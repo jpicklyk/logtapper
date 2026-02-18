@@ -147,6 +147,7 @@ export interface ChartData {
   title: string;
   description?: string;
   series: DataSeries[];
-  xAxis: { label: string; field: string };
-  yAxis: { label: string };
+  xAxis: { label: string; field: string | null };
+  yAxis: { label: string; field: string | null };
+  interactive: boolean;
 }

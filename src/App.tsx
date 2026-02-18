@@ -165,6 +165,7 @@ export default function App() {
                 pipeline={pipeline}
                 sessionId={viewer.session.sessionId}
                 onViewProcessor={handleViewProcessor}
+                onJumpToLine={viewer.jumpToLine}
               />
             )}
           </aside>

@@ -71,9 +71,8 @@ export function getProcessorVars(
 export function getChartData(
   sessionId: string,
   processorId: string,
-  chartId: string,
-): Promise<ChartData> {
-  return invoke('get_chart_data', { sessionId, processorId, chartId });
+): Promise<ChartData[]> {
+  return invoke('get_chart_data', { sessionId, processorId });
 }
 
 // ---------------------------------------------------------------------------

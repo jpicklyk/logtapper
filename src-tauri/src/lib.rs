@@ -36,6 +36,8 @@ pub fn run() {
             commands::processors::load_processor_yaml,
             commands::processors::get_processor_vars,
             commands::processors::uninstall_processor,
+            // Phase 3 — charts
+            commands::charts::get_chart_data,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

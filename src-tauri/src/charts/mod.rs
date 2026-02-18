@@ -1,4 +1,4 @@
-pub mod builder;
 pub mod aggregation;
+pub mod builder;
 
-// TODO Phase 3: Chart data computation and aggregation
+pub use builder::ChartData;

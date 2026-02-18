@@ -3,9 +3,13 @@ use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::path::Path;
 
+use crate::core::bugreport_parser::BugreportParser;
+use crate::core::index::CrossSourceIndex;
+use crate::core::kernel_parser::KernelParser;
 use crate::core::line::LineMeta;
 use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;
+use crate::core::timeline::{Timeline, TimelineEntry};
 
 // ---------------------------------------------------------------------------
 // Source type
@@ -87,6 +91,8 @@ impl LogSource {
 pub struct AnalysisSession {
     pub id: String,
     pub sources: Vec<LogSource>,
+    pub timeline: Timeline,
+    pub index: CrossSourceIndex,
 }
 
 impl AnalysisSession {
@@ -94,6 +100,8 @@ impl AnalysisSession {
         Self {
             id,
             sources: Vec::new(),
+            timeline: Timeline::new(),
+            index: CrossSourceIndex::build(&[]),
         }
     }
 
@@ -132,7 +140,33 @@ impl AnalysisSession {
             line_meta,
         });
 
+        // Rebuild the timeline and index after adding a new source.
+        self.rebuild_timeline();
+
         Ok(idx)
+    }
+
+    /// Rebuild the unified timeline and cross-source index from all loaded sources.
+    pub fn rebuild_timeline(&mut self) {
+        let all_entries: Vec<TimelineEntry> = self
+            .sources
+            .iter()
+            .flat_map(|src| {
+                src.line_meta.iter().enumerate().map(|(i, m)| TimelineEntry {
+                    source_id: src.id.clone(),
+                    source_line_num: i,
+                    timestamp: m.timestamp,
+                    level: m.level,
+                    tag: m.tag.clone(),
+                })
+            })
+            .collect();
+
+        self.timeline = Timeline::build(
+            // Pass a single "all entries" iterator; Timeline::build just flattens.
+            std::iter::once(("", all_entries.into_iter())),
+        );
+        self.index = CrossSourceIndex::build(&self.timeline.entries);
     }
 
     pub fn source_by_id(&self, id: &str) -> Option<&LogSource> {
@@ -240,10 +274,9 @@ fn build_line_index(mmap: &Mmap, source_type: &SourceType) -> (Vec<(usize, usize
 
 fn parser_for(source_type: &SourceType) -> Box<dyn LogParser> {
     match source_type {
-        SourceType::Logcat | SourceType::Radio | SourceType::Events => {
-            Box::new(LogcatParser)
-        }
-        // Phase 3: add KernelParser, BugreportParser etc.
+        SourceType::Logcat | SourceType::Radio | SourceType::Events => Box::new(LogcatParser),
+        SourceType::Kernel => Box::new(KernelParser),
+        SourceType::Bugreport => Box::new(BugreportParser),
         _ => Box::new(LogcatParser),
     }
 }
