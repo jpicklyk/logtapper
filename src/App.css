@@ -6,7 +6,7 @@
   height: 100vh;
   overflow: hidden;
   background: #0f1117;
-  color: #e2e8f0;
+  color: #b8c4ce;
   font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
   position: relative;
 }
@@ -121,7 +121,7 @@
   background: transparent;
   border: none;
   outline: none;
-  color: #e2e8f0;
+  color: #b8c4ce;
   font-size: 12px;
   font-family: inherit;
   padding: 4px 0;
@@ -232,7 +232,7 @@
   flex: 1;
   overflow-y: auto;
   overflow-x: auto;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 22px;
 }
 
@@ -384,7 +384,7 @@ mark {
 
 .progress-message {
   margin-bottom: 16px;
-  color: #c9d1d9;
+  color: #9faab4;
   font-size: 13px;
 }
 
@@ -532,7 +532,7 @@ mark {
   flex-shrink: 0;
 }
 
-.panel-tab:hover { color: #c9d1d9; }
+.panel-tab:hover { color: #9faab4; }
 
 .panel-tab.active {
   color: #58a6ff;
@@ -628,7 +628,7 @@ mark {
 
 .file-info-value {
   font-size: 11px;
-  color: #c9d1d9;
+  color: #9faab4;
   min-width: 0;
   word-break: break-word;
 }
@@ -677,7 +677,18 @@ mark {
 
 .file-info-section-item:hover {
   background: #161b22;
-  color: #e2e8f0;
+  color: #b8c4ce;
+}
+
+.file-info-section-item--active {
+  animation: jump-flash 1.8s ease-out forwards;
+  border-left: 2px solid #f0a500;
+  padding-left: 8px; /* 10px - 2px border = same visual indent */
+  color: #b8c4ce;
+}
+
+.file-info-section-item--active .file-info-section-line {
+  color: #c9a227;
 }
 
 .file-info-section-name {
@@ -723,7 +734,7 @@ mark {
 .proc-panel-title {
   font-size: 12px;
   font-weight: 600;
-  color: #c9d1d9;
+  color: #9faab4;
 }
 
 .proc-panel-actions {
@@ -741,7 +752,7 @@ mark {
   cursor: pointer;
 }
 
-.btn-icon:hover { color: #e2e8f0; }
+.btn-icon:hover { color: #b8c4ce; }
 
 .btn-secondary {
   padding: 4px 10px;
@@ -765,7 +776,7 @@ mark {
   background: #0d1117;
   border: 1px solid #30363d;
   border-radius: 4px;
-  color: #e2e8f0;
+  color: #b8c4ce;
   font-size: 11px;
   font-family: inherit;
   padding: 6px;
@@ -822,7 +833,7 @@ mark {
 
 .proc-item-name {
   font-size: 12px;
-  color: #c9d1d9;
+  color: #9faab4;
   flex: 1;
 }
 
@@ -1038,7 +1049,7 @@ mark {
 
 .var-value {
   font-size: 11px;
-  color: #e2e8f0;
+  color: #b8c4ce;
 }
 
 .var-number { color: #79c0ff; }
@@ -1107,7 +1118,7 @@ mark {
 .chart-title {
   font-size: 11px;
   font-weight: 600;
-  color: #c9d1d9;
+  color: #9faab4;
   margin-bottom: 6px;
   white-space: nowrap;
   overflow: hidden;
@@ -1152,7 +1163,7 @@ mark {
   font-family: inherit;
   line-height: 1.2;
 }
-.btn-icon-sm:hover { color: #e2e8f0; border-color: #8b949e; }
+.btn-icon-sm:hover { color: #b8c4ce; border-color: #8b949e; }
 .btn-icon-sm.active { color: #58a6ff; border-color: #58a6ff; }
 
 /* ── Chat panel ───────────────────────────────────────────────────────────── */
@@ -1176,7 +1187,7 @@ mark {
 .chat-title {
   font-size: 12px;
   font-weight: 600;
-  color: #e2e8f0;
+  color: #b8c4ce;
 }
 
 .chat-header-actions {
@@ -1204,7 +1215,7 @@ mark {
   border: 1px solid #30363d;
   border-radius: 4px;
   padding: 5px 8px;
-  color: #e2e8f0;
+  color: #b8c4ce;
   font-size: 11px;
   font-family: inherit;
   width: 100%;
@@ -1283,7 +1294,7 @@ mark {
 .chat-message-content {
   font-size: 12px;
   line-height: 1.5;
-  color: #e2e8f0;
+  color: #b8c4ce;
   white-space: pre-wrap;
   word-break: break-word;
   padding: 6px 8px;
@@ -1328,7 +1339,7 @@ mark {
   border: 1px solid #30363d;
   border-radius: 4px;
   padding: 6px 8px;
-  color: #e2e8f0;
+  color: #b8c4ce;
   font-size: 11px;
   font-family: inherit;
   resize: none;
@@ -1373,7 +1384,7 @@ mark {
 .marketplace-title {
   font-size: 12px;
   font-weight: 600;
-  color: #e2e8f0;
+  color: #b8c4ce;
 }
 
 .marketplace-error {
@@ -1399,7 +1410,7 @@ mark {
   border: 1px solid #30363d;
   border-radius: 4px;
   padding: 4px 8px;
-  color: #e2e8f0;
+  color: #b8c4ce;
   font-size: 11px;
   font-family: inherit;
 }
@@ -1441,7 +1452,7 @@ mark {
 .marketplace-item-name {
   font-size: 12px;
   font-weight: 600;
-  color: #e2e8f0;
+  color: #b8c4ce;
 }
 
 .marketplace-item-version {
@@ -1562,7 +1573,7 @@ mark {
 
 .tab--active {
   background: #0d1117;
-  color: #e6edf3;
+  color: #b8c4ce;
   border-bottom: 2px solid #1f6feb;
 }
 
@@ -1573,7 +1584,7 @@ mark {
 
 .tab:hover:not(.tab--active):not(.tab--disabled) {
   background: #21262d;
-  color: #e6edf3;
+  color: #b8c4ce;
 }
 
 .tab-label {
@@ -1637,7 +1648,7 @@ mark {
   padding: 6px 14px;
   cursor: pointer;
   font-size: 12px;
-  color: #e6edf3;
+  color: #b8c4ce;
   white-space: nowrap;
 }
 
@@ -1710,7 +1721,7 @@ details[open] > summary::before {
 }
 
 .file-info-body summary:hover {
-  color: #e6edf3;
+  color: #b8c4ce;
   background: #1c2128;
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useLogViewer } from './hooks/useLogViewer';
 import { usePipeline } from './hooks/usePipeline';
@@ -77,7 +77,7 @@ export default function App() {
     }
     getSections(viewer.session.sessionId)
       .then((secs) =>
-        setSections(secs.map((s) => ({ lineNum: s.startLine, title: s.name })))
+        setSections(secs.map((s) => ({ lineNum: s.startLine, endLine: s.endLine, title: s.name })))
       )
       .catch(() => setSections([]));
   }, [viewer.session]);
@@ -91,6 +91,14 @@ export default function App() {
       .catch(() => setMetadata(null));
   }, [viewer.session]);
 
+  // ── Active section — derived from scroll position ─────────────────────────
+
+  const activeSectionIndex = useMemo(() => {
+    if (viewer.scrollToLine == null || sections.length === 0) return -1;
+    const lineNum = viewer.scrollToLine;
+    return sections.findIndex((s) => lineNum >= s.lineNum && lineNum <= s.endLine);
+  }, [viewer.scrollToLine, sections]);
+
   // ── Context value ──────────────────────────────────────────────────────────
 
   const ctxValue = {
@@ -100,6 +108,7 @@ export default function App() {
     metadata,
     processorViewId,
     sections,
+    activeSectionIndex,
     onViewProcessor: handleViewProcessor,
     onClearProcessorView: handleClearProcessorView,
   };

@@ -12,6 +12,7 @@ export interface AppContextValue {
   metadata: DumpstateMetadata | null;
   processorViewId: string | null;
   sections: SectionEntry[];
+  activeSectionIndex: number;
   onViewProcessor: (id: string) => void;
   onClearProcessorView: () => void;
 }

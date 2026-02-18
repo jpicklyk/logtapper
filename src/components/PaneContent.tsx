@@ -19,6 +19,7 @@ export default function PaneContent({ pane }: Props) {
     metadata,
     processorViewId,
     sections,
+    activeSectionIndex,
     onViewProcessor,
   } = useAppContext();
 
@@ -93,6 +94,8 @@ export default function PaneContent({ pane }: Props) {
           sections={sections}
           onJumpToSection={viewer.jumpToLine}
           metadata={metadata}
+          activeSectionIndex={activeSectionIndex}
+          sectionJumpSeq={viewer.jumpSeq}
         />
       ) : (
         <div className="pane-placeholder">Open a log file to see file info.</div>
