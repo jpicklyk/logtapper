@@ -1,16 +1,384 @@
-// TODO Phase 1: implement file loading with mmap
+use regex::Regex;
+use serde::Serialize;
+use std::collections::HashMap;
+use std::path::Path;
+use tauri::State;
 
-#[tauri::command]
-pub async fn load_log_file(_path: String) -> Result<String, String> {
-    Err("not yet implemented".into())
+use crate::commands::AppState;
+use crate::core::line::{
+    HighlightKind, HighlightSpan, LineRequest, LineWindow, SearchQuery, SearchSummary,
+    ViewLine, ViewMode,
+};
+use crate::core::logcat_parser::LogcatParser;
+use crate::core::parser::LogParser;
+use crate::core::session::AnalysisSession;
+
+// ---------------------------------------------------------------------------
+// load_log_file
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadResult {
+    pub session_id: String,
+    pub source_id: String,
+    pub source_name: String,
+    pub total_lines: usize,
+    pub file_size: u64,
+    pub first_timestamp: Option<i64>,
+    pub last_timestamp: Option<i64>,
+    pub source_type: String,
 }
 
 #[tauri::command]
-pub async fn get_lines(_request: serde_json::Value) -> Result<serde_json::Value, String> {
-    Err("not yet implemented".into())
+pub async fn load_log_file(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<LoadResult, String> {
+    let path_obj = Path::new(&path);
+
+    let file_size = std::fs::metadata(path_obj)
+        .map(|m| m.len())
+        .unwrap_or(0);
+
+    // Derive stable IDs from the path
+    let session_id = "default".to_string();
+    let source_id = path_obj
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("source")
+        .to_string();
+
+    let mut session = AnalysisSession::new(session_id.clone());
+    let source_idx = session.add_source_from_file(path_obj, source_id.clone())?;
+
+    let source = &session.sources[source_idx];
+    let total_lines = source.total_lines();
+    let first_ts = source.first_timestamp();
+    let last_ts = source.last_timestamp();
+    let source_type = source.source_type.to_string();
+    let source_name = source.name.clone();
+
+    let result = LoadResult {
+        session_id: session_id.clone(),
+        source_id,
+        source_name,
+        total_lines,
+        file_size,
+        first_timestamp: first_ts,
+        last_timestamp: last_ts,
+        source_type,
+    };
+
+    let mut sessions = state
+        .sessions
+        .lock()
+        .map_err(|_| "State lock poisoned".to_string())?;
+    sessions.insert(session_id, session);
+
+    Ok(result)
 }
 
+// ---------------------------------------------------------------------------
+// get_lines
+// ---------------------------------------------------------------------------
+
 #[tauri::command]
-pub async fn search_logs(_query: serde_json::Value) -> Result<serde_json::Value, String> {
-    Err("not yet implemented".into())
+pub async fn get_lines(
+    state: State<'_, AppState>,
+    request: LineRequest,
+) -> Result<LineWindow, String> {
+    let sessions = state
+        .sessions
+        .lock()
+        .map_err(|_| "State lock poisoned".to_string())?;
+
+    let session = sessions
+        .get(&request.session_id)
+        .ok_or_else(|| format!("Session '{}' not found", request.session_id))?;
+
+    let source = session
+        .primary_source()
+        .ok_or("No sources in session")?;
+
+    let total_lines = source.total_lines();
+    let parser = LogcatParser;
+
+    match request.mode {
+        ViewMode::Full => {
+            let start = request.offset.min(total_lines);
+            let end = (request.offset + request.count).min(total_lines);
+
+            let mut lines = Vec::with_capacity(end - start);
+
+            for i in start..end {
+                let raw = source.raw_line(i).unwrap_or("").to_string();
+                let meta = &source.line_meta[i];
+
+                let highlights = request
+                    .search
+                    .as_ref()
+                    .map(|q| compute_search_highlights(&raw, q))
+                    .unwrap_or_default();
+
+                let view_line = if let Some(ctx) = parser.parse_line(&raw, &source.id, i) {
+                    ViewLine {
+                        line_num: i,
+                        raw: ctx.raw,
+                        level: ctx.level,
+                        tag: ctx.tag,
+                        message: ctx.message,
+                        timestamp: ctx.timestamp,
+                        pid: ctx.pid,
+                        tid: ctx.tid,
+                        source_id: ctx.source_id,
+                        highlights,
+                        matched_by: vec![],
+                        is_context: false,
+                    }
+                } else {
+                    // Section header or unparseable — show raw
+                    ViewLine {
+                        line_num: i,
+                        raw: raw.clone(),
+                        level: meta.level,
+                        tag: meta.tag.clone(),
+                        message: raw,
+                        timestamp: meta.timestamp,
+                        pid: 0,
+                        tid: 0,
+                        source_id: source.id.clone(),
+                        highlights,
+                        matched_by: vec![],
+                        is_context: false,
+                    }
+                };
+
+                lines.push(view_line);
+            }
+
+            Ok(LineWindow { total_lines, lines })
+        }
+
+        ViewMode::Processor => {
+            Err("Processor view mode is implemented in Phase 2".into())
+        }
+
+        ViewMode::Focus(center) => {
+            // Return `context` lines before and after center
+            let half = request.context.max(25);
+            let start = center.saturating_sub(half);
+            let end = (center + half + 1).min(total_lines);
+
+            let sub_req = LineRequest {
+                session_id: request.session_id.clone(),
+                mode: ViewMode::Full,
+                offset: start,
+                count: end - start,
+                context: 0,
+                processor_id: None,
+                search: request.search.clone(),
+            };
+
+            // Recurse with Full mode for the sub-window
+            drop(sessions); // release lock before recursive call
+            let state_ref: &AppState = &state;
+            let inner_sessions = state_ref
+                .sessions
+                .lock()
+                .map_err(|_| "State lock poisoned".to_string())?;
+            let inner_session = inner_sessions
+                .get(&sub_req.session_id)
+                .ok_or("Session not found")?;
+            let inner_source = inner_session.primary_source().ok_or("No source")?;
+
+            let mut lines = Vec::new();
+            for i in start..end {
+                let raw = inner_source.raw_line(i).unwrap_or("").to_string();
+                let meta = &inner_source.line_meta[i];
+                let highlights = sub_req
+                    .search
+                    .as_ref()
+                    .map(|q| compute_search_highlights(&raw, q))
+                    .unwrap_or_default();
+                let ctx = parser.parse_line(&raw, &inner_source.id, i);
+                let view_line = match ctx {
+                    Some(c) => ViewLine {
+                        line_num: i,
+                        raw: c.raw,
+                        level: c.level,
+                        tag: c.tag,
+                        message: c.message,
+                        timestamp: c.timestamp,
+                        pid: c.pid,
+                        tid: c.tid,
+                        source_id: c.source_id,
+                        highlights,
+                        matched_by: vec![],
+                        is_context: i != center,
+                    },
+                    None => ViewLine {
+                        line_num: i,
+                        raw: raw.clone(),
+                        level: meta.level,
+                        tag: meta.tag.clone(),
+                        message: raw,
+                        timestamp: meta.timestamp,
+                        pid: 0,
+                        tid: 0,
+                        source_id: inner_source.id.clone(),
+                        highlights,
+                        matched_by: vec![],
+                        is_context: i != center,
+                    },
+                };
+                lines.push(view_line);
+            }
+
+            Ok(LineWindow { total_lines, lines })
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// search_logs
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn search_logs(
+    state: State<'_, AppState>,
+    session_id: String,
+    query: SearchQuery,
+) -> Result<SearchSummary, String> {
+    let sessions = state
+        .sessions
+        .lock()
+        .map_err(|_| "State lock poisoned".to_string())?;
+
+    let session = sessions
+        .get(&session_id)
+        .ok_or_else(|| format!("Session '{session_id}' not found"))?;
+
+    let source = session.primary_source().ok_or("No sources in session")?;
+
+    let compiled_re = if query.is_regex {
+        let pattern = if query.case_sensitive {
+            query.text.clone()
+        } else {
+            format!("(?i){}", query.text)
+        };
+        Some(Regex::new(&pattern).map_err(|e| format!("Invalid regex: {e}"))?)
+    } else {
+        None
+    };
+
+    let needle_lower = query.text.to_lowercase();
+
+    let mut match_line_nums: Vec<usize> = Vec::new();
+    let mut by_level: HashMap<String, usize> = HashMap::new();
+    let mut by_tag: HashMap<String, usize> = HashMap::new();
+
+    for (i, meta) in source.line_meta.iter().enumerate() {
+        // Level filter
+        if let Some(min_level) = query.min_level {
+            if meta.level < min_level {
+                continue;
+            }
+        }
+
+        // Tag filter
+        if let Some(ref tags) = query.tags {
+            if !tags.is_empty() && !tags.contains(&meta.tag) {
+                continue;
+            }
+        }
+
+        // Text match
+        let raw = source.raw_line(i).unwrap_or("");
+        let matched = if let Some(ref re) = compiled_re {
+            re.is_match(raw)
+        } else if query.case_sensitive {
+            raw.contains(query.text.as_str())
+        } else {
+            raw.to_lowercase().contains(&needle_lower)
+        };
+
+        if matched {
+            match_line_nums.push(i);
+            *by_level
+                .entry(format!("{:?}", meta.level))
+                .or_insert(0) += 1;
+            if !meta.tag.is_empty() {
+                *by_tag.entry(meta.tag.clone()).or_insert(0) += 1;
+            }
+        }
+    }
+
+    Ok(SearchSummary {
+        total_matches: match_line_nums.len(),
+        match_line_nums,
+        by_level,
+        by_tag,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Highlight computation
+// ---------------------------------------------------------------------------
+
+pub fn compute_search_highlights(raw: &str, query: &SearchQuery) -> Vec<HighlightSpan> {
+    if query.text.is_empty() {
+        return vec![];
+    }
+
+    let mut spans = Vec::new();
+
+    if query.is_regex {
+        let pattern = if query.case_sensitive {
+            query.text.clone()
+        } else {
+            format!("(?i){}", query.text)
+        };
+        if let Ok(re) = Regex::new(&pattern) {
+            for m in re.find_iter(raw) {
+                spans.push(HighlightSpan {
+                    start: m.start(),
+                    end: m.end(),
+                    kind: HighlightKind::Search,
+                });
+            }
+        }
+    } else if query.case_sensitive {
+        let mut offset = 0;
+        while let Some(pos) = raw[offset..].find(query.text.as_str()) {
+            let abs = offset + pos;
+            spans.push(HighlightSpan {
+                start: abs,
+                end: abs + query.text.len(),
+                kind: HighlightKind::Search,
+            });
+            offset = abs + query.text.len().max(1);
+            if offset >= raw.len() {
+                break;
+            }
+        }
+    } else {
+        let lower_raw = raw.to_lowercase();
+        let lower_needle = query.text.to_lowercase();
+        let mut offset = 0;
+        while let Some(pos) = lower_raw[offset..].find(&lower_needle) {
+            let abs = offset + pos;
+            spans.push(HighlightSpan {
+                start: abs,
+                end: abs + lower_needle.len(),
+                kind: HighlightKind::Search,
+            });
+            offset = abs + lower_needle.len().max(1);
+            if offset >= lower_raw.len() {
+                break;
+            }
+        }
+    }
+
+    spans
 }

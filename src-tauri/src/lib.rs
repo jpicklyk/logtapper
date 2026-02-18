@@ -1,14 +1,18 @@
+pub mod anonymizer;
+pub mod charts;
+pub mod claude;
 pub mod commands;
 pub mod core;
-pub mod anonymizer;
 pub mod processors;
 pub mod scripting;
-pub mod claude;
-pub mod charts;
+
+use commands::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(AppState::new())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -20,7 +24,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            // Phase 1 — File / Session
+            // Phase 1 — file loading, viewer, search
             commands::files::load_log_file,
             commands::files::get_lines,
             commands::files::search_logs,
