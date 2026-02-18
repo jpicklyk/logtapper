@@ -32,9 +32,9 @@ export default function ProcessorDashboard({
 
   const selected = selectedId ?? activeProcessors[0]?.id ?? null;
 
-  // Count of completed runs — used as refreshKey for VarInspector so it
-  // re-fetches vars automatically after each pipeline run.
-  const runCount = pipeline.lastResults.length;
+  // Increments after every completed pipeline run — used as refreshKey for
+  // VarInspector and the matches list so they re-fetch automatically.
+  const runCount = pipeline.runCount;
 
   // Fetch charts when switching to charts tab or when selected changes.
   useEffect(() => {

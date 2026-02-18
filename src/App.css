@@ -880,6 +880,7 @@ mark {
   align-items: center;
   gap: 6px;
   cursor: pointer;
+  padding-right: 20px; /* leave room for the absolute-positioned × button */
 }
 
 .proc-item-name {
@@ -934,6 +935,7 @@ mark {
   cursor: pointer;
   line-height: 1;
   padding: 0 2px;
+  transition: color 0.15s;
 }
 
 .proc-remove:hover { color: var(--danger); }

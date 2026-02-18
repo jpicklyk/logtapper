@@ -16,6 +16,7 @@ export interface PipelineState {
   running: boolean;
   progress: Record<string, PipelineProgress>;
   lastResults: PipelineRunSummary[];
+  runCount: number;
   error: string | null;
 
   loadProcessors: () => Promise<void>;
@@ -33,6 +34,7 @@ export function usePipeline(): PipelineState {
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<Record<string, PipelineProgress>>({});
   const [lastResults, setLastResults] = useState<PipelineRunSummary[]>([]);
+  const [runCount, setRunCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
 
@@ -111,6 +113,7 @@ export function usePipeline(): PipelineState {
         const ids = Array.from(activeProcessorIds);
         const results = await runPipeline(sessionId, ids, anonymize);
         setLastResults(results);
+        setRunCount((n) => n + 1);
       } catch (e) {
         setError(String(e));
       } finally {
@@ -141,6 +144,7 @@ export function usePipeline(): PipelineState {
     running,
     progress,
     lastResults,
+    runCount,
     error,
     loadProcessors,
     installFromYaml,
