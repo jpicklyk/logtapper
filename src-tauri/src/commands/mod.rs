@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use crate::core::session::AnalysisSession;
+use crate::processors::interpreter::RunResult;
+use crate::processors::schema::ProcessorDef;
 
 pub mod charts;
 pub mod claude;
@@ -12,13 +14,20 @@ pub mod session;
 
 /// Global application state managed by Tauri.
 pub struct AppState {
+    /// Active analysis sessions (sessionId → session).
     pub sessions: Mutex<HashMap<String, AnalysisSession>>,
+    /// Installed processors (processorId → definition).
+    pub processors: Mutex<HashMap<String, ProcessorDef>>,
+    /// Pipeline results: sessionId → processorId → RunResult.
+    pub pipeline_results: Mutex<HashMap<String, HashMap<String, RunResult>>>,
 }
 
 impl AppState {
     pub fn new() -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
+            processors: Mutex::new(HashMap::new()),
+            pipeline_results: Mutex::new(HashMap::new()),
         }
     }
 }

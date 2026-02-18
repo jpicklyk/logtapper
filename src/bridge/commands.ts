@@ -5,7 +5,8 @@ import type {
   LoadResult,
   SearchQuery,
   SearchSummary,
-  RunPipelineResult,
+  ProcessorSummary,
+  PipelineRunSummary,
   ChartData,
 } from './types';
 
@@ -35,20 +36,25 @@ export function searchLogs(
 export function runPipeline(
   sessionId: string,
   processorIds: string[],
-): Promise<RunPipelineResult[]> {
-  return invoke('run_pipeline', { sessionId, processorIds });
+  anonymize = false,
+): Promise<PipelineRunSummary[]> {
+  return invoke('run_pipeline', { sessionId, processorIds, anonymize });
 }
 
-export function stopPipeline(sessionId: string): Promise<void> {
-  return invoke('stop_pipeline', { sessionId });
+export function stopPipeline(): Promise<void> {
+  return invoke('stop_pipeline');
 }
 
-export function listProcessors(): Promise<import('./types').ProcessorInfo[]> {
+export function listProcessors(): Promise<ProcessorSummary[]> {
   return invoke('list_processors');
 }
 
-export function installProcessor(id: string): Promise<void> {
-  return invoke('install_processor', { id });
+export function loadProcessorYaml(yaml: string): Promise<ProcessorSummary> {
+  return invoke('load_processor_yaml', { yaml });
+}
+
+export function uninstallProcessor(processorId: string): Promise<void> {
+  return invoke('uninstall_processor', { processorId });
 }
 
 export function getProcessorVars(

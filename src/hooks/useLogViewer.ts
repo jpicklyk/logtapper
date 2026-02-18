@@ -13,12 +13,15 @@ export interface LogViewerState {
   scrollToLine: number | undefined;
   loading: boolean;
   error: string | null;
+  processorId: string | null;
 
   loadFile: (path: string) => Promise<void>;
   handleFetchNeeded: (offset: number, count: number) => void;
   handleSearch: (query: SearchQuery | null) => void;
   jumpToMatch: (direction: 1 | -1) => void;
   jumpToLine: (lineNum: number) => void;
+  setProcessorView: (processorId: string) => void;
+  clearProcessorView: () => void;
 }
 
 export function useLogViewer(): LogViewerState {
@@ -30,9 +33,13 @@ export function useLogViewer(): LogViewerState {
   const [scrollToLine, setScrollToLine] = useState<number | undefined>(undefined);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [processorId, setProcessorId] = useState<string | null>(null);
 
   // Track in-flight fetch requests to avoid duplicates
   const pendingFetches = useRef<Set<string>>(new Set());
+  const sessionRef = useRef<LoadResult | null>(null);
+  const searchRef = useRef<SearchQuery | null>(null);
+  const processorIdRef = useRef<string | null>(null);
 
   const loadFile = useCallback(async (path: string) => {
     setLoading(true);
@@ -41,9 +48,12 @@ export function useLogViewer(): LogViewerState {
     setSearch(null);
     setSearchSummary(null);
     setCurrentMatchIndex(0);
+    setProcessorId(null);
+    processorIdRef.current = null;
     try {
       const result = await loadLogFile(path);
       setSession(result);
+      sessionRef.current = result;
       // Pre-fetch the first window
       const first = await getLines({
         sessionId: result.sessionId,
@@ -66,18 +76,25 @@ export function useLogViewer(): LogViewerState {
 
   const handleFetchNeeded = useCallback(
     (offset: number, count: number) => {
-      if (!session) return;
-      const key = `${offset}:${count}`;
+      const sess = sessionRef.current;
+      if (!sess) return;
+      const pid = processorIdRef.current;
+      const key = `${pid ?? 'full'}:${offset}:${count}`;
       if (pendingFetches.current.has(key)) return;
       pendingFetches.current.add(key);
 
+      const mode = pid
+        ? { mode: 'Processor' as const }
+        : { mode: 'Full' as const };
+
       getLines({
-        sessionId: session.sessionId,
-        mode: { mode: 'Full' },
+        sessionId: sess.sessionId,
+        mode,
         offset,
         count: Math.min(count, WINDOW_SIZE),
-        context: 0,
-        search: search ?? undefined,
+        context: 3,
+        processorId: pid ?? undefined,
+        search: searchRef.current ?? undefined,
       })
         .then((window) => {
           setLineCache((prev) => {
@@ -89,50 +106,69 @@ export function useLogViewer(): LogViewerState {
         .catch(console.error)
         .finally(() => pendingFetches.current.delete(key));
     },
-    [session, search],
+    [],
   );
 
   const handleSearch = useCallback(
     async (query: SearchQuery | null) => {
+      const sess = sessionRef.current;
       setSearch(query);
+      searchRef.current = query;
       setCurrentMatchIndex(0);
 
-      if (!session || !query) {
+      if (!sess || !query) {
         setSearchSummary(null);
-        // Re-fetch current view without search highlights
         setLineCache(new Map());
         return;
       }
 
       try {
-        const summary = await searchLogs(session.sessionId, query);
+        const summary = await searchLogs(sess.sessionId, query);
         setSearchSummary(summary);
         setCurrentMatchIndex(0);
         if (summary.matchLineNums.length > 0) {
           setScrollToLine(summary.matchLineNums[0]);
         }
-        // Invalidate cache so lines are re-fetched with highlights
         setLineCache(new Map());
       } catch (e) {
         console.error('Search error:', e);
       }
     },
-    [session],
+    [],
   );
 
   const jumpToMatch = useCallback(
     (direction: 1 | -1) => {
-      if (!searchSummary || searchSummary.matchLineNums.length === 0) return;
-      const len = searchSummary.matchLineNums.length;
-      const next = (currentMatchIndex + direction + len) % len;
-      setCurrentMatchIndex(next);
-      setScrollToLine(searchSummary.matchLineNums[next]);
+      setSearchSummary((summary) => {
+        if (!summary || summary.matchLineNums.length === 0) return summary;
+        setCurrentMatchIndex((idx) => {
+          const len = summary.matchLineNums.length;
+          const next = (idx + direction + len) % len;
+          setScrollToLine(summary.matchLineNums[next]);
+          return next;
+        });
+        return summary;
+      });
     },
-    [searchSummary, currentMatchIndex],
+    [],
   );
 
   const jumpToLine = useCallback((lineNum: number) => {
     setScrollToLine(lineNum);
+  }, []);
+
+  const setProcessorView = useCallback((id: string) => {
+    setProcessorId(id);
+    processorIdRef.current = id;
+    setLineCache(new Map());
+    pendingFetches.current.clear();
+  }, []);
+
+  const clearProcessorView = useCallback(() => {
+    setProcessorId(null);
+    processorIdRef.current = null;
+    setLineCache(new Map());
+    pendingFetches.current.clear();
   }, []);
 
   return {
@@ -144,10 +180,13 @@ export function useLogViewer(): LogViewerState {
     scrollToLine,
     loading,
     error,
+    processorId,
     loadFile,
     handleFetchNeeded,
     handleSearch,
     jumpToMatch,
     jumpToLine,
+    setProcessorView,
+    clearProcessorView,
   };
 }

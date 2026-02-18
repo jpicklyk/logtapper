@@ -16,6 +16,8 @@ interface Props {
   onFetchNeeded: (offset: number, count: number) => void;
   onLineClick?: (lineNum: number) => void;
   scrollToLine?: number;
+  /** When set, the viewer is in Processor mode for this processor */
+  processorId?: string;
 }
 
 export default function LogViewer({

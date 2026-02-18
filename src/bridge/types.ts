@@ -103,17 +103,25 @@ export interface VarDecl {
   configurable?: boolean;
 }
 
-export interface ProcessorInfo {
-  meta: ProcessorMeta;
-  vars: VarDecl[];
-  installed: boolean;
+export interface ProcessorSummary {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  tags: string[];
 }
 
-export interface RunPipelineResult {
-  sessionId: string;
+export interface PipelineRunSummary {
   processorId: string;
-  totalMatches: number;
-  durationMs: number;
+  matchedLines: number;
+  emissionCount: number;
+}
+
+export interface PipelineProgress {
+  processorId: string;
+  linesProcessed: number;
+  totalLines: number;
+  percent: number;
 }
 
 // ---------------------------------------------------------------------------

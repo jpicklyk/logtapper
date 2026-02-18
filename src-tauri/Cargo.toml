@@ -29,8 +29,9 @@ memmap2 = "0.9"
 regex = "1.11"
 tauri-plugin-dialog = "2.6.0"
 
-# Phase 2: Scripting (Rhai)
-# rhai = "1.21"
+# Phase 2: Scripting and YAML
+rhai = { version = "1", features = ["sync"] }
+serde_yaml = "0.9"
 
 # Phase 4: Claude API (HTTP + async)
 # tokio = { version = "1", features = ["full"] }

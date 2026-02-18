@@ -1,13 +1,21 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import LogViewer from './components/LogViewer';
 import SearchBar from './components/SearchBar';
 import ProgressOverlay from './components/ProgressOverlay';
+import ProcessorPanel from './components/ProcessorPanel';
+import ProcessorDashboard from './components/ProcessorDashboard';
 import { useLogViewer } from './hooks/useLogViewer';
+import { usePipeline } from './hooks/usePipeline';
 import './App.css';
+
+type SidePanel = 'processors' | 'dashboard' | null;
 
 export default function App() {
   const viewer = useLogViewer();
+  const pipeline = usePipeline();
+  const [sidePanel, setSidePanel] = useState<SidePanel>(null);
+  const [processorViewId, setProcessorViewId] = useState<string | null>(null);
 
   const handleOpenFile = useCallback(async () => {
     const selected = await open({
@@ -27,13 +35,27 @@ export default function App() {
       e.preventDefault();
       const file = e.dataTransfer.files[0];
       if (file) {
-        // Tauri exposes the real path via webkitRelativePath or via the file object
         const path = (file as File & { path?: string }).path;
         if (path) viewer.loadFile(path);
       }
     },
     [viewer],
   );
+
+  const handleViewProcessor = useCallback((id: string) => {
+    setProcessorViewId(id);
+    viewer.setProcessorView(id);
+  }, [viewer]);
+
+  const handleClearProcessorView = useCallback(() => {
+    setProcessorViewId(null);
+    viewer.clearProcessorView();
+  }, [viewer]);
+
+  const toggleProcessors = () =>
+    setSidePanel((p) => (p === 'processors' ? null : 'processors'));
+  const toggleDashboard = () =>
+    setSidePanel((p) => (p === 'dashboard' ? null : 'dashboard'));
 
   return (
     <div
@@ -51,8 +73,33 @@ export default function App() {
               {viewer.session.totalLines.toLocaleString()} lines
             </span>
           )}
+          {processorViewId && (
+            <span className="proc-view-badge">
+              Processor: {processorViewId}{' '}
+              <button className="proc-view-clear" onClick={handleClearProcessorView}>×</button>
+            </span>
+          )}
         </div>
         <div className="header-right">
+          {viewer.session && (
+            <>
+              <button
+                className={`btn-icon-header${sidePanel === 'processors' ? ' active' : ''}`}
+                title="Processors"
+                onClick={toggleProcessors}
+              >
+                ⚙
+              </button>
+              <button
+                className={`btn-icon-header${sidePanel === 'dashboard' ? ' active' : ''}`}
+                title="Dashboard"
+                onClick={toggleDashboard}
+                disabled={pipeline.lastResults.length === 0}
+              >
+                ◫
+              </button>
+            </>
+          )}
           <button className="btn-primary" onClick={handleOpenFile}>
             Open Log File
           </button>
@@ -70,36 +117,59 @@ export default function App() {
         />
       </div>
 
-      {/* ── Main content ── */}
-      <main className="app-main">
-        {viewer.error && (
-          <div className="error-banner">
-            <strong>Error:</strong> {viewer.error}
-          </div>
-        )}
-
-        {!viewer.session && !viewer.loading && (
-          <div className="drop-zone">
-            <div className="drop-zone-content">
-              <p className="drop-zone-icon">📂</p>
-              <p>Drag a log file here or click <strong>Open Log File</strong></p>
-              <p className="drop-zone-hint">
-                Supports logcat, kernel (dmesg), radio, and bugreport files
-              </p>
+      {/* ── Body (viewer + optional side panel) ── */}
+      <div className="app-body">
+        {/* ── Main content ── */}
+        <main className="app-main">
+          {viewer.error && (
+            <div className="error-banner">
+              <strong>Error:</strong> {viewer.error}
             </div>
-          </div>
-        )}
+          )}
 
-        <LogViewer
-          sessionId={viewer.session?.sessionId ?? ''}
-          totalLines={viewer.session?.totalLines ?? 0}
-          lineCache={viewer.lineCache}
-          search={viewer.search ?? undefined}
-          onFetchNeeded={viewer.handleFetchNeeded}
-          onLineClick={viewer.jumpToLine}
-          scrollToLine={viewer.scrollToLine}
-        />
-      </main>
+          {!viewer.session && !viewer.loading && (
+            <div className="drop-zone">
+              <div className="drop-zone-content">
+                <p className="drop-zone-icon">📂</p>
+                <p>Drag a log file here or click <strong>Open Log File</strong></p>
+                <p className="drop-zone-hint">
+                  Supports logcat, kernel (dmesg), radio, and bugreport files
+                </p>
+              </div>
+            </div>
+          )}
+
+          <LogViewer
+            sessionId={viewer.session?.sessionId ?? ''}
+            totalLines={viewer.session?.totalLines ?? 0}
+            lineCache={viewer.lineCache}
+            search={viewer.search ?? undefined}
+            onFetchNeeded={viewer.handleFetchNeeded}
+            onLineClick={viewer.jumpToLine}
+            scrollToLine={viewer.scrollToLine}
+            processorId={processorViewId ?? undefined}
+          />
+        </main>
+
+        {/* ── Side panel ── */}
+        {sidePanel && (
+          <aside className="side-panel">
+            {sidePanel === 'processors' && (
+              <ProcessorPanel
+                pipeline={pipeline}
+                sessionId={viewer.session?.sessionId ?? null}
+              />
+            )}
+            {sidePanel === 'dashboard' && viewer.session && (
+              <ProcessorDashboard
+                pipeline={pipeline}
+                sessionId={viewer.session.sessionId}
+                onViewProcessor={handleViewProcessor}
+              />
+            )}
+          </aside>
+        )}
+      </div>
 
       {/* ── Status bar ── */}
       {viewer.session && (
@@ -108,6 +178,13 @@ export default function App() {
           <span>{viewer.session.totalLines.toLocaleString()} lines</span>
           {viewer.searchSummary && (
             <span>{viewer.searchSummary.totalMatches.toLocaleString()} matches</span>
+          )}
+          {pipeline.lastResults.length > 0 && (
+            <span>
+              {pipeline.lastResults
+                .map((r) => `${r.processorId}: ${r.matchedLines.toLocaleString()} matched`)
+                .join(' · ')}
+            </span>
           )}
         </footer>
       )}

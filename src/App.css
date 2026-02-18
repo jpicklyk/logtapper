@@ -10,6 +10,13 @@
   font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
 }
 
+.app-body {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: row;
+}
+
 /* ── Header ──────────────────────────────────────────────────────────────── */
 
 .app-header {
@@ -179,6 +186,7 @@
   position: relative;
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 /* ── Drop zone ────────────────────────────────────────────────────────────── */
@@ -404,4 +412,429 @@ mark {
   margin-top: 8px;
   font-size: 11px;
   color: #8b949e;
+}
+
+/* ── Header extra buttons ─────────────────────────────────────────────────── */
+
+.btn-icon-header {
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #8b949e;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.btn-icon-header.active {
+  background: #1f6feb33;
+  border-color: #58a6ff;
+  color: #58a6ff;
+}
+
+.btn-icon-header:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.proc-view-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  background: #1f3d1f;
+  border: 1px solid #3fb950;
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: #3fb950;
+}
+
+.proc-view-clear {
+  background: transparent;
+  border: none;
+  color: #3fb950;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+}
+
+/* ── Side panel ───────────────────────────────────────────────────────────── */
+
+.side-panel {
+  width: 280px;
+  flex-shrink: 0;
+  background: #0d1117;
+  border-left: 1px solid #21262d;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Processor panel ──────────────────────────────────────────────────────── */
+
+.processor-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.proc-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  border-bottom: 1px solid #21262d;
+}
+
+.proc-panel-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #c9d1d9;
+}
+
+.proc-panel-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.btn-icon {
+  padding: 2px 6px;
+  background: transparent;
+  border: 1px solid #30363d;
+  border-radius: 3px;
+  color: #8b949e;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btn-icon:hover { color: #e2e8f0; }
+
+.btn-secondary {
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #8b949e;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.btn-secondary:hover { border-color: #58a6ff; color: #58a6ff; }
+
+.proc-import {
+  padding: 8px;
+  border-bottom: 1px solid #21262d;
+}
+
+.proc-yaml-input {
+  width: 100%;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #e2e8f0;
+  font-size: 11px;
+  font-family: inherit;
+  padding: 6px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.proc-import-error {
+  color: #f85149;
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.proc-import-btns {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.proc-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.proc-empty {
+  padding: 12px 8px;
+  color: #484f58;
+  font-size: 11px;
+  text-align: center;
+}
+
+.proc-item {
+  position: relative;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  margin-bottom: 2px;
+}
+
+.proc-item:hover { background: #161b22; }
+
+.proc-item-active {
+  background: #1a2332;
+  border-color: #1f4f8f;
+}
+
+.proc-item-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.proc-item-name {
+  font-size: 12px;
+  color: #c9d1d9;
+  flex: 1;
+}
+
+.proc-item-version {
+  font-size: 10px;
+  color: #484f58;
+}
+
+.proc-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 3px;
+  padding-left: 22px;
+}
+
+.proc-tag {
+  font-size: 10px;
+  background: #21262d;
+  border-radius: 2px;
+  padding: 1px 4px;
+  color: #8b949e;
+}
+
+.proc-progress {
+  height: 2px;
+  background: #21262d;
+  border-radius: 1px;
+  margin-top: 4px;
+  overflow: hidden;
+}
+
+.proc-progress-fill {
+  height: 100%;
+  background: #58a6ff;
+  transition: width 0.1s linear;
+}
+
+.proc-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: transparent;
+  border: none;
+  color: #484f58;
+  font-size: 14px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.proc-remove:hover { color: #f85149; }
+
+.proc-run-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-top: 1px solid #21262d;
+}
+
+.proc-anon-check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #8b949e;
+  flex: 1;
+  cursor: pointer;
+}
+
+.proc-error {
+  padding: 6px 8px;
+  color: #f85149;
+  font-size: 11px;
+  border-top: 1px solid #2d1010;
+}
+
+.proc-results-summary {
+  padding: 6px 8px;
+  border-top: 1px solid #21262d;
+}
+
+.proc-result-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  padding: 2px 0;
+}
+
+.proc-result-id {
+  color: #8b949e;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proc-result-stat {
+  color: #58a6ff;
+  white-space: nowrap;
+}
+
+/* ── Processor dashboard ──────────────────────────────────────────────────── */
+
+.proc-dashboard {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.proc-dashboard-empty {
+  padding: 16px;
+  color: #484f58;
+  font-size: 11px;
+  text-align: center;
+}
+
+.proc-dash-tabs {
+  display: flex;
+  border-bottom: 1px solid #21262d;
+  overflow-x: auto;
+}
+
+.proc-dash-tab {
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #8b949e;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+}
+
+.proc-dash-tab-active {
+  color: #58a6ff;
+  border-bottom-color: #58a6ff;
+}
+
+.proc-dash-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.proc-dash-subtabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px solid #21262d;
+}
+
+.proc-subtab {
+  padding: 2px 8px;
+  background: transparent;
+  border: 1px solid #30363d;
+  border-radius: 3px;
+  color: #8b949e;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.proc-subtab-active {
+  background: #1f6feb33;
+  border-color: #58a6ff;
+  color: #58a6ff;
+}
+
+.proc-dash-vars {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.proc-dash-log-hint {
+  padding: 12px;
+  color: #484f58;
+  font-size: 11px;
+}
+
+/* ── Var inspector ────────────────────────────────────────────────────────── */
+
+.var-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.var-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.var-name {
+  font-size: 10px;
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.var-value {
+  font-size: 11px;
+  color: #e2e8f0;
+}
+
+.var-number { color: #79c0ff; }
+.var-bool { color: #56d364; }
+.var-string { color: #a5d6ff; }
+.var-null, .var-empty { color: #484f58; font-style: italic; }
+
+.var-table {
+  border-collapse: collapse;
+  font-size: 10px;
+  width: 100%;
+  margin-top: 2px;
+}
+
+.var-table th, .var-table td {
+  border: 1px solid #21262d;
+  padding: 2px 4px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+}
+
+.var-table th {
+  background: #161b22;
+  color: #8b949e;
+}
+
+.var-key {
+  color: #8b949e;
+  font-weight: 600;
+}
+
+.var-error {
+  color: #f85149;
+  font-size: 11px;
+  padding: 4px;
 }

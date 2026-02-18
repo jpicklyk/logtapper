@@ -161,7 +161,106 @@ pub async fn get_lines(
         }
 
         ViewMode::Processor => {
-            Err("Processor view mode is implemented in Phase 2".into())
+            let proc_id = request.processor_id.as_deref().ok_or("processor_id required for Processor mode")?;
+
+            // Get the matched line numbers from the last pipeline run.
+            let matched: Vec<usize> = {
+                let pr = state
+                    .pipeline_results
+                    .lock()
+                    .map_err(|_| "Pipeline results lock poisoned")?;
+                pr.get(&request.session_id)
+                    .and_then(|s| s.get(proc_id))
+                    .map(|r| r.matched_line_nums.clone())
+                    .unwrap_or_default()
+            };
+
+            if matched.is_empty() {
+                return Ok(LineWindow { total_lines, lines: vec![] });
+            }
+
+            let ctx_lines = request.context;
+
+            // Build the set of lines to include (matches + context).
+            // Use a sorted deduplicated list so we emit in order.
+            let mut to_show: Vec<usize> = Vec::new();
+            for &m in &matched {
+                let start = m.saturating_sub(ctx_lines);
+                let end = (m + ctx_lines + 1).min(total_lines);
+                for ln in start..end {
+                    if to_show.last() != Some(&ln) {
+                        to_show.push(ln);
+                    }
+                }
+            }
+            to_show.sort_unstable();
+            to_show.dedup();
+
+            // Apply offset/count pagination over the collapsed view.
+            let total_collapsed = to_show.len();
+            let page_start = request.offset.min(total_collapsed);
+            let page_end = (page_start + request.count).min(total_collapsed);
+            let page = &to_show[page_start..page_end];
+
+            let matched_set: std::collections::HashSet<usize> =
+                matched.iter().copied().collect();
+
+            let mut lines = Vec::with_capacity(page.len());
+            for &ln in page {
+                let raw = source.raw_line(ln).unwrap_or("").to_string();
+                let meta = &source.line_meta[ln];
+                let highlights = request
+                    .search
+                    .as_ref()
+                    .map(|q| compute_search_highlights(&raw, q))
+                    .unwrap_or_default();
+
+                let view_line = if let Some(ctx) = parser.parse_line(&raw, &source.id, ln) {
+                    ViewLine {
+                        line_num: ln,
+                        raw: ctx.raw,
+                        level: ctx.level,
+                        tag: ctx.tag,
+                        message: ctx.message,
+                        timestamp: ctx.timestamp,
+                        pid: ctx.pid,
+                        tid: ctx.tid,
+                        source_id: ctx.source_id,
+                        highlights,
+                        matched_by: if matched_set.contains(&ln) {
+                            vec![proc_id.to_string()]
+                        } else {
+                            vec![]
+                        },
+                        is_context: !matched_set.contains(&ln),
+                    }
+                } else {
+                    ViewLine {
+                        line_num: ln,
+                        raw: raw.clone(),
+                        level: meta.level,
+                        tag: meta.tag.clone(),
+                        message: raw,
+                        timestamp: meta.timestamp,
+                        pid: 0,
+                        tid: 0,
+                        source_id: source.id.clone(),
+                        highlights,
+                        matched_by: if matched_set.contains(&ln) {
+                            vec![proc_id.to_string()]
+                        } else {
+                            vec![]
+                        },
+                        is_context: !matched_set.contains(&ln),
+                    }
+                };
+                lines.push(view_line);
+            }
+
+            Ok(LineWindow {
+                total_lines: total_collapsed,
+                lines,
+            })
         }
 
         ViewMode::Focus(center) => {
