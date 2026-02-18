@@ -1751,9 +1751,11 @@ mark {
   gap: 4px;
   padding: 0 10px;
   height: 100%;
+  min-width: 90px;
   cursor: pointer;
   white-space: nowrap;
   border-right: 1px solid var(--border);
+  border-radius: 5px 5px 0 0;
   user-select: none;
   color: var(--text-muted);
   font-size: 12px;
@@ -1777,7 +1779,22 @@ mark {
 }
 
 .tab-label {
-  flex-shrink: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+}
+
+.tab-rename-input {
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--accent-base);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 0;
+  width: 110px;
+  outline: none;
 }
 
 .tab-close {

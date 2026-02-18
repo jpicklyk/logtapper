@@ -52,6 +52,7 @@ export interface PaneLayoutState {
    * - If there are multiple center panes, adds/activates in the last (rightmost) pane.
    */
   openCenterTab: (type: TabType) => void;
+  renameTab: (tabId: string, label: string) => void;
   resetLayout: () => void;
 }
 
@@ -466,6 +467,15 @@ export function usePaneLayout(): PaneLayoutState {
     });
   }, [update]);
 
+  const renameTab = useCallback((tabId: string, label: string) => {
+    update((prev) =>
+      prev.map((pane) => ({
+        ...pane,
+        tabs: pane.tabs.map((t) => (t.id === tabId ? { ...t, label } : t)),
+      })),
+    );
+  }, [update]);
+
   const resetLayout = useCallback(() => {
     localStorage.removeItem(PANES_KEY);
     localStorage.removeItem(SHELL_KEY);
@@ -490,6 +500,7 @@ export function usePaneLayout(): PaneLayoutState {
     resizeLeftSidebar,
     resizeRightPanel,
     openCenterTab,
+    renameTab,
     resetLayout,
   };
 }

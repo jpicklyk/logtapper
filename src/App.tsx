@@ -68,6 +68,20 @@ export default function App() {
     viewer.clearProcessorView();
   }, [viewer]);
 
+  // ── Rename logviewer tabs to filename when a file is loaded ──────────────
+
+  useEffect(() => {
+    if (!viewer.session?.sourceName) return;
+    const name = viewer.session.sourceName;
+    for (const pane of layout.panes) {
+      for (const tab of pane.tabs) {
+        if (tab.type === 'logviewer') {
+          layout.renameTab(tab.id, name);
+        }
+      }
+    }
+  }, [viewer.session?.sourceName]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Dashboard auto-open — fires once when the first results arrive ─────────
 
   const hadResultsRef = useRef(false);

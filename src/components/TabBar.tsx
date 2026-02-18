@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import type { Pane, PaneLayoutState, TabType, PaneTab } from '../hooks/usePaneLayout';
 import { TAB_LABELS } from '../hooks/usePaneLayout';
 
@@ -29,10 +29,34 @@ export default function TabBar({
   const [dragOver, setDragOver] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
   const [addMenuPos, setAddMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const addMenuRef = useRef<HTMLDivElement>(null);
   const addBtnRef = useRef<HTMLButtonElement>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
   const isCompact = layout.preset === 'compact';
+
+  // Auto-focus rename input when it appears.
+  useEffect(() => {
+    if (renamingTabId) {
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+    }
+  }, [renamingTabId]);
+
+  const startRename = useCallback((tab: PaneTab) => {
+    setRenamingTabId(tab.id);
+    setRenameValue(tab.label);
+    setContextMenu(null);
+  }, []);
+
+  const commitRename = useCallback(() => {
+    if (renamingTabId && renameValue.trim()) {
+      layout.renameTab(renamingTabId, renameValue.trim());
+    }
+    setRenamingTabId(null);
+  }, [renamingTabId, renameValue, layout]);
 
   // Close menus on outside mousedown.
   useEffect(() => {
@@ -105,19 +129,39 @@ export default function TabBar({
             <div
               key={tab.id}
               className={`tab${active ? ' tab--active' : ''}${disabled ? ' tab--disabled' : ''}`}
-              draggable={!isCompact}
+              draggable={!isCompact && renamingTabId !== tab.id}
               onDragStart={(e) => {
                 e.dataTransfer.setData('tab-id', tab.id);
                 e.dataTransfer.setData('from-pane', pane.id);
                 e.dataTransfer.effectAllowed = 'move';
               }}
-              onClick={() => !disabled && layout.setActiveTab(tab.id, pane.id)}
+              onClick={() => !disabled && renamingTabId !== tab.id && layout.setActiveTab(tab.id, pane.id)}
               onContextMenu={(e) => {
                 e.preventDefault();
                 setContextMenu({ x: e.clientX, y: e.clientY, tab });
               }}
             >
-              <span className="tab-label">{tab.label}</span>
+              <span
+                className="tab-label"
+                onDoubleClick={(e) => { e.stopPropagation(); startRename(tab); }}
+              >
+                {renamingTabId === tab.id ? (
+                  <input
+                    ref={renameInputRef}
+                    className="tab-rename-input"
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+                      if (e.key === 'Escape') setRenamingTabId(null);
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                ) : (
+                  tab.label
+                )}
+              </span>
               {canClose(tab) && (
                 <button
                   className="tab-close"
@@ -218,6 +262,12 @@ export default function TabBar({
               Move to Right Pane
             </div>
           )}
+          <div
+            className="context-menu-item"
+            onClick={() => startRename(contextMenu.tab)}
+          >
+            Rename Tab
+          </div>
           {canClose(contextMenu.tab) && (
             <div
               className="context-menu-item context-menu-item--danger"
