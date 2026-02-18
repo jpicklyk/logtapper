@@ -1,11 +1,8 @@
 import { useAppContext } from '../context/AppContext';
 import type { Pane } from '../hooks/usePaneLayout';
 import LogViewer from './LogViewer';
-import ProcessorPanel from './ProcessorPanel';
 import ProcessorDashboard from './ProcessorDashboard';
-import ChatPanel from './ChatPanel';
-import ProcessorMarketplace from './ProcessorMarketplace';
-import FileInfoPanel from './FileInfoPanel';
+import ScratchPad from './ScratchPad';
 
 interface Props {
   pane: Pane;
@@ -15,11 +12,7 @@ export default function PaneContent({ pane }: Props) {
   const {
     viewer,
     pipeline,
-    claude,
-    metadata,
     processorViewId,
-    sections,
-    activeSectionIndex,
     onViewProcessor,
   } = useAppContext();
 
@@ -55,14 +48,6 @@ export default function PaneContent({ pane }: Props) {
         />
       );
 
-    case 'processors':
-      return (
-        <ProcessorPanel
-          pipeline={pipeline}
-          sessionId={viewer.session?.sessionId ?? null}
-        />
-      );
-
     case 'dashboard':
       return viewer.session ? (
         <ProcessorDashboard
@@ -75,31 +60,8 @@ export default function PaneContent({ pane }: Props) {
         <div className="pane-placeholder">Open a log file to see the dashboard.</div>
       );
 
-    case 'chat':
-      return (
-        <ChatPanel
-          claude={claude}
-          sessionId={viewer.session?.sessionId ?? null}
-          processorId={processorViewId}
-        />
-      );
-
-    case 'marketplace':
-      return <ProcessorMarketplace pipeline={pipeline} />;
-
-    case 'fileinfo':
-      return viewer.session ? (
-        <FileInfoPanel
-          session={viewer.session}
-          sections={sections}
-          onJumpToSection={viewer.jumpToLine}
-          metadata={metadata}
-          activeSectionIndex={activeSectionIndex}
-          sectionJumpSeq={viewer.jumpSeq}
-        />
-      ) : (
-        <div className="pane-placeholder">Open a log file to see file info.</div>
-      );
+    case 'scratch':
+      return <ScratchPad />;
 
     default:
       return null;

@@ -4,13 +4,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // Types
 // ---------------------------------------------------------------------------
 
-export type TabType =
-  | 'logviewer'
-  | 'processors'
-  | 'dashboard'
-  | 'chat'
-  | 'marketplace'
-  | 'fileinfo';
+/** Tab types that appear in the central pane area. */
+export type TabType = 'logviewer' | 'dashboard' | 'scratch';
+
+/** Tool types shown in the right tool window, controlled by the icon rail. */
+export type RightTool = 'processors' | 'chat' | 'marketplace';
 
 export type LayoutPreset = 'compact' | 'standard' | 'wide';
 
@@ -24,35 +22,58 @@ export interface Pane {
   id: string;
   tabs: PaneTab[];
   activeTabId: string;
-  flexBasis: number; // 0..1 fraction of container width
+  flexBasis: number; // 0..1 fraction of center pane area width
 }
 
 export interface PaneLayoutState {
   panes: Pane[];
   preset: LayoutPreset;
+  /** Ref for the outer workspace div — used by ResizeObserver for preset detection. */
   containerRef: React.RefObject<HTMLDivElement>;
+  /** Ref for the center pane-area div — used to compute fraction deltas when resizing. */
+  centerRef: React.RefObject<HTMLDivElement>;
   moveTab: (tabId: string, fromPaneId: string, toPaneId: string) => void;
   splitRight: (tabId: string, fromPaneId: string) => void;
   closeTab: (tabId: string, paneId: string) => void;
   setActiveTab: (tabId: string, paneId: string) => void;
   addTab: (paneId: string, type: TabType) => void;
   resizePane: (paneId: string, deltaFraction: number) => void;
+  // Sidebar / tool window
+  leftSidebarWidth: number;
+  rightTool: RightTool | null;
+  rightPanelWidth: number;
+  toggleRightTool: (tool: RightTool) => void;
+  resizeLeftSidebar: (delta: number) => void;
+  resizeRightPanel: (delta: number) => void;
+  /**
+   * Open a tab of the given type in the center area.
+   * - If a tab of that type already exists in any pane, activates it.
+   * - If there is only one center pane, splits it right and puts the new tab in the right pane.
+   * - If there are multiple center panes, adds/activates in the last (rightmost) pane.
+   */
+  openCenterTab: (type: TabType) => void;
 }
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const STORAGE_KEY = 'logtapper_panes_v1';
+const PANES_KEY = 'logtapper_panes_v2'; // v2: center-only tab types (no fileinfo/processors/chat/marketplace)
+const SHELL_KEY = 'logtapper_shell_v1';
 const MIN_FLEX = 0.10;
+
+const MIN_LEFT_WIDTH = 140;
+const MAX_LEFT_WIDTH = 420;
+const DEFAULT_LEFT_WIDTH = 220;
+
+const MIN_RIGHT_WIDTH = 220;
+const MAX_RIGHT_WIDTH = 600;
+const DEFAULT_RIGHT_WIDTH = 300;
 
 export const TAB_LABELS: Record<TabType, string> = {
   logviewer: 'Log',
-  processors: 'Processors',
   dashboard: 'Dashboard',
-  chat: 'Chat',
-  marketplace: 'Market',
-  fileinfo: 'File Info',
+  scratch: 'Scratch',
 };
 
 function makeTab(type: TabType): PaneTab {
@@ -73,51 +94,78 @@ function makePane(tabs: TabType[], flexBasis: number): Pane {
 // Default layouts per preset
 // ---------------------------------------------------------------------------
 
-function defaultPanes(preset: LayoutPreset): Pane[] {
-  switch (preset) {
-    case 'compact':
-      return [makePane(['logviewer', 'processors', 'dashboard', 'chat', 'marketplace'], 1.0)];
-    case 'standard':
-      return [
-        makePane(['logviewer'], 0.6),
-        makePane(['processors', 'dashboard', 'chat', 'marketplace'], 0.4),
-      ];
-    case 'wide':
-      return [
-        makePane(['fileinfo'], 0.15),
-        makePane(['logviewer'], 0.50),
-        makePane(['processors', 'dashboard', 'chat', 'marketplace'], 0.35),
-      ];
-  }
+function defaultPanes(_preset: LayoutPreset): Pane[] {
+  // All presets start with a single logviewer pane; users split as needed.
+  return [makePane(['logviewer'], 1.0)];
 }
 
 // ---------------------------------------------------------------------------
 // localStorage persistence
 // ---------------------------------------------------------------------------
 
-interface PersistedLayout {
+interface PersistedPanes {
   standard?: Pane[];
   wide?: Pane[];
 }
 
-function loadLayout(): PersistedLayout {
+interface PersistedShell {
+  leftSidebarWidth?: number;
+  rightTool?: RightTool | null;
+  rightPanelWidth?: number;
+}
+
+const VALID_TAB_TYPES = new Set<string>(['logviewer', 'dashboard', 'scratch']);
+
+/** Strip tabs with tab types that no longer exist (e.g. from a previous schema). */
+function sanitizePanes(panes: Pane[]): Pane[] {
+  return panes
+    .map((pane) => {
+      const tabs = pane.tabs.filter((t) => VALID_TAB_TYPES.has(t.type));
+      if (tabs.length === 0) return null;
+      const activeTabId = tabs.find((t) => t.id === pane.activeTabId)
+        ? pane.activeTabId
+        : tabs[0].id;
+      return { ...pane, tabs, activeTabId };
+    })
+    .filter((p): p is Pane => p !== null);
+}
+
+function loadPanes(): PersistedPanes {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(PANES_KEY);
     if (!raw) return {};
-    return JSON.parse(raw) as PersistedLayout;
+    const parsed = JSON.parse(raw) as PersistedPanes;
+    return {
+      standard: parsed.standard ? sanitizePanes(parsed.standard) : undefined,
+      wide: parsed.wide ? sanitizePanes(parsed.wide) : undefined,
+    };
   } catch {
     return {};
   }
 }
 
-function saveLayout(preset: LayoutPreset, panes: Pane[]): void {
-  if (preset === 'compact') return; // compact is not persisted
+function savePanes(preset: LayoutPreset, panes: Pane[]): void {
+  if (preset === 'compact') return;
   try {
-    const current = loadLayout();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...current, [preset]: panes }));
+    const current = loadPanes();
+    localStorage.setItem(PANES_KEY, JSON.stringify({ ...current, [preset]: panes }));
+  } catch { /* storage full */ }
+}
+
+function loadShell(): PersistedShell {
+  try {
+    const raw = localStorage.getItem(SHELL_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) as PersistedShell;
   } catch {
-    // storage full or unavailable — silently ignore
+    return {};
   }
+}
+
+function saveShell(shell: PersistedShell): void {
+  try {
+    localStorage.setItem(SHELL_KEY, JSON.stringify(shell));
+  } catch { /* storage full */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -126,17 +174,30 @@ function saveLayout(preset: LayoutPreset, panes: Pane[]): void {
 
 export function usePaneLayout(): PaneLayoutState {
   const containerRef = useRef<HTMLDivElement>(null);
+  const centerRef = useRef<HTMLDivElement>(null);
   const [preset, setPreset] = useState<LayoutPreset>('standard');
   const presetRef = useRef<LayoutPreset>('standard');
 
-  // Initialize panes from localStorage or defaults.
+  // Center panes
   const [panes, setPanes] = useState<Pane[]>(() => {
-    const saved = loadLayout();
+    const saved = loadPanes();
     return saved.standard ?? defaultPanes('standard');
   });
   const panesRef = useRef<Pane[]>(panes);
 
-  // Detect preset via ResizeObserver.
+  // Shell state (sidebar/right panel)
+  const savedShell = loadShell();
+  const [leftSidebarWidth, setLeftSidebarWidth] = useState(
+    savedShell.leftSidebarWidth ?? DEFAULT_LEFT_WIDTH,
+  );
+  const [rightTool, setRightTool] = useState<RightTool | null>(
+    savedShell.rightTool ?? null,
+  );
+  const [rightPanelWidth, setRightPanelWidth] = useState(
+    savedShell.rightPanelWidth ?? DEFAULT_RIGHT_WIDTH,
+  );
+
+  // Detect preset via ResizeObserver on the outer workspace container.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -148,8 +209,7 @@ export function usePaneLayout(): PaneLayoutState {
         presetRef.current = next;
         setPreset(next);
 
-        // Load saved layout for this preset, or use defaults.
-        const saved = loadLayout();
+        const saved = loadPanes();
         const initial: Pane[] =
           next === 'compact'
             ? defaultPanes('compact')
@@ -163,16 +223,19 @@ export function usePaneLayout(): PaneLayoutState {
   }, []);
 
   // Keep panesRef in sync.
-  useEffect(() => {
-    panesRef.current = panes;
-  }, [panes]);
+  useEffect(() => { panesRef.current = panes; }, [panes]);
 
-  // Persist on every pane change (non-compact only).
+  // Persist panes on every change (non-compact only).
   useEffect(() => {
     if (presetRef.current !== 'compact') {
-      saveLayout(presetRef.current, panes);
+      savePanes(presetRef.current, panes);
     }
   }, [panes]);
+
+  // Persist shell state.
+  useEffect(() => {
+    saveShell({ leftSidebarWidth, rightTool, rightPanelWidth });
+  }, [leftSidebarWidth, rightTool, rightPanelWidth]);
 
   // ---------------------------------------------------------------------------
   // Helpers
@@ -186,13 +249,10 @@ export function usePaneLayout(): PaneLayoutState {
     });
   }, []);
 
-  // Check if there's only one logviewer tab left across all panes.
   function countLogviewers(ps: Pane[]): number {
     return ps.reduce((n, p) => n + p.tabs.filter((t) => t.type === 'logviewer').length, 0);
   }
 
-  // Redistribute flex after removing a pane — give its space to the left neighbour
-  // (or right if it's the first pane).
   function redistribute(ps: Pane[], removedFlex: number, removedIdx: number): Pane[] {
     if (ps.length === 0) return ps;
     const targetIdx = removedIdx > 0 ? removedIdx - 1 : 0;
@@ -202,7 +262,7 @@ export function usePaneLayout(): PaneLayoutState {
   }
 
   // ---------------------------------------------------------------------------
-  // Operations
+  // Center pane operations
   // ---------------------------------------------------------------------------
 
   const moveTab = useCallback((tabId: string, fromPaneId: string, toPaneId: string) => {
@@ -210,8 +270,6 @@ export function usePaneLayout(): PaneLayoutState {
     update((prev) => {
       const tab = prev.flatMap((p) => p.tabs).find((t) => t.id === tabId);
       if (!tab) return prev;
-
-      // Prevent removing last logviewer if it's the only one.
       const fromPane = prev.find((p) => p.id === fromPaneId);
       if (!fromPane) return prev;
       if (tab.type === 'logviewer' && countLogviewers(prev) <= 1) return prev;
@@ -229,7 +287,6 @@ export function usePaneLayout(): PaneLayoutState {
         return p;
       });
 
-      // Auto-close panes with no tabs.
       const removedPanes = next.filter((p) => p.tabs.length === 0);
       for (const rp of removedPanes) {
         const idx = next.findIndex((p) => p.id === rp.id);
@@ -252,9 +309,8 @@ export function usePaneLayout(): PaneLayoutState {
       const tab = fromPane.tabs.find((t) => t.id === tabId);
       if (!tab) return prev;
 
-      // Don't split if only one logviewer exists and it's the one being split.
       if (tab.type === 'logviewer' && countLogviewers(prev) <= 1) {
-        // Create a new logviewer tab for the new pane (allow multiple views).
+        // Create a new logviewer tab in the new pane (allow multiple views).
         const newTab = makeTab('logviewer');
         const half = fromPane.flexBasis / 2;
         const updatedFrom = { ...fromPane, flexBasis: half };
@@ -266,7 +322,6 @@ export function usePaneLayout(): PaneLayoutState {
         return result;
       }
 
-      // Move the tab to a new pane to the right.
       const half = fromPane.flexBasis / 2;
       const updatedTabs = fromPane.tabs.filter((t) => t.id !== tabId);
       const updatedFrom: Pane = {
@@ -295,14 +350,12 @@ export function usePaneLayout(): PaneLayoutState {
       if (!pane) return prev;
       const tab = pane.tabs.find((t) => t.id === tabId);
       if (!tab) return prev;
-      // Protect last logviewer.
       if (tab.type === 'logviewer' && countLogviewers(prev) <= 1) return prev;
 
       const tabs = pane.tabs.filter((t) => t.id !== tabId);
       let next: Pane[];
 
       if (tabs.length === 0) {
-        // Auto-close pane.
         const idx = prev.findIndex((p) => p.id === paneId);
         next = redistribute(
           prev.filter((p) => p.id !== paneId),
@@ -352,15 +405,83 @@ export function usePaneLayout(): PaneLayoutState {
     });
   }, [update]);
 
+  // ---------------------------------------------------------------------------
+  // Shell operations
+  // ---------------------------------------------------------------------------
+
+  const toggleRightTool = useCallback((tool: RightTool) => {
+    setRightTool((prev) => (prev === tool ? null : tool));
+  }, []);
+
+  const resizeLeftSidebar = useCallback((delta: number) => {
+    setLeftSidebarWidth((prev) =>
+      Math.max(MIN_LEFT_WIDTH, Math.min(MAX_LEFT_WIDTH, prev + delta)),
+    );
+  }, []);
+
+  // Right panel: drag handle is at its LEFT edge.
+  // Dragging LEFT (negative delta) → panel grows wider.
+  const resizeRightPanel = useCallback((delta: number) => {
+    setRightPanelWidth((prev) =>
+      Math.max(MIN_RIGHT_WIDTH, Math.min(MAX_RIGHT_WIDTH, prev - delta)),
+    );
+  }, []);
+
+  const openCenterTab = useCallback((type: TabType) => {
+    update((prev) => {
+      // 1. Already exists somewhere → just activate it.
+      for (const pane of prev) {
+        const existing = pane.tabs.find((t) => t.type === type);
+        if (existing) {
+          return prev.map((p) =>
+            p.id === pane.id ? { ...p, activeTabId: existing.id } : p,
+          );
+        }
+      }
+
+      // 2. Only one pane → split right so the new tab opens alongside the log viewer.
+      if (prev.length === 1) {
+        const fromPane = prev[0];
+        const half = fromPane.flexBasis / 2;
+        const newTab = makeTab(type);
+        const updatedFrom = { ...fromPane, flexBasis: half };
+        const newPane: Pane = {
+          id: crypto.randomUUID(),
+          tabs: [newTab],
+          activeTabId: newTab.id,
+          flexBasis: half,
+        };
+        return [updatedFrom, newPane];
+      }
+
+      // 3. Multiple panes → add to the last (rightmost) pane.
+      const lastPane = prev[prev.length - 1];
+      const newTab = makeTab(type);
+      return prev.map((p) =>
+        p.id === lastPane.id
+          ? { ...p, tabs: [...p.tabs, newTab], activeTabId: newTab.id }
+          : p,
+      );
+    });
+  }, [update]);
+
   return {
     panes,
     preset,
     containerRef,
+    centerRef,
     moveTab,
     splitRight,
     closeTab,
     setActiveTab,
     addTab,
     resizePane,
+    leftSidebarWidth,
+    rightTool,
+    rightPanelWidth,
+    toggleRightTool,
+    resizeLeftSidebar,
+    resizeRightPanel,
+    openCenterTab,
   };
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useLogViewer } from './hooks/useLogViewer';
 import { usePipeline } from './hooks/usePipeline';
@@ -67,6 +67,17 @@ export default function App() {
     setProcessorViewId(null);
     viewer.clearProcessorView();
   }, [viewer]);
+
+  // ── Dashboard auto-open — fires once when the first results arrive ─────────
+
+  const hadResultsRef = useRef(false);
+  useEffect(() => {
+    const hasResults = pipeline.lastResults.length > 0;
+    if (hasResults && !hadResultsRef.current) {
+      layout.openCenterTab('dashboard');
+    }
+    hadResultsRef.current = hasResults;
+  }, [pipeline.lastResults.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Section detection (Bugreport/Dumpstate files) ─────────────────────────
 

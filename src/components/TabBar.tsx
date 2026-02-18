@@ -2,14 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { Pane, PaneLayoutState, TabType, PaneTab } from '../hooks/usePaneLayout';
 import { TAB_LABELS } from '../hooks/usePaneLayout';
 
-const ALL_TAB_TYPES: TabType[] = [
-  'logviewer',
-  'processors',
-  'dashboard',
-  'chat',
-  'marketplace',
-  'fileinfo',
-];
+/** All tab types available in the center pane area. */
+const CENTER_TAB_TYPES: TabType[] = ['logviewer', 'dashboard', 'scratch'];
 
 interface TabBarProps {
   pane: Pane;
@@ -71,7 +65,6 @@ export default function TabBar({
   const canClose = (tab: PaneTab) => {
     if (isCompact) return false;
     if (tab.type === 'logviewer') {
-      // Count logviewer tabs across all panes.
       const total = layout.panes.reduce(
         (n, p) => n + p.tabs.filter((t) => t.type === 'logviewer').length,
         0,
@@ -81,9 +74,13 @@ export default function TabBar({
     return true;
   };
 
-  // Tabs already present in this pane (for "add" dropdown exclusion).
+  // Tabs already in this pane — exclude non-scratch types that are already present.
+  // Scratch can always be added (allows multiple scratch tabs).
   const presentTypes = new Set(pane.tabs.map((t) => t.type));
-  const addableTypes = ALL_TAB_TYPES.filter((t) => !presentTypes.has(t));
+  const addableTypes = CENTER_TAB_TYPES.filter((t) => {
+    if (t === 'scratch') return true; // always addable
+    return !presentTypes.has(t);
+  });
 
   return (
     <>
@@ -157,7 +154,7 @@ export default function TabBar({
         )}
       </div>
 
-      {/* Add-tab dropdown — fixed so it clears pane overflow */}
+      {/* Add-tab dropdown */}
       {addMenuPos && (
         <div
           ref={addMenuRef}
