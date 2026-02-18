@@ -59,6 +59,7 @@ const SectionItem = memo(function SectionItem({ section, isActive, jumpSeq, onCl
   useEffect(() => {
     if (!isActive || !btnRef.current) return;
     const el = btnRef.current;
+    el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     el.style.animation = 'none';
     void el.offsetHeight; // force reflow to restart keyframe
     el.style.animation = '';
