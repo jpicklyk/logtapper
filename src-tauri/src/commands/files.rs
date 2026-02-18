@@ -1,5 +1,3 @@
-use tauri::State;
-
 // TODO Phase 1: implement file loading with mmap
 
 #[tauri::command]
