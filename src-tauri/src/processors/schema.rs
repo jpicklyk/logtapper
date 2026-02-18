@@ -22,12 +22,67 @@ pub struct ProcessorDef {
 
 impl ProcessorDef {
     pub fn from_yaml(yaml: &str) -> Result<Self, String> {
-        serde_yaml::from_str(yaml).map_err(|e| format!("YAML parse error: {e}"))
+        // Strip UTF-8 BOM if present (common Windows clipboard artifact)
+        let yaml = yaml.trim_start_matches('\u{FEFF}');
+        // Try as-is first; on failure, attempt auto-indent normalization
+        // (handles Warp/terminal copy-paste that adds leading spaces to all
+        //  lines after the first, corrupting top-level key alignment).
+        serde_yaml::from_str(yaml)
+            .or_else(|_| serde_yaml::from_str(&normalize_yaml_indent(yaml)))
+            .map_err(|e| format!("YAML parse error: {e}"))
     }
 
     pub fn to_yaml(&self) -> Result<String, String> {
         serde_yaml::to_string(self).map_err(|e| format!("YAML serialize error: {e}"))
     }
+}
+
+/// Strips excess leading indentation caused by terminal copy-paste artifacts.
+///
+/// Detects the pattern where a code block's first line is at column 1 but all
+/// subsequent lines have N extra leading spaces (e.g. Warp adds a 2-space
+/// margin when copying). The excess is inferred from the first indented child
+/// line after a root-level key: if it has more than 2 spaces, the surplus is
+/// stripped from every line (clamped so no line goes negative).
+fn normalize_yaml_indent(yaml: &str) -> String {
+    let lines: Vec<&str> = yaml.lines().collect();
+
+    // Find excess: the first child line under a root key should be 2 spaces in.
+    // If it's indented more, the difference is the copy-paste surplus.
+    let mut saw_root = false;
+    let mut excess: usize = 0;
+    for line in &lines {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let indent = line.bytes().take_while(|&b| b == b' ').count();
+        if indent == 0 {
+            saw_root = true;
+        } else if saw_root {
+            if indent > 2 {
+                excess = indent - 2;
+            }
+            break;
+        }
+    }
+
+    if excess == 0 {
+        return yaml.to_string();
+    }
+
+    let normalized: Vec<String> = lines
+        .iter()
+        .map(|line| {
+            let spaces = line.bytes().take_while(|&b| b == b' ').count();
+            line[spaces.min(excess)..].to_string()
+        })
+        .collect();
+
+    let mut result = normalized.join("\n");
+    if yaml.ends_with('\n') {
+        result.push('\n');
+    }
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -408,5 +463,150 @@ pipeline:
         let yaml = proc.to_yaml().unwrap();
         let proc2 = ProcessorDef::from_yaml(&yaml).unwrap();
         assert_eq!(proc.meta.id, proc2.meta.id);
+    }
+
+    /// Reproduce the user-reported "did not find expected key at line 6 col 3" error.
+    /// This is the minimal Java Crash Tracker YAML (no flow sequences, no description).
+    #[test]
+    fn parses_java_crash_tracker_minimal() {
+        let yaml = r#"
+meta:
+  id: java-crash-tracker
+  name: Java Crash Tracker
+  version: "1.0.0"
+
+vars:
+  - name: crash_count
+    type: int
+    default: 0
+    display: true
+    label: Total Crashes
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains
+        value: FATAL EXCEPTION
+"#;
+        let result = ProcessorDef::from_yaml(yaml);
+        if let Err(e) = &result {
+            panic!("Minimal YAML failed to parse: {e}");
+        }
+        let proc = result.unwrap();
+        assert_eq!(proc.meta.id, "java-crash-tracker");
+        assert_eq!(proc.vars.len(), 1);
+        assert_eq!(proc.pipeline.len(), 1);
+    }
+
+    /// Full Java Crash Tracker YAML — verified reference.
+    #[test]
+    fn parses_java_crash_tracker_full() {
+        let yaml = r#"
+meta:
+  id: java-crash-tracker
+  name: Java Crash Tracker
+
+vars:
+  - name: crash_count
+    type: int
+    default: 0
+    display: true
+    label: Total Crashes
+  - name: crashes_by_process
+    type: map
+    display: true
+    display_as: table
+    label: Crashes by Process
+    columns:
+      - process
+      - count
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains
+        value: FATAL EXCEPTION
+
+  - stage: extract
+    fields:
+      - name: process
+        pattern: 'Process: ([^,\n]+)'
+      - name: exception
+        pattern: '([\w.]+Exception)'
+
+  - stage: script
+    runtime: rhai
+    src: |
+      vars.crash_count += 1;
+      let proc = if fields.process != () { fields.process } else { "unknown" };
+      let exc  = if fields.exception != () { fields.exception } else { "unknown" };
+      _emits.push(#{ process: proc, exception: exc });
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns:
+          - process
+          - exception
+"#;
+        let result = ProcessorDef::from_yaml(yaml);
+        if let Err(e) = &result {
+            panic!("Full Java Crash Tracker YAML failed to parse: {e}");
+        }
+        let proc = result.unwrap();
+        assert_eq!(proc.meta.id, "java-crash-tracker");
+        assert_eq!(proc.vars.len(), 2);
+        assert_eq!(proc.pipeline.len(), 4);
+    }
+
+    /// Test CRLF line endings — common Windows clipboard paste issue.
+    #[test]
+    fn parses_yaml_with_crlf_endings() {
+        let yaml = "meta:\r\n  id: java-crash-tracker\r\n  name: Java Crash Tracker\r\n\r\nvars:\r\n  - name: crash_count\r\n    type: int\r\n    default: 0\r\n    display: true\r\n\r\npipeline:\r\n  - stage: filter\r\n    rules:\r\n      - type: message_contains\r\n        value: FATAL EXCEPTION\r\n";
+        let result = ProcessorDef::from_yaml(yaml);
+        if let Err(e) = &result {
+            eprintln!("CRLF YAML parse error: {e}");
+        }
+        // We're probing whether serde_yaml 0.9 / libyaml handles CRLF
+        assert!(result.is_ok(), "CRLF line endings broke parsing: {:?}", result.err());
+    }
+
+    /// Warp terminal adds 2-space margin to all code-block lines when copying,
+    /// except the very first line. Verify auto-normalization recovers this.
+    #[test]
+    fn auto_normalizes_warp_copy_paste_indent() {
+        // meta: at col 1, but its children at 4-space and siblings at 2-space —
+        // exactly what the user reported pasting from Warp.
+        // NOTE: use concat! so Rust line-continuation `\` does not strip the
+        // leading spaces that are the whole point of this test.
+        let yaml = concat!(
+            "meta:\n",
+            "    id: java-crash-tracker\n",
+            "    name: Java Crash Tracker\n",
+            "\n",
+            "  vars:\n",
+            "    - name: crash_count\n",
+            "      type: int\n",
+            "      default: 0\n",
+            "      display: true\n",
+            "      label: Total Crashes\n",
+            "\n",
+            "  pipeline:\n",
+            "    - stage: filter\n",
+            "      rules:\n",
+            "        - type: message_contains\n",
+            "          value: FATAL EXCEPTION\n",
+        );
+        let result = ProcessorDef::from_yaml(yaml);
+        assert!(
+            result.is_ok(),
+            "Warp-style indent should auto-normalize: {:?}",
+            result.err()
+        );
+        let proc = result.unwrap();
+        assert_eq!(proc.meta.id, "java-crash-tracker");
+        assert_eq!(proc.vars.len(), 1);
+        assert_eq!(proc.pipeline.len(), 1);
     }
 }

@@ -52,6 +52,7 @@ export interface PaneLayoutState {
    * - If there are multiple center panes, adds/activates in the last (rightmost) pane.
    */
   openCenterTab: (type: TabType) => void;
+  resetLayout: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -213,7 +214,7 @@ export function usePaneLayout(): PaneLayoutState {
         const initial: Pane[] =
           next === 'compact'
             ? defaultPanes('compact')
-            : (saved[next] ?? defaultPanes(next));
+            : (saved[next] ?? panesRef.current);
         panesRef.current = initial;
         setPanes(initial);
       }
@@ -465,6 +466,12 @@ export function usePaneLayout(): PaneLayoutState {
     });
   }, [update]);
 
+  const resetLayout = useCallback(() => {
+    localStorage.removeItem(PANES_KEY);
+    localStorage.removeItem(SHELL_KEY);
+    window.location.reload();
+  }, []);
+
   return {
     panes,
     preset,
@@ -483,5 +490,6 @@ export function usePaneLayout(): PaneLayoutState {
     resizeLeftSidebar,
     resizeRightPanel,
     openCenterTab,
+    resetLayout,
   };
 }

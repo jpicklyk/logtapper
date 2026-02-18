@@ -37,6 +37,7 @@ pub fn run() {
             commands::processors::list_processors,
             commands::processors::load_processor_yaml,
             commands::processors::get_processor_vars,
+            commands::processors::get_matched_lines,
             commands::processors::uninstall_processor,
             // Phase 3 — charts
             commands::charts::get_chart_data,

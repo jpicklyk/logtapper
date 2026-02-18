@@ -149,6 +149,13 @@ export default function App() {
             )}
           </div>
           <div className="header-right">
+            <button
+              className="btn-reset-layout"
+              onClick={layout.resetLayout}
+              title="Clear saved layout and reset to defaults"
+            >
+              Reset Layout
+            </button>
             <button className="btn-primary" onClick={handleOpenFile}>
               Open Log File
             </button>

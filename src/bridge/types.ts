@@ -145,6 +145,11 @@ export interface PipelineRunSummary {
   emissionCount: number;
 }
 
+export interface MatchedLine {
+  lineNum: number;
+  raw: string;
+}
+
 export interface PipelineProgress {
   processorId: string;
   linesProcessed: number;

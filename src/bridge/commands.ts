@@ -7,6 +7,7 @@ import type {
   SearchSummary,
   ProcessorSummary,
   PipelineRunSummary,
+  MatchedLine,
   ChartData,
   RegistryEntry,
   DumpstateMetadata,
@@ -65,6 +66,13 @@ export function getProcessorVars(
   processorId: string,
 ): Promise<Record<string, unknown>> {
   return invoke('get_processor_vars', { sessionId, processorId });
+}
+
+export function getMatchedLines(
+  sessionId: string,
+  processorId: string,
+): Promise<MatchedLine[]> {
+  return invoke('get_matched_lines', { sessionId, processorId });
 }
 
 // ---------------------------------------------------------------------------

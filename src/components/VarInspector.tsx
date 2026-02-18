@@ -4,6 +4,8 @@ interface Props {
   sessionId: string;
   processorId: string;
   getVars: (sessionId: string, processorId: string) => Promise<Record<string, unknown>>;
+  /** Changing this value triggers a re-fetch (e.g. pass pipeline run count). */
+  refreshKey?: number | string;
   /** Poll interval in ms; 0 = no polling */
   pollMs?: number;
 }
@@ -54,7 +56,7 @@ function renderValue(val: unknown): React.ReactNode {
   return <span>{String(val)}</span>;
 }
 
-export default function VarInspector({ sessionId, processorId, getVars, pollMs = 0 }: Props) {
+export default function VarInspector({ sessionId, processorId, getVars, refreshKey, pollMs = 0 }: Props) {
   const [vars, setVars] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -82,7 +84,7 @@ export default function VarInspector({ sessionId, processorId, getVars, pollMs =
       };
     }
     return () => { cancelled = true; };
-  }, [sessionId, processorId, getVars, pollMs]);
+  }, [sessionId, processorId, getVars, refreshKey, pollMs]);
 
   if (error) return <div className="var-error">{error}</div>;
   if (!vars) return <div className="var-empty">No variable data</div>;

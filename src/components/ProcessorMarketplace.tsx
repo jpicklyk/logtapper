@@ -115,7 +115,7 @@ export default function ProcessorMarketplace({ pipeline }: Props) {
                 )}
                 <div className="marketplace-item-tags">
                   {entry.tags.map((tag) => (
-                    <span key={tag} className="proc-tag">
+                    <span key={tag} className="marketplace-tag">
                       {tag}
                     </span>
                   ))}

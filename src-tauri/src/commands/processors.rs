@@ -108,6 +108,55 @@ pub async fn get_processor_vars(
 }
 
 // ---------------------------------------------------------------------------
+// get_matched_lines — raw text of every line matched by a processor run
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MatchedLineInfo {
+    pub line_num: usize,
+    pub raw: String,
+}
+
+#[tauri::command]
+pub async fn get_matched_lines(
+    state: State<'_, AppState>,
+    session_id: String,
+    processor_id: String,
+) -> Result<Vec<MatchedLineInfo>, String> {
+    // Grab matched line numbers without holding the lock while we do session I/O.
+    let line_nums: Vec<usize> = {
+        let pr = state
+            .pipeline_results
+            .lock()
+            .map_err(|_| "Pipeline results lock poisoned")?;
+        pr.get(&session_id)
+            .and_then(|s| s.get(&processor_id))
+            .map(|r| r.matched_line_nums.clone())
+            .unwrap_or_default()
+    };
+
+    let sessions = state
+        .sessions
+        .lock()
+        .map_err(|_| "Session lock poisoned")?;
+    let session = sessions
+        .get(&session_id)
+        .ok_or_else(|| format!("Session '{session_id}' not found"))?;
+    let src = session.primary_source().ok_or("No sources in session")?;
+
+    let result = line_nums
+        .iter()
+        .map(|&n| MatchedLineInfo {
+            line_num: n,
+            raw: src.raw_line(n).unwrap_or("").trim_end_matches(['\r', '\n']).to_string(),
+        })
+        .collect();
+
+    Ok(result)
+}
+
+// ---------------------------------------------------------------------------
 // uninstall_processor
 // ---------------------------------------------------------------------------
 

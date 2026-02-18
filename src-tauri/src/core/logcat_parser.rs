@@ -20,9 +20,13 @@ static BRIEF_RE: OnceLock<Regex> = OnceLock::new();
 
 fn threadtime_re() -> &'static Regex {
     THREADTIME_RE.get_or_init(|| {
-        // MM-DD HH:MM:SS.mmm  PID  TID LEVEL TAG: message
+        // Handles both 2-field and 3-field numeric prefixes:
+        //   MM-DD HH:MM:SS.mmm  PID  TID LEVEL TAG: message          (standard adb)
+        //   MM-DD HH:MM:SS.mmm  UID  PID  TID LEVEL TAG: message     (bugreport SYSTEM LOG)
+        // The optional third numeric group (UID) is captured in group 3; when present
+        // groups 4/5 are PID/TID, otherwise groups 3/4 are PID/TID and group 5 is LEVEL.
         Regex::new(
-            r"^(\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}\.\d{3})\s+(\d+)\s+(\d+)\s+([VDIWEFSvdiwefs])\s+(.*?):\s*(.*?)$",
+            r"^(\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}\.\d{3})\s+(\d+)\s+(\d+)\s+(?:(\d+)\s+)?([VDIWEFSvdiwefs])\s+(.*?):\s*(.*?)$",
         )
         .expect("threadtime regex is valid")
     })
@@ -134,9 +138,10 @@ impl LogParser for LogcatParser {
         if let Some(caps) = threadtime_re().captures(raw) {
             let date = caps.get(1).map(|m| m.as_str()).unwrap_or("01-01");
             let time = caps.get(2).map(|m| m.as_str()).unwrap_or("00:00:00.000");
-            let level_char = caps.get(5).map(|m| m.as_str()).unwrap_or("I");
+            // Group 6 = level, group 7 = tag (same offsets for both 2- and 3-field formats).
+            let level_char = caps.get(6).map(|m| m.as_str()).unwrap_or("I");
             let tag = caps
-                .get(6)
+                .get(7)
                 .map(|m| m.as_str().trim().to_string())
                 .unwrap_or_default();
 
@@ -181,11 +186,24 @@ fn parse_threadtime(raw: &str, source_id: &str, line_num: usize) -> Option<LineC
 
     let date = caps.get(1)?.as_str();
     let time_str = caps.get(2)?.as_str();
-    let pid: i32 = caps.get(3)?.as_str().parse().unwrap_or(0);
-    let tid: i32 = caps.get(4)?.as_str().parse().unwrap_or(0);
-    let level_char = caps.get(5)?.as_str();
-    let tag = caps.get(6)?.as_str().trim().to_string();
-    let message = caps.get(7)?.as_str().to_string();
+    // Groups 3/4 are always present. Group 5 is the optional third numeric field (UID prefix).
+    // When group 5 is Some (3-field format): groups 3/4 = first two nums, group 5 = third num,
+    // then group 6 = level, 7 = tag, 8 = message.
+    // When group 5 is None (2-field format): groups 3/4 = PID/TID,
+    // group 6 = level, 7 = tag, 8 = message.
+    let (pid, tid, level_idx, tag_idx, msg_idx) = if caps.get(5).is_some() {
+        // 3-field: group3=first, group4=second (PID), group5=third (TID)
+        let pid: i32 = caps.get(4).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+        let tid: i32 = caps.get(5).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+        (pid, tid, 6usize, 7usize, 8usize)
+    } else {
+        let pid: i32 = caps.get(3).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+        let tid: i32 = caps.get(4).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+        (pid, tid, 6usize, 7usize, 8usize)
+    };
+    let level_char = caps.get(level_idx)?.as_str();
+    let tag = caps.get(tag_idx)?.as_str().trim().to_string();
+    let message = caps.get(msg_idx)?.as_str().to_string();
 
     Some(LineContext {
         raw: raw.to_string(),
@@ -238,6 +256,19 @@ mod tests {
         assert_eq!(ctx.message, "Something went wrong");
         assert_eq!(ctx.pid, 1234);
         assert_eq!(ctx.tid, 5678);
+    }
+
+    /// Bugreport SYSTEM LOG uses UID PID TID format (3 numeric fields).
+    #[test]
+    fn parses_threadtime_uid_pid_tid() {
+        let line = "02-16 17:22:46.497  5004  4922  5064 E PolicyManager: Exception in foo";
+        let parser = LogcatParser;
+        let ctx = parser.parse_line(line, "test", 0).unwrap();
+        assert_eq!(ctx.level, LogLevel::Error);
+        assert_eq!(ctx.tag, "PolicyManager");
+        assert_eq!(ctx.message, "Exception in foo");
+        assert_eq!(ctx.pid, 4922);
+        assert_eq!(ctx.tid, 5064);
     }
 
     #[test]

@@ -9,7 +9,7 @@ interface RailItem {
 const RAIL_ITEMS: RailItem[] = [
   { tool: 'processors',  icon: '⚙',  label: 'Processors' },
   { tool: 'chat',        icon: '✦',  label: 'AI Chat' },
-  { tool: 'marketplace', icon: '◫',  label: 'Marketplace' },
+  { tool: 'marketplace', icon: '⊞',  label: 'Marketplace' },
 ];
 
 interface Props {
