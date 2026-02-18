@@ -24,6 +24,7 @@ export default function ProcessorDashboard({
   const [tab, setTab] = useState<Tab>('vars');
   const [matchedLines, setMatchedLines] = useState<MatchedLine[]>([]);
   const [matchesLoading, setMatchesLoading] = useState(false);
+  const [matchSearch, setMatchSearch] = useState('');
   const { fetchCharts, getProcessorCharts, loading: chartsLoading } = useChartData();
 
   const activeProcessors = Array.from(pipeline.activeProcessorIds)
@@ -72,6 +73,10 @@ export default function ProcessorDashboard({
   }
 
   const processorCharts = selected ? getProcessorCharts(sessionId, selected) : [];
+
+  const filteredLines = matchSearch.trim()
+    ? matchedLines.filter((l) => l.raw.toLowerCase().includes(matchSearch.toLowerCase()))
+    : matchedLines;
 
   return (
     <div className="proc-dashboard">
@@ -147,6 +152,23 @@ export default function ProcessorDashboard({
 
           {tab === 'matches' && (
             <div className="proc-matches">
+              {matchedLines.length > 0 && (
+                <div className="proc-matches-search-bar">
+                  <input
+                    className="proc-matches-search"
+                    type="text"
+                    placeholder="Filter matches…"
+                    value={matchSearch}
+                    onChange={(e) => setMatchSearch(e.target.value)}
+                    spellCheck={false}
+                  />
+                  {matchSearch.trim() && (
+                    <span className="proc-matches-count">
+                      {filteredLines.length} / {matchedLines.length}
+                    </span>
+                  )}
+                </div>
+              )}
               {matchesLoading && <div className="proc-dash-loading">Loading…</div>}
               {!matchesLoading && matchedLines.length === 0 && (
                 <div className="proc-dash-log-hint">
@@ -155,17 +177,21 @@ export default function ProcessorDashboard({
               )}
               {!matchesLoading && matchedLines.length > 0 && (
                 <div className="proc-matches-list">
-                  {matchedLines.map((line) => (
-                    <div
-                      key={line.lineNum}
-                      className="proc-match-row"
-                      onClick={() => onJumpToLine?.(line.lineNum)}
-                      title={`Jump to line ${line.lineNum}`}
-                    >
-                      <span className="proc-match-linenum">{line.lineNum + 1}</span>
-                      <span className="proc-match-raw">{line.raw}</span>
-                    </div>
-                  ))}
+                  {filteredLines.length === 0 ? (
+                    <div className="proc-dash-log-hint">No matches for "{matchSearch}"</div>
+                  ) : (
+                    filteredLines.map((line) => (
+                      <div
+                        key={line.lineNum}
+                        className="proc-match-row"
+                        onClick={() => onJumpToLine?.(line.lineNum)}
+                        title={`Jump to line ${line.lineNum}`}
+                      >
+                        <span className="proc-match-linenum">{line.lineNum + 1}</span>
+                        <span className="proc-match-raw">{line.raw}</span>
+                      </div>
+                    ))
+                  )}
                 </div>
               )}
             </div>

@@ -1179,6 +1179,37 @@ mark {
   background: var(--bg-base);
 }
 
+.proc-matches-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.proc-matches-search {
+  flex: 1;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 11px;
+  padding: 3px 7px;
+  outline: none;
+}
+
+.proc-matches-search:focus {
+  border-color: var(--accent);
+}
+
+.proc-matches-count {
+  font-size: 10px;
+  color: var(--text-dimmed);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .proc-matches-list {
   flex: 1;
   min-height: 0;
