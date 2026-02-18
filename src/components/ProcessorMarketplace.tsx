@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
+import { open } from '@tauri-apps/plugin-dialog';
 import type { RegistryEntry } from '../bridge/types';
-import { fetchRegistry, installFromRegistry } from '../bridge/commands';
+import { fetchRegistry, installFromRegistry, loadProcessorFromFile } from '../bridge/commands';
 import type { PipelineState } from '../hooks/usePipeline';
 
 interface Props {
@@ -53,6 +54,21 @@ export default function ProcessorMarketplace({ pipeline }: Props) {
     [pipeline],
   );
 
+  const handleLoadFile = useCallback(async () => {
+    const selected = await open({
+      multiple: false,
+      filters: [{ name: 'Processor YAML', extensions: ['yaml', 'yml'] }],
+    });
+    if (typeof selected !== 'string') return;
+    setFetchError(null);
+    try {
+      await loadProcessorFromFile(selected);
+      await pipeline.loadProcessors();
+    } catch (err) {
+      setFetchError(err instanceof Error ? err.message : String(err));
+    }
+  }, [pipeline]);
+
   const filteredEntries = entries.filter((e) => {
     if (!filter) return true;
     const q = filter.toLowerCase();
@@ -67,6 +83,12 @@ export default function ProcessorMarketplace({ pipeline }: Props) {
     <div className="marketplace">
       <div className="marketplace-header">
         <span className="marketplace-title">Processor Marketplace</span>
+        <button
+          className="btn-secondary"
+          onClick={handleLoadFile}
+        >
+          Load from file…
+        </button>
         <button
           className="btn-primary"
           onClick={handleFetch}

@@ -26,6 +26,12 @@ pub struct AppState {
     pub http_client: reqwest::Client,
 }
 
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AppState {
     pub fn new() -> Self {
         Self {

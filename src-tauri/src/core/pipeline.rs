@@ -153,7 +153,7 @@ impl Pipeline {
                                         Some(CastType::Float) => raw_val
                                             .parse::<f64>()
                                             .ok()
-                                            .and_then(|f| serde_json::Number::from_f64(f))
+                                            .and_then(serde_json::Number::from_f64)
                                             .map(serde_json::Value::Number)
                                             .unwrap_or_else(|| {
                                                 serde_json::Value::String(raw_val.to_string())

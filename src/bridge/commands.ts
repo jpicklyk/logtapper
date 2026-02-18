@@ -57,6 +57,10 @@ export function loadProcessorYaml(yaml: string): Promise<ProcessorSummary> {
   return invoke('load_processor_yaml', { yaml });
 }
 
+export function loadProcessorFromFile(path: string): Promise<ProcessorSummary> {
+  return invoke('load_processor_from_file', { path });
+}
+
 export function uninstallProcessor(processorId: string): Promise<void> {
   return invoke('uninstall_processor', { processorId });
 }

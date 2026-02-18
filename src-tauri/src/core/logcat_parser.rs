@@ -74,7 +74,7 @@ fn parse_timestamp_ns(date: &str, time: &str) -> i64 {
         .unwrap_or(0)
         + (day - 1);
 
-    let t: Vec<&str> = time.splitn(4, |c| c == ':' || c == '.').collect();
+    let t: Vec<&str> = time.splitn(4, [':', '.']).collect();
     let h: i64 = t.first().and_then(|s| s.parse().ok()).unwrap_or(0);
     let m: i64 = t.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
     let s: i64 = t.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);

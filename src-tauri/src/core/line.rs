@@ -77,6 +77,7 @@ pub enum ViewMode {
     Focus(usize),
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for ViewMode {
     fn default() -> Self {
         ViewMode::Full

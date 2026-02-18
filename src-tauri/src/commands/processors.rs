@@ -1,10 +1,40 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::commands::AppState;
 use crate::processors::registry::{self, RegistryEntry};
 use crate::processors::schema::ProcessorDef;
+
+// ---------------------------------------------------------------------------
+// Private helpers
+// ---------------------------------------------------------------------------
+
+fn processor_summary(def: &ProcessorDef) -> ProcessorSummary {
+    ProcessorSummary {
+        id: def.meta.id.clone(),
+        name: def.meta.name.clone(),
+        version: def.meta.version.clone(),
+        description: def.meta.description.clone(),
+        tags: def.meta.tags.clone(),
+    }
+}
+
+fn persist_processor(app: &AppHandle, id: &str, yaml: &str) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let proc_dir = data_dir.join("processors");
+    std::fs::create_dir_all(&proc_dir).map_err(|e| e.to_string())?;
+    std::fs::write(proc_dir.join(format!("{}.yaml", id)), yaml)
+        .map_err(|e| format!("Failed to persist processor: {e}"))
+}
+
+fn delete_processor_file(app: &AppHandle, id: &str) {
+    if let Ok(data_dir) = app.path().app_data_dir() {
+        let _ = std::fs::remove_file(
+            data_dir.join("processors").join(format!("{}.yaml", id))
+        );
+    }
+}
 
 // ---------------------------------------------------------------------------
 // list_processors
@@ -31,13 +61,7 @@ pub async fn list_processors(
 
     let mut out: Vec<ProcessorSummary> = procs
         .values()
-        .map(|p| ProcessorSummary {
-            id: p.meta.id.clone(),
-            name: p.meta.name.clone(),
-            version: p.meta.version.clone(),
-            description: p.meta.description.clone(),
-            tags: p.meta.tags.clone(),
-        })
+        .map(processor_summary)
         .collect();
 
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -51,6 +75,7 @@ pub async fn list_processors(
 #[tauri::command]
 pub async fn load_processor_yaml(
     state: State<'_, AppState>,
+    app: AppHandle,
     yaml: String,
 ) -> Result<ProcessorSummary, String> {
     // Validate
@@ -64,13 +89,9 @@ pub async fn load_processor_yaml(
         }
     }
 
-    let summary = ProcessorSummary {
-        id: def.meta.id.clone(),
-        name: def.meta.name.clone(),
-        version: def.meta.version.clone(),
-        description: def.meta.description.clone(),
-        tags: def.meta.tags.clone(),
-    };
+    persist_processor(&app, &def.meta.id, &yaml)?;
+
+    let summary = processor_summary(&def);
 
     let mut procs = state
         .processors
@@ -78,6 +99,32 @@ pub async fn load_processor_yaml(
         .map_err(|_| "Processor store lock poisoned")?;
     procs.insert(def.meta.id.clone(), def);
 
+    Ok(summary)
+}
+
+// ---------------------------------------------------------------------------
+// load_processor_from_file — install a processor from a file path
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn load_processor_from_file(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    path: String,
+) -> Result<ProcessorSummary, String> {
+    let yaml = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Cannot read file: {e}"))?;
+    let def = ProcessorDef::from_yaml(&yaml)?;
+    for stage in &def.pipeline {
+        use crate::processors::schema::PipelineStage;
+        if let PipelineStage::Script(s) = stage {
+            crate::scripting::sandbox::validate_for_install(&s.src)?;
+        }
+    }
+    persist_processor(&app, &def.meta.id, &yaml)?;
+    let summary = processor_summary(&def);
+    let mut procs = state.processors.lock().map_err(|_| "lock poisoned")?;
+    procs.insert(def.meta.id.clone(), def);
     Ok(summary)
 }
 
@@ -163,6 +210,7 @@ pub async fn get_matched_lines(
 #[tauri::command]
 pub async fn uninstall_processor(
     state: State<'_, AppState>,
+    app: AppHandle,
     processor_id: String,
 ) -> Result<(), String> {
     let mut procs = state
@@ -173,6 +221,7 @@ pub async fn uninstall_processor(
     if procs.remove(&processor_id).is_none() {
         return Err(format!("Processor '{processor_id}' not found"));
     }
+    delete_processor_file(&app, &processor_id);
     Ok(())
 }
 
@@ -228,6 +277,7 @@ pub async fn fetch_registry(
 #[tauri::command]
 pub async fn install_from_registry(
     state: State<'_, AppState>,
+    app: AppHandle,
     entry: RegistryEntryDto,
 ) -> Result<ProcessorSummary, String> {
     // Build a RegistryEntry from the DTO so we can pass it to download_processor.
@@ -243,7 +293,7 @@ pub async fn install_from_registry(
 
     let yaml = registry::download_processor(&state.http_client, &reg_entry, None).await?;
 
-    // Validate + install (reuse existing load_processor_yaml logic)
+    // Validate + install
     let def = ProcessorDef::from_yaml(&yaml)?;
 
     for stage in &def.pipeline {
@@ -253,13 +303,9 @@ pub async fn install_from_registry(
         }
     }
 
-    let summary = ProcessorSummary {
-        id: def.meta.id.clone(),
-        name: def.meta.name.clone(),
-        version: def.meta.version.clone(),
-        description: def.meta.description.clone(),
-        tags: def.meta.tags.clone(),
-    };
+    persist_processor(&app, &def.meta.id, &yaml)?;
+
+    let summary = processor_summary(&def);
 
     let mut procs = state
         .processors
