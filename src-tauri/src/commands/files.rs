@@ -11,7 +11,27 @@ use crate::core::line::{
 };
 use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;
-use crate::core::session::AnalysisSession;
+use crate::core::session::{AnalysisSession, SectionInfo};
+
+// ---------------------------------------------------------------------------
+// DumpstateMetadata
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DumpstateMetadata {
+    pub build_string: Option<String>,
+    pub build_fingerprint: Option<String>,
+    pub os_version: Option<String>,
+    pub build_type: Option<String>,
+    pub bootloader: Option<String>,
+    pub serial: Option<String>,
+    pub uptime: Option<String>,
+    pub kernel_version: Option<String>,
+    pub sdk_version: Option<String>,
+    pub device_model: Option<String>,
+    pub manufacturer: Option<String>,
+}
 
 // ---------------------------------------------------------------------------
 // load_log_file
@@ -419,6 +439,160 @@ pub async fn search_logs(
         by_level,
         by_tag,
     })
+}
+
+// ---------------------------------------------------------------------------
+// get_dumpstate_metadata
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn get_dumpstate_metadata(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<DumpstateMetadata, String> {
+    let sessions = state
+        .sessions
+        .lock()
+        .map_err(|_| "State lock poisoned".to_string())?;
+
+    let session = sessions
+        .get(&session_id)
+        .ok_or_else(|| format!("Session '{session_id}' not found"))?;
+
+    let source = session.primary_source().ok_or("No sources in session")?;
+
+    let mut meta = DumpstateMetadata {
+        build_string: None,
+        build_fingerprint: None,
+        os_version: None,
+        build_type: None,
+        bootloader: None,
+        serial: None,
+        uptime: None,
+        kernel_version: None,
+        sdk_version: None,
+        device_model: None,
+        manufacturer: None,
+    };
+
+    // Track which section we're in based on section header tags.
+    let mut in_kernel_section = false;
+    let mut kernel_next = false; // next plain content line after KERNEL VERSION header
+    let mut in_props_section = false;
+    let mut passed_first_section = false;
+
+    for (i, line_m) in source.line_meta.iter().enumerate() {
+        let raw = source.raw_line(i).unwrap_or("").trim_end_matches(['\r', '\n']);
+
+        // Detect section boundaries from tag field (BugreportParser sets tag on ------ lines).
+        if raw.starts_with("------") {
+            if !raw.contains("was the duration of") {
+                // Section start header.
+                passed_first_section = true;
+                let tag = &line_m.tag;
+                in_kernel_section = tag == "KERNEL VERSION";
+                in_props_section = tag == "SYSTEM PROPERTIES";
+                kernel_next = in_kernel_section;
+            }
+            continue;
+        }
+
+        // Skip decorative separators and == dumpstate: lines.
+        if raw.starts_with("====") || raw.starts_with("==") {
+            continue;
+        }
+
+        if in_kernel_section && kernel_next && !raw.trim().is_empty() {
+            meta.kernel_version = Some(raw.trim().to_string());
+            kernel_next = false;
+            in_kernel_section = false;
+            continue;
+        }
+
+        if in_props_section {
+            // Pattern: [ro.build.version.sdk]: [34]
+            if let Some(rest) = raw.strip_prefix("[ro.build.version.sdk]: [") {
+                meta.sdk_version = rest.strip_suffix(']').map(str::trim).map(String::from);
+            } else if let Some(rest) = raw.strip_prefix("[ro.product.model]: [") {
+                meta.device_model = rest.strip_suffix(']').map(str::trim).map(String::from);
+            } else if let Some(rest) = raw.strip_prefix("[ro.product.manufacturer]: [") {
+                meta.manufacturer = rest.strip_suffix(']').map(str::trim).map(String::from);
+            }
+            continue;
+        }
+
+        // Header lines before the first section.
+        if !passed_first_section {
+            if raw.starts_with("Build: ") && meta.build_string.is_none() {
+                let value = raw["Build: ".len()..].trim().to_string();
+                // Extract build type from trailing "(user)" / "(userdebug)" / "(eng)".
+                if let (Some(lp), Some(rp)) = (value.rfind('('), value.rfind(')')) {
+                    if lp < rp {
+                        meta.build_type = Some(value[lp + 1..rp].to_string());
+                    }
+                }
+                meta.build_string = Some(value);
+            } else if raw.starts_with("Build fingerprint: '") && meta.build_fingerprint.is_none() {
+                let fp = raw["Build fingerprint: '".len()..]
+                    .trim_end_matches('\'')
+                    .trim()
+                    .to_string();
+                // Extract OS version from fingerprint: brand/product/device:RELEASE/id/...
+                // Third `:` separates device from RELEASE.
+                if let Some(colon_pos) = fp.find(':') {
+                    let after = &fp[colon_pos + 1..];
+                    if let Some(slash_pos) = after.find('/') {
+                        meta.os_version = Some(after[..slash_pos].to_string());
+                    }
+                }
+                meta.build_fingerprint = Some(fp);
+            } else if raw.starts_with("Bootloader: ") && meta.bootloader.is_none() {
+                meta.bootloader = Some(raw["Bootloader: ".len()..].trim().to_string());
+            } else if raw.contains("androidboot.serialno") && meta.serial.is_none() {
+                // androidboot.serialno = "R52X10EJCFA"
+                if let Some(eq_pos) = raw.find('=') {
+                    let val = raw[eq_pos + 1..].trim().trim_matches('"').to_string();
+                    if !val.is_empty() {
+                        meta.serial = Some(val);
+                    }
+                }
+            } else if raw.starts_with("Uptime: ") && meta.uptime.is_none() {
+                meta.uptime = Some(raw["Uptime: ".len()..].trim().to_string());
+            }
+        }
+
+        // Stop scanning once we have all header data and have seen system properties.
+        if passed_first_section
+            && in_props_section
+            && meta.sdk_version.is_some()
+            && meta.device_model.is_some()
+            && meta.manufacturer.is_some()
+        {
+            break;
+        }
+    }
+
+    Ok(meta)
+}
+
+// ---------------------------------------------------------------------------
+// get_sections
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn get_sections(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<Vec<SectionInfo>, String> {
+    let sessions = state
+        .sessions
+        .lock()
+        .map_err(|_| "State lock poisoned".to_string())?;
+    let session = sessions
+        .get(&session_id)
+        .ok_or_else(|| format!("Session '{session_id}' not found"))?;
+    let src = session.primary_source().ok_or("No sources in session")?;
+    Ok(src.sections.clone())
 }
 
 // ---------------------------------------------------------------------------

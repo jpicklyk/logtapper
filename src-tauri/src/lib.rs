@@ -28,6 +28,8 @@ pub fn run() {
             commands::files::load_log_file,
             commands::files::get_lines,
             commands::files::search_logs,
+            commands::files::get_dumpstate_metadata,
+            commands::files::get_sections,
             // Phase 2 — processor pipeline
             commands::pipeline::run_pipeline,
             commands::pipeline::stop_pipeline,

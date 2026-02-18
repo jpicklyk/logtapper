@@ -76,6 +76,37 @@ pub async fn run_pipeline(
         (src.total_lines(), src.id.clone())
     };
 
+    // ── Snapshot section ranges per processor (before main loop) ─────────────
+    // For each processor that declares `sections`, pre-compute the (start, end)
+    // line index ranges so we can skip non-matching lines in O(1) per line.
+    // `None` = no section filter (process all lines).
+    let section_ranges: Vec<Option<Vec<(usize, usize)>>> = {
+        let sessions = state
+            .sessions
+            .lock()
+            .map_err(|_| "Session lock poisoned")?;
+        let session = sessions
+            .get(&session_id)
+            .ok_or("Session not found")?;
+        let src = session.primary_source().ok_or("No source")?;
+
+        defs.iter()
+            .map(|def| {
+                if def.sections.is_empty() {
+                    None
+                } else {
+                    let ranges: Vec<(usize, usize)> = def
+                        .sections
+                        .iter()
+                        .filter_map(|name| src.sections.iter().find(|s| s.name == *name))
+                        .map(|s| (s.start_line, s.end_line))
+                        .collect();
+                    if ranges.is_empty() { None } else { Some(ranges) }
+                }
+            })
+            .collect()
+    };
+
     // ── Set up per-processor runs ─────────────────────────────────────────────
     let mut runs: Vec<ProcessorRun<'_>> = defs.iter().map(ProcessorRun::new).collect();
 
@@ -116,8 +147,13 @@ pub async fn run_pipeline(
             ctx.raw = anon_raw;
         }
 
-        // Run through each processor
-        for run in &mut runs {
+        // Run through each processor (skipping lines outside declared sections)
+        for (run, ranges) in runs.iter_mut().zip(section_ranges.iter()) {
+            if let Some(ranges) = ranges {
+                if !ranges.iter().any(|(s, e)| line_num >= *s && line_num <= *e) {
+                    continue;
+                }
+            }
             run.process_line(&ctx);
         }
 

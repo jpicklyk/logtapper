@@ -16,6 +16,9 @@ interface Props {
   onFetchNeeded: (offset: number, count: number) => void;
   onLineClick?: (lineNum: number) => void;
   scrollToLine?: number;
+  /** Incremented on every jumpToLine call; ensures repeated jumps to the same
+   *  line re-trigger the scroll effect and re-flash the highlight. */
+  jumpSeq?: number;
   /** When set, the viewer is in Processor mode for this processor */
   processorId?: string;
 }
@@ -26,6 +29,7 @@ export default function LogViewer({
   onFetchNeeded,
   onLineClick,
   scrollToLine,
+  jumpSeq,
 }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -70,12 +74,13 @@ export default function LogViewer({
     }
   }, [items, lineCache, onFetchNeeded]);
 
-  // Scroll to a specific line when requested
+  // Scroll to a specific line when requested.
+  // Depends on `jumpSeq` so repeated jumps to the same line always re-fire.
   useEffect(() => {
     if (scrollToLine != null && scrollToLine >= 0) {
       virtualizer.scrollToIndex(scrollToLine, { align: 'center' });
     }
-  }, [scrollToLine, virtualizer]);
+  }, [scrollToLine, jumpSeq, virtualizer]);
 
   const handleLineClick = useCallback(
     (lineNum: number) => onLineClick?.(lineNum),
@@ -118,6 +123,8 @@ export default function LogViewer({
                   line={line}
                   style={{ height: LINE_HEIGHT }}
                   onClick={handleLineClick}
+                  isJumpTarget={virtualItem.index === scrollToLine}
+                  jumpSeq={virtualItem.index === scrollToLine ? jumpSeq : undefined}
                 />
               ) : (
                 <div className="log-line log-line-loading" style={{ height: LINE_HEIGHT }}>

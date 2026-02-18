@@ -2,145 +2,85 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
-
-LogTapper is a Tauri 2 desktop application for parsing, analyzing, and visualizing Android log files (logcat, kernel, radio, bugreport). The full design specification is in `LOG_ANALYZER_SPEC.md`.
-
-**Stack:** Rust (core engine) + React/TypeScript (UI) + Tauri (desktop shell) + Rhai (sandboxed scripting) + Recharts (charts).
-
-## Development Commands
-
-All commands run from the project root (`D:\Projects\LogTapper`).
+## Commands
 
 ```bash
-# Start full dev environment (Rust + React with hot reload)
+# Run the full app in dev mode (starts Vite + Rust backend together)
 npx tauri dev
 
-# Frontend only (no Rust, faster for UI-only work)
-npm run dev
+# Frontend only
+npm run build          # TypeScript check + Vite bundle
+npx vite               # Vite dev server standalone
 
-# Type-check TypeScript
-npx tsc --noEmit
-
-# Rust check only (faster than build)
-cd src-tauri && cargo check
-
-# Rust tests
-cd src-tauri && cargo test
-
-# Rust lint
-cd src-tauri && cargo clippy
-
-# Production build
-npx tauri build
+# Rust backend (run from project root, not src-tauri/)
+cargo test --manifest-path src-tauri/Cargo.toml          # all tests
+cargo test --manifest-path src-tauri/Cargo.toml <name>   # single test by name
+cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 ```
 
-### Windows / MSYS2 Notes
-
-The MSYS2 `link.exe` in the PATH may shadow the MSVC linker. `.cargo/config.toml` pins the correct linker path — this is intentional. The Windows 11 SDK must also be installed:
-
-> Visual Studio Installer → Modify VS 2022 Community → Individual Components → **Windows 11 SDK (10.0.26100.0)**
-
-The `@tauri-apps/cli-win32-x64-msvc` package must be installed alongside `@tauri-apps/cli`. It is pinned in `devDependencies`. If you clean `node_modules`, do a full `npm install` to ensure it is re-fetched.
+**Platform note (MSYS2/Windows):** `.npmrc` sets `os=win32` and `cpu=x64` so npm installs the correct `@rollup/rollup-win32-x64-msvc` native binary. Without this, MSYS2 bash reports `linux` and npm skips the Windows optional deps.
 
 ## Architecture
 
-### Process Model
-
-Two processes communicate over Tauri IPC:
+Tauri 2.x desktop app: React 18/TypeScript frontend + Rust backend. All IPC goes through typed `invoke()` calls and Tauri events — no direct filesystem or network access from the frontend.
 
 ```
-React/TS (webview)  ──invoke/event──►  Rust core (native process)
+src/bridge/       ← all invoke() wrappers and event listeners
+src/hooks/        ← stateful logic (useLogViewer, usePipeline, useClaude)
+src/components/   ← React components, consume hooks only
+
+src-tauri/src/commands/   ← #[tauri::command] handlers, AppState definition
+src-tauri/src/core/       ← parsers, AnalysisSession, LineMeta/LineContext
+src-tauri/src/processors/ ← YAML schema, interpreter, VarStore, registry
+src-tauri/src/scripting/  ← Rhai sandbox, scope builder, emit() bridge
+src-tauri/src/anonymizer/ ← PII detection + token mapping
+src-tauri/src/charts/     ← chart data building from emissions/vars
+src-tauri/src/claude/     ← Claude API client (SSE streaming), generator
 ```
 
-The Rust side owns all data: file memory maps, parsed lines, processor state, analysis sessions. The frontend is a pure display layer — it requests windows of data via `invoke()` and listens to streaming events.
+### AppState (`commands/mod.rs`)
 
-### Rust Crate Layout (`src-tauri/src/`)
+All five fields use `std::sync::Mutex` (not async mutexes) because Tauri's command dispatcher is synchronous at the IPC boundary.
 
-| Module | Responsibility |
-|--------|---------------|
-| `commands/` | Tauri `#[command]` handlers — thin glue between IPC and core. Entry point: `lib.rs`. |
-| `core/` | Data models (`LineContext`, `LogLevel`, `LineMeta`), parsers, pipeline engine, session/timeline |
-| `anonymizer/` | PII detection and deterministic pseudonymization — runs between parser and processors |
-| `processors/` | YAML schema parsing, declarative stage interpreter, variable system, GitHub registry |
-| `scripting/` | Rhai engine setup, `LineContext`/`vars`/`emit()` bindings, sandbox limits |
-| `claude/` | Anthropic API client (SSE streaming), analysis context builder, processor generator |
-| `charts/` | `ChartData` computation from processor state; time bucketing/aggregation |
+| Field | Type | Contains |
+|---|---|---|
+| `sessions` | `Mutex<HashMap<String, AnalysisSession>>` | sessionId → mmap'd file + line index |
+| `processors` | `Mutex<HashMap<String, ProcessorDef>>` | processorId → YAML-defined processor. **In-memory only — lost on restart.** |
+| `pipeline_results` | `Mutex<HashMap<String, HashMap<String, RunResult>>>` | sessionId → processorId → matched lines + emissions + vars |
+| `api_key` | `Mutex<Option<String>>` | Claude API key set at runtime |
+| `http_client` | `reqwest::Client` | Shared; no mutex needed (client is Clone + Send + Sync) |
 
-**`AppState`** (in `commands/mod.rs`):
-```rust
-sessions: Mutex<HashMap<String, AnalysisSession>>
-processors: Mutex<HashMap<String, ProcessorDef>>
-pipeline_results: Mutex<HashMap<String, HashMap<String, RunResult>>>
-api_key: Mutex<Option<String>>
-http_client: reqwest::Client
-```
+To add a new command: implement it in the appropriate `commands/*.rs` file, then register it in `src-tauri/src/lib.rs` in the `.invoke_handler(tauri::generate_handler![...])` list.
 
-### Frontend Layout (`src/`)
+### End-to-end pipeline run
 
-| Directory | Responsibility |
-|-----------|---------------|
-| `components/` | React UI components (log viewer, processor panel, charts, chat, marketplace) |
-| `hooks/` | State and IPC hooks (`usePipeline`, `useLogViewer`, `useClaude`, `useChartData`) |
-| `bridge/` | Typed wrappers around `@tauri-apps/api` — `commands.ts`, `types.ts` |
+1. **Frontend** → `runPipeline(sessionId, processorIds, anonymize)` via `invoke()`
+2. **`commands/pipeline.rs`** clones processor defs from `AppState::processors`, snapshots `total_lines` from the session, then loops over every line:
+   - Re-acquires `sessions` lock per line to get raw bytes (coarse but correct; see `commands/pipeline.rs`)
+   - Parses with `LogcatParser` (hardcoded — not the session's detected parser)
+   - Optionally anonymizes `message` and `raw`
+   - Runs each `ProcessorRun::process_line()` in sequence (serial, no parallelism)
+   - Emits `pipeline-progress` Tauri event every 5,000 lines
+3. Results stored in `AppState::pipeline_results[sessionId][processorId]`
+4. **Frontend** `usePipeline` hook listens to `pipeline-progress` events for live progress
 
-### Data Flow
+### Tauri events
 
-```
-File on disk
-  → mmap (LogSource)
-  → Parser (logcat / kernel / radio / bugreport)
-  → Anonymizer (PII scrubbing — always before processors and Claude)
-  → Pipeline engine
-      → Declarative YAML stages (filter → extract → correlate → aggregate)
-      → Rhai script stage (optional, sandboxed)
-      → emit() / emit_chart()
-  → Output: vars state, emissions table, ChartData
-  → Tauri events → Frontend
-```
+| Event name | Emitted by | Payload type |
+|---|---|---|
+| `pipeline-progress` | `commands/pipeline.rs` | `PipelineProgress` (processorId, linesProcessed, totalLines, percent) |
+| `claude-stream` | `claude/client.rs` | `{ kind: "text"\|"done"\|"error", text?, error? }` |
 
-## Key Subsystems
+### Known bugs
 
-### Processor System
+1. **Processor view cache mismatch** (`useLogViewer.ts` + `commands/files.rs`): In Processor mode, `get_lines` returns `ViewLine` with `lineNum` = actual file line number (e.g., 42, 57). The frontend stores these in `lineCache` keyed by `lineNum`. But the virtualizer uses sequential 0-based indices. Result: processor view shows all `…` loading placeholders, never resolves.
 
-Processors are YAML files with two optional layers:
-1. **Declarative stages** — interpreted directly by Rust (`processors/interpreter.rs`). No code.
-2. **`stage: script` with Rhai** — inline script with access to `line`, `fields`, `vars`, `history`, `emit()`.
+2. **KernelParser drops non-kernel lines** (`core/kernel_parser.rs`): `parse_meta()` returns `None` for lines that don't match the kernel timestamp regex. Those lines are silently excluded from the index. Also, `detect_source_type()` in `session.rs` uses `text.starts_with('[')` as a kernel indicator — too broad; can misdetect logcat files.
 
-`vars` declared in the YAML header persist across all lines in a processor run.
+3. **`pipeline.rs` always uses `LogcatParser`**: The pipeline parser is hardcoded regardless of the session's detected source type. For Kernel or Bugreport files, lines may not parse and are silently skipped (`continue` on `None` from `parse_line`).
 
-### PII Anonymizer
+### Tauri-specific gotchas
 
-Always positioned **after parsing, before processors**. Mappings are session-scoped in memory only. Deterministic: same raw value → same token within a session (e.g., `192.168.1.1` → `<IPv4-1>`).
-
-### Log Viewer Windowing
-
-Rust backend owns all lines. Frontend requests a `LineWindow` via `get_lines(LineRequest)` with `offset + count`. Virtual scrolling via `@tanstack/react-virtual`. Three view modes: **Full**, **Processor** (collapsed to matches + context gaps), **Focus** (centered on a line).
-
-### Claude Integration
-
-- `claude_analyze`: Streams response as `claude-stream` Tauri events; returns `Promise<void>`.
-- `claude_generate_processor`: Non-streaming, returns validated YAML string.
-- API key stored in `AppState.api_key` (set via `set_claude_api_key` command); frontend persists to localStorage.
-- All data sent to Claude has already been through the anonymizer.
-
-### GitHub Registry
-
-- `fetch_registry` command downloads `registry.json` from GitHub.
-- `install_from_registry` downloads YAML, verifies SHA-256, validates, and installs.
-- `processors/registry.rs` handles HTTP + integrity checks.
-
-## Key Constraints
-
-- **Rhai sandbox limits** (set in `scripting/engine.rs`): 1M operations, 50K string, 100K array, 10K map. No filesystem or network access.
-- **`cargo check/test` in `src-tauri/`**, not the project root.
-- **`Cargo.lock` is committed** — this is a binary application, not a library.
-- Tauri 2 events require `use tauri::Emitter` to be in scope for `app.emit()`.
-
-## Phase Completion Status
-
-All four phases are complete:
-- **Phase 1** ✓ — Logcat parser, mmap file reader, virtualized viewer, search
-- **Phase 2** ✓ — Rhai scripting, YAML processors, PII anonymizer, processor UI
-- **Phase 3** ✓ — Kernel/bugreport parsers, unified timeline, cross-source index, charts
-- **Phase 4** ✓ — Claude AI streaming, processor generation, GitHub registry, marketplace
+- `app.emit()` requires `use tauri::{AppHandle, Emitter}` — `Emitter` is a trait, not inherent on `AppHandle`.
+- Rust's `regex` crate does **not** support look-ahead (`(?!...)`). Clippy flags this as `clippy::invalid_regex`. `get_or_compile()` in `processors/interpreter.rs` returns `Option<&Regex>` to handle invalid patterns gracefully.
+- Timestamps are **nanoseconds since 2000-01-01 UTC** (not Unix epoch). JS `number` (64-bit float) loses precision beyond 2^53 nanos — treat timestamps as opaque ordering values on the frontend; do not perform arithmetic on them.

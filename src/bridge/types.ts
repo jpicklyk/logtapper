@@ -79,6 +79,34 @@ export interface LoadResult {
 }
 
 // ---------------------------------------------------------------------------
+// Dumpstate metadata (extracted from bugreport/dumpstate files)
+// ---------------------------------------------------------------------------
+
+export interface DumpstateMetadata {
+  buildString: string | null;
+  buildFingerprint: string | null;
+  osVersion: string | null;
+  buildType: string | null;
+  bootloader: string | null;
+  serial: string | null;
+  uptime: string | null;
+  kernelVersion: string | null;
+  sdkVersion: string | null;
+  deviceModel: string | null;
+  manufacturer: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Section index (Bugreport/Dumpstate files)
+// ---------------------------------------------------------------------------
+
+export interface SectionInfo {
+  name: string;
+  startLine: number;
+  endLine: number;
+}
+
+// ---------------------------------------------------------------------------
 // Processor types (Phase 2)
 // ---------------------------------------------------------------------------
 

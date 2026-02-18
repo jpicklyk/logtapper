@@ -11,6 +11,9 @@ export interface LogViewerState {
   searchSummary: SearchSummary | null;
   currentMatchIndex: number;
   scrollToLine: number | undefined;
+  /** Incremented on every jumpToLine call so repeated jumps to the same line
+   *  still trigger the scroll effect and re-flash the highlight. */
+  jumpSeq: number;
   loading: boolean;
   error: string | null;
   processorId: string | null;
@@ -31,6 +34,7 @@ export function useLogViewer(): LogViewerState {
   const [searchSummary, setSearchSummary] = useState<SearchSummary | null>(null);
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
   const [scrollToLine, setScrollToLine] = useState<number | undefined>(undefined);
+  const [jumpSeq, setJumpSeq] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [processorId, setProcessorId] = useState<string | null>(null);
@@ -145,6 +149,7 @@ export function useLogViewer(): LogViewerState {
           const len = summary.matchLineNums.length;
           const next = (idx + direction + len) % len;
           setScrollToLine(summary.matchLineNums[next]);
+          setJumpSeq((s) => s + 1);
           return next;
         });
         return summary;
@@ -155,6 +160,7 @@ export function useLogViewer(): LogViewerState {
 
   const jumpToLine = useCallback((lineNum: number) => {
     setScrollToLine(lineNum);
+    setJumpSeq((s) => s + 1);
   }, []);
 
   const setProcessorView = useCallback((id: string) => {
@@ -178,6 +184,7 @@ export function useLogViewer(): LogViewerState {
     searchSummary,
     currentMatchIndex,
     scrollToLine,
+    jumpSeq,
     loading,
     error,
     processorId,

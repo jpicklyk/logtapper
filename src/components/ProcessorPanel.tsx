@@ -160,6 +160,11 @@ export default function ProcessorPanel({ pipeline, sessionId }: Props) {
           className="btn-primary"
           onClick={handleRun}
           disabled={!hasActive || !sessionId || pipeline.running}
+          title={
+            !sessionId ? 'Load a log file first' :
+            !hasActive ? 'Check at least one processor to run' :
+            'Run selected processors'
+          }
         >
           {pipeline.running ? 'Running…' : 'Run'}
         </button>
@@ -169,6 +174,10 @@ export default function ProcessorPanel({ pipeline, sessionId }: Props) {
           </button>
         )}
       </div>
+
+      {!hasActive && !pipeline.running && pipeline.processors.length > 0 && (
+        <div className="proc-hint">Check one or more processors above, then click Run.</div>
+      )}
 
       {pipeline.error && (
         <div className="proc-error">{pipeline.error}</div>

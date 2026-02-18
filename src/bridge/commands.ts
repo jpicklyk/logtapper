@@ -9,6 +9,8 @@ import type {
   PipelineRunSummary,
   ChartData,
   RegistryEntry,
+  DumpstateMetadata,
+  SectionInfo,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -97,6 +99,18 @@ export function claudeGenerateProcessor(
   sampleLines: string[],
 ): Promise<string> {
   return invoke('claude_generate_processor', { description, sampleLines });
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 — Dumpstate metadata + section index
+// ---------------------------------------------------------------------------
+
+export function getDumpstateMetadata(sessionId: string): Promise<DumpstateMetadata> {
+  return invoke('get_dumpstate_metadata', { sessionId });
+}
+
+export function getSections(sessionId: string): Promise<SectionInfo[]> {
+  return invoke('get_sections', { sessionId });
 }
 
 // ---------------------------------------------------------------------------

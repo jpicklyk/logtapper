@@ -9,6 +9,11 @@ pub struct ProcessorDef {
     pub meta: ProcessorMeta,
     #[serde(default)]
     pub sources: SourceRequirements,
+    /// Section names to restrict processing to (Bugreport files only).
+    /// Empty = process all lines regardless of section.
+    /// Exact match against section names as parsed by BugreportParser.
+    #[serde(default)]
+    pub sections: Vec<String>,
     #[serde(default)]
     pub vars: Vec<VarDecl>,
     #[serde(default)]

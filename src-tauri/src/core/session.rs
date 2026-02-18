@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::core::bugreport_parser::BugreportParser;
 use crate::core::index::CrossSourceIndex;
 use crate::core::kernel_parser::KernelParser;
-use crate::core::line::LineMeta;
+use crate::core::line::{LineMeta, LogLevel};
 use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;
 use crate::core::timeline::{Timeline, TimelineEntry};
@@ -44,6 +44,20 @@ impl std::fmt::Display for SourceType {
 }
 
 // ---------------------------------------------------------------------------
+// SectionInfo — one named section in a dumpstate/bugreport file
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SectionInfo {
+    pub name: String,
+    /// 0-based index of the `------` section-start header line.
+    pub start_line: usize,
+    /// 0-based index of the duration footer, or the last indexed line if no footer found.
+    pub end_line: usize,
+}
+
+// ---------------------------------------------------------------------------
 // LogSource — one file, memory-mapped
 // ---------------------------------------------------------------------------
 
@@ -56,6 +70,8 @@ pub struct LogSource {
     pub line_index: Vec<(usize, usize)>,
     /// Lightweight metadata for every indexed line.
     pub line_meta: Vec<LineMeta>,
+    /// Named sections (Bugreport only; empty for all other source types).
+    pub sections: Vec<SectionInfo>,
 }
 
 impl LogSource {
@@ -123,6 +139,7 @@ impl AnalysisSession {
         let source_type = detect_source_type(&mmap);
 
         let (line_index, line_meta) = build_line_index(&mmap, &source_type);
+        let sections = build_section_index(&line_meta, &source_type);
 
         let name = path
             .file_name()
@@ -138,6 +155,7 @@ impl AnalysisSession {
             mmap,
             line_index,
             line_meta,
+            sections,
         });
 
         // Rebuild the timeline and index after adding a new source.
@@ -188,6 +206,12 @@ fn detect_source_type(mmap: &Mmap) -> SourceType {
     let sample = &mmap[..mmap.len().min(4096)];
     let text = std::str::from_utf8(sample).unwrap_or("");
 
+    // Dumpstate must be checked first: dumpstate files embed logcat sections
+    // that contain "--------- beginning of", which would otherwise trigger the
+    // Logcat branch below.
+    if text.contains("== dumpstate:") || text.contains("Bugreport format version:") {
+        return SourceType::Bugreport;
+    }
     if text.contains("--------- beginning of") || is_logcat_threadtime(text) {
         return SourceType::Logcat;
     }
@@ -258,11 +282,15 @@ fn build_line_index(mmap: &Mmap, source_type: &SourceType) -> (Vec<(usize, usize
                     }
                 };
 
-                if let Some(meta) = parser.parse_meta(raw, start) {
-                    line_index.push((start, content_end - start));
-                    line_meta.push(meta);
-                }
-                // Lines that return None from parse_meta (e.g. section headers) are skipped.
+                let meta = parser.parse_meta(raw, start).unwrap_or(LineMeta {
+                    level: LogLevel::Info,
+                    tag: String::new(),
+                    timestamp: 0,
+                    byte_offset: start,
+                    byte_len: content_end - start,
+                });
+                line_index.push((start, content_end - start));
+                line_meta.push(meta);
             }
 
             start = i + 1;
@@ -270,6 +298,51 @@ fn build_line_index(mmap: &Mmap, source_type: &SourceType) -> (Vec<(usize, usize
     }
 
     (line_index, line_meta)
+}
+
+/// Scan `line_meta` to extract named section boundaries for Bugreport files.
+///
+/// BugreportParser sets `LineMeta.tag` to the section name on `------` lines:
+/// - Start header: `level = Info`, non-empty tag (not "dumpstate")
+/// - Duration footer: `level = Verbose`, non-empty tag
+///
+/// Uses a stack so that nested sub-section headers (e.g. the many
+/// `BLOCK STAT (/sys/block/…)` lines inside `DUMP BLOCK STAT`) are NOT
+/// emitted as separate sections.  A `SectionInfo` is only created when a
+/// matching duration footer is found.  Sub-section headers that never receive
+/// their own footer are silently discarded.
+///
+/// Returns an empty Vec for all non-Bugreport source types.
+fn build_section_index(line_meta: &[LineMeta], source_type: &SourceType) -> Vec<SectionInfo> {
+    if !matches!(source_type, SourceType::Bugreport) {
+        return Vec::new();
+    }
+
+    let mut sections = Vec::new();
+    // Stack of (section_name, start_line_idx) — top is the most recently opened.
+    let mut pending: Vec<(String, usize)> = Vec::new();
+
+    for (i, meta) in line_meta.iter().enumerate() {
+        if meta.level == LogLevel::Info && !meta.tag.is_empty() && meta.tag != "dumpstate" {
+            // Section start header — push onto the stack.
+            pending.push((meta.tag.clone(), i));
+        } else if meta.level == LogLevel::Verbose && !meta.tag.is_empty() {
+            // Duration footer — find the most recently opened section with this name.
+            if let Some(pos) = pending.iter().rposition(|(name, _)| name == &meta.tag) {
+                let (name, start) = pending.remove(pos);
+                sections.push(SectionInfo {
+                    name,
+                    start_line: start,
+                    end_line: i,
+                });
+            }
+            // Sub-section headers without a matching footer remain on the stack
+            // and are discarded at the end — they are NOT emitted as sections.
+        }
+    }
+
+    // Any unmatched stack entries are orphan sub-section headers; drop them.
+    sections
 }
 
 fn parser_for(source_type: &SourceType) -> Box<dyn LogParser> {
