@@ -1,0 +1,13 @@
+# Cargo workspace configuration
+
+# NOTE for development in Warp terminal on Windows:
+# The MSYS2 `link.exe` in Warp's PATH shadows the MSVC linker.
+# The linker below is set explicitly so `cargo check/build` works from Warp bash.
+# If building from a VS Developer Command Prompt instead, you can remove this.
+[target.x86_64-pc-windows-msvc]
+linker = "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\link.exe"
+
+# Also requires the Windows SDK to be installed.
+# If you see LNK1181 (cannot open kernel32.lib), open Visual Studio Installer,
+# click Modify on VS 2022 Community, Individual Components tab,
+# and install "Windows 11 SDK (10.0.26100.0)".
