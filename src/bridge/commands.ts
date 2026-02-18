@@ -8,6 +8,7 @@ import type {
   ProcessorSummary,
   PipelineRunSummary,
   ChartData,
+  RegistryEntry,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -79,6 +80,10 @@ export function getChartData(
 // Phase 4 — Claude
 // ---------------------------------------------------------------------------
 
+export function setClaudeApiKey(apiKey: string): Promise<void> {
+  return invoke('set_claude_api_key', { apiKey });
+}
+
 export function claudeAnalyze(
   sessionId: string,
   processorId: string | null,
@@ -92,4 +97,16 @@ export function claudeGenerateProcessor(
   sampleLines: string[],
 ): Promise<string> {
   return invoke('claude_generate_processor', { description, sampleLines });
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 — Registry
+// ---------------------------------------------------------------------------
+
+export function fetchRegistry(registryUrl?: string): Promise<RegistryEntry[]> {
+  return invoke('fetch_registry', { registryUrl: registryUrl ?? null });
+}
+
+export function installFromRegistry(entry: RegistryEntry): Promise<ProcessorSummary> {
+  return invoke('install_from_registry', { entry });
 }

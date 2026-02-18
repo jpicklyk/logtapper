@@ -137,8 +137,10 @@ impl<'a> ProcessorRun<'a> {
                 values.iter().any(|v| line.message.contains(v.as_str()))
             }
             FilterRule::MessageRegex { pattern } => {
-                let regex = self.get_or_compile(pattern);
-                regex.is_match(&line.message)
+                match self.get_or_compile(pattern) {
+                    Some(re) => re.is_match(&line.message),
+                    None => false, // Invalid pattern — treat as no-match.
+                }
             }
             FilterRule::LevelMin { level } => {
                 let min = parse_level(level).unwrap_or(LogLevel::Verbose);
@@ -157,10 +159,18 @@ impl<'a> ProcessorRun<'a> {
         }
     }
 
-    fn get_or_compile(&mut self, pattern: &str) -> &Regex {
-        self.regex_cache
-            .entry(pattern.to_string())
-            .or_insert_with(|| Regex::new(pattern).unwrap_or_else(|_| Regex::new("(?!)").unwrap()))
+    /// Returns `None` if the pattern fails to compile (invalid regex).
+    fn get_or_compile(&mut self, pattern: &str) -> Option<&Regex> {
+        // We store only successfully compiled regexes; absent key means invalid.
+        if !self.regex_cache.contains_key(pattern) {
+            if let Ok(re) = Regex::new(pattern) {
+                self.regex_cache.insert(pattern.to_string(), re);
+            } else {
+                // Invalid pattern — return None to skip this rule.
+                return None;
+            }
+        }
+        self.regex_cache.get(pattern)
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -174,12 +184,10 @@ impl<'a> ProcessorRun<'a> {
         out: &mut HashMap<String, JsonValue>,
     ) {
         for field in fields {
-            let re = self.regex_cache
-                .entry(field.pattern.clone())
-                .or_insert_with(|| {
-                    Regex::new(&field.pattern)
-                        .unwrap_or_else(|_| Regex::new("(?!)").unwrap())
-                });
+            let re = match self.get_or_compile(&field.pattern.clone()) {
+                Some(r) => r,
+                None => continue, // Invalid pattern — skip this field.
+            };
 
             if let Some(caps) = re.captures(&line.message) {
                 // Capture group 1 if present, else whole match.

@@ -5,15 +5,19 @@ import SearchBar from './components/SearchBar';
 import ProgressOverlay from './components/ProgressOverlay';
 import ProcessorPanel from './components/ProcessorPanel';
 import ProcessorDashboard from './components/ProcessorDashboard';
+import ChatPanel from './components/ChatPanel';
+import ProcessorMarketplace from './components/ProcessorMarketplace';
 import { useLogViewer } from './hooks/useLogViewer';
 import { usePipeline } from './hooks/usePipeline';
+import { useClaude } from './hooks/useClaude';
 import './App.css';
 
-type SidePanel = 'processors' | 'dashboard' | null;
+type SidePanel = 'processors' | 'dashboard' | 'chat' | 'marketplace' | null;
 
 export default function App() {
   const viewer = useLogViewer();
   const pipeline = usePipeline();
+  const claude = useClaude();
   const [sidePanel, setSidePanel] = useState<SidePanel>(null);
   const [processorViewId, setProcessorViewId] = useState<string | null>(null);
 
@@ -52,10 +56,8 @@ export default function App() {
     viewer.clearProcessorView();
   }, [viewer]);
 
-  const toggleProcessors = () =>
-    setSidePanel((p) => (p === 'processors' ? null : 'processors'));
-  const toggleDashboard = () =>
-    setSidePanel((p) => (p === 'dashboard' ? null : 'dashboard'));
+  const togglePanel = (panel: SidePanel) =>
+    setSidePanel((p) => (p === panel ? null : panel));
 
   return (
     <div
@@ -86,20 +88,34 @@ export default function App() {
               <button
                 className={`btn-icon-header${sidePanel === 'processors' ? ' active' : ''}`}
                 title="Processors"
-                onClick={toggleProcessors}
+                onClick={() => togglePanel('processors')}
               >
                 ⚙
               </button>
               <button
                 className={`btn-icon-header${sidePanel === 'dashboard' ? ' active' : ''}`}
                 title="Dashboard"
-                onClick={toggleDashboard}
+                onClick={() => togglePanel('dashboard')}
                 disabled={pipeline.lastResults.length === 0}
               >
                 ◫
               </button>
+              <button
+                className={`btn-icon-header${sidePanel === 'chat' ? ' active' : ''}`}
+                title="Claude Analysis"
+                onClick={() => togglePanel('chat')}
+              >
+                ✦
+              </button>
             </>
           )}
+          <button
+            className={`btn-icon-header${sidePanel === 'marketplace' ? ' active' : ''}`}
+            title="Processor Marketplace"
+            onClick={() => togglePanel('marketplace')}
+          >
+            ⊞
+          </button>
           <button className="btn-primary" onClick={handleOpenFile}>
             Open Log File
           </button>
@@ -167,6 +183,16 @@ export default function App() {
                 onViewProcessor={handleViewProcessor}
                 onJumpToLine={viewer.jumpToLine}
               />
+            )}
+            {sidePanel === 'chat' && (
+              <ChatPanel
+                claude={claude}
+                sessionId={viewer.session?.sessionId ?? null}
+                processorId={processorViewId}
+              />
+            )}
+            {sidePanel === 'marketplace' && (
+              <ProcessorMarketplace pipeline={pipeline} />
             )}
           </aside>
         )}

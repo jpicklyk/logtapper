@@ -38,6 +38,13 @@ pub fn run() {
             commands::processors::uninstall_processor,
             // Phase 3 — charts
             commands::charts::get_chart_data,
+            // Phase 4 — Claude AI
+            commands::claude::set_claude_api_key,
+            commands::claude::claude_analyze,
+            commands::claude::claude_generate_processor,
+            // Phase 4 — GitHub registry
+            commands::processors::fetch_registry,
+            commands::processors::install_from_registry,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

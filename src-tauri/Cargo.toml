@@ -33,6 +33,9 @@ tauri-plugin-dialog = "2.6.0"
 rhai = { version = "1", features = ["sync"] }
 serde_yaml = "0.9"
 
-# Phase 4: Claude API (HTTP + async)
-# tokio = { version = "1", features = ["full"] }
-# reqwest = { version = "0.12", features = ["json", "stream"] }
+# Phase 4: Claude API (HTTP + async) + registry
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+futures-util = "0.3"
+sha2 = "0.10"
+hex = "0.4"

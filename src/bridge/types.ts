@@ -151,3 +151,37 @@ export interface ChartData {
   yAxis: { label: string; field: string | null };
   interactive: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Claude types (Phase 4)
+// ---------------------------------------------------------------------------
+
+export interface ClaudeStreamEvent {
+  /** "text" | "done" | "error" */
+  kind: string;
+  text?: string;
+  error?: string;
+}
+
+export type ChatRole = 'user' | 'assistant';
+
+export interface ChatMessage {
+  role: ChatRole;
+  content: string;
+  /** True while this assistant message is still streaming */
+  streaming?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Registry types (Phase 4)
+// ---------------------------------------------------------------------------
+
+export interface RegistryEntry {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  path: string;
+  tags: string[];
+  sha256: string;
+}

@@ -898,3 +898,356 @@ mark {
   background: #161b22 !important;
   border: 1px solid #30363d !important;
 }
+
+/* ── Small icon button ────────────────────────────────────────────────────── */
+
+.btn-icon-sm {
+  padding: 2px 6px;
+  background: transparent;
+  border: 1px solid #30363d;
+  border-radius: 3px;
+  color: #8b949e;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.2;
+}
+.btn-icon-sm:hover { color: #e2e8f0; border-color: #8b949e; }
+.btn-icon-sm.active { color: #58a6ff; border-color: #58a6ff; }
+
+/* ── Chat panel ───────────────────────────────────────────────────────────── */
+
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid #21262d;
+  flex-shrink: 0;
+}
+
+.chat-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.chat-header-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.chat-key-settings {
+  padding: 12px;
+  border-bottom: 1px solid #21262d;
+  background: #161b22;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-key-label {
+  font-size: 11px;
+  color: #8b949e;
+}
+
+.chat-key-input {
+  background: #0f1117;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 5px 8px;
+  color: #e2e8f0;
+  font-size: 11px;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.chat-key-save {
+  align-self: flex-start;
+  font-size: 11px;
+  padding: 3px 10px;
+}
+
+.chat-key-hint {
+  font-size: 10px;
+  color: #484f58;
+  margin: 0;
+}
+
+.chat-context-banner {
+  padding: 4px 12px;
+  background: #1f6feb1a;
+  border-bottom: 1px solid #1f6feb33;
+  font-size: 10px;
+  color: #8b949e;
+  flex-shrink: 0;
+}
+
+.chat-no-session {
+  padding: 16px;
+  font-size: 11px;
+  color: #484f58;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-empty {
+  padding: 16px;
+  text-align: center;
+  color: #484f58;
+  font-size: 11px;
+}
+
+.chat-empty p { margin: 4px 0; }
+
+.chat-empty-hint {
+  font-size: 10px;
+  font-style: italic;
+}
+
+.chat-message {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.chat-message-role {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #484f58;
+}
+
+.chat-message-user .chat-message-role { color: #58a6ff; }
+.chat-message-assistant .chat-message-role { color: #3fb950; }
+
+.chat-message-content {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #e2e8f0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: #161b22;
+}
+
+.chat-message-user .chat-message-content {
+  background: #1f6feb1a;
+  border: 1px solid #1f6feb33;
+}
+
+.chat-cursor {
+  animation: blink 1s step-end infinite;
+  color: #3fb950;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+.chat-error {
+  padding: 8px;
+  background: #f851491a;
+  border: 1px solid #f8514933;
+  border-radius: 4px;
+  color: #f85149;
+  font-size: 11px;
+}
+
+.chat-input-area {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border-top: 1px solid #21262d;
+  flex-shrink: 0;
+}
+
+.chat-input {
+  background: #0f1117;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 6px 8px;
+  color: #e2e8f0;
+  font-size: 11px;
+  font-family: inherit;
+  resize: none;
+  width: 100%;
+  box-sizing: border-box;
+  line-height: 1.4;
+}
+
+.chat-input:focus {
+  outline: none;
+  border-color: #58a6ff;
+}
+
+.chat-input:disabled {
+  opacity: 0.4;
+}
+
+.chat-send-btn {
+  align-self: flex-end;
+  font-size: 11px;
+  padding: 4px 14px;
+}
+
+/* ── Processor marketplace ────────────────────────────────────────────────── */
+
+.marketplace {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.marketplace-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid #21262d;
+  flex-shrink: 0;
+}
+
+.marketplace-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.marketplace-error {
+  margin: 8px;
+  padding: 8px;
+  background: #f851491a;
+  border: 1px solid #f8514933;
+  border-radius: 4px;
+  color: #f85149;
+  font-size: 11px;
+}
+
+.marketplace-filter {
+  padding: 8px;
+  border-bottom: 1px solid #21262d;
+  flex-shrink: 0;
+}
+
+.marketplace-filter-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: #0f1117;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: #e2e8f0;
+  font-size: 11px;
+  font-family: inherit;
+}
+
+.marketplace-empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: #484f58;
+  font-size: 11px;
+}
+
+.marketplace-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.marketplace-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 10px 12px;
+  gap: 8px;
+  border-bottom: 1px solid #21262d;
+}
+
+.marketplace-item:hover { background: #161b22; }
+
+.marketplace-item-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.marketplace-item-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.marketplace-item-version {
+  font-size: 10px;
+  color: #484f58;
+}
+
+.marketplace-item-desc {
+  font-size: 11px;
+  color: #8b949e;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.marketplace-item-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 2px;
+}
+
+.marketplace-item-error {
+  font-size: 10px;
+  color: #f85149;
+  margin-top: 2px;
+}
+
+.marketplace-item-action {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.marketplace-installed-badge {
+  font-size: 10px;
+  color: #3fb950;
+}
+
+.proc-tag {
+  display: inline-block;
+  padding: 1px 5px;
+  background: #1f6feb1a;
+  border: 1px solid #1f6feb33;
+  border-radius: 3px;
+  font-size: 9px;
+  color: #58a6ff;
+}
