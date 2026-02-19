@@ -23,8 +23,10 @@ const YEAR2000_MS = 946_684_800_000;
 
 function formatTimestamp(ns: number | null): string {
   if (ns === null || ns === 0) return '—';
+  // Logcat timestamps are device LOCAL time encoded as-if-UTC in our base epoch.
+  // Using timeZone:'UTC' prevents the browser from applying a second timezone shift.
   const ms = Math.floor(ns / 1_000_000) + YEAR2000_MS;
-  return new Date(ms).toLocaleString();
+  return new Date(ms).toLocaleString(undefined, { timeZone: 'UTC' });
 }
 
 function formatFileSize(bytes: number): string {
