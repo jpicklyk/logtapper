@@ -17,6 +17,7 @@ fn processor_summary(def: &ProcessorDef) -> ProcessorSummary {
         version: def.meta.version.clone(),
         description: def.meta.description.clone(),
         tags: def.meta.tags.clone(),
+        builtin: def.meta.id.starts_with("__"),
     }
 }
 
@@ -48,6 +49,7 @@ pub struct ProcessorSummary {
     pub version: String,
     pub description: String,
     pub tags: Vec<String>,
+    pub builtin: bool,
 }
 
 #[tauri::command]
@@ -64,7 +66,8 @@ pub async fn list_processors(
         .map(processor_summary)
         .collect();
 
-    out.sort_by(|a, b| a.name.cmp(&b.name));
+    // Built-in processors always sort before user-installed ones.
+    out.sort_by(|a, b| b.builtin.cmp(&a.builtin).then(a.name.cmp(&b.name)));
     Ok(out)
 }
 
@@ -213,6 +216,10 @@ pub async fn uninstall_processor(
     app: AppHandle,
     processor_id: String,
 ) -> Result<(), String> {
+    if processor_id.starts_with("__") {
+        return Err("Built-in processors cannot be uninstalled".to_string());
+    }
+
     let mut procs = state
         .processors
         .lock()

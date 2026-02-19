@@ -5,6 +5,7 @@ import { usePipeline } from './hooks/usePipeline';
 import { useClaude } from './hooks/useClaude';
 import { usePaneLayout } from './hooks/usePaneLayout';
 import { useSettings } from './hooks/useSettings';
+import { useAnonymizerConfig } from './hooks/useAnonymizerConfig';
 import { AppContext } from './context/AppContext';
 import { getDumpstateMetadata, getSections, listAdbDevices } from './bridge/commands';
 import type { AdbDevice, DumpstateMetadata } from './bridge/types';
@@ -17,6 +18,7 @@ import './App.css';
 
 export default function App() {
   const { settings, updateSetting, resetSettings } = useSettings();
+  const anonymizerConfig = useAnonymizerConfig();
   const viewer = useLogViewer(settings.streamFrontendCacheMax);
   const pipeline = usePipeline();
   const claude = useClaude();
@@ -303,6 +305,7 @@ export default function App() {
             onUpdate={updateSetting}
             onReset={resetSettings}
             onClose={() => setShowSettings(false)}
+            anonymizerConfig={anonymizerConfig}
           />
         )}
 

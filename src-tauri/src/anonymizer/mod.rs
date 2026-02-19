@@ -1,7 +1,14 @@
+pub mod config;
 pub mod detectors;
 pub mod mapping;
 
-use detectors::{PiiDetector, PiiMatch, default_detectors};
+use config::{AnonymizerConfig, category_for_id};
+use detectors::{
+    AndroidIdDetector, ApiKeyDetector, BearerTokenDetector, CustomDetector, EmailDetector,
+    GaidDetector, ImeiDetector, Ipv4Detector, Ipv6Detector, JwtDetector, MacDetector,
+    PhoneDetector, PiiDetector, PiiMatch, SerialDetector, SessionIdDetector,
+    UrlCredentialsDetector, default_detectors,
+};
 use mapping::PiiMappings;
 
 // ---------------------------------------------------------------------------
@@ -27,6 +34,48 @@ impl LogAnonymizer {
 
     /// Build with a custom detector set.
     pub fn with_detectors(detectors: Vec<Box<dyn PiiDetector>>) -> Self {
+        Self {
+            detectors,
+            mappings: PiiMappings::new(),
+        }
+    }
+
+    /// Build with detectors selected by `AnonymizerConfig`.
+    pub fn from_config(config: &AnonymizerConfig) -> Self {
+        let mut detectors: Vec<Box<dyn PiiDetector>> = Vec::new();
+        for entry in &config.detectors {
+            if !entry.enabled {
+                continue;
+            }
+            // Push built-in struct for known IDs
+            match entry.id.as_str() {
+                "email" => detectors.push(Box::new(EmailDetector)),
+                "mac" => detectors.push(Box::new(MacDetector)),
+                "ipv4" => detectors.push(Box::new(Ipv4Detector)),
+                "ipv6" => detectors.push(Box::new(Ipv6Detector)),
+                "imei" => detectors.push(Box::new(ImeiDetector)),
+                "android_id" => detectors.push(Box::new(AndroidIdDetector)),
+                "serial" => detectors.push(Box::new(SerialDetector)),
+                "phone" => detectors.push(Box::new(PhoneDetector)),
+                "jwt" => detectors.push(Box::new(JwtDetector)),
+                "api_keys" => detectors.push(Box::new(ApiKeyDetector)),
+                "bearer_token" => detectors.push(Box::new(BearerTokenDetector)),
+                "gaid" => detectors.push(Box::new(GaidDetector)),
+                "session_id" => detectors.push(Box::new(SessionIdDetector)),
+                "url_credentials" => detectors.push(Box::new(UrlCredentialsDetector)),
+                _ => {} // user-defined entry — no built-in struct
+            }
+            // Add user-added (non-builtin) enabled patterns for this entry
+            for pattern in &entry.patterns {
+                if !pattern.builtin && pattern.enabled {
+                    if let Ok(det) =
+                        CustomDetector::with_category(&pattern.regex, category_for_id(&entry.id))
+                    {
+                        detectors.push(Box::new(det));
+                    }
+                }
+            }
+        }
         Self {
             detectors,
             mappings: PiiMappings::new(),

@@ -13,6 +13,8 @@ import type {
   DumpstateMetadata,
   SectionInfo,
   AdbDevice,
+  AnonymizerConfig,
+  AnonymizerTestResult,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -169,4 +171,24 @@ export function fetchRegistry(registryUrl?: string): Promise<RegistryEntry[]> {
 
 export function installFromRegistry(entry: RegistryEntry): Promise<ProcessorSummary> {
   return invoke('install_from_registry', { entry });
+}
+
+// ---------------------------------------------------------------------------
+// PII Anonymizer
+// ---------------------------------------------------------------------------
+
+export function getAnonymizerConfig(): Promise<AnonymizerConfig> {
+  return invoke('get_anonymizer_config');
+}
+
+export function setAnonymizerConfig(config: AnonymizerConfig): Promise<void> {
+  return invoke('set_anonymizer_config', { config });
+}
+
+export function testAnonymizer(text: string): Promise<AnonymizerTestResult> {
+  return invoke('test_anonymizer', { text });
+}
+
+export function getPiiMappings(sessionId: string): Promise<Record<string, string>> {
+  return invoke('get_pii_mappings', { sessionId });
 }

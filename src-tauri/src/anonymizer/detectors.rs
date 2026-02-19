@@ -16,6 +16,12 @@ pub enum PiiCategory {
     Imei,
     Serial,
     AndroidId,
+    Jwt,
+    ApiKey,
+    BearerToken,
+    Gaid,
+    SessionId,
+    UrlCredentials,
     Custom,
 }
 
@@ -30,6 +36,12 @@ impl PiiCategory {
             PiiCategory::Imei => "IMEI",
             PiiCategory::Serial => "SERIAL",
             PiiCategory::AndroidId => "AID",
+            PiiCategory::Jwt => "JWT",
+            PiiCategory::ApiKey => "KEY",
+            PiiCategory::BearerToken => "TOKEN",
+            PiiCategory::Gaid => "GAID",
+            PiiCategory::SessionId => "SESSION",
+            PiiCategory::UrlCredentials => "CRED",
             PiiCategory::Custom => "PII",
         }
     }
@@ -71,6 +83,16 @@ fn regex_matches(re: &Regex, text: &str, category: PiiCategory) -> Vec<PiiMatch>
             category,
             raw_value: m.as_str().to_string(),
         })
+        .collect()
+}
+
+fn capture_group1_matches(re: &Regex, text: &str, category: PiiCategory) -> Vec<PiiMatch> {
+    re.captures_iter(text)
+        .filter_map(|cap| cap.get(1).map(|m| PiiMatch {
+            range: m.start()..m.end(),
+            category,
+            raw_value: m.as_str().to_string(),
+        }))
         .collect()
 }
 
@@ -138,9 +160,6 @@ impl PiiDetector for Ipv6Detector {
     }
     fn find_all(&self, text: &str) -> Vec<PiiMatch> {
         let re = IPV6_RE.get_or_init(|| {
-            // Full form: 8 groups of 4 hex digits separated by colons.
-            // Compressed form: requires at least one hex group before "::".
-            // This avoids matching lone IPv4 port suffixes like ":8080".
             Regex::new(
                 r"(?i)\b(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}\b|\b[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*::(?:[0-9a-f]{1,4}:)*[0-9a-f]{1,4}\b|\b::[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*\b",
             )
@@ -174,7 +193,7 @@ impl PiiDetector for MacDetector {
 }
 
 // ---------------------------------------------------------------------------
-// Phone number detector
+// Phone number detector (tier3, off by default)
 // ---------------------------------------------------------------------------
 
 static PHONE_RE: OnceLock<Regex> = OnceLock::new();
@@ -228,19 +247,9 @@ impl PiiDetector for SerialDetector {
     }
     fn find_all(&self, text: &str) -> Vec<PiiMatch> {
         let re = SERIAL_RE.get_or_init(|| {
-            // "serial=XXXXXX" or "SN: XXXXXX" patterns; 6-20 alphanum chars
             Regex::new(r"(?i)(?:serial\s*[=:]\s*|SN[:\s])([A-Za-z0-9]{6,20})").unwrap()
         });
-        re.captures_iter(text)
-            .map(|cap| {
-                let m = cap.get(1).unwrap();
-                PiiMatch {
-                    range: m.start()..m.end(),
-                    category: PiiCategory::Serial,
-                    raw_value: m.as_str().to_string(),
-                }
-            })
-            .collect()
+        capture_group1_matches(re, text, PiiCategory::Serial)
     }
 }
 
@@ -258,10 +267,165 @@ impl PiiDetector for AndroidIdDetector {
     }
     fn find_all(&self, text: &str) -> Vec<PiiMatch> {
         let re = AID_RE.get_or_init(|| {
-            // Exactly 16 hex chars, word-boundary delimited
             Regex::new(r"\b[0-9a-fA-F]{16}\b").unwrap()
         });
         regex_matches(re, text, PiiCategory::AndroidId)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// JWT detector
+// ---------------------------------------------------------------------------
+
+static JWT_RE: OnceLock<Regex> = OnceLock::new();
+
+pub struct JwtDetector;
+
+impl PiiDetector for JwtDetector {
+    fn category(&self) -> PiiCategory {
+        PiiCategory::Jwt
+    }
+    fn quick_screen(&self, text: &str) -> bool {
+        text.contains("eyJ")
+    }
+    fn find_all(&self, text: &str) -> Vec<PiiMatch> {
+        let re = JWT_RE.get_or_init(|| {
+            Regex::new(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}=*").unwrap()
+        });
+        regex_matches(re, text, PiiCategory::Jwt)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// API key detector (AWS, GitHub, Stripe, Google, Slack)
+// ---------------------------------------------------------------------------
+
+static API_KEY_AWS_RE: OnceLock<Regex> = OnceLock::new();
+static API_KEY_GITHUB_RE: OnceLock<Regex> = OnceLock::new();
+static API_KEY_STRIPE_RE: OnceLock<Regex> = OnceLock::new();
+static API_KEY_GOOGLE_RE: OnceLock<Regex> = OnceLock::new();
+static API_KEY_SLACK_RE: OnceLock<Regex> = OnceLock::new();
+
+pub struct ApiKeyDetector;
+
+impl PiiDetector for ApiKeyDetector {
+    fn category(&self) -> PiiCategory {
+        PiiCategory::ApiKey
+    }
+    fn quick_screen(&self, text: &str) -> bool {
+        text.contains("AKIA")
+            || text.contains("ghp_")
+            || text.contains("sk_live")
+            || text.contains("sk_test")
+            || text.contains("AIza")
+            || text.contains("xox")
+    }
+    fn find_all(&self, text: &str) -> Vec<PiiMatch> {
+        let aws = API_KEY_AWS_RE.get_or_init(|| Regex::new(r"\bAKIA[0-9A-Z]{16}\b").unwrap());
+        let github = API_KEY_GITHUB_RE.get_or_init(|| Regex::new(r"\bghp_[0-9a-zA-Z]{36}\b").unwrap());
+        let stripe = API_KEY_STRIPE_RE.get_or_init(|| Regex::new(r"\bsk_(?:live|test)_[0-9a-zA-Z]{24,99}\b").unwrap());
+        let google = API_KEY_GOOGLE_RE.get_or_init(|| Regex::new(r"\bAIza[0-9A-Za-z\-_]{35}\b").unwrap());
+        let slack = API_KEY_SLACK_RE.get_or_init(|| Regex::new(r"\bxox[pboas]-[0-9a-zA-Z\-]{10,99}\b").unwrap());
+        let patterns: [&Regex; 5] = [aws, github, stripe, google, slack];
+        let mut matches = Vec::new();
+        for re in &patterns {
+            matches.extend(regex_matches(re, text, PiiCategory::ApiKey));
+        }
+        matches
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bearer token detector
+// ---------------------------------------------------------------------------
+
+static BEARER_RE: OnceLock<Regex> = OnceLock::new();
+
+pub struct BearerTokenDetector;
+
+impl PiiDetector for BearerTokenDetector {
+    fn category(&self) -> PiiCategory {
+        PiiCategory::BearerToken
+    }
+    fn quick_screen(&self, text: &str) -> bool {
+        text.to_ascii_lowercase().contains("bearer")
+    }
+    fn find_all(&self, text: &str) -> Vec<PiiMatch> {
+        let re = BEARER_RE.get_or_init(|| {
+            Regex::new(r"(?i)Bearer\s+[A-Za-z0-9\-_~+/]{32,}").unwrap()
+        });
+        regex_matches(re, text, PiiCategory::BearerToken)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Google Advertising ID detector
+// ---------------------------------------------------------------------------
+
+static GAID_RE: OnceLock<Regex> = OnceLock::new();
+
+pub struct GaidDetector;
+
+impl PiiDetector for GaidDetector {
+    fn category(&self) -> PiiCategory {
+        PiiCategory::Gaid
+    }
+    fn quick_screen(&self, text: &str) -> bool {
+        text.contains("gaid")
+            || text.contains("advertising_id")
+            || text.contains("google_ad_id")
+    }
+    fn find_all(&self, text: &str) -> Vec<PiiMatch> {
+        let re = GAID_RE.get_or_init(|| {
+            Regex::new(r"(?i)(?:gaid|advertising_id|google_ad_id)\s*[=:]\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})").unwrap()
+        });
+        capture_group1_matches(re, text, PiiCategory::Gaid)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Session ID / cookie detector
+// ---------------------------------------------------------------------------
+
+static SESSION_ID_RE: OnceLock<Regex> = OnceLock::new();
+
+pub struct SessionIdDetector;
+
+impl PiiDetector for SessionIdDetector {
+    fn category(&self) -> PiiCategory {
+        PiiCategory::SessionId
+    }
+    fn quick_screen(&self, text: &str) -> bool {
+        text.contains("session") || text.contains("jsessionid") || text.contains("phpsessid")
+    }
+    fn find_all(&self, text: &str) -> Vec<PiiMatch> {
+        let re = SESSION_ID_RE.get_or_init(|| {
+            Regex::new(r"(?i)(?:session_id|sessionid|jsessionid|phpsessid)\s*[=:]\s*([a-zA-Z0-9]{20,})").unwrap()
+        });
+        capture_group1_matches(re, text, PiiCategory::SessionId)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// URL credentials detector
+// ---------------------------------------------------------------------------
+
+static URL_CRED_RE: OnceLock<Regex> = OnceLock::new();
+
+pub struct UrlCredentialsDetector;
+
+impl PiiDetector for UrlCredentialsDetector {
+    fn category(&self) -> PiiCategory {
+        PiiCategory::UrlCredentials
+    }
+    fn quick_screen(&self, text: &str) -> bool {
+        text.contains("://") && text.contains('@')
+    }
+    fn find_all(&self, text: &str) -> Vec<PiiMatch> {
+        let re = URL_CRED_RE.get_or_init(|| {
+            Regex::new(r"(?i)(?:https?|postgres|mysql|mongodb|redis|ftp|smtp|amqp|s3)://[^\s:@/]+:[^\s:@/]+@[^\s/]+").unwrap()
+        });
+        regex_matches(re, text, PiiCategory::UrlCredentials)
     }
 }
 
@@ -271,22 +435,27 @@ impl PiiDetector for AndroidIdDetector {
 
 pub struct CustomDetector {
     regex: Regex,
+    category: PiiCategory,
 }
 
 impl CustomDetector {
     pub fn new(pattern: &str) -> Result<Self, String> {
+        Self::with_category(pattern, PiiCategory::Custom)
+    }
+
+    pub fn with_category(pattern: &str, category: PiiCategory) -> Result<Self, String> {
         Regex::new(pattern)
-            .map(|regex| Self { regex })
+            .map(|regex| Self { regex, category })
             .map_err(|e| e.to_string())
     }
 }
 
 impl PiiDetector for CustomDetector {
     fn category(&self) -> PiiCategory {
-        PiiCategory::Custom
+        self.category
     }
     fn find_all(&self, text: &str) -> Vec<PiiMatch> {
-        regex_matches(&self.regex, text, PiiCategory::Custom)
+        regex_matches(&self.regex, text, self.category)
     }
 }
 
@@ -297,12 +466,18 @@ impl PiiDetector for CustomDetector {
 pub fn default_detectors() -> Vec<Box<dyn PiiDetector>> {
     vec![
         Box::new(EmailDetector),
-        Box::new(MacDetector),       // before IPv4 — MAC is more specific
+        Box::new(MacDetector),              // MAC before IPv4 — more specific
         Box::new(Ipv4Detector),
         Box::new(Ipv6Detector),
         Box::new(ImeiDetector),
-        Box::new(AndroidIdDetector), // after IMEI (both hex-ish)
+        Box::new(AndroidIdDetector),        // after IMEI (both hex-ish)
         Box::new(SerialDetector),
-        // Phone is noisy — excluded from default set; callers can add if desired.
+        Box::new(BearerTokenDetector),      // keyword-anchored — before JWT
+        Box::new(JwtDetector),
+        Box::new(ApiKeyDetector),
+        Box::new(GaidDetector),
+        Box::new(SessionIdDetector),
+        Box::new(UrlCredentialsDetector),
+        // PhoneDetector excluded — off by default (tier3)
     ]
 }

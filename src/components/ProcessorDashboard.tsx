@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { PipelineState } from '../hooks/usePipeline';
 import type { MatchedLine } from '../bridge/types';
-import { getMatchedLines } from '../bridge/commands';
+import { getMatchedLines, getPiiMappings } from '../bridge/commands';
 import { useChartData } from '../hooks/useChartData';
 import VarInspector from './VarInspector';
 import ProcessorChart from './ProcessorChart';
+import PiiTestPane from './PiiTestPane';
 
 interface Props {
   pipeline: PipelineState;
@@ -13,7 +14,7 @@ interface Props {
   onJumpToLine?: (lineNum: number) => void;
 }
 
-type Tab = 'vars' | 'charts' | 'matches';
+type Tab = 'vars' | 'charts' | 'matches' | 'test';
 
 export default function ProcessorDashboard({
   pipeline,
@@ -25,6 +26,7 @@ export default function ProcessorDashboard({
   const [matchedLines, setMatchedLines] = useState<MatchedLine[]>([]);
   const [matchesLoading, setMatchesLoading] = useState(false);
   const [matchSearch, setMatchSearch] = useState('');
+  const [piiMappings, setPiiMappings] = useState<Record<string, string>>({});
   const { fetchCharts, getProcessorCharts, loading: chartsLoading } = useChartData();
 
   const activeProcessors = Array.from(pipeline.activeProcessorIds)
@@ -63,6 +65,14 @@ export default function ProcessorDashboard({
       fetchMatches(sessionId, selected);
     }
   }, [tab, selected, sessionId, runCount, fetchMatches]);
+
+  useEffect(() => {
+    if (selected === '__pii_anonymizer' && tab === 'vars' && sessionId && runCount > 0) {
+      getPiiMappings(sessionId)
+        .then(setPiiMappings)
+        .catch(() => setPiiMappings({}));
+    }
+  }, [selected, tab, sessionId, runCount]);
 
   if (activeProcessors.length === 0) {
     return (
@@ -115,6 +125,14 @@ export default function ProcessorDashboard({
             >
               Matches
             </button>
+            {selected === '__pii_anonymizer' && (
+              <button
+                className={`proc-subtab${tab === 'test' ? ' proc-subtab-active' : ''}`}
+                onClick={() => setTab('test')}
+              >
+                Test
+              </button>
+            )}
           </div>
 
           {tab === 'vars' && (
@@ -128,6 +146,30 @@ export default function ProcessorDashboard({
                   getVars={pipeline.getVars}
                   refreshKey={runCount}
                 />
+              )}
+              {selected === '__pii_anonymizer' && (
+                <div className="pii-mapping-section">
+                  <div className="pii-mapping-title">Token Mapping</div>
+                  {Object.keys(piiMappings).length === 0 ? (
+                    <div className="proc-dash-log-hint">
+                      Run the pipeline with "Anonymize PII" enabled to see token mappings.
+                    </div>
+                  ) : (
+                    <table className="pii-mapping-table">
+                      <thead>
+                        <tr><th>Token</th><th>Original Value</th></tr>
+                      </thead>
+                      <tbody>
+                        {Object.entries(piiMappings).map(([token, original]) => (
+                          <tr key={token}>
+                            <td><code className="pii-token-code">{token}</code></td>
+                            <td className="pii-original-value">{original}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
               )}
             </div>
           )}
@@ -147,6 +189,12 @@ export default function ProcessorDashboard({
                   onPointClick={onJumpToLine}
                 />
               ))}
+            </div>
+          )}
+
+          {tab === 'test' && (
+            <div className="proc-dash-test">
+              <PiiTestPane />
             </div>
           )}
 

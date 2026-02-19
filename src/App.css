@@ -611,6 +611,34 @@ mark {
   border-bottom: 1px solid var(--border);
 }
 
+/* ── Settings tab bar (sits between modal header and body) ── */
+.settings-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  padding: 0 12px;
+  background: var(--bg-primary);
+  flex-shrink: 0;
+}
+.settings-tab {
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.settings-tab:hover {
+  color: var(--text-primary);
+}
+.settings-tab-active {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent, #58a6ff);
+}
+
 .modal-title {
   font-size: 13px;
   font-weight: 600;
@@ -2528,4 +2556,486 @@ details[open] > summary::before {
   gap: 8px;
   padding: 10px 16px;
   border-top: 1px solid var(--border);
+}
+
+/* ── PII Settings ── */
+.settings-row-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 0;
+  padding: 4px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-row-toggle:last-of-type {
+  border-bottom: none;
+}
+.settings-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  width: 100%;
+}
+.settings-toggle-text {
+  font-size: 13px;
+  color: var(--text);
+  min-width: 140px;
+}
+.settings-toggle-hint {
+  font-size: 11px;
+  color: var(--text-dimmed);
+  font-family: monospace;
+}
+.settings-subsection-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin: 8px 0 4px;
+}
+.settings-custom-pattern-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-pattern-name {
+  font-size: 13px;
+  color: var(--text);
+  min-width: 100px;
+}
+.settings-pattern-regex {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-raised);
+  padding: 2px 6px;
+  border-radius: 3px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-add-pattern-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px;
+  background: var(--bg-raised);
+  border-radius: 6px;
+}
+.settings-pattern-input {
+  font-family: monospace;
+}
+
+/* ── PII Test Pane ── */
+.pii-test-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  height: 100%;
+  overflow-y: auto;
+}
+.pii-test-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.pii-test-input {
+  width: 100%;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 8px;
+  font-family: monospace;
+  font-size: 12px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+.pii-test-actions {
+  display: flex;
+  gap: 8px;
+}
+.pii-test-error {
+  color: var(--danger);
+  font-size: 12px;
+}
+.pii-test-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pii-test-result-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.pii-test-result-box {
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  word-break: break-all;
+}
+.pii-test-annotated-text {
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.pii-test-token {
+  border-radius: 3px;
+  padding: 1px 3px;
+  font-weight: 600;
+  cursor: help;
+}
+.pii-test-no-matches {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+.pii-test-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.pii-test-table th {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.pii-test-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.pii-test-token-code {
+  font-weight: 600;
+}
+.pii-test-original {
+  color: var(--text-muted);
+}
+
+/* ── PII Mapping Table (in ProcessorDashboard vars tab) ── */
+.pii-mapping-section {
+  margin-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 12px;
+}
+.pii-mapping-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.pii-mapping-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.pii-mapping-table th {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.pii-mapping-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.pii-token-code {
+  font-family: monospace;
+  color: var(--accent);
+  font-size: 11px;
+}
+.pii-original-value {
+  color: var(--text-muted);
+  font-family: monospace;
+  font-size: 11px;
+  word-break: break-all;
+}
+
+/* PII tier groups */
+.pii-tier-group {
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.pii-tier-group-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--bg-overlay);
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Detector cards */
+.pii-detector-card {
+  border-bottom: 1px solid var(--border);
+}
+.pii-detector-card:last-child {
+  border-bottom: none;
+}
+
+.pii-detector-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: default;
+}
+
+.pii-detector-label {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.pii-fp-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+.pii-fp-badge-tier1 {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+
+.pii-fp-badge-tier2 {
+  background: rgba(234, 179, 8, 0.15);
+  color: #eab308;
+}
+
+.pii-fp-badge-tier3 {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.pii-detector-expand-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pii-detector-expand-btn:hover {
+  background: var(--bg-overlay);
+  color: var(--text);
+}
+
+/* Pattern list */
+.pii-pattern-list {
+  background: var(--bg-overlay);
+  border-top: 1px solid var(--border);
+  padding: 8px 12px 8px 32px;
+}
+
+.pii-pattern-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.pii-pattern-builtin-icon {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.pii-pattern-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.pii-pattern-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-bottom: 2px;
+}
+
+.pii-pattern-regex {
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--text);
+  background: var(--bg-raised);
+  border-radius: 3px;
+  padding: 1px 4px;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.pii-pattern-del-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.pii-pattern-del-btn:hover {
+  color: #ef4444;
+}
+
+/* Add pattern form */
+.pii-add-pattern-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.pii-add-pattern-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.pii-add-pattern-input {
+  flex: 1;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 8px;
+}
+.pii-add-pattern-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.pii-add-pattern-error {
+  font-size: 11px;
+  color: #ef4444;
+}
+
+.pii-add-btn {
+  background: var(--accent);
+  border: none;
+  border-radius: 4px;
+  color: white;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+.pii-add-btn:hover {
+  opacity: 0.85;
+}
+.pii-add-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Add pattern toggle link */
+.pii-add-pattern-toggle {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 0;
+  text-align: left;
+}
+
+/* Custom detectors section */
+.pii-custom-section {
+  margin-top: 16px;
+}
+
+.pii-custom-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.pii-custom-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 6px;
+}
+
+.pii-custom-entry-label {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.pii-custom-del-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0;
+}
+.pii-custom-del-btn:hover {
+  color: #ef4444;
+}
+
+.pii-add-custom-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  margin-top: 8px;
+}
+.proc-dash-test {
+  height: 100%;
+  overflow-y: auto;
+}
+
+/* ── Processor builtin badge ── */
+.proc-item-builtin-badge {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  background: #1f3a5f;
+  border-radius: 3px;
+  padding: 1px 5px;
+  margin-left: 4px;
 }

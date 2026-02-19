@@ -112,7 +112,11 @@ pub async fn run_pipeline(
 
     let parser = LogcatParser;
     let anon = if anonymize {
-        Some(LogAnonymizer::new())
+        let config = {
+            let c = state.anonymizer_config.lock().map_err(|_| "Anonymizer config lock poisoned")?;
+            c.clone()
+        };
+        Some(LogAnonymizer::from_config(&config))
     } else {
         None
     };
@@ -171,6 +175,16 @@ pub async fn run_pipeline(
                 );
                 let _ = i;
             }
+        }
+    }
+
+    // ── Store PII mappings for the session (token → original) for display ────
+    if let Some(ref a) = anon {
+        let forward = a.mappings.all_mappings(); // raw_value → token
+        let inverted: HashMap<String, String> =
+            forward.into_iter().map(|(raw, tok)| (tok, raw)).collect();
+        if let Ok(mut pm) = state.pii_mappings.lock() {
+            pm.insert(session_id.clone(), inverted);
         }
     }
 

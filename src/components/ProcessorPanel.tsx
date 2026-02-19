@@ -112,7 +112,7 @@ export default function ProcessorPanel({ pipeline, sessionId }: Props) {
           const active = pipeline.activeProcessorIds.has(p.id);
           const prog = pipeline.progress[p.id];
           return (
-            <div key={p.id} className={`proc-item${active ? ' proc-item-active' : ''}`}>
+            <div key={p.id} className={`proc-item${active ? ' proc-item-active' : ''}${p.builtin ? ' proc-item-builtin' : ''}`}>
               <label className="proc-item-check">
                 <input
                   type="checkbox"
@@ -120,7 +120,8 @@ export default function ProcessorPanel({ pipeline, sessionId }: Props) {
                   onChange={() => pipeline.toggleProcessor(p.id)}
                 />
                 <span className="proc-item-name">{p.name}</span>
-                <span className="proc-item-version">v{p.version}</span>
+                {p.builtin && <span className="proc-item-builtin-badge">built-in</span>}
+                {!p.builtin && <span className="proc-item-version">v{p.version}</span>}
               </label>
               {p.tags.length > 0 && (
                 <div className="proc-tags">
@@ -135,13 +136,15 @@ export default function ProcessorPanel({ pipeline, sessionId }: Props) {
                   />
                 </div>
               )}
-              <button
-                className="proc-remove"
-                title="Uninstall processor"
-                onClick={() => pipeline.removeProcessor(p.id)}
-              >
-                ×
-              </button>
+              {!p.builtin && (
+                <button
+                  className="proc-remove"
+                  title="Uninstall processor"
+                  onClick={() => pipeline.removeProcessor(p.id)}
+                >
+                  ×
+                </button>
+              )}
             </div>
           );
         })}

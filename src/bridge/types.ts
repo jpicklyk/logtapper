@@ -173,6 +173,44 @@ export interface ProcessorSummary {
   version: string;
   description: string;
   tags: string[];
+  builtin: boolean;  // true for built-in processors (id starts with __)
+}
+
+// ---------------------------------------------------------------------------
+// PII Anonymizer types
+// ---------------------------------------------------------------------------
+
+export interface PatternEntry {
+  label: string;
+  regex: string;
+  builtin: boolean;
+  enabled: boolean;
+}
+
+export interface DetectorEntry {
+  id: string;
+  label: string;
+  tier: 'tier1' | 'tier2' | 'tier3';
+  fpHint: string;
+  enabled: boolean;
+  patterns: PatternEntry[];
+}
+
+export interface AnonymizerConfig {
+  detectors: DetectorEntry[];
+}
+
+export interface PiiReplacement {
+  token: string;
+  original: string;
+  category: string;
+  start: number;
+  end: number;
+}
+
+export interface AnonymizerTestResult {
+  anonymized: string;
+  replacements: PiiReplacement[];
 }
 
 export interface PipelineRunSummary {

@@ -7,6 +7,7 @@ pub mod processors;
 pub mod scripting;
 
 use commands::AppState;
+use processors::schema::ProcessorDef;
 use tauri::Manager;
 
 fn load_persisted_processors(state: &AppState, proc_dir: &std::path::Path) {
@@ -48,9 +49,30 @@ pub fn run() {
             // Load persisted processors from app data directory.
             let data_dir = app.path().app_data_dir()?;
             let proc_dir = data_dir.join("processors");
+            let state = app.state::<AppState>();
             if proc_dir.exists() {
-                let state = app.state::<AppState>();
                 load_persisted_processors(&state, &proc_dir);
+            }
+
+            // Load anonymizer config from disk
+            let config_path = data_dir.join("anonymizer_config.json");
+            if let Ok(json) = std::fs::read_to_string(&config_path) {
+                if let Ok(cfg) = serde_json::from_str::<crate::anonymizer::config::AnonymizerConfig>(&json) {
+                    if let Ok(mut stored) = state.anonymizer_config.lock() {
+                        *stored = cfg;
+                    }
+                }
+            }
+
+            // Load built-in PII Anonymizer processor
+            const PII_ANONYMIZER_YAML: &str = include_str!("processors/builtin/pii_anonymizer.yaml");
+            match ProcessorDef::from_yaml(PII_ANONYMIZER_YAML) {
+                Ok(def) => {
+                    if let Ok(mut procs) = state.processors.lock() {
+                        procs.insert(def.meta.id.clone(), def);
+                    }
+                }
+                Err(e) => eprintln!("Failed to load built-in PII Anonymizer: {e}"),
             }
 
             Ok(())
@@ -86,6 +108,11 @@ pub fn run() {
             // Phase 4 — GitHub registry
             commands::processors::fetch_registry,
             commands::processors::install_from_registry,
+            // Phase 5 — PII Anonymizer
+            commands::anonymizer::get_anonymizer_config,
+            commands::anonymizer::set_anonymizer_config,
+            commands::anonymizer::test_anonymizer,
+            commands::anonymizer::get_pii_mappings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

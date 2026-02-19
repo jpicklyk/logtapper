@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use crate::anonymizer::config::AnonymizerConfig;
 use crate::core::session::AnalysisSession;
 use crate::processors::interpreter::{ContinuousRunState, RunResult};
 use crate::processors::schema::ProcessorDef;
 
 pub mod adb;
+pub mod anonymizer;
 pub mod charts;
 pub mod claude;
 pub mod files;
@@ -29,6 +31,10 @@ pub struct AppState {
     pub stream_tasks: Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
     /// Continuous processor state for live streaming (sessionId → processorId → state).
     pub stream_processor_state: Mutex<HashMap<String, HashMap<String, ContinuousRunState>>>,
+    /// Global anonymizer configuration (persisted to disk).
+    pub anonymizer_config: Mutex<AnonymizerConfig>,
+    /// PII token→original mappings from the last pipeline run per session.
+    pub pii_mappings: Mutex<HashMap<String, HashMap<String, String>>>,
 }
 
 impl Default for AppState {
@@ -51,6 +57,8 @@ impl AppState {
                 .expect("Failed to create HTTP client"),
             stream_tasks: Mutex::new(HashMap::new()),
             stream_processor_state: Mutex::new(HashMap::new()),
+            anonymizer_config: Mutex::new(AnonymizerConfig::with_defaults()),
+            pii_mappings: Mutex::new(HashMap::new()),
         }
     }
 }
