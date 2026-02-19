@@ -102,6 +102,43 @@ fn capture_group1_matches(re: &Regex, text: &str, category: PiiCategory) -> Vec<
 
 static EMAIL_RE: OnceLock<Regex> = OnceLock::new();
 
+/// File extensions that appear as TLDs in Android logs but are never real email TLDs.
+/// Used to post-filter `EmailDetector` matches.
+const EMAIL_EXT_BLOCKLIST: &[&str] = &[
+    "apk", "apks", "xapk", "apex",   // Android package formats
+    "so", "odex", "vdex", "elf",      // native / compiled
+    "jar", "aar", "dex",              // JVM bytecode
+    "exe", "dll", "bin", "lib",       // generic binaries
+    "drpt", "zip", "gz", "tar",       // data / archive
+];
+
+/// Returns true if the regex-matched "email" is actually an Android build artifact.
+///
+/// Two checks (both needed because Android logs produce two distinct FP patterns):
+/// 1. TLD is a known file extension (e.g. `Foo@Bar.apk`, `lib@service.jar`).
+/// 2. First domain label is a reverse-domain prefix (`com`, `org`, `net`, `edu`, `gov`).
+///    Real MX records never start with these; Android package names always do
+///    (e.g. `apex@com.android.appsearch`).
+fn is_android_artifact(m: &str) -> bool {
+    // Check 1: file-extension TLD
+    if let Some(dot) = m.rfind('.') {
+        let tld = m[dot + 1..].to_ascii_lowercase();
+        if EMAIL_EXT_BLOCKLIST.contains(&tld.as_str()) {
+            return true;
+        }
+    }
+    // Check 2: reverse-domain package prefix
+    if let Some(at) = m.find('@') {
+        let first_label = m[at + 1..].split('.').next().unwrap_or("");
+        const REV_PREFIXES: &[&str] = &["com", "org", "net", "edu", "gov"];
+        let fl = first_label.to_ascii_lowercase();
+        if REV_PREFIXES.contains(&fl.as_str()) {
+            return true;
+        }
+    }
+    false
+}
+
 pub struct EmailDetector;
 
 impl PiiDetector for EmailDetector {
@@ -112,13 +149,22 @@ impl PiiDetector for EmailDetector {
         text.contains('@')
     }
     fn find_all(&self, text: &str) -> Vec<PiiMatch> {
-        // RFC 5321 dot-atom format (ASCII only). Requires a letters-only TLD (2-10 chars)
-        // to eliminate false positives like version numbers (e.g. "foo@1.2.3").
-        // \w is avoided intentionally — it matches Unicode word chars, causing false matches.
+        // RFC 5321 dot-atom format (ASCII only).
+        // First domain label requires a letter start (`[a-zA-Z]`) to reject version-number
+        // domains like `foo@1.3-service.coral` or `lib@86911.drpt`.
+        // Post-filtered by `is_android_artifact()` to remove file-extension TLDs and
+        // reverse-domain Android package names that survive the regex.
         let re = EMAIL_RE.get_or_init(|| {
-            Regex::new(r"\b[a-zA-Z0-9][a-zA-Z0-9._%+\-]{0,62}@[a-zA-Z0-9\-]+(?:\.[a-zA-Z0-9\-]+)*\.[a-zA-Z]{2,10}\b").unwrap()
+            Regex::new(r"\b[a-zA-Z0-9][a-zA-Z0-9._%+\-]{0,62}@[a-zA-Z][a-zA-Z0-9\-]*(?:\.[a-zA-Z0-9\-]+)*\.[a-zA-Z]{2,10}\b").unwrap()
         });
-        regex_matches(re, text, PiiCategory::Email)
+        re.find_iter(text)
+            .filter(|m| !is_android_artifact(m.as_str()))
+            .map(|m| PiiMatch {
+                range: m.start()..m.end(),
+                category: PiiCategory::Email,
+                raw_value: m.as_str().to_string(),
+            })
+            .collect()
     }
 }
 

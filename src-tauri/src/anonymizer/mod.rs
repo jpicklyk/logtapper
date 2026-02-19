@@ -224,4 +224,51 @@ mod tests {
         assert_eq!(out, text);
         assert!(spans.is_empty());
     }
+
+    /// All 12 patterns observed as email false positives in real Android logs.
+    #[test]
+    fn no_email_false_positives_from_android_logs() {
+        let anon = LogAnonymizer::new();
+        let cases = [
+            "SettingsProvider@SettingsProvider.apk",
+            "CallLogBackup@CallLogBackup.apk",
+            "apex@com.android.appsearch",
+            "dump_report_55@86911.drpt",
+            "apex@com.samsung.android.shell",
+            "javalib@service-uwb.jar",
+            "javalib@service-lifeguard.jar",
+            "DualOutFocusViewer_S.apk@classes.dex",
+            "android.hardware.usb@1.3-service.coral",
+            "android.hardware.graphics.mapper@2.1.so",
+            "androidx.work.systemjobscheduler@com.google.android",
+            "android.hardware.sensors@2.0-service.multihal",
+        ];
+        for &case in &cases {
+            let (out, spans) = anon.anonymize(case);
+            assert!(
+                spans.is_empty(),
+                "Email false positive on: {case}\n  became: {out}"
+            );
+        }
+    }
+
+    /// Real email addresses must still be detected.
+    #[test]
+    fn email_true_positives_still_work() {
+        let anon = LogAnonymizer::new();
+        let cases = [
+            "user@example.com",
+            "user@sub.example.co.uk",
+            "report@company.io",
+            "alert@service.dev",
+            "no-reply@mail.example.org",
+        ];
+        for &case in &cases {
+            let (out, _spans) = anon.anonymize(case);
+            assert!(
+                !out.contains('@'),
+                "Email true positive missed: {case}"
+            );
+        }
+    }
 }
