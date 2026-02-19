@@ -271,4 +271,117 @@ mod tests {
             );
         }
     }
+
+    /// Java class-reference patterns (Class@Class.method) must not be treated as emails.
+    /// EAP-SIM anonymous NAI must not be treated as an email.
+    #[test]
+    fn no_email_false_positives_java_and_eap() {
+        let anon = LogAnonymizer::new();
+        let cases = [
+            "Auth@TokenRepository.init",
+            "Auth@RestClientAccessTokenManager.initialize",
+            "DomainLayer@ExperienceMigration.load",
+            "DomainRepo@LocationDataSource.init",
+            "anonymous@samsung.openroaming.net",
+        ];
+        for &case in &cases {
+            let (out, spans) = anon.anonymize(case);
+            assert!(
+                spans.is_empty(),
+                "Email false positive on: {case}\n  became: {out}"
+            );
+        }
+    }
+
+    /// Version strings with leading-zero octets must not be treated as IPv4 addresses.
+    #[test]
+    fn no_ipv4_false_positives_version_strings() {
+        let anon = LogAnonymizer::new();
+        let cases = [
+            "15.0.00.15",
+            "01.02.10.38",
+            "026.4.00.00",
+            "08.04.2.00",
+            "3.1.03.16",
+            "14.1.00.71",
+            "2.5.01.2",
+            "4.0.04.23",
+        ];
+        for &case in &cases {
+            let (_, spans) = anon.anonymize(case);
+            let ipv4_hits: Vec<_> = spans
+                .iter()
+                .filter(|_| true) // any span means the whole string was replaced
+                .collect();
+            // The string should produce 0 or 0 IP spans.
+            // We check by confirming the output still contains the original text
+            // (i.e. no replacement happened for the IP detector specifically).
+            let (out, _) = anon.anonymize(case);
+            assert!(
+                !out.contains("<IPv4-"),
+                "IPv4 false positive on version string: {case}\n  became: {out}"
+            );
+            let _ = ipv4_hits;
+        }
+    }
+
+    /// Standard IPv4 addresses (no leading zeros) must still be detected.
+    #[test]
+    fn ipv4_true_positives_still_work() {
+        let anon = LogAnonymizer::new();
+        let cases = [
+            ("192.168.1.1", "private"),
+            ("10.0.0.1", "private"),
+            ("8.8.8.8", "dns"),
+            ("127.0.0.1", "loopback"),
+            ("0.0.0.0", "any"),
+            ("255.255.255.255", "broadcast"),
+        ];
+        for &(ip, label) in &cases {
+            let (out, _spans) = anon.anonymize(ip);
+            assert!(
+                out.contains("<IPv4-"),
+                "IPv4 true positive missed ({label}): {ip}"
+            );
+        }
+    }
+
+    /// 64-bit memory addresses (many leading zeros) must not be treated as Android IDs.
+    #[test]
+    fn no_aid_false_positives_memory_addresses() {
+        let anon = LogAnonymizer::new();
+        let cases = [
+            "000000000001b184",
+            "0000000000226a38",
+            "000000000001056c",
+            "00000000000877e0",
+            "0000000000000000",
+        ];
+        for &case in &cases {
+            let (out, _spans) = anon.anonymize(case);
+            assert!(
+                !out.contains("<AID-"),
+                "AID false positive on memory address: {case}\n  became: {out}"
+            );
+        }
+    }
+
+    /// Random-looking 16-char hex values (real Android IDs) must still be detected.
+    #[test]
+    fn aid_true_positives_still_work() {
+        let anon = LogAnonymizer::new();
+        let cases = [
+            "7afc833662d63194",
+            "8938bd824975bfb2",
+            "d384dae7306a9a75",
+            "3000d44e908d6011",
+        ];
+        for &case in &cases {
+            let (out, _spans) = anon.anonymize(case);
+            assert!(
+                out.contains("<AID-"),
+                "AID true positive missed: {case}"
+            );
+        }
+    }
 }

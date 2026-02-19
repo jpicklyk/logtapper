@@ -112,27 +112,39 @@ const EMAIL_EXT_BLOCKLIST: &[&str] = &[
     "drpt", "zip", "gz", "tar",       // data / archive
 ];
 
-/// Returns true if the regex-matched "email" is actually an Android build artifact.
+/// Returns true if the regex-matched "email" is actually an Android artifact or
+/// a well-known network-auth identifier rather than a real email address.
 ///
-/// Two checks (both needed because Android logs produce two distinct FP patterns):
-/// 1. TLD is a known file extension (e.g. `Foo@Bar.apk`, `lib@service.jar`).
-/// 2. First domain label is a reverse-domain prefix (`com`, `org`, `net`, `edu`, `gov`).
+/// Three checks (the quick_screen already handles Java class refs and numeric
+/// first-char domains, so these cover the remaining FP categories):
+/// 1. TLD is a known file/binary extension (`Foo@Bar.apk`, `lib@service.jar`).
+/// 2. Local part is a known non-PII network-auth identifier (`anonymous`).
+///    Used in EAP-SIM/PEAP/802.1X Wi-Fi roaming; never a real user address.
+/// 3. First domain label is a reverse-domain prefix (`com`, `org`, etc.).
 ///    Real MX records never start with these; Android package names always do
 ///    (e.g. `apex@com.android.appsearch`).
 fn is_android_artifact(m: &str) -> bool {
     // Check 1: file-extension TLD
     if let Some(dot) = m.rfind('.') {
-        let tld = m[dot + 1..].to_ascii_lowercase();
-        if EMAIL_EXT_BLOCKLIST.contains(&tld.as_str()) {
+        let tld = &m[dot + 1..];
+        if EMAIL_EXT_BLOCKLIST.iter().any(|&ext| tld.eq_ignore_ascii_case(ext)) {
             return true;
         }
     }
-    // Check 2: reverse-domain package prefix
     if let Some(at) = m.find('@') {
-        let first_label = m[at + 1..].split('.').next().unwrap_or("");
+        let local = &m[..at];
+        let domain = &m[at + 1..];
+        let first_label = domain.split('.').next().unwrap_or("");
+
+        // Check 2: known non-PII local parts
+        const ANON_LOCAL: &[&str] = &["anonymous"];
+        if ANON_LOCAL.iter().any(|&a| local.eq_ignore_ascii_case(a)) {
+            return true;
+        }
+
+        // Check 3: reverse-domain package prefix
         const REV_PREFIXES: &[&str] = &["com", "org", "net", "edu", "gov"];
-        let fl = first_label.to_ascii_lowercase();
-        if REV_PREFIXES.contains(&fl.as_str()) {
+        if REV_PREFIXES.iter().any(|&p| first_label.eq_ignore_ascii_case(p)) {
             return true;
         }
     }
@@ -146,14 +158,20 @@ impl PiiDetector for EmailDetector {
         PiiCategory::Email
     }
     fn quick_screen(&self, text: &str) -> bool {
-        text.contains('@')
+        // The character immediately after '@' must be an ASCII lowercase letter.
+        // Real email hostnames are lowercase by universal convention; Java class
+        // references (Foo@Bar.method) and numeric domains (foo@1.2.3) fail this
+        // check before the full regex even runs.
+        text.as_bytes()
+            .windows(2)
+            .any(|w| w[0] == b'@' && w[1].is_ascii_lowercase())
     }
     fn find_all(&self, text: &str) -> Vec<PiiMatch> {
         // RFC 5321 dot-atom format (ASCII only).
         // First domain label requires a letter start (`[a-zA-Z]`) to reject version-number
         // domains like `foo@1.3-service.coral` or `lib@86911.drpt`.
-        // Post-filtered by `is_android_artifact()` to remove file-extension TLDs and
-        // reverse-domain Android package names that survive the regex.
+        // Post-filtered by `is_android_artifact()` to remove file-extension TLDs,
+        // reverse-domain Android package names, and known network-auth local parts.
         let re = EMAIL_RE.get_or_init(|| {
             Regex::new(r"\b[a-zA-Z0-9][a-zA-Z0-9._%+\-]{0,62}@[a-zA-Z][a-zA-Z0-9\-]*(?:\.[a-zA-Z0-9\-]+)*\.[a-zA-Z]{2,10}\b").unwrap()
         });
@@ -188,7 +206,11 @@ impl PiiDetector for Ipv4Detector {
     }
     fn find_all(&self, text: &str) -> Vec<PiiMatch> {
         let re = IPV4_RE.get_or_init(|| {
-            Regex::new(r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b")
+            // Each octet: 0-255 without leading zeros.
+            // Old pattern [01]?\d\d? allowed "01", "00", "026" etc. — common in Android
+            // version strings (e.g. "15.0.00.15", "3.1.03.16", "01.02.10.38").
+            // New pattern: 250-255 | 200-249 | 100-199 | 10-99 | 0-9
+            Regex::new(r"\b(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\b")
                 .unwrap()
         });
         regex_matches(re, text, PiiCategory::Ipv4)
@@ -341,7 +363,20 @@ impl PiiDetector for AndroidIdDetector {
         let re = AID_RE.get_or_init(|| {
             Regex::new(r"\b[0-9a-fA-F]{16}\b").unwrap()
         });
-        regex_matches(re, text, PiiCategory::AndroidId)
+        re.find_iter(text)
+            .filter(|m| {
+                // 64-bit memory addresses in Android logs are padded with leading zeros
+                // (e.g. "000000000001b184" = 0x1b184). A real Android ID is a random
+                // 64-bit value and should have at most ~8 zero nybbles on average.
+                // Reject values with > 8 zeros out of 16 chars.
+                m.as_str().bytes().filter(|&b| b == b'0').count() <= 8
+            })
+            .map(|m| PiiMatch {
+                range: m.start()..m.end(),
+                category: PiiCategory::AndroidId,
+                raw_value: m.as_str().to_string(),
+            })
+            .collect()
     }
 }
 

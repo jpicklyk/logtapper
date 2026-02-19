@@ -97,8 +97,8 @@ fn default_detector_entries() -> Vec<DetectorEntry> {
             fp_hint: "<2%".to_string(),
             enabled: true,
             patterns: vec![p(
-                "IPv4 (dotted decimal)",
-                r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b",
+                "IPv4 (dotted decimal, no leading zeros)",
+                r"\b(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\b",
             )],
         },
         DetectorEntry {
