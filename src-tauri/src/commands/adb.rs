@@ -272,6 +272,68 @@ pub async fn stop_adb_stream(
 }
 
 // ---------------------------------------------------------------------------
+// update_stream_processors
+// ---------------------------------------------------------------------------
+
+/// Update the set of active processors for a running ADB stream.
+/// Called by the frontend whenever the user toggles processors during streaming.
+/// New processors start fresh at the current stream position.
+/// Removed processors have their state dropped.
+#[tauri::command]
+pub async fn update_stream_processors(
+    state: State<'_, AppState>,
+    session_id: String,
+    processor_ids: Vec<String>,
+) -> Result<(), String> {
+    // Get the current total_lines so new processors are seeded from the right position.
+    let current_total = {
+        let sessions = state
+            .sessions
+            .lock()
+            .map_err(|_| "Session lock poisoned")?;
+        sessions
+            .get(&session_id)
+            .and_then(|s| s.primary_source())
+            .map(|src| src.total_lines())
+            .unwrap_or(0)
+    };
+
+    // Clone the defs we need for any new processors.
+    let new_proc_defs: HashMap<String, ProcessorDef> = {
+        let procs = state
+            .processors
+            .lock()
+            .map_err(|_| "Processor lock poisoned")?;
+        processor_ids
+            .iter()
+            .filter_map(|id| procs.get(id).map(|d| (id.clone(), d.clone())))
+            .collect()
+    };
+
+    let mut sp_state = state
+        .stream_processor_state
+        .lock()
+        .map_err(|_| "Stream processor state lock poisoned")?;
+
+    let inner = sp_state.entry(session_id.clone()).or_default();
+
+    // Remove processors no longer in the requested set.
+    inner.retain(|id, _| processor_ids.contains(id));
+
+    // Add new processors (those not already tracked) with fresh state.
+    for proc_id in &processor_ids {
+        if !inner.contains_key(proc_id.as_str()) {
+            if let Some(def) = new_proc_defs.get(proc_id) {
+                let run = ProcessorRun::new(def);
+                inner.insert(proc_id.clone(), run.into_continuous_state(current_total));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // get_package_pids
 // ---------------------------------------------------------------------------
 

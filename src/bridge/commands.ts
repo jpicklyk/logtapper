@@ -43,6 +43,13 @@ export function stopAdbStream(sessionId: string): Promise<void> {
   return invoke('stop_adb_stream', { sessionId });
 }
 
+export function updateStreamProcessors(
+  sessionId: string,
+  processorIds: string[],
+): Promise<void> {
+  return invoke('update_stream_processors', { sessionId, processorIds });
+}
+
 export function getPackagePids(
   deviceSerial: string,
   packageName: string,

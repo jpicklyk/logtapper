@@ -7,7 +7,7 @@ import { usePaneLayout } from './hooks/usePaneLayout';
 import { useSettings } from './hooks/useSettings';
 import { useAnonymizerConfig } from './hooks/useAnonymizerConfig';
 import { AppContext } from './context/AppContext';
-import { getDumpstateMetadata, getSections, listAdbDevices } from './bridge/commands';
+import { getDumpstateMetadata, getSections, listAdbDevices, updateStreamProcessors } from './bridge/commands';
 import type { AdbDevice, DumpstateMetadata } from './bridge/types';
 import type { SectionEntry } from './components/FileInfoPanel';
 import PaneLayout from './components/PaneLayout';
@@ -107,6 +107,18 @@ export default function App() {
     setDeviceList([]);
     await startStreamWithDevice(device.serial);
   }, [startStreamWithDevice]);
+
+  // ── Sync active processors to backend during streaming ────────────────────
+  // When the user toggles processors while a stream is running, notify the
+  // backend so it starts/stops running them on each incoming batch.
+  useEffect(() => {
+    if (!viewer.isStreaming || !viewer.session) return;
+    const sessionId = viewer.session.sessionId;
+    const processorIds = Array.from(pipeline.activeProcessorIds);
+    updateStreamProcessors(sessionId, processorIds).catch(() => {
+      // Best-effort: the stream may have stopped between render and this call.
+    });
+  }, [viewer.isStreaming, viewer.session, pipeline.activeProcessorIds]);
 
   // ── Processor view ─────────────────────────────────────────────────────────
 
