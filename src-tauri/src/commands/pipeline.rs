@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use serde::Serialize;
 use std::collections::HashMap;
 use tauri::{AppHandle, Emitter, State};
@@ -62,9 +63,10 @@ pub async fn run_pipeline(
             .collect::<Result<Vec<_>, _>>()?
     };
 
-    // ── Get session / source ─────────────────────────────────────────────────
-    // We need to hold the lock only briefly to snapshot the data we need.
-    let (total_lines, source_id) = {
+    // ── Change 1: Snapshot all raw lines + section ranges in ONE lock ────────
+    // Previously the sessions lock was re-acquired for every line (~633K times
+    // for a 76 MB file). Now we take it once, clone all raw bytes, and release.
+    let (total_lines, source_id, raw_lines, section_ranges) = {
         let sessions = state
             .sessions
             .lock()
@@ -73,47 +75,41 @@ pub async fn run_pipeline(
             .get(&session_id)
             .ok_or_else(|| format!("Session '{session_id}' not found"))?;
         let src = session.primary_source().ok_or("No sources in session")?;
-        (src.total_lines(), src.id.clone())
-    };
 
-    // ── Snapshot section ranges per processor (before main loop) ─────────────
-    // For each processor that declares `sections`, pre-compute the (start, end)
-    // line index ranges so we can skip non-matching lines in O(1) per line.
-    // `None` = no section filter (process all lines).
-    let section_ranges: Vec<Option<Vec<(usize, usize)>>> = {
-        let sessions = state
-            .sessions
-            .lock()
-            .map_err(|_| "Session lock poisoned")?;
-        let session = sessions
-            .get(&session_id)
-            .ok_or("Session not found")?;
-        let src = session.primary_source().ok_or("No source")?;
+        let total = src.total_lines();
+        let sid = src.id.clone();
+        let lines: Vec<String> = (0..total)
+            .map(|n| src.raw_line(n).unwrap_or("").to_string())
+            .collect();
 
-        defs.iter()
+        let ranges: Vec<Option<Vec<(usize, usize)>>> = defs
+            .iter()
             .map(|def| {
                 if def.sections.is_empty() {
                     None
                 } else {
-                    let ranges: Vec<(usize, usize)> = def
+                    let r: Vec<(usize, usize)> = def
                         .sections
                         .iter()
                         .filter_map(|name| src.sections.iter().find(|s| s.name == *name))
                         .map(|s| (s.start_line, s.end_line))
                         .collect();
-                    if ranges.is_empty() { None } else { Some(ranges) }
+                    if r.is_empty() { None } else { Some(r) }
                 }
             })
-            .collect()
+            .collect();
+
+        (total, sid, lines, ranges)
     };
+    // Sessions lock released — all data is now owned locally.
 
-    // ── Set up per-processor runs ─────────────────────────────────────────────
-    let mut runs: Vec<ProcessorRun<'_>> = defs.iter().map(ProcessorRun::new).collect();
-
-    let parser = LogcatParser;
-    let anon = if anonymize {
+    // ── Build anonymizer ──────────────────────────────────────────────────────
+    let anon: Option<LogAnonymizer> = if anonymize {
         let config = {
-            let c = state.anonymizer_config.lock().map_err(|_| "Anonymizer config lock poisoned")?;
+            let c = state
+                .anonymizer_config
+                .lock()
+                .map_err(|_| "Anonymizer config lock poisoned")?;
             c.clone()
         };
         Some(LogAnonymizer::from_config(&config))
@@ -121,37 +117,54 @@ pub async fn run_pipeline(
         None
     };
 
+    // ── Set up parser and per-processor runs ──────────────────────────────────
+    let parser = LogcatParser;
+    let mut runs: Vec<ProcessorRun<'_>> = defs.iter().map(ProcessorRun::new).collect();
+
+    // ── Change 3 (+ Change 2): Parse and anonymize in parallel with Rayon ────
+    //
+    // `LogcatParser` is a stateless unit struct (`Sync`).
+    // `LogAnonymizer` is `Sync` because:
+    //   - `Vec<Box<dyn PiiDetector>>`: all detector structs are `Send + Sync`
+    //   - `PiiMappings`: uses three internal `Mutex<HashMap<...>>` fields
+    // Both can be safely shared across Rayon worker threads.
+    //
+    // Change 2: We anonymize only `ctx.message` (not `ctx.raw` separately).
+    // Since `message` is always a suffix of the trimmed `raw` in logcat format,
+    // we reconstruct `anon_raw` by keeping the header prefix from `ctx.raw` and
+    // appending the already-anonymized message — halving the regex work.
+    let parsed_lines: Vec<Option<_>> = raw_lines
+        .par_iter()
+        .enumerate()
+        .map(|(line_num, raw)| {
+            let mut ctx = parser.parse_line(raw, &source_id, line_num)?;
+            if let Some(ref a) = anon {
+                // prefix_len: byte offset where message starts within raw.
+                // message is always a suffix of raw (logcat_parser guarantee).
+                let prefix_len = ctx.raw.len().saturating_sub(ctx.message.len());
+                let (anon_msg, _) = a.anonymize(&ctx.message);
+                // Build anonymized raw: keep logcat header, replace message.
+                let anon_raw = format!("{}{}", &ctx.raw[..prefix_len], &anon_msg);
+                ctx.message = anon_msg;
+                ctx.raw = anon_raw;
+            }
+            Some(ctx)
+        })
+        .collect();
+
+    // Raw lines no longer needed — drop them to free memory before Phase 2.
+    drop(raw_lines);
+
+    // ── Phase 2: Sequential processor pass ────────────────────────────────────
+    // ProcessorRun accumulators are stateful so this must remain sequential.
     const PROGRESS_INTERVAL: usize = 5_000;
 
-    // ── Main loop ─────────────────────────────────────────────────────────────
-    for line_num in 0..total_lines {
-        // Re-acquire sessions lock for each line (coarse, but correct).
-        // For real perf we'd snapshot the whole source, but mmap stays valid.
-        let raw = {
-            let sessions = state
-                .sessions
-                .lock()
-                .map_err(|_| "Session lock poisoned")?;
-            let session = sessions.get(&session_id).ok_or("Session not found")?;
-            let src = session.primary_source().ok_or("No source")?;
-            src.raw_line(line_num).unwrap_or("").to_string()
-        };
-
-        // Parse the line
-        let mut ctx = match parser.parse_line(&raw, &source_id, line_num) {
+    for (line_num, maybe_ctx) in parsed_lines.into_iter().enumerate() {
+        let ctx = match maybe_ctx {
             Some(c) => c,
             None => continue,
         };
 
-        // Optionally anonymize message and raw
-        if let Some(ref a) = anon {
-            let (anon_msg, _) = a.anonymize(&ctx.message);
-            ctx.message = anon_msg;
-            let (anon_raw, _) = a.anonymize(&ctx.raw);
-            ctx.raw = anon_raw;
-        }
-
-        // Run through each processor (skipping lines outside declared sections)
         for (run, ranges) in runs.iter_mut().zip(section_ranges.iter()) {
             if let Some(ranges) = ranges {
                 if !ranges.iter().any(|(s, e)| line_num >= *s && line_num <= *e) {
@@ -161,9 +174,8 @@ pub async fn run_pipeline(
             run.process_line(&ctx);
         }
 
-        // Emit progress periodically
-        if line_num % PROGRESS_INTERVAL == 0 || line_num == total_lines - 1 {
-            for (i, proc_id) in processor_ids.iter().enumerate() {
+        if line_num % PROGRESS_INTERVAL == 0 || line_num + 1 == total_lines {
+            for proc_id in &processor_ids {
                 let _ = app.emit(
                     "pipeline-progress",
                     PipelineProgress {
@@ -173,7 +185,6 @@ pub async fn run_pipeline(
                         percent: (line_num + 1) as f32 / total_lines as f32 * 100.0,
                     },
                 );
-                let _ = i;
             }
         }
     }
@@ -202,7 +213,6 @@ pub async fn run_pipeline(
         session_results.insert(proc_id.clone(), result);
     }
 
-    // Store results
     {
         let mut pr = state
             .pipeline_results
