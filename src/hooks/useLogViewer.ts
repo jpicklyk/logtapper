@@ -342,8 +342,10 @@ export function useLogViewer(frontendCacheMax: number = 50_000): LogViewerState 
         ? { mode: 'Processor' as const }
         : { mode: 'Full' as const };
 
+      // Capture session ID now; discard results if session changes before response arrives.
+      const sessionId = sess.sessionId;
       getLines({
-        sessionId: sess.sessionId,
+        sessionId,
         mode,
         offset,
         count: Math.min(count, WINDOW_SIZE),
@@ -352,6 +354,9 @@ export function useLogViewer(frontendCacheMax: number = 50_000): LogViewerState 
         search: searchRef.current ?? undefined,
       })
         .then((window) => {
+          // Guard: discard stale results from a previous session (e.g. in-flight
+          // file fetches that complete after a stream session has replaced the file).
+          if (sessionRef.current?.sessionId !== sessionId) return;
           for (const line of window.lines) lineCacheRef.current.set(line.lineNum, line);
           setCacheVersion((v) => v + 1);
         })

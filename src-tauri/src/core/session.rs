@@ -157,6 +157,17 @@ impl LogSource {
             .find(|m| m.timestamp > 0)
             .map(|m| m.timestamp)
     }
+
+    /// Return the `LineMeta` for absolute line number `n`, correctly adjusted
+    /// for stream eviction.  Returns `None` when the line has been evicted from
+    /// the in-memory buffer or `n` is out of range.
+    pub fn meta_at(&self, n: usize) -> Option<&LineMeta> {
+        let local = match &self.data {
+            LogSourceData::Stream { evicted_count, .. } => n.checked_sub(*evicted_count)?,
+            LogSourceData::File { .. } => n,
+        };
+        self.line_meta.get(local)
+    }
 }
 
 // ---------------------------------------------------------------------------

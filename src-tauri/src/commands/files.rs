@@ -6,7 +6,7 @@ use tauri::State;
 
 use crate::commands::AppState;
 use crate::core::line::{
-    HighlightKind, HighlightSpan, LineRequest, LineWindow, SearchQuery, SearchSummary,
+    HighlightKind, HighlightSpan, LineRequest, LineWindow, LogLevel, SearchQuery, SearchSummary,
     ViewLine, ViewMode,
 };
 use crate::core::logcat_parser::LogcatParser;
@@ -136,7 +136,8 @@ pub async fn get_lines(
 
             for i in start..end {
                 let raw = source.raw_line(i).unwrap_or("").to_string();
-                let meta = &source.line_meta[i];
+                // meta_at() adjusts for stream eviction offset; avoids OOB panic.
+                let meta = source.meta_at(i);
 
                 let highlights = request
                     .search
@@ -160,14 +161,15 @@ pub async fn get_lines(
                         is_context: false,
                     }
                 } else {
-                    // Section header or unparseable — show raw
+                    // Section header or unparseable — fall back to stored meta.
+                    // If meta is None (line was evicted from stream buffer), use defaults.
                     ViewLine {
                         line_num: i,
                         raw: raw.clone(),
-                        level: meta.level,
-                        tag: meta.tag.clone(),
+                        level: meta.map_or(LogLevel::Info, |m| m.level),
+                        tag: meta.map_or_else(String::new, |m| m.tag.clone()),
                         message: raw,
-                        timestamp: meta.timestamp,
+                        timestamp: meta.map_or(0, |m| m.timestamp),
                         pid: 0,
                         tid: 0,
                         source_id: source.id.clone(),
