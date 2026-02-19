@@ -48,6 +48,8 @@ pub struct LoadResult {
     pub first_timestamp: Option<i64>,
     pub last_timestamp: Option<i64>,
     pub source_type: String,
+    /// True for live ADB streaming sessions; false for static file sessions.
+    pub is_streaming: bool,
 }
 
 #[tauri::command]
@@ -88,6 +90,7 @@ pub async fn load_log_file(
         first_timestamp: first_ts,
         last_timestamp: last_ts,
         source_type,
+        is_streaming: false,
     };
 
     let mut sessions = state

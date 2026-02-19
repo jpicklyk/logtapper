@@ -5,8 +5,8 @@ import { usePipeline } from './hooks/usePipeline';
 import { useClaude } from './hooks/useClaude';
 import { usePaneLayout } from './hooks/usePaneLayout';
 import { AppContext } from './context/AppContext';
-import { getDumpstateMetadata, getSections } from './bridge/commands';
-import type { DumpstateMetadata } from './bridge/types';
+import { getDumpstateMetadata, getSections, listAdbDevices } from './bridge/commands';
+import type { AdbDevice, DumpstateMetadata } from './bridge/types';
 import type { SectionEntry } from './components/FileInfoPanel';
 import PaneLayout from './components/PaneLayout';
 import SearchBar from './components/SearchBar';
@@ -22,6 +22,9 @@ export default function App() {
   const [processorViewId, setProcessorViewId] = useState<string | null>(null);
   const [sections, setSections] = useState<SectionEntry[]>([]);
   const [metadata, setMetadata] = useState<DumpstateMetadata | null>(null);
+  const [deviceList, setDeviceList] = useState<AdbDevice[]>([]);
+  const [showDeviceSelector, setShowDeviceSelector] = useState(false);
+  const [adbError, setAdbError] = useState<string | null>(null);
 
   // ── File open ──────────────────────────────────────────────────────────────
 
@@ -55,6 +58,44 @@ export default function App() {
     },
     [viewer],
   );
+
+  // ── ADB streaming ──────────────────────────────────────────────────────────
+
+  const startStreamWithDevice = useCallback(async (deviceId: string) => {
+    setAdbError(null);
+    setMetadata(null);
+    setSections([]);
+    await viewer.startStream(deviceId, undefined, Array.from(pipeline.activeProcessorIds));
+  }, [viewer, pipeline.activeProcessorIds]);
+
+  const handleStreamAdb = useCallback(async () => {
+    setAdbError(null);
+    try {
+      const devices = await listAdbDevices();
+      if (devices.length === 0) {
+        setAdbError('No ADB devices found. Connect a device and enable USB debugging.');
+        return;
+      }
+      if (devices.length === 1) {
+        await startStreamWithDevice(devices[0].serial);
+      } else {
+        setDeviceList(devices);
+        setShowDeviceSelector(true);
+      }
+    } catch (e) {
+      setAdbError(String(e));
+    }
+  }, [startStreamWithDevice]);
+
+  const handleStopStream = useCallback(async () => {
+    await viewer.stopStream();
+  }, [viewer]);
+
+  const handleDeviceSelect = useCallback(async (device: AdbDevice) => {
+    setShowDeviceSelector(false);
+    setDeviceList([]);
+    await startStreamWithDevice(device.serial);
+  }, [startStreamWithDevice]);
 
   // ── Processor view ─────────────────────────────────────────────────────────
 
@@ -151,8 +192,10 @@ export default function App() {
             <span className="app-title">LogTapper</span>
             {viewer.session && (
               <span className="session-info">
+                {viewer.isStreaming && <span className="stream-dot" title="Streaming" />}
                 {viewer.session.sourceName} —{' '}
                 {viewer.session.totalLines.toLocaleString()} lines
+                {viewer.isStreaming && <span className="stream-label">live</span>}
               </span>
             )}
             {processorViewId && (
@@ -170,6 +213,15 @@ export default function App() {
             >
               Reset Layout
             </button>
+            {viewer.isStreaming ? (
+              <button className="btn-stop-stream" onClick={handleStopStream}>
+                ■ Stop Stream
+              </button>
+            ) : (
+              <button className="btn-stream-adb" onClick={handleStreamAdb}>
+                ▶ Stream ADB
+              </button>
+            )}
             <button className="btn-primary" onClick={handleOpenFile}>
               Open Log File
             </button>
@@ -187,10 +239,16 @@ export default function App() {
           />
         </div>
 
-        {/* ── Error banner ── */}
+        {/* ── Error banners ── */}
         {viewer.error && (
           <div className="error-banner">
             <strong>Error:</strong> {viewer.error}
+          </div>
+        )}
+        {adbError && (
+          <div className="error-banner">
+            <strong>ADB:</strong> {adbError}{' '}
+            <button className="error-banner-dismiss" onClick={() => setAdbError(null)}>×</button>
           </div>
         )}
 
@@ -220,6 +278,31 @@ export default function App() {
 
         {/* ── Loading overlay ── */}
         {viewer.loading && <ProgressOverlay message="Loading log file…" />}
+
+        {/* ── ADB device selector modal ── */}
+        {showDeviceSelector && (
+          <div className="modal-backdrop" onClick={() => setShowDeviceSelector(false)}>
+            <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <span className="modal-title">Select ADB Device</span>
+                <button className="modal-close" onClick={() => setShowDeviceSelector(false)}>×</button>
+              </div>
+              <div className="modal-body">
+                {deviceList.map((device) => (
+                  <button
+                    key={device.serial}
+                    className="device-item"
+                    onClick={() => handleDeviceSelect(device)}
+                  >
+                    <span className="device-model">{device.model || device.serial}</span>
+                    <span className="device-serial">{device.serial}</span>
+                    <span className={`device-state device-state--${device.state}`}>{device.state}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </AppContext.Provider>
   );

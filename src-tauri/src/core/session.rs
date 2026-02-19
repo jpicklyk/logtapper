@@ -58,30 +58,63 @@ pub struct SectionInfo {
 }
 
 // ---------------------------------------------------------------------------
-// LogSource — one file, memory-mapped
+// LogSourceData — backing store (file mmap or live stream)
+// ---------------------------------------------------------------------------
+
+pub enum LogSourceData {
+    File {
+        mmap: Mmap,
+        /// (byte_offset, byte_len) for every indexed line.
+        line_index: Vec<(usize, usize)>,
+    },
+    Stream {
+        /// Raw line strings growing as new ADB lines arrive.
+        raw_lines: Vec<String>,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// LogSource — one source (file or ADB stream)
 // ---------------------------------------------------------------------------
 
 pub struct LogSource {
     pub id: String,
     pub name: String,
     pub source_type: SourceType,
-    pub mmap: Mmap,
-    /// (byte_offset, byte_len) for every indexed line.
-    pub line_index: Vec<(usize, usize)>,
-    /// Lightweight metadata for every indexed line.
+    pub data: LogSourceData,
+    /// Lightweight metadata for every indexed line (shared by both variants).
     pub line_meta: Vec<LineMeta>,
     /// Named sections (Bugreport only; empty for all other source types).
     pub sections: Vec<SectionInfo>,
 }
 
 impl LogSource {
+    /// Create an empty streaming source.
+    pub fn new_stream(id: String, name: String) -> Self {
+        Self {
+            id,
+            name,
+            source_type: SourceType::Logcat,
+            data: LogSourceData::Stream { raw_lines: Vec::new() },
+            line_meta: Vec::new(),
+            sections: Vec::new(),
+        }
+    }
+
     pub fn total_lines(&self) -> usize {
-        self.line_index.len()
+        self.line_meta.len()
     }
 
     pub fn raw_line(&self, line_num: usize) -> Option<&str> {
-        let (off, len) = self.line_index.get(line_num)?;
-        std::str::from_utf8(&self.mmap[*off..*off + *len]).ok()
+        match &self.data {
+            LogSourceData::File { mmap, line_index } => {
+                let (off, len) = line_index.get(line_num)?;
+                std::str::from_utf8(&mmap[*off..*off + *len]).ok()
+            }
+            LogSourceData::Stream { raw_lines } => {
+                raw_lines.get(line_num).map(|s| s.as_str())
+            }
+        }
     }
 
     pub fn first_timestamp(&self) -> Option<i64> {
@@ -152,8 +185,7 @@ impl AnalysisSession {
             id: source_id,
             name,
             source_type,
-            mmap,
-            line_index,
+            data: LogSourceData::File { mmap, line_index },
             line_meta,
             sections,
         });
@@ -162,6 +194,14 @@ impl AnalysisSession {
         self.rebuild_timeline();
 
         Ok(idx)
+    }
+
+    /// Add an empty streaming source (for ADB logcat sessions).
+    /// Returns the new source's index in `self.sources`.
+    pub fn add_stream_source(&mut self, source_id: String, device_label: String) -> usize {
+        let idx = self.sources.len();
+        self.sources.push(LogSource::new_stream(source_id, device_label));
+        idx
     }
 
     /// Rebuild the unified timeline and cross-source index from all loaded sources.

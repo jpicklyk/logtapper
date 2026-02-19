@@ -11,6 +11,7 @@ use super::schema::{VarDecl, VarType};
 /// Holds the current value of every declared variable for a single processor run.
 /// Values are stored as `rhai::Dynamic` so they can be passed directly into
 /// Rhai scopes with zero copies.
+#[derive(Clone)]
 pub struct VarStore {
     decls: Vec<VarDecl>,
     values: HashMap<String, Dynamic>,

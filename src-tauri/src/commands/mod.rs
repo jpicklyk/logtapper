@@ -2,9 +2,10 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use crate::core::session::AnalysisSession;
-use crate::processors::interpreter::RunResult;
+use crate::processors::interpreter::{ContinuousRunState, RunResult};
 use crate::processors::schema::ProcessorDef;
 
+pub mod adb;
 pub mod charts;
 pub mod claude;
 pub mod files;
@@ -24,6 +25,10 @@ pub struct AppState {
     pub api_key: Mutex<Option<String>>,
     /// Shared HTTP client for registry and Claude API calls.
     pub http_client: reqwest::Client,
+    /// Cancellation senders for active ADB streaming tasks (sessionId → sender).
+    pub stream_tasks: Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
+    /// Continuous processor state for live streaming (sessionId → processorId → state).
+    pub stream_processor_state: Mutex<HashMap<String, HashMap<String, ContinuousRunState>>>,
 }
 
 impl Default for AppState {
@@ -44,6 +49,8 @@ impl AppState {
                 .timeout(std::time::Duration::from_secs(30))
                 .build()
                 .expect("Failed to create HTTP client"),
+            stream_tasks: Mutex::new(HashMap::new()),
+            stream_processor_state: Mutex::new(HashMap::new()),
         }
     }
 }

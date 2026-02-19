@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { ProcessorSummary, PipelineRunSummary, PipelineProgress } from '../bridge/types';
+import type { ProcessorSummary, PipelineRunSummary, PipelineProgress, AdbProcessorUpdate } from '../bridge/types';
 import {
   listProcessors,
   loadProcessorYaml,
@@ -37,8 +37,9 @@ export function usePipeline(): PipelineState {
   const [runCount, setRunCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
+  const adbProcUnlistenRef = useRef<UnlistenFn | null>(null);
 
-  // Subscribe to pipeline-progress events
+  // Subscribe to pipeline-progress events (batch runs)
   useEffect(() => {
     let cancelled = false;
     listen<PipelineProgress>('pipeline-progress', (event) => {
@@ -54,6 +55,27 @@ export function usePipeline(): PipelineState {
     return () => {
       cancelled = true;
       unlistenRef.current?.();
+    };
+  }, []);
+
+  // Subscribe to adb-processor-update events (continuous streaming runs)
+  useEffect(() => {
+    let cancelled = false;
+    listen<AdbProcessorUpdate>('adb-processor-update', (event) => {
+      if (cancelled) return;
+      const { processorId, matchedLines, emissionCount } = event.payload;
+      setLastResults((prev) => {
+        const without = prev.filter((r) => r.processorId !== processorId);
+        return [...without, { processorId, matchedLines, emissionCount }];
+      });
+      setRunCount((n) => n + 1);
+    }).then((fn) => {
+      if (cancelled) fn();
+      else adbProcUnlistenRef.current = fn;
+    });
+    return () => {
+      cancelled = true;
+      adbProcUnlistenRef.current?.();
     };
   }, []);
 

@@ -56,6 +56,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // ADB streaming
+            commands::adb::list_adb_devices,
+            commands::adb::start_adb_stream,
+            commands::adb::stop_adb_stream,
             // Phase 1 — file loading, viewer, search
             commands::files::load_log_file,
             commands::files::get_lines,

@@ -45,6 +45,7 @@ export default function PaneContent({ pane }: Props) {
           scrollToLine={viewer.scrollToLine}
           jumpSeq={viewer.jumpSeq}
           processorId={processorViewId ?? undefined}
+          isStreaming={viewer.isStreaming}
         />
       );
 

@@ -49,6 +49,25 @@ impl<'a> ProcessorRun<'a> {
         }
     }
 
+    /// Create a run seeded with previously saved state for continuous (streaming) processing.
+    pub fn new_seeded(
+        def: &'a ProcessorDef,
+        vars: VarStore,
+        emissions: Vec<Emission>,
+        matched_line_nums: Vec<usize>,
+        history: Vec<LineContext>,
+    ) -> Self {
+        Self {
+            vars,
+            def,
+            emissions,
+            matched_line_nums,
+            regex_cache: HashMap::new(),
+            script_engine: None,
+            history,
+        }
+    }
+
     /// Process a single line through the entire pipeline.
     pub fn process_line(&mut self, line: &LineContext) {
         // Extracted fields accumulate across stages.
@@ -112,6 +131,26 @@ impl<'a> ProcessorRun<'a> {
             emissions: self.emissions,
             vars: self.vars.to_json(),
             matched_line_nums: self.matched_line_nums,
+        }
+    }
+
+    /// Non-consuming snapshot of current results (used after each streaming batch).
+    pub fn current_result(&self) -> RunResult {
+        RunResult {
+            emissions: self.emissions.clone(),
+            vars: self.vars.to_json(),
+            matched_line_nums: self.matched_line_nums.clone(),
+        }
+    }
+
+    /// Consume the run into a `ContinuousRunState` for storage between batches.
+    pub fn into_continuous_state(self, last_processed_line: usize) -> ContinuousRunState {
+        ContinuousRunState {
+            vars: self.vars,
+            emissions: self.emissions,
+            matched_line_nums: self.matched_line_nums,
+            history: self.history,
+            last_processed_line,
         }
     }
 
@@ -264,6 +303,23 @@ pub struct RunResult {
     pub vars: HashMap<String, JsonValue>,
     /// Line numbers of lines that matched (had at least one emission or passed filter).
     pub matched_line_nums: Vec<usize>,
+}
+
+// ---------------------------------------------------------------------------
+// ContinuousRunState — persistent processor state between streaming batches
+// ---------------------------------------------------------------------------
+
+/// Saved state for a processor running continuously on a live ADB stream.
+/// Between batches the `ProcessorRun` is consumed; state is stored here and
+/// restored via `ProcessorRun::new_seeded()` for each new batch.
+pub struct ContinuousRunState {
+    pub vars: VarStore,
+    pub emissions: Vec<Emission>,
+    pub matched_line_nums: Vec<usize>,
+    /// Lookback history (last ≤1000 lines). Persisted across batches.
+    pub history: Vec<LineContext>,
+    /// Absolute session line index of the next line to process.
+    pub last_processed_line: usize,
 }
 
 // ---------------------------------------------------------------------------

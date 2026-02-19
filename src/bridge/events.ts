@@ -1,4 +1,27 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import type { AdbBatchPayload, AdbProcessorUpdate, AdbStreamStopped } from './types';
+
+// ---------------------------------------------------------------------------
+// ADB streaming events
+// ---------------------------------------------------------------------------
+
+export function onAdbBatch(
+  cb: (payload: AdbBatchPayload) => void,
+): Promise<UnlistenFn> {
+  return listen<AdbBatchPayload>('adb-batch', (e) => cb(e.payload));
+}
+
+export function onAdbProcessorUpdate(
+  cb: (payload: AdbProcessorUpdate) => void,
+): Promise<UnlistenFn> {
+  return listen<AdbProcessorUpdate>('adb-processor-update', (e) => cb(e.payload));
+}
+
+export function onAdbStreamStopped(
+  cb: (payload: AdbStreamStopped) => void,
+): Promise<UnlistenFn> {
+  return listen<AdbStreamStopped>('adb-stream-stopped', (e) => cb(e.payload));
+}
 
 // ---------------------------------------------------------------------------
 // Phase 1 — Progress

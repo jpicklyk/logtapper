@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect } from 'react';
+import { useRef, useCallback, useEffect, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ViewLine, SearchQuery } from '../bridge/types';
 import LogLine from './LogLine';
@@ -6,6 +6,7 @@ import LogLine from './LogLine';
 const LINE_HEIGHT = 22; // px — monospace, single line
 const OVERSCAN = 5;
 const FETCH_THRESHOLD = 50; // fetch when within this many lines of window edge
+const AT_BOTTOM_THRESHOLD = 60; // px from bottom to consider "at bottom"
 
 interface Props {
   sessionId: string;
@@ -21,6 +22,8 @@ interface Props {
   jumpSeq?: number;
   /** When set, the viewer is in Processor mode for this processor */
   processorId?: string;
+  /** True when an ADB stream is active — enables auto-scroll-to-bottom */
+  isStreaming?: boolean;
 }
 
 export default function LogViewer({
@@ -30,8 +33,12 @@ export default function LogViewer({
   onLineClick,
   scrollToLine,
   jumpSeq,
+  isStreaming,
 }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+  // Prevent the programmatic scroll from toggling autoScroll off
+  const suppressScrollRef = useRef(false);
 
   const virtualizer = useVirtualizer({
     count: totalLines,
@@ -41,6 +48,34 @@ export default function LogViewer({
   });
 
   const items = virtualizer.getVirtualItems();
+
+  // ── Scroll listener — detect whether user is near the bottom ────────────────
+  useEffect(() => {
+    const el = parentRef.current;
+    if (!el) return;
+
+    const onScroll = () => {
+      if (suppressScrollRef.current) return;
+      const nearBottom =
+        el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_THRESHOLD;
+      setAutoScroll(nearBottom);
+    };
+
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+
+  // ── Auto-scroll to bottom when new streaming lines arrive ────────────────────
+  useEffect(() => {
+    if (!isStreaming || !autoScroll || totalLines === 0) return;
+    suppressScrollRef.current = true;
+    virtualizer.scrollToIndex(totalLines - 1, { align: 'end' });
+    requestAnimationFrame(() => {
+      suppressScrollRef.current = false;
+    });
+  // Intentionally only depends on totalLines so we fire once per new batch
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [totalLines]);
 
   // Fetch missing windows as the user scrolls
   const lastFetchRef = useRef({ offset: -1, count: 0 });
@@ -74,11 +109,15 @@ export default function LogViewer({
     }
   }, [items, lineCache, onFetchNeeded]);
 
-  // Scroll to a specific line when requested.
+  // Scroll to a specific line when requested (jumpToLine / search navigation).
   // Depends on `jumpSeq` so repeated jumps to the same line always re-fire.
   useEffect(() => {
     if (scrollToLine != null && scrollToLine >= 0) {
+      suppressScrollRef.current = true;
       virtualizer.scrollToIndex(scrollToLine, { align: 'center' });
+      requestAnimationFrame(() => {
+        suppressScrollRef.current = false;
+      });
     }
   }, [scrollToLine, jumpSeq, virtualizer]);
 

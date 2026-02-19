@@ -76,6 +76,36 @@ export interface LoadResult {
   firstTimestamp: number | null;
   lastTimestamp: number | null;
   sourceType: string;
+  /** True for live ADB streaming sessions. */
+  isStreaming: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// ADB streaming types
+// ---------------------------------------------------------------------------
+
+export interface AdbDevice {
+  serial: string;
+  model: string;
+  state: string;
+}
+
+export interface AdbBatchPayload {
+  sessionId: string;
+  lines: ViewLine[];
+  totalLines: number;
+}
+
+export interface AdbProcessorUpdate {
+  sessionId: string;
+  processorId: string;
+  matchedLines: number;
+  emissionCount: number;
+}
+
+export interface AdbStreamStopped {
+  sessionId: string;
+  reason: string;
 }
 
 // ---------------------------------------------------------------------------

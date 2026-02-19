@@ -12,7 +12,32 @@ import type {
   RegistryEntry,
   DumpstateMetadata,
   SectionInfo,
+  AdbDevice,
 } from './types';
+
+// ---------------------------------------------------------------------------
+// ADB streaming
+// ---------------------------------------------------------------------------
+
+export function listAdbDevices(): Promise<AdbDevice[]> {
+  return invoke('list_adb_devices');
+}
+
+export function startAdbStream(
+  deviceId?: string,
+  packageFilter?: string,
+  activeProcessorIds: string[] = [],
+): Promise<LoadResult> {
+  return invoke('start_adb_stream', {
+    deviceId: deviceId ?? null,
+    packageFilter: packageFilter ?? null,
+    activeProcessorIds,
+  });
+}
+
+export function stopAdbStream(sessionId: string): Promise<void> {
+  return invoke('stop_adb_stream', { sessionId });
+}
 
 // ---------------------------------------------------------------------------
 // Phase 1 — File / Session
