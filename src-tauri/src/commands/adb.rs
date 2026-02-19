@@ -272,13 +272,22 @@ async fn run_streaming_task(
     package_filter: Option<String>,
     app: AppHandle,
 ) {
-    // Build adb command
+    // Build adb command — stream only lines from now onward (-T @<epoch_secs>)
+    // to avoid dumping the entire on-device ring buffer on connect.
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
     let mut cmd = Command::new("adb");
     cmd.arg("-s")
         .arg(&device_serial)
         .arg("logcat")
         .arg("-v")
         .arg("threadtime")
+        .arg("-T")
+        .arg(format!("@{}", now_secs))
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true);
@@ -316,23 +325,35 @@ async fn run_streaming_task(
         }
     };
 
-    let mut reader = BufReader::new(stdout).lines();
+    // Spawn a dedicated reader task to avoid cancellation-safety issues with
+    // next_line() inside tokio::select!. Channel recv() IS cancellation-safe.
+    let (line_tx, mut line_rx) = tokio::sync::mpsc::channel::<String>(1024);
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(stdout).lines();
+        while let Ok(Some(line)) = reader.next_line().await {
+            if line_tx.send(line).await.is_err() {
+                break; // Main task dropped the receiver (cancelled)
+            }
+        }
+        // Sender drops here → main task sees None from line_rx.recv()
+    });
+
     let mut buffer: Vec<String> = Vec::new();
     let mut ticker = tokio::time::interval(tokio::time::Duration::from_millis(50));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {
         tokio::select! {
-            line_result = reader.next_line() => {
-                match line_result {
-                    Ok(Some(line)) => {
+            msg = line_rx.recv() => {
+                match msg {
+                    Some(line) => {
                         buffer.push(line);
                         if buffer.len() >= 100 {
                             flush_batch(&mut buffer, &session_id, &source_id, &app);
                         }
                     }
-                    Ok(None) => {
-                        // EOF — device disconnected
+                    None => {
+                        // Reader task ended (EOF or device disconnect)
                         if !buffer.is_empty() {
                             flush_batch(&mut buffer, &session_id, &source_id, &app);
                         }
@@ -341,16 +362,6 @@ async fn run_streaming_task(
                             AdbStreamStopped {
                                 session_id: session_id.clone(),
                                 reason: "eof".to_string(),
-                            },
-                        );
-                        break;
-                    }
-                    Err(e) => {
-                        let _ = app.emit(
-                            "adb-stream-stopped",
-                            AdbStreamStopped {
-                                session_id: session_id.clone(),
-                                reason: format!("Read error: {e}"),
                             },
                         );
                         break;
