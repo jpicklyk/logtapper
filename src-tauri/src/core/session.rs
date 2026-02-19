@@ -430,3 +430,118 @@ fn parser_for(source_type: &SourceType) -> Box<dyn LogParser> {
         _ => Box::new(LogcatParser),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::line::LogLevel;
+
+    /// Helper: build a LogSource in Stream mode with `n` lines already in
+    /// raw_lines / line_meta, and `evicted` lines already evicted from the front.
+    fn make_stream_source(n: usize, evicted: usize) -> LogSource {
+        let mut src = LogSource::new_stream("test".into(), "test".into());
+        if let LogSourceData::Stream {
+            ref mut raw_lines,
+            ref mut evicted_count,
+            ref mut byte_count,
+            ..
+        } = src.data
+        {
+            *evicted_count = evicted;
+            for i in 0..n {
+                let line = format!("line {}", evicted + i);
+                *byte_count += line.len() as u64 + 1;
+                raw_lines.push(line);
+                src.line_meta.push(LineMeta {
+                    level: LogLevel::Info,
+                    tag: format!("tag{}", evicted + i),
+                    timestamp: (evicted + i) as i64,
+                    byte_offset: 0,
+                    byte_len: 0,
+                });
+            }
+        }
+        src
+    }
+
+    // --- meta_at() correctness tests ---
+
+    #[test]
+    fn meta_at_no_eviction() {
+        let src = make_stream_source(5, 0);
+        // Line 0..4 should all be accessible
+        for i in 0..5usize {
+            let meta = src.meta_at(i).expect("meta_at should return Some");
+            assert_eq!(meta.timestamp, i as i64);
+        }
+        // Line 5 is out of range
+        assert!(src.meta_at(5).is_none());
+    }
+
+    #[test]
+    fn meta_at_after_eviction() {
+        // 3 lines retained; first 7 evicted → absolute line nums 7, 8, 9
+        let src = make_stream_source(3, 7);
+
+        // Lines 0..6 are evicted — must return None, NOT panic
+        for i in 0..7usize {
+            assert!(
+                src.meta_at(i).is_none(),
+                "evicted line {i} should return None"
+            );
+        }
+
+        // Lines 7, 8, 9 are live
+        assert_eq!(src.meta_at(7).unwrap().timestamp, 7);
+        assert_eq!(src.meta_at(8).unwrap().timestamp, 8);
+        assert_eq!(src.meta_at(9).unwrap().timestamp, 9);
+
+        // Line 10 is beyond the buffer
+        assert!(src.meta_at(10).is_none());
+    }
+
+    #[test]
+    fn meta_at_large_eviction() {
+        // Simulate heavy eviction: 10_000 evicted, only 100 retained
+        let src = make_stream_source(100, 10_000);
+
+        // Should not panic for any evicted line
+        assert!(src.meta_at(0).is_none());
+        assert!(src.meta_at(9_999).is_none());
+
+        // First retained line
+        assert_eq!(src.meta_at(10_000).unwrap().timestamp, 10_000);
+        // Last retained line
+        assert_eq!(src.meta_at(10_099).unwrap().timestamp, 10_099);
+
+        // Past the end
+        assert!(src.meta_at(10_100).is_none());
+    }
+
+    // --- total_lines() reflects cumulative count through eviction ---
+
+    #[test]
+    fn total_lines_counts_evicted() {
+        let src = make_stream_source(50, 200);
+        // 200 evicted + 50 retained = 250 total
+        assert_eq!(src.total_lines(), 250);
+    }
+
+    // --- raw_line() mirrors meta_at() semantics ---
+
+    #[test]
+    fn raw_line_after_eviction() {
+        let src = make_stream_source(3, 5);
+        // Evicted lines return None
+        assert!(src.raw_line(0).is_none());
+        assert!(src.raw_line(4).is_none());
+        // Live lines return the correct string
+        assert_eq!(src.raw_line(5), Some("line 5"));
+        assert_eq!(src.raw_line(7), Some("line 7"));
+        assert!(src.raw_line(8).is_none()); // past end
+    }
+}

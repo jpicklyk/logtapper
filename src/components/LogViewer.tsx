@@ -47,8 +47,6 @@ export default function LogViewer({
   // Ref mirrors autoScroll state so the totalLines effect reads it synchronously,
   // avoiding the race where React hasn't re-rendered yet when the next batch arrives.
   const autoScrollRef = useRef(true);
-  // Prevent the programmatic scroll from toggling autoScroll off
-  const suppressScrollRef = useRef(false);
 
   // When lineNumbers is provided (filter active), use its length as the count.
   // This allows the virtualizer to only show filtered lines.
@@ -69,7 +67,6 @@ export default function LogViewer({
     if (!el) return;
 
     const onScroll = () => {
-      if (suppressScrollRef.current) return;
       const nearBottom =
         el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_THRESHOLD;
       autoScrollRef.current = nearBottom; // sync — read by effect without stale-state race
@@ -81,13 +78,13 @@ export default function LogViewer({
   }, []);
 
   // ── Auto-scroll to bottom when new streaming lines arrive ────────────────────
+  // No scroll suppression: the resulting scroll event correctly sets
+  // autoScrollRef = true (nearBottom), which is the desired state.
+  // User scrolling up naturally sets autoScrollRef = false before this effect
+  // fires, so the early return prevents pulling them back down.
   useEffect(() => {
     if (!isStreaming || !autoScrollRef.current || count === 0) return;
-    suppressScrollRef.current = true;
     virtualizer.scrollToIndex(count - 1, { align: 'end' });
-    requestAnimationFrame(() => {
-      suppressScrollRef.current = false;
-    });
   // Depends on `count` (filtered or total) so we fire once per new batch.
   // When filter is active, count = lineNumbers.length and grows as matches arrive.
   // autoScrollRef is a ref — no need to list it; it's always current.
@@ -133,11 +130,7 @@ export default function LogViewer({
   // Depends on `jumpSeq` so repeated jumps to the same line always re-fire.
   useEffect(() => {
     if (scrollToLine != null && scrollToLine >= 0) {
-      suppressScrollRef.current = true;
       virtualizer.scrollToIndex(scrollToLine, { align: 'center' });
-      requestAnimationFrame(() => {
-        suppressScrollRef.current = false;
-      });
     }
   }, [scrollToLine, jumpSeq, virtualizer]);
 
