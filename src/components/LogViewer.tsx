@@ -37,6 +37,9 @@ export default function LogViewer({
 }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+  // Ref mirrors autoScroll state so the totalLines effect reads it synchronously,
+  // avoiding the race where React hasn't re-rendered yet when the next batch arrives.
+  const autoScrollRef = useRef(true);
   // Prevent the programmatic scroll from toggling autoScroll off
   const suppressScrollRef = useRef(false);
 
@@ -58,6 +61,7 @@ export default function LogViewer({
       if (suppressScrollRef.current) return;
       const nearBottom =
         el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_THRESHOLD;
+      autoScrollRef.current = nearBottom; // sync — read by effect without stale-state race
       setAutoScroll(nearBottom);
     };
 
@@ -67,13 +71,14 @@ export default function LogViewer({
 
   // ── Auto-scroll to bottom when new streaming lines arrive ────────────────────
   useEffect(() => {
-    if (!isStreaming || !autoScroll || totalLines === 0) return;
+    if (!isStreaming || !autoScrollRef.current || totalLines === 0) return;
     suppressScrollRef.current = true;
     virtualizer.scrollToIndex(totalLines - 1, { align: 'end' });
     requestAnimationFrame(() => {
       suppressScrollRef.current = false;
     });
-  // Intentionally only depends on totalLines so we fire once per new batch
+  // Intentionally only depends on totalLines so we fire once per new batch.
+  // autoScrollRef is a ref — no need to list it; it's always current.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalLines]);
 

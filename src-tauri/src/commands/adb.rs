@@ -272,13 +272,8 @@ async fn run_streaming_task(
     package_filter: Option<String>,
     app: AppHandle,
 ) {
-    // Build adb command — stream only lines from now onward (-T @<epoch_secs>)
-    // to avoid dumping the entire on-device ring buffer on connect.
-    let now_secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-
+    // Build adb command.  -T 1 = replay the last 1 buffered entry then
+    // stream new lines only, avoiding a full ring-buffer dump on connect.
     let mut cmd = Command::new("adb");
     cmd.arg("-s")
         .arg(&device_serial)
@@ -286,10 +281,10 @@ async fn run_streaming_task(
         .arg("-v")
         .arg("threadtime")
         .arg("-T")
-        .arg(format!("@{}", now_secs))
+        .arg("1")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())  // capture so errors surface in logs
         .kill_on_drop(true);
 
     // If package filter specified, add PID filter
@@ -324,6 +319,16 @@ async fn run_streaming_task(
             return;
         }
     };
+
+    // Log stderr from adb so errors surface in the Tauri dev console.
+    if let Some(stderr) = child.stderr.take() {
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                eprintln!("[adb stderr] {line}");
+            }
+        });
+    }
 
     // Spawn a dedicated reader task to avoid cancellation-safety issues with
     // next_line() inside tokio::select!. Channel recv() IS cancellation-safe.
