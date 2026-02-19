@@ -47,6 +47,9 @@ export default function LogViewer({
   // Ref mirrors autoScroll state so the totalLines effect reads it synchronously,
   // avoiding the race where React hasn't re-rendered yet when the next batch arrives.
   const autoScrollRef = useRef(true);
+  // Set true before our own scrollToIndex calls so onScroll ignores the resulting
+  // scroll event (which would otherwise re-enable auto-scroll after the user scrolled up).
+  const programmaticScrollRef = useRef(false);
 
   // When lineNumbers is provided (filter active), use its length as the count.
   // This allows the virtualizer to only show filtered lines.
@@ -61,33 +64,78 @@ export default function LogViewer({
 
   const items = virtualizer.getVirtualItems();
 
-  // ── Scroll listener — detect whether user is near the bottom ────────────────
+  // ── Scroll / interaction listeners ──────────────────────────────────────────
+  //
+  // Two separate concerns are handled here:
+  //
+  // 1. DISABLE auto-scroll: detected via `wheel` (scrolling up) and `keydown`
+  //    (arrow keys / Page Up / Home).  These fire BEFORE the scroll position
+  //    changes, so they beat any React effect that reads autoScrollRef.
+  //
+  // 2. RE-ENABLE auto-scroll: detected via the `scroll` event only when the
+  //    position is near the bottom.  The scroll event is NEVER used to disable
+  //    auto-scroll, which eliminates the race where a programmatic scrollToIndex
+  //    fires a scroll event whose nearBottom=true overwrites the user's intent.
   useEffect(() => {
     const el = parentRef.current;
     if (!el) return;
 
-    const onScroll = () => {
-      const nearBottom =
-        el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_THRESHOLD;
-      autoScrollRef.current = nearBottom; // sync — read by effect without stale-state race
-      setAutoScroll(nearBottom);
+    // User scrolling up with the mouse wheel → immediately disable auto-scroll.
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) {
+        autoScrollRef.current = false;
+        setAutoScroll(false);
+      }
     };
 
+    // Keyboard navigation upward → disable auto-scroll.
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (['ArrowUp', 'PageUp', 'Home'].includes(e.key)) {
+        autoScrollRef.current = false;
+        setAutoScroll(false);
+      }
+    };
+
+    // Scroll position: only RE-ENABLE auto-scroll when at the bottom.
+    // Skip if programmaticScrollRef is set — our scrollToIndex fires this event
+    // asynchronously, and it can arrive AFTER a wheel-up event, accidentally
+    // re-enabling auto-scroll that the user just turned off.
+    const onScroll = () => {
+      if (programmaticScrollRef.current) return;
+      const nearBottom =
+        el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_THRESHOLD;
+      if (nearBottom && !autoScrollRef.current) {
+        autoScrollRef.current = true;
+        setAutoScroll(true);
+      }
+    };
+
+    el.addEventListener('wheel', onWheel, { passive: true });
+    el.addEventListener('keydown', onKeyDown);
     el.addEventListener('scroll', onScroll, { passive: true });
-    return () => el.removeEventListener('scroll', onScroll);
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('keydown', onKeyDown);
+      el.removeEventListener('scroll', onScroll);
+    };
   }, []);
 
   // ── Auto-scroll to bottom when new streaming lines arrive ────────────────────
-  // No scroll suppression: the resulting scroll event correctly sets
-  // autoScrollRef = true (nearBottom), which is the desired state.
-  // User scrolling up naturally sets autoScrollRef = false before this effect
-  // fires, so the early return prevents pulling them back down.
   useEffect(() => {
     if (!isStreaming || !autoScrollRef.current || count === 0) return;
+    // Flag our scroll so onScroll knows to ignore this event and not
+    // re-enable auto-scroll in case the user scrolled up just before this fires.
+    programmaticScrollRef.current = true;
     virtualizer.scrollToIndex(count - 1, { align: 'end' });
+    // The browser fires scroll events asynchronously. Two rAFs ensures we're past
+    // the frame in which the scroll event is dispatched before clearing the flag.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        programmaticScrollRef.current = false;
+      });
+    });
   // Depends on `count` (filtered or total) so we fire once per new batch.
-  // When filter is active, count = lineNumbers.length and grows as matches arrive.
-  // autoScrollRef is a ref — no need to list it; it's always current.
+  // autoScrollRef / programmaticScrollRef are refs — no need to list them.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [count]);
 
