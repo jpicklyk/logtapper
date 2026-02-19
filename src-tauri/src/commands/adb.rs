@@ -261,6 +261,36 @@ pub async fn stop_adb_stream(
 }
 
 // ---------------------------------------------------------------------------
+// get_package_pids
+// ---------------------------------------------------------------------------
+
+/// Resolve a package name to its current PID(s) on the device.
+/// Uses `adb shell pidof <package>` which works on Android 4.4+.
+/// Returns an empty vec if the package is not running.
+#[tauri::command]
+pub async fn get_package_pids(
+    device_serial: String,
+    package_name: String,
+) -> Result<Vec<u32>, String> {
+    let output = Command::new("adb")
+        .arg("-s")
+        .arg(&device_serial)
+        .arg("shell")
+        .arg("pidof")
+        .arg(&package_name)
+        .output()
+        .await
+        .map_err(|e| format!("adb error: {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let pids: Vec<u32> = stdout
+        .split_whitespace()
+        .filter_map(|s| s.parse().ok())
+        .collect();
+    Ok(pids)
+}
+
+// ---------------------------------------------------------------------------
 // Background streaming task
 // ---------------------------------------------------------------------------
 

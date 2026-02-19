@@ -2308,3 +2308,127 @@ details[open] > summary::before {
 .scratch-pad::placeholder {
   color: var(--text-dimmed);
 }
+
+/* ── Logviewer pane wrapper (filter bar + viewer stacked) ─────────────────── */
+
+.logviewer-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ── Stream filter bar ────────────────────────────────────────────────────── */
+
+.stream-filter-bar {
+  flex-shrink: 0;
+  padding: 5px 8px 4px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.filter-chips {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.filter-chip {
+  font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 10px;
+  padding: 1px 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--bg-overlay);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: border-color 0.1s, color 0.1s;
+  white-space: nowrap;
+}
+
+.filter-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.filter-count {
+  font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+.filter-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 3px 8px;
+  transition: border-color 0.15s;
+}
+
+.filter-input-row:focus-within {
+  border-color: var(--accent);
+}
+
+.filter-input-row--error {
+  border-color: var(--danger) !important;
+}
+
+.filter-icon {
+  color: var(--text-dimmed);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.filter-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 11.5px;
+  color: var(--text);
+  min-width: 0;
+}
+
+.filter-input::placeholder {
+  color: var(--text-dimmed);
+}
+
+.filter-clear {
+  background: none;
+  border: none;
+  color: var(--text-dimmed);
+  cursor: pointer;
+  font-size: 15px;
+  padding: 0 2px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color 0.1s;
+}
+
+.filter-clear:hover {
+  color: var(--text);
+}
+
+.filter-parse-error {
+  font-size: 10.5px;
+  color: var(--danger);
+  padding: 0 2px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.filter-parse-error-icon {
+  font-size: 11px;
+}

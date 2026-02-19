@@ -60,6 +60,7 @@ pub fn run() {
             commands::adb::list_adb_devices,
             commands::adb::start_adb_stream,
             commands::adb::stop_adb_stream,
+            commands::adb::get_package_pids,
             // Phase 1 — file loading, viewer, search
             commands::files::load_log_file,
             commands::files::get_lines,

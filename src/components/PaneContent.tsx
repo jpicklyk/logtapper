@@ -1,6 +1,7 @@
 import { useAppContext } from '../context/AppContext';
 import type { Pane } from '../hooks/usePaneLayout';
 import LogViewer from './LogViewer';
+import StreamFilterBar from './StreamFilterBar';
 import ProcessorDashboard from './ProcessorDashboard';
 import ScratchPad from './ScratchPad';
 
@@ -35,18 +36,30 @@ export default function PaneContent({ pane }: Props) {
         );
       }
       return (
-        <LogViewer
-          sessionId={viewer.session?.sessionId ?? ''}
-          totalLines={viewer.session?.totalLines ?? 0}
-          lineCache={viewer.lineCache}
-          search={viewer.search ?? undefined}
-          onFetchNeeded={viewer.handleFetchNeeded}
-          onLineClick={viewer.jumpToLine}
-          scrollToLine={viewer.scrollToLine}
-          jumpSeq={viewer.jumpSeq}
-          processorId={processorViewId ?? undefined}
-          isStreaming={viewer.isStreaming}
-        />
+        <div className="logviewer-pane">
+          {viewer.isStreaming && (
+            <StreamFilterBar
+              value={viewer.streamFilter}
+              onChange={viewer.setStreamFilter}
+              matchCount={viewer.filteredLineNums?.length ?? null}
+              totalCount={viewer.session?.totalLines ?? 0}
+              parseError={viewer.filterParseError}
+            />
+          )}
+          <LogViewer
+            sessionId={viewer.session?.sessionId ?? ''}
+            totalLines={viewer.session?.totalLines ?? 0}
+            lineCache={viewer.lineCache}
+            search={viewer.search ?? undefined}
+            onFetchNeeded={viewer.handleFetchNeeded}
+            onLineClick={viewer.jumpToLine}
+            scrollToLine={viewer.scrollToLine}
+            jumpSeq={viewer.jumpSeq}
+            processorId={processorViewId ?? undefined}
+            isStreaming={viewer.isStreaming}
+            lineNumbers={viewer.filteredLineNums ?? undefined}
+          />
+        </div>
       );
 
     case 'dashboard':

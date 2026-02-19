@@ -24,6 +24,12 @@ interface Props {
   processorId?: string;
   /** True when an ADB stream is active — enables auto-scroll-to-bottom */
   isStreaming?: boolean;
+  /**
+   * When provided, the virtualizer shows only these line numbers in order.
+   * virtualItem.index maps to lineNumbers[index] for cache lookup.
+   * Used when a stream filter is active.
+   */
+  lineNumbers?: number[];
 }
 
 export default function LogViewer({
@@ -34,17 +40,22 @@ export default function LogViewer({
   scrollToLine,
   jumpSeq,
   isStreaming,
+  lineNumbers,
 }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
-  const [autoScroll, setAutoScroll] = useState(true);
+  const [, setAutoScroll] = useState(true);
   // Ref mirrors autoScroll state so the totalLines effect reads it synchronously,
   // avoiding the race where React hasn't re-rendered yet when the next batch arrives.
   const autoScrollRef = useRef(true);
   // Prevent the programmatic scroll from toggling autoScroll off
   const suppressScrollRef = useRef(false);
 
+  // When lineNumbers is provided (filter active), use its length as the count.
+  // This allows the virtualizer to only show filtered lines.
+  const count = lineNumbers ? lineNumbers.length : totalLines;
+
   const virtualizer = useVirtualizer({
-    count: totalLines,
+    count,
     getScrollElement: () => parentRef.current,
     estimateSize: () => LINE_HEIGHT,
     overscan: OVERSCAN,
@@ -71,22 +82,26 @@ export default function LogViewer({
 
   // ── Auto-scroll to bottom when new streaming lines arrive ────────────────────
   useEffect(() => {
-    if (!isStreaming || !autoScrollRef.current || totalLines === 0) return;
+    if (!isStreaming || !autoScrollRef.current || count === 0) return;
     suppressScrollRef.current = true;
-    virtualizer.scrollToIndex(totalLines - 1, { align: 'end' });
+    virtualizer.scrollToIndex(count - 1, { align: 'end' });
     requestAnimationFrame(() => {
       suppressScrollRef.current = false;
     });
-  // Intentionally only depends on totalLines so we fire once per new batch.
+  // Depends on `count` (filtered or total) so we fire once per new batch.
+  // When filter is active, count = lineNumbers.length and grows as matches arrive.
   // autoScrollRef is a ref — no need to list it; it's always current.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [totalLines]);
+  }, [count]);
 
   // Fetch missing windows as the user scrolls
   const lastFetchRef = useRef({ offset: -1, count: 0 });
 
   useEffect(() => {
-    if (items.length === 0) return;
+    // When lineNumbers is provided (filter active), all lines are already in the
+    // cache (pushed via streaming batch events). Skip on-demand fetching.
+    if (items.length === 0 || lineNumbers) return;
+
     const first = items[0].index;
     const last = items[items.length - 1].index;
 
@@ -112,7 +127,7 @@ export default function LogViewer({
       lastFetchRef.current = { offset: fetchOffset, count: fetchCount };
       onFetchNeeded(fetchOffset, fetchCount);
     }
-  }, [items, lineCache, onFetchNeeded]);
+  }, [items, lineCache, onFetchNeeded, lineNumbers]);
 
   // Scroll to a specific line when requested (jumpToLine / search navigation).
   // Depends on `jumpSeq` so repeated jumps to the same line always re-fire.
@@ -131,7 +146,15 @@ export default function LogViewer({
     [onLineClick],
   );
 
-  if (totalLines === 0) {
+  if (count === 0) {
+    if (lineNumbers) {
+      // Filter active but no matches yet
+      return (
+        <div className="log-viewer-empty">
+          <p>No lines match the current filter.</p>
+        </div>
+      );
+    }
     return (
       <div className="log-viewer-empty">
         <p>No log file loaded. Open a file to begin.</p>
@@ -149,7 +172,12 @@ export default function LogViewer({
         }}
       >
         {items.map((virtualItem) => {
-          const line = lineCache.get(virtualItem.index);
+          // When lineNumbers is provided, map virtualizer index → actual line number
+          const actualLineNum = lineNumbers
+            ? lineNumbers[virtualItem.index]
+            : virtualItem.index;
+          const line = lineCache.get(actualLineNum);
+          const isTarget = scrollToLine != null && actualLineNum === scrollToLine;
           return (
             <div
               key={virtualItem.key}
@@ -167,13 +195,13 @@ export default function LogViewer({
                   line={line}
                   style={{ height: LINE_HEIGHT }}
                   onClick={handleLineClick}
-                  isJumpTarget={virtualItem.index === scrollToLine}
-                  jumpSeq={virtualItem.index === scrollToLine ? jumpSeq : undefined}
+                  isJumpTarget={isTarget}
+                  jumpSeq={isTarget ? jumpSeq : undefined}
                 />
               ) : (
                 <div className="log-line log-line-loading" style={{ height: LINE_HEIGHT }}>
                   <span className="log-linenum">
-                    {String(virtualItem.index + 1).padStart(7, ' ')}
+                    {String(actualLineNum + 1).padStart(7, ' ')}
                   </span>
                   <span className="log-loading-indicator">…</span>
                 </div>

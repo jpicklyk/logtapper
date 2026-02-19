@@ -39,6 +39,13 @@ export function stopAdbStream(sessionId: string): Promise<void> {
   return invoke('stop_adb_stream', { sessionId });
 }
 
+export function getPackagePids(
+  deviceSerial: string,
+  packageName: string,
+): Promise<number[]> {
+  return invoke('get_package_pids', { deviceSerial, packageName });
+}
+
 // ---------------------------------------------------------------------------
 // Phase 1 — File / Session
 // ---------------------------------------------------------------------------
