@@ -112,8 +112,12 @@ impl PiiDetector for EmailDetector {
         text.contains('@')
     }
     fn find_all(&self, text: &str) -> Vec<PiiMatch> {
-        let re = EMAIL_RE
-            .get_or_init(|| Regex::new(r"[\w.+\-]+@[\w\-]+\.[\w.\-]+").unwrap());
+        // RFC 5321 dot-atom format (ASCII only). Requires a letters-only TLD (2-10 chars)
+        // to eliminate false positives like version numbers (e.g. "foo@1.2.3").
+        // \w is avoided intentionally — it matches Unicode word chars, causing false matches.
+        let re = EMAIL_RE.get_or_init(|| {
+            Regex::new(r"\b[a-zA-Z0-9][a-zA-Z0-9._%+\-]{0,62}@[a-zA-Z0-9\-]+(?:\.[a-zA-Z0-9\-]+)*\.[a-zA-Z]{2,10}\b").unwrap()
+        });
         regex_matches(re, text, PiiCategory::Email)
     }
 }
@@ -131,7 +135,10 @@ impl PiiDetector for Ipv4Detector {
         PiiCategory::Ipv4
     }
     fn quick_screen(&self, text: &str) -> bool {
-        text.as_bytes().iter().filter(|&&b| b == b'.').count() >= 3
+        // Counting dots catches package names like `com.google.android.gms` (3+ dots, no digits
+        // before the dot). Checking for digit→dot filters those out, since IPv4 octets always
+        // start with a digit (e.g. "192.") while Java package segments start with a letter.
+        text.as_bytes().windows(2).any(|w| w[0].is_ascii_digit() && w[1] == b'.')
     }
     fn find_all(&self, text: &str) -> Vec<PiiMatch> {
         let re = IPV4_RE.get_or_init(|| {
@@ -204,6 +211,24 @@ impl PiiDetector for PhoneDetector {
     fn category(&self) -> PiiCategory {
         PiiCategory::Phone
     }
+    fn quick_screen(&self, text: &str) -> bool {
+        // E.164 always has '+'; US format requires at least 10 consecutive digits.
+        if text.contains('+') {
+            return true;
+        }
+        let mut run = 0u8;
+        for &b in text.as_bytes() {
+            if b.is_ascii_digit() {
+                run += 1;
+                if run >= 7 {
+                    return true;
+                }
+            } else {
+                run = 0;
+            }
+        }
+        false
+    }
     fn find_all(&self, text: &str) -> Vec<PiiMatch> {
         let re = PHONE_RE.get_or_init(|| {
             Regex::new(r"(?:\+?\d[\d\s\-.()/]{7,}\d)").unwrap()
@@ -243,7 +268,8 @@ impl PiiDetector for SerialDetector {
         PiiCategory::Serial
     }
     fn quick_screen(&self, text: &str) -> bool {
-        text.contains("serial") || text.contains("Serial") || text.contains("SN")
+        // Include SERIAL (all-caps) because the regex is (?i) but contains() is case-sensitive.
+        text.contains("serial") || text.contains("Serial") || text.contains("SERIAL") || text.contains("SN")
     }
     fn find_all(&self, text: &str) -> Vec<PiiMatch> {
         let re = SERIAL_RE.get_or_init(|| {
@@ -300,11 +326,10 @@ impl PiiDetector for JwtDetector {
 // API key detector (AWS, GitHub, Stripe, Google, Slack)
 // ---------------------------------------------------------------------------
 
-static API_KEY_AWS_RE: OnceLock<Regex> = OnceLock::new();
-static API_KEY_GITHUB_RE: OnceLock<Regex> = OnceLock::new();
-static API_KEY_STRIPE_RE: OnceLock<Regex> = OnceLock::new();
-static API_KEY_GOOGLE_RE: OnceLock<Regex> = OnceLock::new();
-static API_KEY_SLACK_RE: OnceLock<Regex> = OnceLock::new();
+// All five API key patterns combined into one DFA — one scan instead of five.
+// The regex crate compiles alternations into a single DFA that explores all branches
+// simultaneously, making this as fast as the fastest individual pattern.
+static API_KEY_RE: OnceLock<Regex> = OnceLock::new();
 
 pub struct ApiKeyDetector;
 
@@ -321,17 +346,13 @@ impl PiiDetector for ApiKeyDetector {
             || text.contains("xox")
     }
     fn find_all(&self, text: &str) -> Vec<PiiMatch> {
-        let aws = API_KEY_AWS_RE.get_or_init(|| Regex::new(r"\bAKIA[0-9A-Z]{16}\b").unwrap());
-        let github = API_KEY_GITHUB_RE.get_or_init(|| Regex::new(r"\bghp_[0-9a-zA-Z]{36}\b").unwrap());
-        let stripe = API_KEY_STRIPE_RE.get_or_init(|| Regex::new(r"\bsk_(?:live|test)_[0-9a-zA-Z]{24,99}\b").unwrap());
-        let google = API_KEY_GOOGLE_RE.get_or_init(|| Regex::new(r"\bAIza[0-9A-Za-z\-_]{35}\b").unwrap());
-        let slack = API_KEY_SLACK_RE.get_or_init(|| Regex::new(r"\bxox[pboas]-[0-9a-zA-Z\-]{10,99}\b").unwrap());
-        let patterns: [&Regex; 5] = [aws, github, stripe, google, slack];
-        let mut matches = Vec::new();
-        for re in &patterns {
-            matches.extend(regex_matches(re, text, PiiCategory::ApiKey));
-        }
-        matches
+        let re = API_KEY_RE.get_or_init(|| {
+            Regex::new(
+                r"\bAKIA[0-9A-Z]{16}\b|\bghp_[0-9a-zA-Z]{36}\b|\bsk_(?:live|test)_[0-9a-zA-Z]{24,99}\b|\bAIza[0-9A-Za-z_\-]{35}\b|\bxox[pboas]-[0-9a-zA-Z\-]{10,99}\b",
+            )
+            .unwrap()
+        });
+        regex_matches(re, text, PiiCategory::ApiKey)
     }
 }
 
@@ -348,7 +369,9 @@ impl PiiDetector for BearerTokenDetector {
         PiiCategory::BearerToken
     }
     fn quick_screen(&self, text: &str) -> bool {
-        text.to_ascii_lowercase().contains("bearer")
+        // Avoid to_ascii_lowercase() — it allocates on every call.
+        // "Bearer" (title case) is the HTTP standard; include common variants explicitly.
+        text.contains("Bearer") || text.contains("bearer") || text.contains("BEARER")
     }
     fn find_all(&self, text: &str) -> Vec<PiiMatch> {
         let re = BEARER_RE.get_or_init(|| {
@@ -371,9 +394,10 @@ impl PiiDetector for GaidDetector {
         PiiCategory::Gaid
     }
     fn quick_screen(&self, text: &str) -> bool {
-        text.contains("gaid")
-            || text.contains("advertising_id")
-            || text.contains("google_ad_id")
+        // The regex is (?i) but contains() is case-sensitive; cover common casings.
+        text.contains("gaid") || text.contains("GAID")
+            || text.contains("advertising_id") || text.contains("ADVERTISING_ID")
+            || text.contains("google_ad_id") || text.contains("GOOGLE_AD_ID")
     }
     fn find_all(&self, text: &str) -> Vec<PiiMatch> {
         let re = GAID_RE.get_or_init(|| {

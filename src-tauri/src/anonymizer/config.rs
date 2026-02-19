@@ -80,7 +80,7 @@ fn default_detector_entries() -> Vec<DetectorEntry> {
             tier: "tier1".to_string(),
             fp_hint: "<1%".to_string(),
             enabled: true,
-            patterns: vec![p("Email (general)", r"[\w.+\-]+@[\w\-]+\.[\w.\-]+")],
+            patterns: vec![p("Email (RFC 5321 dot-atom)", r"\b[a-zA-Z0-9][a-zA-Z0-9._%+\-]{0,62}@[a-zA-Z0-9\-]+(?:\.[a-zA-Z0-9\-]+)*\.[a-zA-Z]{2,10}\b")],
         },
         DetectorEntry {
             id: "mac".to_string(),
@@ -88,7 +88,7 @@ fn default_detector_entries() -> Vec<DetectorEntry> {
             tier: "tier1".to_string(),
             fp_hint: "<1%".to_string(),
             enabled: true,
-            patterns: vec![p("MAC address (colon or dash)", r"(?i)(?:[0-9a-f]{2}[:\-]){5}[0-9a-f]{2}")],
+            patterns: vec![p("MAC address (colon or dash)", r"(?i)\b(?:[0-9a-f]{2}[:\-]){5}[0-9a-f]{2}\b")],
         },
         DetectorEntry {
             id: "ipv4".to_string(),
