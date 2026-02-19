@@ -4,6 +4,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
+use crate::anonymizer::LogAnonymizer;
 use crate::commands::AppState;
 use crate::commands::files::LoadResult;
 use crate::core::line::{LineMeta, LogLevel, ViewLine};
@@ -268,6 +269,47 @@ pub async fn stop_adb_stream(
         sp_state.remove(&session_id);
     }
 
+    // Clean up stream anonymizer
+    {
+        let mut sa = state
+            .stream_anonymizers
+            .lock()
+            .map_err(|_| "Stream anonymizer lock poisoned")?;
+        sa.remove(&session_id);
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// set_stream_anonymize
+// ---------------------------------------------------------------------------
+
+/// Enable or disable PII anonymization for a live ADB stream.
+/// When enabled, a `LogAnonymizer` is created from the current config and
+/// applied to every incoming line in `flush_batch` before display and processing.
+/// The same anonymizer instance persists across batches so token numbering is
+/// consistent (e.g. `user@corp.com` always maps to `<EMAIL-1>`).
+#[tauri::command]
+pub async fn set_stream_anonymize(
+    state: State<'_, AppState>,
+    session_id: String,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut sa = state
+        .stream_anonymizers
+        .lock()
+        .map_err(|_| "Stream anonymizer lock poisoned")?;
+    if enabled {
+        let config = state
+            .anonymizer_config
+            .lock()
+            .map_err(|_| "Anonymizer config lock poisoned")?
+            .clone();
+        sa.insert(session_id, LogAnonymizer::from_config(&config));
+    } else {
+        sa.remove(&session_id);
+    }
     Ok(())
 }
 
@@ -585,6 +627,28 @@ fn flush_batch(
         return;
     }
 
+    // ── Step 2b: Apply PII anonymization to ViewLines (if enabled) ────────────
+    // Extract the anonymizer for this session (same extract-use-reinsert pattern
+    // as stream_processor_state). Using the same instance across batches keeps
+    // token numbering stable: the same raw value always maps to the same token.
+    let anon: Option<LogAnonymizer> = {
+        let mut sa = match state.stream_anonymizers.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        sa.remove(session_id)
+    };
+
+    if let Some(ref a) = anon {
+        for (_, _, vl) in &mut parsed {
+            let (anon_msg, _) = a.anonymize(&vl.message);
+            // Reconstruct raw: keep the logcat header prefix, replace message.
+            let prefix_len = vl.raw.len().saturating_sub(vl.message.len());
+            vl.raw = format!("{}{}", &vl.raw[..prefix_len], &anon_msg);
+            vl.message = anon_msg;
+        }
+    }
+
     // ── Step 3: Append raw lines + meta to session, evict if over cap ─────────
     let (total_lines, byte_count, first_ts, last_ts) = {
         let mut sessions = match state.sessions.lock() {
@@ -769,6 +833,21 @@ fn flush_batch(
             matched_lines,
             emission_count,
         });
+    }
+
+    // ── Step 4b: Re-insert anonymizer and persist PII mappings ───────────────
+    if let Some(a) = anon {
+        // Update the session's token→original map so the PII dashboard can show it.
+        let forward = a.mappings.all_mappings();
+        let inverted: std::collections::HashMap<String, String> =
+            forward.into_iter().map(|(raw, tok)| (tok, raw)).collect();
+        if let Ok(mut pm) = state.pii_mappings.lock() {
+            pm.insert(session_id.to_string(), inverted);
+        }
+        // Re-insert for the next batch.
+        if let Ok(mut sa) = state.stream_anonymizers.lock() {
+            sa.insert(session_id.to_string(), a);
+        }
     }
 
     // ── Step 5: Emit events ────────────────────────────────────────────────────

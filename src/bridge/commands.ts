@@ -50,6 +50,13 @@ export function updateStreamProcessors(
   return invoke('update_stream_processors', { sessionId, processorIds });
 }
 
+export function setStreamAnonymize(
+  sessionId: string,
+  enabled: boolean,
+): Promise<void> {
+  return invoke('set_stream_anonymize', { sessionId, enabled });
+}
+
 export function getPackagePids(
   deviceSerial: string,
   packageName: string,

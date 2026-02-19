@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use crate::anonymizer::config::AnonymizerConfig;
+use crate::anonymizer::LogAnonymizer;
 use crate::core::session::AnalysisSession;
 use crate::processors::interpreter::{ContinuousRunState, RunResult};
 use crate::processors::schema::ProcessorDef;
@@ -35,6 +36,9 @@ pub struct AppState {
     pub anonymizer_config: Mutex<AnonymizerConfig>,
     /// PII token→original mappings from the last pipeline run per session.
     pub pii_mappings: Mutex<HashMap<String, HashMap<String, String>>>,
+    /// Persistent anonymizers for live ADB stream sessions (sessionId → anonymizer).
+    /// Created by `set_stream_anonymize(enabled=true)`; dropped on stream stop.
+    pub stream_anonymizers: Mutex<HashMap<String, LogAnonymizer>>,
 }
 
 impl Default for AppState {
@@ -59,6 +63,7 @@ impl AppState {
             stream_processor_state: Mutex::new(HashMap::new()),
             anonymizer_config: Mutex::new(AnonymizerConfig::with_defaults()),
             pii_mappings: Mutex::new(HashMap::new()),
+            stream_anonymizers: Mutex::new(HashMap::new()),
         }
     }
 }

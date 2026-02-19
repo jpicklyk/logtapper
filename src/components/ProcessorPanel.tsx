@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import type { PipelineState } from '../hooks/usePipeline';
+import { setStreamAnonymize } from '../bridge/commands';
 
 interface Props {
   pipeline: PipelineState;
   sessionId: string | null;
+  isStreaming: boolean;
 }
 
-export default function ProcessorPanel({ pipeline, sessionId }: Props) {
+export default function ProcessorPanel({ pipeline, sessionId, isStreaming }: Props) {
   const [yamlInput, setYamlInput] = useState('');
   const [showImport, setShowImport] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
@@ -17,6 +19,13 @@ export default function ProcessorPanel({ pipeline, sessionId }: Props) {
     pipeline.loadProcessors();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Sync anonymize toggle to the backend while a stream is active.
+  // This enables/disables live PII anonymization of incoming stream lines.
+  useEffect(() => {
+    if (!isStreaming || !sessionId) return;
+    setStreamAnonymize(sessionId, anonymize).catch(() => {});
+  }, [isStreaming, sessionId, anonymize]);
 
   async function handleImport() {
     setImportError(null);

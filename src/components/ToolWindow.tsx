@@ -18,6 +18,7 @@ export default function ToolWindow({ tool, width }: Props) {
         <ProcessorPanel
           pipeline={pipeline}
           sessionId={viewer.session?.sessionId ?? null}
+          isStreaming={viewer.isStreaming}
         />
       )}
       {tool === 'chat' && (
