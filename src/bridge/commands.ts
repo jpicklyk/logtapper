@@ -27,11 +27,13 @@ export function startAdbStream(
   deviceId?: string,
   packageFilter?: string,
   activeProcessorIds: string[] = [],
+  maxRawLines?: number,
 ): Promise<LoadResult> {
   return invoke('start_adb_stream', {
     deviceId: deviceId ?? null,
     packageFilter: packageFilter ?? null,
     activeProcessorIds,
+    maxRawLines: maxRawLines ?? null,
   });
 }
 

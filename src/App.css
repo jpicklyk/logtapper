@@ -2432,3 +2432,100 @@ details[open] > summary::before {
 .filter-parse-error-icon {
   font-size: 11px;
 }
+
+/* ── Settings panel ───────────────────────────────────────────────────────── */
+
+.settings-dialog {
+  min-width: 500px;
+  max-width: 580px;
+}
+
+.settings-body {
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.settings-section {
+  padding-bottom: 4px;
+}
+
+.settings-section-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  padding: 10px 16px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-row:last-child {
+  border-bottom: none;
+}
+
+.settings-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-label-text {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.settings-label-hint {
+  font-size: 10px;
+  color: var(--text-dimmed);
+  line-height: 1.45;
+}
+
+.settings-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.settings-input {
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 4px 8px;
+  width: 96px;
+  text-align: right;
+}
+
+.settings-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.settings-unit {
+  font-size: 11px;
+  color: var(--text-dimmed);
+  white-space: nowrap;
+}
+
+.settings-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+}

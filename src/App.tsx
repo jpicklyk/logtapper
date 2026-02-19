@@ -4,6 +4,7 @@ import { useLogViewer } from './hooks/useLogViewer';
 import { usePipeline } from './hooks/usePipeline';
 import { useClaude } from './hooks/useClaude';
 import { usePaneLayout } from './hooks/usePaneLayout';
+import { useSettings } from './hooks/useSettings';
 import { AppContext } from './context/AppContext';
 import { getDumpstateMetadata, getSections, listAdbDevices } from './bridge/commands';
 import type { AdbDevice, DumpstateMetadata } from './bridge/types';
@@ -11,10 +12,12 @@ import type { SectionEntry } from './components/FileInfoPanel';
 import PaneLayout from './components/PaneLayout';
 import SearchBar from './components/SearchBar';
 import ProgressOverlay from './components/ProgressOverlay';
+import SettingsPanel from './components/SettingsPanel';
 import './App.css';
 
 export default function App() {
-  const viewer = useLogViewer();
+  const { settings, updateSetting, resetSettings } = useSettings();
+  const viewer = useLogViewer(settings.streamFrontendCacheMax);
   const pipeline = usePipeline();
   const claude = useClaude();
   const layout = usePaneLayout();
@@ -24,6 +27,7 @@ export default function App() {
   const [metadata, setMetadata] = useState<DumpstateMetadata | null>(null);
   const [deviceList, setDeviceList] = useState<AdbDevice[]>([]);
   const [showDeviceSelector, setShowDeviceSelector] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [adbError, setAdbError] = useState<string | null>(null);
 
   // ── File open ──────────────────────────────────────────────────────────────
@@ -65,8 +69,13 @@ export default function App() {
     setAdbError(null);
     setMetadata(null);
     setSections([]);
-    await viewer.startStream(deviceId, undefined, Array.from(pipeline.activeProcessorIds));
-  }, [viewer, pipeline.activeProcessorIds]);
+    await viewer.startStream(
+      deviceId,
+      undefined,
+      Array.from(pipeline.activeProcessorIds),
+      settings.streamBackendLineMax,
+    );
+  }, [viewer, pipeline.activeProcessorIds, settings.streamBackendLineMax]);
 
   const handleStreamAdb = useCallback(async () => {
     setAdbError(null);
@@ -213,6 +222,14 @@ export default function App() {
             >
               Reset Layout
             </button>
+            <button
+              className="btn-icon-header"
+              onClick={() => setShowSettings(true)}
+              title="Settings"
+              aria-label="Open Settings"
+            >
+              ⚙
+            </button>
             {viewer.isStreaming ? (
               <button className="btn-stop-stream" onClick={handleStopStream}>
                 ■ Stop Stream
@@ -278,6 +295,16 @@ export default function App() {
 
         {/* ── Loading overlay ── */}
         {viewer.loading && <ProgressOverlay message="Loading log file…" />}
+
+        {/* ── Settings panel ── */}
+        {showSettings && (
+          <SettingsPanel
+            settings={settings}
+            onUpdate={updateSetting}
+            onReset={resetSettings}
+            onClose={() => setShowSettings(false)}
+          />
+        )}
 
         {/* ── ADB device selector modal ── */}
         {showDeviceSelector && (

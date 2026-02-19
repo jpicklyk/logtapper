@@ -94,6 +94,12 @@ export interface AdbBatchPayload {
   sessionId: string;
   lines: ViewLine[];
   totalLines: number;
+  /** Cumulative bytes received from ADB (for Size display in file info panel). */
+  byteCount: number;
+  /** First non-zero timestamp in the stream (ns since 2000-01-01 UTC), or null. */
+  firstTimestamp: number | null;
+  /** Most recent non-zero timestamp (ns since 2000-01-01 UTC), or null. */
+  lastTimestamp: number | null;
 }
 
 export interface AdbProcessorUpdate {

@@ -32,7 +32,7 @@ export interface LogViewerState {
   filteredLineNums: number[] | null;
 
   loadFile: (path: string) => Promise<void>;
-  startStream: (deviceId?: string, packageFilter?: string, activeProcessorIds?: string[]) => Promise<void>;
+  startStream: (deviceId?: string, packageFilter?: string, activeProcessorIds?: string[], maxRawLines?: number) => Promise<void>;
   stopStream: () => Promise<void>;
   setStreamFilter: (expr: string) => Promise<void>;
   handleFetchNeeded: (offset: number, count: number) => void;
@@ -43,9 +43,14 @@ export interface LogViewerState {
   clearProcessorView: () => void;
 }
 
-export function useLogViewer(): LogViewerState {
+/**
+ * @param frontendCacheMax - Maximum number of ViewLine entries kept in the
+ *   frontend lineCache. When exceeded, the oldest entries (lowest lineNum) are
+ *   evicted. 0 = unlimited. Updated via useEffect so changes take effect on the
+ *   next streaming batch.
+ */
+export function useLogViewer(frontendCacheMax: number = 50_000): LogViewerState {
   const [session, setSession] = useState<LoadResult | null>(null);
-  const [lineCache, setLineCache] = useState<Map<number, ViewLine>>(new Map());
   const [search, setSearch] = useState<SearchQuery | null>(null);
   const [searchSummary, setSearchSummary] = useState<SearchSummary | null>(null);
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
@@ -59,17 +64,30 @@ export function useLogViewer(): LogViewerState {
   const [filterParseError, setFilterParseError] = useState<string | null>(null);
   const [filteredLineNums, setFilteredLineNums] = useState<number[] | null>(null);
 
+  // Cache version triggers re-renders when lineCacheRef is mutated (file fetch path).
+  const [, setCacheVersion] = useState(0);
+
   // Track in-flight fetch requests to avoid duplicates
   const pendingFetches = useRef<Set<string>>(new Set());
   const sessionRef = useRef<LoadResult | null>(null);
   const searchRef = useRef<SearchQuery | null>(null);
   const processorIdRef = useRef<string | null>(null);
+  const isStreamingRef = useRef(false);
+
+  // Keep frontendCacheMax in a ref so handleAdbBatch (stable callback) reads the latest value.
+  const frontendCacheMaxRef = useRef(frontendCacheMax);
+  useEffect(() => { frontendCacheMaxRef.current = frontendCacheMax; }, [frontendCacheMax]);
 
   // Filter refs — writable from callbacks without causing re-renders
   const filterAstRef = useRef<FilterNode | null>(null);
   const packagePidsRef = useRef<Map<string, number[]>>(new Map());
   const streamDeviceSerialRef = useRef<string | null>(null);
-  // Mirror of lineCache for synchronous access in filter recompute
+
+  // Mutable lineCache backing store — never replaced during streaming batches,
+  // only mutated in place. This eliminates the O(N) new Map(prev) copy every 50 ms.
+  // Re-renders are triggered by:
+  //   • setSession()  — streaming batch path (updates totalLines + file info)
+  //   • setCacheVersion() — file fetch path (no session update needed)
   const lineCacheRef = useRef<Map<number, ViewLine>>(new Map());
 
   // ADB event unlisteners
@@ -85,9 +103,8 @@ export function useLogViewer(): LogViewerState {
   }, []);
 
   const resetSessionState = useCallback(() => {
-    const emptyCache = new Map<number, ViewLine>();
-    setLineCache(emptyCache);
-    lineCacheRef.current = emptyCache;
+    lineCacheRef.current = new Map<number, ViewLine>();
+    setCacheVersion((v) => v + 1);
     setSearch(null);
     searchRef.current = null;
     setSearchSummary(null);
@@ -106,20 +123,34 @@ export function useLogViewer(): LogViewerState {
   const handleAdbBatch = useCallback((payload: AdbBatchPayload) => {
     if (payload.sessionId !== sessionRef.current?.sessionId) return;
 
-    // Append new lines to lineCache (keyed by sequential lineNum)
-    setLineCache((prev) => {
-      const next = new Map(prev);
-      for (const line of payload.lines) {
-        next.set(line.lineNum, line);
-      }
-      lineCacheRef.current = next;
-      return next;
-    });
+    // Mutate lineCache in place — no O(N) copy.
+    const cache = lineCacheRef.current;
+    for (const line of payload.lines) {
+      cache.set(line.lineNum, line);
+    }
 
-    // Update totalLines in session so virtualizer resizes
+    // Evict oldest entries if over the frontend cap (Map iteration is insertion-ordered).
+    const cap = frontendCacheMaxRef.current;
+    if (cap > 0 && cache.size > cap) {
+      let toEvict = cache.size - cap;
+      for (const key of cache.keys()) {
+        if (toEvict <= 0) break;
+        cache.delete(key);
+        toEvict--;
+      }
+    }
+
+    // Update session metadata — this setState triggers the re-render that shows new lines.
     setSession((prev) => {
       if (!prev) return prev;
-      return { ...prev, totalLines: payload.totalLines };
+      return {
+        ...prev,
+        totalLines: payload.totalLines,
+        fileSize: payload.byteCount,
+        // Preserve first timestamp once set; always update last timestamp.
+        firstTimestamp: prev.firstTimestamp ?? payload.firstTimestamp,
+        lastTimestamp: payload.lastTimestamp,
+      };
     });
 
     // Incremental filter: check only new lines from this batch
@@ -204,6 +235,7 @@ export function useLogViewer(): LogViewerState {
     adbStoppedUnlistenRef.current?.();
     adbStoppedUnlistenRef.current = null;
     setIsStreaming(false);
+    isStreamingRef.current = false;
 
     setLoading(true);
     setError(null);
@@ -220,11 +252,8 @@ export function useLogViewer(): LogViewerState {
         count: WINDOW_SIZE,
         context: 0,
       });
-      setLineCache((prev) => {
-        const next = new Map(prev);
-        for (const line of first.lines) next.set(line.lineNum, line);
-        return next;
-      });
+      for (const line of first.lines) lineCacheRef.current.set(line.lineNum, line);
+      setCacheVersion((v) => v + 1);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -236,6 +265,7 @@ export function useLogViewer(): LogViewerState {
     deviceId?: string,
     packageFilter?: string,
     activeProcessorIds: string[] = [],
+    maxRawLines?: number,
   ) => {
     // Clean up any previous stream
     adbBatchUnlistenRef.current?.();
@@ -251,10 +281,11 @@ export function useLogViewer(): LogViewerState {
     streamDeviceSerialRef.current = deviceId ?? null;
 
     try {
-      const result = await startAdbStream(deviceId, packageFilter, activeProcessorIds);
+      const result = await startAdbStream(deviceId, packageFilter, activeProcessorIds, maxRawLines);
       setSession(result);
       sessionRef.current = result;
       setIsStreaming(true);
+      isStreamingRef.current = true;
 
       // Subscribe to incoming line batches
       const unlistenBatch = await onAdbBatch(handleAdbBatch);
@@ -264,6 +295,7 @@ export function useLogViewer(): LogViewerState {
       const unlistenStopped = await onAdbStreamStopped((payload) => {
         if (payload.sessionId !== sessionRef.current?.sessionId) return;
         setIsStreaming(false);
+        isStreamingRef.current = false;
         adbBatchUnlistenRef.current?.();
         adbBatchUnlistenRef.current = null;
       });
@@ -271,6 +303,7 @@ export function useLogViewer(): LogViewerState {
     } catch (e) {
       setError(String(e));
       setIsStreaming(false);
+      isStreamingRef.current = false;
     } finally {
       setLoading(false);
     }
@@ -290,10 +323,14 @@ export function useLogViewer(): LogViewerState {
     adbStoppedUnlistenRef.current?.();
     adbStoppedUnlistenRef.current = null;
     setIsStreaming(false);
+    isStreamingRef.current = false;
   }, []);
 
   const handleFetchNeeded = useCallback(
     (offset: number, count: number) => {
+      // Skip file fetches during active streaming — all lines arrive via batch events.
+      if (isStreamingRef.current) return;
+
       const sess = sessionRef.current;
       if (!sess) return;
       const pid = processorIdRef.current;
@@ -315,11 +352,8 @@ export function useLogViewer(): LogViewerState {
         search: searchRef.current ?? undefined,
       })
         .then((window) => {
-          setLineCache((prev) => {
-            const next = new Map(prev);
-            for (const line of window.lines) next.set(line.lineNum, line);
-            return next;
-          });
+          for (const line of window.lines) lineCacheRef.current.set(line.lineNum, line);
+          setCacheVersion((v) => v + 1);
         })
         .catch(console.error)
         .finally(() => pendingFetches.current.delete(key));
@@ -336,7 +370,8 @@ export function useLogViewer(): LogViewerState {
 
       if (!sess || !query) {
         setSearchSummary(null);
-        setLineCache(new Map());
+        lineCacheRef.current = new Map();
+        setCacheVersion((v) => v + 1);
         return;
       }
 
@@ -347,7 +382,8 @@ export function useLogViewer(): LogViewerState {
         if (summary.matchLineNums.length > 0) {
           setScrollToLine(summary.matchLineNums[0]);
         }
-        setLineCache(new Map());
+        lineCacheRef.current = new Map();
+        setCacheVersion((v) => v + 1);
       } catch (e) {
         console.error('Search error:', e);
       }
@@ -380,20 +416,22 @@ export function useLogViewer(): LogViewerState {
   const setProcessorView = useCallback((id: string) => {
     setProcessorId(id);
     processorIdRef.current = id;
-    setLineCache(new Map());
+    lineCacheRef.current = new Map();
+    setCacheVersion((v) => v + 1);
     pendingFetches.current.clear();
   }, []);
 
   const clearProcessorView = useCallback(() => {
     setProcessorId(null);
     processorIdRef.current = null;
-    setLineCache(new Map());
+    lineCacheRef.current = new Map();
+    setCacheVersion((v) => v + 1);
     pendingFetches.current.clear();
   }, []);
 
   return {
     session,
-    lineCache,
+    lineCache: lineCacheRef.current,
     search,
     searchSummary,
     currentMatchIndex,

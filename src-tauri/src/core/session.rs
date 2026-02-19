@@ -70,6 +70,12 @@ pub enum LogSourceData {
     Stream {
         /// Raw line strings growing as new ADB lines arrive.
         raw_lines: Vec<String>,
+        /// Cumulative bytes received (including bytes of evicted lines).
+        byte_count: u64,
+        /// Lines drained from the front to enforce the size cap.
+        evicted_count: usize,
+        /// First non-zero timestamp ever seen; set once, never cleared after eviction.
+        cached_first_ts: Option<i64>,
     },
 }
 
@@ -95,14 +101,23 @@ impl LogSource {
             id,
             name,
             source_type: SourceType::Logcat,
-            data: LogSourceData::Stream { raw_lines: Vec::new() },
+            data: LogSourceData::Stream {
+                raw_lines: Vec::new(),
+                byte_count: 0,
+                evicted_count: 0,
+                cached_first_ts: None,
+            },
             line_meta: Vec::new(),
             sections: Vec::new(),
         }
     }
 
     pub fn total_lines(&self) -> usize {
-        self.line_meta.len()
+        match &self.data {
+            LogSourceData::File { .. } => self.line_meta.len(),
+            // Cumulative total: evicted + currently retained
+            LogSourceData::Stream { evicted_count, .. } => evicted_count + self.line_meta.len(),
+        }
     }
 
     pub fn raw_line(&self, line_num: usize) -> Option<&str> {
@@ -111,17 +126,28 @@ impl LogSource {
                 let (off, len) = line_index.get(line_num)?;
                 std::str::from_utf8(&mmap[*off..*off + *len]).ok()
             }
-            LogSourceData::Stream { raw_lines } => {
-                raw_lines.get(line_num).map(|s| s.as_str())
+            LogSourceData::Stream { raw_lines, evicted_count, .. } => {
+                let local_idx = line_num.checked_sub(*evicted_count)?;
+                raw_lines.get(local_idx).map(|s| s.as_str())
             }
         }
     }
 
+    /// Cumulative byte count for streaming sources; 0 for file sources.
+    pub fn stream_byte_count(&self) -> u64 {
+        if let LogSourceData::Stream { byte_count, .. } = &self.data {
+            *byte_count
+        } else {
+            0
+        }
+    }
+
     pub fn first_timestamp(&self) -> Option<i64> {
-        self.line_meta
-            .iter()
-            .find(|m| m.timestamp > 0)
-            .map(|m| m.timestamp)
+        match &self.data {
+            // Return cached value so eviction doesn't lose the original first timestamp.
+            LogSourceData::Stream { cached_first_ts, .. } => *cached_first_ts,
+            _ => self.line_meta.iter().find(|m| m.timestamp > 0).map(|m| m.timestamp),
+        }
     }
 
     pub fn last_timestamp(&self) -> Option<i64> {

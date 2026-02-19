@@ -31,6 +31,12 @@ pub struct AdbBatch {
     pub session_id: String,
     pub lines: Vec<ViewLine>,
     pub total_lines: usize,
+    /// Cumulative bytes received from ADB (for Size display in file info panel).
+    pub byte_count: u64,
+    /// First non-zero timestamp in the stream (nanoseconds since 2000-01-01 UTC).
+    pub first_timestamp: Option<i64>,
+    /// Most recent non-zero timestamp (nanoseconds since 2000-01-01 UTC).
+    pub last_timestamp: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -119,6 +125,9 @@ pub async fn start_adb_stream(
     device_id: Option<String>,
     package_filter: Option<String>,
     active_processor_ids: Vec<String>,
+    // Maximum raw log lines to keep in the backend buffer; oldest evicted above this.
+    // None defaults to 500,000.
+    max_raw_lines: Option<u32>,
 ) -> Result<LoadResult, String> {
     // ── Resolve device ────────────────────────────────────────────────────────
     let serial = match device_id {
@@ -189,6 +198,7 @@ pub async fn start_adb_stream(
     let sid = session_id.clone();
     let src_id = source_id.clone();
     let serial_clone = serial.clone();
+    let max_lines = max_raw_lines.unwrap_or(500_000) as usize;
     tokio::spawn(async move {
         run_streaming_task(
             cancel_rx,
@@ -197,6 +207,7 @@ pub async fn start_adb_stream(
             serial_clone,
             package_filter,
             app_clone,
+            max_lines,
         )
         .await;
     });
@@ -301,6 +312,7 @@ async fn run_streaming_task(
     device_serial: String,
     package_filter: Option<String>,
     app: AppHandle,
+    max_raw_lines: usize,
 ) {
     // Build adb command.  -T 1 = replay the last 1 buffered entry then
     // stream new lines only, avoiding a full ring-buffer dump on connect.
@@ -384,13 +396,13 @@ async fn run_streaming_task(
                     Some(line) => {
                         buffer.push(line);
                         if buffer.len() >= 100 {
-                            flush_batch(&mut buffer, &session_id, &source_id, &app);
+                            flush_batch(&mut buffer, &session_id, &source_id, &app, max_raw_lines);
                         }
                     }
                     None => {
                         // Reader task ended (EOF or device disconnect)
                         if !buffer.is_empty() {
-                            flush_batch(&mut buffer, &session_id, &source_id, &app);
+                            flush_batch(&mut buffer, &session_id, &source_id, &app, max_raw_lines);
                         }
                         let _ = app.emit(
                             "adb-stream-stopped",
@@ -405,7 +417,7 @@ async fn run_streaming_task(
             }
             _ = &mut cancel => {
                 if !buffer.is_empty() {
-                    flush_batch(&mut buffer, &session_id, &source_id, &app);
+                    flush_batch(&mut buffer, &session_id, &source_id, &app, max_raw_lines);
                 }
                 child.kill().await.ok();
                 let _ = app.emit(
@@ -419,7 +431,7 @@ async fn run_streaming_task(
             }
             _ = ticker.tick() => {
                 if !buffer.is_empty() {
-                    flush_batch(&mut buffer, &session_id, &source_id, &app);
+                    flush_batch(&mut buffer, &session_id, &source_id, &app, max_raw_lines);
                 }
             }
         }
@@ -435,6 +447,7 @@ fn flush_batch(
     session_id: &str,
     source_id: &str,
     app: &AppHandle,
+    max_raw_lines: usize,
 ) {
     if buffer.is_empty() {
         return;
@@ -510,8 +523,8 @@ fn flush_batch(
         return;
     }
 
-    // ── Step 3: Append raw lines + meta to session (brief lock) ───────────────
-    let total_lines = {
+    // ── Step 3: Append raw lines + meta to session, evict if over cap ─────────
+    let (total_lines, byte_count, first_ts, last_ts) = {
         let mut sessions = match state.sessions.lock() {
             Ok(g) => g,
             Err(_) => return,
@@ -523,13 +536,69 @@ fn flush_batch(
             Some(s) => s,
             None => return,
         };
+
+        // Append parsed lines to both raw_lines and line_meta.
+        // Access source.data and source.line_meta as separate fields to satisfy borrow checker.
         for (raw, meta, _) in &parsed {
-            if let LogSourceData::Stream { raw_lines } = &mut source.data {
+            if let LogSourceData::Stream {
+                ref mut raw_lines,
+                ref mut byte_count,
+                ref mut cached_first_ts,
+                ..
+            } = source.data
+            {
+                *byte_count += (raw.len() + 1) as u64; // +1 for the newline
                 raw_lines.push(raw.clone());
+                if cached_first_ts.is_none() && meta.timestamp > 0 {
+                    *cached_first_ts = Some(meta.timestamp);
+                }
             }
+            // source.data borrow released at end of if-let block; now safe to borrow line_meta
             source.line_meta.push(meta.clone());
         }
-        source.total_lines()
+
+        // Evict oldest lines from the front if over the cap.
+        // Compute excess separately to avoid simultaneous mutable + immutable borrows.
+        let excess = if let LogSourceData::Stream { ref raw_lines, .. } = source.data {
+            raw_lines.len().saturating_sub(max_raw_lines)
+        } else {
+            0
+        };
+
+        if excess > 0 {
+            if let LogSourceData::Stream {
+                ref mut raw_lines,
+                ref mut evicted_count,
+                ..
+            } = source.data
+            {
+                raw_lines.drain(0..excess);
+                *evicted_count += excess;
+            }
+            // source.data borrow released; now drain the parallel line_meta slice
+            source.line_meta.drain(0..excess);
+        }
+
+        // Collect stats for the batch event payload.
+        let total = source.total_lines();
+        let (bc, first_ts, last_ts) = if let LogSourceData::Stream {
+            byte_count,
+            cached_first_ts,
+            ..
+        } = &source.data
+        {
+            let last = source
+                .line_meta
+                .iter()
+                .rev()
+                .find(|m| m.timestamp > 0)
+                .map(|m| m.timestamp);
+            (*byte_count, *cached_first_ts, last)
+        } else {
+            (0, None, None)
+        };
+
+        (total, bc, first_ts, last_ts)
     };
 
     // Collect ViewLines for the batch event
@@ -541,21 +610,21 @@ fn flush_batch(
             match state.stream_processor_state.lock() {
                 Ok(g) => g,
                 Err(_) => {
-                    emit_batch(app, session_id, view_lines, total_lines);
+                    emit_batch(app, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
                     return;
                 }
             };
         match sp_state.get(session_id) {
             Some(m) => m.keys().cloned().collect(),
             None => {
-                emit_batch(app, session_id, view_lines, total_lines);
+                emit_batch(app, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
                 return;
             }
         }
     };
 
     if proc_ids.is_empty() {
-        emit_batch(app, session_id, view_lines, total_lines);
+        emit_batch(app, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
         return;
     }
 
@@ -565,7 +634,7 @@ fn flush_batch(
             match state.processors.lock() {
                 Ok(g) => g,
                 Err(_) => {
-                    emit_batch(app, session_id, view_lines, total_lines);
+                    emit_batch(app, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
                     return;
                 }
             };
@@ -641,20 +710,31 @@ fn flush_batch(
     }
 
     // ── Step 5: Emit events ────────────────────────────────────────────────────
-    emit_batch(app, session_id, view_lines, total_lines);
+    emit_batch(app, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
 
     for update in proc_updates {
         let _ = app.emit("adb-processor-update", update);
     }
 }
 
-fn emit_batch(app: &AppHandle, session_id: &str, lines: Vec<ViewLine>, total_lines: usize) {
+fn emit_batch(
+    app: &AppHandle,
+    session_id: &str,
+    lines: Vec<ViewLine>,
+    total_lines: usize,
+    byte_count: u64,
+    first_timestamp: Option<i64>,
+    last_timestamp: Option<i64>,
+) {
     let _ = app.emit(
         "adb-batch",
         AdbBatch {
             session_id: session_id.to_string(),
             lines,
             total_lines,
+            byte_count,
+            first_timestamp,
+            last_timestamp,
         },
     );
 }
