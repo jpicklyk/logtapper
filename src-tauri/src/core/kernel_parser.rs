@@ -73,6 +73,7 @@ impl LogParser for KernelParser {
             source_id: source_id.to_string(),
             source_line_num: line_num,
             fields: Default::default(),
+            annotations: Vec::new(),
         })
     }
 

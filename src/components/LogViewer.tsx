@@ -30,6 +30,10 @@ interface Props {
    * Used when a stream filter is active.
    */
   lineNumbers?: number[];
+  /** Set of line numbers that have a StateTracker transition — shows gutter dot. */
+  transitionLineNums?: Set<number>;
+  /** lineNum → list of tracker IDs that transitioned on that line. */
+  transitionsByLine?: Record<number, string[]>;
 }
 
 export default function LogViewer({
@@ -41,6 +45,8 @@ export default function LogViewer({
   jumpSeq,
   isStreaming,
   lineNumbers,
+  transitionLineNums,
+  transitionsByLine,
 }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [, setAutoScroll] = useState(true);
@@ -51,6 +57,10 @@ export default function LogViewer({
   // the async scroll event it fires — which can arrive after a wheel-up event
   // and would otherwise re-enable auto-scroll the user just turned off.
   const lastProgrammaticScrollMs = useRef(0);
+  // Timestamp of the last manual wheel-up or keyboard-up event. Prevents onScroll
+  // from re-enabling auto-scroll when the user is still near the bottom (< threshold)
+  // immediately after a small upward scroll — the classic "near-bottom race."
+  const lastManualScrollUpMs = useRef(0);
 
   // When lineNumbers is provided (filter active), use its length as the count.
   // This allows the virtualizer to only show filtered lines.
@@ -67,23 +77,26 @@ export default function LogViewer({
 
   // ── Scroll / interaction listeners ──────────────────────────────────────────
   //
-  // DISABLE: wheel-up and keyboard-up fire synchronously before scroll position
-  // changes — they always beat the React effect and set autoScrollRef = false.
+  // DISABLE: onScroll disables auto-scroll whenever the view is not near the
+  // bottom (covers wheel, scrollbar drag, touch, momentum — all mechanisms).
+  // onWheel and onKeyDown additionally set lastManualScrollUpMs immediately,
+  // before the scroll position has changed, to handle the near-bottom race case
+  // where the view is still within AT_BOTTOM_THRESHOLD after a tiny upward scroll.
   //
-  // RE-ENABLE: scroll event checks position, but ONLY if it has been at least
-  // 150 ms since our last programmatic scrollToIndex call.  The browser dispatches
-  // scroll events asynchronously (after the current task), so the event from our
-  // scrollToIndex can arrive after a wheel-up event has already disabled
-  // auto-scroll.  The 150 ms guard ensures that event is ignored.
+  // RE-ENABLE: onScroll re-enables when near bottom AND the 600ms manual-scroll
+  // guard has expired. Programmatic scrolls (scrollToIndex) set
+  // lastProgrammaticScrollMs and are ignored entirely during the 150ms window.
   useEffect(() => {
     const el = parentRef.current;
     if (!el) return;
 
     const PROGRAMMATIC_GUARD_MS = 150;
+    const MANUAL_SCROLL_GUARD_MS = 600;
 
     // Wheel scroll up → disable immediately (fires before position changes).
     const onWheel = (e: WheelEvent) => {
       if (e.deltaY < 0) {
+        lastManualScrollUpMs.current = Date.now();
         autoScrollRef.current = false;
         setAutoScroll(false);
       }
@@ -92,18 +105,37 @@ export default function LogViewer({
     // Keyboard up → disable immediately.
     const onKeyDown = (e: KeyboardEvent) => {
       if (['ArrowUp', 'PageUp', 'Home'].includes(e.key)) {
+        lastManualScrollUpMs.current = Date.now();
         autoScrollRef.current = false;
         setAutoScroll(false);
       }
     };
 
-    // Re-enable only when position is near bottom AND the scroll event is not
-    // a leftover from our last programmatic scroll (timestamp guard).
+    // Handle all scroll events: disable when moved away from bottom (any mechanism),
+    // re-enable when back near bottom (with manual-scroll guard).
     const onScroll = () => {
-      if (Date.now() - lastProgrammaticScrollMs.current < PROGRAMMATIC_GUARD_MS) return;
+      const now = Date.now();
+      // Ignore scroll events caused by our own programmatic scrollToIndex calls.
+      if (now - lastProgrammaticScrollMs.current < PROGRAMMATIC_GUARD_MS) return;
+
       const nearBottom =
         el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_THRESHOLD;
+
+      // Disable auto-scroll whenever the view is not near the bottom — this catches
+      // scrollbar drags, touch/trackpad momentum, and any mechanism not covered by
+      // the wheel/keydown handlers.
+      if (!nearBottom && autoScrollRef.current) {
+        lastManualScrollUpMs.current = now;
+        autoScrollRef.current = false;
+        setAutoScroll(false);
+        return;
+      }
+
+      // Re-enable when user scrolls back near bottom, but only after the manual-scroll
+      // guard window has expired (prevents near-bottom race: user barely scrolls up,
+      // still within threshold, scroll event fires and immediately re-enables).
       if (nearBottom && !autoScrollRef.current) {
+        if (now - lastManualScrollUpMs.current < MANUAL_SCROLL_GUARD_MS) return;
         autoScrollRef.current = true;
         setAutoScroll(true);
       }
@@ -166,8 +198,13 @@ export default function LogViewer({
 
   // Scroll to a specific line when requested (jumpToLine / search navigation).
   // Depends on `jumpSeq` so repeated jumps to the same line always re-fire.
+  // Disable auto-scroll immediately before jumping — synchronously, so there
+  // is no race with an incoming streaming batch that could override the jump.
   useEffect(() => {
     if (scrollToLine != null && scrollToLine >= 0) {
+      autoScrollRef.current = false;
+      setAutoScroll(false);
+      lastManualScrollUpMs.current = Date.now();
       virtualizer.scrollToIndex(scrollToLine, { align: 'center' });
     }
   }, [scrollToLine, jumpSeq, virtualizer]);
@@ -228,6 +265,8 @@ export default function LogViewer({
                   onClick={handleLineClick}
                   isJumpTarget={isTarget}
                   jumpSeq={isTarget ? jumpSeq : undefined}
+                  hasTransition={transitionLineNums?.has(actualLineNum)}
+                  transitionTrackers={transitionsByLine?.[actualLineNum]}
                 />
               ) : (
                 <div className="log-line log-line-loading" style={{ height: LINE_HEIGHT }}>

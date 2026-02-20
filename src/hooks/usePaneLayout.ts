@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // ---------------------------------------------------------------------------
 
 /** Tab types that appear in the central pane area. */
-export type TabType = 'logviewer' | 'dashboard' | 'scratch';
+export type TabType = 'logviewer' | 'dashboard' | 'scratch' | 'statetimeline';
 
 /** Tool types shown in the right tool window, controlled by the icon rail. */
 export type RightTool = 'processors' | 'chat' | 'marketplace';
@@ -76,6 +76,7 @@ export const TAB_LABELS: Record<TabType, string> = {
   logviewer: 'Log',
   dashboard: 'Dashboard',
   scratch: 'Scratch',
+  statetimeline: 'State Timeline',
 };
 
 function makeTab(type: TabType): PaneTab {
@@ -116,7 +117,7 @@ interface PersistedShell {
   rightPanelWidth?: number;
 }
 
-const VALID_TAB_TYPES = new Set<string>(['logviewer', 'dashboard', 'scratch']);
+const VALID_TAB_TYPES = new Set<string>(['logviewer', 'dashboard', 'scratch', 'statetimeline']);
 
 /** Strip tabs with tab types that no longer exist (e.g. from a previous schema). */
 function sanitizePanes(panes: Pane[]): Pane[] {

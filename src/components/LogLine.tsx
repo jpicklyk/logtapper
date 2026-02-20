@@ -10,6 +10,10 @@ interface Props {
   isJumpTarget?: boolean;
   /** Incremented each time the same line is jumped to; triggers animation restart. */
   jumpSeq?: number;
+  /** True when one or more StateTrackers transitioned on this line. */
+  hasTransition?: boolean;
+  /** Names of trackers that transitioned on this line (for tooltip). */
+  transitionTrackers?: string[];
 }
 
 const LEVEL_CLASS: Record<string, string> = {
@@ -21,7 +25,7 @@ const LEVEL_CLASS: Record<string, string> = {
   Fatal: 'level-f',
 };
 
-const LogLine = memo(function LogLine({ line, style, onClick, isJumpTarget, jumpSeq }: Props) {
+const LogLine = memo(function LogLine({ line, style, onClick, isJumpTarget, jumpSeq, hasTransition, transitionTrackers }: Props) {
   const levelClass = LEVEL_CLASS[line.level] ?? '';
   const lineRef = useRef<HTMLDivElement>(null);
 
@@ -34,6 +38,10 @@ const LogLine = memo(function LogLine({ line, style, onClick, isJumpTarget, jump
     el.style.animation = '';
   }, [isJumpTarget, jumpSeq]);
 
+  const tooltip = transitionTrackers?.length
+    ? `State change: ${transitionTrackers.join(', ')}`
+    : undefined;
+
   return (
     <div
       ref={lineRef}
@@ -41,6 +49,9 @@ const LogLine = memo(function LogLine({ line, style, onClick, isJumpTarget, jump
       style={style}
       onClick={() => onClick?.(line.lineNum)}
     >
+      <span className="log-gutter" title={tooltip}>
+        {hasTransition && <span className="log-gutter-dot">◆</span>}
+      </span>
       <span className="log-linenum">{line.lineNum + 1}</span>
       <span className="log-msg">
         <HighlightedText text={line.raw} highlights={line.highlights} />

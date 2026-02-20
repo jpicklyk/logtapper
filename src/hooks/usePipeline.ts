@@ -26,6 +26,7 @@ export interface PipelineState {
   run: (sessionId: string, anonymize?: boolean) => Promise<void>;
   stop: () => Promise<void>;
   getVars: (sessionId: string, processorId: string) => Promise<Record<string, unknown>>;
+  clearResults: () => void;
 }
 
 export function usePipeline(): PipelineState {
@@ -58,15 +59,25 @@ export function usePipeline(): PipelineState {
     };
   }, []);
 
-  // Subscribe to adb-processor-update events (continuous streaming runs)
+  // Subscribe to adb-processor-update events (continuous streaming runs).
+  // Accumulates on top of existing results so that a manual "Run on Buffer"
+  // baseline isn't overwritten by the next per-batch count.
   useEffect(() => {
     let cancelled = false;
     listen<AdbProcessorUpdate>('adb-processor-update', (event) => {
       if (cancelled) return;
       const { processorId, matchedLines, emissionCount } = event.payload;
       setLastResults((prev) => {
+        const existing = prev.find((r) => r.processorId === processorId);
         const without = prev.filter((r) => r.processorId !== processorId);
-        return [...without, { processorId, matchedLines, emissionCount }];
+        return [
+          ...without,
+          {
+            processorId,
+            matchedLines: (existing?.matchedLines ?? 0) + matchedLines,
+            emissionCount: (existing?.emissionCount ?? 0) + emissionCount,
+          },
+        ];
       });
       setRunCount((n) => n + 1);
     }).then((fn) => {
@@ -145,6 +156,11 @@ export function usePipeline(): PipelineState {
     [activeProcessorIds],
   );
 
+  const clearResults = useCallback(() => {
+    setLastResults([]);
+    setProgress({});
+  }, []);
+
   const stop = useCallback(async () => {
     try {
       await stopPipeline();
@@ -175,5 +191,6 @@ export function usePipeline(): PipelineState {
     run,
     stop,
     getVars,
+    clearResults,
   };
 }

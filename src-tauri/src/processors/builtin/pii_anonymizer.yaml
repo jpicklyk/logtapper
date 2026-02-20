@@ -1,58 +1,9 @@
-meta:
-  id: __pii_anonymizer
-  name: Anonymization Report
-  version: "1.0.0"
-  author: LogTapper
-  description: "Counts and maps PII tokens found in anonymized lines. Run alongside 'Anonymize PII' to see what was redacted, per category, and view the token→original mapping."
-  tags: [builtin, pii, privacy]
-
-vars:
-  - name: total_replacements
-    type: int
-    default: 0
-    display: true
-    label: "Total PII Replacements"
-  - name: by_category
-    type: map
-    default: {}
-    display: true
-    display_as: table
-    columns: [category, count]
-    label: "Replacements by Category"
-
-pipeline:
-  - stage: filter
-    rules:
-      - type: message_contains_any
-        values: ["<EMAIL-", "<IPv4-", "<IPv6-", "<MAC-", "<PHONE-", "<IMEI-", "<SERIAL-", "<AID-", "<PII-", "<JWT-", "<KEY-", "<TOKEN-", "<GAID-", "<SESSION-", "<CRED-"]
-  - stage: script
-    runtime: rhai
-    src: |
-      let msg = line.message;
-      let cats = [
-        #{ prefix: "<EMAIL-",   name: "EMAIL"   },
-        #{ prefix: "<IPv4-",    name: "IPv4"    },
-        #{ prefix: "<IPv6-",    name: "IPv6"    },
-        #{ prefix: "<MAC-",     name: "MAC"     },
-        #{ prefix: "<PHONE-",   name: "PHONE"   },
-        #{ prefix: "<IMEI-",    name: "IMEI"    },
-        #{ prefix: "<SERIAL-",  name: "SERIAL"  },
-        #{ prefix: "<AID-",     name: "AID"     },
-        #{ prefix: "<PII-",     name: "PII"     },
-        #{ prefix: "<JWT-",     name: "JWT"     },
-        #{ prefix: "<KEY-",     name: "KEY"     },
-        #{ prefix: "<TOKEN-",   name: "TOKEN"   },
-        #{ prefix: "<GAID-",    name: "GAID"    },
-        #{ prefix: "<SESSION-", name: "SESSION" },
-        #{ prefix: "<CRED-",    name: "CRED"    },
-      ];
-      for item in cats {
-        if msg.contains(item.prefix) {
-          vars.total_replacements += 1;
-          let m = vars.by_category;
-          let k = item.name;
-          if k in m { m[k] = m[k] + 1; } else { m[k] = 1; }
-          vars.by_category = m;
-          _emits.push(#{ category: item.name, line_num: line.source_line_num });
-        }
-      }
+type: transformer
+id: __pii_anonymizer
+name: PII Anonymizer
+version: 1.0.0
+author: LogTapper
+description: Redacts personally identifiable information (emails, IPs, MACs, phone numbers) from log messages. Uses consistent token mapping so the same value always maps to the same token within a session.
+tags: [privacy, pii, security]
+builtin: true
+builtin_kind: pii_anonymizer

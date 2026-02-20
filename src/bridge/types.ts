@@ -174,6 +174,8 @@ export interface ProcessorSummary {
   description: string;
   tags: string[];
   builtin: boolean;  // true for built-in processors (id starts with __)
+  processorType: 'transformer' | 'reporter' | 'state_tracker' | 'correlator' | 'annotator';
+  group: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -291,4 +293,36 @@ export interface RegistryEntry {
   path: string;
   tags: string[];
   sha256: string;
+}
+
+// ---------------------------------------------------------------------------
+// StateTracker IPC types
+// ---------------------------------------------------------------------------
+
+export interface FieldChange {
+  from: unknown;
+  to: unknown;
+}
+
+export interface StateTransition {
+  lineNum: number;
+  timestamp: number;
+  transitionName: string;
+  changes: Record<string, FieldChange>;
+}
+
+export interface StateSnapshot {
+  lineNum: number;
+  timestamp: number;
+  fields: Record<string, unknown>;
+  /** Field names explicitly set by at least one transition before this line.
+   *  Fields absent from this list are still at their declared default and
+   *  have never been triggered — treat their value as Unknown. */
+  initializedFields: string[];
+}
+
+export interface AdbTrackerUpdate {
+  sessionId: string;
+  trackerId: string;
+  transitionCount: number;
 }

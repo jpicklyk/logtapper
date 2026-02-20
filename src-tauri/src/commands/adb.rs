@@ -12,7 +12,7 @@ use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;
 use crate::core::session::{AnalysisSession, LogSourceData};
 use crate::processors::interpreter::{ContinuousRunState, ProcessorRun};
-use crate::processors::schema::ProcessorDef;
+use crate::processors::reporter::schema::ReporterDef;
 
 // ---------------------------------------------------------------------------
 // Payload types for Tauri events
@@ -54,6 +54,14 @@ pub struct AdbProcessorUpdate {
 pub struct AdbStreamStopped {
     pub session_id: String,
     pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdbTrackerUpdate {
+    pub session_id: String,
+    pub tracker_id: String,
+    pub transition_count: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -170,7 +178,7 @@ pub async fn start_adb_stream(
 
         let mut proc_states: HashMap<String, ContinuousRunState> = HashMap::new();
         for proc_id in &active_processor_ids {
-            if let Some(def) = procs.get(proc_id) {
+            if let Some(def) = procs.get(proc_id).and_then(|p| p.as_reporter()) {
                 let run = ProcessorRun::new(def);
                 proc_states.insert(proc_id.clone(), run.into_continuous_state(0));
             }
@@ -278,6 +286,24 @@ pub async fn stop_adb_stream(
         sa.remove(&session_id);
     }
 
+    // Clean up stream transformer state
+    {
+        let mut st = state
+            .stream_transformer_state
+            .lock()
+            .map_err(|_| "Stream transformer state lock poisoned")?;
+        st.remove(&session_id);
+    }
+
+    // Clean up stream tracker state
+    {
+        let mut st = state
+            .stream_tracker_state
+            .lock()
+            .map_err(|_| "Stream tracker state lock poisoned")?;
+        st.remove(&session_id);
+    }
+
     Ok(())
 }
 
@@ -341,14 +367,14 @@ pub async fn update_stream_processors(
     };
 
     // Clone the defs we need for any new processors.
-    let new_proc_defs: HashMap<String, ProcessorDef> = {
+    let new_proc_defs: HashMap<String, ReporterDef> = {
         let procs = state
             .processors
             .lock()
             .map_err(|_| "Processor lock poisoned")?;
         processor_ids
             .iter()
-            .filter_map(|id| procs.get(id).map(|d| (id.clone(), d.clone())))
+            .filter_map(|id| procs.get(id).and_then(|p| p.as_reporter()).map(|d| (id.clone(), d.clone())))
             .collect()
     };
 
@@ -372,6 +398,88 @@ pub async fn update_stream_processors(
         }
     }
 
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// update_stream_trackers
+// ---------------------------------------------------------------------------
+
+/// Update the set of active StateTracker processors for a running ADB stream.
+/// New trackers start fresh; removed trackers have their state dropped.
+#[tauri::command]
+pub async fn update_stream_trackers(
+    state: State<'_, AppState>,
+    session_id: String,
+    tracker_ids: Vec<String>,
+) -> Result<(), String> {
+    let current_total = {
+        let sessions = state.sessions.lock().map_err(|_| "Session lock poisoned")?;
+        sessions.get(&session_id)
+            .and_then(|s| s.primary_source())
+            .map(|src| src.total_lines())
+            .unwrap_or(0)
+    };
+
+    let tracker_defs: HashMap<String, crate::processors::state_tracker::schema::StateTrackerDef> = {
+        let procs = state.processors.lock().map_err(|_| "Processor lock poisoned")?;
+        tracker_ids.iter()
+            .filter_map(|id| procs.get(id).and_then(|p| p.as_state_tracker()).map(|d| (id.clone(), d.clone())))
+            .collect()
+    };
+
+    let mut st = state.stream_tracker_state.lock()
+        .map_err(|_| "Stream tracker state lock poisoned")?;
+    let inner = st.entry(session_id).or_default();
+    inner.retain(|id, _| tracker_ids.contains(id));
+    for t_id in &tracker_ids {
+        if !inner.contains_key(t_id.as_str()) {
+            if let Some(def) = tracker_defs.get(t_id) {
+                let current_state: HashMap<String, serde_json::Value> = def.state.iter()
+                    .map(|f| (f.name.clone(), f.default.clone()))
+                    .collect();
+                inner.insert(t_id.clone(), crate::processors::state_tracker::types::ContinuousTrackerState {
+                    current_state,
+                    transitions: Vec::new(),
+                    last_processed_line: current_total,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// update_stream_transformers
+// ---------------------------------------------------------------------------
+
+/// Update the set of active Transformer processors for a running ADB stream.
+#[tauri::command]
+pub async fn update_stream_transformers(
+    state: State<'_, AppState>,
+    session_id: String,
+    transformer_ids: Vec<String>,
+) -> Result<(), String> {
+    let current_total = {
+        let sessions = state.sessions.lock().map_err(|_| "Session lock poisoned")?;
+        sessions.get(&session_id)
+            .and_then(|s| s.primary_source())
+            .map(|src| src.total_lines())
+            .unwrap_or(0)
+    };
+
+    let mut st = state.stream_transformer_state.lock()
+        .map_err(|_| "Stream transformer state lock poisoned")?;
+    let inner = st.entry(session_id).or_default();
+    inner.retain(|id, _| transformer_ids.contains(id));
+    for t_id in &transformer_ids {
+        if !inner.contains_key(t_id.as_str()) {
+            inner.insert(t_id.clone(), crate::processors::transformer::types::ContinuousTransformerState {
+                last_processed_line: current_total,
+                pii_mappings: None,
+            });
+        }
+    }
     Ok(())
 }
 
@@ -730,6 +838,76 @@ fn flush_batch(
     // Collect ViewLines for the batch event
     let view_lines: Vec<ViewLine> = parsed.iter().map(|(_, _, vl)| vl.clone()).collect();
 
+    // ── Step 3.5: StateTracker layer ──────────────────────────────────────────
+    {
+        let tracker_ids: Vec<String> = {
+            match state.stream_tracker_state.lock() {
+                Ok(st) => st.get(session_id).map(|m| m.keys().cloned().collect()).unwrap_or_default(),
+                Err(_) => Vec::new(),
+            }
+        };
+
+        if !tracker_ids.is_empty() {
+            let tracker_defs: HashMap<String, crate::processors::state_tracker::schema::StateTrackerDef> = {
+                let procs = match state.processors.lock() {
+                    Ok(g) => g,
+                    Err(_) => {
+                        // Can't get defs, skip tracker pass this batch
+                        return;
+                    }
+                };
+                tracker_ids.iter()
+                    .filter_map(|id| procs.get(id.as_str()).and_then(|p| p.as_state_tracker()).map(|d| (id.clone(), d.clone())))
+                    .collect()
+            };
+
+            for t_id in &tracker_ids {
+                let def = match tracker_defs.get(t_id) {
+                    Some(d) => d,
+                    None => continue,
+                };
+
+                // Extract continuous state (extract-use-reinsert)
+                let cont_state = {
+                    let mut st = match state.stream_tracker_state.lock() {
+                        Ok(g) => g,
+                        Err(_) => continue,
+                    };
+                    match st.get_mut(session_id).and_then(|m| m.remove(t_id.as_str())) {
+                        Some(s) => s,
+                        None => crate::processors::state_tracker::types::ContinuousTrackerState::default(),
+                    }
+                };
+
+                let mut run = crate::processors::state_tracker::engine::StateTrackerRun::new_seeded(
+                    t_id, def, cont_state,
+                );
+
+                for (i, (raw, _, _)) in parsed.iter().enumerate() {
+                    if let Some(ctx) = parser.parse_line(raw, source_id, first_new_line + i) {
+                        run.process_line(&ctx);
+                    }
+                }
+
+                let new_cont = run.into_continuous_state(first_new_line + parsed.len());
+                let transition_count = new_cont.transitions.len();
+
+                // Re-insert updated state
+                if let Ok(mut st) = state.stream_tracker_state.lock() {
+                    st.entry(session_id.to_string())
+                        .or_default()
+                        .insert(t_id.clone(), new_cont);
+                }
+
+                let _ = app.emit("adb-tracker-update", AdbTrackerUpdate {
+                    session_id: session_id.to_string(),
+                    tracker_id: t_id.clone(),
+                    transition_count,
+                });
+            }
+        }
+    }
+
     // ── Step 4: Run active processors on new lines ────────────────────────────
     let proc_ids: Vec<String> = {
         let sp_state: std::sync::MutexGuard<'_, HashMap<String, HashMap<String, ContinuousRunState>>> =
@@ -755,18 +933,17 @@ fn flush_batch(
     }
 
     // Clone processor defs (brief lock)
-    let defs: HashMap<String, ProcessorDef> = {
-        let procs: std::sync::MutexGuard<'_, HashMap<String, ProcessorDef>> =
-            match state.processors.lock() {
-                Ok(g) => g,
-                Err(_) => {
-                    emit_batch(app, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
-                    return;
-                }
-            };
+    let defs: HashMap<String, ReporterDef> = {
+        let procs = match state.processors.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                emit_batch(app, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
+                return;
+            }
+        };
         proc_ids
             .iter()
-            .filter_map(|id| procs.get(id.as_str()).map(|d| (id.clone(), d.clone())))
+            .filter_map(|id| procs.get(id.as_str()).and_then(|p| p.as_reporter()).map(|d| (id.clone(), d.clone())))
             .collect()
     };
 

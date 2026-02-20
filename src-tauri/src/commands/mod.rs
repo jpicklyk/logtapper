@@ -4,8 +4,10 @@ use std::sync::Mutex;
 use crate::anonymizer::config::AnonymizerConfig;
 use crate::anonymizer::LogAnonymizer;
 use crate::core::session::AnalysisSession;
+use crate::processors::AnyProcessor;
 use crate::processors::interpreter::{ContinuousRunState, RunResult};
-use crate::processors::schema::ProcessorDef;
+use crate::processors::state_tracker::types::{StateTrackerResult, ContinuousTrackerState};
+use crate::processors::transformer::types::ContinuousTransformerState;
 
 pub mod adb;
 pub mod anonymizer;
@@ -15,30 +17,39 @@ pub mod files;
 pub mod pipeline;
 pub mod processors;
 pub mod session;
+pub mod state_tracker;
 
 /// Global application state managed by Tauri.
 pub struct AppState {
-    /// Active analysis sessions (sessionId → session).
+    /// Active analysis sessions (sessionId -> session).
     pub sessions: Mutex<HashMap<String, AnalysisSession>>,
-    /// Installed processors (processorId → definition).
-    pub processors: Mutex<HashMap<String, ProcessorDef>>,
-    /// Pipeline results: sessionId → processorId → RunResult.
+    /// Installed processors (processorId -> definition).
+    pub processors: Mutex<HashMap<String, AnyProcessor>>,
+    /// Pipeline results: sessionId -> processorId -> RunResult.
     pub pipeline_results: Mutex<HashMap<String, HashMap<String, RunResult>>>,
     /// Claude API key (set by the user at runtime).
     pub api_key: Mutex<Option<String>>,
     /// Shared HTTP client for registry and Claude API calls.
     pub http_client: reqwest::Client,
-    /// Cancellation senders for active ADB streaming tasks (sessionId → sender).
+    /// Cancellation senders for active ADB streaming tasks.
     pub stream_tasks: Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
-    /// Continuous processor state for live streaming (sessionId → processorId → state).
+    /// Continuous processor state for live streaming.
     pub stream_processor_state: Mutex<HashMap<String, HashMap<String, ContinuousRunState>>>,
     /// Global anonymizer configuration (persisted to disk).
     pub anonymizer_config: Mutex<AnonymizerConfig>,
-    /// PII token→original mappings from the last pipeline run per session.
+    /// PII token->original mappings from the last pipeline run per session.
     pub pii_mappings: Mutex<HashMap<String, HashMap<String, String>>>,
-    /// Persistent anonymizers for live ADB stream sessions (sessionId → anonymizer).
-    /// Created by `set_stream_anonymize(enabled=true)`; dropped on stream stop.
+    /// Persistent anonymizers for live ADB stream sessions.
     pub stream_anonymizers: Mutex<HashMap<String, LogAnonymizer>>,
+    /// StateTracker results: sessionId -> trackerId -> StateTrackerResult.
+    #[allow(dead_code)]
+    pub state_tracker_results: Mutex<HashMap<String, HashMap<String, StateTrackerResult>>>,
+    /// Continuous StateTracker state for live streaming.
+    #[allow(dead_code)]
+    pub stream_tracker_state: Mutex<HashMap<String, HashMap<String, ContinuousTrackerState>>>,
+    /// Continuous Transformer state for live streaming.
+    #[allow(dead_code)]
+    pub stream_transformer_state: Mutex<HashMap<String, HashMap<String, ContinuousTransformerState>>>,
 }
 
 impl Default for AppState {
@@ -64,6 +75,9 @@ impl AppState {
             anonymizer_config: Mutex::new(AnonymizerConfig::with_defaults()),
             pii_mappings: Mutex::new(HashMap::new()),
             stream_anonymizers: Mutex::new(HashMap::new()),
+            state_tracker_results: Mutex::new(HashMap::new()),
+            stream_tracker_state: Mutex::new(HashMap::new()),
+            stream_transformer_state: Mutex::new(HashMap::new()),
         }
     }
 }

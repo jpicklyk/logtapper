@@ -1,0 +1,68 @@
+type: state_tracker
+id: __battery_state
+name: Battery State
+version: 1.0.0
+author: LogTapper
+description: Tracks battery level, charging status, and power source changes.
+tags: [battery, power, android]
+builtin: true
+
+group: System
+
+state:
+  - name: level
+    type: int
+    default: 100
+  - name: charging
+    type: bool
+    default: false
+  - name: plugged
+    type: string
+    default: 
+  - name: health
+    type: string
+    default: good
+
+transitions:
+  - name: Battery Level Change
+    filter:
+      tag: BatteryService
+      message_regex: 'level=(\d+)'
+    set:
+      level: $1
+
+  - name: Charging Started
+    filter:
+      tag: BatteryService
+      message_regex: 'status=2'
+    set:
+      charging: true
+
+  - name: Discharging
+    filter:
+      tag: BatteryService
+      message_regex: 'status=3'
+    set:
+      charging: false
+    clear:
+      - plugged
+
+  - name: USB Plugged
+    filter:
+      tag: BatteryService
+      message_regex: 'plugged=2'
+    set:
+      plugged: usb
+      charging: true
+
+  - name: AC Plugged
+    filter:
+      tag: BatteryService
+      message_regex: 'plugged=1'
+    set:
+      plugged: ac
+      charging: true
+
+output:
+  timeline: true
+  annotate: true

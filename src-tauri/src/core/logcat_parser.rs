@@ -125,6 +125,7 @@ impl LogParser for LogcatParser {
             source_id: source_id.to_string(),
             source_line_num: line_num,
             fields: Default::default(),
+            annotations: Vec::new(),
         })
     }
 
@@ -216,6 +217,7 @@ fn parse_threadtime(raw: &str, source_id: &str, line_num: usize) -> Option<LineC
         source_id: source_id.to_string(),
         source_line_num: line_num,
         fields: Default::default(),
+        annotations: Vec::new(),
     })
 }
 
@@ -238,6 +240,7 @@ fn parse_brief(raw: &str, source_id: &str, line_num: usize) -> Option<LineContex
         source_id: source_id.to_string(),
         source_line_num: line_num,
         fields: Default::default(),
+        annotations: Vec::new(),
     })
 }
 

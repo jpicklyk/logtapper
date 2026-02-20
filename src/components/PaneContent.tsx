@@ -1,9 +1,11 @@
+import { useCallback } from 'react';
 import { useAppContext } from '../context/AppContext';
 import type { Pane } from '../hooks/usePaneLayout';
 import LogViewer from './LogViewer';
 import StreamFilterBar from './StreamFilterBar';
 import ProcessorDashboard from './ProcessorDashboard';
 import ScratchPad from './ScratchPad';
+import StateTimeline from './StateTimeline';
 
 interface Props {
   pane: Pane;
@@ -13,9 +15,16 @@ export default function PaneContent({ pane }: Props) {
   const {
     viewer,
     pipeline,
+    stateTracker,
     processorViewId,
     onViewProcessor,
+    setSelectedLineNum,
   } = useAppContext();
+
+  const handleLineClick = useCallback((lineNum: number) => {
+    viewer.jumpToLine(lineNum);
+    setSelectedLineNum(lineNum);
+  }, [viewer, setSelectedLineNum]);
 
   const activeTab = pane.tabs.find((t) => t.id === pane.activeTabId);
   if (!activeTab) return null;
@@ -52,12 +61,14 @@ export default function PaneContent({ pane }: Props) {
             lineCache={viewer.lineCache}
             search={viewer.search ?? undefined}
             onFetchNeeded={viewer.handleFetchNeeded}
-            onLineClick={viewer.jumpToLine}
+            onLineClick={handleLineClick}
             scrollToLine={viewer.scrollToLine}
             jumpSeq={viewer.jumpSeq}
             processorId={processorViewId ?? undefined}
             isStreaming={viewer.isStreaming}
             lineNumbers={viewer.filteredLineNums ?? undefined}
+            transitionLineNums={stateTracker.allTransitionLineNums.size > 0 ? stateTracker.allTransitionLineNums : undefined}
+            transitionsByLine={stateTracker.allTransitionLineNums.size > 0 ? stateTracker.transitionsByLine : undefined}
           />
         </div>
       );
@@ -76,6 +87,9 @@ export default function PaneContent({ pane }: Props) {
 
     case 'scratch':
       return <ScratchPad />;
+
+    case 'statetimeline':
+      return <StateTimeline />;
 
     default:
       return null;

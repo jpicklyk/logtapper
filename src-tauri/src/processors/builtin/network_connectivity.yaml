@@ -1,0 +1,61 @@
+type: state_tracker
+id: __network_connectivity
+name: Network Connectivity
+version: 1.0.0
+author: LogTapper
+description: "Tracks network connectivity state: connected/disconnected, network type, and roaming status."
+tags: [network, connectivity, android]
+builtin: true
+
+group: Network
+
+state:
+  - name: connected
+    type: bool
+    default: false
+  - name: network_type
+    type: string
+    default: 
+  - name: roaming
+    type: bool
+    default: false
+  - name: reason
+    type: string
+    default: 
+
+transitions:
+  - name: Network Connected
+    filter:
+      tag: ConnectivityService
+      message_regex: 'type: ([^\[,]+).*state: CONNECTED'
+    set:
+      connected: true
+      network_type: $1
+
+  - name: Network Disconnected
+    filter:
+      tag: ConnectivityService
+      message_regex: 'state: DISCONNECTED.*reason: ([^\]]+)'
+    set:
+      connected: false
+      reason: $1
+    clear:
+      - network_type
+
+  - name: Roaming Started
+    filter:
+      tag: ConnectivityService
+      message_contains: isRoaming=true
+    set:
+      roaming: true
+
+  - name: Roaming Stopped
+    filter:
+      tag: ConnectivityService
+      message_contains: isRoaming=false
+    set:
+      roaming: false
+
+output:
+  timeline: true
+  annotate: true

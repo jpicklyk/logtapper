@@ -15,6 +15,8 @@ import type {
   AdbDevice,
   AnonymizerConfig,
   AnonymizerTestResult,
+  StateSnapshot,
+  StateTransition,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -48,6 +50,20 @@ export function updateStreamProcessors(
   processorIds: string[],
 ): Promise<void> {
   return invoke('update_stream_processors', { sessionId, processorIds });
+}
+
+export function updateStreamTrackers(
+  sessionId: string,
+  trackerIds: string[],
+): Promise<void> {
+  return invoke('update_stream_trackers', { sessionId, trackerIds });
+}
+
+export function updateStreamTransformers(
+  sessionId: string,
+  transformerIds: string[],
+): Promise<void> {
+  return invoke('update_stream_transformers', { sessionId, transformerIds });
 }
 
 export function setStreamAnonymize(
@@ -205,4 +221,29 @@ export function testAnonymizer(text: string): Promise<AnonymizerTestResult> {
 
 export function getPiiMappings(sessionId: string): Promise<Record<string, string>> {
   return invoke('get_pii_mappings', { sessionId });
+}
+
+// ---------------------------------------------------------------------------
+// StateTracker query commands
+// ---------------------------------------------------------------------------
+
+export function getStateAtLine(
+  sessionId: string,
+  trackerId: string,
+  lineNum: number,
+): Promise<StateSnapshot> {
+  return invoke('get_state_at_line', { sessionId, trackerId, lineNum });
+}
+
+export function getStateTransitions(
+  sessionId: string,
+  trackerId: string,
+): Promise<StateTransition[]> {
+  return invoke('get_state_transitions', { sessionId, trackerId });
+}
+
+export function getAllTransitionLines(
+  sessionId: string,
+): Promise<Record<string, number[]>> {
+  return invoke('get_all_transition_lines', { sessionId });
 }

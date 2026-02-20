@@ -6,8 +6,16 @@ import { useClaude } from './hooks/useClaude';
 import { usePaneLayout } from './hooks/usePaneLayout';
 import { useSettings } from './hooks/useSettings';
 import { useAnonymizerConfig } from './hooks/useAnonymizerConfig';
+import { useStateTracker } from './hooks/useStateTracker';
 import { AppContext } from './context/AppContext';
-import { getDumpstateMetadata, getSections, listAdbDevices, updateStreamProcessors } from './bridge/commands';
+import {
+  getDumpstateMetadata,
+  getSections,
+  listAdbDevices,
+  updateStreamProcessors,
+  updateStreamTrackers,
+  updateStreamTransformers,
+} from './bridge/commands';
 import type { AdbDevice, DumpstateMetadata } from './bridge/types';
 import type { SectionEntry } from './components/FileInfoPanel';
 import PaneLayout from './components/PaneLayout';
@@ -22,6 +30,7 @@ export default function App() {
   const viewer = useLogViewer(settings.streamFrontendCacheMax);
   const pipeline = usePipeline();
   const claude = useClaude();
+  const stateTracker = useStateTracker();
   const layout = usePaneLayout();
 
   const [processorViewId, setProcessorViewId] = useState<string | null>(null);
@@ -31,6 +40,7 @@ export default function App() {
   const [showDeviceSelector, setShowDeviceSelector] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [adbError, setAdbError] = useState<string | null>(null);
+  const [selectedLineNum, setSelectedLineNum] = useState<number | null>(null);
 
   // ── File open ──────────────────────────────────────────────────────────────
 
@@ -71,6 +81,7 @@ export default function App() {
     setAdbError(null);
     setMetadata(null);
     setSections([]);
+    pipeline.clearResults();
     await viewer.startStream(
       deviceId,
       undefined,
@@ -111,14 +122,29 @@ export default function App() {
   // ── Sync active processors to backend during streaming ────────────────────
   // When the user toggles processors while a stream is running, notify the
   // backend so it starts/stops running them on each incoming batch.
+  // Processors are split by type: reporters → update_stream_processors,
+  // trackers → update_stream_trackers, transformers → update_stream_transformers.
   useEffect(() => {
     if (!viewer.isStreaming || !viewer.session) return;
     const sessionId = viewer.session.sessionId;
-    const processorIds = Array.from(pipeline.activeProcessorIds);
-    updateStreamProcessors(sessionId, processorIds).catch(() => {
-      // Best-effort: the stream may have stopped between render and this call.
-    });
-  }, [viewer.isStreaming, viewer.session, pipeline.activeProcessorIds]);
+    const activeIds = Array.from(pipeline.activeProcessorIds);
+
+    const reporterIds: string[] = [];
+    const trackerIds: string[] = [];
+    const transformerIds: string[] = [];
+
+    for (const id of activeIds) {
+      const proc = pipeline.processors.find((p) => p.id === id);
+      if (!proc) continue;
+      if (proc.processorType === 'state_tracker') trackerIds.push(id);
+      else if (proc.processorType === 'transformer') transformerIds.push(id);
+      else reporterIds.push(id);
+    }
+
+    updateStreamProcessors(sessionId, reporterIds).catch(() => {});
+    updateStreamTrackers(sessionId, trackerIds).catch(() => {});
+    updateStreamTransformers(sessionId, transformerIds).catch(() => {});
+  }, [viewer.isStreaming, viewer.session, pipeline.activeProcessorIds, pipeline.processors]);
 
   // ── Processor view ─────────────────────────────────────────────────────────
 
@@ -157,6 +183,21 @@ export default function App() {
     hadResultsRef.current = hasResults;
   }, [pipeline.lastResults.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Refresh StateTracker transitions + auto-open State Timeline ──────────
+
+  useEffect(() => {
+    if (!viewer.session || pipeline.lastResults.length === 0) return;
+    stateTracker.refreshTransitionLines(viewer.session.sessionId).catch(() => {});
+
+    // Auto-open State Timeline if any StateTracker processors ran and produced results
+    const hasActiveTrackers = pipeline.processors.some(
+      (p) => p.processorType === 'state_tracker' && pipeline.activeProcessorIds.has(p.id),
+    );
+    if (hasActiveTrackers) {
+      layout.openCenterTab('statetimeline');
+    }
+  }, [pipeline.runCount]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Section detection (Bugreport/Dumpstate files) ─────────────────────────
 
   useEffect(() => {
@@ -194,12 +235,15 @@ export default function App() {
     viewer,
     pipeline,
     claude,
+    stateTracker,
     metadata,
     processorViewId,
     sections,
     activeSectionIndex,
     onViewProcessor: handleViewProcessor,
     onClearProcessorView: handleClearProcessorView,
+    selectedLineNum,
+    setSelectedLineNum,
   };
 
   return (
@@ -244,6 +288,9 @@ export default function App() {
             >
               ⚙
             </button>
+            {viewer.isStreaming && pipeline.activeProcessorIds.has('__pii_anonymizer') && (
+              <span className="stream-anon-badge" title="PII anonymization active">🔒 PII</span>
+            )}
             {viewer.isStreaming ? (
               <button className="btn-stop-stream" onClick={handleStopStream}>
                 ■ Stop Stream

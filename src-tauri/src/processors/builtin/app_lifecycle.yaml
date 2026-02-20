@@ -1,0 +1,63 @@
+type: state_tracker
+id: __app_lifecycle
+name: App Lifecycle
+version: 1.0.0
+author: LogTapper
+description: Tracks foreground app changes, activity launches, and crashes via ActivityManager.
+tags: [app, lifecycle, android]
+builtin: true
+
+group: App
+
+state:
+  - name: foreground_app
+    type: string
+    default: 
+  - name: foreground_activity
+    type: string
+    default: 
+  - name: last_crash
+    type: string
+    default: 
+  - name: crashed
+    type: bool
+    default: false
+
+transitions:
+  - name: Activity Started
+    filter:
+      tag: ActivityManager
+      message_regex: 'START.*cmp=([^\s/]+)/([^\s]+)'
+    set:
+      foreground_app: $1
+      foreground_activity: $2
+      crashed: false
+
+  - name: App Crashed
+    filter:
+      tag: ActivityManager
+      message_regex: 'Process ([^\s]+) \(pid \d+\) has died'
+    set:
+      last_crash: $1
+      crashed: true
+
+  - name: ANR Detected
+    filter:
+      tag: ActivityManager
+      message_regex: 'ANR in ([^\s]+)'
+    set:
+      last_crash: $1
+      crashed: true
+
+  - name: App Resumed
+    filter:
+      tag: ActivityManager
+      message_regex: 'Displayed ([^\s/]+)/([^\s:]+)'
+    set:
+      foreground_app: $1
+      foreground_activity: $2
+      crashed: false
+
+output:
+  timeline: true
+  annotate: true

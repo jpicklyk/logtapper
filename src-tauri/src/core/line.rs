@@ -22,6 +22,18 @@ impl std::fmt::Display for LogLevel {
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// Annotation -- applied by Annotator processors
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Annotation {
+    pub source_id: String,
+    pub label: String,
+    pub color: Option<String>,
+}
+
 /// Full parsed representation of a single log line — used by processors/scripts.
 #[derive(Debug, Clone, Serialize)]
 pub struct LineContext {
@@ -36,6 +48,9 @@ pub struct LineContext {
     pub source_line_num: usize,
     /// Fields extracted by upstream pipeline stages.
     pub fields: HashMap<String, serde_json::Value>,
+    /// Annotations applied by Annotator processors.
+    #[serde(default)]
+    pub annotations: Vec<Annotation>,
 }
 
 /// Lightweight per-line metadata stored alongside the mmap.

@@ -40,6 +40,11 @@ pub async fn get_chart_data(
         (result.emissions.clone(), result.vars.clone())
     };
 
-    let charts = build_charts(&def, &emissions, &vars);
+    // Charts are only supported for Reporter-type processors.
+    let reporter = match def.as_reporter() {
+        Some(r) => r,
+        None => return Ok(vec![]),
+    };
+    let charts = build_charts(reporter, &emissions, &vars);
     Ok(charts)
 }

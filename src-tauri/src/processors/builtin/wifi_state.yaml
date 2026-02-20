@@ -1,0 +1,78 @@
+type: state_tracker
+id: __wifi_state
+name: WiFi State
+version: 1.0.0
+author: LogTapper
+description: "Tracks WiFi connection state throughout the log: enabled/disabled, SSID, signal strength, and IP address."
+tags: [network, wifi, android]
+builtin: true
+
+group: Network
+
+state:
+  - name: enabled
+    type: bool
+    default: false
+  - name: ssid
+    type: string
+    default: 
+  - name: signal_dbm
+    type: int
+    default: 0
+  - name: ip_address
+    type: string
+    default: 
+
+transitions:
+  - name: WiFi Enabled
+    filter:
+      tag: WifiStateMachine
+      message_contains: CMD_ENABLE_NETWORK
+    set:
+      enabled: true
+
+  - name: WiFi Associated
+    filter:
+      tag: WifiStateMachine
+      message_regex: 'ssid=([^\s,]+)'
+    set:
+      ssid: $1
+
+  - name: WiFi Connected
+    filter:
+      tag: WifiInfo
+      message_regex: 'SSID=([^\s,]+).*SignalLevel=(-?\d+)'
+    set:
+      ssid: $1
+      signal_dbm: $2
+
+  - name: IP Assigned
+    filter:
+      tag: DhcpClient
+      message_regex: 'Confirmed new address (\d+\.\d+\.\d+\.\d+)'
+    set:
+      ip_address: $1
+
+  - name: WiFi Disabled
+    filter:
+      tag: WifiStateMachine
+      message_contains: CMD_DISABLE_NETWORK
+    set:
+      enabled: false
+    clear:
+      - ssid
+      - signal_dbm
+      - ip_address
+
+  - name: WiFi Disconnected
+    filter:
+      tag: WifiStateMachine
+      message_contains: DISCONNECTING
+    set:
+      ssid: 
+    clear:
+      - ip_address
+
+output:
+  timeline: true
+  annotate: true
