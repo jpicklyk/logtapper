@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { ProcessorSummary, PipelineRunSummary, PipelineProgress, AdbProcessorUpdate } from '../bridge/types';
 import {
@@ -9,9 +9,25 @@ import {
   stopPipeline,
   getProcessorVars,
 } from '../bridge/commands';
+import { arrayMove } from '@dnd-kit/sortable';
+
+const LS_KEY = 'logtapper_pipeline_chain';
+
+function loadChainFromStorage(validIds: Set<string>): string[] {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return (parsed as unknown[]).filter((id): id is string => typeof id === 'string' && validIds.has(id));
+  } catch {
+    return [];
+  }
+}
 
 export interface PipelineState {
   processors: ProcessorSummary[];
+  pipelineChain: string[];
   activeProcessorIds: Set<string>;
   running: boolean;
   progress: Record<string, PipelineProgress>;
@@ -22,6 +38,10 @@ export interface PipelineState {
   loadProcessors: () => Promise<void>;
   installFromYaml: (yaml: string) => Promise<void>;
   removeProcessor: (id: string) => Promise<void>;
+  addToChain: (id: string) => void;
+  removeFromChain: (id: string) => void;
+  reorderChain: (fromIndex: number, toIndex: number) => void;
+  /** @deprecated Use addToChain / removeFromChain instead */
   toggleProcessor: (id: string) => void;
   run: (sessionId: string, anonymize?: boolean) => Promise<void>;
   stop: () => Promise<void>;
@@ -31,7 +51,7 @@ export interface PipelineState {
 
 export function usePipeline(): PipelineState {
   const [processors, setProcessors] = useState<ProcessorSummary[]>([]);
-  const [activeProcessorIds, setActiveProcessorIds] = useState<Set<string>>(new Set());
+  const [pipelineChain, setPipelineChain] = useState<string[]>([]);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<Record<string, PipelineProgress>>({});
   const [lastResults, setLastResults] = useState<PipelineRunSummary[]>([]);
@@ -39,6 +59,16 @@ export function usePipeline(): PipelineState {
   const [error, setError] = useState<string | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const adbProcUnlistenRef = useRef<UnlistenFn | null>(null);
+  const chainInitializedRef = useRef(false);
+
+  // Derive activeProcessorIds from pipelineChain for backward compatibility
+  const activeProcessorIds = useMemo(() => new Set(pipelineChain), [pipelineChain]);
+
+  // Persist chain to localStorage whenever it changes (after initialization)
+  useEffect(() => {
+    if (!chainInitializedRef.current) return;
+    localStorage.setItem(LS_KEY, JSON.stringify(pipelineChain));
+  }, [pipelineChain]);
 
   // Subscribe to pipeline-progress events (batch runs)
   useEffect(() => {
@@ -60,8 +90,6 @@ export function usePipeline(): PipelineState {
   }, []);
 
   // Subscribe to adb-processor-update events (continuous streaming runs).
-  // Accumulates on top of existing results so that a manual "Run on Buffer"
-  // baseline isn't overwritten by the next per-batch count.
   useEffect(() => {
     let cancelled = false;
     listen<AdbProcessorUpdate>('adb-processor-update', (event) => {
@@ -94,6 +122,13 @@ export function usePipeline(): PipelineState {
     try {
       const list = await listProcessors();
       setProcessors(list);
+      // Initialize chain from localStorage on first load
+      if (!chainInitializedRef.current) {
+        chainInitializedRef.current = true;
+        const validIds = new Set(list.map((p) => p.id));
+        const saved = loadChainFromStorage(validIds);
+        setPipelineChain(saved);
+      }
     } catch (e) {
       setError(String(e));
     }
@@ -117,34 +152,43 @@ export function usePipeline(): PipelineState {
     try {
       await uninstallProcessor(id);
       setProcessors((prev) => prev.filter((p) => p.id !== id));
-      setActiveProcessorIds((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
+      setPipelineChain((prev) => prev.filter((chainId) => chainId !== id));
     } catch (e) {
       setError(String(e));
     }
   }, []);
 
+  const addToChain = useCallback((id: string) => {
+    setPipelineChain((prev) => {
+      if (prev.includes(id)) return prev;
+      return [...prev, id];
+    });
+  }, []);
+
+  const removeFromChain = useCallback((id: string) => {
+    setPipelineChain((prev) => prev.filter((chainId) => chainId !== id));
+  }, []);
+
+  const reorderChain = useCallback((fromIndex: number, toIndex: number) => {
+    setPipelineChain((prev) => arrayMove(prev, fromIndex, toIndex));
+  }, []);
+
+  // Backward-compat toggle: add if not in chain, remove if present
   const toggleProcessor = useCallback((id: string) => {
-    setActiveProcessorIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
+    setPipelineChain((prev) => {
+      if (prev.includes(id)) return prev.filter((chainId) => chainId !== id);
+      return [...prev, id];
     });
   }, []);
 
   const run = useCallback(
     async (sessionId: string, anonymize = false) => {
-      if (activeProcessorIds.size === 0) return;
+      if (pipelineChain.length === 0) return;
       setRunning(true);
       setProgress({});
       setError(null);
       try {
-        const ids = Array.from(activeProcessorIds);
-        const results = await runPipeline(sessionId, ids, anonymize);
+        const results = await runPipeline(sessionId, pipelineChain, anonymize);
         setLastResults(results);
         setRunCount((n) => n + 1);
       } catch (e) {
@@ -153,7 +197,7 @@ export function usePipeline(): PipelineState {
         setRunning(false);
       }
     },
-    [activeProcessorIds],
+    [pipelineChain],
   );
 
   const clearResults = useCallback(() => {
@@ -178,6 +222,7 @@ export function usePipeline(): PipelineState {
 
   return {
     processors,
+    pipelineChain,
     activeProcessorIds,
     running,
     progress,
@@ -187,6 +232,9 @@ export function usePipeline(): PipelineState {
     loadProcessors,
     installFromYaml,
     removeProcessor,
+    addToChain,
+    removeFromChain,
+    reorderChain,
     toggleProcessor,
     run,
     stop,

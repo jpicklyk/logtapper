@@ -10,7 +10,7 @@ interface Props {
 }
 
 export default function ToolWindow({ tool, width }: Props) {
-  const { viewer, pipeline, claude, processorViewId } = useAppContext();
+  const { viewer, pipeline, claude, processorViewId, onOpenLibrary } = useAppContext();
 
   return (
     <div className="tool-window" style={{ width }}>
@@ -19,6 +19,7 @@ export default function ToolWindow({ tool, width }: Props) {
           pipeline={pipeline}
           sessionId={viewer.session?.sessionId ?? null}
           isStreaming={viewer.isStreaming}
+          onOpenLibrary={onOpenLibrary}
         />
       )}
       {tool === 'chat' && (

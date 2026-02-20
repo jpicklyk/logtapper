@@ -22,6 +22,7 @@ import PaneLayout from './components/PaneLayout';
 import SearchBar from './components/SearchBar';
 import ProgressOverlay from './components/ProgressOverlay';
 import SettingsPanel from './components/SettingsPanel';
+import ProcessorLibrary from './components/ProcessorLibrary';
 import './App.css';
 
 export default function App() {
@@ -39,6 +40,7 @@ export default function App() {
   const [deviceList, setDeviceList] = useState<AdbDevice[]>([]);
   const [showDeviceSelector, setShowDeviceSelector] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showLibrary, setShowLibrary] = useState(false);
   const [adbError, setAdbError] = useState<string | null>(null);
   const [selectedLineNum, setSelectedLineNum] = useState<number | null>(null);
 
@@ -242,6 +244,7 @@ export default function App() {
     activeSectionIndex,
     onViewProcessor: handleViewProcessor,
     onClearProcessorView: handleClearProcessorView,
+    onOpenLibrary: () => setShowLibrary(true),
     selectedLineNum,
     setSelectedLineNum,
   };
@@ -365,6 +368,14 @@ export default function App() {
             onReset={resetSettings}
             onClose={() => setShowSettings(false)}
             anonymizerConfig={anonymizerConfig}
+          />
+        )}
+
+        {/* ── Processor library modal ── */}
+        {showLibrary && (
+          <ProcessorLibrary
+            pipeline={pipeline}
+            onClose={() => setShowLibrary(false)}
           />
         )}
 

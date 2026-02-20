@@ -17,6 +17,7 @@ export interface AppContextValue {
   activeSectionIndex: number;
   onViewProcessor: (id: string) => void;
   onClearProcessorView: () => void;
+  onOpenLibrary: () => void;
   selectedLineNum: number | null;
   setSelectedLineNum: (n: number | null) => void;
 }

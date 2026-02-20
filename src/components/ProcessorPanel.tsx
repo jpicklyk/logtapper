@@ -1,217 +1,303 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useCallback } from 'react';
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import type { PipelineState } from '../hooks/usePipeline';
+import type { PipelineRunSummary, PipelineProgress } from '../bridge/types';
 
 interface Props {
   pipeline: PipelineState;
   sessionId: string | null;
   isStreaming: boolean;
+  onOpenLibrary: () => void;
 }
 
-// Type → [label, CSS class, accent color for left border]
-const PROC_TYPE_META: Record<string, [string, string, string]> = {
-  transformer:  ['Transformer',  'proc-type-transformer', '#2dd4bf'],
-  reporter:     ['Reporter',     'proc-type-reporter',    '#58a6ff'],
-  state_tracker:['StateTracker', 'proc-type-tracker',     '#60a5fa'],
-  correlator:   ['Correlator',   'proc-type-correlator',  '#c084fc'],
-  annotator:    ['Annotator',    'proc-type-annotator',   '#fb923c'],
+// Type → [label, CSS class]
+const PROC_TYPE_META: Record<string, [string, string]> = {
+  transformer:   ['Transformer',  'proc-type-transformer'],
+  reporter:      ['Reporter',     'proc-type-reporter'],
+  state_tracker: ['StateTracker', 'proc-type-tracker'],
+  correlator:    ['Correlator',   'proc-type-correlator'],
+  annotator:     ['Annotator',    'proc-type-annotator'],
 };
 
-function TypeBadge({ type }: { type: string }) {
-  const meta = PROC_TYPE_META[type];
-  if (!meta) return null;
-  return <span className={`proc-type-badge ${meta[1]}`}>{meta[0]}</span>;
+// Accent color per type (for left border of chain nodes)
+const PROC_TYPE_ACCENT: Record<string, string> = {
+  transformer:   '#2dd4bf',
+  reporter:      '#58a6ff',
+  state_tracker: '#60a5fa',
+  correlator:    '#c084fc',
+  annotator:     '#fb923c',
+};
+
+// ── ChainConnector ──────────────────────────────────────────────────────────
+
+function ChainConnector({ isActive }: { isActive: boolean }) {
+  return (
+    <div className={`chain-connector${isActive ? ' chain-connector--active' : ''}`}>
+      <div className="chain-dot" />
+      <div className="chain-dot" />
+      <div className="chain-dot" />
+    </div>
+  );
 }
 
-export default function ProcessorPanel({ pipeline, sessionId, isStreaming }: Props) {
-  const [yamlInput, setYamlInput] = useState('');
-  const [showImport, setShowImport] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+// ── StatLine ─────────────────────────────────────────────────────────────────
+
+function StatLine({
+  processorType,
+  result,
+  progress,
+  running,
+}: {
+  processorType: string;
+  result?: PipelineRunSummary;
+  progress?: PipelineProgress;
+  running: boolean;
+}) {
+  if (running && progress) {
+    return (
+      <div className="chain-node-stat">
+        <div className="chain-node-progress">
+          <div className="chain-node-progress-fill" style={{ width: `${progress.percent.toFixed(0)}%` }} />
+          <div className="proc-progress-shimmer" />
+        </div>
+      </div>
+    );
+  }
+  if (!result) return null;
+
+  if (processorType === 'state_tracker') {
+    return (
+      <div className="chain-node-stat">
+        {result.matchedLines.toLocaleString()} transitions
+      </div>
+    );
+  }
+  if (processorType === 'transformer') {
+    return (
+      <div className="chain-node-stat">
+        {result.matchedLines.toLocaleString()} lines passed
+      </div>
+    );
+  }
+  return (
+    <div className="chain-node-stat">
+      {result.matchedLines.toLocaleString()} matched
+      {result.emissionCount > 0 && ` · ${result.emissionCount.toLocaleString()} emitted`}
+    </div>
+  );
+}
+
+// ── ChainNode ────────────────────────────────────────────────────────────────
+
+interface ChainNodeProps {
+  id: string;
+  name: string;
+  processorType: string;
+  builtin: boolean;
+  result?: PipelineRunSummary;
+  progress?: PipelineProgress;
+  running: boolean;
+  onRemove: (id: string) => void;
+}
+
+function ChainNode({
+  id,
+  name,
+  processorType,
+  builtin,
+  result,
+  progress,
+  running,
+  onRemove,
+}: ChainNodeProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    '--proc-accent': PROC_TYPE_ACCENT[processorType] ?? '#58a6ff',
+  } as React.CSSProperties;
+
+  const [typeLabel, typeBadgeClass] = PROC_TYPE_META[processorType] ?? ['Unknown', ''];
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`chain-node${isDragging ? ' chain-node--dragging' : ''}`}
+    >
+      {/* Drag handle */}
+      <div className="chain-node-handle" {...attributes} {...listeners} title="Drag to reorder">
+        <svg width="10" height="14" viewBox="0 0 10 14" fill="none">
+          <circle cx="3" cy="2.5" r="1.2" fill="currentColor"/>
+          <circle cx="7" cy="2.5" r="1.2" fill="currentColor"/>
+          <circle cx="3" cy="7" r="1.2" fill="currentColor"/>
+          <circle cx="7" cy="7" r="1.2" fill="currentColor"/>
+          <circle cx="3" cy="11.5" r="1.2" fill="currentColor"/>
+          <circle cx="7" cy="11.5" r="1.2" fill="currentColor"/>
+        </svg>
+      </div>
+
+      {/* Accent bar */}
+      <div className="chain-node-accent" />
+
+      {/* Body */}
+      <div className="chain-node-body">
+        <div className="chain-node-name">{name}</div>
+        <div className="chain-node-meta">
+          <span className={`proc-type-badge ${typeBadgeClass}`}>{typeLabel}</span>
+          {builtin && <span className="proc-item-builtin-badge">built-in</span>}
+        </div>
+        <StatLine
+          processorType={processorType}
+          result={result}
+          progress={progress}
+          running={running}
+        />
+      </div>
+
+      {/* Remove button */}
+      {!builtin && (
+        <button
+          className="chain-node-remove"
+          title="Remove from chain"
+          onClick={() => onRemove(id)}
+        >
+          <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
+            <path d="M1 1l8 8M9 1L1 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── ProcessorPanel ───────────────────────────────────────────────────────────
+
+export default function ProcessorPanel({ pipeline, sessionId, isStreaming, onOpenLibrary }: Props) {
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   useEffect(() => {
     pipeline.loadProcessors();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function handleImport() {
-    setImportError(null);
-    try {
-      await pipeline.installFromYaml(yamlInput);
-      setYamlInput('');
-      setShowImport(false);
-    } catch (e) {
-      setImportError(String(e));
-    }
-  }
-
-  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const text = await file.text();
-    setYamlInput(text);
-    setShowImport(true);
-    e.target.value = '';
-  }
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      const fromIndex = pipeline.pipelineChain.indexOf(String(active.id));
+      const toIndex = pipeline.pipelineChain.indexOf(String(over.id));
+      if (fromIndex === -1 || toIndex === -1) return;
+      pipeline.reorderChain(fromIndex, toIndex);
+    },
+    [pipeline],
+  );
 
   async function handleRun() {
     if (!sessionId) return;
     await pipeline.run(sessionId);
   }
 
-  const hasActive = pipeline.activeProcessorIds.size > 0;
-  const canRun = hasActive && !!sessionId && !pipeline.running;
+  // Build a lookup from processorId → result
+  const resultMap = new Map<string, PipelineRunSummary>(
+    pipeline.lastResults.map((r) => [r.processorId, r]),
+  );
+
+  const chainProcessors = pipeline.pipelineChain
+    .map((id) => pipeline.processors.find((p) => p.id === id))
+    .filter(Boolean) as NonNullable<(typeof pipeline.processors)[0]>[];
+
+  const isActive = pipeline.running || isStreaming;
+  const canRun = pipeline.pipelineChain.length > 0 && !!sessionId && !pipeline.running;
 
   return (
     <div className="processor-panel">
-
       {/* ── Header ── */}
       <div className="proc-panel-header">
         <div className="proc-panel-title-group">
-          <span className="proc-panel-title">Processors</span>
-          {pipeline.processors.length > 0 && (
-            <span className="proc-panel-count">{pipeline.processors.length}</span>
+          <span className="proc-panel-title">Pipeline</span>
+          {pipeline.pipelineChain.length > 0 && (
+            <span className="proc-panel-count">{pipeline.pipelineChain.length}</span>
           )}
         </div>
-        <div className="proc-panel-actions">
-          <button
-            className="proc-action-btn"
-            title="Upload processor YAML"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
-              <path d="M7 1v8M3.5 4.5L7 1l3.5 3.5M2 11h10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </button>
-          <button
-            className={`proc-action-btn${showImport ? ' proc-action-btn--active' : ''}`}
-            title="Paste processor YAML"
-            onClick={() => setShowImport((v) => !v)}
-          >
-            <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
-              <path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-            </svg>
-          </button>
-        </div>
+        <button
+          className="proc-action-btn"
+          title="Add processor"
+          onClick={onOpenLibrary}
+        >
+          <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+            <path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+        </button>
       </div>
 
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".yaml,.yml"
-        style={{ display: 'none' }}
-        onChange={handleFileUpload}
-      />
-
-      {/* ── YAML Import ── */}
-      {showImport && (
-        <div className="proc-import">
-          <div className="proc-import-label">Paste YAML</div>
-          <textarea
-            className="proc-yaml-input"
-            placeholder="type: reporter&#10;id: my_processor&#10;name: My Processor&#10;…"
-            value={yamlInput}
-            onChange={(e) => setYamlInput(e.target.value)}
-            rows={7}
-            spellCheck={false}
-            autoFocus
-          />
-          {importError && <div className="proc-import-error">{importError}</div>}
-          <div className="proc-import-btns">
-            <button
-              className="btn-primary"
-              onClick={handleImport}
-              disabled={!yamlInput.trim()}
-            >
-              Install
-            </button>
-            <button
-              className="btn-secondary"
-              onClick={() => { setShowImport(false); setImportError(null); }}
-            >
-              Cancel
-            </button>
-          </div>
+      {/* ── Pipeline chain ── */}
+      <div className="pipeline-chain">
+        {/* Source node */}
+        <div className="pipeline-node-source">
+          <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+            <path d="M3 1.5l7 4.5-7 4.5V1.5z" fill="currentColor"/>
+          </svg>
+          LOG STREAM IN
         </div>
-      )}
 
-      {/* ── Processor list ── */}
-      <div className="proc-list">
-        {pipeline.processors.length === 0 && (
-          <div className="proc-empty">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" className="proc-empty-icon">
-              <rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" strokeWidth="1.2"/>
-              <path d="M9 12h6M12 9v6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-            </svg>
-            <span>No processors installed</span>
-            <span className="proc-empty-sub">Upload a YAML file to get started</span>
-          </div>
-        )}
-        {pipeline.processors.map((p, idx) => {
-          const active = pipeline.activeProcessorIds.has(p.id);
-          const prog = pipeline.progress[p.id];
-          const accentColor = PROC_TYPE_META[p.processorType]?.[2] ?? '#58a6ff';
-          return (
-            <div
-              key={p.id}
-              className={`proc-item${active ? ' proc-item-active' : ''}${p.builtin ? ' proc-item-builtin' : ''}`}
-              style={{
-                '--proc-accent': accentColor,
-                '--proc-idx': idx,
-              } as React.CSSProperties}
-            >
-              {/* Left accent bar */}
-              <span className="proc-item-accent" />
-
-              {/* Checkbox + name row */}
-              <label className="proc-item-check">
-                <input
-                  type="checkbox"
-                  checked={active}
-                  onChange={() => pipeline.toggleProcessor(p.id)}
-                />
-                <span className="proc-item-name">{p.name}</span>
-              </label>
-
-              {/* Meta row: type badge + tags + version */}
-              <div className="proc-item-meta">
-                <TypeBadge type={p.processorType} />
-                {p.tags.map((t) => (
-                  <span key={t} className="proc-tag">{t}</span>
-                ))}
-                {!p.builtin && (
-                  <span className="proc-item-version">v{p.version}</span>
-                )}
-                {p.builtin && (
-                  <span className="proc-item-builtin-badge">built-in</span>
-                )}
-              </div>
-
-              {/* Progress bar */}
-              {prog && pipeline.running && (
-                <div className="proc-progress">
-                  <div
-                    className="proc-progress-fill"
-                    style={{ width: `${prog.percent.toFixed(0)}%` }}
-                  />
-                  <div className="proc-progress-shimmer" />
-                </div>
-              )}
-
-              {/* Remove button */}
-              {!p.builtin && (
-                <button
-                  className="proc-remove"
-                  title="Uninstall processor"
-                  onClick={() => pipeline.removeProcessor(p.id)}
-                >
-                  <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
-                    <path d="M1 1l8 8M9 1L1 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                  </svg>
-                </button>
-              )}
+        {/* Chain items or empty hint */}
+        {chainProcessors.length === 0 ? (
+          <div className="pipeline-chain-empty">
+            <ChainConnector isActive={false} />
+            <div className="pipeline-empty-hint">
+              Add processors with{' '}
+              <button className="pipeline-empty-hint-btn" onClick={onOpenLibrary}>+</button>
             </div>
-          );
-        })}
+            <ChainConnector isActive={false} />
+          </div>
+        ) : (
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={pipeline.pipelineChain} strategy={verticalListSortingStrategy}>
+              {chainProcessors.map((proc) => (
+                <Fragment key={proc.id}>
+                  <ChainConnector isActive={isActive} />
+                  <ChainNode
+                    id={proc.id}
+                    name={proc.name}
+                    processorType={proc.processorType}
+                    builtin={proc.builtin}
+                    result={resultMap.get(proc.id)}
+                    progress={pipeline.progress[proc.id]}
+                    running={pipeline.running}
+                    onRemove={pipeline.removeFromChain}
+                  />
+                </Fragment>
+              ))}
+            </SortableContext>
+          </DndContext>
+        )}
+
+        {/* Last connector before sink */}
+        {chainProcessors.length > 0 && <ChainConnector isActive={isActive} />}
+
+        {/* Sink node */}
+        <div className="pipeline-node-sink">
+          <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+            <path d="M9 1.5l-7 4.5 7 4.5V1.5z" fill="currentColor"/>
+          </svg>
+          LOG STREAM OUT
+        </div>
       </div>
 
       {/* ── Run row ── */}
@@ -222,9 +308,8 @@ export default function ProcessorPanel({ pipeline, sessionId, isStreaming }: Pro
           disabled={!canRun}
           title={
             !sessionId ? 'Load a log file first' :
-            !hasActive ? 'Check at least one processor to run' :
-            isStreaming ? 'Process all currently captured lines' :
-            'Run selected processors'
+            pipeline.pipelineChain.length === 0 ? 'Add processors to the chain first' :
+            'Run pipeline on loaded log'
           }
         >
           {pipeline.running ? (
@@ -237,7 +322,7 @@ export default function ProcessorPanel({ pipeline, sessionId, isStreaming }: Pro
               <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
                 <path d="M3 1.5l7 4.5-7 4.5V1.5z" fill="currentColor"/>
               </svg>
-              {isStreaming ? 'Run on Buffer' : 'Run'}
+              Run Pipeline
             </>
           )}
         </button>
@@ -246,38 +331,11 @@ export default function ProcessorPanel({ pipeline, sessionId, isStreaming }: Pro
             Stop
           </button>
         )}
-        {!hasActive && !pipeline.running && pipeline.processors.length > 0 && (
-          <span className="proc-hint">Select a processor</span>
-        )}
       </div>
 
       {/* ── Error ── */}
       {pipeline.error && (
         <div className="proc-error">{pipeline.error}</div>
-      )}
-
-      {/* ── Results summary ── */}
-      {pipeline.lastResults.length > 0 && !pipeline.running && (
-        <div className="proc-results-summary">
-          <div className="proc-results-label">Last Run</div>
-          {pipeline.lastResults
-            .filter((r) => r.matchedLines > 0 || r.emissionCount > 0)
-            .map((r) => (
-              <div key={r.processorId} className="proc-result-row">
-                <span className="proc-result-id">{r.processorId}</span>
-                <span className="proc-result-stat">
-                  <span className="proc-result-num">{r.matchedLines.toLocaleString()}</span>
-                  {' '}matched
-                </span>
-                {r.emissionCount > 0 && (
-                  <span className="proc-result-stat">
-                    <span className="proc-result-num">{r.emissionCount.toLocaleString()}</span>
-                    {' '}emitted
-                  </span>
-                )}
-              </div>
-          ))}
-        </div>
       )}
     </div>
   );
