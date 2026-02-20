@@ -1,9 +1,9 @@
 type: state_tracker
 id: __network_connectivity
 name: Network Connectivity
-version: 1.0.0
+version: 2.0.0
 author: LogTapper
-description: "Tracks network connectivity state: connected/disconnected, network type, and roaming status."
+description: "Tracks network connectivity state: connected/disconnected and network type (WIFI, MOBILE, etc.). Uses ConnectivityService EVENT_NETWORK_INFO_CHANGED events from modern Android (6+)."
 tags: [network, connectivity, android]
 builtin: true
 
@@ -15,19 +15,17 @@ state:
     default: false
   - name: network_type
     type: string
-    default: 
-  - name: roaming
-    type: bool
-    default: false
-  - name: reason
-    type: string
-    default: 
+    default: ""
 
 transitions:
+  # Modern Android (6+) — ConnectivityService EVENT_NETWORK_INFO_CHANGED
+  # Format: [<id> <TYPE>] EVENT_NETWORK_INFO_CHANGED, going from <OLD> to <NEW>
+  # TYPE is WIFI, MOBILE, ETHERNET, etc.
+
   - name: Network Connected
     filter:
       tag: ConnectivityService
-      message_regex: 'type: ([^\[,]+).*state: CONNECTED'
+      message_regex: '\[\d+ (\w+)\] EVENT_NETWORK_INFO_CHANGED, going from \w+ to CONNECTED'
     set:
       connected: true
       network_type: $1
@@ -35,26 +33,31 @@ transitions:
   - name: Network Disconnected
     filter:
       tag: ConnectivityService
-      message_regex: 'state: DISCONNECTED.*reason: ([^\]]+)'
+      message_regex: '\[\d+ (\w+)\] EVENT_NETWORK_INFO_CHANGED, going from \w+ to DISCONNECTED'
     set:
       connected: false
-      reason: $1
     clear:
       - network_type
 
-  - name: Roaming Started
-    filter:
-      tag: ConnectivityService
-      message_contains: isRoaming=true
-    set:
-      roaming: true
+  # Legacy Android (pre-6) — NetworkStateTracker / ConnectivityService
+  # Format: type: WIFI[], state: CONNECTED/CONNECTED
 
-  - name: Roaming Stopped
+  - name: Network Connected (Legacy)
     filter:
       tag: ConnectivityService
-      message_contains: isRoaming=false
+      message_regex: 'type: (\w+).*state: CONNECTED/CONNECTED'
     set:
-      roaming: false
+      connected: true
+      network_type: $1
+
+  - name: Network Disconnected (Legacy)
+    filter:
+      tag: ConnectivityService
+      message_regex: 'type: (\w+).*state: DISCONNECTED/DISCONNECTED'
+    set:
+      connected: false
+    clear:
+      - network_type
 
 output:
   timeline: true
