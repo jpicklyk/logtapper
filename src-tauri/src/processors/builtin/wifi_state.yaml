@@ -1,9 +1,9 @@
 type: state_tracker
 id: __wifi_state
 name: WiFi State
-version: 1.0.0
+version: 1.1.0
 author: LogTapper
-description: "Tracks WiFi connection state throughout the log: enabled/disabled, SSID, signal strength, and IP address."
+description: "Tracks WiFi connection state throughout the log: enabled/disabled, SSID, signal strength, and IP address. Supports AOSP (WifiStateMachine) and Samsung (SemClientModeImpl) devices."
 tags: [network, wifi, android]
 builtin: true
 
@@ -15,15 +15,17 @@ state:
     default: false
   - name: ssid
     type: string
-    default: 
+    default: ""
   - name: signal_dbm
     type: int
     default: 0
   - name: ip_address
     type: string
-    default: 
+    default: ""
 
 transitions:
+  # ── AOSP / Pixel ──────────────────────────────────────────────────────────
+
   - name: WiFi Enabled
     filter:
       tag: WifiStateMachine
@@ -69,9 +71,57 @@ transitions:
       tag: WifiStateMachine
       message_contains: DISCONNECTING
     set:
-      ssid: 
+      ssid: ""
     clear:
       - ip_address
+
+  # ── Samsung (SemClientModeImpl / SemRoamingAssistant) ────────────────────
+
+  - name: WiFi Disconnected
+    filter:
+      tag_regex: 'SemClientModeImpl'
+      message_contains: "entering DisconnectedState"
+    set:
+      enabled: false
+      ssid: ""
+    clear:
+      - ip_address
+      - signal_dbm
+
+  - name: WiFi Connecting
+    filter:
+      tag_regex: 'SemClientModeImpl'
+      message_contains: "Leaving Disconnected state"
+    set:
+      enabled: true
+
+  - name: WiFi L2 Connected
+    filter:
+      tag_regex: 'SemClientModeImpl'
+      message_contains: "entering L2ConnectedState"
+    set:
+      enabled: true
+
+  - name: WiFi Connected
+    filter:
+      tag_regex: 'SemClientModeImpl'
+      message_contains: "entering ConnectedState"
+    set:
+      enabled: true
+
+  - name: WiFi SSID (Samsung)
+    filter:
+      tag_regex: 'SemRoamingAssistant'
+      message_regex: 'wifiStateChangeEvent\[1\]\["([^"]+)"'
+    set:
+      ssid: $1
+
+  - name: IP Assigned (Samsung)
+    filter:
+      tag_regex: 'SemClientModeImpl'
+      message_regex: 'ObtainingIp.*?(\d+\.\d+\.\d+\.\d+)'
+    set:
+      ip_address: $1
 
 output:
   timeline: true

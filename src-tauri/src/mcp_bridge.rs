@@ -363,38 +363,60 @@ async fn h_pipeline(
         }
     };
 
-    // --- State tracker results ---
+    // --- State tracker results (pipeline run OR live stream) ---
+    // Pipeline runs store results in state_tracker_results.
+    // Streaming runs accumulate in stream_tracker_state.
+    // Check both; pipeline results take priority when present.
     let tracker_results: Vec<Value> = {
-        let results = state.state_tracker_results.lock().unwrap();
-        let procs = state.processors.lock().unwrap();
-        match results.get(&session_id) {
-            None => vec![],
-            Some(session_map) => session_map
-                .iter()
-                .map(|(tracker_id, tracker_result)| {
-                    let name = procs
-                        .get(tracker_id)
-                        .map(|p| p.meta.name.clone())
-                        .unwrap_or_else(|| tracker_id.clone());
-                    json!({
-                        "processorId": tracker_id,
-                        "processorType": "state_tracker",
-                        "name": name,
-                        "transitionCount": tracker_result.transitions.len(),
-                        "finalState": tracker_result.final_state,
-                        "recentTransitions": tracker_result.transitions
-                            .iter()
-                            .rev()
-                            .take(5)
-                            .map(|t| json!({
-                                "lineNum": t.line_num,
-                                "transitionName": t.transition_name,
-                                "changes": t.changes,
-                            }))
-                            .collect::<Vec<_>>(),
-                    })
+        let pipeline_res = state.state_tracker_results.lock().unwrap();
+        let stream_res   = state.stream_tracker_state.lock().unwrap();
+        let procs        = state.processors.lock().unwrap();
+
+        let from_pipeline = pipeline_res.get(&session_id);
+        let from_stream   = stream_res.get(&session_id);
+
+        if from_pipeline.is_none() && from_stream.is_none() {
+            vec![]
+        } else {
+            // Collect all tracker IDs from either source.
+            let mut tracker_ids: Vec<String> = from_pipeline
+                .map(|m| m.keys().cloned().collect())
+                .unwrap_or_default();
+            if let Some(sm) = from_stream {
+                for id in sm.keys() {
+                    if !tracker_ids.contains(id) { tracker_ids.push(id.clone()); }
+                }
+            }
+            tracker_ids.into_iter().map(|tracker_id| {
+                let name = procs.get(&tracker_id)
+                    .map(|p| p.meta.name.clone())
+                    .unwrap_or_else(|| tracker_id.clone());
+
+                // Prefer pipeline result; fall back to stream state.
+                let (transitions, final_state): (&[_], serde_json::Value) =
+                    if let Some(pr) = from_pipeline.and_then(|m| m.get(&tracker_id)) {
+                        (pr.transitions.as_slice(), json!(pr.final_state))
+                    } else if let Some(sr) = from_stream.and_then(|m| m.get(&tracker_id)) {
+                        (sr.transitions.as_slice(), json!(sr.current_state))
+                    } else {
+                        (&[], json!({}))
+                    };
+
+                json!({
+                    "processorId": tracker_id,
+                    "processorType": "state_tracker",
+                    "name": name,
+                    "transitionCount": transitions.len(),
+                    "finalState": final_state,
+                    "recentTransitions": transitions.iter().rev().take(5)
+                        .map(|t| json!({
+                            "lineNum": t.line_num,
+                            "transitionName": t.transition_name,
+                            "changes": t.changes,
+                        }))
+                        .collect::<Vec<_>>(),
                 })
-                .collect(),
+            }).collect()
         }
     };
 
@@ -426,31 +448,42 @@ async fn h_events(
     let limit = params.limit.unwrap_or(50).min(200);
 
     let events: Vec<Value> = {
-        let results = state.state_tracker_results.lock().unwrap();
-        let Some(session_results) = results.get(&session_id) else {
-            return Json(json!({ "sessionId": session_id, "events": [], "count": 0 }));
-        };
+        let pipeline_res = state.state_tracker_results.lock().unwrap();
+        let stream_res   = state.stream_tracker_state.lock().unwrap();
 
-        // Collect all transitions from all trackers, sort by line_num desc.
-        let mut all: Vec<Value> = session_results
-            .values()
-            .flat_map(|r| {
-                r.transitions.iter().map(|t| {
-                    json!({
+        // Collect transitions from pipeline results first, then streaming state.
+        // Both may coexist; streaming transitions use tracker_id as the key.
+        let mut all: Vec<Value> = Vec::new();
+
+        if let Some(session_map) = pipeline_res.get(&session_id) {
+            for r in session_map.values() {
+                for t in &r.transitions {
+                    all.push(json!({
                         "trackerId": r.tracker_id,
                         "transitionName": t.transition_name,
                         "lineNum": t.line_num,
                         "timestamp": t.timestamp,
                         "changes": t.changes,
-                    })
-                })
-            })
-            .collect();
+                    }));
+                }
+            }
+        }
 
-        all.sort_by(|a, b| {
-            b["lineNum"].as_u64().cmp(&a["lineNum"].as_u64())
-        });
+        if let Some(session_map) = stream_res.get(&session_id) {
+            for (tracker_id, cont) in session_map {
+                for t in &cont.transitions {
+                    all.push(json!({
+                        "trackerId": tracker_id,
+                        "transitionName": t.transition_name,
+                        "lineNum": t.line_num,
+                        "timestamp": t.timestamp,
+                        "changes": t.changes,
+                    }));
+                }
+            }
+        }
 
+        all.sort_by(|a, b| b["lineNum"].as_u64().cmp(&a["lineNum"].as_u64()));
         all.into_iter().take(limit).collect()
     };
 
