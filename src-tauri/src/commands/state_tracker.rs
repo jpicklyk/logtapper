@@ -3,6 +3,42 @@ use tauri::State;
 use crate::commands::AppState;
 use crate::processors::state_tracker::types::{StateSnapshot, StateTransition};
 
+// ---------------------------------------------------------------------------
+// Helpers — resolve transitions for a tracker from either pipeline results
+// (state_tracker_results) or live streaming state (stream_tracker_state).
+// Pipeline results take priority when present.
+// ---------------------------------------------------------------------------
+
+fn resolve_transitions(
+    state: &AppState,
+    session_id: &str,
+    tracker_id: &str,
+) -> Option<Vec<StateTransition>> {
+    // Try pipeline results first.
+    {
+        let results = state.state_tracker_results.lock().ok()?;
+        if let Some(session_map) = results.get(session_id) {
+            if let Some(r) = session_map.get(tracker_id) {
+                return Some(r.transitions.clone());
+            }
+        }
+    }
+    // Fall back to streaming state.
+    {
+        let stream = state.stream_tracker_state.lock().ok()?;
+        if let Some(session_map) = stream.get(session_id) {
+            if let Some(cont) = session_map.get(tracker_id) {
+                return Some(cont.transitions.clone());
+            }
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
+
 /// Get the state snapshot at a specific line number for a given tracker.
 #[tauri::command]
 pub async fn get_state_at_line(
@@ -11,56 +47,44 @@ pub async fn get_state_at_line(
     tracker_id: String,
     line_num: usize,
 ) -> Result<StateSnapshot, String> {
-    // Binary search for state at line_num using stored transitions
-    let pos = {
-        let results = state.state_tracker_results.lock()
-            .map_err(|_| "State tracker results lock poisoned")?;
-        let session_results = results.get(&session_id)
-            .ok_or_else(|| format!("No state tracker results for session {session_id}"))?;
-        let tracker_result = session_results.get(&tracker_id)
-            .ok_or_else(|| format!("No results for tracker {tracker_id}"))?;
-        tracker_result.transitions.partition_point(|t| t.line_num <= line_num)
-    };
+    let transitions = resolve_transitions(&state, &session_id, &tracker_id)
+        .ok_or_else(|| format!("No state tracker results for session {session_id} / tracker {tracker_id}"))?;
 
-    // Get defaults from the tracker def and replay transitions up to pos
-    let (fields, fields_init, line, ts) = {
-        let processors = state.processors.lock()
-            .map_err(|_| "Processor lock poisoned")?;
-        let processor = processors.get(&tracker_id)
-            .ok_or_else(|| format!("Processor {tracker_id} not found"))?;
-        let tracker_def = processor.as_state_tracker()
-            .ok_or_else(|| format!("{tracker_id} is not a StateTracker"))?;
+    let pos = transitions.partition_point(|t| t.line_num <= line_num);
 
-        let mut fields: HashMap<String, serde_json::Value> = tracker_def.state.iter()
-            .map(|f| (f.name.clone(), f.default.clone()))
-            .collect();
+    // Replay transitions up to pos against the tracker's declared defaults.
+    let processors = state.processors.lock()
+        .map_err(|_| "Processor lock poisoned")?;
+    let processor = processors.get(&tracker_id)
+        .ok_or_else(|| format!("Processor {tracker_id} not found"))?;
+    let tracker_def = processor.as_state_tracker()
+        .ok_or_else(|| format!("{tracker_id} is not a StateTracker"))?;
 
-        let results = state.state_tracker_results.lock()
-            .map_err(|_| "State tracker results lock poisoned")?;
-        let session_results = results.get(&session_id)
-            .ok_or_else(|| format!("No state tracker results for session {session_id}"))?;
-        let tracker_result = session_results.get(&tracker_id)
-            .ok_or_else(|| format!("No results for tracker {tracker_id}"))?;
+    let mut fields: HashMap<String, serde_json::Value> = tracker_def.state.iter()
+        .map(|f| (f.name.clone(), f.default.clone()))
+        .collect();
 
-        let mut initialized: std::collections::HashSet<String> = Default::default();
-        for t in &tracker_result.transitions[..pos] {
-            for (field, change) in &t.changes {
-                fields.insert(field.clone(), change.to.clone());
-                initialized.insert(field.clone());
-            }
+    let mut initialized: std::collections::HashSet<String> = Default::default();
+    for t in &transitions[..pos] {
+        for (field, change) in &t.changes {
+            fields.insert(field.clone(), change.to.clone());
+            initialized.insert(field.clone());
         }
+    }
 
-        let (line, ts) = if pos > 0 {
-            let t = &tracker_result.transitions[pos - 1];
-            (t.line_num, t.timestamp)
-        } else {
-            (0, 0)
-        };
-
-        (fields, initialized.into_iter().collect::<Vec<_>>(), line, ts)
+    let (line, ts) = if pos > 0 {
+        let t = &transitions[pos - 1];
+        (t.line_num, t.timestamp)
+    } else {
+        (0, 0)
     };
 
-    Ok(StateSnapshot { line_num: line, timestamp: ts, fields, initialized_fields: fields_init })
+    Ok(StateSnapshot {
+        line_num: line,
+        timestamp: ts,
+        fields,
+        initialized_fields: initialized.into_iter().collect(),
+    })
 }
 
 /// Get all transitions for a tracker in a session.
@@ -70,13 +94,8 @@ pub async fn get_state_transitions(
     session_id: String,
     tracker_id: String,
 ) -> Result<Vec<StateTransition>, String> {
-    let results = state.state_tracker_results.lock()
-        .map_err(|_| "State tracker results lock poisoned")?;
-    let session_results = results.get(&session_id)
-        .ok_or_else(|| format!("No state tracker results for session {session_id}"))?;
-    let tracker_result = session_results.get(&tracker_id)
-        .ok_or_else(|| format!("No results for tracker {tracker_id}"))?;
-    Ok(tracker_result.transitions.clone())
+    resolve_transitions(&state, &session_id, &tracker_id)
+        .ok_or_else(|| format!("No state tracker results for session {session_id} / tracker {tracker_id}"))
 }
 
 /// Get all transition line numbers grouped by tracker ID.
@@ -85,17 +104,31 @@ pub async fn get_all_transition_lines(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<HashMap<String, Vec<usize>>, String> {
-    let results = state.state_tracker_results.lock()
-        .map_err(|_| "State tracker results lock poisoned")?;
-    let session_results = results.get(&session_id)
-        .ok_or_else(|| format!("No state tracker results for session {session_id}"))?;
+    let mut map: HashMap<String, Vec<usize>> = HashMap::new();
 
-    let map: HashMap<String, Vec<usize>> = session_results.iter()
-        .map(|(tracker_id, result)| {
-            let lines: Vec<usize> = result.transitions.iter().map(|t| t.line_num).collect();
-            (tracker_id.clone(), lines)
-        })
-        .collect();
+    // Collect from pipeline results.
+    {
+        let results = state.state_tracker_results.lock()
+            .map_err(|_| "State tracker results lock poisoned")?;
+        if let Some(session_map) = results.get(&session_id) {
+            for (tracker_id, result) in session_map {
+                let lines: Vec<usize> = result.transitions.iter().map(|t| t.line_num).collect();
+                map.insert(tracker_id.clone(), lines);
+            }
+        }
+    }
+
+    // Merge in streaming state (adds trackers not already present from pipeline results).
+    {
+        let stream = state.stream_tracker_state.lock()
+            .map_err(|_| "Stream tracker state lock poisoned")?;
+        if let Some(session_map) = stream.get(&session_id) {
+            for (tracker_id, cont) in session_map {
+                let lines: Vec<usize> = cont.transitions.iter().map(|t| t.line_num).collect();
+                map.entry(tracker_id.clone()).or_insert(lines);
+            }
+        }
+    }
 
     Ok(map)
 }
