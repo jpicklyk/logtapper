@@ -124,6 +124,11 @@ pub async fn run_pipeline(
     };
     // Sessions lock released.
 
+    // ── Snapshot anonymizer config (used to build transformers with user settings) ─
+    let anonymizer_config = state.anonymizer_config.lock()
+        .map_err(|_| "Anonymizer config lock poisoned")?
+        .clone();
+
     // ── Parse all lines in parallel ───────────────────────────────────────────
     let parser = LogcatParser;
     let mut parsed_lines: Vec<Option<crate::core::line::LineContext>> = raw_lines
@@ -133,10 +138,26 @@ pub async fn run_pipeline(
         .collect();
     drop(raw_lines);
 
+    // ── Save pre-transform messages for state tracker processing ──────────────
+    // State trackers must run on original messages so their capture regexes
+    // still match (e.g. IP regex won't match "<IPv4-1>").  After capturing,
+    // the stored transition values are post-processed with the PII mapping.
+    // source_line_num == position in parsed_lines (set by the parser loop above).
+    let pre_transform_msgs: HashMap<usize, String> =
+        if !transformer_defs.is_empty() && !tracker_defs.is_empty() {
+            parsed_lines
+                .iter()
+                .filter_map(|opt| opt.as_ref().map(|l| (l.source_line_num, l.message.clone())))
+                .collect()
+        } else {
+            HashMap::new()
+        };
+
     // ── Layer 1: Transformers (sequential — each modifies or drops lines) ─────
+    let forward_pii: HashMap<String, String>;
     if !transformer_defs.is_empty() {
         let mut transformer_runs: Vec<TransformerRun> = transformer_defs.iter()
-            .map(|(_, def)| TransformerRun::new(def))
+            .map(|(_, def)| TransformerRun::new_with_anonymizer_config(def, &anonymizer_config))
             .collect();
 
         for line_opt in parsed_lines.iter_mut() {
@@ -154,33 +175,86 @@ pub async fn run_pipeline(
             }
         }
 
-        // Store PII mappings (raw→token) inverted as token→raw for display
-        let all_pii: HashMap<String, String> = transformer_runs.iter()
+        // Forward mapping: raw→token.  Keep for post-processing state tracker values.
+        // Also store inverted (token→raw) for the reveal-PII UI feature.
+        forward_pii = transformer_runs.iter()
             .flat_map(|r| r.get_pii_mappings())
             .collect();
-        if !all_pii.is_empty() {
+        if !forward_pii.is_empty() {
             let inverted: HashMap<String, String> =
-                all_pii.into_iter().map(|(raw, tok)| (tok, raw)).collect();
+                forward_pii.iter().map(|(raw, tok)| (tok.clone(), raw.clone())).collect();
             if let Ok(mut pm) = state.pii_mappings.lock() {
                 pm.insert(session_id.clone(), inverted);
             }
         }
+    } else {
+        forward_pii = HashMap::new();
     }
 
     // Collect non-dropped lines for downstream layers
-    let enriched_lines: Vec<crate::core::line::LineContext> =
+    let mut enriched_lines: Vec<crate::core::line::LineContext> =
         parsed_lines.into_iter().flatten().collect();
 
     // ── Layer 2a: StateTrackers ────────────────────────────────────────────────
+    // Temporarily restore pre-transform messages so capture regexes work on
+    // real values.  After capture, changes are post-processed with forward_pii.
     if !tracker_defs.is_empty() {
+        // Swap in pre-transform messages; save post-transform ones for restoration.
+        let mut saved_post_transform: Vec<String> = Vec::with_capacity(enriched_lines.len());
+        if !pre_transform_msgs.is_empty() {
+            for line in enriched_lines.iter_mut() {
+                let orig = pre_transform_msgs
+                    .get(&line.source_line_num)
+                    .cloned()
+                    .unwrap_or_else(|| line.message.clone());
+                saved_post_transform.push(std::mem::replace(&mut line.message, orig));
+            }
+        }
+
         let mut session_tracker_results = HashMap::new();
         for (tracker_id, def) in &tracker_defs {
             let mut run = StateTrackerRun::new(tracker_id, def);
             for line in &enriched_lines {
                 run.process_line(line);
             }
-            session_tracker_results.insert(tracker_id.clone(), run.finish());
+            let mut result = run.finish();
+
+            // Post-process: replace any captured raw PII values with tokens.
+            if !forward_pii.is_empty() {
+                for transition in result.transitions.iter_mut() {
+                    for (_, change) in transition.changes.iter_mut() {
+                        if let serde_json::Value::String(s) = &change.to {
+                            if let Some(token) = forward_pii.get(s.as_str()) {
+                                change.to = serde_json::Value::String(token.clone());
+                            }
+                        }
+                        if let serde_json::Value::String(s) = &change.from {
+                            if let Some(token) = forward_pii.get(s.as_str()) {
+                                change.from = serde_json::Value::String(token.clone());
+                            }
+                        }
+                    }
+                }
+                // Also anonymize the final_state snapshot
+                for val in result.final_state.values_mut() {
+                    if let serde_json::Value::String(s) = val {
+                        if let Some(token) = forward_pii.get(s.as_str()) {
+                            *s = token.clone();
+                        }
+                    }
+                }
+            }
+
+            session_tracker_results.insert(tracker_id.clone(), result);
         }
+
+        // Restore post-transform messages for reporters.
+        if !saved_post_transform.is_empty() {
+            for (line, post_msg) in enriched_lines.iter_mut().zip(saved_post_transform) {
+                line.message = post_msg;
+            }
+        }
+
         if let Ok(mut str_results) = state.state_tracker_results.lock() {
             str_results.insert(session_id.clone(), session_tracker_results);
         }

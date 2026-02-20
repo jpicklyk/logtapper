@@ -128,6 +128,7 @@ pub fn run() {
             commands::state_tracker::get_state_transitions,
             commands::state_tracker::get_all_transition_lines,
             commands::session::get_mcp_status,
+            commands::session::set_mcp_anonymize,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

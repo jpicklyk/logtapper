@@ -48,6 +48,9 @@ pub struct AppState {
     pub stream_anonymizers: Mutex<HashMap<String, LogAnonymizer>>,
     /// Persistent anonymizers for MCP query results (one per session for stable token numbering).
     pub mcp_anonymizers: Mutex<HashMap<String, LogAnonymizer>>,
+    /// Whether to apply PII anonymization to MCP query results.
+    /// Set to true by the frontend when __pii_anonymizer is in the pipeline chain.
+    pub mcp_anonymize: Mutex<bool>,
     /// StateTracker results: sessionId -> trackerId -> StateTrackerResult.
     #[allow(dead_code)]
     pub state_tracker_results: Mutex<HashMap<String, HashMap<String, StateTrackerResult>>>,
@@ -85,6 +88,7 @@ impl AppState {
             pii_mappings: Mutex::new(HashMap::new()),
             stream_anonymizers: Mutex::new(HashMap::new()),
             mcp_anonymizers: Mutex::new(HashMap::new()),
+            mcp_anonymize: Mutex::new(false),
             state_tracker_results: Mutex::new(HashMap::new()),
             stream_tracker_state: Mutex::new(HashMap::new()),
             stream_transformer_state: Mutex::new(HashMap::new()),

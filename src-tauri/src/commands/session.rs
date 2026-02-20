@@ -14,6 +14,15 @@ pub struct McpStatus {
     pub idle_secs: Option<u32>,
 }
 
+/// Enable or disable PII anonymization for MCP query results.
+/// Called by the frontend whenever __pii_anonymizer is added to or removed from the chain.
+#[tauri::command]
+pub fn set_mcp_anonymize(state: State<'_, AppState>, enabled: bool) {
+    if let Ok(mut flag) = state.mcp_anonymize.lock() {
+        *flag = enabled;
+    }
+}
+
 /// Returns the MCP bridge status (bound + last-activity age).
 #[tauri::command]
 pub fn get_mcp_status(state: State<'_, AppState>) -> McpStatus {

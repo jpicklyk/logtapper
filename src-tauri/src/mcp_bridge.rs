@@ -307,12 +307,13 @@ async fn h_query(
     };
 
     // ── PII anonymization ─────────────────────────────────────────────────────
-    // The MCP bridge bypasses the processor pipeline, so we apply the anonymizer
-    // directly here.  One persistent LogAnonymizer per session ensures token
-    // numbering is stable across multiple MCP queries (same email → same token).
+    // Anonymize only when the frontend has __pii_anonymizer in the pipeline chain
+    // (signalled via set_mcp_anonymize).  One persistent LogAnonymizer per session
+    // ensures token numbering is stable across multiple MCP queries.
     let snaps = {
-        let config = state.anonymizer_config.lock().unwrap().clone();
-        if config.detectors.iter().any(|d| d.enabled) {
+        let should_anonymize = *state.mcp_anonymize.lock().unwrap();
+        if should_anonymize {
+            let config = state.anonymizer_config.lock().unwrap().clone();
             let mut anon_map = state.mcp_anonymizers.lock().unwrap();
             let anon = anon_map
                 .entry(session_id.clone())

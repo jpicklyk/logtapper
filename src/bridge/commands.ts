@@ -252,3 +252,7 @@ export function getAllTransitionLines(
 export function getMcpStatus(): Promise<McpStatus> {
   return invoke('get_mcp_status');
 }
+
+export function setMcpAnonymize(enabled: boolean): Promise<void> {
+  return invoke('set_mcp_anonymize', { enabled });
+}

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use regex::Regex;
 use crate::core::line::{LineContext, LogLevel};
 use crate::processors::reporter::schema::{FilterRule, FilterStage};
+use crate::anonymizer::config::AnonymizerConfig;
 use crate::processors::transformer::schema::{TransformerDef, TransformOp, BuiltinTransformer};
 use crate::processors::transformer::types::ContinuousTransformerState;
 use crate::processors::transformer::builtin::PiiTransformer;
@@ -20,6 +21,25 @@ impl TransformerRun {
             .is_some_and(|b| matches!(b, BuiltinTransformer::PiiAnonymizer))
         {
             Some(PiiTransformer::new())
+        } else {
+            None
+        };
+        TransformerRun {
+            def: def.clone(),
+            pii_transformer,
+            regex_cache: HashMap::new(),
+        }
+    }
+
+    /// Build using the user's configured anonymizer detectors instead of hardcoded defaults.
+    /// Use this in the pipeline so Settings → PII config is respected.
+    pub fn new_with_anonymizer_config(def: &TransformerDef, config: &AnonymizerConfig) -> Self {
+        let pii_transformer = if def
+            .builtin
+            .as_ref()
+            .is_some_and(|b| matches!(b, BuiltinTransformer::PiiAnonymizer))
+        {
+            Some(PiiTransformer::from_config(config))
         } else {
             None
         };

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::anonymizer::LogAnonymizer;
+use crate::anonymizer::{LogAnonymizer, config::AnonymizerConfig};
 use crate::core::line::LineContext;
 
 /// Built-in PII Transformer that wraps LogAnonymizer.
@@ -12,6 +12,13 @@ impl PiiTransformer {
     pub fn new() -> Self {
         PiiTransformer {
             anonymizer: LogAnonymizer::new(),
+        }
+    }
+
+    /// Create a PiiTransformer using the user's configured detectors.
+    pub fn from_config(config: &AnonymizerConfig) -> Self {
+        PiiTransformer {
+            anonymizer: LogAnonymizer::from_config(config),
         }
     }
 

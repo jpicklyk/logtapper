@@ -8,6 +8,7 @@ import {
   runPipeline,
   stopPipeline,
   getProcessorVars,
+  setMcpAnonymize,
 } from '../bridge/commands';
 import { arrayMove } from '@dnd-kit/sortable';
 
@@ -68,6 +69,13 @@ export function usePipeline(): PipelineState {
   useEffect(() => {
     if (!chainInitializedRef.current) return;
     localStorage.setItem(LS_KEY, JSON.stringify(pipelineChain));
+  }, [pipelineChain]);
+
+  // Sync MCP anonymization flag whenever the chain changes.
+  // MCP query results are anonymized iff __pii_anonymizer is in the chain.
+  useEffect(() => {
+    if (!chainInitializedRef.current) return;
+    setMcpAnonymize(pipelineChain.includes('__pii_anonymizer')).catch(() => {});
   }, [pipelineChain]);
 
   // Subscribe to pipeline-progress events (batch runs)
