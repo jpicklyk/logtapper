@@ -272,9 +272,8 @@ async fn h_query(
                     .collect()
             }
             _ => {
-                // uniform: scan all (up to cap) in order
-                let start = total_lines.saturating_sub(SCAN_CAP);
-                (start..total_lines).collect()
+                // uniform: scan all lines in order so rare events aren't missed
+                (0..total_lines).collect()
             }
         };
 
