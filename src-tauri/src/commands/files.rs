@@ -368,6 +368,23 @@ pub async fn get_lines(
 // search_logs
 // ---------------------------------------------------------------------------
 
+/// Parse "HH:MM" or "HH:MM:SS" into nanoseconds within a 24-hour day.
+/// Returns None on invalid input.
+fn parse_time_to_day_ns(s: &str) -> Option<i64> {
+    let mut parts = s.splitn(3, ':');
+    let h: i64 = parts.next()?.trim().parse().ok()?;
+    let m: i64 = parts.next()?.trim().parse().ok()?;
+    let sec: i64 = parts
+        .next()
+        .and_then(|s| s.split('.').next())
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0);
+    if !(0..=23).contains(&h) || !(0..=59).contains(&m) || !(0..=59).contains(&sec) {
+        return None;
+    }
+    Some((h * 3600 + m * 60 + sec) * 1_000_000_000)
+}
+
 #[tauri::command]
 pub async fn search_logs(
     state: State<'_, AppState>,
@@ -398,6 +415,12 @@ pub async fn search_logs(
 
     let needle_lower = query.text.to_lowercase();
 
+    // Pre-compute time range bounds (nanoseconds within a 24-hour day)
+    const DAY_NS: i64 = 86_400_000_000_000; // 24 * 60 * 60 * 1_000_000_000
+    let start_ns = query.start_time.as_deref().and_then(parse_time_to_day_ns);
+    let end_ns = query.end_time.as_deref().and_then(parse_time_to_day_ns);
+    let has_time_filter = start_ns.is_some() || end_ns.is_some();
+
     let mut match_line_nums: Vec<usize> = Vec::new();
     let mut by_level: HashMap<String, usize> = HashMap::new();
     let mut by_tag: HashMap<String, usize> = HashMap::new();
@@ -417,7 +440,27 @@ pub async fn search_logs(
             }
         }
 
-        // Text match
+        // Time range filter (compare time-of-day component only).
+        // Lines with timestamp == 0 have no parsed time and are excluded — they
+        // cannot be placed within a time range (section headers, plain content, etc).
+        if has_time_filter {
+            if meta.timestamp == 0 {
+                continue;
+            }
+            let ts_mod = meta.timestamp % DAY_NS;
+            if let Some(s) = start_ns {
+                if ts_mod < s {
+                    continue;
+                }
+            }
+            if let Some(e) = end_ns {
+                if ts_mod > e {
+                    continue;
+                }
+            }
+        }
+
+        // Text match (empty text matches everything — allows time/level/tag-only queries)
         let raw = source.raw_line(i).unwrap_or("");
         let matched = if let Some(ref re) = compiled_re {
             re.is_match(raw)

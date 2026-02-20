@@ -48,6 +48,10 @@ export interface SearchQuery {
   withinProcessor?: string;
   minLevel?: LogLevel;
   tags?: string[];
+  /** Time-of-day lower bound, format "HH:MM" or "HH:MM:SS" */
+  startTime?: string;
+  /** Time-of-day upper bound, format "HH:MM" or "HH:MM:SS" */
+  endTime?: string;
 }
 
 export interface LineRequest {
@@ -270,26 +274,6 @@ export interface ChartData {
   xAxis: { label: string; field: string | null };
   yAxis: { label: string; field: string | null };
   interactive: boolean;
-}
-
-// ---------------------------------------------------------------------------
-// Claude types (Phase 4)
-// ---------------------------------------------------------------------------
-
-export interface ClaudeStreamEvent {
-  /** "text" | "done" | "error" */
-  kind: string;
-  text?: string;
-  error?: string;
-}
-
-export type ChatRole = 'user' | 'assistant';
-
-export interface ChatMessage {
-  role: ChatRole;
-  content: string;
-  /** True while this assistant message is still streaming */
-  streaming?: boolean;
 }
 
 // ---------------------------------------------------------------------------

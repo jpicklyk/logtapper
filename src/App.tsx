@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useLogViewer } from './hooks/useLogViewer';
 import { usePipeline } from './hooks/usePipeline';
-import { useClaude } from './hooks/useClaude';
 import { usePaneLayout } from './hooks/usePaneLayout';
 import { useSettings } from './hooks/useSettings';
 import { useAnonymizerConfig } from './hooks/useAnonymizerConfig';
@@ -30,7 +29,6 @@ export default function App() {
   const anonymizerConfig = useAnonymizerConfig();
   const viewer = useLogViewer(settings.streamFrontendCacheMax);
   const pipeline = usePipeline();
-  const claude = useClaude();
   const stateTracker = useStateTracker();
   const layout = usePaneLayout();
 
@@ -239,7 +237,6 @@ export default function App() {
   const ctxValue = {
     viewer,
     pipeline,
-    claude,
     stateTracker,
     metadata,
     processorViewId,
@@ -286,14 +283,6 @@ export default function App() {
             >
               Reset Layout
             </button>
-            <button
-              className="btn-icon-header"
-              onClick={() => setShowSettings(true)}
-              title="Settings"
-              aria-label="Open Settings"
-            >
-              ⚙
-            </button>
             {viewer.isStreaming && pipeline.activeProcessorIds.has('__pii_anonymizer') && (
               <span className="stream-anon-badge" title="PII anonymization active">🔒 PII</span>
             )}
@@ -319,7 +308,11 @@ export default function App() {
             summary={viewer.searchSummary}
             onJumpToMatch={viewer.jumpToMatch}
             currentMatchIndex={viewer.currentMatchIndex}
-            disabled={!viewer.session}
+            disabled={!viewer.session || viewer.isStreaming}
+            onTimeFilter={viewer.setTimeFilter}
+            timeStart={viewer.timeStart}
+            timeEnd={viewer.timeEnd}
+            timeFilterCount={viewer.timeFilterLineNums?.length ?? null}
           />
         </div>
 
@@ -340,6 +333,7 @@ export default function App() {
         <PaneLayout
           layout={layout}
           pipelineHasResults={pipeline.lastResults.length > 0}
+          onOpenSettings={() => setShowSettings(true)}
         />
 
         {/* ── Status bar ── */}

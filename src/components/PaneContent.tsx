@@ -26,6 +26,22 @@ export default function PaneContent({ pane }: Props) {
     setSelectedLineNum(lineNum);
   }, [viewer, setSelectedLineNum]);
 
+  // Merge stream filter (filteredLineNums) and time range filter (timeFilterLineNums).
+  // When both are active, show only lines that satisfy both (intersection).
+  const sf = viewer.filteredLineNums;
+  const tf = viewer.timeFilterLineNums;
+  let effectiveLineNums: number[] | undefined;
+  if (sf !== null && tf !== null) {
+    const sfSet = new Set(sf);
+    effectiveLineNums = tf.filter((n) => sfSet.has(n));
+  } else if (sf !== null) {
+    effectiveLineNums = sf;
+  } else if (tf !== null) {
+    effectiveLineNums = tf;
+  } else {
+    effectiveLineNums = undefined;
+  }
+
   const activeTab = pane.tabs.find((t) => t.id === pane.activeTabId);
   if (!activeTab) return null;
 
@@ -66,7 +82,7 @@ export default function PaneContent({ pane }: Props) {
             jumpSeq={viewer.jumpSeq}
             processorId={processorViewId ?? undefined}
             isStreaming={viewer.isStreaming}
-            lineNumbers={viewer.filteredLineNums ?? undefined}
+            lineNumbers={effectiveLineNums}
             transitionLineNums={stateTracker.allTransitionLineNums.size > 0 ? stateTracker.allTransitionLineNums : undefined}
             transitionsByLine={stateTracker.allTransitionLineNums.size > 0 ? stateTracker.transitionsByLine : undefined}
           />

@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { type UnlistenFn } from '@tauri-apps/api/event';
 import type { ViewLine, SearchQuery, SearchSummary, LoadResult, AdbBatchPayload } from '../bridge/types';
 import { loadLogFile, getLines, searchLogs, startAdbStream, stopAdbStream, getPackagePids } from '../bridge/commands';
+
 import { onAdbBatch, onAdbStreamStopped } from '../bridge/events';
 import { parseFilter, matchesFilter, extractPackageNames, type FilterNode, FilterParseError } from '../filter';
 
@@ -32,11 +33,21 @@ export interface LogViewerState {
   filteredLineNums: number[] | null;
   /** Maximum frontend cache size in lines (0 = unlimited). */
   cacheMax: number;
+  /** Current time range filter start ("HH:MM"), empty = not set */
+  timeStart: string;
+  /** Current time range filter end ("HH:MM"), empty = not set */
+  timeEnd: string;
+  /**
+   * Line numbers matching the active time range filter.
+   * null = no time filter active; [] = filter active but 0 matches.
+   */
+  timeFilterLineNums: number[] | null;
 
   loadFile: (path: string) => Promise<void>;
   startStream: (deviceId?: string, packageFilter?: string, activeProcessorIds?: string[], maxRawLines?: number) => Promise<void>;
   stopStream: () => Promise<void>;
   setStreamFilter: (expr: string) => Promise<void>;
+  setTimeFilter: (start: string, end: string) => Promise<void>;
   handleFetchNeeded: (offset: number, count: number) => void;
   handleSearch: (query: SearchQuery | null) => void;
   jumpToMatch: (direction: 1 | -1) => void;
@@ -65,6 +76,11 @@ export function useLogViewer(frontendCacheMax: number = 50_000): LogViewerState 
   const [streamFilter, setStreamFilterExpr] = useState('');
   const [filterParseError, setFilterParseError] = useState<string | null>(null);
   const [filteredLineNums, setFilteredLineNums] = useState<number[] | null>(null);
+  const [timeStart, setTimeStartState] = useState('');
+  const [timeEnd, setTimeEndState] = useState('');
+  const [timeFilterLineNums, setTimeFilterLineNums] = useState<number[] | null>(null);
+  const timeStartRef = useRef('');
+  const timeEndRef = useRef('');
 
   // Cache version triggers re-renders when lineCacheRef is mutated (file fetch path).
   const [, setCacheVersion] = useState(0);
@@ -120,6 +136,12 @@ export function useLogViewer(frontendCacheMax: number = 50_000): LogViewerState 
     setFilteredLineNums(null);
     filterAstRef.current = null;
     packagePidsRef.current = new Map();
+    // Reset time range filter
+    setTimeStartState('');
+    setTimeEndState('');
+    timeStartRef.current = '';
+    timeEndRef.current = '';
+    setTimeFilterLineNums(null);
   }, []);
 
   const handleAdbBatch = useCallback((payload: AdbBatchPayload) => {
@@ -228,6 +250,43 @@ export function useLogViewer(frontendCacheMax: number = 50_000): LogViewerState 
     }
     nums.sort((a, b) => a - b);
     setFilteredLineNums(nums);
+  }, []);
+
+  /**
+   * Apply a time-of-day range filter to the loaded file.
+   * Calls the backend search_logs to find all lines within the range, then
+   * sets timeFilterLineNums to drive the viewer's lineNumbers prop.
+   * Pass empty strings to clear the filter.
+   */
+  const setTimeFilter = useCallback(async (start: string, end: string) => {
+    setTimeStartState(start);
+    setTimeEndState(end);
+    timeStartRef.current = start;
+    timeEndRef.current = end;
+
+    if (!start.trim() && !end.trim()) {
+      setTimeFilterLineNums(null);
+      return;
+    }
+
+    const sess = sessionRef.current;
+    if (!sess) {
+      setTimeFilterLineNums(null);
+      return;
+    }
+
+    try {
+      const summary = await searchLogs(sess.sessionId, {
+        text: '',
+        isRegex: false,
+        caseSensitive: false,
+        startTime: start.trim() || undefined,
+        endTime: end.trim() || undefined,
+      });
+      setTimeFilterLineNums(summary.matchLineNums);
+    } catch (e) {
+      console.error('Time filter error:', e);
+    }
   }, []);
 
   const loadFile = useCallback(async (path: string) => {
@@ -467,10 +526,14 @@ export function useLogViewer(frontendCacheMax: number = 50_000): LogViewerState 
     filterParseError,
     filteredLineNums,
     cacheMax: frontendCacheMax,
+    timeStart,
+    timeEnd,
+    timeFilterLineNums,
     loadFile,
     startStream,
     stopStream,
     setStreamFilter,
+    setTimeFilter,
     handleFetchNeeded,
     handleSearch,
     jumpToMatch,

@@ -78,6 +78,12 @@ pub struct SearchQuery {
     pub within_processor: Option<String>,
     pub min_level: Option<LogLevel>,
     pub tags: Option<Vec<String>>,
+    /// Optional time-of-day lower bound, format "HH:MM" or "HH:MM:SS"
+    #[serde(default)]
+    pub start_time: Option<String>,
+    /// Optional time-of-day upper bound, format "HH:MM" or "HH:MM:SS"
+    #[serde(default)]
+    pub end_time: Option<String>,
 }
 
 fn bool_true() -> bool {
