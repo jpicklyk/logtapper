@@ -239,3 +239,17 @@ server.tool(
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
+
+// ---------------------------------------------------------------------------
+// Heartbeat — ping the bridge every 10 s so the Tauri app knows this MCP
+// server process is alive, even when no tools are being invoked.
+// The frontend uses mcp_last_activity (stamped on every bridge request) to
+// distinguish "connected" from "ready (idle)" state.
+// ---------------------------------------------------------------------------
+
+const HEARTBEAT_INTERVAL_MS = 10_000;
+
+setInterval(() => {
+  fetch(`${BASE_URL}/mcp/status`, { signal: AbortSignal.timeout(4_000) })
+    .catch(() => { /* LogTapper not running — silently ignore */ });
+}, HEARTBEAT_INTERVAL_MS);
