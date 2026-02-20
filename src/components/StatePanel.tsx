@@ -49,7 +49,9 @@ export default function StatePanel() {
       return;
     }
     const sessionId = viewer.session.sessionId;
-    const lineNum = selectedLineNum ?? 0;
+    // When no line is explicitly selected (e.g. auto-scroll active), default to
+    // MAX_SAFE_INTEGER so we replay ALL transitions and show the latest state.
+    const lineNum = selectedLineNum ?? Number.MAX_SAFE_INTEGER;
 
     // Only show skeleton loading rows on the VERY FIRST fetch (no data yet).
     // All subsequent fetches — including the high-frequency ticks from streaming

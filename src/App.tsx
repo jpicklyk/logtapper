@@ -188,7 +188,10 @@ export default function App() {
   // ── Refresh StateTracker transitions + auto-open State Timeline ──────────
 
   useEffect(() => {
-    if (!viewer.session || pipeline.lastResults.length === 0) return;
+    if (!viewer.session) return;
+    // In streaming mode, refresh whenever runCount ticks (adb-processor-update).
+    // In file mode, only refresh after the pipeline has actually run.
+    if (!viewer.isStreaming && pipeline.lastResults.length === 0) return;
     stateTracker.refreshTransitionLines(viewer.session.sessionId).catch(() => {});
 
     // Auto-open State Timeline if any StateTracker processors ran and produced results
