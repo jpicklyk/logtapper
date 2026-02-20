@@ -278,6 +278,8 @@ mod tests {
         assert_eq!(run.current_state["charging"], json!(false));
         assert_eq!(run.current_state["status"], json!("discharging"));
         assert_eq!(run.current_state["plugged"], json!("none"));
+        // plugged must appear in changes (null→"none") so it becomes initialized in the UI
+        assert!(run.transitions[0].changes.contains_key("plugged"));
     }
 
     #[test]

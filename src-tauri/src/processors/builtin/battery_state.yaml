@@ -16,7 +16,6 @@ state:
     type: bool
   - name: plugged
     type: string
-    default: none
   - name: status
     type: string
 
