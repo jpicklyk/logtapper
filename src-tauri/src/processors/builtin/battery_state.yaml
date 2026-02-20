@@ -1,9 +1,9 @@
 type: state_tracker
 id: __battery_state
 name: Battery State
-version: 2.0.0
+version: 3.0.0
 author: LogTapper
-description: "Tracks battery level, charging status, plug source, and health. Supports Samsung (colon-separated: level:N, ac:true) and AOSP (equals-separated: level=N, plugged=1) BatteryService formats."
+description: "Tracks battery level, charging status, and plug source from BatteryService. Each transition captures all fields at once so level + status + plugged are set atomically. Supports Samsung (level:N, status:N, ac:true/false) and AOSP (level=N, status=N, plugged=N) formats."
 tags: [battery, power, android]
 builtin: true
 
@@ -16,110 +16,129 @@ state:
     type: bool
   - name: plugged
     type: string
+    default: none
   - name: status
     type: string
 
 transitions:
-  # Level — "level:100" (Samsung) or "level=100" (AOSP)
+  # ── Samsung format: status=2 + named plug boolean ─────────────────────────
+  # Captures level ($1) and sets charging/status/plugged atomically.
+
+  - name: Charging via AC
+    filter:
+      tag: BatteryService
+      message_regex: 'level[=:](\d+).*?status[=:]2[,\s].*?ac:true'
+    set:
+      level: "$1"
+      charging: true
+      status: charging
+      plugged: ac
+
+  - name: Charging via USB
+    filter:
+      tag: BatteryService
+      message_regex: 'level[=:](\d+).*?status[=:]2[,\s].*?usb:true'
+    set:
+      level: "$1"
+      charging: true
+      status: charging
+      plugged: usb
+
+  - name: Charging via Wireless
+    filter:
+      tag: BatteryService
+      message_regex: 'level[=:](\d+).*?status[=:]2[,\s].*?wireless:true'
+    set:
+      level: "$1"
+      charging: true
+      status: charging
+      plugged: wireless
+
+  - name: Charging via Pogo
+    filter:
+      tag: BatteryService
+      message_regex: 'level[=:](\d+).*?status[=:]2[,\s].*?pogo:true'
+    set:
+      level: "$1"
+      charging: true
+      status: charging
+      plugged: pogo
+
+  # ── AOSP format: status=2 + numeric plugged code ──────────────────────────
+
+  - name: AC Plugged (AOSP)
+    filter:
+      tag: BatteryService
+      message_regex: 'level=(\d+).*?status=2.*?plugged=1[\s,]'
+    set:
+      level: "$1"
+      charging: true
+      status: charging
+      plugged: ac
+
+  - name: USB Plugged (AOSP)
+    filter:
+      tag: BatteryService
+      message_regex: 'level=(\d+).*?status=2.*?plugged=2[\s,]'
+    set:
+      level: "$1"
+      charging: true
+      status: charging
+      plugged: usb
+
+  - name: Wireless Charging (AOSP)
+    filter:
+      tag: BatteryService
+      message_regex: 'level=(\d+).*?status=2.*?plugged=4[\s,]'
+    set:
+      level: "$1"
+      charging: true
+      status: charging
+      plugged: wireless
+
+  # ── Status 3 — Discharging (both formats) ─────────────────────────────────
+
+  - name: Discharging
+    filter:
+      tag: BatteryService
+      message_regex: 'level[=:](\d+).*?status[=:]3[,\s]'
+    set:
+      level: "$1"
+      charging: false
+      status: discharging
+      plugged: none
+
+  # ── Status 4 — Not Charging (plugged but not charging) ────────────────────
+
+  - name: Not Charging
+    filter:
+      tag: BatteryService
+      message_regex: 'level[=:](\d+).*?status[=:]4[,\s]'
+    set:
+      level: "$1"
+      charging: false
+      status: not_charging
+      plugged: none
+
+  # ── Status 5 — Full ───────────────────────────────────────────────────────
+
+  - name: Battery Full
+    filter:
+      tag: BatteryService
+      message_regex: 'level[=:](\d+).*?status[=:]5[,\s]'
+    set:
+      level: "$1"
+      charging: false
+      status: full
+
+  # ── Level-only fallback (level present but no recognized status) ──────────
+
   - name: Battery Level
     filter:
       tag: BatteryService
       message_regex: 'level[=:](\d+)'
     set:
-      level: $1
-
-  # Charging status — "status:N," (Samsung) or "status=N" (AOSP)
-  # Android status codes: 2=CHARGING 3=DISCHARGING 4=NOT_CHARGING 5=FULL
-
-  - name: Charging
-    filter:
-      tag: BatteryService
-      message_regex: 'status[=:]2[,\s]'
-    set:
-      charging: true
-      status: charging
-
-  - name: Discharging
-    filter:
-      tag: BatteryService
-      message_regex: 'status[=:]3[,\s]'
-    set:
-      charging: false
-      status: discharging
-    clear:
-      - plugged
-
-  - name: Not Charging
-    filter:
-      tag: BatteryService
-      message_regex: 'status[=:]4[,\s]'
-    set:
-      charging: false
-      status: not_charging
-
-  - name: Battery Full
-    filter:
-      tag: BatteryService
-      message_regex: 'status[=:]5[,\s]'
-    set:
-      charging: false
-      status: full
-
-  # Plug source — Samsung named booleans ("ac:true", "usb:true", etc.)
-
-  - name: AC Plugged
-    filter:
-      tag: BatteryService
-      message_contains: "ac:true"
-    set:
-      plugged: ac
-
-  - name: USB Plugged
-    filter:
-      tag: BatteryService
-      message_contains: "usb:true"
-    set:
-      plugged: usb
-
-  - name: Wireless Charging
-    filter:
-      tag: BatteryService
-      message_contains: "wireless:true"
-    set:
-      plugged: wireless
-
-  - name: Pogo Charging
-    filter:
-      tag: BatteryService
-      message_contains: "pogo:true"
-    set:
-      plugged: pogo
-
-  # Plug source — AOSP numeric codes ("plugged=1/2/4")
-
-  - name: AC Plugged (AOSP)
-    filter:
-      tag: BatteryService
-      message_regex: 'plugged=1[\s,]'
-    set:
-      plugged: ac
-      charging: true
-
-  - name: USB Plugged (AOSP)
-    filter:
-      tag: BatteryService
-      message_regex: 'plugged=2[\s,]'
-    set:
-      plugged: usb
-      charging: true
-
-  - name: Wireless Charging (AOSP)
-    filter:
-      tag: BatteryService
-      message_regex: 'plugged=4[\s,]'
-    set:
-      plugged: wireless
-      charging: true
+      level: "$1"
 
 output:
   timeline: true

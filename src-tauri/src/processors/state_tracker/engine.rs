@@ -255,6 +255,60 @@ mod tests {
     };
     use serde_json::json;
 
+    fn load_battery_def() -> StateTrackerDef {
+        let yaml = include_str!("../builtin/battery_state.yaml");
+        let proc: crate::processors::AnyProcessor =
+            crate::processors::AnyProcessor::from_yaml(yaml).expect("battery_state.yaml parses");
+        match proc.kind {
+            crate::processors::ProcessorKind::StateTracker(def) => def,
+            _ => panic!("expected StateTracker kind"),
+        }
+    }
+
+    #[test]
+    fn battery_discharging_sets_all_fields() {
+        let def = load_battery_def();
+        let mut run = StateTrackerRun::new("__battery_state", &def);
+        // Samsung ACTION_BATTERY_CHANGED — status:3 (discharging), all plug booleans false
+        let msg = "Sending ACTION_BATTERY_CHANGED: level:99, status:3, health:2, remain:0, ac:false, usb:false, wireless:false, pogo:false, misc:0x10000";
+        run.process_line(&make_line(1, "BatteryService", msg));
+        assert_eq!(run.transitions.len(), 1);
+        assert_eq!(run.transitions[0].transition_name, "Discharging");
+        assert_eq!(run.current_state["level"], json!("99"));
+        assert_eq!(run.current_state["charging"], json!(false));
+        assert_eq!(run.current_state["status"], json!("discharging"));
+        assert_eq!(run.current_state["plugged"], json!("none"));
+    }
+
+    #[test]
+    fn battery_charging_usb_sets_all_fields() {
+        let def = load_battery_def();
+        let mut run = StateTrackerRun::new("__battery_state", &def);
+        // Samsung — status:2 (charging), usb:true
+        let msg = "Sending ACTION_BATTERY_CHANGED: level:85, status:2, health:2, remain:0, ac:false, usb:true, wireless:false, pogo:false";
+        run.process_line(&make_line(1, "BatteryService", msg));
+        assert_eq!(run.transitions.len(), 1);
+        assert_eq!(run.transitions[0].transition_name, "Charging via USB");
+        assert_eq!(run.current_state["level"], json!("85"));
+        assert_eq!(run.current_state["charging"], json!(true));
+        assert_eq!(run.current_state["status"], json!("charging"));
+        assert_eq!(run.current_state["plugged"], json!("usb"));
+    }
+
+    #[test]
+    fn battery_aosp_ac_sets_all_fields() {
+        let def = load_battery_def();
+        let mut run = StateTrackerRun::new("__battery_state", &def);
+        // AOSP — level=90, status=2, plugged=1 (AC)
+        let msg = "level=90, status=2, health=2, present=true, voltage=4200, plugged=1, technology=Li-ion";
+        run.process_line(&make_line(1, "BatteryService", msg));
+        assert_eq!(run.transitions.len(), 1);
+        assert_eq!(run.transitions[0].transition_name, "AC Plugged (AOSP)");
+        assert_eq!(run.current_state["level"], json!("90"));
+        assert_eq!(run.current_state["charging"], json!(true));
+        assert_eq!(run.current_state["plugged"], json!("ac"));
+    }
+
     fn make_line(source_line_num: usize, tag: &str, message: &str) -> LineContext {
         LineContext {
             source_line_num,

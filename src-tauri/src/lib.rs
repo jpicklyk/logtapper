@@ -37,6 +37,7 @@ fn load_persisted_processors(state: &AppState, proc_dir: &std::path::Path) {
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::new())
+        .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
