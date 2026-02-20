@@ -4376,6 +4376,48 @@ details[open] > summary::before {
   z-index: 100;
 }
 
+/* Pinned tail node (e.g. PII Anonymizer) — not draggable, always last */
+.chain-node--pinned {
+  border-style: dashed;
+  opacity: 0.92;
+}
+
+/* Output gate separator above the pinned node */
+.chain-output-gate-sep {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 4px 0;
+  color: var(--text-dimmed);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.chain-output-gate-sep::before,
+.chain-output-gate-sep::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-subtle);
+}
+
+.chain-output-gate-label {
+  white-space: nowrap;
+  color: var(--text-dimmed);
+}
+
+/* Locked drag handle for pinned nodes */
+.chain-node-handle--locked {
+  cursor: default;
+  pointer-events: none;
+  opacity: 0.4;
+}
+
+.chain-node.chain-node--pinned:hover .chain-node-handle--locked {
+  color: var(--text-dimmed);
+}
+
 .chain-node-handle {
   display: flex;
   align-items: center;

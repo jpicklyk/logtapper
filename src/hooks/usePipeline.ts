@@ -14,6 +14,9 @@ import { arrayMove } from '@dnd-kit/sortable';
 
 const LS_KEY = 'logtapper_pipeline_chain';
 
+/** Processors that must always stay at the end of the chain. */
+const PINNED_TAIL_IDS = new Set(['__pii_anonymizer']);
+
 function loadChainFromStorage(validIds: Set<string>): string[] {
   try {
     const raw = localStorage.getItem(LS_KEY);
@@ -169,6 +172,15 @@ export function usePipeline(): PipelineState {
   const addToChain = useCallback((id: string) => {
     setPipelineChain((prev) => {
       if (prev.includes(id)) return prev;
+      if (PINNED_TAIL_IDS.has(id)) {
+        // Pinned processors always go at the very end.
+        return [...prev, id];
+      }
+      // Insert before any pinned-tail processors that are already in the chain.
+      const firstPinnedIdx = prev.findIndex((x) => PINNED_TAIL_IDS.has(x));
+      if (firstPinnedIdx !== -1) {
+        return [...prev.slice(0, firstPinnedIdx), id, ...prev.slice(firstPinnedIdx)];
+      }
       return [...prev, id];
     });
   }, []);
@@ -178,7 +190,15 @@ export function usePipeline(): PipelineState {
   }, []);
 
   const reorderChain = useCallback((fromIndex: number, toIndex: number) => {
-    setPipelineChain((prev) => arrayMove(prev, fromIndex, toIndex));
+    setPipelineChain((prev) => {
+      // Never drag a pinned-tail processor.
+      if (PINNED_TAIL_IDS.has(prev[fromIndex])) return prev;
+      // Never drag past a pinned-tail processor.
+      const firstPinnedIdx = prev.findIndex((x) => PINNED_TAIL_IDS.has(x));
+      const clampedTo =
+        firstPinnedIdx !== -1 ? Math.min(toIndex, firstPinnedIdx - 1) : toIndex;
+      return arrayMove(prev, fromIndex, clampedTo);
+    });
   }, []);
 
   // Backward-compat toggle: add if not in chain, remove if present

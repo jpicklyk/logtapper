@@ -391,6 +391,76 @@ function ChainNode({
   );
 }
 
+// ── PinnedChainNode ───────────────────────────────────────────────────────────
+// Non-draggable node for processors locked to the end of the chain (e.g. PII anonymizer).
+
+function PinnedChainNode({
+  id,
+  name,
+  processorType,
+  builtin,
+  result,
+  progress,
+  running,
+  onRemove,
+}: ChainNodeProps) {
+  const style: React.CSSProperties = {
+    '--proc-accent': PROC_TYPE_ACCENT[processorType] ?? '#58a6ff',
+  } as React.CSSProperties;
+
+  const [typeLabel, typeBadgeClass] = PROC_TYPE_META[processorType] ?? ['Unknown', ''];
+
+  return (
+    <>
+      {/* Output-gate separator */}
+      <div className="chain-output-gate-sep">
+        <span className="chain-output-gate-label">output gate</span>
+      </div>
+
+      <div style={style} className="chain-node chain-node--pinned">
+        {/* Lock icon — not interactive */}
+        <div className="chain-node-handle chain-node-handle--locked" title="Pinned to end — always processes output last">
+          <svg width="10" height="12" viewBox="0 0 10 12" fill="none">
+            <rect x="2" y="5.5" width="6" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.2"/>
+            <path d="M3 5.5V3.5a2 2 0 014 0v2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+          </svg>
+        </div>
+
+        {/* Accent bar */}
+        <div className="chain-node-accent" />
+
+        {/* Body */}
+        <div className="chain-node-body">
+          <div className="chain-node-name">{name}</div>
+          <div className="chain-node-meta">
+            <span className={`proc-type-badge ${typeBadgeClass}`}>{typeLabel}</span>
+            {builtin && <span className="proc-item-builtin-badge">built-in</span>}
+          </div>
+          <StatLine
+            processorType={processorType}
+            result={result}
+            progress={progress}
+            running={running}
+          />
+        </div>
+
+        {/* Remove button only if not builtin */}
+        {!builtin && (
+          <button
+            className="chain-node-remove"
+            title="Remove from chain"
+            onClick={() => onRemove(id)}
+          >
+            <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
+              <path d="M1 1l8 8M9 1L1 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+          </button>
+        )}
+      </div>
+    </>
+  );
+}
+
 // ── ProcessorPanel ───────────────────────────────────────────────────────────
 
 export default function ProcessorPanel({ pipeline, sessionId, isStreaming, onOpenLibrary, cacheSize, cacheMax }: Props) {
@@ -405,6 +475,9 @@ export default function ProcessorPanel({ pipeline, sessionId, isStreaming, onOpe
     (event: DragEndEvent) => {
       const { active, over } = event;
       if (!over || active.id === over.id) return;
+      // Reorder within the full pipelineChain using the full-chain indices.
+      // Pinned-tail items are excluded from the sortable context so they
+      // can never appear as active or over here.
       const fromIndex = pipeline.pipelineChain.indexOf(String(active.id));
       const toIndex = pipeline.pipelineChain.indexOf(String(over.id));
       if (fromIndex === -1 || toIndex === -1) return;
@@ -423,9 +496,16 @@ export default function ProcessorPanel({ pipeline, sessionId, isStreaming, onOpe
     pipeline.lastResults.map((r) => [r.processorId, r]),
   );
 
-  const chainProcessors = pipeline.pipelineChain
+  const PINNED_TAIL_IDS = new Set(['__pii_anonymizer']);
+
+  const allChainProcessors = pipeline.pipelineChain
     .map((id) => pipeline.processors.find((p) => p.id === id))
     .filter(Boolean) as NonNullable<(typeof pipeline.processors)[0]>[];
+
+  // Split into freely-sortable processors and pinned-tail processors.
+  const sortableProcessors = allChainProcessors.filter((p) => !PINNED_TAIL_IDS.has(p.id));
+  const pinnedProcessors   = allChainProcessors.filter((p) =>  PINNED_TAIL_IDS.has(p.id));
+  const sortableIds        = sortableProcessors.map((p) => p.id);
 
   const isActive = pipeline.running || isStreaming;
   const canRun = pipeline.pipelineChain.length > 0 && !!sessionId && !pipeline.running;
@@ -462,7 +542,7 @@ export default function ProcessorPanel({ pipeline, sessionId, isStreaming, onOpe
         </div>
 
         {/* Chain items or empty hint */}
-        {chainProcessors.length === 0 ? (
+        {allChainProcessors.length === 0 ? (
           <div className="pipeline-chain-empty">
             <ChainConnector isActive={false} />
             <div className="pipeline-empty-hint">
@@ -472,29 +552,49 @@ export default function ProcessorPanel({ pipeline, sessionId, isStreaming, onOpe
             <ChainConnector isActive={false} />
           </div>
         ) : (
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            <SortableContext items={pipeline.pipelineChain} strategy={verticalListSortingStrategy}>
-              {chainProcessors.map((proc) => (
-                <Fragment key={proc.id}>
-                  <ChainConnector isActive={isActive} />
-                  <ChainNode
-                    id={proc.id}
-                    name={proc.name}
-                    processorType={proc.processorType}
-                    builtin={proc.builtin}
-                    result={resultMap.get(proc.id)}
-                    progress={pipeline.progress[proc.id]}
-                    running={pipeline.running}
-                    onRemove={pipeline.removeFromChain}
-                  />
-                </Fragment>
-              ))}
-            </SortableContext>
-          </DndContext>
+          <>
+            {/* Freely sortable processors */}
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
+                {sortableProcessors.map((proc) => (
+                  <Fragment key={proc.id}>
+                    <ChainConnector isActive={isActive} />
+                    <ChainNode
+                      id={proc.id}
+                      name={proc.name}
+                      processorType={proc.processorType}
+                      builtin={proc.builtin}
+                      result={resultMap.get(proc.id)}
+                      progress={pipeline.progress[proc.id]}
+                      running={pipeline.running}
+                      onRemove={pipeline.removeFromChain}
+                    />
+                  </Fragment>
+                ))}
+              </SortableContext>
+            </DndContext>
+
+            {/* Pinned-tail processors (e.g. PII Anonymizer) — always last, not draggable */}
+            {pinnedProcessors.map((proc) => (
+              <Fragment key={proc.id}>
+                <ChainConnector isActive={isActive} />
+                <PinnedChainNode
+                  id={proc.id}
+                  name={proc.name}
+                  processorType={proc.processorType}
+                  builtin={proc.builtin}
+                  result={resultMap.get(proc.id)}
+                  progress={pipeline.progress[proc.id]}
+                  running={pipeline.running}
+                  onRemove={pipeline.removeFromChain}
+                />
+              </Fragment>
+            ))}
+          </>
         )}
 
         {/* Last connector before sink */}
-        {chainProcessors.length > 0 && <ChainConnector isActive={isActive} />}
+        {allChainProcessors.length > 0 && <ChainConnector isActive={isActive} />}
 
         {/* Sink node */}
         <div className="pipeline-node-sink">
