@@ -1,9 +1,9 @@
 type: state_tracker
 id: __battery_state
 name: Battery State
-version: 1.0.0
+version: 2.0.0
 author: LogTapper
-description: Tracks battery level, charging status, and power source changes.
+description: "Tracks battery level, charging status, plug source, and health. Supports Samsung (colon-separated: level:N, ac:true) and AOSP (equals-separated: level=N, plugged=1) BatteryService formats."
 tags: [battery, power, android]
 builtin: true
 
@@ -18,49 +18,111 @@ state:
     default: false
   - name: plugged
     type: string
-    default: 
-  - name: health
+    default: ""
+  - name: status
     type: string
-    default: good
+    default: ""
 
 transitions:
-  - name: Battery Level Change
+  # Level — "level:100" (Samsung) or "level=100" (AOSP)
+  - name: Battery Level
     filter:
       tag: BatteryService
-      message_regex: 'level=(\d+)'
+      message_regex: 'level[=:](\d+)'
     set:
       level: $1
 
-  - name: Charging Started
+  # Charging status — "status:N," (Samsung) or "status=N" (AOSP)
+  # Android status codes: 2=CHARGING 3=DISCHARGING 4=NOT_CHARGING 5=FULL
+
+  - name: Charging
     filter:
       tag: BatteryService
-      message_regex: 'status=2'
+      message_regex: 'status[=:]2[,\s]'
     set:
       charging: true
+      status: charging
 
   - name: Discharging
     filter:
       tag: BatteryService
-      message_regex: 'status=3'
+      message_regex: 'status[=:]3[,\s]'
     set:
       charging: false
+      status: discharging
     clear:
       - plugged
 
-  - name: USB Plugged
+  - name: Not Charging
     filter:
       tag: BatteryService
-      message_regex: 'plugged=2'
+      message_regex: 'status[=:]4[,\s]'
     set:
-      plugged: usb
-      charging: true
+      charging: false
+      status: not_charging
+
+  - name: Battery Full
+    filter:
+      tag: BatteryService
+      message_regex: 'status[=:]5[,\s]'
+    set:
+      charging: false
+      status: full
+
+  # Plug source — Samsung named booleans ("ac:true", "usb:true", etc.)
 
   - name: AC Plugged
     filter:
       tag: BatteryService
-      message_regex: 'plugged=1'
+      message_contains: "ac:true"
     set:
       plugged: ac
+
+  - name: USB Plugged
+    filter:
+      tag: BatteryService
+      message_contains: "usb:true"
+    set:
+      plugged: usb
+
+  - name: Wireless Charging
+    filter:
+      tag: BatteryService
+      message_contains: "wireless:true"
+    set:
+      plugged: wireless
+
+  - name: Pogo Charging
+    filter:
+      tag: BatteryService
+      message_contains: "pogo:true"
+    set:
+      plugged: pogo
+
+  # Plug source — AOSP numeric codes ("plugged=1/2/4")
+
+  - name: AC Plugged (AOSP)
+    filter:
+      tag: BatteryService
+      message_regex: 'plugged=1[\s,]'
+    set:
+      plugged: ac
+      charging: true
+
+  - name: USB Plugged (AOSP)
+    filter:
+      tag: BatteryService
+      message_regex: 'plugged=2[\s,]'
+    set:
+      plugged: usb
+      charging: true
+
+  - name: Wireless Charging (AOSP)
+    filter:
+      tag: BatteryService
+      message_regex: 'plugged=4[\s,]'
+    set:
+      plugged: wireless
       charging: true
 
 output:
