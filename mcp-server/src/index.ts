@@ -174,6 +174,31 @@ server.tool(
   }
 );
 
+// ── logtapper_get_pipeline_results ───────────────────────────────────────
+
+server.tool(
+  "logtapper_get_pipeline_results",
+  "Get the results of the last pipeline run for a session. Returns per-processor " +
+    "summaries for all processor types:\n" +
+    "  reporters     — matchedLines count, emission count, accumulated vars\n" +
+    "  state_trackers — transitionCount, finalState snapshot, 5 most recent transitions\n" +
+    "\nUse this to verify the pipeline ran correctly and to understand what each " +
+    "processor found before querying raw lines or events. " +
+    "Returns hasResults:false if the pipeline has not been run yet.",
+  {
+    session_id: z.string().describe("Session ID"),
+  },
+  async ({ session_id }) => {
+    try {
+      return ok(
+        await bridgeGet(`/mcp/sessions/${encodeURIComponent(session_id)}/pipeline`)
+      );
+    } catch (err) {
+      return ok({ error: String(err) });
+    }
+  }
+);
+
 // ── logtapper_get_events ─────────────────────────────────────────────────
 
 server.tool(

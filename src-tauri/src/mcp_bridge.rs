@@ -34,6 +34,7 @@ pub async fn start(handle: Handle) {
         .route("/mcp/status", get(h_status))
         .route("/mcp/sessions", get(h_sessions))
         .route("/mcp/sessions/{session_id}/query", get(h_query))
+        .route("/mcp/sessions/{session_id}/pipeline", get(h_pipeline))
         .route("/mcp/sessions/{session_id}/events", get(h_events))
         .with_state(handle);
 
@@ -311,6 +312,98 @@ async fn h_query(
             "tagCounts": tag_counts,
             "levelCounts": level_counts,
         },
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// GET /mcp/sessions/{session_id}/pipeline
+// ---------------------------------------------------------------------------
+
+async fn h_pipeline(
+    State(handle): State<Handle>,
+    Path(session_id): Path<String>,
+) -> Json<Value> {
+    let state = handle.state::<AppState>();
+
+    // --- Reporter results ---
+    let reporter_results: Vec<Value> = {
+        let results = state.pipeline_results.lock().unwrap();
+        let procs = state.processors.lock().unwrap();
+        match results.get(&session_id) {
+            None => vec![],
+            Some(session_map) => session_map
+                .iter()
+                .map(|(proc_id, run_result)| {
+                    let name = procs
+                        .get(proc_id)
+                        .map(|p| p.meta.name.clone())
+                        .unwrap_or_else(|| proc_id.clone());
+                    // Summarise vars — omit empty maps/lists to keep output compact.
+                    let vars: serde_json::Map<String, Value> = run_result
+                        .vars
+                        .iter()
+                        .filter_map(|(k, v)| {
+                            match v {
+                                Value::Array(a) if a.is_empty() => None,
+                                Value::Object(o) if o.is_empty() => None,
+                                _ => Some((k.clone(), v.clone())),
+                            }
+                        })
+                        .collect();
+                    json!({
+                        "processorId": proc_id,
+                        "processorType": "reporter",
+                        "name": name,
+                        "matchedLines": run_result.matched_line_nums.len(),
+                        "emissions": run_result.emissions.len(),
+                        "vars": vars,
+                    })
+                })
+                .collect(),
+        }
+    };
+
+    // --- State tracker results ---
+    let tracker_results: Vec<Value> = {
+        let results = state.state_tracker_results.lock().unwrap();
+        let procs = state.processors.lock().unwrap();
+        match results.get(&session_id) {
+            None => vec![],
+            Some(session_map) => session_map
+                .iter()
+                .map(|(tracker_id, tracker_result)| {
+                    let name = procs
+                        .get(tracker_id)
+                        .map(|p| p.meta.name.clone())
+                        .unwrap_or_else(|| tracker_id.clone());
+                    json!({
+                        "processorId": tracker_id,
+                        "processorType": "state_tracker",
+                        "name": name,
+                        "transitionCount": tracker_result.transitions.len(),
+                        "finalState": tracker_result.final_state,
+                        "recentTransitions": tracker_result.transitions
+                            .iter()
+                            .rev()
+                            .take(5)
+                            .map(|t| json!({
+                                "lineNum": t.line_num,
+                                "transitionName": t.transition_name,
+                                "changes": t.changes,
+                            }))
+                            .collect::<Vec<_>>(),
+                    })
+                })
+                .collect(),
+        }
+    };
+
+    let has_any = !reporter_results.is_empty() || !tracker_results.is_empty();
+    Json(json!({
+        "sessionId": session_id,
+        "hasResults": has_any,
+        "reporters": reporter_results,
+        "stateTrackers": tracker_results,
     }))
 }
 
