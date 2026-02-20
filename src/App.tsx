@@ -55,9 +55,10 @@ export default function App() {
     if (typeof selected === 'string') {
       setMetadata(null);
       setSections([]);
+      stateTracker.clearTransitions();
       await viewer.loadFile(selected);
     }
-  }, [viewer]);
+  }, [viewer, stateTracker.clearTransitions]);
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -68,11 +69,12 @@ export default function App() {
         if (path) {
           setMetadata(null);
           setSections([]);
+          stateTracker.clearTransitions();
           viewer.loadFile(path);
         }
       }
     },
-    [viewer],
+    [viewer, stateTracker.clearTransitions],
   );
 
   // ── ADB streaming ──────────────────────────────────────────────────────────
@@ -82,13 +84,14 @@ export default function App() {
     setMetadata(null);
     setSections([]);
     pipeline.clearResults();
+    stateTracker.clearTransitions();
     await viewer.startStream(
       deviceId,
       undefined,
       Array.from(pipeline.activeProcessorIds),
       settings.streamBackendLineMax,
     );
-  }, [viewer, pipeline.activeProcessorIds, settings.streamBackendLineMax]);
+  }, [viewer, pipeline.activeProcessorIds, settings.streamBackendLineMax, stateTracker.clearTransitions]);
 
   const handleStreamAdb = useCallback(async () => {
     setAdbError(null);

@@ -609,37 +609,46 @@ export default function ProcessorPanel({ pipeline, sessionId, isStreaming, onOpe
       </div>
 
       {/* ── Run row ── */}
-      <div className="proc-run-row">
-        <button
-          className={`proc-run-btn${canRun ? ' proc-run-btn--ready' : ''}${pipeline.running ? ' proc-run-btn--running' : ''}`}
-          onClick={handleRun}
-          disabled={!canRun}
-          title={
-            !sessionId ? 'Load a log file first' :
-            pipeline.pipelineChain.length === 0 ? 'Add processors to the chain first' :
-            'Run pipeline on loaded log'
-          }
-        >
-          {pipeline.running ? (
-            <>
-              <span className="proc-run-spinner" />
-              Running…
-            </>
-          ) : (
-            <>
-              <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
-                <path d="M3 1.5l7 4.5-7 4.5V1.5z" fill="currentColor"/>
-              </svg>
-              Run Pipeline
-            </>
-          )}
-        </button>
-        {pipeline.running && (
-          <button className="btn-secondary" onClick={pipeline.stop}>
-            Stop
+      {isStreaming ? (
+        <div className="proc-run-row proc-run-row--streaming">
+          <span className="proc-streaming-indicator">
+            <span className="stream-dot" />
+            Pipeline running live
+          </span>
+        </div>
+      ) : (
+        <div className="proc-run-row">
+          <button
+            className={`proc-run-btn${canRun ? ' proc-run-btn--ready' : ''}${pipeline.running ? ' proc-run-btn--running' : ''}`}
+            onClick={handleRun}
+            disabled={!canRun}
+            title={
+              !sessionId ? 'Load a log file first' :
+              pipeline.pipelineChain.length === 0 ? 'Add processors to the chain first' :
+              'Run pipeline on loaded log'
+            }
+          >
+            {pipeline.running ? (
+              <>
+                <span className="proc-run-spinner" />
+                Running…
+              </>
+            ) : (
+              <>
+                <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+                  <path d="M3 1.5l7 4.5-7 4.5V1.5z" fill="currentColor"/>
+                </svg>
+                Run Pipeline
+              </>
+            )}
           </button>
-        )}
-      </div>
+          {pipeline.running && (
+            <button className="btn-secondary" onClick={pipeline.stop}>
+              Stop
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ── Error ── */}
       {pipeline.error && (

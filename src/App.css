@@ -1450,6 +1450,20 @@ mark {
   background: linear-gradient(0deg, #0c1017 0%, var(--bg-base) 100%);
 }
 
+.proc-run-row--streaming {
+  justify-content: center;
+}
+
+.proc-streaming-indicator {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--success);
+  letter-spacing: 0.02em;
+}
+
 .proc-run-btn {
   flex: 1;
   display: flex;
