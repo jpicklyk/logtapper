@@ -210,30 +210,84 @@ async fn h_query(
         (snaps, total)
     };
 
-    // Apply optional filters (no locks held here).
+    // If any filter is active, scanning a fixed sample produces poor results for
+    // rare events in large logs.  Instead, scan all lines (up to SCAN_CAP) and
+    // collect up to `n` matches.  The "strategy" still controls scan direction:
+    //   recent   → scan newest→oldest (stop after n matches)
+    //   around   → scan outward from around_line (stop after n matches)
+    //   uniform  → scan all, then space the matches evenly
+    let has_filter = params.tag.is_some() || params.message.is_some() || params.level.is_some();
+    const SCAN_CAP: usize = 100_000;
+
+    let snaps = if has_filter {
+        // Rebuild snap list by scanning real lines instead of using the sample.
+        let sessions = state.sessions.lock().unwrap();
+        let Some(session) = sessions.get(&session_id) else {
+            return Json(json!({ "error": "session not found", "sessionId": session_id }));
+        };
+        let Some(source) = session.primary_source() else {
+            return Json(json!({ "error": "session has no sources", "sessionId": session_id }));
+        };
+
+        // Build the scan order based on strategy.
+        let scan_indices: Vec<usize> = match strategy {
+            "recent" => {
+                let start = total_lines.saturating_sub(SCAN_CAP);
+                (start..total_lines).rev().collect()
+            }
+            "around" => {
+                let center = params.around_line.unwrap_or(total_lines.saturating_sub(1));
+                let half = SCAN_CAP / 2;
+                let start = center.saturating_sub(half);
+                let end = (center + half).min(total_lines);
+                // Interleave outward from center: center, center-1, center+1, …
+                let before: Vec<usize> = (start..=center).rev().collect();
+                let after: Vec<usize> = ((center + 1)..end).collect();
+                before.into_iter().zip(after.into_iter().map(Some).chain(std::iter::repeat(None)))
+                    .flat_map(|(b, a)| std::iter::once(b).chain(a))
+                    .collect()
+            }
+            _ => {
+                // uniform: scan all (up to cap) in order
+                let start = total_lines.saturating_sub(SCAN_CAP);
+                (start..total_lines).collect()
+            }
+        };
+
+        let msg_needle = params.message.as_ref().map(|m| m.to_lowercase());
+        let mut matched: Vec<LineSnap> = Vec::new();
+        for i in scan_indices {
+            if matched.len() >= n { break; }
+            let Some(raw) = source.raw_line(i) else { continue };
+            let Some(meta) = source.meta_at(i) else { continue };
+            let level_str = format!("{:?}", meta.level);
+            // Tag filter
+            if let Some(ref tf) = params.tag {
+                if &meta.tag != tf { continue; }
+            }
+            // Message filter (case-insensitive)
+            if let Some(ref needle) = msg_needle {
+                if !raw.to_lowercase().contains(needle.as_str()) { continue; }
+            }
+            // Level filter
+            if let Some(ref lf) = params.level {
+                if !level_at_least(&level_str, lf) { continue; }
+            }
+            matched.push(LineSnap { line_num: i, level: level_str, tag: meta.tag.clone(), raw: raw.to_string() });
+        }
+        // For "recent" we scanned newest→oldest; restore chronological order.
+        if strategy == "recent" { matched.reverse(); }
+        matched
+    } else {
+        snaps
+    };
+
+    // Build JSON output.
     let mut tag_counts: HashMap<String, usize> = HashMap::new();
     let mut level_counts: HashMap<String, usize> = HashMap::new();
 
     let lines: Vec<Value> = snaps
         .into_iter()
-        .filter(|snap| {
-            if let Some(ref tag_f) = params.tag {
-                if &snap.tag != tag_f {
-                    return false;
-                }
-            }
-            if let Some(ref msg_f) = params.message {
-                if !snap.raw.contains(msg_f.as_str()) {
-                    return false;
-                }
-            }
-            if let Some(ref level_f) = params.level {
-                if !level_at_least(&snap.level, level_f) {
-                    return false;
-                }
-            }
-            true
-        })
         .map(|snap| {
             *tag_counts.entry(snap.tag.clone()).or_insert(0) += 1;
             *level_counts.entry(snap.level.clone()).or_insert(0) += 1;
@@ -251,7 +305,7 @@ async fn h_query(
         "sessionId": session_id,
         "totalLinesInSession": total_lines,
         "sampledCount": count,
-        "strategy": strategy,
+        "strategy": if has_filter { "scan" } else { strategy },
         "lines": lines,
         "stats": {
             "tagCounts": tag_counts,

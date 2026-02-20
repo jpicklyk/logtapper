@@ -30,6 +30,7 @@ use regex::Regex;
 use std::sync::OnceLock;
 
 use crate::core::line::{LineContext, LineMeta, LogLevel};
+use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;
 
 // ---------------------------------------------------------------------------
@@ -160,6 +161,13 @@ impl BugreportParser {
             };
         }
 
+        // Try logcat format (handles both standard ADB and bugreport UID-prefixed formats).
+        // LogcatParser already recognises MM-DD HH:MM:SS.mmm [UID] PID TID LEVEL TAG: msg.
+        if let Some(mut meta) = LogcatParser.parse_meta(raw, byte_offset) {
+            meta.byte_len = raw.len();
+            return meta;
+        }
+
         // Plain content line — key:value pairs, prose, numbers, etc.
         LineMeta {
             level: LogLevel::Info,
@@ -179,6 +187,13 @@ impl LogParser for BugreportParser {
 
     fn parse_line(&self, raw: &str, source_id: &str, line_num: usize) -> Option<LineContext> {
         let raw = raw.trim_end_matches(['\r', '\n']);
+
+        // Delegate logcat lines to LogcatParser for full pid/tid/message parsing.
+        if let Some(mut ctx) = LogcatParser.parse_line(raw, source_id, line_num) {
+            ctx.source_line_num = line_num;
+            return Some(ctx);
+        }
+
         let meta = self.classify(raw, 0);
         Some(LineContext {
             raw: raw.to_string(),
@@ -246,6 +261,30 @@ mod tests {
         let m = p.parse_meta("MemTotal:        5843088 kB", 0).unwrap();
         assert_eq!(m.level, LogLevel::Info);
         assert_eq!(m.tag, "");
+    }
+
+    #[test]
+    fn parses_embedded_logcat_line_standard() {
+        let p = BugreportParser;
+        // Standard ADB logcat format: MM-DD HH:MM:SS.mmm PID TID L TAG: msg
+        let m = p
+            .parse_meta("02-16 17:24:00.058  1587  1587 E Watchdog: !@Sync timeout", 0)
+            .unwrap();
+        assert_eq!(m.level, LogLevel::Error);
+        assert_eq!(m.tag, "Watchdog");
+        assert!(m.timestamp > 0);
+    }
+
+    #[test]
+    fn parses_embedded_logcat_line_with_uid() {
+        let p = BugreportParser;
+        // Bugreport SYSTEM LOG format: MM-DD HH:MM:SS.mmm UID PID TID L TAG: msg
+        let m = p
+            .parse_meta("02-16 17:28:19.497  1000  1149  3609 D RestrictionPolicy: some message", 0)
+            .unwrap();
+        assert_eq!(m.level, LogLevel::Debug);
+        assert_eq!(m.tag, "RestrictionPolicy");
+        assert!(m.timestamp > 0);
     }
 
     #[test]
