@@ -376,17 +376,15 @@ function ChainNode({
       </div>
 
       {/* Remove button */}
-      {!builtin && (
-        <button
-          className="chain-node-remove"
-          title="Remove from chain"
-          onClick={() => onRemove(id)}
-        >
-          <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
-            <path d="M1 1l8 8M9 1L1 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-          </svg>
-        </button>
-      )}
+      <button
+        className="chain-node-remove"
+        title="Remove from chain"
+        onClick={() => onRemove(id)}
+      >
+        <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
+          <path d="M1 1l8 8M9 1L1 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+        </svg>
+      </button>
     </div>
   );
 }
@@ -444,18 +442,16 @@ function PinnedChainNode({
           />
         </div>
 
-        {/* Remove button only if not builtin */}
-        {!builtin && (
-          <button
-            className="chain-node-remove"
-            title="Remove from chain"
-            onClick={() => onRemove(id)}
-          >
-            <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
-              <path d="M1 1l8 8M9 1L1 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-            </svg>
-          </button>
-        )}
+        {/* Remove button */}
+        <button
+          className="chain-node-remove"
+          title="Remove from chain"
+          onClick={() => onRemove(id)}
+        >
+          <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
+            <path d="M1 1l8 8M9 1L1 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+        </button>
       </div>
     </>
   );

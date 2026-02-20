@@ -4511,7 +4511,7 @@ details[open] > summary::before {
   border-radius: 3px;
   color: var(--text-dimmed);
   cursor: pointer;
-  opacity: 0;
+  opacity: 0.45;
   transition: opacity 0.15s, color 0.15s, background 0.15s;
 }
 
