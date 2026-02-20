@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAppContext } from '../context/AppContext';
 import type { StateSnapshot } from '../bridge/types';
+import AutoBlockerCard from './AutoBlockerCard';
 
 interface TrackerState {
   trackerId: string;
@@ -38,9 +39,9 @@ export default function StatePanel() {
   // session. While true, subsequent fetches update silently (no loading flash).
   const hasDataRef = useRef(false);
 
-  const activeTrackers = pipeline.processors.filter(
-    (p) => p.processorType === 'state_tracker' && pipeline.activeProcessorIds.has(p.id),
-  );
+  const activeTrackers = pipeline.pipelineChain
+    .map((id) => pipeline.processors.find((p) => p.id === id))
+    .filter((p): p is NonNullable<typeof p> => p != null && p.processorType === 'state_tracker');
 
   useEffect(() => {
     if (!viewer.session || activeTrackers.length === 0) {
@@ -139,6 +140,19 @@ export default function StatePanel() {
         const isChanged = !!(stateTracker.transitionsByLine[selectedLineNum ?? -1]?.includes(ts.trackerId));
         const totalTransitions = Object.values(stateTracker.transitionsByLine)
           .filter((ids) => ids.includes(ts.trackerId)).length;
+
+        // Samsung Auto Blocker gets a specialized danger-aware card
+        if (ts.trackerId === '__samsung_auto_blocker') {
+          return (
+            <AutoBlockerCard
+              key={ts.trackerId}
+              snapshot={ts.snapshot}
+              loading={ts.loading}
+              isChanged={isChanged}
+              totalTransitions={totalTransitions}
+            />
+          );
+        }
 
         return (
           <div

@@ -75,11 +75,12 @@ pub fn run() {
 
             // Load built-in processors compiled into the binary.
             let builtins: &[(&str, &str)] = &[
-                ("pii_anonymizer",       include_str!("processors/builtin/pii_anonymizer.yaml")),
-                ("wifi_state",           include_str!("processors/builtin/wifi_state.yaml")),
-                ("battery_state",        include_str!("processors/builtin/battery_state.yaml")),
-                ("app_lifecycle",        include_str!("processors/builtin/app_lifecycle.yaml")),
-                ("network_connectivity", include_str!("processors/builtin/network_connectivity.yaml")),
+                ("pii_anonymizer",        include_str!("processors/builtin/pii_anonymizer.yaml")),
+                ("wifi_state",            include_str!("processors/builtin/wifi_state.yaml")),
+                ("battery_state",         include_str!("processors/builtin/battery_state.yaml")),
+                ("app_lifecycle",         include_str!("processors/builtin/app_lifecycle.yaml")),
+                ("network_connectivity",  include_str!("processors/builtin/network_connectivity.yaml")),
+                ("samsung_auto_blocker",  include_str!("processors/builtin/samsung_auto_blocker.yaml")),
             ];
             if let Ok(mut procs) = state.processors.lock() {
                 for (name, yaml) in builtins {

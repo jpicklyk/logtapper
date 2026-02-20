@@ -16,9 +16,9 @@ export default function StateTimeline() {
   // subsequent fetches update silently — no loading flash on streaming ticks.
   const hasDataRef = useRef(false);
 
-  const activeTrackers = pipeline.processors.filter(
-    (p) => p.processorType === 'state_tracker' && pipeline.activeProcessorIds.has(p.id),
-  );
+  const activeTrackers = pipeline.pipelineChain
+    .map((id) => pipeline.processors.find((p) => p.id === id))
+    .filter((p): p is NonNullable<typeof p> => p != null && p.processorType === 'state_tracker');
 
   useEffect(() => {
     if (!viewer.session || activeTrackers.length === 0) {

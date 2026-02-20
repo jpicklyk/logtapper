@@ -1,0 +1,65 @@
+type: state_tracker
+id: __samsung_auto_blocker
+name: Auto Blocker
+version: 1.0.0
+author: LogTapper
+description: >-
+  Tracks Samsung Auto Blocker state. When enabled, blocks USB debugging,
+  ADB commands, app sideloading, and developer certificates. Detected from
+  live logcat (SecDynamicFragment) and dumpstate security setting dumps.
+  Note: dumpstate transitions require the pipeline bug fix (currently
+  hardcoded to LogcatParser) to fire reliably.
+tags: [samsung, security, auto_blocker, usb, adb]
+builtin: true
+
+group: Security
+
+state:
+  - name: enabled
+    type: bool
+  - name: source
+    type: string
+
+transitions:
+  # ── Logcat: SecDynamicFragment setting state reports ─────────────────────
+  # Line format:
+  #   I SecDynamicFragment: DynamicMenuData key rampart_main_setting_alias
+  #   ,title : Auto Blocker ,summary : ... ,isCheck : false ,isEnable : true
+
+  - name: Auto Blocker On
+    filter:
+      tag: SecDynamicFragment
+      message_regex: 'rampart_main_setting_alias.*isCheck\s*:\s*true'
+    set:
+      enabled: true
+      source: logcat
+
+  - name: Auto Blocker Off
+    filter:
+      tag: SecDynamicFragment
+      message_regex: 'rampart_main_setting_alias.*isCheck\s*:\s*false'
+    set:
+      enabled: false
+      source: logcat
+
+  # ── Dumpstate: pipe-delimited security settings section ──────────────────
+  # Line format:
+  #   rampart_main_setting_alias | Auto Blocker | <component> | 1 |
+
+  - name: Auto Blocker On (dumpstate)
+    filter:
+      message_regex: 'rampart_main_setting_alias\s*\|\s*Auto Blocker\s*\|[^|]*\|\s*1\s*\|'
+    set:
+      enabled: true
+      source: dumpstate
+
+  - name: Auto Blocker Off (dumpstate)
+    filter:
+      message_regex: 'rampart_main_setting_alias\s*\|\s*Auto Blocker\s*\|[^|]*\|\s*0\s*\|'
+    set:
+      enabled: false
+      source: dumpstate
+
+output:
+  timeline: true
+  annotate: true
