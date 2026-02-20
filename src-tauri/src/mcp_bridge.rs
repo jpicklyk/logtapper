@@ -19,6 +19,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tauri::{AppHandle, Manager, Wry};
 
+use crate::anonymizer::LogAnonymizer;
 use crate::commands::AppState;
 
 pub const PORT: u16 = 40404;
@@ -303,6 +304,29 @@ async fn h_query(
         matched
     } else {
         snaps
+    };
+
+    // ── PII anonymization ─────────────────────────────────────────────────────
+    // The MCP bridge bypasses the processor pipeline, so we apply the anonymizer
+    // directly here.  One persistent LogAnonymizer per session ensures token
+    // numbering is stable across multiple MCP queries (same email → same token).
+    let snaps = {
+        let config = state.anonymizer_config.lock().unwrap().clone();
+        if config.detectors.iter().any(|d| d.enabled) {
+            let mut anon_map = state.mcp_anonymizers.lock().unwrap();
+            let anon = anon_map
+                .entry(session_id.clone())
+                .or_insert_with(|| LogAnonymizer::from_config(&config));
+            snaps
+                .into_iter()
+                .map(|s| {
+                    let (clean, _) = anon.anonymize(&s.raw);
+                    LineSnap { raw: clean, ..s }
+                })
+                .collect::<Vec<_>>()
+        } else {
+            snaps
+        }
     };
 
     // Build JSON output.

@@ -46,6 +46,8 @@ pub struct AppState {
     pub pii_mappings: Mutex<HashMap<String, HashMap<String, String>>>,
     /// Persistent anonymizers for live ADB stream sessions.
     pub stream_anonymizers: Mutex<HashMap<String, LogAnonymizer>>,
+    /// Persistent anonymizers for MCP query results (one per session for stable token numbering).
+    pub mcp_anonymizers: Mutex<HashMap<String, LogAnonymizer>>,
     /// StateTracker results: sessionId -> trackerId -> StateTrackerResult.
     #[allow(dead_code)]
     pub state_tracker_results: Mutex<HashMap<String, HashMap<String, StateTrackerResult>>>,
@@ -82,6 +84,7 @@ impl AppState {
             anonymizer_config: Mutex::new(AnonymizerConfig::with_defaults()),
             pii_mappings: Mutex::new(HashMap::new()),
             stream_anonymizers: Mutex::new(HashMap::new()),
+            mcp_anonymizers: Mutex::new(HashMap::new()),
             state_tracker_results: Mutex::new(HashMap::new()),
             stream_tracker_state: Mutex::new(HashMap::new()),
             stream_transformer_state: Mutex::new(HashMap::new()),
