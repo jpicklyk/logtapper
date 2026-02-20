@@ -30,16 +30,23 @@ type Handle = AppHandle<Wry>;
 // ---------------------------------------------------------------------------
 
 pub async fn start(handle: Handle) {
+    // Clone handle for the router state; keep original for the port flag.
     let router = Router::new()
         .route("/mcp/status", get(h_status))
         .route("/mcp/sessions", get(h_sessions))
         .route("/mcp/sessions/{session_id}/query", get(h_query))
         .route("/mcp/sessions/{session_id}/pipeline", get(h_pipeline))
         .route("/mcp/sessions/{session_id}/events", get(h_events))
-        .with_state(handle);
+        .with_state(handle.clone());
 
     match tokio::net::TcpListener::bind(("127.0.0.1", PORT)).await {
         Ok(listener) => {
+            // Record that the bridge is running so the frontend can show status.
+            let state = handle.state::<AppState>();
+            if let Ok(mut p) = state.mcp_bridge_port.lock() {
+                *p = Some(PORT);
+            }
+            drop(state);
             log::info!("MCP bridge listening on 127.0.0.1:{PORT}");
             if let Err(e) = axum::serve(listener, router).await {
                 log::error!("MCP bridge error: {e}");

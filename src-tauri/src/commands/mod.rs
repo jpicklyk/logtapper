@@ -21,6 +21,8 @@ pub mod state_tracker;
 
 /// Global application state managed by Tauri.
 pub struct AppState {
+    /// Port the MCP HTTP bridge is listening on, or None if it failed to bind.
+    pub mcp_bridge_port: Mutex<Option<u16>>,
     /// Active analysis sessions (sessionId -> session).
     pub sessions: Mutex<HashMap<String, AnalysisSession>>,
     /// Installed processors (processorId -> definition).
@@ -61,6 +63,7 @@ impl Default for AppState {
 impl AppState {
     pub fn new() -> Self {
         Self {
+            mcp_bridge_port: Mutex::new(None),
             sessions: Mutex::new(HashMap::new()),
             processors: Mutex::new(HashMap::new()),
             pipeline_results: Mutex::new(HashMap::new()),

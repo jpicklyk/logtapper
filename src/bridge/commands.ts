@@ -17,6 +17,7 @@ import type {
   AnonymizerTestResult,
   StateSnapshot,
   StateTransition,
+  McpStatus,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -246,4 +247,8 @@ export function getAllTransitionLines(
   sessionId: string,
 ): Promise<Record<string, number[]>> {
   return invoke('get_all_transition_lines', { sessionId });
+}
+
+export function getMcpStatus(): Promise<McpStatus> {
+  return invoke('get_mcp_status');
 }

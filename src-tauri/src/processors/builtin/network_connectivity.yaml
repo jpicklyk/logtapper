@@ -12,10 +12,8 @@ group: Network
 state:
   - name: connected
     type: bool
-    default: false
   - name: network_type
     type: string
-    default: ""
 
 transitions:
   # Modern Android (6+) — ConnectivityService EVENT_NETWORK_INFO_CHANGED

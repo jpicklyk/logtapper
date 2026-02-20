@@ -12,16 +12,12 @@ group: Network
 state:
   - name: enabled
     type: bool
-    default: false
   - name: ssid
     type: string
-    default: ""
   - name: signal_dbm
     type: int
-    default: 0
   - name: ip_address
     type: string
-    default: ""
 
 transitions:
   # ── AOSP / Pixel ──────────────────────────────────────────────────────────

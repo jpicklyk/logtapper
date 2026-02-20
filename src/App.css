@@ -4050,6 +4050,292 @@ details[open] > summary::before {
   animation-delay: 0.94s;
 }
 
+/* ── Post-pipeline: display cache + MCP bridge ───────────────────────────── */
+
+.pipeline-post-chain {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid #111827;
+  margin-top: 2px;
+}
+
+.pipeline-post-divider {
+  height: 1px;
+  background: #111827;
+  margin: 0 10px;
+}
+
+/* ── Ring Buffer / Display Cache ─────────────────────────────────────────── */
+
+.ring-buf-widget {
+  padding: 10px 10px 8px;
+  border-bottom: 1px solid #111827;
+}
+
+.ring-buf-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.ring-buf-title {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dimmed);
+}
+
+.ring-buf-badge {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.ring-buf-badge--live {
+  background: #0f2d1a;
+  color: #4ade80;
+  border: 1px solid #1a5c30;
+}
+
+.ring-buf-badge--evict {
+  background: #2d1a0a;
+  color: #fb923c;
+  border: 1px solid #7c3b0a;
+  animation: badge-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes badge-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; }
+}
+
+.ring-buf-body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ring-buf-svg {
+  flex-shrink: 0;
+  overflow: visible;
+}
+
+/* Smooth fill transition */
+.ring-fill-arc {
+  transition: stroke-dashoffset 0.7s cubic-bezier(0.4, 0, 0.2, 1),
+              stroke 0.5s ease;
+}
+
+/* Orbiting particles — rotate around SVG centre (44 44) */
+.ring-orbit-group {
+  transform-origin: 44px 44px;
+  animation: ring-orbit 2.4s linear infinite;
+}
+
+@keyframes ring-orbit {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.ring-pct-text {
+  font-size: 12px;
+  font-weight: 700;
+  fill: #c8d8ec;
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+}
+
+.ring-sub-text {
+  font-size: 8px;
+  fill: #3d5470;
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.ring-buf-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ring-stat-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ring-stat-key {
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #2e4a68;
+}
+
+.ring-stat-val {
+  font-size: 13px;
+  font-weight: 700;
+  color: #7ab3e0;
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  line-height: 1;
+}
+
+.ring-evict-note {
+  font-size: 9px;
+  color: #fb923c;
+  margin-top: 2px;
+  opacity: 0.85;
+}
+
+/* ── MCP Bridge ──────────────────────────────────────────────────────────── */
+
+.mcp-widget {
+  padding: 10px 10px 12px;
+}
+
+.mcp-widget-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 9px;
+}
+
+.mcp-widget-title {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dimmed);
+}
+
+.mcp-pill {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.mcp-pill--on {
+  background: #0f2d1a;
+  color: #4ade80;
+  border: 1px solid #1a5c30;
+}
+
+.mcp-pill--off {
+  background: #1a1f2e;
+  color: #4a6380;
+  border: 1px solid #252e42;
+}
+
+/* Connection row: icon ── line ── address */
+.mcp-conn-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.mcp-conn-node {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: #0f1729;
+  border: 1px solid #1c2640;
+  color: #3d5470;
+  flex-shrink: 0;
+  transition: color 0.3s, border-color 0.3s;
+}
+
+.mcp-conn-node--on {
+  color: #22c55e;
+  border-color: #1a5c30;
+  box-shadow: 0 0 8px #22c55e22;
+}
+
+/* Animated dashes with sliding packets */
+.mcp-conn-line {
+  flex: 1;
+  height: 2px;
+  background: repeating-linear-gradient(
+    90deg,
+    #1c2640 0px,
+    #1c2640 4px,
+    transparent 4px,
+    transparent 8px
+  );
+  position: relative;
+  overflow: hidden;
+  border-radius: 1px;
+}
+
+.mcp-packet {
+  position: absolute;
+  top: -1px;
+  left: -8px;
+  width: 8px;
+  height: 4px;
+  background: linear-gradient(90deg, transparent, #22c55e, transparent);
+  border-radius: 2px;
+  animation: mcp-slide 3.3s linear infinite;
+}
+
+@keyframes mcp-slide {
+  from { left: -8px; opacity: 0; }
+  5%   { opacity: 1; }
+  90%  { opacity: 1; }
+  to   { left: 100%; opacity: 0; }
+}
+
+.mcp-conn-addr {
+  font-size: 10px;
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  color: #4a7a9b;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* "reads" label + capability chips */
+.mcp-reads-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mcp-reads-label {
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #2e4a68;
+  flex-shrink: 0;
+}
+
+.mcp-reads-caps {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
+.mcp-cap {
+  font-size: 9px;
+  color: #4a7a9b;
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+}
+
+.mcp-cap-sep {
+  font-size: 9px;
+  color: #1c2e48;
+}
+
 /* ── Chain node (draggable processor card) ────────────────────────────────── */
 
 .chain-node {

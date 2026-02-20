@@ -30,6 +30,8 @@ export interface LogViewerState {
    * line number. null means no filter (show all lines).
    */
   filteredLineNums: number[] | null;
+  /** Maximum frontend cache size in lines (0 = unlimited). */
+  cacheMax: number;
 
   loadFile: (path: string) => Promise<void>;
   startStream: (deviceId?: string, packageFilter?: string, activeProcessorIds?: string[], maxRawLines?: number) => Promise<void>;
@@ -464,6 +466,7 @@ export function useLogViewer(frontendCacheMax: number = 50_000): LogViewerState 
     streamFilter,
     filterParseError,
     filteredLineNums,
+    cacheMax: frontendCacheMax,
     loadFile,
     startStream,
     stopStream,

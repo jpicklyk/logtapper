@@ -12,16 +12,12 @@ group: App
 state:
   - name: foreground_app
     type: string
-    default: 
   - name: foreground_activity
     type: string
-    default: 
   - name: last_crash
     type: string
-    default: 
   - name: crashed
     type: bool
-    default: false
 
 transitions:
   - name: Activity Started

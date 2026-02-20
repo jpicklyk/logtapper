@@ -18,6 +18,8 @@ pub struct StateFieldDecl {
     pub name: String,
     #[serde(rename = "type")]
     pub field_type: StateFieldType,
+    /// If omitted from YAML, defaults to `null` — meaning "unknown until first observed".
+    #[serde(default)]
     pub default: serde_json::Value,
 }
 

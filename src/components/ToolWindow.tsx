@@ -20,6 +20,8 @@ export default function ToolWindow({ tool, width }: Props) {
           sessionId={viewer.session?.sessionId ?? null}
           isStreaming={viewer.isStreaming}
           onOpenLibrary={onOpenLibrary}
+          cacheSize={viewer.lineCache.size}
+          cacheMax={viewer.cacheMax}
         />
       )}
       {tool === 'chat' && (

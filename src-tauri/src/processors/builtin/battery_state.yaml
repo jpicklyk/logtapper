@@ -12,16 +12,12 @@ group: System
 state:
   - name: level
     type: int
-    default: 100
   - name: charging
     type: bool
-    default: false
   - name: plugged
     type: string
-    default: ""
   - name: status
     type: string
-    default: ""
 
 transitions:
   # Level — "level:100" (Samsung) or "level=100" (AOSP)
