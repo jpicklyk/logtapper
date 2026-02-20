@@ -4220,13 +4220,29 @@ details[open] > summary::before {
   border-radius: 3px;
 }
 
-.mcp-pill--on {
+/* connected = actively being queried by Claude Code */
+.mcp-pill--connected {
   background: #0f2d1a;
   color: #4ade80;
   border: 1px solid #1a5c30;
 }
 
-.mcp-pill--off {
+/* ready = bridge is bound but Claude Code isn't currently querying it */
+.mcp-pill--ready {
+  background: #111c2e;
+  color: #4a7a9b;
+  border: 1px solid #1c3050;
+}
+
+/* offline = port failed to bind */
+.mcp-pill--offline {
+  background: #1a1f2e;
+  color: #4a6380;
+  border: 1px solid #252e42;
+}
+
+/* checking = initial load */
+.mcp-pill--checking {
   background: #1a1f2e;
   color: #4a6380;
   border: 1px solid #252e42;

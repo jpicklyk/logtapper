@@ -144,23 +144,50 @@ function RingBufferWidget({ cacheSize, cacheMax, isStreaming }: {
 
 // ── McpStatusWidget ──────────────────────────────────────────────────────────
 
+// How recently the MCP client must have queried to be considered "connected".
+const MCP_ACTIVE_THRESHOLD_SECS = 30;
+
+type McpConnState = 'checking' | 'offline' | 'ready' | 'connected';
+
+function mcpConnState(status: McpStatus | null): McpConnState {
+  if (status === null) return 'checking';
+  if (!status.running) return 'offline';
+  if (status.idleSecs === null) return 'ready';          // bound but never queried
+  if (status.idleSecs <= MCP_ACTIVE_THRESHOLD_SECS) return 'connected';
+  return 'ready';                                         // bound, queried before, now idle
+}
+
+const MCP_CONN_LABELS: Record<McpConnState, string> = {
+  checking:  '…',
+  offline:   'offline',
+  ready:     'ready',
+  connected: 'connected',
+};
+
 function McpStatusWidget() {
   const [status, setStatus] = useState<McpStatus | null>(null);
 
   useEffect(() => {
-    getMcpStatus()
-      .then(setStatus)
-      .catch(() => setStatus({ running: false, port: 40404 }));
+    const check = () =>
+      getMcpStatus()
+        .then(setStatus)
+        .catch(() => setStatus({ running: false, port: 40404, idleSecs: null }));
+
+    check();
+    const id = setInterval(check, 5_000);
+    return () => clearInterval(id);
   }, []);
 
-  const running = status?.running ?? false;
+  const connState = mcpConnState(status);
+  const running   = connState !== 'offline' && connState !== 'checking';
+  const active    = connState === 'connected';
 
   return (
     <div className="mcp-widget">
       <div className="mcp-widget-header">
         <span className="mcp-widget-title">MCP Bridge</span>
-        <span className={`mcp-pill ${running ? 'mcp-pill--on' : 'mcp-pill--off'}`}>
-          {status === null ? '…' : running ? 'active' : 'offline'}
+        <span className={`mcp-pill mcp-pill--${connState}`}>
+          {MCP_CONN_LABELS[connState]}
         </span>
       </div>
 
@@ -173,7 +200,7 @@ function McpStatusWidget() {
           </svg>
         </div>
         <div className="mcp-conn-line">
-          {running && (
+          {active && (
             <>
               <div className="mcp-packet" style={{ animationDelay: '0s' }} />
               <div className="mcp-packet" style={{ animationDelay: '1.1s' }} />
@@ -182,11 +209,11 @@ function McpStatusWidget() {
           )}
         </div>
         <div className="mcp-conn-addr">
-          {running ? `127.0.0.1:${status!.port}` : 'not bound'}
+          {status?.running ? `127.0.0.1:${status.port}` : 'not bound'}
         </div>
       </div>
 
-      {/* What the bridge exposes — clarifies it reads from AppState, not the cache */}
+      {/* What the bridge exposes */}
       <div className="mcp-reads-row">
         <span className="mcp-reads-label">reads</span>
         <div className="mcp-reads-caps">

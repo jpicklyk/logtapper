@@ -23,6 +23,9 @@ pub mod state_tracker;
 pub struct AppState {
     /// Port the MCP HTTP bridge is listening on, or None if it failed to bind.
     pub mcp_bridge_port: Mutex<Option<u16>>,
+    /// Timestamp of the most recent request received by the MCP HTTP bridge.
+    /// None = bridge never received a request (Claude Code hasn't connected yet).
+    pub mcp_last_activity: Mutex<Option<std::time::Instant>>,
     /// Active analysis sessions (sessionId -> session).
     pub sessions: Mutex<HashMap<String, AnalysisSession>>,
     /// Installed processors (processorId -> definition).
@@ -64,6 +67,7 @@ impl AppState {
     pub fn new() -> Self {
         Self {
             mcp_bridge_port: Mutex::new(None),
+            mcp_last_activity: Mutex::new(None),
             sessions: Mutex::new(HashMap::new()),
             processors: Mutex::new(HashMap::new()),
             pipeline_results: Mutex::new(HashMap::new()),

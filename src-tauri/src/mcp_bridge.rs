@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
+    middleware,
     routing::get,
 };
 use serde::Deserialize;
@@ -29,6 +30,19 @@ type Handle = AppHandle<Wry>;
 // Entry point (spawned as a tokio task from lib.rs setup)
 // ---------------------------------------------------------------------------
 
+/// Middleware: stamp `mcp_last_activity` on every inbound request.
+async fn record_activity(
+    State(handle): State<Handle>,
+    req: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    let state = handle.state::<AppState>();
+    if let Ok(mut ts) = state.mcp_last_activity.lock() {
+        *ts = Some(std::time::Instant::now());
+    }
+    next.run(req).await
+}
+
 pub async fn start(handle: Handle) {
     // Clone handle for the router state; keep original for the port flag.
     let router = Router::new()
@@ -37,6 +51,7 @@ pub async fn start(handle: Handle) {
         .route("/mcp/sessions/{session_id}/query", get(h_query))
         .route("/mcp/sessions/{session_id}/pipeline", get(h_pipeline))
         .route("/mcp/sessions/{session_id}/events", get(h_events))
+        .layer(middleware::from_fn_with_state(handle.clone(), record_activity))
         .with_state(handle.clone());
 
     match tokio::net::TcpListener::bind(("127.0.0.1", PORT)).await {

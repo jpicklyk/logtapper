@@ -87,6 +87,8 @@ export interface LoadResult {
 export interface McpStatus {
   running: boolean;
   port: number;
+  /** Seconds since last request from the MCP client. null = never connected. */
+  idleSecs: number | null;
 }
 
 // ---------------------------------------------------------------------------
