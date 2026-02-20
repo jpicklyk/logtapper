@@ -40,3 +40,6 @@ futures-util = "0.3"
 sha2 = "0.10"
 hex = "0.4"
 rayon = "1"
+
+# MCP bridge — local HTTP server for AI agent tool access
+axum = "0.8"

@@ -165,27 +165,47 @@ export default function LogViewer({
   const lastFetchRef = useRef({ offset: -1, count: 0 });
 
   useEffect(() => {
-    // When lineNumbers is provided (filter active), all lines are already in the
-    // cache (pushed via streaming batch events). Skip on-demand fetching.
-    if (items.length === 0 || lineNumbers) return;
+    if (items.length === 0) return;
+    // Streaming with filter: all lines arrive via batch events — no fetching needed.
+    if (lineNumbers && isStreaming) return;
 
     const first = items[0].index;
     const last = items[items.length - 1].index;
 
-    // Check if any visible lines are missing from cache
-    let missingStart = -1;
-    for (let i = first; i <= last; i++) {
-      if (!lineCache.has(i)) {
-        missingStart = i;
-        break;
+    let fetchOffset: number;
+    let fetchCount: number;
+
+    if (lineNumbers) {
+      // File mode with filter active: visible virtualizer indices map to actual
+      // line numbers via lineNumbers[]. Check those for cache misses.
+      let hasMiss = false;
+      for (let i = first; i <= last; i++) {
+        if (!lineCache.has(lineNumbers[i])) {
+          hasMiss = true;
+          break;
+        }
       }
+      if (!hasMiss) return;
+
+      // Fetch a window of actual file lines around the visible filtered range.
+      const firstActual = lineNumbers[first];
+      const lastActual = lineNumbers[Math.min(last, lineNumbers.length - 1)];
+      fetchOffset = Math.max(0, firstActual - FETCH_THRESHOLD);
+      fetchCount = lastActual - fetchOffset + FETCH_THRESHOLD * 2;
+    } else {
+      // Normal file mode: sequential line indices.
+      let missingStart = -1;
+      for (let i = first; i <= last; i++) {
+        if (!lineCache.has(i)) {
+          missingStart = i;
+          break;
+        }
+      }
+      if (missingStart === -1) return;
+
+      fetchOffset = Math.max(0, first - FETCH_THRESHOLD);
+      fetchCount = last - fetchOffset + FETCH_THRESHOLD * 2;
     }
-
-    if (missingStart === -1) return;
-
-    // Request a generous window around the viewport
-    const fetchOffset = Math.max(0, first - FETCH_THRESHOLD);
-    const fetchCount = last - fetchOffset + FETCH_THRESHOLD * 2;
 
     if (
       fetchOffset !== lastFetchRef.current.offset ||
@@ -194,7 +214,7 @@ export default function LogViewer({
       lastFetchRef.current = { offset: fetchOffset, count: fetchCount };
       onFetchNeeded(fetchOffset, fetchCount);
     }
-  }, [items, lineCache, onFetchNeeded, lineNumbers]);
+  }, [items, lineCache, onFetchNeeded, lineNumbers, isStreaming]);
 
   // Scroll to a specific line when requested (jumpToLine / search navigation).
   // Depends on `jumpSeq` so repeated jumps to the same line always re-fire.

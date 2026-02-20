@@ -358,6 +358,21 @@ export function useLogViewer(frontendCacheMax: number = 50_000): LogViewerState 
           // file fetches that complete after a stream session has replaced the file).
           if (sessionRef.current?.sessionId !== sessionId) return;
           for (const line of window.lines) lineCacheRef.current.set(line.lineNum, line);
+          // Re-apply active filter to newly fetched lines (file session incremental filter).
+          const ast = filterAstRef.current;
+          if (ast) {
+            const pids = packagePidsRef.current;
+            const newMatches = window.lines
+              .filter((line) => matchesFilter(ast, line, pids))
+              .map((line) => line.lineNum);
+            if (newMatches.length > 0) {
+              setFilteredLineNums((prev) => {
+                const merged = [...(prev ?? []), ...newMatches];
+                merged.sort((a, b) => a - b);
+                return merged;
+              });
+            }
+          }
           setCacheVersion((v) => v + 1);
         })
         .catch(console.error)

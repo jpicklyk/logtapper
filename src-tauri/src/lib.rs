@@ -3,6 +3,7 @@ pub mod charts;
 pub mod claude;
 pub mod commands;
 pub mod core;
+pub mod mcp_bridge;
 pub mod processors;
 pub mod scripting;
 
@@ -63,6 +64,13 @@ pub fn run() {
                     }
                 }
             }
+
+            // Spawn the MCP HTTP bridge on Tauri's async runtime.
+            // Must use tauri::async_runtime::spawn — tokio::spawn panics here
+            // because the setup callback runs before the raw tokio reactor is
+            // exposed to callers directly.
+            let bridge_handle = app.handle().clone();
+            tauri::async_runtime::spawn(crate::mcp_bridge::start(bridge_handle));
 
             // Load built-in processors compiled into the binary.
             let builtins: &[(&str, &str)] = &[

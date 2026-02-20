@@ -46,7 +46,7 @@ export default function PaneContent({ pane }: Props) {
       }
       return (
         <div className="logviewer-pane">
-          {viewer.isStreaming && (
+          {viewer.session && (
             <StreamFilterBar
               value={viewer.streamFilter}
               onChange={viewer.setStreamFilter}
