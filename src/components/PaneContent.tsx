@@ -72,6 +72,14 @@ export default function PaneContent({ pane }: Props) {
               parseError={viewer.filterParseError}
             />
           )}
+          {viewer.indexingProgress !== null && (
+            <div className="indexing-progress">
+              <div
+                className="indexing-progress-fill"
+                style={{ width: `${Math.min(100, viewer.indexingProgress.percent)}%` }}
+              />
+            </div>
+          )}
           <LogViewer
             sessionId={viewer.session?.sessionId ?? ''}
             totalLines={viewer.session?.totalLines ?? 0}

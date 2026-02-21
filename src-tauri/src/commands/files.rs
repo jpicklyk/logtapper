@@ -1,8 +1,10 @@
+use memmap2::Mmap;
 use regex::Regex;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
-use tauri::State;
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::AppState;
 use crate::core::line::{
@@ -11,7 +13,7 @@ use crate::core::line::{
 };
 use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;
-use crate::core::session::{AnalysisSession, SectionInfo};
+use crate::core::session::{AnalysisSession, SectionInfo, parser_for};
 
 // ---------------------------------------------------------------------------
 // DumpstateMetadata
@@ -50,11 +52,34 @@ pub struct LoadResult {
     pub source_type: String,
     /// True for live ADB streaming sessions; false for static file sessions.
     pub is_streaming: bool,
+    /// True while background indexing is still in progress for this session.
+    pub is_indexing: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Progressive indexing event payloads
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileIndexProgress {
+    session_id: String,
+    indexed_lines: usize,
+    bytes_scanned: usize,
+    total_bytes: usize,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileIndexComplete {
+    session_id: String,
+    total_lines: usize,
 }
 
 #[tauri::command]
 pub async fn load_log_file(
     state: State<'_, AppState>,
+    app: AppHandle,
     path: String,
 ) -> Result<LoadResult, String> {
     let path_obj = Path::new(&path);
@@ -71,15 +96,31 @@ pub async fn load_log_file(
         .unwrap_or("source")
         .to_string();
 
+    // Cancel any in-progress indexing task for a previous session.
+    {
+        let mut tasks = state
+            .indexing_tasks
+            .lock()
+            .map_err(|_| "State lock poisoned".to_string())?;
+        if let Some(cancel) = tasks.remove(&session_id) {
+            let _ = cancel.send(());
+        }
+    }
+
+    const INITIAL_BYTES: usize = 1_000_000; // 1 MB initial chunk
+
     let mut session = AnalysisSession::new(session_id.clone());
-    let source_idx = session.add_source_from_file(path_obj, source_id.clone())?;
+    let (source_idx, mmap_arc, total_bytes, bytes_consumed) =
+        session.add_source_partial(path_obj, source_id.clone(), INITIAL_BYTES)?;
 
     let source = &session.sources[source_idx];
     let total_lines = source.total_lines();
     let first_ts = source.first_timestamp();
     let last_ts = source.last_timestamp();
-    let source_type = source.source_type.to_string();
+    let source_type_str = source.source_type.to_string();
     let source_name = source.name.clone();
+    let is_indexing = source.is_indexing;
+    let source_type = session.sources[source_idx].source_type.clone();
 
     let result = LoadResult {
         session_id: session_id.clone(),
@@ -89,17 +130,171 @@ pub async fn load_log_file(
         file_size,
         first_timestamp: first_ts,
         last_timestamp: last_ts,
-        source_type,
+        source_type: source_type_str,
         is_streaming: false,
+        is_indexing,
     };
 
-    let mut sessions = state
-        .sessions
-        .lock()
-        .map_err(|_| "State lock poisoned".to_string())?;
-    sessions.insert(session_id, session);
+    {
+        let mut sessions = state
+            .sessions
+            .lock()
+            .map_err(|_| "State lock poisoned".to_string())?;
+        sessions.insert(session_id.clone(), session);
+    }
+
+    // Spawn background indexing task if there's more to scan.
+    if is_indexing {
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+        {
+            let mut tasks = state
+                .indexing_tasks
+                .lock()
+                .map_err(|_| "State lock poisoned".to_string())?;
+            tasks.insert(session_id.clone(), cancel_tx);
+        }
+        let app_clone = app.clone();
+        let sid = session_id.clone();
+        tokio::spawn(async move {
+            run_background_indexer(
+                sid,
+                mmap_arc,
+                source_type,
+                bytes_consumed,
+                total_bytes,
+                app_clone,
+                cancel_rx,
+            )
+            .await;
+        });
+    }
 
     Ok(result)
+}
+
+async fn run_background_indexer(
+    session_id: String,
+    mmap: Arc<Mmap>,
+    source_type: crate::core::session::SourceType,
+    start_byte: usize,
+    total_bytes: usize,
+    app: AppHandle,
+    mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
+) {
+    const CHUNK_LINES: usize = 100_000;
+
+    let state = app.state::<AppState>();
+    let parser = parser_for(&source_type);
+    let data: &[u8] = mmap.as_ref();
+
+    let mut chunk_index: Vec<(usize, usize)> = Vec::with_capacity(CHUNK_LINES);
+    let mut chunk_meta: Vec<crate::core::line::LineMeta> = Vec::with_capacity(CHUNK_LINES);
+    // bytes_scanned is updated inside the loop before it is read; no valid initial value.
+    let mut bytes_scanned: usize;
+    let mut start = start_byte;
+    let mut total_indexed: usize = {
+        state
+            .sessions
+            .lock()
+            .ok()
+            .and_then(|s: std::sync::MutexGuard<std::collections::HashMap<String, crate::core::session::AnalysisSession>>| {
+                s.get(&session_id)
+                    .and_then(|sess| sess.sources.first())
+                    .map(|src| src.total_lines())
+            })
+            .unwrap_or(0)
+    };
+
+    let mut i = start_byte;
+    loop {
+        // Check for cancellation
+        if cancel_rx.try_recv().is_ok() {
+            return;
+        }
+
+        if i >= data.len() {
+            break;
+        }
+
+        if data[i] == b'\n' || i == data.len() - 1 {
+            let end = if data[i] == b'\n' { i } else { i + 1 };
+            let content_end = if end > start && data[end - 1] == b'\r' {
+                end - 1
+            } else {
+                end
+            };
+
+            if content_end > start {
+                if let Ok(raw_str) = std::str::from_utf8(&data[start..content_end]) {
+                    let raw_str = raw_str.trim();
+                    if !raw_str.is_empty() {
+                        let meta = parser.parse_meta(raw_str, start).unwrap_or(
+                            crate::core::line::LineMeta {
+                                level: LogLevel::Info,
+                                tag: String::new(),
+                                timestamp: 0,
+                                byte_offset: start,
+                                byte_len: content_end - start,
+                            },
+                        );
+                        chunk_index.push((start, content_end - start));
+                        chunk_meta.push(meta);
+                    }
+                }
+            }
+
+            bytes_scanned = i + 1;
+            start = i + 1;
+
+            if chunk_meta.len() >= CHUNK_LINES || i >= data.len() - 1 {
+                let done = i >= data.len() - 1;
+                let batch_index = std::mem::take(&mut chunk_index);
+                let batch_meta = std::mem::take(&mut chunk_meta);
+                total_indexed += batch_meta.len();
+
+                if let Ok(mut sessions) = state.sessions.lock() {
+                    let sessions: &mut std::collections::HashMap<String, crate::core::session::AnalysisSession> = &mut sessions;
+                    if let Some(session) = sessions.get_mut(&session_id) {
+                        session.extend_source_index(0, batch_index, batch_meta, done);
+                    }
+                }
+
+                let _ = app.emit(
+                    "file-index-progress",
+                    FileIndexProgress {
+                        session_id: session_id.clone(),
+                        indexed_lines: total_indexed,
+                        bytes_scanned,
+                        total_bytes,
+                    },
+                );
+
+                if done {
+                    let _ = app.emit(
+                        "file-index-complete",
+                        FileIndexComplete {
+                            session_id: session_id.clone(),
+                            total_lines: total_indexed,
+                        },
+                    );
+                    // Remove the task entry
+                    if let Ok(mut tasks) = state.indexing_tasks.lock() {
+                        let tasks: &mut std::collections::HashMap<String, tokio::sync::oneshot::Sender<()>> = &mut tasks;
+                        tasks.remove(&session_id);
+                    }
+                    return;
+                }
+
+                chunk_index = Vec::with_capacity(CHUNK_LINES);
+                chunk_meta = Vec::with_capacity(CHUNK_LINES);
+
+                // Yield to allow other tokio tasks (e.g. get_lines) to run.
+                tokio::task::yield_now().await;
+            }
+        }
+
+        i += 1;
+    }
 }
 
 // ---------------------------------------------------------------------------

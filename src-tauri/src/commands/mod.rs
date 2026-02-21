@@ -40,6 +40,8 @@ pub struct AppState {
     pub http_client: reqwest::Client,
     /// Cancellation senders for active ADB streaming tasks.
     pub stream_tasks: Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
+    /// Cancellation senders for active background file-indexing tasks.
+    pub indexing_tasks: Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
     /// Continuous processor state for live streaming.
     pub stream_processor_state: Mutex<HashMap<String, HashMap<String, ContinuousRunState>>>,
     /// Global anonymizer configuration (persisted to disk).
@@ -87,6 +89,7 @@ impl AppState {
                 .build()
                 .expect("Failed to create HTTP client"),
             stream_tasks: Mutex::new(HashMap::new()),
+            indexing_tasks: Mutex::new(HashMap::new()),
             stream_processor_state: Mutex::new(HashMap::new()),
             anonymizer_config: Mutex::new(AnonymizerConfig::with_defaults()),
             pii_mappings: Mutex::new(HashMap::new()),

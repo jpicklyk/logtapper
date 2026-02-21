@@ -82,6 +82,24 @@ export interface LoadResult {
   sourceType: string;
   /** True for live ADB streaming sessions. */
   isStreaming: boolean;
+  /** True while background file indexing is still in progress. */
+  isIndexing: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Progressive file-indexing events
+// ---------------------------------------------------------------------------
+
+export interface FileIndexProgress {
+  sessionId: string;
+  indexedLines: number;
+  bytesScanned: number;
+  totalBytes: number;
+}
+
+export interface FileIndexComplete {
+  sessionId: string;
+  totalLines: number;
 }
 
 // ---------------------------------------------------------------------------

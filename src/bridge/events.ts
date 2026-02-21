@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { AdbBatchPayload, AdbProcessorUpdate, AdbStreamStopped } from './types';
+import type { AdbBatchPayload, AdbProcessorUpdate, AdbStreamStopped, FileIndexProgress, FileIndexComplete } from './types';
 
 // ---------------------------------------------------------------------------
 // ADB streaming events
@@ -21,6 +21,22 @@ export function onAdbStreamStopped(
   cb: (payload: AdbStreamStopped) => void,
 ): Promise<UnlistenFn> {
   return listen<AdbStreamStopped>('adb-stream-stopped', (e) => cb(e.payload));
+}
+
+// ---------------------------------------------------------------------------
+// Progressive file-indexing events
+// ---------------------------------------------------------------------------
+
+export function onFileIndexProgress(
+  cb: (payload: FileIndexProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<FileIndexProgress>('file-index-progress', (e) => cb(e.payload));
+}
+
+export function onFileIndexComplete(
+  cb: (payload: FileIndexComplete) => void,
+): Promise<UnlistenFn> {
+  return listen<FileIndexComplete>('file-index-complete', (e) => cb(e.payload));
 }
 
 // ---------------------------------------------------------------------------

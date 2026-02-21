@@ -231,6 +231,7 @@ pub async fn start_adb_stream(
         last_timestamp: None,
         source_type: "Logcat".to_string(),
         is_streaming: true,
+        is_indexing: false,
     })
 }
 

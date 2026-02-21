@@ -1,9 +1,10 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { type UnlistenFn } from '@tauri-apps/api/event';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
 import type { ViewLine, SearchQuery, SearchSummary, LoadResult, AdbBatchPayload } from '../bridge/types';
 import { loadLogFile, getLines, searchLogs, startAdbStream, stopAdbStream, getPackagePids } from '../bridge/commands';
 
-import { onAdbBatch, onAdbStreamStopped } from '../bridge/events';
+import { onAdbBatch, onAdbStreamStopped, onFileIndexProgress, onFileIndexComplete } from '../bridge/events';
 import { parseFilter, matchesFilter, extractPackageNames, type FilterNode, FilterParseError } from '../filter';
 
 const WINDOW_SIZE = 500; // lines to fetch per request
@@ -33,6 +34,8 @@ export interface LogViewerState {
   filteredLineNums: number[] | null;
   /** Maximum frontend cache size in lines (0 = unlimited). */
   cacheMax: number;
+  /** Non-null while background file indexing is in progress. */
+  indexingProgress: { percent: number; indexedLines: number } | null;
   /** Current time range filter start ("HH:MM"), empty = not set */
   timeStart: string;
   /** Current time range filter end ("HH:MM"), empty = not set */
@@ -79,6 +82,7 @@ export function useLogViewer(frontendCacheMax: number = 50_000): LogViewerState 
   const [timeStart, setTimeStartState] = useState('');
   const [timeEnd, setTimeEndState] = useState('');
   const [timeFilterLineNums, setTimeFilterLineNums] = useState<number[] | null>(null);
+  const [indexingProgress, setIndexingProgress] = useState<{ percent: number; indexedLines: number } | null>(null);
   const timeStartRef = useRef('');
   const timeEndRef = useRef('');
 
@@ -298,6 +302,7 @@ export function useLogViewer(frontendCacheMax: number = 50_000): LogViewerState 
     setIsStreaming(false);
     isStreamingRef.current = false;
 
+    setIndexingProgress(null);
     setLoading(true);
     setError(null);
     resetSessionState();
@@ -321,6 +326,50 @@ export function useLogViewer(frontendCacheMax: number = 50_000): LogViewerState 
       setLoading(false);
     }
   }, [resetSessionState]);
+
+  // Wire up Tauri file drag-and-drop so users can drag a log file onto the window.
+  useEffect(() => {
+    let unlisten: UnlistenFn | null = null;
+    getCurrentWebview().onDragDropEvent((event) => {
+      if (event.payload.type === 'drop' && event.payload.paths.length > 0) {
+        loadFile(event.payload.paths[0]);
+      }
+    }).then((fn) => { unlisten = fn; });
+    return () => { unlisten?.(); };
+  }, [loadFile]);
+
+  // Subscribe to progressive file-indexing events.
+  useEffect(() => {
+    let unlistenProgress: UnlistenFn | null = null;
+    let unlistenComplete: UnlistenFn | null = null;
+
+    onFileIndexProgress((payload) => {
+      if (payload.sessionId !== sessionRef.current?.sessionId) return;
+      const percent = payload.totalBytes > 0
+        ? (payload.bytesScanned / payload.totalBytes) * 100
+        : 0;
+      setIndexingProgress({ percent, indexedLines: payload.indexedLines });
+      // Extend totalLines in the session so the virtualizer knows more lines exist.
+      setSession((prev) => {
+        if (!prev || prev.sessionId !== payload.sessionId) return prev;
+        return { ...prev, totalLines: payload.indexedLines };
+      });
+    }).then((fn) => { unlistenProgress = fn; });
+
+    onFileIndexComplete((payload) => {
+      if (payload.sessionId !== sessionRef.current?.sessionId) return;
+      setSession((prev) => {
+        if (!prev || prev.sessionId !== payload.sessionId) return prev;
+        return { ...prev, totalLines: payload.totalLines };
+      });
+      setIndexingProgress(null);
+    }).then((fn) => { unlistenComplete = fn; });
+
+    return () => {
+      unlistenProgress?.();
+      unlistenComplete?.();
+    };
+  }, []);
 
   const startStream = useCallback(async (
     deviceId?: string,
@@ -526,6 +575,7 @@ export function useLogViewer(frontendCacheMax: number = 50_000): LogViewerState 
     filterParseError,
     filteredLineNums,
     cacheMax: frontendCacheMax,
+    indexingProgress,
     timeStart,
     timeEnd,
     timeFilterLineNums,

@@ -2,6 +2,7 @@ use memmap2::Mmap;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::core::bugreport_parser::BugreportParser;
 use crate::core::index::CrossSourceIndex;
@@ -63,7 +64,7 @@ pub struct SectionInfo {
 
 pub enum LogSourceData {
     File {
-        mmap: Mmap,
+        mmap: Arc<Mmap>,
         /// (byte_offset, byte_len) for every indexed line.
         line_index: Vec<(usize, usize)>,
     },
@@ -92,6 +93,8 @@ pub struct LogSource {
     pub line_meta: Vec<LineMeta>,
     /// Named sections (Bugreport only; empty for all other source types).
     pub sections: Vec<SectionInfo>,
+    /// True while a background indexing task is still scanning the remainder of the file.
+    pub is_indexing: bool,
 }
 
 impl LogSource {
@@ -109,6 +112,7 @@ impl LogSource {
             },
             line_meta: Vec::new(),
             sections: Vec::new(),
+            is_indexing: false,
         }
     }
 
@@ -204,7 +208,7 @@ impl AnalysisSession {
         // Safety: the file is opened read-only; other processes may write to it,
         // but we accept that risk for large-file performance.
         let mmap =
-            unsafe { Mmap::map(&file) }.map_err(|e| format!("Cannot mmap file: {e}"))?;
+            Arc::new(unsafe { Mmap::map(&file) }.map_err(|e| format!("Cannot mmap file: {e}"))?);
 
         let source_type = detect_source_type(&mmap);
 
@@ -225,6 +229,7 @@ impl AnalysisSession {
             data: LogSourceData::File { mmap, line_index },
             line_meta,
             sections,
+            is_indexing: false,
         });
 
         // Rebuild the timeline and index after adding a new source.
@@ -239,6 +244,72 @@ impl AnalysisSession {
         let idx = self.sources.len();
         self.sources.push(LogSource::new_stream(source_id, device_label));
         idx
+    }
+
+    /// Like `add_source_from_file` but only indexes the first `max_bytes` synchronously.
+    /// Returns `(source_idx, Arc<Mmap>, total_file_bytes, bytes_consumed)`.
+    /// The caller is responsible for background-indexing the remainder.
+    pub fn add_source_partial(
+        &mut self,
+        path: &Path,
+        source_id: String,
+        max_bytes: usize,
+    ) -> Result<(usize, Arc<Mmap>, usize, usize), String> {
+        let file = File::open(path).map_err(|e| format!("Cannot open '{}': {e}", path.display()))?;
+        let mmap = Arc::new(
+            unsafe { Mmap::map(&file) }.map_err(|e| format!("Cannot mmap file: {e}"))?,
+        );
+        let total_bytes = mmap.len();
+        let source_type = detect_source_type(&mmap);
+        let parser = parser_for(&source_type);
+        let (line_index, line_meta, bytes_consumed) =
+            build_partial_line_index(mmap.as_ref(), parser.as_ref(), max_bytes);
+        let sections = build_section_index(&line_meta, &source_type);
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let is_indexing = bytes_consumed < total_bytes;
+        let idx = self.sources.len();
+        self.sources.push(LogSource {
+            id: source_id,
+            name,
+            source_type,
+            data: LogSourceData::File { mmap: Arc::clone(&mmap), line_index },
+            line_meta,
+            sections,
+            is_indexing,
+        });
+        if !is_indexing {
+            self.rebuild_timeline();
+        }
+        Ok((idx, mmap, total_bytes, bytes_consumed))
+    }
+
+    /// Append new index entries to the source at `source_idx`.
+    /// When `done` is true, rebuilds sections and timeline.
+    pub fn extend_source_index(
+        &mut self,
+        source_idx: usize,
+        new_line_index: Vec<(usize, usize)>,
+        new_line_meta: Vec<LineMeta>,
+        done: bool,
+    ) {
+        {
+            let source = &mut self.sources[source_idx];
+            if let LogSourceData::File { ref mut line_index, .. } = source.data {
+                line_index.extend(new_line_index);
+            }
+            source.line_meta.extend(new_line_meta);
+            source.is_indexing = !done;
+        }
+        if done {
+            let source_type = self.sources[source_idx].source_type.clone();
+            let sections = build_section_index(&self.sources[source_idx].line_meta, &source_type);
+            self.sources[source_idx].sections = sections;
+            self.rebuild_timeline();
+        }
     }
 
     /// Rebuild the unified timeline and cross-source index from all loaded sources.
@@ -377,6 +448,64 @@ fn build_line_index(mmap: &Mmap, source_type: &SourceType) -> (Vec<(usize, usize
     (line_index, line_meta)
 }
 
+/// Like `build_line_index` but stops after scanning `max_bytes`.
+/// Returns `(line_index, line_meta, bytes_consumed)` where `bytes_consumed` is
+/// the byte offset just past the last complete line scanned.
+pub(crate) fn build_partial_line_index(
+    data: &[u8],
+    parser: &dyn LogParser,
+    max_bytes: usize,
+) -> (Vec<(usize, usize)>, Vec<LineMeta>, usize) {
+    let scan_limit = max_bytes.min(data.len());
+    let estimate = (scan_limit / 120).max(1024);
+    let mut line_index: Vec<(usize, usize)> = Vec::with_capacity(estimate);
+    let mut line_meta: Vec<LineMeta> = Vec::with_capacity(estimate);
+    let mut start = 0usize;
+    let mut end_byte = 0usize;
+
+    for i in 0..data.len() {
+        if data[i] == b'\n' || i == data.len() - 1 {
+            let end = if data[i] == b'\n' { i } else { i + 1 };
+            let content_end = if end > start && data[end - 1] == b'\r' {
+                end - 1
+            } else {
+                end
+            };
+
+            if content_end > start {
+                let raw = match std::str::from_utf8(&data[start..content_end]) {
+                    Ok(s) if !s.trim().is_empty() => s,
+                    _ => {
+                        start = i + 1;
+                        end_byte = i + 1;
+                        if end_byte >= scan_limit && scan_limit < data.len() {
+                            break;
+                        }
+                        continue;
+                    }
+                };
+                let meta = parser.parse_meta(raw, start).unwrap_or(LineMeta {
+                    level: LogLevel::Info,
+                    tag: String::new(),
+                    timestamp: 0,
+                    byte_offset: start,
+                    byte_len: content_end - start,
+                });
+                line_index.push((start, content_end - start));
+                line_meta.push(meta);
+            }
+
+            end_byte = i + 1;
+            start = i + 1;
+            if end_byte >= scan_limit && scan_limit < data.len() {
+                break;
+            }
+        }
+    }
+
+    (line_index, line_meta, end_byte)
+}
+
 /// Scan `line_meta` to extract named section boundaries for Bugreport files.
 ///
 /// BugreportParser sets `LineMeta.tag` to the section name on `------` lines:
@@ -422,7 +551,7 @@ fn build_section_index(line_meta: &[LineMeta], source_type: &SourceType) -> Vec<
     sections
 }
 
-fn parser_for(source_type: &SourceType) -> Box<dyn LogParser> {
+pub(crate) fn parser_for(source_type: &SourceType) -> Box<dyn LogParser> {
     match source_type {
         SourceType::Logcat | SourceType::Radio | SourceType::Events => Box::new(LogcatParser),
         SourceType::Kernel => Box::new(KernelParser),
