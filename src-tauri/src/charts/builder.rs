@@ -81,14 +81,16 @@ fn build_chart(
     emissions: &[Emission],
     _vars: &HashMap<String, JsonValue>,
 ) -> ChartData {
-    let emission_maps: Vec<&HashMap<String, JsonValue>> =
-        emissions.iter().map(|e| &e.fields).collect();
+    let emission_maps: Vec<HashMap<String, JsonValue>> =
+        emissions.iter().map(|e| e.fields.iter().cloned().collect()).collect();
+    let emission_refs: Vec<&HashMap<String, JsonValue>> =
+        emission_maps.iter().collect();
 
     let series = match spec.chart_type.as_str() {
-        "bar" | "pie" => build_bar_series(spec, &emission_maps),
-        "time_series" | "area" => build_time_series(spec, &emission_maps),
-        "scatter" => build_scatter_series(spec, &emission_maps),
-        "histogram" => build_histogram_series(spec, &emission_maps),
+        "bar" | "pie" => build_bar_series(spec, &emission_refs),
+        "time_series" | "area" => build_time_series(spec, &emission_refs),
+        "scatter" => build_scatter_series(spec, &emission_refs),
+        "histogram" => build_histogram_series(spec, &emission_refs),
         _ => vec![],
     };
 

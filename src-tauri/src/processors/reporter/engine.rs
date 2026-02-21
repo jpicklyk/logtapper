@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::core::line::LineContext;
 use super::schema::{
-    AggType, CastType, ExtractField, FilterRule, FilterStage, PipelineStage, ReporterDef,
+    AggType, CastType, ExtractField, FilterRule, PipelineStage, ReporterDef,
 };
 use super::vars::VarStore;
 use crate::scripting::engine::ScriptEngine;
@@ -13,10 +13,31 @@ use crate::scripting::engine::ScriptEngine;
 // Emission — one row pushed via emit() or the aggregate stage
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone)]
 pub struct Emission {
     pub line_num: usize,
-    pub fields: HashMap<String, JsonValue>,
+    pub fields: Vec<(String, JsonValue)>,
+}
+
+impl serde::Serialize for Emission {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut s = serializer.serialize_struct("Emission", 2)?;
+        s.serialize_field("line_num", &self.line_num)?;
+        struct FieldsAsMap<'a>(&'a [(String, JsonValue)]);
+        impl serde::Serialize for FieldsAsMap<'_> {
+            fn serialize<S2: serde::Serializer>(&self, serializer: S2) -> Result<S2::Ok, S2::Error> {
+                use serde::ser::SerializeMap;
+                let mut map = serializer.serialize_map(Some(self.0.len()))?;
+                for (k, v) in self.0 {
+                    map.serialize_entry(k, v)?;
+                }
+                map.end()
+            }
+        }
+        s.serialize_field("fields", &FieldsAsMap(&self.fields))?;
+        s.end()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -38,25 +59,48 @@ pub struct ProcessorRun<'a> {
     burst_windows: HashMap<String, VecDeque<i64>>,
     /// Keys currently in an active burst (suppresses duplicate emissions per burst).
     burst_active: HashSet<String>,
+    /// Filter stages with rules pre-sorted by ascending cost (cheapest first).
+    sorted_filter_rules: Vec<Vec<FilterRule>>,
 }
 
 impl<'a> ProcessorRun<'a> {
     pub fn new(def: &'a ReporterDef) -> Self {
+        let sorted_filter_rules: Vec<Vec<FilterRule>> = def.pipeline.iter()
+            .filter_map(|stage| match stage {
+                PipelineStage::Filter(fs) => {
+                    let mut rules = fs.rules.clone();
+                    rules.sort_by_key(|r| r.cost_rank());
+                    Some(rules)
+                }
+                _ => None,
+            })
+            .collect();
         Self {
             vars: VarStore::new(&def.vars),
             def,
-            emissions: Vec::new(),
+            emissions: Vec::with_capacity(64),
             matched_line_nums: Vec::new(),
             regex_cache: HashMap::new(),
             script_engine: None,
             history: VecDeque::new(),
             burst_windows: HashMap::new(),
             burst_active: HashSet::new(),
+            sorted_filter_rules,
         }
     }
 
     /// Create a run seeded with previously saved state for continuous (streaming) processing.
     pub fn new_seeded(def: &'a ReporterDef, state: ContinuousRunState) -> Self {
+        let sorted_filter_rules: Vec<Vec<FilterRule>> = def.pipeline.iter()
+            .filter_map(|stage| match stage {
+                PipelineStage::Filter(fs) => {
+                    let mut rules = fs.rules.clone();
+                    rules.sort_by_key(|r| r.cost_rank());
+                    Some(rules)
+                }
+                _ => None,
+            })
+            .collect();
         Self {
             vars: state.vars,
             def,
@@ -67,6 +111,7 @@ impl<'a> ProcessorRun<'a> {
             history: state.history,
             burst_windows: state.burst_windows,
             burst_active: state.burst_active,
+            sorted_filter_rules,
         }
     }
 
@@ -74,13 +119,15 @@ impl<'a> ProcessorRun<'a> {
     pub fn process_line(&mut self, line: &LineContext) {
         // Extracted fields accumulate across stages.
         let mut fields: HashMap<String, JsonValue> = HashMap::new();
+        let mut filter_idx = 0usize;
 
         for stage in &self.def.pipeline {
             match stage {
-                PipelineStage::Filter(fs) => {
-                    if !self.apply_filter(fs, line) {
+                PipelineStage::Filter(_) => {
+                    if !self.apply_filter_sorted(filter_idx, line) {
                         return; // Line rejected — skip remaining stages.
                     }
+                    filter_idx += 1;
                 }
                 PipelineStage::Extract(es) => {
                     self.apply_extract(&es.fields, line, &mut fields);
@@ -99,8 +146,9 @@ impl<'a> ProcessorRun<'a> {
                         self.vars.update_from_rhai(&new_vars);
                         // Collect emissions — auto-inject timestamp so time series charts work
                         for mut e in new_emissions {
-                            e.entry("timestamp".to_string())
-                                .or_insert_with(|| JsonValue::Number(line.timestamp.into()));
+                            if !e.iter().any(|(k, _)| k == "timestamp") {
+                                e.push(("timestamp".to_string(), JsonValue::Number(line.timestamp.into())));
+                            }
                             self.emissions.push(Emission {
                                 line_num: line.source_line_num,
                                 fields: e,
@@ -175,9 +223,10 @@ impl<'a> ProcessorRun<'a> {
     // Filter
     // ────────────────────────────────────────────────────────────────────────
 
-    fn apply_filter(&mut self, stage: &FilterStage, line: &LineContext) -> bool {
-        for rule in &stage.rules {
-            if !self.rule_matches(rule, line) {
+    fn apply_filter_sorted(&mut self, filter_idx: usize, line: &LineContext) -> bool {
+        for i in 0..self.sorted_filter_rules[filter_idx].len() {
+            let rule = self.sorted_filter_rules[filter_idx][i].clone();
+            if !self.rule_matches(&rule, line) {
                 return false;
             }
         }
@@ -298,10 +347,10 @@ impl<'a> ProcessorRun<'a> {
                     if let Some(JsonValue::String(group)) = fields.get(fname) {
                         self.emissions.push(Emission {
                             line_num: 0,
-                            fields: HashMap::from([
+                            fields: vec![
                                 (fname.to_string(), JsonValue::String(group.clone())),
                                 ("_count".to_string(), JsonValue::Number(1.into())),
-                            ]),
+                            ],
                         });
                     }
                 }
@@ -336,12 +385,12 @@ impl<'a> ProcessorRun<'a> {
                     let line_num = self.matched_line_nums.last().copied().unwrap_or(0);
                     self.emissions.push(Emission {
                         line_num,
-                        fields: HashMap::from([
+                        fields: vec![
                             ("burst_key".to_string(), JsonValue::String(key)),
                             ("count_in_window".to_string(), JsonValue::Number(count_in_window.into())),
                             ("window_ms".to_string(), JsonValue::Number(window_ms.unwrap_or(2000).into())),
                             ("timestamp".to_string(), JsonValue::Number(timestamp.into())),
-                        ]),
+                        ],
                     });
                 } else if !in_burst && was_active {
                     // Falling edge: clear so the next burst can re-trigger.
@@ -454,6 +503,10 @@ mod tests {
 
     fn def(yaml: &str) -> ReporterDef {
         ReporterDef::from_yaml(yaml).expect("YAML parse failed")
+    }
+
+    fn get_field<'a>(e: &'a Emission, k: &str) -> Option<&'a JsonValue> {
+        e.fields.iter().find(|(key, _)| key == k).map(|(_, v)| v)
     }
 
     // ── Filter: TagMatch ─────────────────────────────────────────────────────
@@ -683,7 +736,7 @@ pipeline:
         run.process_line(&make_line("T", "FD: 950 heap: 512", LogLevel::Info, 1));
         let result = run.finish();
         assert_eq!(result.emissions.len(), 1);
-        assert_eq!(result.emissions[0].fields["fd"], JsonValue::Number(950.into()));
+        assert_eq!(get_field(&result.emissions[0], "fd"), Some(&JsonValue::Number(950.into())));
         assert_eq!(result.vars["last_fd"], JsonValue::Number(950.into()));
     }
 
@@ -709,7 +762,7 @@ pipeline:
         let mut run = ProcessorRun::new(&d);
         run.process_line(&make_line("T", "no fd here", LogLevel::Info, 1));
         let result = run.finish();
-        assert_eq!(result.emissions[0].fields["has_fd"], JsonValue::Bool(false));
+        assert_eq!(get_field(&result.emissions[0], "has_fd"), Some(&JsonValue::Bool(false)));
     }
 
     // ── Script / emissions ───────────────────────────────────────────────────
@@ -759,8 +812,8 @@ pipeline:
         let result = run.finish();
         assert_eq!(result.emissions.len(), 1);
         assert_eq!(
-            result.emissions[0].fields["timestamp"],
-            JsonValue::Number(123_456_789_000i64.into()),
+            get_field(&result.emissions[0], "timestamp"),
+            Some(&JsonValue::Number(123_456_789_000i64.into())),
             "timestamp must be auto-injected from line.timestamp"
         );
     }
@@ -783,8 +836,8 @@ pipeline:
         run.process_line(&line);
         let result = run.finish();
         assert_eq!(
-            result.emissions[0].fields["timestamp"],
-            JsonValue::Number(999i64.into()),
+            get_field(&result.emissions[0], "timestamp"),
+            Some(&JsonValue::Number(999i64.into())),
             "script-provided timestamp must not be overwritten by auto-inject"
         );
     }
@@ -858,10 +911,10 @@ pipeline:
         }
         let result = run.finish();
         assert_eq!(result.emissions.len(), 1, "exactly one burst emission on rising edge");
-        assert_eq!(result.emissions[0].fields["burst_key"],
-                   JsonValue::String("mykey".to_string()));
-        assert_eq!(result.emissions[0].fields["count_in_window"],
-                   JsonValue::Number(5.into()));
+        assert_eq!(get_field(&result.emissions[0], "burst_key"),
+                   Some(&JsonValue::String("mykey".to_string())));
+        assert_eq!(get_field(&result.emissions[0], "count_in_window"),
+                   Some(&JsonValue::Number(5.into())));
     }
 
     #[test]
@@ -927,7 +980,7 @@ pipeline:
         let result = run.finish();
         assert_eq!(result.emissions.len(), 1);
         assert!(
-            result.emissions[0].fields.contains_key("timestamp"),
+            result.emissions[0].fields.iter().any(|(k, _)| k == "timestamp"),
             "burst emission must carry a timestamp field for chart rendering"
         );
     }
@@ -956,8 +1009,8 @@ pipeline:
         }
         let result = run.finish();
         assert_eq!(result.emissions.len(), 1);
-        assert_eq!(result.emissions[0].fields["burst_key"],
-                   JsonValue::String("_default".to_string()));
+        assert_eq!(get_field(&result.emissions[0], "burst_key"),
+                   Some(&JsonValue::String("_default".to_string())));
     }
 
     // ── into_continuous_state drain tests ────────────────────────────────
@@ -1014,5 +1067,172 @@ pipeline:
         assert_eq!(state.matched_line_nums.len(), 5, "drain=false must preserve matched_line_nums");
         assert!(!state.history.is_empty(), "drain=false must preserve history");
         assert_eq!(state.last_processed_line, 5);
+    }
+
+    // ── Filter cost sorting ─────────────────────────────────────────────────
+
+    #[test]
+    fn filter_rules_sorted_cheapest_first() {
+        // Define a processor with expensive rules listed first in YAML order:
+        // message_regex (cost 5) then level_min (cost 0).
+        // After cost-sorting, LevelMin should come first in sorted_filter_rules.
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_regex
+        pattern: 'FD:\s+\d+'
+      - type: level_min
+        level: W
+"#);
+        let run = ProcessorRun::new(&d);
+        assert_eq!(run.sorted_filter_rules.len(), 1, "one filter stage");
+        // First rule should be LevelMin (cheapest, cost 0)
+        assert!(
+            matches!(run.sorted_filter_rules[0][0], FilterRule::LevelMin { .. }),
+            "LevelMin should be sorted first, got: {:?}", run.sorted_filter_rules[0][0]
+        );
+        // Second rule should be MessageRegex (most expensive, cost 5)
+        assert!(
+            matches!(run.sorted_filter_rules[0][1], FilterRule::MessageRegex { .. }),
+            "MessageRegex should be sorted last, got: {:?}", run.sorted_filter_rules[0][1]
+        );
+    }
+
+    #[test]
+    fn filter_cost_sorting_preserves_and_semantics() {
+        // Verify that sorting doesn't break AND semantics: a line must pass ALL rules.
+        // YAML order: [message_regex, level_min, tag_match] — gets sorted to
+        // [level_min, tag_match, message_regex].
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_regex
+        pattern: 'Killing'
+      - type: level_min
+        level: W
+      - type: tag_match
+        tags: [ActivityManager]
+"#);
+        let mut run = ProcessorRun::new(&d);
+        // Passes all three rules
+        run.process_line(&make_line("ActivityManager", "Killing PID 1234", LogLevel::Warn, 1));
+        // Fails level_min (Info < Warn)
+        run.process_line(&make_line("ActivityManager", "Killing PID 5678", LogLevel::Info, 2));
+        // Fails tag_match
+        run.process_line(&make_line("System", "Killing PID 9999", LogLevel::Warn, 3));
+        // Fails message_regex
+        run.process_line(&make_line("ActivityManager", "Starting PID 0000", LogLevel::Error, 4));
+        let result = run.finish();
+        assert_eq!(result.matched_line_nums, vec![1], "only line 1 should pass all three rules");
+    }
+
+    // ── Emission serialization ─────────────────────────────────────────────
+
+    #[test]
+    fn emission_serializes_fields_as_json_object() {
+        let emission = Emission {
+            line_num: 42,
+            fields: vec![("key".to_string(), JsonValue::String("val".to_string()))],
+        };
+        let json = serde_json::to_value(&emission).unwrap();
+        assert!(json["fields"].is_object(), "fields must serialize as JSON object, not array");
+        assert_eq!(json["fields"]["key"], "val");
+        assert_eq!(json["line_num"], 42);
+    }
+
+    // ── Lazy history access (history_get / history_len) ───────────────────
+
+    #[test]
+    fn script_history_len_returns_correct_count() {
+        // Process N lines, then check history_len() returns N (up to cap of 1000).
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+vars:
+  - name: hist_len
+    type: int
+    default: 0
+pipeline:
+  - stage: script
+    runtime: rhai
+    src: |
+      vars.hist_len = history_len();
+"#);
+        let mut run = ProcessorRun::new(&d);
+        for i in 0..5usize {
+            run.process_line(&make_line("T", "msg", LogLevel::Info, i));
+        }
+        let result = run.finish();
+        // After processing 5 lines, history_len() on the last call should be 4
+        // (the current line is added AFTER process_line completes the pipeline).
+        assert_eq!(result.vars["hist_len"], JsonValue::Number(4.into()));
+    }
+
+    #[test]
+    fn script_history_get_returns_correct_entry() {
+        // Process 3 lines, then verify history_get(0) returns the first (oldest) entry.
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+vars:
+  - name: first_tag
+    type: string
+    default: ""
+  - name: last_msg
+    type: string
+    default: ""
+pipeline:
+  - stage: script
+    runtime: rhai
+    src: |
+      if history_len() > 0 {
+        let first = history_get(0);
+        vars.first_tag = first.tag;
+        let last = history_get(history_len() - 1);
+        vars.last_msg = last.message;
+      }
+"#);
+        let mut run = ProcessorRun::new(&d);
+        run.process_line(&make_line("TagA", "alpha", LogLevel::Info, 0));
+        run.process_line(&make_line("TagB", "beta", LogLevel::Info, 1));
+        run.process_line(&make_line("TagC", "gamma", LogLevel::Info, 2));
+        let result = run.finish();
+        // On the third line's script execution, history = [TagA, TagB]
+        assert_eq!(result.vars["first_tag"], JsonValue::String("TagA".to_string()));
+        assert_eq!(result.vars["last_msg"], JsonValue::String("beta".to_string()));
+    }
+
+    #[test]
+    fn script_history_get_out_of_bounds_returns_unit() {
+        // history_get(9999) on an empty/small history should return () (unit), not panic.
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+vars:
+  - name: is_unit
+    type: bool
+    default: false
+pipeline:
+  - stage: script
+    runtime: rhai
+    src: |
+      let val = history_get(9999);
+      vars.is_unit = val == ();
+"#);
+        let mut run = ProcessorRun::new(&d);
+        run.process_line(&make_line("T", "msg", LogLevel::Info, 0));
+        let result = run.finish();
+        assert_eq!(result.vars["is_unit"], JsonValue::Bool(true));
     }
 }

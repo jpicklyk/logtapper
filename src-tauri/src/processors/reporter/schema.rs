@@ -404,6 +404,20 @@ pub struct AnnotationSpec {
     pub color: Option<String>,
 }
 
+impl FilterRule {
+    /// Returns a sort key: lower = cheaper = should run first.
+    pub fn cost_rank(&self) -> u8 {
+        match self {
+            FilterRule::LevelMin { .. } => 0,
+            FilterRule::TimeRange { .. } => 1,
+            FilterRule::TagMatch { .. } => 2,
+            FilterRule::MessageContains { .. } => 3,
+            FilterRule::MessageContainsAny { .. } => 4,
+            FilterRule::MessageRegex { .. } => 5,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

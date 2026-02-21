@@ -27,8 +27,10 @@ pub struct BridgeInput<'a> {
 /// | line    | map             | read-only  |
 /// | fields  | map             | read-only  |
 /// | vars    | map             | read/write |
-/// | history | array of maps   | read-only  |
 /// | _emits  | array           | internal — scripts never touch this directly |
+///
+/// History is NOT materialized here. Scripts access history via the registered
+/// `history_get(i)` and `history_len()` Rhai functions on `ScriptEngine`.
 pub fn build_scope<'src>(input: &BridgeInput<'_>) -> Scope<'src> {
     let mut scope = Scope::new();
 
@@ -54,22 +56,10 @@ pub fn build_scope<'src>(input: &BridgeInput<'_>) -> Scope<'src> {
     // ── vars (read/write) ─────────────────────────────────────────────────────
     scope.push("vars", input.vars.to_rhai_map());
 
-    // ── history ───────────────────────────────────────────────────────────────
-    let history_arr: rhai::Array = input
-        .history
-        .iter()
-        .map(|lc| {
-            let mut m = RhaiMap::new();
-            m.insert("timestamp".into(), Dynamic::from(lc.timestamp));
-            m.insert("level".into(), Dynamic::from(lc.level.to_string()));
-            m.insert("tag".into(), Dynamic::from(lc.tag.clone()));
-            m.insert("message".into(), Dynamic::from(lc.message.clone()));
-            m.insert("pid".into(), Dynamic::from(lc.pid as i64));
-            m.insert("tid".into(), Dynamic::from(lc.tid as i64));
-            Dynamic::from(m)
-        })
-        .collect();
-    scope.push_constant("history", Dynamic::from(history_arr));
+    // ── history — accessed lazily via history_get(i) / history_len() ─────────
+    // (No scope variable needed; the ScriptEngine has registered Rhai functions
+    //  that read from a shared Arc<Mutex<Vec<LineContext>>> populated before
+    //  each run_script() call.)
 
     // ── _emits — internal accumulator for emit() calls ────────────────────────
     scope.push("_emits", Dynamic::from(rhai::Array::new()));
@@ -82,7 +72,7 @@ pub fn build_scope<'src>(input: &BridgeInput<'_>) -> Scope<'src> {
 // ---------------------------------------------------------------------------
 
 /// After script execution, drain `_emits` from the scope and convert to JSON.
-pub fn drain_emissions(scope: &mut Scope<'_>) -> Vec<HashMap<String, JsonValue>> {
+pub fn drain_emissions(scope: &mut Scope<'_>) -> Vec<Vec<(String, JsonValue)>> {
     let arr = scope
         .get_value::<rhai::Array>("_emits")
         .unwrap_or_default();
