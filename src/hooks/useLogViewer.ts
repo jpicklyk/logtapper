@@ -310,19 +310,22 @@ export function useLogViewer(frontendCacheMax: number = 50_000): LogViewerState 
       const result = await loadLogFile(path);
       setSession(result);
       sessionRef.current = result;
-      // Pre-fetch the first window
-      const first = await getLines({
+      // Show the viewer immediately — the virtualizer will fetch visible rows naturally.
+      setLoading(false);
+      // Warm the cache for the first window in the background (best-effort, no await).
+      getLines({
         sessionId: result.sessionId,
         mode: { mode: 'Full' },
         offset: 0,
         count: WINDOW_SIZE,
         context: 0,
-      });
-      for (const line of first.lines) lineCacheRef.current.set(line.lineNum, line);
-      setCacheVersion((v) => v + 1);
+      }).then((first) => {
+        if (sessionRef.current?.sessionId !== result.sessionId) return;
+        for (const line of first.lines) lineCacheRef.current.set(line.lineNum, line);
+        setCacheVersion((v) => v + 1);
+      }).catch(() => { /* ignore — virtualizer will retry */ });
     } catch (e) {
       setError(String(e));
-    } finally {
       setLoading(false);
     }
   }, [resetSessionState]);
@@ -349,7 +352,7 @@ export function useLogViewer(frontendCacheMax: number = 50_000): LogViewerState 
         ? (payload.bytesScanned / payload.totalBytes) * 100
         : 0;
       setIndexingProgress({ percent, indexedLines: payload.indexedLines });
-      // Extend totalLines in the session so the virtualizer knows more lines exist.
+      // Extend totalLines so the virtualizer stays current during background indexing.
       setSession((prev) => {
         if (!prev || prev.sessionId !== payload.sessionId) return prev;
         return { ...prev, totalLines: payload.indexedLines };
@@ -468,6 +471,16 @@ export function useLogViewer(frontendCacheMax: number = 50_000): LogViewerState 
           // file fetches that complete after a stream session has replaced the file).
           if (sessionRef.current?.sessionId !== sessionId) return;
           for (const line of window.lines) lineCacheRef.current.set(line.lineNum, line);
+          // Evict oldest entries if over the cap (same ring-buffer logic as streaming).
+          const cap = frontendCacheMaxRef.current;
+          if (cap > 0 && lineCacheRef.current.size > cap) {
+            let toEvict = lineCacheRef.current.size - cap;
+            for (const key of lineCacheRef.current.keys()) {
+              if (toEvict <= 0) break;
+              lineCacheRef.current.delete(key);
+              toEvict--;
+            }
+          }
           // Re-apply active filter to newly fetched lines (file session incremental filter).
           const ast = filterAstRef.current;
           if (ast) {

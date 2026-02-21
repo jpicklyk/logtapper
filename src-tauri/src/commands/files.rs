@@ -218,23 +218,39 @@ async fn run_background_indexer(
                 end
             };
 
-            // Include blank lines so indexed line numbers match physical file positions.
-            let raw_str = if content_end > start {
-                std::str::from_utf8(&data[start..content_end]).unwrap_or("").trim()
+            let byte_len = content_end - start;
+            let meta = if byte_len > 0 {
+                match std::str::from_utf8(&data[start..content_end]) {
+                    Ok(s) if !s.trim().is_empty() => {
+                        parser.parse_meta(s.trim(), start).unwrap_or(crate::core::line::LineMeta {
+                            level: LogLevel::Info,
+                            tag: String::new(),
+                            timestamp: 0,
+                            byte_offset: start,
+                            byte_len,
+                            is_section_boundary: false,
+                        })
+                    }
+                    _ => crate::core::line::LineMeta {
+                        level: LogLevel::Verbose,
+                        tag: String::new(),
+                        timestamp: 0,
+                        byte_offset: start,
+                        byte_len,
+                        is_section_boundary: false,
+                    },
+                }
             } else {
-                ""
-            };
-            let meta = parser.parse_meta(raw_str, start).unwrap_or(
                 crate::core::line::LineMeta {
-                    level: LogLevel::Info,
+                    level: LogLevel::Verbose,
                     tag: String::new(),
                     timestamp: 0,
                     byte_offset: start,
-                    byte_len: content_end.saturating_sub(start),
+                    byte_len: 0,
                     is_section_boundary: false,
-                },
-            );
-            chunk_index.push((start, content_end.saturating_sub(start)));
+                }
+            };
+            chunk_index.push((start, byte_len));
             chunk_meta.push(meta);
 
             bytes_scanned = i + 1;

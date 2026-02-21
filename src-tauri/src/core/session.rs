@@ -398,7 +398,10 @@ fn is_logcat_threadtime(sample: &str) -> bool {
 // Line indexer — scans the mmap once, builds per-line metadata
 // ---------------------------------------------------------------------------
 
-fn build_line_index(mmap: &Mmap, source_type: &SourceType) -> (Vec<(usize, usize)>, Vec<LineMeta>) {
+fn build_line_index(
+    mmap: &Mmap,
+    source_type: &SourceType,
+) -> (Vec<(usize, usize)>, Vec<LineMeta>) {
     let parser: Box<dyn LogParser> = parser_for(source_type);
     let data = mmap.as_ref();
 
@@ -414,30 +417,49 @@ fn build_line_index(mmap: &Mmap, source_type: &SourceType) -> (Vec<(usize, usize
         if data[i] == b'\n' || i == len - 1 {
             let end = if data[i] == b'\n' { i } else { i + 1 };
 
-            // Strip trailing \r if present
+            // Strip trailing \r if present.
             let content_end = if end > start && data[end - 1] == b'\r' {
                 end - 1
             } else {
                 end
             };
 
-            // Include blank lines so indexed line numbers match physical file positions.
-            let raw = if content_end > start {
-                std::str::from_utf8(&data[start..content_end]).unwrap_or("").trim()
+            let byte_len = content_end - start;
+            // Build meta: try to parse non-empty lines; blank/unparseable lines get a minimal default.
+            let meta = if byte_len > 0 {
+                match std::str::from_utf8(&data[start..content_end]) {
+                    Ok(s) if !s.trim().is_empty() => {
+                        parser.parse_meta(s.trim(), start).unwrap_or(LineMeta {
+                            level: LogLevel::Info,
+                            tag: String::new(),
+                            timestamp: 0,
+                            byte_offset: start,
+                            byte_len,
+                            is_section_boundary: false,
+                        })
+                    }
+                    _ => LineMeta {
+                        level: LogLevel::Verbose,
+                        tag: String::new(),
+                        timestamp: 0,
+                        byte_offset: start,
+                        byte_len,
+                        is_section_boundary: false,
+                    },
+                }
             } else {
-                ""
+                LineMeta {
+                    level: LogLevel::Verbose,
+                    tag: String::new(),
+                    timestamp: 0,
+                    byte_offset: start,
+                    byte_len: 0,
+                    is_section_boundary: false,
+                }
             };
-            let meta = parser.parse_meta(raw, start).unwrap_or(LineMeta {
-                level: LogLevel::Info,
-                tag: String::new(),
-                timestamp: 0,
-                byte_offset: start,
-                byte_len: content_end.saturating_sub(start),
-                is_section_boundary: false,
-            });
-            line_index.push((start, content_end.saturating_sub(start)));
-            line_meta.push(meta);
 
+            line_index.push((start, byte_len));
+            line_meta.push(meta);
             start = i + 1;
         }
     }
@@ -446,8 +468,8 @@ fn build_line_index(mmap: &Mmap, source_type: &SourceType) -> (Vec<(usize, usize
 }
 
 /// Like `build_line_index` but stops after scanning `max_bytes`.
-/// Returns `(line_index, line_meta, bytes_consumed)` where `bytes_consumed` is
-/// the byte offset just past the last complete line scanned.
+/// Returns `(line_index, line_meta, bytes_consumed)`.
+/// `bytes_consumed` is the byte offset just past the last complete line scanned.
 pub(crate) fn build_partial_line_index(
     data: &[u8],
     parser: &dyn LogParser,
@@ -469,23 +491,41 @@ pub(crate) fn build_partial_line_index(
                 end
             };
 
-            // Include blank lines so indexed line numbers match physical file positions.
-            let raw = if content_end > start {
-                std::str::from_utf8(&data[start..content_end]).unwrap_or("").trim()
+            let byte_len = content_end - start;
+            let meta = if byte_len > 0 {
+                match std::str::from_utf8(&data[start..content_end]) {
+                    Ok(s) if !s.trim().is_empty() => {
+                        parser.parse_meta(s.trim(), start).unwrap_or(LineMeta {
+                            level: LogLevel::Info,
+                            tag: String::new(),
+                            timestamp: 0,
+                            byte_offset: start,
+                            byte_len,
+                            is_section_boundary: false,
+                        })
+                    }
+                    _ => LineMeta {
+                        level: LogLevel::Verbose,
+                        tag: String::new(),
+                        timestamp: 0,
+                        byte_offset: start,
+                        byte_len,
+                        is_section_boundary: false,
+                    },
+                }
             } else {
-                ""
+                LineMeta {
+                    level: LogLevel::Verbose,
+                    tag: String::new(),
+                    timestamp: 0,
+                    byte_offset: start,
+                    byte_len: 0,
+                    is_section_boundary: false,
+                }
             };
-            let meta = parser.parse_meta(raw, start).unwrap_or(LineMeta {
-                level: LogLevel::Info,
-                tag: String::new(),
-                timestamp: 0,
-                byte_offset: start,
-                byte_len: content_end.saturating_sub(start),
-                is_section_boundary: false,
-            });
-            line_index.push((start, content_end.saturating_sub(start)));
-            line_meta.push(meta);
 
+            line_index.push((start, byte_len));
+            line_meta.push(meta);
             end_byte = i + 1;
             start = i + 1;
             if end_byte >= scan_limit && scan_limit < data.len() {
