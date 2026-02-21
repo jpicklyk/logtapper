@@ -33,7 +33,7 @@ pub struct ProcessorRun<'a> {
     /// Script engine (lazily created when a script stage is encountered).
     script_engine: Option<ScriptEngine>,
     /// Lookback buffer (capped at 1000 lines).
-    history: Vec<LineContext>,
+    history: VecDeque<LineContext>,
     /// Per-key sliding windows of timestamps (nanos). Used by BurstDetector.
     burst_windows: HashMap<String, VecDeque<i64>>,
     /// Keys currently in an active burst (suppresses duplicate emissions per burst).
@@ -49,7 +49,7 @@ impl<'a> ProcessorRun<'a> {
             matched_line_nums: Vec::new(),
             regex_cache: HashMap::new(),
             script_engine: None,
-            history: Vec::new(),
+            history: VecDeque::new(),
             burst_windows: HashMap::new(),
             burst_active: HashSet::new(),
         }
@@ -92,7 +92,7 @@ impl<'a> ProcessorRun<'a> {
                         line,
                         fields: &fields,
                         vars: &self.vars,
-                        history: &self.history,
+                        history: self.history.make_contiguous(),
                     };
                     if let Ok((new_vars, new_emissions)) = engine.run_script(&ss.src, &input) {
                         // Merge var updates
@@ -130,9 +130,9 @@ impl<'a> ProcessorRun<'a> {
         self.matched_line_nums.push(line.source_line_num);
 
         // Add to lookback buffer (Phase 3 will use this in session.query)
-        self.history.push(line.clone());
+        self.history.push_back(line.clone());
         if self.history.len() > 1000 {
-            self.history.remove(0);
+            self.history.pop_front();
         }
     }
 
@@ -155,11 +155,15 @@ impl<'a> ProcessorRun<'a> {
     }
 
     /// Consume the run into a `ContinuousRunState` for storage between batches.
-    pub fn into_continuous_state(self, last_processed_line: usize) -> ContinuousRunState {
+    ///
+    /// When `drain` is true (streaming mode), emissions and matched_line_nums
+    /// are cleared rather than carried forward -- they have already been
+    /// snapshot via `current_result()` and stored in `pipeline_results`.
+    pub fn into_continuous_state(self, last_processed_line: usize, drain: bool) -> ContinuousRunState {
         ContinuousRunState {
             vars: self.vars,
-            emissions: self.emissions,
-            matched_line_nums: self.matched_line_nums,
+            emissions: if drain { Vec::new() } else { self.emissions },
+            matched_line_nums: if drain { Vec::new() } else { self.matched_line_nums },
             history: self.history,
             last_processed_line,
             burst_windows: self.burst_windows,
@@ -375,7 +379,7 @@ pub struct ContinuousRunState {
     pub emissions: Vec<Emission>,
     pub matched_line_nums: Vec<usize>,
     /// Lookback history (last ≤1000 lines). Persisted across batches.
-    pub history: Vec<LineContext>,
+    pub history: VecDeque<LineContext>,
     /// Absolute session line index of the next line to process.
     pub last_processed_line: usize,
     /// BurstDetector sliding windows (persisted so bursts span batch boundaries).
@@ -954,5 +958,61 @@ pipeline:
         assert_eq!(result.emissions.len(), 1);
         assert_eq!(result.emissions[0].fields["burst_key"],
                    JsonValue::String("_default".to_string()));
+    }
+
+    // ── into_continuous_state drain tests ────────────────────────────────
+
+    #[test]
+    fn into_continuous_state_drain_clears_emissions_and_matches() {
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: script
+    runtime: rhai
+    src: |
+      _emits.push(#{ value: 1 });
+"#);
+        let mut run = ProcessorRun::new(&d);
+        for i in 0..5usize {
+            run.process_line(&make_line("T", "msg", LogLevel::Info, i));
+        }
+        // Verify emissions and matches exist before drain
+        assert_eq!(run.current_result().emissions.len(), 5);
+        assert_eq!(run.current_result().matched_line_nums.len(), 5);
+
+        let state = run.into_continuous_state(5, true);
+        // Emissions and matched_line_nums should be empty after drain
+        assert!(state.emissions.is_empty(), "drain=true must clear emissions");
+        assert!(state.matched_line_nums.is_empty(), "drain=true must clear matched_line_nums");
+        // Vars, history, burst state should be preserved
+        assert!(!state.history.is_empty(), "drain must preserve history");
+        assert_eq!(state.last_processed_line, 5);
+    }
+
+    #[test]
+    fn into_continuous_state_no_drain_preserves_all() {
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: script
+    runtime: rhai
+    src: |
+      _emits.push(#{ value: 1 });
+"#);
+        let mut run = ProcessorRun::new(&d);
+        for i in 0..5usize {
+            run.process_line(&make_line("T", "msg", LogLevel::Info, i));
+        }
+
+        let state = run.into_continuous_state(5, false);
+        // Everything should be preserved with drain=false
+        assert_eq!(state.emissions.len(), 5, "drain=false must preserve emissions");
+        assert_eq!(state.matched_line_nums.len(), 5, "drain=false must preserve matched_line_nums");
+        assert!(!state.history.is_empty(), "drain=false must preserve history");
+        assert_eq!(state.last_processed_line, 5);
     }
 }

@@ -180,7 +180,7 @@ pub async fn start_adb_stream(
         for proc_id in &active_processor_ids {
             if let Some(def) = procs.get(proc_id).and_then(|p| p.as_reporter()) {
                 let run = ProcessorRun::new(def);
-                proc_states.insert(proc_id.clone(), run.into_continuous_state(0));
+                proc_states.insert(proc_id.clone(), run.into_continuous_state(0, false));
             }
         }
         drop(procs);
@@ -394,7 +394,7 @@ pub async fn update_stream_processors(
         if !inner.contains_key(proc_id.as_str()) {
             if let Some(def) = new_proc_defs.get(proc_id) {
                 let run = ProcessorRun::new(def);
-                inner.insert(proc_id.clone(), run.into_continuous_state(current_total));
+                inner.insert(proc_id.clone(), run.into_continuous_state(current_total, false));
             }
         }
     }
@@ -989,7 +989,7 @@ fn flush_batch(
         }
 
         // Save updated continuous state (always — this drives the next batch)
-        let new_state = run.into_continuous_state(total_lines);
+        let new_state = run.into_continuous_state(total_lines, true);
         if let Ok(mut sp_state) = state.stream_processor_state.lock() {
             sp_state
                 .entry(session_id.to_string())

@@ -221,42 +221,44 @@ pub async fn run_pipeline(
             }
         }
 
-        let mut session_tracker_results = HashMap::new();
-        for (tracker_id, def) in &tracker_defs {
-            let mut run = StateTrackerRun::new(tracker_id, def);
-            for line in &enriched_lines {
-                run.process_line(line);
-            }
-            let mut result = run.finish();
+        let session_tracker_results: HashMap<String, _> = tracker_defs
+            .par_iter()
+            .map(|(tracker_id, def)| {
+                let mut run = StateTrackerRun::new(tracker_id, def);
+                for line in &enriched_lines {
+                    run.process_line(line);
+                }
+                let mut result = run.finish();
 
-            // Post-process: replace any captured raw PII values with tokens.
-            if !forward_pii.is_empty() {
-                for transition in result.transitions.iter_mut() {
-                    for (_, change) in transition.changes.iter_mut() {
-                        if let serde_json::Value::String(s) = &change.to {
-                            if let Some(token) = forward_pii.get(s.as_str()) {
-                                change.to = serde_json::Value::String(token.clone());
+                // Post-process: replace any captured raw PII values with tokens.
+                if !forward_pii.is_empty() {
+                    for transition in result.transitions.iter_mut() {
+                        for (_, change) in transition.changes.iter_mut() {
+                            if let serde_json::Value::String(s) = &change.to {
+                                if let Some(token) = forward_pii.get(s.as_str()) {
+                                    change.to = serde_json::Value::String(token.clone());
+                                }
+                            }
+                            if let serde_json::Value::String(s) = &change.from {
+                                if let Some(token) = forward_pii.get(s.as_str()) {
+                                    change.from = serde_json::Value::String(token.clone());
+                                }
                             }
                         }
-                        if let serde_json::Value::String(s) = &change.from {
+                    }
+                    // Also anonymize the final_state snapshot
+                    for val in result.final_state.values_mut() {
+                        if let serde_json::Value::String(s) = val {
                             if let Some(token) = forward_pii.get(s.as_str()) {
-                                change.from = serde_json::Value::String(token.clone());
+                                *s = token.clone();
                             }
                         }
                     }
                 }
-                // Also anonymize the final_state snapshot
-                for val in result.final_state.values_mut() {
-                    if let serde_json::Value::String(s) = val {
-                        if let Some(token) = forward_pii.get(s.as_str()) {
-                            *s = token.clone();
-                        }
-                    }
-                }
-            }
 
-            session_tracker_results.insert(tracker_id.clone(), result);
-        }
+                (tracker_id.clone(), result)
+            })
+            .collect();
 
         // Restore post-transform messages for reporters.
         if !saved_post_transform.is_empty() {
@@ -273,20 +275,22 @@ pub async fn run_pipeline(
     // ── Layer 2b: Reporters (sequential — stateful accumulators) ──────────────
     const PROGRESS_INTERVAL: usize = 5_000;
 
-    let mut reporter_runs: Vec<ProcessorRun<'_>> = reporter_defs.iter()
-        .map(|(_, def)| ProcessorRun::new(def))
+    #[allow(clippy::type_complexity)]
+    let mut reporter_runs: Vec<(ProcessorRun<'_>, &Option<Vec<(usize, usize)>>)> = reporter_defs.iter()
+        .zip(section_ranges.iter())
+        .map(|((_, def), ranges)| (ProcessorRun::new(def), ranges))
         .collect();
 
     for (idx, ctx) in enriched_lines.iter().enumerate() {
-        for (run, ranges) in reporter_runs.iter_mut().zip(section_ranges.iter()) {
+        reporter_runs.par_iter_mut().for_each(|(run, ranges)| {
             if let Some(ranges) = ranges {
                 // Use the original file line number (ctx.source_line_num) for section range check
                 if !ranges.iter().any(|(s, e)| ctx.source_line_num >= *s && ctx.source_line_num <= *e) {
-                    continue;
+                    return;
                 }
             }
             run.process_line(ctx);
-        }
+        });
 
         if idx % PROGRESS_INTERVAL == 0 || idx + 1 == enriched_lines.len() {
             for proc_id in &processor_ids {
@@ -324,7 +328,7 @@ pub async fn run_pipeline(
     let mut session_pipeline_results: HashMap<String, _> = HashMap::new();
 
     // Reporter results
-    for ((proc_id, _), run) in reporter_ids.iter().zip(reporter_defs.iter()).zip(reporter_runs.into_iter()) {
+    for ((proc_id, _), (run, _)) in reporter_ids.iter().zip(reporter_defs.iter()).zip(reporter_runs.into_iter()) {
         let result = run.finish();
         summaries.push(PipelineRunSummary {
             processor_id: proc_id.clone(),
