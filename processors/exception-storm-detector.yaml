@@ -7,24 +7,11 @@ meta:
   tags: ["exception", "error", "storm", "burst", "android", "stability"]
 
 vars:
-  - name: burst_count
-    type: int
-    default: 0
-    display: true
-    label: "Storms Detected"
-
   - name: total_errors_seen
     type: int
     default: 0
     display: true
     label: "Total Errors Seen"
-
-  - name: storms
-    type: list
-    display: true
-    label: "Storm Events"
-    display_as: table
-    columns: ["burst_key", "count_in_window", "window_ms"]
 
 pipeline:
   - stage: filter

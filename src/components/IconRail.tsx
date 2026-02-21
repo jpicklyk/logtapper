@@ -7,17 +7,17 @@ interface RailItem {
 }
 
 const RAIL_ITEMS: RailItem[] = [
-  { tool: 'processors',  icon: '⚙',  label: 'Processors' },
-  { tool: 'chat',        icon: '✦',  label: 'AI Chat' },
+  { tool: 'processors',  icon: '≋',  label: 'Processors' },
   { tool: 'marketplace', icon: '⊞',  label: 'Marketplace' },
 ];
 
 interface Props {
   activeTool: RightTool | null;
   onToggle: (tool: RightTool) => void;
+  onOpenSettings: () => void;
 }
 
-export default function IconRail({ activeTool, onToggle }: Props) {
+export default function IconRail({ activeTool, onToggle, onOpenSettings }: Props) {
   return (
     <div className="icon-rail">
       {RAIL_ITEMS.map(({ tool, icon, label }) => (
@@ -32,6 +32,15 @@ export default function IconRail({ activeTool, onToggle }: Props) {
           <span className="icon-rail-icon">{icon}</span>
         </button>
       ))}
+      <button
+        className="icon-rail-btn"
+        style={{ marginTop: 'auto' }}
+        data-tooltip="Settings"
+        aria-label="Open Settings"
+        onClick={onOpenSettings}
+      >
+        <span className="icon-rail-icon">⚙</span>
+      </button>
     </div>
   );
 }

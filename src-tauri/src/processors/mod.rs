@@ -7,7 +7,7 @@ pub mod transformer;
 
 use serde::{Deserialize, Serialize};
 
-use reporter::schema::ReporterDef;
+use reporter::schema::{ReporterDef, DisplayAs};
 use transformer::schema::TransformerDef;
 use state_tracker::schema::StateTrackerDef;
 use correlator::schema::CorrelatorDef;
@@ -205,6 +205,19 @@ impl AnyProcessor {
     }
 }
 
+/// Display metadata for a single var declaration — sent with ProcessorSummary.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VarMeta {
+    pub name: String,
+    /// Human-readable label (from YAML `label:`, or title-cased name as fallback).
+    pub label: String,
+    pub display: bool,
+    /// `"table"` or `"value"` (from YAML `display_as:`), or None.
+    pub display_as: Option<String>,
+    pub columns: Vec<String>,
+}
+
 /// IPC-serializable summary (returned by list_processors command).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -217,10 +230,39 @@ pub struct ProcessorSummary {
     pub builtin: bool,
     pub processor_type: String,
     pub group: Option<String>,
+    /// Var declarations from the YAML (reporters only; empty for other types).
+    pub vars_meta: Vec<VarMeta>,
+}
+
+fn snake_to_title(s: &str) -> String {
+    s.split('_')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 impl From<&AnyProcessor> for ProcessorSummary {
     fn from(p: &AnyProcessor) -> Self {
+        let vars_meta = match &p.kind {
+            ProcessorKind::Reporter(def) => def.vars.iter().map(|v| VarMeta {
+                name: v.name.clone(),
+                label: v.label.clone().unwrap_or_else(|| snake_to_title(&v.name)),
+                display: v.display,
+                display_as: v.display_as.as_ref().map(|d| match d {
+                    DisplayAs::Table => "table".to_string(),
+                    DisplayAs::Value => "value".to_string(),
+                }),
+                columns: v.columns.clone(),
+            }).collect(),
+            _ => Vec::new(),
+        };
+
         ProcessorSummary {
             id: p.meta.id.clone(),
             name: p.meta.name.clone(),
@@ -230,6 +272,7 @@ impl From<&AnyProcessor> for ProcessorSummary {
             builtin: p.meta.builtin,
             processor_type: p.processor_type().to_string(),
             group: p.group(),
+            vars_meta,
         }
     }
 }

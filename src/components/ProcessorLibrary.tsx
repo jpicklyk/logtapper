@@ -176,12 +176,14 @@ export default function ProcessorLibrary({ pipeline, onClose }: Props) {
     if (typeof selected !== 'string') return;
     setYamlError(null);
     try {
-      await loadProcessorFromFile(selected);
+      const summary = await loadProcessorFromFile(selected);
       await pipeline.loadProcessors();
+      pipeline.addToChain(summary.id);
+      onClose();
     } catch (e) {
       setYamlError(String(e));
     }
-  }, [pipeline]);
+  }, [pipeline, onClose]);
 
   const handleYamlInstall = useCallback(async () => {
     if (!yamlInput.trim()) return;

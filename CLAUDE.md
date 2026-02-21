@@ -44,6 +44,51 @@ src-tauri/src/charts/           ← chart data building from emissions/vars
 src-tauri/src/claude/           ← Claude API client (SSE streaming), processor generator
 ```
 
+## Security model: data tiers and external exposure
+
+LogTapper maintains two distinct data tiers. Understanding which tier is accessible externally is critical when working on features that touch the MCP bridge, export, or Claude integration.
+
+### Tier 1 — Raw log store (internal, `AppState::sessions`)
+
+`AnalysisSession` holds raw log data in one of two forms:
+- **File mode**: memory-mapped bytes + line index (`LogSourceData::File { mmap, line_index }`)
+- **Stream mode**: `Vec<String>` raw lines with eviction counter (`LogSourceData::Stream`)
+
+Accessed via `source.raw_line(i)` / `source.meta_at(i)`. This is the authoritative, unmodified log data.
+
+**What reads Tier 1:**
+- `get_lines` Tauri command — serves `ViewLine[]` to the frontend viewer **only** (internal)
+- `run_pipeline` / `flush_batch` — reads raw lines as pipeline input
+- `mcp_bridge::h_query` — **intentionally serves sampled raw lines externally** (see MCP note below)
+
+### Tier 2 — Pipeline results (`AppState::pipeline_results`, `state_tracker_results`)
+
+Produced by `run_pipeline` (file mode) or `flush_batch` (ADB streaming) after the full layered execution: Transformers → StateTrackers → Reporters. Contains matched line counts, emissions, accumulated vars, and state transition records. Does **not** store raw line text — only references (`matched_line_nums`) and derived aggregates.
+
+**What reads Tier 2:**
+- `get_processor_vars`, `get_matched_lines`, `get_chart_data`, `get_state_transitions` Tauri commands
+- `mcp_bridge::h_pipeline` and `mcp_bridge::h_events`
+
+### Frontend display cache (frontend-only, never exposed externally)
+
+`useLogViewer::lineCacheRef` — `Map<number, ViewLine>` — is a FIFO ring buffer capped at `frontendCacheMax` (default 50,000 lines). It is **not** a pathway for external access; the MCP bridge reads `AppState` directly.
+
+Populated two ways:
+- **ADB streaming**: `adb-batch` events carry `ViewLine[]` produced by `flush_batch` **after** Layer 1 transformers have run — i.e., post-transformation view
+- **File mode**: `get_lines` calls return raw `ViewLine[]` from the line index, pre-pipeline
+
+### MCP bridge access summary
+
+The bridge binds to `127.0.0.1:40404` only (no external network).
+
+| Endpoint | Tier accessed | Notes |
+|---|---|---|
+| `GET /mcp/sessions/:id/query` | **Tier 1 — raw lines** | Intentional: gives Claude direct log access for diagnosis. PII anonymized on-the-fly if `mcp_anonymize` flag is set (toggled when `__pii_anonymizer` is in the pipeline chain). **Default is unredacted.** |
+| `GET /mcp/sessions/:id/pipeline` | Tier 2 — pipeline results | Reporter vars, emissions, matcher counts |
+| `GET /mcp/sessions/:id/events` | Tier 2 — pipeline results | StateTracker transition records |
+
+**PII risk:** If a log file contains PII and `__pii_anonymizer` is **not** in the pipeline chain, MCP queries receive raw unredacted lines. This is deliberate — MCP is a local-only tool used by the developer — but the anonymizer must be explicitly opted into by adding it to the chain.
+
 ### Processor type system
 
 `AnyProcessor { meta: ProcessorMeta, kind: ProcessorKind }` is the unified registry type stored in `AppState::processors`. The `type:` YAML field dispatches to the correct schema; omitting it defaults to `reporter` for backward compatibility.

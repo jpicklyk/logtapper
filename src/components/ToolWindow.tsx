@@ -1,7 +1,6 @@
 import { useAppContext } from '../context/AppContext';
 import type { RightTool } from '../hooks/usePaneLayout';
 import ProcessorPanel from './ProcessorPanel';
-import ChatPanel from './ChatPanel';
 import ProcessorMarketplace from './ProcessorMarketplace';
 
 interface Props {
@@ -10,7 +9,7 @@ interface Props {
 }
 
 export default function ToolWindow({ tool, width }: Props) {
-  const { viewer, pipeline, claude, processorViewId, onOpenLibrary } = useAppContext();
+  const { viewer, pipeline, onOpenLibrary } = useAppContext();
 
   return (
     <div className="tool-window" style={{ width }}>
@@ -22,13 +21,6 @@ export default function ToolWindow({ tool, width }: Props) {
           onOpenLibrary={onOpenLibrary}
           cacheSize={viewer.lineCache.size}
           cacheMax={viewer.cacheMax}
-        />
-      )}
-      {tool === 'chat' && (
-        <ChatPanel
-          claude={claude}
-          sessionId={viewer.session?.sessionId ?? null}
-          processorId={processorViewId}
         />
       )}
       {tool === 'marketplace' && (

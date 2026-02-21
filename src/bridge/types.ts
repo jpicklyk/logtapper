@@ -182,6 +182,16 @@ export interface VarDecl {
   configurable?: boolean;
 }
 
+export interface VarMeta {
+  name: string;
+  /** Human-readable label (from YAML label:, or title-cased name as fallback). */
+  label: string;
+  display: boolean;
+  /** 'table' | 'value', or undefined. */
+  displayAs?: 'table' | 'value';
+  columns: string[];
+}
+
 export interface ProcessorSummary {
   id: string;
   name: string;
@@ -191,6 +201,8 @@ export interface ProcessorSummary {
   builtin: boolean;  // true for built-in processors (id starts with __)
   processorType: 'transformer' | 'reporter' | 'state_tracker' | 'correlator' | 'annotator';
   group: string | null;
+  /** Var declarations from the YAML (reporters only; empty for other types). */
+  varsMeta: VarMeta[];
 }
 
 // ---------------------------------------------------------------------------

@@ -10,9 +10,10 @@ import IconRail from './IconRail';
 interface Props {
   layout: PaneLayoutState;
   pipelineHasResults: boolean;
+  onOpenSettings: () => void;
 }
 
-export default function PaneLayout({ layout, pipelineHasResults }: Props) {
+export default function PaneLayout({ layout, pipelineHasResults, onOpenSettings }: Props) {
   const {
     panes,
     preset,
@@ -78,7 +79,7 @@ export default function PaneLayout({ layout, pipelineHasResults }: Props) {
 
       {/* ── Icon rail — far right edge ── */}
       {!isCompact && (
-        <IconRail activeTool={rightTool} onToggle={toggleRightTool} />
+        <IconRail activeTool={rightTool} onToggle={toggleRightTool} onOpenSettings={onOpenSettings} />
       )}
 
     </div>

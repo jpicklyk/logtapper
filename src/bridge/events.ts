@@ -69,17 +69,3 @@ export function onChartUpdate(
   return listen(`chart-update-${processorId}-${chartId}`, (e) => cb(e.payload));
 }
 
-// ---------------------------------------------------------------------------
-// Phase 4 — Claude streaming
-// ---------------------------------------------------------------------------
-
-export interface ClaudeStreamPayload {
-  token: string;
-  done: boolean;
-}
-
-export function onClaudeStream(
-  cb: (p: ClaudeStreamPayload) => void,
-): Promise<UnlistenFn> {
-  return listen<ClaudeStreamPayload>('claude-stream', (e) => cb(e.payload));
-}
