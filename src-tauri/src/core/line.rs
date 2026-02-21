@@ -61,6 +61,11 @@ pub struct LineMeta {
     pub timestamp: i64,
     pub byte_offset: usize,
     pub byte_len: usize,
+    /// True only for `------` section header/footer lines in bugreport files.
+    /// Used by `build_section_index` to distinguish section boundaries from
+    /// regular logcat lines (which also have non-empty tags and Info level).
+    #[serde(default)]
+    pub is_section_boundary: bool,
 }
 
 // ---------------------------------------------------------------------------

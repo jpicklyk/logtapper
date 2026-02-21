@@ -695,6 +695,7 @@ fn flush_batch(
                 timestamp: 0,
                 byte_offset: 0,
                 byte_len: raw.len(),
+                is_section_boundary: false,
             });
 
         let view_line = if let Some(ctx) = parser.parse_line(&raw, source_id, line_num) {

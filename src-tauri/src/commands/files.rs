@@ -235,6 +235,7 @@ async fn run_background_indexer(
                                 timestamp: 0,
                                 byte_offset: start,
                                 byte_len: content_end - start,
+                                is_section_boundary: false,
                             },
                         );
                         chunk_index.push((start, content_end - start));

@@ -118,6 +118,7 @@ impl BugreportParser {
                 timestamp: 0,
                 byte_offset,
                 byte_len: raw.len(),
+                is_section_boundary: false,
             };
         }
 
@@ -135,6 +136,7 @@ impl BugreportParser {
                 timestamp: parse_dumpstate_timestamp(y, mo, d, h, mi, s),
                 byte_offset,
                 byte_len: raw.len(),
+                is_section_boundary: false,
             };
         }
 
@@ -158,6 +160,7 @@ impl BugreportParser {
                 timestamp: 0,
                 byte_offset,
                 byte_len: raw.len(),
+                is_section_boundary: true,
             };
         }
 
@@ -175,6 +178,7 @@ impl BugreportParser {
             timestamp: 0,
             byte_offset,
             byte_len: raw.len(),
+            is_section_boundary: false,
         }
     }
 }

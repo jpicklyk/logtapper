@@ -152,6 +152,7 @@ impl LogParser for LogcatParser {
                 timestamp: parse_timestamp_ns(date, time),
                 byte_offset,
                 byte_len: raw.len(),
+                is_section_boundary: false,
             });
         }
 
@@ -168,6 +169,7 @@ impl LogParser for LogcatParser {
                 timestamp: 0,
                 byte_offset,
                 byte_len: raw.len(),
+                is_section_boundary: false,
             });
         }
 
@@ -178,6 +180,7 @@ impl LogParser for LogcatParser {
             timestamp: 0,
             byte_offset,
             byte_len: raw.len(),
+            is_section_boundary: false,
         })
     }
 }

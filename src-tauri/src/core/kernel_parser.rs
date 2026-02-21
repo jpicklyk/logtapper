@@ -85,6 +85,7 @@ impl LogParser for KernelParser {
             timestamp: ctx.timestamp,
             byte_offset,
             byte_len: raw.len(),
+            is_section_boundary: false,
         })
     }
 }

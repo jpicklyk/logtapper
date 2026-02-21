@@ -436,6 +436,7 @@ fn build_line_index(mmap: &Mmap, source_type: &SourceType) -> (Vec<(usize, usize
                     timestamp: 0,
                     byte_offset: start,
                     byte_len: content_end - start,
+                    is_section_boundary: false,
                 });
                 line_index.push((start, content_end - start));
                 line_meta.push(meta);
@@ -490,6 +491,7 @@ pub(crate) fn build_partial_line_index(
                     timestamp: 0,
                     byte_offset: start,
                     byte_len: content_end - start,
+                    is_section_boundary: false,
                 });
                 line_index.push((start, content_end - start));
                 line_meta.push(meta);
@@ -529,6 +531,9 @@ fn build_section_index(line_meta: &[LineMeta], source_type: &SourceType) -> Vec<
     let mut pending: Vec<(String, usize)> = Vec::new();
 
     for (i, meta) in line_meta.iter().enumerate() {
+        if !meta.is_section_boundary {
+            continue;
+        }
         if meta.level == LogLevel::Info && !meta.tag.is_empty() && meta.tag != "dumpstate" {
             // Section start header — push onto the stack.
             pending.push((meta.tag.clone(), i));
@@ -591,6 +596,7 @@ mod tests {
                     timestamp: (evicted + i) as i64,
                     byte_offset: 0,
                     byte_len: 0,
+                    is_section_boundary: false,
                 });
             }
         }
