@@ -97,8 +97,10 @@ impl<'a> ProcessorRun<'a> {
                     if let Ok((new_vars, new_emissions)) = engine.run_script(&ss.src, &input) {
                         // Merge var updates
                         self.vars.update_from_rhai(&new_vars);
-                        // Collect emissions
-                        for e in new_emissions {
+                        // Collect emissions — auto-inject timestamp so time series charts work
+                        for mut e in new_emissions {
+                            e.entry("timestamp".to_string())
+                                .or_insert_with(|| JsonValue::Number(line.timestamp.into()));
                             self.emissions.push(Emission {
                                 line_num: line.source_line_num,
                                 fields: e,
@@ -334,6 +336,7 @@ impl<'a> ProcessorRun<'a> {
                             ("burst_key".to_string(), JsonValue::String(key)),
                             ("count_in_window".to_string(), JsonValue::Number(count_in_window.into())),
                             ("window_ms".to_string(), JsonValue::Number(window_ms.unwrap_or(2000).into())),
+                            ("timestamp".to_string(), JsonValue::Number(timestamp.into())),
                         ]),
                     });
                 } else if !in_burst && was_active {

@@ -104,12 +104,33 @@ pub async fn get_matched_lines(
     session_id: String,
     processor_id: String,
 ) -> Result<Vec<MatchedLineInfo>, String> {
+    // 1. Reporter pipeline results
     let line_nums: Vec<usize> = {
         let pr = state.pipeline_results.lock().map_err(|_| "Pipeline results lock poisoned")?;
-        pr.get(&session_id)
+        if let Some(nums) = pr.get(&session_id)
             .and_then(|s| s.get(&processor_id))
             .map(|r| r.matched_line_nums.clone())
-            .unwrap_or_default()
+        {
+            nums
+        } else {
+            drop(pr);
+            // 2. State tracker transition lines
+            let str_lock = state.state_tracker_results.lock().map_err(|_| "State tracker results lock poisoned")?;
+            if let Some(nums) = str_lock.get(&session_id)
+                .and_then(|s| s.get(&processor_id))
+                .map(|r| r.transitions.iter().map(|t| t.line_num).collect::<Vec<_>>())
+            {
+                nums
+            } else {
+                drop(str_lock);
+                // 3. Correlator event trigger lines
+                let cr_lock = state.correlator_results.lock().map_err(|_| "Correlator results lock poisoned")?;
+                cr_lock.get(&session_id)
+                    .and_then(|s| s.get(&processor_id))
+                    .map(|r| r.events.iter().map(|e| e.trigger_line_num).collect::<Vec<_>>())
+                    .unwrap_or_default()
+            }
+        }
     };
     let sessions = state.sessions.lock().map_err(|_| "Session lock poisoned")?;
     let session = sessions.get(&session_id)
