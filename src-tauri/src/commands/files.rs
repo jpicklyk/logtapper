@@ -792,11 +792,17 @@ pub async fn get_dumpstate_metadata(
             } else if raw.starts_with("Bootloader: ") && meta.bootloader.is_none() {
                 meta.bootloader = Some(raw["Bootloader: ".len()..].trim().to_string());
             } else if raw.contains("androidboot.serialno") && meta.serial.is_none() {
-                // androidboot.serialno = "R52X10EJCFA"
-                if let Some(eq_pos) = raw.find('=') {
-                    let val = raw[eq_pos + 1..].trim().trim_matches('"').to_string();
-                    if !val.is_empty() {
-                        meta.serial = Some(val);
+                // Handles both:
+                //   androidboot.serialno = "R52X10EJCFA"        (standalone line)
+                //   ...androidboot.serialno=R52X10EJCFA ...     (kernel cmdline)
+                if let Some(sn_pos) = raw.find("androidboot.serialno") {
+                    let after = raw[sn_pos + "androidboot.serialno".len()..].trim_start_matches(' ');
+                    if let Some(rest) = after.strip_prefix('=') {
+                        let rest = rest.trim_start_matches([' ', '"']);
+                        let val: String = rest.chars().take_while(|&c| c != ' ' && c != '"').collect();
+                        if !val.is_empty() {
+                            meta.serial = Some(val);
+                        }
                     }
                 }
             } else if raw.starts_with("Uptime: ") && meta.uptime.is_none() {

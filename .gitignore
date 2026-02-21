@@ -32,6 +32,9 @@ Thumbs.db
 # Research / scratch documents
 research_docs/
 
+# Implementation plans (local working docs, not for git history)
+plans/
+
 # Logs
 *.log
 npm-debug.log*

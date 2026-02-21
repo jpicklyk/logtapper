@@ -413,3 +413,546 @@ fn parse_time_hms(s: &str) -> i64 {
     let ms = sec_ms.get(1).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
     (h * 3_600 + m * 60 + sec) * 1_000_000_000 + ms * 1_000_000
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::line::{LineContext, LogLevel};
+    use crate::processors::reporter::schema::ReporterDef;
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    fn make_line(tag: &str, message: &str, level: LogLevel, line_num: usize) -> LineContext {
+        LineContext {
+            raw: format!("01-01 00:00:00.000  123  456 {:?} {tag}: {message}", level),
+            timestamp: 1_000_000_000i64 * (line_num as i64 + 1),
+            level,
+            tag: tag.to_string(),
+            pid: 123,
+            tid: 456,
+            message: message.to_string(),
+            source_id: "test".to_string(),
+            source_line_num: line_num,
+            fields: HashMap::new(),
+            annotations: vec![],
+        }
+    }
+
+    fn make_line_ts(tag: &str, message: &str, level: LogLevel, line_num: usize, ts: i64) -> LineContext {
+        let mut l = make_line(tag, message, level, line_num);
+        l.timestamp = ts;
+        l
+    }
+
+    fn def(yaml: &str) -> ReporterDef {
+        ReporterDef::from_yaml(yaml).expect("YAML parse failed")
+    }
+
+    // ── Filter: TagMatch ─────────────────────────────────────────────────────
+
+    #[test]
+    fn filter_tag_match_accepts_matching_tag() {
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: filter
+    rules:
+      - type: tag_match
+        tags: [MyTag]
+"#);
+        let mut run = ProcessorRun::new(&d);
+        run.process_line(&make_line("MyTag", "hello", LogLevel::Info, 10));
+        let result = run.finish();
+        assert_eq!(result.matched_line_nums, vec![10]);
+    }
+
+    #[test]
+    fn filter_tag_match_rejects_wrong_tag() {
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: filter
+    rules:
+      - type: tag_match
+        tags: [MyTag]
+"#);
+        let mut run = ProcessorRun::new(&d);
+        run.process_line(&make_line("OtherTag", "hello", LogLevel::Info, 5));
+        assert!(run.finish().matched_line_nums.is_empty());
+    }
+
+    // ── Filter: MessageContains ──────────────────────────────────────────────
+
+    #[test]
+    fn filter_message_contains_accepts_and_rejects() {
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains
+        value: "DISCONNECT"
+"#);
+        let mut run = ProcessorRun::new(&d);
+        run.process_line(&make_line("T", "DISCONNECT reason=3", LogLevel::Info, 1));
+        run.process_line(&make_line("T", "CONNECT event", LogLevel::Info, 2));
+        let result = run.finish();
+        assert_eq!(result.matched_line_nums, vec![1]);
+    }
+
+    // ── Filter: MessageContainsAny ───────────────────────────────────────────
+
+    #[test]
+    fn filter_message_contains_any_accepts_either_value() {
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains_any
+        values: [EBADF, "Bad file descriptor"]
+"#);
+        let mut run = ProcessorRun::new(&d);
+        run.process_line(&make_line("T", "read: EBADF", LogLevel::Error, 1));
+        run.process_line(&make_line("T", "Bad file descriptor", LogLevel::Error, 2));
+        run.process_line(&make_line("T", "all good", LogLevel::Info, 3));
+        let result = run.finish();
+        assert_eq!(result.matched_line_nums, vec![1, 2]);
+    }
+
+    // ── Filter: LevelMin ────────────────────────────────────────────────────
+
+    #[test]
+    fn filter_level_min_accepts_warn_and_above() {
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: filter
+    rules:
+      - type: level_min
+        level: W
+"#);
+        let mut run = ProcessorRun::new(&d);
+        run.process_line(&make_line("T", "v", LogLevel::Verbose, 1));
+        run.process_line(&make_line("T", "d", LogLevel::Debug,   2));
+        run.process_line(&make_line("T", "i", LogLevel::Info,    3));
+        run.process_line(&make_line("T", "w", LogLevel::Warn,    4));
+        run.process_line(&make_line("T", "e", LogLevel::Error,   5));
+        run.process_line(&make_line("T", "f", LogLevel::Fatal,   6));
+        let result = run.finish();
+        assert_eq!(result.matched_line_nums, vec![4, 5, 6]);
+    }
+
+    // ── Filter: MessageRegex ─────────────────────────────────────────────────
+
+    #[test]
+    fn filter_message_regex_matches_pattern() {
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_regex
+        pattern: 'FD:\s+\d+'
+"#);
+        let mut run = ProcessorRun::new(&d);
+        run.process_line(&make_line("T", "Watchdog FD: 950 heap: 512", LogLevel::Info, 7));
+        run.process_line(&make_line("T", "No match here", LogLevel::Info, 8));
+        let result = run.finish();
+        assert_eq!(result.matched_line_nums, vec![7]);
+    }
+
+    #[test]
+    fn filter_invalid_regex_produces_no_matches() {
+        // An invalid regex should not panic — it silently rejects all lines.
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_regex
+        pattern: '(?!invalid_lookahead)'
+"#);
+        let mut run = ProcessorRun::new(&d);
+        run.process_line(&make_line("T", "anything", LogLevel::Info, 1));
+        assert!(run.finish().matched_line_nums.is_empty());
+    }
+
+    // ── Filter: TimeRange ────────────────────────────────────────────────────
+
+    #[test]
+    fn filter_time_range_accepts_within_window() {
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: filter
+    rules:
+      - type: time_range
+        from: "00:30:00"
+        to: "02:00:00"
+"#);
+        let mut run = ProcessorRun::new(&d);
+        // 1 hour = 3_600_000_000_000 ns; within [30min, 2h] → accepted
+        let inside  = make_line_ts("T", "inside",  LogLevel::Info, 1, 3_600_000_000_000);
+        // midnight (ts=0) → before 00:30 → rejected
+        let outside = make_line_ts("T", "outside", LogLevel::Info, 2, 0);
+        run.process_line(&inside);
+        run.process_line(&outside);
+        let result = run.finish();
+        assert_eq!(result.matched_line_nums, vec![1]);
+    }
+
+    // ── Filter: multiple rules AND-ed ────────────────────────────────────────
+
+    #[test]
+    fn filter_rules_are_anded_all_must_pass() {
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: filter
+    rules:
+      - type: tag_match
+        tags: [ActivityManager]
+      - type: message_contains
+        value: "Killing"
+"#);
+        let mut run = ProcessorRun::new(&d);
+        // Both rules satisfied → accepted
+        run.process_line(&make_line("ActivityManager", "Killing PID 1234", LogLevel::Info, 1));
+        // Wrong tag → rejected
+        run.process_line(&make_line("System", "Killing PID 5678", LogLevel::Info, 2));
+        // Right tag, wrong message → rejected
+        run.process_line(&make_line("ActivityManager", "Starting PID 9999", LogLevel::Info, 3));
+        let result = run.finish();
+        assert_eq!(result.matched_line_nums, vec![1]);
+    }
+
+    // ── Extract ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn extract_captures_group_and_casts_to_int() {
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+vars:
+  - name: last_fd
+    type: int
+    default: 0
+pipeline:
+  - stage: extract
+    fields:
+      - name: fd_count
+        pattern: 'FD:\s+(\d+)'
+        cast: int
+  - stage: script
+    runtime: rhai
+    src: |
+      if "fd_count" in fields {
+        vars.last_fd = fields.fd_count;
+      }
+      _emits.push(#{ fd: fields.fd_count });
+"#);
+        let mut run = ProcessorRun::new(&d);
+        run.process_line(&make_line("T", "FD: 950 heap: 512", LogLevel::Info, 1));
+        let result = run.finish();
+        assert_eq!(result.emissions.len(), 1);
+        assert_eq!(result.emissions[0].fields["fd"], JsonValue::Number(950.into()));
+        assert_eq!(result.vars["last_fd"], JsonValue::Number(950.into()));
+    }
+
+    #[test]
+    fn extract_non_matching_pattern_omits_field() {
+        // When the extract pattern doesn't match, the field is absent from `fields`.
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: extract
+    fields:
+      - name: fd_count
+        pattern: 'FD:\s+(\d+)'
+        cast: int
+  - stage: script
+    runtime: rhai
+    src: |
+      let has_fd = "fd_count" in fields;
+      _emits.push(#{ has_fd: has_fd });
+"#);
+        let mut run = ProcessorRun::new(&d);
+        run.process_line(&make_line("T", "no fd here", LogLevel::Info, 1));
+        let result = run.finish();
+        assert_eq!(result.emissions[0].fields["has_fd"], JsonValue::Bool(false));
+    }
+
+    // ── Script / emissions ───────────────────────────────────────────────────
+
+    #[test]
+    fn script_var_accumulates_across_lines() {
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+vars:
+  - name: count
+    type: int
+    default: 0
+pipeline:
+  - stage: script
+    runtime: rhai
+    src: |
+      vars.count += 1;
+"#);
+        let mut run = ProcessorRun::new(&d);
+        for i in 0..5usize {
+            run.process_line(&make_line("T", "msg", LogLevel::Info, i));
+        }
+        let result = run.finish();
+        assert_eq!(result.vars["count"], JsonValue::Number(5.into()));
+        assert_eq!(result.matched_line_nums.len(), 5);
+    }
+
+    #[test]
+    fn script_emission_gets_timestamp_auto_injected() {
+        // The engine must inject `line.timestamp` into every emission that
+        // doesn't already have a "timestamp" key — required for time series charts.
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: script
+    runtime: rhai
+    src: |
+      _emits.push(#{ value: 42 });
+"#);
+        let mut run = ProcessorRun::new(&d);
+        let line = make_line_ts("T", "msg", LogLevel::Info, 1, 123_456_789_000);
+        run.process_line(&line);
+        let result = run.finish();
+        assert_eq!(result.emissions.len(), 1);
+        assert_eq!(
+            result.emissions[0].fields["timestamp"],
+            JsonValue::Number(123_456_789_000i64.into()),
+            "timestamp must be auto-injected from line.timestamp"
+        );
+    }
+
+    #[test]
+    fn script_explicit_timestamp_is_preserved() {
+        // If the script already pushed a "timestamp" field, it must not be overwritten.
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: script
+    runtime: rhai
+    src: |
+      _emits.push(#{ value: 1, timestamp: 999 });
+"#);
+        let mut run = ProcessorRun::new(&d);
+        let line = make_line_ts("T", "msg", LogLevel::Info, 1, 111_000);
+        run.process_line(&line);
+        let result = run.finish();
+        assert_eq!(
+            result.emissions[0].fields["timestamp"],
+            JsonValue::Number(999i64.into()),
+            "script-provided timestamp must not be overwritten by auto-inject"
+        );
+    }
+
+    #[test]
+    fn emission_line_num_matches_source_line_num() {
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: script
+    runtime: rhai
+    src: |
+      _emits.push(#{ x: 1 });
+"#);
+        let mut run = ProcessorRun::new(&d);
+        run.process_line(&make_line("T", "msg", LogLevel::Info, 42));
+        let result = run.finish();
+        assert_eq!(result.emissions[0].line_num, 42);
+    }
+
+    // ── No pipeline — pass-through ───────────────────────────────────────────
+
+    #[test]
+    fn no_pipeline_all_lines_matched_no_emissions() {
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+"#);
+        let mut run = ProcessorRun::new(&d);
+        for i in 1..=3usize {
+            run.process_line(&make_line("T", "msg", LogLevel::Info, i));
+        }
+        let result = run.finish();
+        assert_eq!(result.matched_line_nums, vec![1, 2, 3]);
+        assert!(result.emissions.is_empty());
+    }
+
+    // ── BurstDetector ────────────────────────────────────────────────────────
+
+    /// Build a minimal YAML with a BurstDetector on the extracted "key" field.
+    fn burst_def_yaml(window_ms: u64, threshold: usize) -> String {
+        format!(r#"
+meta:
+  id: burst-test
+  name: Burst Test
+pipeline:
+  - stage: extract
+    fields:
+      - name: key
+        pattern: 'key=(\w+)'
+  - stage: aggregate
+    groups:
+      - type: burst_detector
+        field: key
+        window_ms: {window_ms}
+        threshold: {threshold}
+"#)
+    }
+
+    #[test]
+    fn burst_fires_once_on_rising_edge() {
+        let d = def(&burst_def_yaml(2000, 5));
+        let mut run = ProcessorRun::new(&d);
+        let base = 1_000_000_000_000i64; // arbitrary base timestamp (nanos)
+        for i in 0..5usize {
+            run.process_line(&make_line_ts("T", "key=mykey event", LogLevel::Error, i + 1,
+                base + (i as i64) * 10_000_000)); // 10ms apart → all within 2s window
+        }
+        let result = run.finish();
+        assert_eq!(result.emissions.len(), 1, "exactly one burst emission on rising edge");
+        assert_eq!(result.emissions[0].fields["burst_key"],
+                   JsonValue::String("mykey".to_string()));
+        assert_eq!(result.emissions[0].fields["count_in_window"],
+                   JsonValue::Number(5.into()));
+    }
+
+    #[test]
+    fn burst_does_not_fire_below_threshold() {
+        let d = def(&burst_def_yaml(2000, 10));
+        let mut run = ProcessorRun::new(&d);
+        let base = 1_000_000_000_000i64;
+        for i in 0..5usize {
+            run.process_line(&make_line_ts("T", "key=k event", LogLevel::Error, i + 1,
+                base + (i as i64) * 10_000_000));
+        }
+        let result = run.finish();
+        assert!(result.emissions.is_empty(), "5 events < threshold of 10, no burst");
+    }
+
+    #[test]
+    fn burst_fires_once_not_on_every_subsequent_line() {
+        let d = def(&burst_def_yaml(2000, 3));
+        let mut run = ProcessorRun::new(&d);
+        let base = 1_000_000_000_000i64;
+        // Send 10 rapid events — only the 3rd (rising edge) should emit
+        for i in 0..10usize {
+            run.process_line(&make_line_ts("T", "key=spam event", LogLevel::Error, i + 1,
+                base + (i as i64) * 10_000_000));
+        }
+        let result = run.finish();
+        assert_eq!(result.emissions.len(), 1, "burst emits once on rising edge only");
+    }
+
+    #[test]
+    fn burst_re_fires_after_window_expires() {
+        // After a gap longer than the window, old events expire, active flag clears,
+        // and a new burst can trigger again.
+        let d = def(&burst_def_yaml(500, 3)); // 500ms window
+        let mut run = ProcessorRun::new(&d);
+        let base = 1_000_000_000_000i64;
+        let ms  = 1_000_000i64; // 1ms in nanos
+
+        // First burst: 3 events within 50ms
+        for i in 0..3usize {
+            run.process_line(&make_line_ts("T", "key=k event", LogLevel::Error, i + 1,
+                base + (i as i64) * 10 * ms));
+        }
+        // Second burst: 3 events starting 1s later (> 500ms gap clears the window)
+        for i in 0..3usize {
+            run.process_line(&make_line_ts("T", "key=k event", LogLevel::Error, i + 10,
+                base + 1000 * ms + (i as i64) * 10 * ms));
+        }
+        let result = run.finish();
+        assert_eq!(result.emissions.len(), 2, "two separate bursts → two emissions");
+    }
+
+    #[test]
+    fn burst_emission_contains_timestamp_field() {
+        // Burst emissions must have a "timestamp" field so time series charts work.
+        let d = def(&burst_def_yaml(2000, 3));
+        let mut run = ProcessorRun::new(&d);
+        let base = 2_000_000_000_000i64;
+        for i in 0..3usize {
+            run.process_line(&make_line_ts("T", "key=t event", LogLevel::Error, i + 1,
+                base + (i as i64) * 10_000_000));
+        }
+        let result = run.finish();
+        assert_eq!(result.emissions.len(), 1);
+        assert!(
+            result.emissions[0].fields.contains_key("timestamp"),
+            "burst emission must carry a timestamp field for chart rendering"
+        );
+    }
+
+    #[test]
+    fn burst_uses_default_key_when_field_not_extracted() {
+        // When the burst field is not present in `fields` (extract didn't match),
+        // the key falls back to "_default" and the detector still works.
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: aggregate
+    groups:
+      - type: burst_detector
+        field: nonexistent_field
+        window_ms: 2000
+        threshold: 3
+"#);
+        let mut run = ProcessorRun::new(&d);
+        let base = 1_000_000_000_000i64;
+        for i in 0..3usize {
+            run.process_line(&make_line_ts("T", "msg", LogLevel::Info, i + 1,
+                base + (i as i64) * 10_000_000));
+        }
+        let result = run.finish();
+        assert_eq!(result.emissions.len(), 1);
+        assert_eq!(result.emissions[0].fields["burst_key"],
+                   JsonValue::String("_default".to_string()));
+    }
+}
