@@ -155,6 +155,7 @@ pub async fn load_log_file(
         }
         let app_clone = app.clone();
         let sid = session_id.clone();
+        let initial_line_count = total_lines; // capture before session is moved into map
         tokio::spawn(async move {
             run_background_indexer(
                 sid,
@@ -162,6 +163,7 @@ pub async fn load_log_file(
                 source_type,
                 bytes_consumed,
                 total_bytes,
+                initial_line_count,
                 app_clone,
                 cancel_rx,
             )
@@ -178,6 +180,7 @@ async fn run_background_indexer(
     source_type: crate::core::session::SourceType,
     start_byte: usize,
     total_bytes: usize,
+    initial_line_count: usize,
     app: AppHandle,
     mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) {
@@ -192,18 +195,9 @@ async fn run_background_indexer(
     // bytes_scanned is updated inside the loop before it is read; no valid initial value.
     let mut bytes_scanned: usize;
     let mut start = start_byte;
-    let mut total_indexed: usize = {
-        state
-            .sessions
-            .lock()
-            .ok()
-            .and_then(|s: std::sync::MutexGuard<std::collections::HashMap<String, crate::core::session::AnalysisSession>>| {
-                s.get(&session_id)
-                    .and_then(|sess| sess.sources.first())
-                    .map(|src| src.total_lines())
-            })
-            .unwrap_or(0)
-    };
+    // Start from the count already indexed in the initial partial scan, passed directly
+    // to avoid a session lock that might fail or see a replaced session.
+    let mut total_indexed: usize = initial_line_count;
 
     let mut i = start_byte;
     loop {
@@ -224,25 +218,24 @@ async fn run_background_indexer(
                 end
             };
 
-            if content_end > start {
-                if let Ok(raw_str) = std::str::from_utf8(&data[start..content_end]) {
-                    let raw_str = raw_str.trim();
-                    if !raw_str.is_empty() {
-                        let meta = parser.parse_meta(raw_str, start).unwrap_or(
-                            crate::core::line::LineMeta {
-                                level: LogLevel::Info,
-                                tag: String::new(),
-                                timestamp: 0,
-                                byte_offset: start,
-                                byte_len: content_end - start,
-                                is_section_boundary: false,
-                            },
-                        );
-                        chunk_index.push((start, content_end - start));
-                        chunk_meta.push(meta);
-                    }
-                }
-            }
+            // Include blank lines so indexed line numbers match physical file positions.
+            let raw_str = if content_end > start {
+                std::str::from_utf8(&data[start..content_end]).unwrap_or("").trim()
+            } else {
+                ""
+            };
+            let meta = parser.parse_meta(raw_str, start).unwrap_or(
+                crate::core::line::LineMeta {
+                    level: LogLevel::Info,
+                    tag: String::new(),
+                    timestamp: 0,
+                    byte_offset: start,
+                    byte_len: content_end.saturating_sub(start),
+                    is_section_boundary: false,
+                },
+            );
+            chunk_index.push((start, content_end.saturating_sub(start)));
+            chunk_meta.push(meta);
 
             bytes_scanned = i + 1;
             start = i + 1;

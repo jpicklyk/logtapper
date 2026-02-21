@@ -219,12 +219,15 @@ export default function App() {
       setSections([]);
       return;
     }
+    // Don't fetch sections while progressive indexing is still running — the
+    // backend only rebuilds the section index on completion (done=true).
+    if (viewer.indexingProgress !== null) return;
     getSections(viewer.session.sessionId)
       .then((secs) =>
         setSections(secs.map((s) => ({ lineNum: s.startLine, endLine: s.endLine, title: s.name })))
       )
       .catch(() => setSections([]));
-  }, [viewer.session]);
+  }, [viewer.session, viewer.indexingProgress]);
 
   // ── Dumpstate metadata fetch ───────────────────────────────────────────────
 
