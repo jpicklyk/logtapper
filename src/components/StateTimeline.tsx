@@ -12,13 +12,13 @@ interface TrackerTimeline {
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
-const EPOCH_OFFSET_MS = 946684800000; // 2000-01-01 00:00:00 UTC in Unix ms
-
+// Timestamps are Unix nanoseconds computed with 2000-01-01 as the logcat year anchor.
+// The raw i64 value IS a Unix nanosecond timestamp — do NOT add any epoch offset.
 function formatTs(tsNanos: number): string {
-  const d = new Date(EPOCH_OFFSET_MS + tsNanos / 1_000_000);
+  const d = new Date(tsNanos / 1_000_000); // Unix ns → Unix ms
   return [
     d.getUTCHours().toString().padStart(2, '0'),
-    d.getUTCMinutes().toString().padStart(2, '0'),
+    d.getUTCMinutes().toString().padStart(2, '00'),
     d.getUTCSeconds().toString().padStart(2, '0'),
   ].join(':') + '.' + d.getUTCMilliseconds().toString().padStart(3, '0');
 }
@@ -125,21 +125,39 @@ export default function StateTimeline() {
   const session = viewer.session;
   const totalLines = session?.totalLines ?? 1;
 
-  // Session time bounds — used for the time ruler row
+  // Session time bounds — derived from transition timestamps, NOT session metadata.
+  // session.firstTimestamp / lastTimestamp are unreliable for bugreport files because
+  // the dumpstate header line gets a year-2026 Unix-ns timestamp while logcat lines
+  // use a year-2000-base, making firstTs > lastTs and causing hasTimeData = false.
   const [minTs, tsRange, hasTimeData] = useMemo(() => {
-    if (
-      session?.firstTimestamp != null &&
-      session.lastTimestamp != null &&
-      session.lastTimestamp > session.firstTimestamp
-    ) {
-      return [
-        session.firstTimestamp,
-        session.lastTimestamp - session.firstTimestamp,
-        true,
-      ] as const;
+    // Collect all transitions that carry a real timestamp
+    const anchors: { lineNum: number; ts: number }[] = [];
+    for (const tl of timelines) {
+      for (const t of tl.transitions) {
+        if (t.timestamp > 0) anchors.push({ lineNum: t.lineNum, ts: t.timestamp });
+      }
     }
-    return [0, 1, false] as const;
-  }, [session]);
+    if (anchors.length === 0) return [0, 1, false] as const;
+
+    anchors.sort((a, b) => a.lineNum - b.lineNum);
+    const first = anchors[0];
+    const last = anchors[anchors.length - 1];
+
+    // If all timestamps are on the same line, give a ±5 s window around that point
+    if (first.lineNum === last.lineNum || first.ts >= last.ts) {
+      return [first.ts - 5_000_000_000, 10_000_000_000, true] as const;
+    }
+
+    // Linear extrapolation: compute slope (ns per line) and extend to line 0 and totalLines-1
+    const slope = (last.ts - first.ts) / (last.lineNum - first.lineNum);
+    const extMin = Math.max(0, first.ts - first.lineNum * slope);
+    const extMax = first.ts + (totalLines - 1 - first.lineNum) * slope;
+    const extRange = extMax - extMin;
+
+    if (extRange <= 0) return [0, 1, false] as const;
+
+    return [extMin, extRange, true] as const;
+  }, [timelines, totalLines]);
 
   // Scroll-wheel zoom — single viewport in line-number space
   useEffect(() => {
