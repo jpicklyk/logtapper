@@ -43,3 +43,6 @@ rayon = "1"
 
 # MCP bridge — local HTTP server for AI agent tool access
 axum = "0.8"
+
+# Window state persistence (saves position/size across restarts)
+tauri-plugin-window-state = "2"

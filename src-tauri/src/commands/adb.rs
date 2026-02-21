@@ -873,10 +873,7 @@ fn flush_batch(
                         Ok(g) => g,
                         Err(_) => continue,
                     };
-                    match st.get_mut(session_id).and_then(|m| m.remove(t_id.as_str())) {
-                        Some(s) => s,
-                        None => crate::processors::state_tracker::types::ContinuousTrackerState::default(),
-                    }
+                    st.get_mut(session_id).and_then(|m| m.remove(t_id.as_str())).unwrap_or_default()
                 };
 
                 let mut run = crate::processors::state_tracker::engine::StateTrackerRun::new_seeded(
@@ -969,13 +966,7 @@ fn flush_batch(
         };
 
         // Create seeded run and process new lines
-        let mut run = ProcessorRun::new_seeded(
-            def,
-            cont_state.vars,
-            cont_state.emissions,
-            cont_state.matched_line_nums,
-            cont_state.history,
-        );
+        let mut run = ProcessorRun::new_seeded(def, cont_state);
 
         for (i, (_, _, vl)) in parsed.iter().enumerate() {
             if let Some(ctx) = parser.parse_line(&vl.raw, source_id, first_new_line + i) {

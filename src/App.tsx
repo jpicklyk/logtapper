@@ -202,6 +202,14 @@ export default function App() {
     if (hasActiveTrackers) {
       layout.openCenterTab('statetimeline');
     }
+
+    // Auto-open Correlations tab if any correlator processors are in the chain
+    const hasActiveCorrelators = pipeline.processors.some(
+      (p) => p.processorType === 'correlator' && pipeline.activeProcessorIds.has(p.id),
+    );
+    if (hasActiveCorrelators) {
+      layout.openCenterTab('correlations');
+    }
   }, [pipeline.runCount]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Section detection (Bugreport/Dumpstate files) ─────────────────────────

@@ -71,11 +71,7 @@ impl AnyProcessor {
     pub fn group(&self) -> Option<String> {
         match &self.kind {
             ProcessorKind::StateTracker(def) => {
-                if def.group.is_empty() {
-                    None
-                } else {
-                    Some(def.group.clone())
-                }
+                if def.group.is_empty() { None } else { Some(def.group.clone()) }
             }
             _ => None,
         }
@@ -98,6 +94,13 @@ impl AnyProcessor {
     pub fn as_state_tracker(&self) -> Option<&StateTrackerDef> {
         match &self.kind {
             ProcessorKind::StateTracker(def) => Some(def),
+            _ => None,
+        }
+    }
+
+    pub fn as_correlator(&self) -> Option<&CorrelatorDef> {
+        match &self.kind {
+            ProcessorKind::Correlator(def) => Some(def),
             _ => None,
         }
     }

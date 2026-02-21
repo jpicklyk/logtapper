@@ -1,6 +1,6 @@
 use regex::Regex;
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::core::line::LineContext;
 use super::schema::{
@@ -34,6 +34,10 @@ pub struct ProcessorRun<'a> {
     script_engine: Option<ScriptEngine>,
     /// Lookback buffer (capped at 1000 lines).
     history: Vec<LineContext>,
+    /// Per-key sliding windows of timestamps (nanos). Used by BurstDetector.
+    burst_windows: HashMap<String, VecDeque<i64>>,
+    /// Keys currently in an active burst (suppresses duplicate emissions per burst).
+    burst_active: HashSet<String>,
 }
 
 impl<'a> ProcessorRun<'a> {
@@ -46,25 +50,23 @@ impl<'a> ProcessorRun<'a> {
             regex_cache: HashMap::new(),
             script_engine: None,
             history: Vec::new(),
+            burst_windows: HashMap::new(),
+            burst_active: HashSet::new(),
         }
     }
 
     /// Create a run seeded with previously saved state for continuous (streaming) processing.
-    pub fn new_seeded(
-        def: &'a ReporterDef,
-        vars: VarStore,
-        emissions: Vec<Emission>,
-        matched_line_nums: Vec<usize>,
-        history: Vec<LineContext>,
-    ) -> Self {
+    pub fn new_seeded(def: &'a ReporterDef, state: ContinuousRunState) -> Self {
         Self {
-            vars,
+            vars: state.vars,
             def,
-            emissions,
-            matched_line_nums,
+            emissions: state.emissions,
+            matched_line_nums: state.matched_line_nums,
             regex_cache: HashMap::new(),
             script_engine: None,
-            history,
+            history: state.history,
+            burst_windows: state.burst_windows,
+            burst_active: state.burst_active,
         }
     }
 
@@ -106,7 +108,14 @@ impl<'a> ProcessorRun<'a> {
                 }
                 PipelineStage::Aggregate(agg) => {
                     for group in &agg.groups {
-                        self.apply_aggregate(&group.agg_type, group.field.as_deref(), &fields);
+                        self.apply_aggregate(
+                            &group.agg_type,
+                            group.field.as_deref(),
+                            &fields,
+                            line.timestamp,
+                            group.window_ms,
+                            group.threshold,
+                        );
                     }
                 }
                 PipelineStage::Correlate(_) | PipelineStage::Output(_) => {
@@ -151,6 +160,8 @@ impl<'a> ProcessorRun<'a> {
             matched_line_nums: self.matched_line_nums,
             history: self.history,
             last_processed_line,
+            burst_windows: self.burst_windows,
+            burst_active: self.burst_active,
         }
     }
 
@@ -263,6 +274,9 @@ impl<'a> ProcessorRun<'a> {
         agg_type: &AggType,
         field: Option<&str>,
         fields: &HashMap<String, JsonValue>,
+        timestamp: i64,
+        window_ms: Option<u64>,
+        threshold: Option<usize>,
     ) {
         match agg_type {
             AggType::Count => {
@@ -284,6 +298,47 @@ impl<'a> ProcessorRun<'a> {
                             ]),
                         });
                     }
+                }
+            }
+            AggType::BurstDetector => {
+                // Sliding-window burst detector.
+                // Emits one Emission per rising edge (when count crosses threshold).
+                // Clears active flag on falling edge so next burst re-triggers.
+                let window_nanos = window_ms.unwrap_or(2000) as i64 * 1_000_000;
+                let burst_threshold = threshold.unwrap_or(20);
+
+                let key = field
+                    .and_then(|f| fields.get(f))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("_default")
+                    .to_string();
+
+                let window = self.burst_windows.entry(key.clone()).or_default();
+                // Evict entries outside the sliding window.
+                while window.front().is_some_and(|&ts| timestamp - ts > window_nanos) {
+                    window.pop_front();
+                }
+                window.push_back(timestamp);
+
+                let in_burst = window.len() >= burst_threshold;
+                let was_active = self.burst_active.contains(&key);
+
+                if in_burst && !was_active {
+                    // Rising edge: emit burst event.
+                    self.burst_active.insert(key.clone());
+                    let count_in_window = window.len();
+                    let line_num = self.matched_line_nums.last().copied().unwrap_or(0);
+                    self.emissions.push(Emission {
+                        line_num,
+                        fields: HashMap::from([
+                            ("burst_key".to_string(), JsonValue::String(key)),
+                            ("count_in_window".to_string(), JsonValue::Number(count_in_window.into())),
+                            ("window_ms".to_string(), JsonValue::Number(window_ms.unwrap_or(2000).into())),
+                        ]),
+                    });
+                } else if !in_burst && was_active {
+                    // Falling edge: clear so the next burst can re-trigger.
+                    self.burst_active.remove(&key);
                 }
             }
             // Min/Max/Avg/Percentile/TimeBucket are deferred to Phase 3 chart aggregation.
@@ -320,6 +375,10 @@ pub struct ContinuousRunState {
     pub history: Vec<LineContext>,
     /// Absolute session line index of the next line to process.
     pub last_processed_line: usize,
+    /// BurstDetector sliding windows (persisted so bursts span batch boundaries).
+    pub burst_windows: HashMap<String, VecDeque<i64>>,
+    /// BurstDetector active-burst keys (persisted to prevent double-firing).
+    pub burst_active: HashSet<String>,
 }
 
 // ---------------------------------------------------------------------------

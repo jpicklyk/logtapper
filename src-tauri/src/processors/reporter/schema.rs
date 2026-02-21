@@ -294,6 +294,12 @@ pub struct AggregateGroup {
     pub interval: Option<String>,
     #[serde(default)]
     pub label: Option<String>,
+    /// Sliding window size in milliseconds for BurstDetector (default 2000).
+    #[serde(default)]
+    pub window_ms: Option<u64>,
+    /// Number of events within the window to trigger a burst (default 20).
+    #[serde(default)]
+    pub threshold: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -306,6 +312,9 @@ pub enum AggType {
     Avg,
     Percentile,
     TimeBucket,
+    /// Sliding-window burst detector. Emits one event per rising edge when
+    /// `threshold` or more events occur within `window_ms` milliseconds.
+    BurstDetector,
 }
 
 // ── Output ───────────────────────────────────────────────────────────────────

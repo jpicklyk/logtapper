@@ -1,0 +1,151 @@
+meta:
+  id: "system-server-fd-monitor"
+  name: "System Server FD Monitor"
+  version: "1.0.0"
+  author: "LogTapper"
+  description: "Extracts Samsung Watchdog FD telemetry from system_server. Tracks FD count over time, classifies into normal/elevated/critical states, and detects the boot FD spike pattern."
+  tags: ["fd", "file-descriptor", "system_server", "watchdog", "leak", "android"]
+
+vars:
+  - name: peak_fd_count
+    type: int
+    default: 0
+    display: true
+    label: "Peak FD Count"
+
+  - name: boot_fd_spike
+    type: int
+    default: 0
+    display: true
+    label: "Boot FD Spike (sync1→sync2 delta)"
+
+  - name: baseline_fd_count
+    type: int
+    default: 0
+    display: true
+    label: "Baseline FD Count (sync1)"
+
+  - name: critical_count
+    type: int
+    default: 0
+    display: true
+    label: "Critical FD Events (>1000)"
+
+  - name: fd_state_distribution
+    type: map
+    default: {}
+    display: true
+    label: "FD State Distribution"
+    display_as: table
+    columns: ["fd_state", "count"]
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: tag_match
+        tags: ["Watchdog"]
+      - type: message_contains
+        value: "FD:"
+
+  - stage: extract
+    fields:
+      - name: fd_count
+        pattern: 'FD:\s*(\d+)'
+        cast: int
+      - name: heap_used
+        pattern: 'heap\(MB\):\s*(\d+)\s*/'
+        cast: int
+      - name: heap_max
+        pattern: 'heap\(MB\):\s*\d+\s*/\s*(\d+)'
+        cast: int
+      - name: sync_num
+        pattern: '!@Sync[:\s]+(\d+)'
+        cast: int
+
+  - stage: script
+    runtime: rhai
+    src: |
+      if !("fd_count" in fields) {
+        return;
+      }
+
+      let fd = fields.fd_count;
+
+      // Classify FD state
+      let fd_state = "normal";
+      if fd > 1000 {
+        fd_state = "critical";
+        vars.critical_count += 1;
+      } else if fd >= 500 {
+        fd_state = "elevated";
+      }
+
+      // Track peak
+      if fd > vars.peak_fd_count {
+        vars.peak_fd_count = fd;
+      }
+
+      // Boot spike detection: capture sync1 as baseline, sync2-sync1 as spike
+      if "sync_num" in fields {
+        let sn = fields.sync_num;
+        if sn == 1 && vars.baseline_fd_count == 0 {
+          vars.baseline_fd_count = fd;
+        } else if sn == 2 && vars.baseline_fd_count > 0 && vars.boot_fd_spike == 0 {
+          let delta = fd - vars.baseline_fd_count;
+          if delta > 0 {
+            vars.boot_fd_spike = delta;
+          }
+        }
+      }
+
+      // Update state distribution
+      let dist = vars.fd_state_distribution;
+      if fd_state in dist {
+        dist[fd_state] = dist[fd_state] + 1;
+      } else {
+        dist[fd_state] = 1;
+      }
+      vars.fd_state_distribution = dist;
+
+      let heap_pct = 0;
+      if "heap_used" in fields && "heap_max" in fields {
+        if fields.heap_max > 0 {
+          heap_pct = (fields.heap_used * 100) / fields.heap_max;
+        }
+      }
+
+      _emits.push(#{
+        fd_count: fd,
+        fd_state: fd_state,
+        heap_pct: heap_pct,
+        sync_num: if "sync_num" in fields { fields.sync_num } else { 0 },
+      });
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["fd_count", "fd_state", "heap_pct", "sync_num"]
+        sort: "fd_count"
+
+    charts:
+      - id: fd_timeline
+        type: time_series
+        title: "System Server FD Count Over Time"
+        source: emissions
+        x: { field: timestamp, label: "Time" }
+        y: { field: fd_count, label: "FD Count" }
+
+      - id: heap_timeline
+        type: time_series
+        title: "System Server Heap Usage % Over Time"
+        source: emissions
+        x: { field: timestamp, label: "Time" }
+        y: { field: heap_pct, label: "Heap %" }
+
+      - id: fd_state_bar
+        type: bar
+        title: "FD State Distribution"
+        source: emissions
+        x: { field: fd_state, label: "FD State" }
+        y: { field: fd_state, label: "Count", aggregation: count }

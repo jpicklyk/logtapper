@@ -18,6 +18,7 @@ import type {
   StateSnapshot,
   StateTransition,
   McpStatus,
+  CorrelatorResult,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -158,29 +159,6 @@ export function getChartData(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 4 — Claude
-// ---------------------------------------------------------------------------
-
-export function setClaudeApiKey(apiKey: string): Promise<void> {
-  return invoke('set_claude_api_key', { apiKey });
-}
-
-export function claudeAnalyze(
-  sessionId: string,
-  processorId: string | null,
-  userMessage: string,
-): Promise<void> {
-  return invoke('claude_analyze', { sessionId, processorId, userMessage });
-}
-
-export function claudeGenerateProcessor(
-  description: string,
-  sampleLines: string[],
-): Promise<string> {
-  return invoke('claude_generate_processor', { description, sampleLines });
-}
-
-// ---------------------------------------------------------------------------
 // Phase 5 — Dumpstate metadata + section index
 // ---------------------------------------------------------------------------
 
@@ -251,6 +229,17 @@ export function getAllTransitionLines(
 
 export function getMcpStatus(): Promise<McpStatus> {
   return invoke('get_mcp_status');
+}
+
+// ---------------------------------------------------------------------------
+// Correlator query commands
+// ---------------------------------------------------------------------------
+
+export function getCorrelatorEvents(
+  sessionId: string,
+  correlatorId: string,
+): Promise<CorrelatorResult> {
+  return invoke('get_correlator_events', { sessionId, correlatorId });
 }
 
 export function setMcpAnonymize(enabled: boolean): Promise<void> {

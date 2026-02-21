@@ -5,10 +5,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // ---------------------------------------------------------------------------
 
 /** Tab types that appear in the central pane area. */
-export type TabType = 'logviewer' | 'dashboard' | 'scratch' | 'statetimeline';
+export type TabType = 'logviewer' | 'dashboard' | 'scratch' | 'statetimeline' | 'correlations';
 
 /** Tool types shown in the right tool window, controlled by the icon rail. */
-export type RightTool = 'processors' | 'chat' | 'marketplace';
+export type RightTool = 'processors' | 'marketplace';
 
 export type LayoutPreset = 'compact' | 'standard' | 'wide';
 
@@ -77,6 +77,7 @@ export const TAB_LABELS: Record<TabType, string> = {
   dashboard: 'Dashboard',
   scratch: 'Scratch',
   statetimeline: 'State Timeline',
+  correlations: 'Correlations',
 };
 
 function makeTab(type: TabType): PaneTab {
@@ -117,7 +118,7 @@ interface PersistedShell {
   rightPanelWidth?: number;
 }
 
-const VALID_TAB_TYPES = new Set<string>(['logviewer', 'dashboard', 'scratch', 'statetimeline']);
+const VALID_TAB_TYPES = new Set<string>(['logviewer', 'dashboard', 'scratch', 'statetimeline', 'correlations']);
 
 /** Strip tabs with tab types that no longer exist (e.g. from a previous schema). */
 function sanitizePanes(panes: Pane[]): Pane[] {
@@ -155,11 +156,18 @@ function savePanes(preset: LayoutPreset, panes: Pane[]): void {
   } catch { /* storage full */ }
 }
 
+const VALID_RIGHT_TOOLS = new Set<string>(['processors', 'marketplace']);
+
 function loadShell(): PersistedShell {
   try {
     const raw = localStorage.getItem(SHELL_KEY);
     if (!raw) return {};
-    return JSON.parse(raw) as PersistedShell;
+    const parsed = JSON.parse(raw) as PersistedShell;
+    // Sanitize stale rightTool values from previous schema versions.
+    if (parsed.rightTool && !VALID_RIGHT_TOOLS.has(parsed.rightTool)) {
+      parsed.rightTool = null;
+    }
+    return parsed;
   } catch {
     return {};
   }

@@ -129,6 +129,8 @@ pub fn run() {
             commands::state_tracker::get_state_at_line,
             commands::state_tracker::get_state_transitions,
             commands::state_tracker::get_all_transition_lines,
+            // Correlator query command
+            commands::correlator::get_correlator_events,
             commands::session::get_mcp_status,
             commands::session::set_mcp_anonymize,
         ])

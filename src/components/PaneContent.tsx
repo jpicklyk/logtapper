@@ -6,6 +6,7 @@ import StreamFilterBar from './StreamFilterBar';
 import ProcessorDashboard from './ProcessorDashboard';
 import ScratchPad from './ScratchPad';
 import StateTimeline from './StateTimeline';
+import CorrelationsView from './CorrelationsView';
 
 interface Props {
   pane: Pane;
@@ -106,6 +107,9 @@ export default function PaneContent({ pane }: Props) {
 
     case 'statetimeline':
       return <StateTimeline />;
+
+    case 'correlations':
+      return <CorrelationsView />;
 
     default:
       return null;

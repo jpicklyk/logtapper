@@ -7,6 +7,7 @@ use crate::commands::AppState;
 use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;
 use crate::processors::ProcessorKind;
+use crate::processors::correlator::engine::CorrelatorRun;
 use crate::processors::reporter::engine::ProcessorRun;
 use crate::processors::state_tracker::engine::StateTrackerRun;
 use crate::processors::transformer::engine::TransformerRun;
@@ -52,22 +53,24 @@ pub async fn run_pipeline(
     anonymize: bool,
 ) -> Result<Vec<PipelineRunSummary>, String> {
     // ── Partition processor IDs by kind ──────────────────────────────────────
-    let (transformer_ids, reporter_ids, tracker_ids) = {
+    let (transformer_ids, reporter_ids, tracker_ids, correlator_ids) = {
         let procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
         let mut t_ids: Vec<String> = Vec::new();
         let mut r_ids: Vec<String> = Vec::new();
         let mut s_ids: Vec<String> = Vec::new();
+        let mut c_ids: Vec<String> = Vec::new();
         for id in &processor_ids {
             if let Some(p) = procs.get(id) {
                 match &p.kind {
                     ProcessorKind::Transformer(_) => t_ids.push(id.clone()),
                     ProcessorKind::Reporter(_) => r_ids.push(id.clone()),
                     ProcessorKind::StateTracker(_) => s_ids.push(id.clone()),
-                    _ => {} // Correlator / Annotator: schema stubs, no engine yet
+                    ProcessorKind::Correlator(_) => c_ids.push(id.clone()),
+                    _ => {} // Annotator: schema stub, no engine yet
                 }
             }
         }
-        (t_ids, r_ids, s_ids)
+        (t_ids, r_ids, s_ids, c_ids)
     };
 
     // ── Clone defs (one lock acquisition per kind, released immediately) ──────
@@ -89,6 +92,13 @@ pub async fn run_pipeline(
         let procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
         tracker_ids.iter()
             .filter_map(|id| procs.get(id).and_then(|p| p.as_state_tracker()).map(|d| (id.clone(), d.clone())))
+            .collect()
+    };
+
+    let correlator_defs: Vec<(String, crate::processors::correlator::schema::CorrelatorDef)> = {
+        let procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
+        correlator_ids.iter()
+            .filter_map(|id| procs.get(id).and_then(|p| p.as_correlator()).map(|d| (id.clone(), d.clone())))
             .collect()
     };
 
@@ -293,6 +303,22 @@ pub async fn run_pipeline(
         }
     }
 
+    // ── Layer 2c: Correlators ─────────────────────────────────────────────────
+    if !correlator_defs.is_empty() {
+        let mut session_correlator_results = HashMap::new();
+        for (corr_id, corr_def) in &correlator_defs {
+            let mut run = CorrelatorRun::new(corr_def);
+            for line in &enriched_lines {
+                run.process_line(line);
+            }
+            let result = run.finish();
+            session_correlator_results.insert(corr_id.clone(), result);
+        }
+        if let Ok(mut cr) = state.correlator_results.lock() {
+            cr.insert(session_id.clone(), session_correlator_results);
+        }
+    }
+
     // ── Collect results ───────────────────────────────────────────────────────
     let mut summaries: Vec<PipelineRunSummary> = Vec::new();
     let mut session_pipeline_results: HashMap<String, _> = HashMap::new();
@@ -330,6 +356,21 @@ pub async fn run_pipeline(
             matched_lines: 0,
             emission_count: 0,
         });
+    }
+
+    // Correlator summaries (event count as emission_count)
+    if let Ok(cr) = state.correlator_results.lock() {
+        if let Some(session_map) = cr.get(&session_id) {
+            for corr_id in &correlator_ids {
+                if let Some(result) = session_map.get(corr_id) {
+                    summaries.push(PipelineRunSummary {
+                        processor_id: corr_id.clone(),
+                        matched_lines: result.events.len(),
+                        emission_count: result.events.len(),
+                    });
+                }
+            }
+        }
     }
 
     {

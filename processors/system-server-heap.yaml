@@ -1,0 +1,164 @@
+meta:
+  id: "system-server-heap"
+  name: "System Server Heap Monitor"
+  version: "1.0.0"
+  author: "LogTapper"
+  description: "Monitors Android system_server Java heap pressure via Watchdog !@Sync messages. Tracks heap used/max and pressure level over time. Critical heap pressure often precedes system_server restart or device reboot."
+  tags: ["memory", "heap", "system_server", "watchdog", "oom", "android"]
+
+vars:
+  - name: sample_count
+    type: int
+    default: 0
+    display: true
+    label: "Heap Samples"
+
+  - name: peak_heap_used
+    type: int
+    default: 0
+    display: true
+    label: "Peak Heap Used (MB)"
+
+  - name: peak_heap_pct
+    type: int
+    default: 0
+    display: true
+    label: "Peak Heap %"
+
+  - name: high_pressure_count
+    type: int
+    default: 0
+    display: true
+    label: "High Pressure Events (>80%)"
+
+  - name: critical_pressure_count
+    type: int
+    default: 0
+    display: true
+    label: "Critical Pressure Events (>90%)"
+
+  - name: pressure_distribution
+    type: map
+    default: {}
+    display: true
+    label: "Pressure Distribution"
+    display_as: table
+    columns: ["pressure_level", "count"]
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: tag_match
+        tags: ["Watchdog"]
+      - type: message_contains
+        value: "heap(MB):"
+
+  - stage: extract
+    fields:
+      - name: sync_num
+        pattern: '!@Sync:\s*(\d+)'
+        cast: int
+      - name: heap_used
+        pattern: 'heap\(MB\):\s*(\d+)\s*/'
+        cast: int
+      - name: heap_max
+        pattern: 'heap\(MB\):\s*\d+\s*/\s*(\d+)'
+        cast: int
+      - name: fd_count
+        pattern: 'FD:\s*(\d+)'
+        cast: int
+
+  - stage: script
+    runtime: rhai
+    src: |
+      // Skip if heap fields were not extracted
+      if !("heap_used" in fields) || !("heap_max" in fields) {
+        return;
+      }
+      if fields.heap_max == 0 {
+        return;
+      }
+
+      vars.sample_count += 1;
+
+      // Integer heap percentage (0-100)
+      let heap_pct = (fields.heap_used * 100) / fields.heap_max;
+
+      // Track peak usage
+      if fields.heap_used > vars.peak_heap_used {
+        vars.peak_heap_used = fields.heap_used;
+      }
+      if heap_pct > vars.peak_heap_pct {
+        vars.peak_heap_pct = heap_pct;
+      }
+
+      // Classify pressure level
+      let pressure_level = "normal_<60";
+      if heap_pct >= 95 {
+        pressure_level = "critical_95+";
+      } else if heap_pct >= 90 {
+        pressure_level = "high_90-95";
+      } else if heap_pct >= 80 {
+        pressure_level = "elevated_80-90";
+      } else if heap_pct >= 60 {
+        pressure_level = "moderate_60-80";
+      }
+
+      if heap_pct >= 90 {
+        vars.critical_pressure_count += 1;
+      } else if heap_pct >= 80 {
+        vars.high_pressure_count += 1;
+      }
+
+      // Count by pressure level
+      let pd = vars.pressure_distribution;
+      if pressure_level in pd {
+        pd[pressure_level] = pd[pressure_level] + 1;
+      } else {
+        pd[pressure_level] = 1;
+      }
+      vars.pressure_distribution = pd;
+
+      let fd = if "fd_count" in fields { fields.fd_count } else { 0 };
+
+      _emits.push(#{
+        heap_used: fields.heap_used,
+        heap_max: fields.heap_max,
+        heap_pct: heap_pct,
+        fd_count: fd,
+        pressure_level: pressure_level,
+      });
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["heap_used", "heap_max", "heap_pct", "fd_count", "pressure_level"]
+        sort: "heap_pct"
+      - type: summary
+        source: vars
+        template: |
+          {{sample_count}} heap samples. Peak: {{peak_heap_used}} MB ({{peak_heap_pct}}%)
+          High pressure (>80%): {{high_pressure_count}} | Critical (>90%): {{critical_pressure_count}}
+
+    charts:
+      - id: heap_timeline
+        type: time_series
+        title: "System Server Heap Usage Over Time"
+        source: emissions
+        x: { field: timestamp, label: "Time" }
+        y: { field: heap_pct, label: "Heap %" }
+
+      - id: pressure_bar
+        type: bar
+        title: "Heap Pressure Distribution"
+        source: emissions
+        x: { field: pressure_level, label: "Pressure Level" }
+        y: { field: pressure_level, label: "Count", aggregation: count }
+
+      - id: fd_timeline
+        type: time_series
+        title: "File Descriptor Count Over Time"
+        source: emissions
+        x: { field: timestamp, label: "Time" }
+        y: { field: fd_count, label: "FD Count" }

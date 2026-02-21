@@ -1,0 +1,96 @@
+meta:
+  id: "ebadf-error-tracker"
+  name: "EBADF Error Tracker"
+  version: "1.0.0"
+  author: "LogTapper"
+  description: "Finds EBADF (bad file descriptor) errors across all processes. Groups by PID and operation type. High EBADF rates often indicate FD recycling caused by an FD leak in another process."
+  tags: ["ebadf", "fd", "file-descriptor", "error", "android"]
+
+vars:
+  - name: ebadf_count
+    type: int
+    default: 0
+    display: true
+    label: "EBADF Errors"
+
+  - name: ebadf_by_pid
+    type: map
+    default: {}
+    display: true
+    label: "EBADF by PID"
+    display_as: table
+    columns: ["pid", "count"]
+
+  - name: ebadf_by_operation
+    type: map
+    default: {}
+    display: true
+    label: "EBADF by Operation"
+    display_as: table
+    columns: ["operation", "count"]
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains_any
+        values: ["EBADF", "Bad file descriptor"]
+      - type: level_min
+        level: W
+
+  - stage: extract
+    fields:
+      - name: operation
+        pattern: '(read|write|close|ioctl|poll|select|recv|send)\s+(?:failed|error)'
+      - name: pid
+        pattern: '^\S+\s+(\d+)\s+\d+ [VDIWEF]'
+        cast: int
+
+  - stage: script
+    runtime: rhai
+    src: |
+      vars.ebadf_count += 1;
+
+      let pid_str = if "pid" in fields { fields.pid.to_string() } else { "unknown" };
+      let op = if "operation" in fields { fields.operation } else { "unknown" };
+
+      let bp = vars.ebadf_by_pid;
+      if pid_str in bp {
+        bp[pid_str] = bp[pid_str] + 1;
+      } else {
+        bp[pid_str] = 1;
+      }
+      vars.ebadf_by_pid = bp;
+
+      let bo = vars.ebadf_by_operation;
+      if op in bo {
+        bo[op] = bo[op] + 1;
+      } else {
+        bo[op] = 1;
+      }
+      vars.ebadf_by_operation = bo;
+
+      _emits.push(#{
+        pid: if "pid" in fields { fields.pid } else { 0 },
+        operation: op,
+      });
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["pid", "operation"]
+
+    charts:
+      - id: ebadf_by_pid
+        type: bar
+        title: "EBADF Errors by PID"
+        source: emissions
+        x: { field: pid, label: "PID" }
+        y: { field: pid, label: "Count", aggregation: count }
+
+      - id: ebadf_timeline
+        type: time_series
+        title: "EBADF Errors Over Time"
+        source: emissions
+        x: { field: timestamp, label: "Time" }
+        y: { field: pid, label: "Count", aggregation: count }

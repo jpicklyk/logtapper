@@ -1,0 +1,115 @@
+meta:
+  id: "process-kill-storm"
+  name: "Process Kill Storm"
+  version: "1.0.0"
+  author: "LogTapper"
+  description: "Captures ActivityManager process kills. Tracks kill rate, RSS freed per kill, and groups kills by reason (e.g. empty process, background ANR). Useful for diagnosing memory pressure kill storms."
+  tags: ["am", "activitymanager", "kill", "oom", "memory", "android"]
+
+vars:
+  - name: total_kills
+    type: int
+    default: 0
+    display: true
+    label: "Total Kills"
+
+  - name: total_rss_freed_kb
+    type: int
+    default: 0
+    display: true
+    label: "Total RSS Freed (KB)"
+
+  - name: largest_killed_rss_kb
+    type: int
+    default: 0
+    display: true
+    label: "Largest Killed Process RSS (KB)"
+
+  - name: largest_killed_process
+    type: string
+    default: ""
+    display: true
+    label: "Largest Killed Process"
+
+  - name: kills_by_reason
+    type: map
+    default: {}
+    display: true
+    label: "Kills by Reason"
+    display_as: table
+    columns: ["reason", "count"]
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: tag_match
+        tags: ["ActivityManager"]
+      - type: message_contains
+        value: "Killing"
+
+  - stage: extract
+    fields:
+      - name: process_name
+        pattern: 'Killing\s+\d+:([^/\s]+)'
+      - name: pid
+        pattern: 'Killing\s+(\d+)'
+        cast: int
+      - name: rss_kb
+        pattern: 'adj=\S+.*?rss=(\d+)kb'
+        cast: int
+      - name: reason
+        pattern: '#\d+\s+(.+?)(?:\s+adj=|$)'
+
+  - stage: script
+    runtime: rhai
+    src: |
+      vars.total_kills += 1;
+
+      let rss = if "rss_kb" in fields { fields.rss_kb } else { 0 };
+      vars.total_rss_freed_kb += rss;
+
+      let proc = if "process_name" in fields { fields.process_name } else { "unknown" };
+      let reason = if "reason" in fields { fields.reason } else { "unknown" };
+      let pid = if "pid" in fields { fields.pid } else { 0 };
+
+      if rss > vars.largest_killed_rss_kb {
+        vars.largest_killed_rss_kb = rss;
+        vars.largest_killed_process = proc;
+      }
+
+      let kbr = vars.kills_by_reason;
+      if reason in kbr {
+        kbr[reason] = kbr[reason] + 1;
+      } else {
+        kbr[reason] = 1;
+      }
+      vars.kills_by_reason = kbr;
+
+      _emits.push(#{
+        process_name: proc,
+        pid: pid,
+        rss_kb: rss,
+        reason: reason,
+      });
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["process_name", "pid", "rss_kb", "reason"]
+        sort: "rss_kb"
+
+    charts:
+      - id: kill_timeline
+        type: time_series
+        title: "Process Kills Over Time"
+        source: emissions
+        x: { field: timestamp, label: "Time" }
+        y: { field: rss_kb, label: "RSS Freed (KB)" }
+
+      - id: top_killed_by_rss
+        type: bar
+        title: "Top Killed Processes by RSS"
+        source: emissions
+        x: { field: process_name, label: "Process" }
+        y: { field: rss_kb, label: "RSS (KB)", aggregation: sum }

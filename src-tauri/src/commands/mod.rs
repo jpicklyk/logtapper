@@ -8,11 +8,13 @@ use crate::processors::AnyProcessor;
 use crate::processors::interpreter::{ContinuousRunState, RunResult};
 use crate::processors::state_tracker::types::{StateTrackerResult, ContinuousTrackerState};
 use crate::processors::transformer::types::ContinuousTransformerState;
+use crate::processors::correlator::engine::CorrelatorResult;
 
 pub mod adb;
 pub mod anonymizer;
 pub mod charts;
 pub mod claude;
+pub mod correlator;
 pub mod files;
 pub mod pipeline;
 pub mod processors;
@@ -54,6 +56,8 @@ pub struct AppState {
     /// StateTracker results: sessionId -> trackerId -> StateTrackerResult.
     #[allow(dead_code)]
     pub state_tracker_results: Mutex<HashMap<String, HashMap<String, StateTrackerResult>>>,
+    /// Correlator results: sessionId -> correlatorId -> CorrelatorResult.
+    pub correlator_results: Mutex<HashMap<String, HashMap<String, CorrelatorResult>>>,
     /// Continuous StateTracker state for live streaming.
     #[allow(dead_code)]
     pub stream_tracker_state: Mutex<HashMap<String, HashMap<String, ContinuousTrackerState>>>,
@@ -92,6 +96,7 @@ impl AppState {
             state_tracker_results: Mutex::new(HashMap::new()),
             stream_tracker_state: Mutex::new(HashMap::new()),
             stream_transformer_state: Mutex::new(HashMap::new()),
+            correlator_results: Mutex::new(HashMap::new()),
         }
     }
 }

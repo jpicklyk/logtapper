@@ -1,0 +1,132 @@
+meta:
+  id: "gc-pressure-monitor"
+  name: "GC Pressure Monitor"
+  version: "1.0.0"
+  author: "LogTapper"
+  description: "Tracks ART GC events. Monitors heap used/max and GC duration. Classifies heap pressure as normal (<70%), stressed (70-85%), or critical (>85%). Explicit (system-forced) GCs tracked separately."
+  tags: ["gc", "heap", "art", "memory", "android"]
+
+vars:
+  - name: gc_count
+    type: int
+    default: 0
+    display: true
+    label: "GC Events"
+
+  - name: explicit_gc_count
+    type: int
+    default: 0
+    display: true
+    label: "Explicit GC Events"
+
+  - name: critical_count
+    type: int
+    default: 0
+    display: true
+    label: "Critical Pressure Events (>85%)"
+
+  - name: peak_heap_pct
+    type: int
+    default: 0
+    display: true
+    label: "Peak Heap %"
+
+  - name: pressure_distribution
+    type: map
+    default: {}
+    display: true
+    label: "Pressure Distribution"
+    display_as: table
+    columns: ["pressure_state", "count"]
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: tag_match
+        tags: ["art"]
+      - type: message_contains_any
+        values: ["Background concurrent", "Explicit concurrent"]
+
+  - stage: extract
+    fields:
+      - name: heap_used
+        pattern: '(\d+)MB/\d+MB'
+        cast: int
+      - name: heap_max
+        pattern: '\d+MB/(\d+)MB'
+        cast: int
+      - name: gc_duration_ms_str
+        pattern: '(\d+\.\d+)ms'
+      - name: is_explicit
+        pattern: '(Explicit) concurrent'
+
+  - stage: script
+    runtime: rhai
+    src: |
+      if !("heap_used" in fields) || !("heap_max" in fields) {
+        return;
+      }
+      if fields.heap_max == 0 {
+        return;
+      }
+
+      vars.gc_count += 1;
+
+      let heap_pct = (fields.heap_used * 100) / fields.heap_max;
+
+      if heap_pct > vars.peak_heap_pct {
+        vars.peak_heap_pct = heap_pct;
+      }
+
+      let is_explicit = "is_explicit" in fields;
+      if is_explicit {
+        vars.explicit_gc_count += 1;
+      }
+
+      let pressure_state = "normal";
+      if is_explicit {
+        pressure_state = "explicit_gc";
+      } else if heap_pct > 85 {
+        pressure_state = "critical";
+        vars.critical_count += 1;
+      } else if heap_pct >= 70 {
+        pressure_state = "stressed";
+      }
+
+      let dist = vars.pressure_distribution;
+      if pressure_state in dist {
+        dist[pressure_state] = dist[pressure_state] + 1;
+      } else {
+        dist[pressure_state] = 1;
+      }
+      vars.pressure_distribution = dist;
+
+      _emits.push(#{
+        heap_used: fields.heap_used,
+        heap_max: fields.heap_max,
+        heap_pct: heap_pct,
+        pressure_state: pressure_state,
+        is_explicit: is_explicit,
+      });
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["heap_used", "heap_max", "heap_pct", "pressure_state"]
+        sort: "heap_pct"
+
+    charts:
+      - id: gc_heap_timeline
+        type: time_series
+        title: "GC Heap Pressure Over Time"
+        source: emissions
+        x: { field: timestamp, label: "Time" }
+        y: { field: heap_pct, label: "Heap %" }
+
+      - id: gc_pressure_bar
+        type: bar
+        title: "GC Pressure State Distribution"
+        source: emissions
+        x: { field: pressure_state, label: "Pressure State" }
+        y: { field: pressure_state, label: "Count", aggregation: count }

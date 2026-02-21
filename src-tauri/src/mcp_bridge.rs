@@ -52,6 +52,7 @@ pub async fn start(handle: Handle) {
         .route("/mcp/sessions/{session_id}/query", get(h_query))
         .route("/mcp/sessions/{session_id}/pipeline", get(h_pipeline))
         .route("/mcp/sessions/{session_id}/events", get(h_events))
+        .route("/mcp/sessions/{session_id}/correlations", get(h_correlations))
         .layer(middleware::from_fn_with_state(handle.clone(), record_activity))
         .with_state(handle.clone());
 
@@ -62,6 +63,7 @@ pub async fn start(handle: Handle) {
             if let Ok(mut p) = state.mcp_bridge_port.lock() {
                 *p = Some(PORT);
             }
+            #[allow(clippy::drop_non_drop)]
             drop(state);
             log::info!("MCP bridge listening on 127.0.0.1:{PORT}");
             if let Err(e) = axum::serve(listener, router).await {
@@ -538,6 +540,49 @@ async fn h_events(
         "sessionId": session_id,
         "events": events,
         "count": count,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// GET /mcp/sessions/{session_id}/correlations
+// ---------------------------------------------------------------------------
+
+async fn h_correlations(
+    State(handle): State<Handle>,
+    Path(session_id): Path<String>,
+) -> Json<Value> {
+    let state = handle.state::<AppState>();
+
+    let correlators: Vec<Value> = {
+        let cr = state.correlator_results.lock().unwrap();
+        match cr.get(&session_id) {
+            None => vec![],
+            Some(session_map) => session_map
+                .iter()
+                .map(|(corr_id, result)| {
+                    let events: Vec<Value> = result.events.iter().map(|evt| {
+                        json!({
+                            "triggerLineNum": evt.trigger_line_num,
+                            "triggerTimestamp": evt.trigger_timestamp,
+                            "triggerSourceId": evt.trigger_source_id,
+                            "triggerFields": evt.trigger_fields,
+                            "message": evt.message,
+                            "matchedSourceIds": evt.matched_sources.keys().collect::<Vec<_>>(),
+                        })
+                    }).collect();
+                    json!({
+                        "correlatorId": corr_id,
+                        "eventCount": events.len(),
+                        "events": events,
+                    })
+                })
+                .collect(),
+        }
+    };
+
+    Json(json!({
+        "sessionId": session_id,
+        "correlators": correlators,
     }))
 }
 

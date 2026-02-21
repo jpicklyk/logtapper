@@ -1,0 +1,71 @@
+meta:
+  id: "exception-storm-detector"
+  name: "Exception Storm Detector"
+  version: "1.0.0"
+  author: "LogTapper"
+  description: "Detects exception storms — bursts of 20+ identical errors within a 2-second window. Uses the BurstDetector aggregate to fire exactly once per rising edge. Useful for diagnosing recursive failure loops (e.g. 530 identical ServiceNotFoundExceptions/second)."
+  tags: ["exception", "error", "storm", "burst", "android", "stability"]
+
+vars:
+  - name: burst_count
+    type: int
+    default: 0
+    display: true
+    label: "Storms Detected"
+
+  - name: total_errors_seen
+    type: int
+    default: 0
+    display: true
+    label: "Total Errors Seen"
+
+  - name: storms
+    type: list
+    display: true
+    label: "Storm Events"
+    display_as: table
+    columns: ["burst_key", "count_in_window", "window_ms"]
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: level_min
+        level: E
+
+  - stage: extract
+    fields:
+      - name: service_not_found
+        pattern: 'No service published for:\s+(\w+)'
+      - name: exception_class
+        pattern: '(\w+(?:Exception|Error))'
+
+  - stage: script
+    runtime: rhai
+    src: |
+      vars.total_errors_seen += 1;
+
+      // Derive burst key: prefer specific service name, then exception class, then log tag
+      let key = if fields.service_not_found != () {
+        "ServiceNotFound:" + fields.service_not_found
+      } else if fields.exception_class != () {
+        fields.exception_class
+      } else {
+        line.tag
+      };
+
+      // Write burst_key back into fields so the BurstDetector aggregate can read it
+      fields.burst_key = key;
+
+  - stage: aggregate
+    groups:
+      - type: burst_detector
+        field: burst_key
+        window_ms: 2000
+        threshold: 20
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["burst_key", "count_in_window", "window_ms"]
+        sort: "count_in_window"

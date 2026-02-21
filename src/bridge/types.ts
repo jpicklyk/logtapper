@@ -321,3 +321,32 @@ export interface AdbTrackerUpdate {
   trackerId: string;
   transitionCount: number;
 }
+
+// ---------------------------------------------------------------------------
+// Correlator IPC types
+// ---------------------------------------------------------------------------
+
+export interface SourceMatch {
+  lineNum: number;
+  timestamp: number;
+  fields: Record<string, unknown>;
+  rawLine: string;
+}
+
+export interface CorrelationEvent {
+  triggerLineNum: number;
+  triggerTimestamp: number;
+  triggerSourceId: string;
+  triggerFields: Record<string, unknown>;
+  triggerRawLine: string;
+  /** Non-trigger source matches available at trigger time. */
+  matchedSources: Record<string, SourceMatch[]>;
+  /** Human-readable message from the emit template. */
+  message: string;
+}
+
+export interface CorrelatorResult {
+  /** Plain-English explanation from the YAML author. */
+  guidance: string | null;
+  events: CorrelationEvent[];
+}
