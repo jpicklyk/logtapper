@@ -27,7 +27,6 @@ import './App.css';
 export default function App() {
   const { settings, updateSetting, resetSettings } = useSettings();
   const anonymizerConfig = useAnonymizerConfig();
-  const viewer = useLogViewer(settings.streamFrontendCacheMax);
   const pipeline = usePipeline();
   const stateTracker = useStateTracker();
   const layout = usePaneLayout();
@@ -42,6 +41,13 @@ export default function App() {
   const [adbError, setAdbError] = useState<string | null>(null);
   const [selectedLineNum, setSelectedLineNum] = useState<number | null>(null);
 
+  const handleBeforeLoad = useCallback(() => {
+    setMetadata(null);
+    setSections([]);
+    stateTracker.clearTransitions();
+  }, [stateTracker.clearTransitions]);
+  const viewer = useLogViewer(settings.streamFrontendCacheMax, handleBeforeLoad);
+
   // ── File open ──────────────────────────────────────────────────────────────
 
   const handleOpenFile = useCallback(async () => {
@@ -53,29 +59,9 @@ export default function App() {
       ],
     });
     if (typeof selected === 'string') {
-      setMetadata(null);
-      setSections([]);
-      stateTracker.clearTransitions();
       await viewer.loadFile(selected);
     }
-  }, [viewer, stateTracker.clearTransitions]);
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      const file = e.dataTransfer.files[0];
-      if (file) {
-        const path = (file as File & { path?: string }).path;
-        if (path) {
-          setMetadata(null);
-          setSections([]);
-          stateTracker.clearTransitions();
-          viewer.loadFile(path);
-        }
-      }
-    },
-    [viewer, stateTracker.clearTransitions],
-  );
+  }, [viewer]);
 
   // ── ADB streaming ──────────────────────────────────────────────────────────
 
@@ -160,6 +146,16 @@ export default function App() {
     setProcessorViewId(null);
     viewer.clearProcessorView();
   }, [viewer]);
+
+  const handleCloseSession = useCallback(async () => {
+    await viewer.closeSession();
+    pipeline.clearResults();
+    stateTracker.clearTransitions();
+    setMetadata(null);
+    setSections([]);
+    setProcessorViewId(null);
+    setSelectedLineNum(null);
+  }, [viewer, pipeline, stateTracker]);
 
   // ── Rename logviewer tabs to filename when a file is loaded ──────────────
 
@@ -268,7 +264,7 @@ export default function App() {
       <div
         className="app-layout"
         onDragOver={(e) => e.preventDefault()}
-        onDrop={handleDrop}
+        onDrop={(e) => e.preventDefault()}
       >
         {/* ── Header ── */}
         <header className="app-header">
@@ -280,6 +276,13 @@ export default function App() {
                 {viewer.session.sourceName} —{' '}
                 {viewer.session.totalLines.toLocaleString()} lines
                 {viewer.isStreaming && <span className="stream-label">live</span>}
+                <button
+                  className="session-close"
+                  onClick={handleCloseSession}
+                  title="Close session"
+                >
+                  ×
+                </button>
               </span>
             )}
             {processorViewId && (
