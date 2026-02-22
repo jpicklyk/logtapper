@@ -340,22 +340,35 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
   }, [resetSessionState]);
 
   // Wire up Tauri file drag-and-drop so users can drag a log file onto the window.
+  // Uses `cancelled` flag to handle React StrictMode double-mount: if cleanup runs
+  // before the async `.then()` resolves, the listener is immediately unregistered.
   useEffect(() => {
+    let cancelled = false;
     let unlisten: UnlistenFn | null = null;
     getCurrentWebview().onDragDropEvent((event) => {
+      if (cancelled) return;
       if (event.payload.type === 'drop' && event.payload.paths.length > 0) {
         loadFile(event.payload.paths[0]);
       }
-    }).then((fn) => { unlisten = fn; });
-    return () => { unlisten?.(); };
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, [loadFile]);
 
   // Subscribe to progressive file-indexing events.
+  // Same `cancelled` flag pattern for StrictMode safety.
   useEffect(() => {
+    let cancelled = false;
     let unlistenProgress: UnlistenFn | null = null;
     let unlistenComplete: UnlistenFn | null = null;
 
     onFileIndexProgress((payload) => {
+      if (cancelled) return;
       if (payload.sessionId !== sessionRef.current?.sessionId) return;
       const percent = payload.totalBytes > 0
         ? (payload.bytesScanned / payload.totalBytes) * 100
@@ -366,18 +379,26 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
         if (!prev || prev.sessionId !== payload.sessionId) return prev;
         return { ...prev, totalLines: payload.indexedLines };
       });
-    }).then((fn) => { unlistenProgress = fn; });
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlistenProgress = fn;
+    });
 
     onFileIndexComplete((payload) => {
+      if (cancelled) return;
       if (payload.sessionId !== sessionRef.current?.sessionId) return;
       setSession((prev) => {
         if (!prev || prev.sessionId !== payload.sessionId) return prev;
         return { ...prev, totalLines: payload.totalLines };
       });
       setIndexingProgress(null);
-    }).then((fn) => { unlistenComplete = fn; });
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlistenComplete = fn;
+    });
 
     return () => {
+      cancelled = true;
       unlistenProgress?.();
       unlistenComplete?.();
     };

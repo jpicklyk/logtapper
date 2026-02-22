@@ -273,3 +273,39 @@ setTrackerStates((prev) => {
 - Multiple filter rules are AND-ed. For OR logic, use `message_regex: "foo|bar"` or `message_contains_any: [...]`.
 - `validate_for_install()` only validates Rhai syntax — invalid filter regexes pass install but silently produce 0 matches at runtime.
 - Clippy: `impl Default for Foo` where the body only calls field defaults → replace with `#[derive(Default)]`.
+
+### React StrictMode + async event listeners (CRITICAL)
+
+`main.tsx` wraps `<App>` in `<React.StrictMode>`, which **double-mounts** every `useEffect` in dev mode (mount → cleanup → remount). This silently leaks Tauri event listeners when the setup is async.
+
+**The bug pattern (DO NOT USE):**
+```tsx
+useEffect(() => {
+  let unlisten: UnlistenFn | null = null;
+  someAsyncListenerSetup().then((fn) => { unlisten = fn; });
+  return () => { unlisten?.(); };  // ← cleanup runs BEFORE .then() resolves → unlisten is still null → leaked listener
+}, []);
+```
+
+On StrictMode remount, the first listener is never cleaned up. Both fire on every event, causing duplicate processing (e.g., `loadFile` called twice → double the lines).
+
+**The correct pattern (ALWAYS USE for async listener setup):**
+```tsx
+useEffect(() => {
+  let cancelled = false;
+  let unlisten: UnlistenFn | null = null;
+  someAsyncListenerSetup((event) => {
+    if (cancelled) return;          // guard callback execution
+    handleEvent(event);
+  }).then((fn) => {
+    if (cancelled) fn();            // cleanup already ran → immediately unregister
+    else unlisten = fn;
+  });
+  return () => {
+    cancelled = true;
+    unlisten?.();
+  };
+}, [deps]);
+```
+
+This applies to ALL Tauri async listener APIs: `getCurrentWebview().onDragDropEvent()`, `listen()` / `once()` from `@tauri-apps/api/event`, and any custom async event subscriptions. Correctly implemented in `usePipeline.ts`, `useStateTracker.ts`, and `useLogViewer.ts`. Check any new `useEffect` that calls `.then()` on a listener setup.
