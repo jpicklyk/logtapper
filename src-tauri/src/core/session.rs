@@ -181,6 +181,10 @@ impl LogSource {
                 }
                 let start = line_index[line_num] as usize;
                 let end = line_index[line_num + 1] as usize;
+                // Guard against corrupt/stale offsets (can happen during concurrent indexing)
+                if start >= end || end > mmap.len() {
+                    return None;
+                }
                 // Strip trailing \n and \r\n
                 let mut slice_end = end;
                 if slice_end > start && mmap[slice_end - 1] == b'\n' {
