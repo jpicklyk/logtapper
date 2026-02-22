@@ -76,7 +76,7 @@ export const TAB_LABELS: Record<TabType, string> = {
   logviewer: 'Log',
   dashboard: 'Dashboard',
   scratch: 'Scratch',
-  statetimeline: 'State Timeline',
+  statetimeline: 'Timeline',
   correlations: 'Correlations',
 };
 

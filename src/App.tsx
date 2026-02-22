@@ -207,11 +207,14 @@ export default function App() {
     if (!viewer.isStreaming && pipeline.lastResults.length === 0) return;
     stateTracker.refreshTransitionLines(viewer.session.sessionId).catch(() => {});
 
-    // Auto-open State Timeline if any StateTracker processors ran and produced results
+    // Auto-open Timeline if any StateTracker or timeline-enabled Reporter processors ran
     const hasActiveTrackers = pipeline.processors.some(
       (p) => p.processorType === 'state_tracker' && pipeline.activeProcessorIds.has(p.id),
     );
-    if (hasActiveTrackers) {
+    const hasActiveReporters = pipeline.processors.some(
+      (p) => p.processorType === 'reporter' && pipeline.activeProcessorIds.has(p.id),
+    );
+    if (hasActiveTrackers || hasActiveReporters) {
       layout.openCenterTab('statetimeline');
     }
 

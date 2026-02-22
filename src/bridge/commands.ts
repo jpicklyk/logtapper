@@ -19,6 +19,7 @@ import type {
   StateTransition,
   McpStatus,
   CorrelatorResult,
+  TimelineSeriesData,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -160,6 +161,13 @@ export function getChartData(
   processorId: string,
 ): Promise<ChartData[]> {
   return invoke('get_chart_data', { sessionId, processorId });
+}
+
+export function getTimelineData(
+  sessionId: string,
+  processorIds: string[],
+): Promise<TimelineSeriesData[]> {
+  return invoke('get_timeline_data', { sessionId, processorIds });
 }
 
 // ---------------------------------------------------------------------------

@@ -4851,6 +4851,51 @@ details[open] > summary::before {
   border-color: rgba(59, 130, 246, 0.35);
 }
 
+/* ── Sparkline tracks (reporter timeline data) ─────────────────────────────── */
+
+.timeline-sparkline-track {
+  align-items: stretch;
+}
+
+.timeline-sparkline-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  display: flex;
+  align-items: center;
+}
+
+.timeline-sparkline-body {
+  position: relative;
+  flex: 1;
+  cursor: crosshair;
+  border-radius: 4px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+
+.timeline-sparkline-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.timeline-sparkline-ymax,
+.timeline-sparkline-ymin {
+  position: absolute;
+  right: 4px;
+  font-size: 8px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dimmed);
+  pointer-events: none;
+  opacity: 0.7;
+  line-height: 1;
+}
+.timeline-sparkline-ymax { top: 2px; }
+.timeline-sparkline-ymin { bottom: 2px; }
+
 /* ── Pipeline chain layout ─────────────────────────────────────────────────── */
 
 .pipeline-chain {

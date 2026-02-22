@@ -123,6 +123,7 @@ pipeline:
         source: emissions
         x: { field: timestamp, label: "Time" }
         y: { field: heap_pct, label: "Heap %" }
+        timeline: { field: heap_pct, color: "#d29922", label: "GC Heap %" }
 
       - id: gc_pressure_bar
         type: bar

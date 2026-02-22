@@ -317,6 +317,26 @@ export interface ChartData {
 }
 
 // ---------------------------------------------------------------------------
+// Timeline sparkline types
+// ---------------------------------------------------------------------------
+
+export interface TimelinePoint {
+  lineNum: number;
+  value: number;
+}
+
+export interface TimelineSeriesData {
+  processorId: string;
+  processorName: string;
+  field: string;
+  label: string;
+  color: string | null;
+  points: TimelinePoint[];
+  minValue: number;
+  maxValue: number;
+}
+
+// ---------------------------------------------------------------------------
 // Registry types (Phase 4)
 // ---------------------------------------------------------------------------
 

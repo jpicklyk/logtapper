@@ -117,6 +117,7 @@ pub fn run() {
             commands::processors::get_matched_lines,
             commands::processors::uninstall_processor,
             commands::charts::get_chart_data,
+            commands::charts::get_timeline_data,
             commands::claude::set_claude_api_key,
             commands::claude::claude_analyze,
             commands::claude::claude_generate_processor,

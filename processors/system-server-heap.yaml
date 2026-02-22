@@ -148,6 +148,7 @@ pipeline:
         source: emissions
         x: { field: timestamp, label: "Time" }
         y: { field: heap_pct, label: "Heap %" }
+        timeline: { field: heap_pct, color: "#3fb950", label: "Heap %" }
 
       - id: pressure_bar
         type: bar

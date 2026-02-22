@@ -344,6 +344,15 @@ pub enum OutputView {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimelineSpec {
+    pub field: String,
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChartSpec {
     pub id: String,
     #[serde(rename = "type")]
@@ -372,6 +381,8 @@ pub struct ChartSpec {
     pub interactive: bool,
     #[serde(default)]
     pub annotations: Vec<AnnotationSpec>,
+    #[serde(default)]
+    pub timeline: Option<TimelineSpec>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
