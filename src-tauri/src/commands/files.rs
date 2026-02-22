@@ -11,8 +11,6 @@ use crate::core::line::{
     HighlightKind, HighlightSpan, LineRequest, LineWindow, LogLevel, SearchQuery, SearchSummary,
     ViewLine, ViewMode,
 };
-use crate::core::logcat_parser::LogcatParser;
-use crate::core::parser::LogParser;
 use crate::core::session::{AnalysisSession, SectionInfo, parser_for};
 
 // ---------------------------------------------------------------------------
@@ -174,6 +172,67 @@ pub async fn load_log_file(
     Ok(result)
 }
 
+#[tauri::command]
+pub async fn close_session(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    // 1. Cancel active ADB stream (if any)
+    if let Some(cancel_tx) = state.stream_tasks.lock()
+        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id) {
+        let _ = cancel_tx.send(());
+    }
+
+    // 2. Cancel active background indexing (if any)
+    if let Some(cancel_tx) = state.indexing_tasks.lock()
+        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id) {
+        let _ = cancel_tx.send(());
+    }
+
+    // 3. Remove session (drops mmap / stream data)
+    state.sessions.lock()
+        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id);
+
+    // 4. Remove pipeline results
+    state.pipeline_results.lock()
+        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id);
+
+    // 5. Remove state tracker results
+    state.state_tracker_results.lock()
+        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id);
+
+    // 6. Remove correlator results
+    state.correlator_results.lock()
+        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id);
+
+    // 7. Remove streaming processor state
+    state.stream_processor_state.lock()
+        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id);
+
+    // 8. Remove streaming tracker state
+    state.stream_tracker_state.lock()
+        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id);
+
+    // 9. Remove streaming transformer state
+    state.stream_transformer_state.lock()
+        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id);
+
+    // 10. Remove PII mappings
+    state.pii_mappings.lock()
+        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id);
+
+    // 11. Remove stream anonymizer
+    state.stream_anonymizers.lock()
+        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id);
+
+    // 12. Remove MCP anonymizer
+    state.mcp_anonymizers.lock()
+        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id);
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn run_background_indexer(
     session_id: String,
     mmap: Arc<Mmap>,
@@ -184,126 +243,78 @@ async fn run_background_indexer(
     app: AppHandle,
     mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) {
-    const CHUNK_LINES: usize = 100_000;
+    // ~100k lines at ~80 bytes avg; exact line count varies but
+    // build_partial_line_index stops at the next newline past this limit.
+    const CHUNK_BYTES: usize = 8_000_000;
 
     let state = app.state::<AppState>();
     let parser = parser_for(&source_type);
     let data: &[u8] = mmap.as_ref();
 
-    let mut chunk_index: Vec<(usize, usize)> = Vec::with_capacity(CHUNK_LINES);
-    let mut chunk_meta: Vec<crate::core::line::LineMeta> = Vec::with_capacity(CHUNK_LINES);
-    // bytes_scanned is updated inside the loop before it is read; no valid initial value.
-    let mut bytes_scanned: usize;
-    let mut start = start_byte;
-    // Start from the count already indexed in the initial partial scan, passed directly
-    // to avoid a session lock that might fail or see a replaced session.
+    let mut cursor = start_byte;
     let mut total_indexed: usize = initial_line_count;
 
-    let mut i = start_byte;
-    loop {
+    while cursor < data.len() {
         // Check for cancellation
         if cancel_rx.try_recv().is_ok() {
             return;
         }
 
-        if i >= data.len() {
+        let remaining = &data[cursor..];
+        let (mut chunk_index, mut chunk_meta, bytes_in_chunk) =
+            crate::core::session::build_partial_line_index(remaining, parser.as_ref(), CHUNK_BYTES);
+
+        if bytes_in_chunk == 0 {
             break;
         }
 
-        if data[i] == b'\n' || i == data.len() - 1 {
-            let end = if data[i] == b'\n' { i } else { i + 1 };
-            let content_end = if end > start && data[end - 1] == b'\r' {
-                end - 1
-            } else {
-                end
-            };
+        // Adjust offsets: build_partial_line_index operates on a sub-slice starting
+        // at byte 0, but real byte_offsets are cursor + local_offset.
+        for entry in chunk_index.iter_mut() {
+            entry.0 += cursor;
+        }
+        for m in chunk_meta.iter_mut() {
+            m.byte_offset += cursor;
+        }
 
-            let byte_len = content_end - start;
-            let meta = if byte_len > 0 {
-                match std::str::from_utf8(&data[start..content_end]) {
-                    Ok(s) if !s.trim().is_empty() => {
-                        parser.parse_meta(s.trim(), start).unwrap_or(crate::core::line::LineMeta {
-                            level: LogLevel::Info,
-                            tag: String::new(),
-                            timestamp: 0,
-                            byte_offset: start,
-                            byte_len,
-                            is_section_boundary: false,
-                        })
-                    }
-                    _ => crate::core::line::LineMeta {
-                        level: LogLevel::Verbose,
-                        tag: String::new(),
-                        timestamp: 0,
-                        byte_offset: start,
-                        byte_len,
-                        is_section_boundary: false,
-                    },
-                }
-            } else {
-                crate::core::line::LineMeta {
-                    level: LogLevel::Verbose,
-                    tag: String::new(),
-                    timestamp: 0,
-                    byte_offset: start,
-                    byte_len: 0,
-                    is_section_boundary: false,
-                }
-            };
-            chunk_index.push((start, byte_len));
-            chunk_meta.push(meta);
+        cursor += bytes_in_chunk;
+        let done = cursor >= data.len();
+        total_indexed += chunk_meta.len();
 
-            bytes_scanned = i + 1;
-            start = i + 1;
-
-            if chunk_meta.len() >= CHUNK_LINES || i >= data.len() - 1 {
-                let done = i >= data.len() - 1;
-                let batch_index = std::mem::take(&mut chunk_index);
-                let batch_meta = std::mem::take(&mut chunk_meta);
-                total_indexed += batch_meta.len();
-
-                if let Ok(mut sessions) = state.sessions.lock() {
-                    let sessions: &mut std::collections::HashMap<String, crate::core::session::AnalysisSession> = &mut sessions;
-                    if let Some(session) = sessions.get_mut(&session_id) {
-                        session.extend_source_index(0, batch_index, batch_meta, done);
-                    }
-                }
-
-                let _ = app.emit(
-                    "file-index-progress",
-                    FileIndexProgress {
-                        session_id: session_id.clone(),
-                        indexed_lines: total_indexed,
-                        bytes_scanned,
-                        total_bytes,
-                    },
-                );
-
-                if done {
-                    let _ = app.emit(
-                        "file-index-complete",
-                        FileIndexComplete {
-                            session_id: session_id.clone(),
-                            total_lines: total_indexed,
-                        },
-                    );
-                    // Remove the task entry
-                    if let Ok(mut tasks) = state.indexing_tasks.lock() {
-                        let tasks: &mut std::collections::HashMap<String, tokio::sync::oneshot::Sender<()>> = &mut tasks;
-                        tasks.remove(&session_id);
-                    }
-                    return;
-                }
-
-                chunk_index = Vec::with_capacity(CHUNK_LINES);
-                chunk_meta = Vec::with_capacity(CHUNK_LINES);
-
-                // Yield to allow other tokio tasks (e.g. get_lines) to run.
-                tokio::task::yield_now().await;
+        if let Ok(mut sessions) = state.sessions.lock() {
+            let sessions: &mut std::collections::HashMap<String, crate::core::session::AnalysisSession> = &mut sessions;
+            if let Some(session) = sessions.get_mut(&session_id) {
+                session.extend_source_index(0, chunk_index, chunk_meta, done);
             }
         }
 
-        i += 1;
+        let _ = app.emit(
+            "file-index-progress",
+            FileIndexProgress {
+                session_id: session_id.clone(),
+                indexed_lines: total_indexed,
+                bytes_scanned: cursor,
+                total_bytes,
+            },
+        );
+
+        if done {
+            let _ = app.emit(
+                "file-index-complete",
+                FileIndexComplete {
+                    session_id: session_id.clone(),
+                    total_lines: total_indexed,
+                },
+            );
+            if let Ok(mut tasks) = state.indexing_tasks.lock() {
+                let tasks: &mut std::collections::HashMap<String, tokio::sync::oneshot::Sender<()>> = &mut tasks;
+                tasks.remove(&session_id);
+            }
+            return;
+        }
+
+        // Yield to allow other tokio tasks (e.g. get_lines) to run.
+        tokio::task::yield_now().await;
     }
 }
 
@@ -330,7 +341,7 @@ pub async fn get_lines(
         .ok_or("No sources in session")?;
 
     let total_lines = source.total_lines();
-    let parser = LogcatParser;
+    let parser = parser_for(&source.source_type);
 
     match request.mode {
         ViewMode::Full => {
@@ -353,6 +364,7 @@ pub async fn get_lines(
                 let view_line = if let Some(ctx) = parser.parse_line(&raw, &source.id, i) {
                     ViewLine {
                         line_num: i,
+                        virtual_index: i,
                         raw: ctx.raw,
                         level: ctx.level,
                         tag: ctx.tag,
@@ -370,6 +382,7 @@ pub async fn get_lines(
                     // If meta is None (line was evicted from stream buffer), use defaults.
                     ViewLine {
                         line_num: i,
+                        virtual_index: i,
                         raw: raw.clone(),
                         level: meta.map_or(LogLevel::Info, |m| m.level),
                         tag: meta.map_or_else(String::new, |m| m.tag.clone()),
@@ -436,9 +449,10 @@ pub async fn get_lines(
                 matched.iter().copied().collect();
 
             let mut lines = Vec::with_capacity(page.len());
-            for &ln in page {
+            for (pos, &ln) in page.iter().enumerate() {
+                let vi = page_start + pos;
                 let raw = source.raw_line(ln).unwrap_or("").to_string();
-                let meta = &source.line_meta[ln];
+                let Some(meta) = source.meta_at(ln) else { continue };
                 let highlights = request
                     .search
                     .as_ref()
@@ -448,6 +462,7 @@ pub async fn get_lines(
                 let view_line = if let Some(ctx) = parser.parse_line(&raw, &source.id, ln) {
                     ViewLine {
                         line_num: ln,
+                        virtual_index: vi,
                         raw: ctx.raw,
                         level: ctx.level,
                         tag: ctx.tag,
@@ -467,6 +482,7 @@ pub async fn get_lines(
                 } else {
                     ViewLine {
                         line_num: ln,
+                        virtual_index: vi,
                         raw: raw.clone(),
                         level: meta.level,
                         tag: meta.tag.clone(),
@@ -534,6 +550,7 @@ pub async fn get_lines(
                 let view_line = match ctx {
                     Some(c) => ViewLine {
                         line_num: i,
+                        virtual_index: i,
                         raw: c.raw,
                         level: c.level,
                         tag: c.tag,
@@ -548,6 +565,7 @@ pub async fn get_lines(
                     },
                     None => ViewLine {
                         line_num: i,
+                        virtual_index: i,
                         raw: raw.clone(),
                         level: meta.level,
                         tag: meta.tag.clone(),

@@ -302,4 +302,80 @@ mod tests {
         let parser = LogcatParser;
         assert!(parser.parse_line(line, "test", 0).is_none());
     }
+
+    // --- parse_meta() tests (exercising the indexing path, not parse_line) ---
+
+    #[test]
+    fn parse_meta_threadtime_extracts_all_fields() {
+        let line = "01-17 10:23:45.123  1234  5678 E ActivityManager: Something went wrong";
+        let parser = LogcatParser;
+        let meta = parser.parse_meta(line, 42).unwrap();
+
+        assert_eq!(meta.level, LogLevel::Error);
+        assert_eq!(meta.tag, "ActivityManager");
+        assert!(meta.timestamp > 0, "timestamp should be parsed from date/time");
+        assert_eq!(meta.byte_offset, 42);
+        assert_eq!(meta.byte_len, line.len());
+    }
+
+    #[test]
+    fn parse_meta_timestamp_matches_parse_line() {
+        let line = "03-15 14:30:00.500  1000  2000 I TestTag: hello";
+        let parser = LogcatParser;
+        let meta = parser.parse_meta(line, 0).unwrap();
+        let ctx = parser.parse_line(line, "test", 0).unwrap();
+
+        assert_eq!(
+            meta.timestamp, ctx.timestamp,
+            "parse_meta and parse_line must produce identical timestamps"
+        );
+        assert_eq!(meta.level, ctx.level);
+        assert_eq!(meta.tag, ctx.tag);
+    }
+
+    #[test]
+    fn parse_meta_uid_pid_tid_format() {
+        let line = "02-16 17:22:46.497  5004  4922  5064 E PolicyManager: Exception in foo";
+        let parser = LogcatParser;
+        let meta = parser.parse_meta(line, 100).unwrap();
+        let ctx = parser.parse_line(line, "test", 0).unwrap();
+
+        assert_eq!(meta.level, LogLevel::Error);
+        assert_eq!(meta.tag, "PolicyManager");
+        assert_eq!(meta.timestamp, ctx.timestamp);
+    }
+
+    #[test]
+    fn parse_meta_brief_format() {
+        let line = "D/MyTag( 999): debug message";
+        let parser = LogcatParser;
+        let meta = parser.parse_meta(line, 0).unwrap();
+
+        assert_eq!(meta.level, LogLevel::Debug);
+        assert_eq!(meta.tag, "MyTag");
+        assert_eq!(meta.timestamp, 0, "brief format has no timestamp");
+    }
+
+    #[test]
+    fn parse_meta_unknown_format_still_indexes() {
+        let line = "some random non-logcat text";
+        let parser = LogcatParser;
+        let meta = parser.parse_meta(line, 200).unwrap();
+
+        assert_eq!(meta.level, LogLevel::Info);
+        assert_eq!(meta.tag, "");
+        assert_eq!(meta.timestamp, 0);
+        assert_eq!(meta.byte_offset, 200);
+        assert_eq!(meta.byte_len, line.len());
+    }
+
+    #[test]
+    fn parse_meta_skips_section_headers() {
+        let line = "--------- beginning of main";
+        let parser = LogcatParser;
+        assert!(
+            parser.parse_meta(line, 0).is_none(),
+            "parse_meta should skip section headers just like parse_line"
+        );
+    }
 }

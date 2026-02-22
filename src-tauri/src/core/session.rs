@@ -363,7 +363,7 @@ fn detect_source_type(mmap: &Mmap) -> SourceType {
     if text.contains("--------- beginning of") || is_logcat_threadtime(text) {
         return SourceType::Logcat;
     }
-    if text.contains("[    0.") || text.contains("Linux version") || text.starts_with('[') {
+    if text.contains("[    0.") || text.contains("Linux version") || looks_like_kernel(text) {
         return SourceType::Kernel;
     }
     if text.contains("RILJ") || text.contains("RIL") {
@@ -389,6 +389,35 @@ fn is_logcat_threadtime(sample: &str) -> bool {
             && b[14] == b'.'
         {
             return true;
+        }
+    }
+    false
+}
+
+/// Check if the first non-empty line looks like a kernel log timestamp: `[ NNNNN.NNNNNN]`.
+/// Guards against false positives from lines that merely start with `[`.
+fn looks_like_kernel(sample: &str) -> bool {
+    for line in sample.lines().take(10) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if !trimmed.starts_with('[') {
+            continue;
+        }
+        if let Some(close) = trimmed.find(']') {
+            if close > 1 {
+                let inner = &trimmed[1..close];
+                // Must look like a numeric timestamp: digits, dots, and spaces only,
+                // with at least one dot.
+                if inner.contains('.')
+                    && inner
+                        .chars()
+                        .all(|c| c.is_ascii_digit() || c == '.' || c == ' ')
+                {
+                    return true;
+                }
+            }
         }
     }
     false
@@ -708,4 +737,597 @@ mod tests {
         assert_eq!(src.raw_line(7), Some("line 7"));
         assert!(src.raw_line(8).is_none()); // past end
     }
+
+    // =========================================================================
+    // Progressive file loading tests
+    // =========================================================================
+
+    /// Generate `n` well-formed logcat threadtime lines as bytes.
+    /// Each line has a unique timestamp and message for verification.
+    fn make_logcat_data(n: usize) -> Vec<u8> {
+        let mut out = String::new();
+        for i in 0..n {
+            let mm = 1 + (i % 12);
+            let dd = 1 + (i % 28);
+            let hh = i % 24;
+            let mi = i % 60;
+            let ss = i % 60;
+            let ms = (i * 7) % 1000;
+            let tid = 1000 + (i % 10);
+            out.push_str(&format!(
+                "{:02}-{:02} {:02}:{:02}:{:02}.{:03}  1000  {} I TestTag: message {}\n",
+                mm, dd, hh, mi, ss, ms, tid, i
+            ));
+        }
+        out.into_bytes()
+    }
+
+    /// Simulate the background indexer (`run_background_indexer` in files.rs):
+    /// scan remaining bytes in chunks using the same `build_partial_line_index`
+    /// + offset adjustment pattern that the real code uses.
+    /// Returns combined (line_index, line_meta) for the extension portion only.
+    fn simulate_background_chunks(
+        data: &[u8],
+        parser: &dyn LogParser,
+        initial_bytes_consumed: usize,
+        chunk_bytes: usize,
+    ) -> (Vec<(usize, usize)>, Vec<LineMeta>) {
+        let mut all_index = Vec::new();
+        let mut all_meta = Vec::new();
+        let mut cursor = initial_bytes_consumed;
+
+        while cursor < data.len() {
+            let remaining = &data[cursor..];
+            let (mut chunk_idx, mut chunk_meta, bytes_in_chunk) =
+                build_partial_line_index(remaining, parser, chunk_bytes);
+
+            if bytes_in_chunk == 0 {
+                break;
+            }
+
+            // Same offset adjustment as run_background_indexer:
+            // build_partial_line_index operates on a sub-slice starting at 0,
+            // but real byte_offsets are cursor + local_offset.
+            for entry in chunk_idx.iter_mut() {
+                entry.0 += cursor;
+            }
+            for m in chunk_meta.iter_mut() {
+                m.byte_offset += cursor;
+            }
+
+            all_index.extend(chunk_idx);
+            all_meta.extend(chunk_meta);
+            cursor += bytes_in_chunk;
+        }
+        (all_index, all_meta)
+    }
+
+    // --- A. build_partial_line_index unit tests ---
+
+    #[test]
+    fn partial_index_small_file_fits_in_one_chunk() {
+        let data = make_logcat_data(5);
+        let parser = LogcatParser;
+        let (idx, meta, consumed) =
+            build_partial_line_index(&data, &parser, data.len() + 1000);
+
+        assert_eq!(idx.len(), 5);
+        assert_eq!(meta.len(), 5);
+        assert_eq!(consumed, data.len());
+
+        // Verify byte offsets are sequential and non-overlapping
+        for i in 1..idx.len() {
+            assert!(
+                idx[i].0 >= idx[i - 1].0 + idx[i - 1].1,
+                "line {} offset should be >= end of line {}",
+                i,
+                i - 1
+            );
+        }
+    }
+
+    #[test]
+    fn partial_index_stops_at_boundary() {
+        let data = make_logcat_data(10);
+        let parser = LogcatParser;
+
+        // Find where line 3 ends (after its \n)
+        let mut newline_count = 0;
+        let mut cutoff = 0;
+        for (i, &b) in data.iter().enumerate() {
+            if b == b'\n' {
+                newline_count += 1;
+                if newline_count == 3 {
+                    cutoff = i + 1; // byte after 3rd \n
+                    break;
+                }
+            }
+        }
+
+        let (idx, meta, consumed) = build_partial_line_index(&data, &parser, cutoff);
+
+        assert_eq!(idx.len(), 3, "should index exactly 3 lines");
+        assert_eq!(meta.len(), 3);
+        assert_eq!(consumed, cutoff, "bytes_consumed should be right after 3rd newline");
+    }
+
+    #[test]
+    fn partial_index_line_content_matches() {
+        let data = make_logcat_data(5);
+        let parser = LogcatParser;
+        let (idx, _meta, _consumed) =
+            build_partial_line_index(&data, &parser, data.len() + 100);
+
+        for (i, &(off, len)) in idx.iter().enumerate() {
+            let extracted = std::str::from_utf8(&data[off..off + len]).unwrap();
+            let expected_suffix = format!("message {}", i);
+            assert!(
+                extracted.contains(&expected_suffix),
+                "line {} content '{}' should contain '{}'",
+                i,
+                extracted,
+                expected_suffix
+            );
+        }
+    }
+
+    #[test]
+    fn partial_index_handles_crlf() {
+        let mut data = String::new();
+        for i in 0..3 {
+            data.push_str(&format!(
+                "01-01 12:00:0{}.000  1000  1001 I TestTag: msg {}\r\n",
+                i, i
+            ));
+        }
+        let bytes = data.into_bytes();
+        let parser = LogcatParser;
+        let (idx, meta, consumed) =
+            build_partial_line_index(&bytes, &parser, bytes.len() + 100);
+
+        assert_eq!(idx.len(), 3);
+        assert_eq!(meta.len(), 3);
+        assert_eq!(consumed, bytes.len());
+
+        // byte_len should exclude \r
+        for &(off, len) in &idx {
+            let content = &bytes[off..off + len];
+            assert!(
+                !content.contains(&b'\r'),
+                "byte_len should exclude \\r"
+            );
+            assert!(
+                !content.contains(&b'\n'),
+                "byte_len should exclude \\n"
+            );
+        }
+    }
+
+    #[test]
+    fn partial_index_empty_data() {
+        let data: &[u8] = &[];
+        let parser = LogcatParser;
+        let (idx, meta, consumed) = build_partial_line_index(data, &parser, 1000);
+
+        assert_eq!(idx.len(), 0);
+        assert_eq!(meta.len(), 0);
+        assert_eq!(consumed, 0);
+    }
+
+    #[test]
+    fn partial_index_single_line_no_newline() {
+        let data = b"01-01 12:00:00.000  1000  1001 I TestTag: only line";
+        let parser = LogcatParser;
+        let (idx, meta, consumed) = build_partial_line_index(data, &parser, data.len() + 100);
+
+        assert_eq!(idx.len(), 1, "should index the single line without trailing newline");
+        assert_eq!(meta.len(), 1);
+        assert_eq!(consumed, data.len());
+        assert_eq!(idx[0].0, 0);
+        assert_eq!(idx[0].1, data.len());
+    }
+
+    #[test]
+    fn partial_index_preserves_timestamps() {
+        // Lines with distinct timestamps
+        let data = b"01-15 08:30:00.000  1000  1001 I TestTag: first\n\
+                     03-22 14:45:30.500  2000  2001 W OtherTag: second\n";
+        let parser = LogcatParser;
+        let (_idx, meta, _consumed) =
+            build_partial_line_index(data, &parser, data.len() + 100);
+
+        assert_eq!(meta.len(), 2);
+        // Both should have non-zero timestamps
+        assert_ne!(meta[0].timestamp, 0, "first line should have parsed timestamp");
+        assert_ne!(meta[1].timestamp, 0, "second line should have parsed timestamp");
+        // Second timestamp (March) should be later than first (January)
+        assert!(
+            meta[1].timestamp > meta[0].timestamp,
+            "March timestamp {} should be > January timestamp {}",
+            meta[1].timestamp,
+            meta[0].timestamp
+        );
+    }
+
+    // --- B. Partial + extend = full equivalence tests ---
+
+    #[test]
+    fn partial_then_extend_equals_full_index() {
+        let data = make_logcat_data(20);
+        let parser = LogcatParser;
+
+        // Full reference: build_partial_line_index with huge max_bytes
+        let (ref_idx, ref_meta, _) =
+            build_partial_line_index(&data, &parser, data.len() + 1000);
+        assert_eq!(ref_idx.len(), 20);
+
+        // Now do partial (~half) + extend
+        let half = data.len() / 2;
+        let (part_idx, part_meta, consumed) =
+            build_partial_line_index(&data, &parser, half);
+        assert!(part_idx.len() < 20, "partial should index fewer than all 20 lines");
+        assert!(consumed <= data.len());
+
+        // Simulate extension for remaining bytes
+        let (ext_idx, ext_meta) =
+            simulate_background_chunks(&data, &parser, consumed, data.len());
+
+        // Combine
+        let mut combined_idx = part_idx;
+        combined_idx.extend(ext_idx);
+        let mut combined_meta = part_meta;
+        combined_meta.extend(ext_meta);
+
+        assert_eq!(
+            combined_idx.len(),
+            ref_idx.len(),
+            "combined line count should match full index"
+        );
+        // Verify every offset+length matches
+        for i in 0..ref_idx.len() {
+            assert_eq!(
+                combined_idx[i], ref_idx[i],
+                "line {} index mismatch: combined {:?} vs ref {:?}",
+                i, combined_idx[i], ref_idx[i]
+            );
+        }
+        // Verify timestamps match
+        for i in 0..ref_meta.len() {
+            assert_eq!(
+                combined_meta[i].timestamp, ref_meta[i].timestamp,
+                "line {} timestamp mismatch",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn multi_chunk_extend_equals_full() {
+        let data = make_logcat_data(30);
+        let parser = LogcatParser;
+
+        // Full reference
+        let (ref_idx, _ref_meta, _) =
+            build_partial_line_index(&data, &parser, data.len() + 1000);
+        assert_eq!(ref_idx.len(), 30);
+
+        // Small chunk size: ~2 lines worth of bytes at a time
+        let chunk_size = 120; // roughly one logcat line
+        let (first_idx, first_meta, consumed) =
+            build_partial_line_index(&data, &parser, chunk_size);
+        assert!(first_idx.len() < 30);
+
+        let (ext_idx, ext_meta) =
+            simulate_background_chunks(&data, &parser, consumed, chunk_size);
+
+        let mut combined_idx = first_idx;
+        combined_idx.extend(ext_idx);
+        let mut combined_meta = first_meta;
+        combined_meta.extend(ext_meta);
+
+        assert_eq!(
+            combined_idx.len(),
+            ref_idx.len(),
+            "multi-chunk combined should match full: got {} vs {}",
+            combined_idx.len(),
+            ref_idx.len()
+        );
+        for i in 0..ref_idx.len() {
+            assert_eq!(combined_idx[i], ref_idx[i], "line {} index mismatch", i);
+        }
+    }
+
+    #[test]
+    fn extend_source_index_appends_correctly() {
+        let data = make_logcat_data(10);
+        let parser = LogcatParser;
+
+        // Build partial covering ~half
+        let half = data.len() / 2;
+        let (part_idx, part_meta, consumed) =
+            build_partial_line_index(&data, &parser, half);
+        let part_count = part_idx.len();
+        assert!(part_count > 0 && part_count < 10);
+
+        // Build extension for the rest
+        let remaining = &data[consumed..];
+        let (mut ext_idx, mut ext_meta, _) =
+            build_partial_line_index(remaining, &parser, remaining.len() + 100);
+        // Adjust offsets for extension
+        for entry in ext_idx.iter_mut() {
+            entry.0 += consumed;
+        }
+        for m in ext_meta.iter_mut() {
+            m.byte_offset += consumed;
+        }
+        let ext_count = ext_idx.len();
+
+        // Create session with a File-mode source manually (anon mmap with data copied in)
+        let mut mmap_mut = memmap2::MmapOptions::new()
+            .len(data.len())
+            .map_anon()
+            .expect("anon mmap");
+        mmap_mut.copy_from_slice(&data);
+        let mmap: Mmap = mmap_mut.make_read_only().unwrap();
+        let mmap = Arc::new(mmap);
+
+        let mut session = AnalysisSession::new("test-session".into());
+        session.sources.push(LogSource {
+            id: "src1".into(),
+            name: "test.log".into(),
+            source_type: SourceType::Logcat,
+            data: LogSourceData::File {
+                mmap: Arc::clone(&mmap),
+                line_index: part_idx,
+            },
+            line_meta: part_meta,
+            sections: Vec::new(),
+            is_indexing: true,
+        });
+
+        // Verify is_indexing is true
+        assert!(session.sources[0].is_indexing);
+        assert_eq!(session.sources[0].total_lines(), part_count);
+
+        // Extend with remaining lines
+        session.extend_source_index(0, ext_idx, ext_meta, true);
+
+        // Verify final state
+        assert!(!session.sources[0].is_indexing, "should be done indexing");
+        assert_eq!(
+            session.sources[0].total_lines(),
+            part_count + ext_count,
+            "total lines should be sum of partial + extension"
+        );
+
+        // Verify raw_line works for ALL lines
+        let source = &session.sources[0];
+        for i in 0..source.total_lines() {
+            let line = source.raw_line(i);
+            assert!(
+                line.is_some(),
+                "raw_line({}) should return Some after extend",
+                i
+            );
+            let text = line.unwrap();
+            let expected = format!("message {}", i);
+            assert!(
+                text.contains(&expected),
+                "raw_line({}) = '{}' should contain '{}'",
+                i,
+                text,
+                expected
+            );
+        }
+
+        // Verify meta_at works for ALL lines
+        for i in 0..source.total_lines() {
+            assert!(
+                source.meta_at(i).is_some(),
+                "meta_at({}) should return Some after extend",
+                i
+            );
+        }
+    }
+
+    // --- C. Line number accuracy through progressive loads ---
+
+    #[test]
+    fn line_numbers_are_sequential_across_chunks() {
+        let data = make_logcat_data(15);
+        let parser = LogcatParser;
+
+        let chunk_size = 200;
+        let (first_idx, first_meta, consumed) =
+            build_partial_line_index(&data, &parser, chunk_size);
+        let (ext_idx, ext_meta) =
+            simulate_background_chunks(&data, &parser, consumed, chunk_size);
+
+        let mut combined_idx = first_idx;
+        combined_idx.extend(ext_idx);
+        let mut combined_meta = first_meta;
+        combined_meta.extend(ext_meta);
+
+        // Verify every line extracts the right content
+        for (i, &(off, len)) in combined_idx.iter().enumerate() {
+            let content = std::str::from_utf8(&data[off..off + len]).unwrap();
+            let expected = format!("message {}", i);
+            assert!(
+                content.contains(&expected),
+                "line {} content '{}' should contain '{}'",
+                i,
+                content,
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn meta_at_works_across_chunk_boundary() {
+        let data = make_logcat_data(10);
+        let parser = LogcatParser;
+
+        // Partial: cover first ~4 lines
+        let (part_idx, part_meta, consumed) =
+            build_partial_line_index(&data, &parser, 300);
+        let boundary = part_idx.len();
+        assert!(boundary > 0 && boundary < 10);
+
+        // Extension
+        let remaining = &data[consumed..];
+        let (mut ext_idx, mut ext_meta, _) =
+            build_partial_line_index(remaining, &parser, remaining.len() + 100);
+        for entry in ext_idx.iter_mut() {
+            entry.0 += consumed;
+        }
+        for m in ext_meta.iter_mut() {
+            m.byte_offset += consumed;
+        }
+
+        let mut combined_meta = part_meta;
+        combined_meta.extend(ext_meta);
+
+        // Check around the boundary
+        let last_of_first = &combined_meta[boundary - 1];
+        let first_of_second = &combined_meta[boundary];
+
+        assert_ne!(last_of_first.timestamp, 0, "last line of first chunk should have timestamp");
+        assert_ne!(first_of_second.timestamp, 0, "first line of second chunk should have timestamp");
+        assert!(
+            first_of_second.timestamp >= last_of_first.timestamp,
+            "timestamps should be non-decreasing across chunk boundary"
+        );
+    }
+
+    // --- D. Edge cases ---
+
+    #[test]
+    fn partial_index_max_bytes_mid_line() {
+        let data = make_logcat_data(5);
+        let parser = LogcatParser;
+
+        // Find the start of line 2 (after 2nd \n), then set max_bytes to mid-line-2
+        let mut newlines = 0;
+        let mut line2_start = 0;
+        for (i, &b) in data.iter().enumerate() {
+            if b == b'\n' {
+                newlines += 1;
+                if newlines == 2 {
+                    line2_start = i + 1;
+                    break;
+                }
+            }
+        }
+        let mid_line2 = line2_start + 10; // somewhere in the middle of line 2
+
+        let (idx, _meta, consumed) = build_partial_line_index(&data, &parser, mid_line2);
+
+        // Should still fully index line 2 (scan continues to its \n),
+        // but NOT index line 3+
+        assert_eq!(idx.len(), 3, "should index lines 0, 1, 2 (scan past mid-line)");
+        // consumed should be past line 2's newline
+        assert!(
+            consumed > mid_line2,
+            "bytes_consumed {} should be past mid_line2 {}",
+            consumed,
+            mid_line2
+        );
+    }
+
+    #[test]
+    fn partial_index_max_bytes_exactly_on_newline() {
+        let data = make_logcat_data(5);
+        let parser = LogcatParser;
+
+        // Find the exact position of the 3rd \n
+        let mut newlines = 0;
+        let mut third_nl = 0;
+        for (i, &b) in data.iter().enumerate() {
+            if b == b'\n' {
+                newlines += 1;
+                if newlines == 3 {
+                    third_nl = i;
+                    break;
+                }
+            }
+        }
+
+        // max_bytes = position of the 3rd newline (0-indexed byte)
+        let (idx, _meta, consumed) = build_partial_line_index(&data, &parser, third_nl);
+
+        // The 3rd newline terminates line index 2 (0-based). After processing it,
+        // consumed = third_nl + 1, which equals scan_limit or exceeds it, so we break.
+        assert_eq!(idx.len(), 3, "should index exactly 3 lines");
+        assert_eq!(consumed, third_nl + 1);
+    }
+
+    #[test]
+    fn extend_with_empty_batch() {
+        let data = make_logcat_data(5);
+        let parser = LogcatParser;
+
+        let (part_idx, part_meta, _consumed) =
+            build_partial_line_index(&data, &parser, data.len() + 100);
+
+        // Create a File source manually with is_indexing = true
+        let mut mmap_mut = memmap2::MmapOptions::new()
+            .len(data.len())
+            .map_anon()
+            .expect("anon mmap");
+        mmap_mut.copy_from_slice(&data);
+        let mmap: Mmap = mmap_mut.make_read_only().unwrap();
+
+        let mut session = AnalysisSession::new("test".into());
+        session.sources.push(LogSource {
+            id: "src1".into(),
+            name: "test.log".into(),
+            source_type: SourceType::Logcat,
+            data: LogSourceData::File {
+                mmap: Arc::new(mmap),
+                line_index: part_idx.clone(),
+            },
+            line_meta: part_meta.clone(),
+            sections: Vec::new(),
+            is_indexing: true,
+        });
+
+        let original_count = session.sources[0].total_lines();
+
+        // Extend with empty batch, done=true
+        session.extend_source_index(0, Vec::new(), Vec::new(), true);
+
+        assert!(!session.sources[0].is_indexing, "should be done indexing");
+        assert_eq!(
+            session.sources[0].total_lines(),
+            original_count,
+            "line count should not change with empty batch"
+        );
+    }
+
+    #[test]
+    fn blank_lines_are_indexed() {
+        // Logcat lines with a blank line in between
+        let data = b"01-01 12:00:00.000  1000  1001 I TestTag: line one\n\
+                     \n\
+                     01-01 12:00:02.000  1000  1001 I TestTag: line three\n";
+        let parser = LogcatParser;
+        let (idx, meta, consumed) =
+            build_partial_line_index(data, &parser, data.len() + 100);
+
+        assert_eq!(idx.len(), 3, "blank line should be indexed too");
+        assert_eq!(meta.len(), 3);
+        assert_eq!(consumed, data.len());
+
+        // The blank line should have byte_len 0
+        assert_eq!(idx[1].1, 0, "blank line should have byte_len 0");
+
+        // Lines after the blank should still have correct content
+        let (off, len) = idx[2];
+        let content = std::str::from_utf8(&data[off..off + len]).unwrap();
+        assert!(content.contains("line three"), "third line content should be correct");
+    }
+
+    // --- Helper: build_partial_line_index signature adapter for equivalence tests ---
+    // (build_line_index takes &Mmap, but we use build_partial_line_index with huge
+    //  max_bytes as the "full" reference since the logic is identical)
 }

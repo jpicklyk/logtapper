@@ -116,4 +116,44 @@ mod tests {
         assert_eq!(ctx.level, LogLevel::Error);
         assert_eq!(ctx.tag, "swapper");
     }
+
+    // --- parse_meta() tests (exercising the indexing path) ---
+
+    #[test]
+    fn parse_meta_extracts_fields() {
+        let line = "[12345.678901] wlan: firmware crash detected";
+        let p = KernelParser;
+        let meta = p.parse_meta(line, 500).unwrap();
+
+        assert_eq!(meta.level, LogLevel::Info);
+        assert_eq!(meta.tag, "kernel");
+        assert!(meta.timestamp > 0);
+        assert_eq!(meta.byte_offset, 500);
+        assert_eq!(meta.byte_len, line.len());
+    }
+
+    #[test]
+    fn parse_meta_timestamp_matches_parse_line() {
+        let line = "[12345.678901] wlan: firmware crash detected";
+        let p = KernelParser;
+        let meta = p.parse_meta(line, 0).unwrap();
+        let ctx = p.parse_line(line, "kernel", 0).unwrap();
+
+        assert_eq!(
+            meta.timestamp, ctx.timestamp,
+            "parse_meta and parse_line must produce identical timestamps"
+        );
+        assert_eq!(meta.level, ctx.level);
+        assert_eq!(meta.tag, ctx.tag);
+    }
+
+    #[test]
+    fn parse_meta_returns_none_for_non_kernel() {
+        let line = "this is not a kernel line";
+        let p = KernelParser;
+        assert!(
+            p.parse_meta(line, 0).is_none(),
+            "non-kernel lines should return None from parse_meta"
+        );
+    }
 }
