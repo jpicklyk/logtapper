@@ -107,6 +107,7 @@ pub fn run() {
             commands::files::search_logs,
             commands::files::get_dumpstate_metadata,
             commands::files::get_sections,
+            commands::files::close_session,
             commands::pipeline::run_pipeline,
             commands::pipeline::stop_pipeline,
             commands::processors::list_processors,

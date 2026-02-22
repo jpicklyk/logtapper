@@ -18,6 +18,7 @@ export interface AppContextValue {
   onOpenLibrary: () => void;
   selectedLineNum: number | null;
   setSelectedLineNum: (n: number | null) => void;
+  onCloseSession: () => void;
 }
 
 export const AppContext = createContext<AppContextValue | null>(null);

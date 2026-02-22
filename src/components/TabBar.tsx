@@ -11,6 +11,10 @@ interface TabBarProps {
   paneCount: number;
   layout: PaneLayoutState;
   pipelineHasResults: boolean;
+  /** Whether a log session is currently loaded. */
+  hasSession: boolean;
+  /** Called when the user clicks close on a logviewer tab to close the session. */
+  onCloseSession?: () => void;
 }
 
 interface ContextMenu {
@@ -25,6 +29,8 @@ export default function TabBar({
   paneCount,
   layout,
   pipelineHasResults,
+  hasSession,
+  onCloseSession,
 }: TabBarProps) {
   const [dragOver, setDragOver] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
@@ -89,11 +95,8 @@ export default function TabBar({
   const canClose = (tab: PaneTab) => {
     if (isCompact) return false;
     if (tab.type === 'logviewer') {
-      const total = layout.panes.reduce(
-        (n, p) => n + p.tabs.filter((t) => t.type === 'logviewer').length,
-        0,
-      );
-      return total > 1;
+      // Logviewer tab can be closed when a session is loaded (closes the session)
+      return hasSession;
     }
     return true;
   };
@@ -165,10 +168,14 @@ export default function TabBar({
               {canClose(tab) && (
                 <button
                   className="tab-close"
-                  title="Close tab"
+                  title={tab.type === 'logviewer' ? 'Close file' : 'Close tab'}
                   onClick={(e) => {
                     e.stopPropagation();
-                    layout.closeTab(tab.id, pane.id);
+                    if (tab.type === 'logviewer' && onCloseSession) {
+                      onCloseSession();
+                    } else {
+                      layout.closeTab(tab.id, pane.id);
+                    }
                   }}
                 >
                   ×
@@ -272,11 +279,15 @@ export default function TabBar({
             <div
               className="context-menu-item context-menu-item--danger"
               onClick={() => {
-                layout.closeTab(contextMenu.tab.id, pane.id);
+                if (contextMenu.tab.type === 'logviewer' && onCloseSession) {
+                  onCloseSession();
+                } else {
+                  layout.closeTab(contextMenu.tab.id, pane.id);
+                }
                 setContextMenu(null);
               }}
             >
-              Close Tab
+              {contextMenu.tab.type === 'logviewer' ? 'Close File' : 'Close Tab'}
             </div>
           )}
         </div>

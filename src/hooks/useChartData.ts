@@ -27,5 +27,18 @@ export function useChartData() {
     [charts],
   );
 
-  return { fetchCharts, getProcessorCharts, loading, error };
+  const clearSessionCharts = useCallback((sessionId: string) => {
+    setCharts((prev) => {
+      const prefix = `${sessionId}:`;
+      const next: Record<string, ChartData[]> = {};
+      for (const key of Object.keys(prev)) {
+        if (!key.startsWith(prefix)) {
+          next[key] = prev[key];
+        }
+      }
+      return next;
+    });
+  }, []);
+
+  return { fetchCharts, getProcessorCharts, clearSessionCharts, loading, error };
 }

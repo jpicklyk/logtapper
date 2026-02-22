@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
 
 use crate::anonymizer::config::AnonymizerConfig;
 use crate::anonymizer::LogAnonymizer;
@@ -66,6 +67,8 @@ pub struct AppState {
     /// Continuous Transformer state for live streaming.
     #[allow(dead_code)]
     pub stream_transformer_state: Mutex<HashMap<String, HashMap<String, ContinuousTransformerState>>>,
+    /// Cancellation flag for the active pipeline run.
+    pub pipeline_cancel: Arc<AtomicBool>,
 }
 
 impl Default for AppState {
@@ -100,6 +103,7 @@ impl AppState {
             stream_tracker_state: Mutex::new(HashMap::new()),
             stream_transformer_state: Mutex::new(HashMap::new()),
             correlator_results: Mutex::new(HashMap::new()),
+            pipeline_cancel: Arc::new(AtomicBool::new(false)),
         }
     }
 }

@@ -1,11 +1,12 @@
 use rayon::prelude::*;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::AppState;
-use crate::core::logcat_parser::LogcatParser;
-use crate::core::parser::LogParser;
+use crate::core::session::{LogSourceData, parser_for};
 use crate::processors::ProcessorKind;
 use crate::processors::correlator::engine::CorrelatorRun;
 use crate::processors::reporter::engine::ProcessorRun;
@@ -38,8 +39,48 @@ pub struct PipelineRunSummary {
 }
 
 // ---------------------------------------------------------------------------
+// Source snapshot — data extracted from the session under lock
+// ---------------------------------------------------------------------------
+
+/// Lightweight handle to the source data, cloned from the session so we
+/// can process without holding the sessions lock.
+enum SourceSnapshot {
+    File {
+        mmap: Arc<memmap2::Mmap>,
+        line_index: Vec<(usize, usize)>,
+    },
+    Stream {
+        raw_lines: Vec<String>,
+    },
+}
+
+impl SourceSnapshot {
+    fn total_lines(&self) -> usize {
+        match self {
+            SourceSnapshot::File { line_index, .. } => line_index.len(),
+            SourceSnapshot::Stream { raw_lines } => raw_lines.len(),
+        }
+    }
+
+    fn raw_line(&self, n: usize) -> Option<&str> {
+        match self {
+            SourceSnapshot::File { mmap, line_index } => {
+                let (off, len) = line_index.get(n)?;
+                std::str::from_utf8(&mmap[*off..*off + *len]).ok()
+            }
+            SourceSnapshot::Stream { raw_lines } => {
+                raw_lines.get(n).map(|s| s.as_str())
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // run_pipeline
 // ---------------------------------------------------------------------------
+
+const CHUNK_SIZE: usize = 50_000;
+const PROGRESS_INTERVAL: usize = 5_000;
 
 #[tauri::command]
 pub async fn run_pipeline(
@@ -52,6 +93,9 @@ pub async fn run_pipeline(
     #[allow(unused_variables)]
     anonymize: bool,
 ) -> Result<Vec<PipelineRunSummary>, String> {
+    // Reset cancellation flag at the start
+    state.pipeline_cancel.store(false, Ordering::Relaxed);
+
     // ── Partition processor IDs by kind ──────────────────────────────────────
     let (transformer_ids, reporter_ids, tracker_ids, correlator_ids) = {
         let procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
@@ -102,18 +146,25 @@ pub async fn run_pipeline(
             .collect()
     };
 
-    // ── Snapshot raw lines + section ranges ───────────────────────────────────
-    let (total_lines, source_id, raw_lines, section_ranges) = {
+    // ── Snapshot source data + section ranges ────────────────────────────────
+    let (source_snapshot, source_id, section_ranges, source_type) = {
         let sessions = state.sessions.lock().map_err(|_| "Session lock poisoned")?;
         let session = sessions.get(&session_id)
             .ok_or_else(|| format!("Session '{session_id}' not found"))?;
         let src = session.primary_source().ok_or("No sources in session")?;
 
-        let total = src.total_lines();
         let sid = src.id.clone();
-        let lines: Vec<String> = (0..total)
-            .map(|n| src.raw_line(n).unwrap_or("").to_string())
-            .collect();
+        let stype = src.source_type.clone();
+
+        let snapshot = match &src.data {
+            LogSourceData::File { mmap, line_index } => SourceSnapshot::File {
+                mmap: Arc::clone(mmap),
+                line_index: line_index.clone(),
+            },
+            LogSourceData::Stream { raw_lines, .. } => SourceSnapshot::Stream {
+                raw_lines: raw_lines.clone(),
+            },
+        };
 
         // Section ranges indexed parallel to reporter_defs
         let ranges: Vec<Option<Vec<(usize, usize)>>> = reporter_defs.iter()
@@ -130,63 +181,166 @@ pub async fn run_pipeline(
             })
             .collect();
 
-        (total, sid, lines, ranges)
+        (snapshot, sid, ranges, stype)
     };
     // Sessions lock released.
 
-    // ── Snapshot anonymizer config (used to build transformers with user settings) ─
+    let total_lines = source_snapshot.total_lines();
+    let parser = parser_for(&source_type);
+
+    // ── Snapshot anonymizer config ───────────────────────────────────────────
     let anonymizer_config = state.anonymizer_config.lock()
         .map_err(|_| "Anonymizer config lock poisoned")?
         .clone();
 
-    // ── Parse all lines in parallel ───────────────────────────────────────────
-    let parser = LogcatParser;
-    let mut parsed_lines: Vec<Option<crate::core::line::LineContext>> = raw_lines
-        .par_iter()
-        .enumerate()
-        .map(|(line_num, raw)| parser.parse_line(raw, &source_id, line_num))
+    // ── Initialize transformer runs ──────────────────────────────────────────
+    let mut transformer_runs: Vec<TransformerRun> = transformer_defs.iter()
+        .map(|(_, def)| TransformerRun::new_with_anonymizer_config(def, &anonymizer_config))
         .collect();
-    drop(raw_lines);
 
-    // ── Save pre-transform messages for state tracker processing ──────────────
-    // State trackers must run on original messages so their capture regexes
-    // still match (e.g. IP regex won't match "<IPv4-1>").  After capturing,
-    // the stored transition values are post-processed with the PII mapping.
-    // source_line_num == position in parsed_lines (set by the parser loop above).
-    let pre_transform_msgs: HashMap<usize, String> =
-        if !transformer_defs.is_empty() && !tracker_defs.is_empty() {
-            parsed_lines
-                .iter()
-                .filter_map(|opt| opt.as_ref().map(|l| (l.source_line_num, l.message.clone())))
-                .collect()
-        } else {
-            HashMap::new()
-        };
+    // ── Initialize reporter runs ─────────────────────────────────────────────
+    #[allow(clippy::type_complexity)]
+    let mut reporter_runs: Vec<(ProcessorRun<'_>, &Option<Vec<(usize, usize)>>)> = reporter_defs.iter()
+        .zip(section_ranges.iter())
+        .map(|((_, def), ranges)| (ProcessorRun::new(def), ranges))
+        .collect();
 
-    // ── Layer 1: Transformers (sequential — each modifies or drops lines) ─────
-    let forward_pii: HashMap<String, String>;
-    if !transformer_defs.is_empty() {
-        let mut transformer_runs: Vec<TransformerRun> = transformer_defs.iter()
-            .map(|(_, def)| TransformerRun::new_with_anonymizer_config(def, &anonymizer_config))
+    // ── Initialize tracker runs ──────────────────────────────────────────────
+    let mut tracker_runs: Vec<(String, StateTrackerRun)> = tracker_defs.iter()
+        .map(|(tid, def)| (tid.clone(), StateTrackerRun::new(tid, def)))
+        .collect();
+
+    // ── Initialize correlator runs ───────────────────────────────────────────
+    let mut correlator_runs: Vec<(String, CorrelatorRun<'_>)> = correlator_defs.iter()
+        .map(|(cid, def)| (cid.clone(), CorrelatorRun::new(def)))
+        .collect();
+
+    // Forward PII mapping accumulated across all chunks
+    let mut forward_pii: HashMap<String, String> = HashMap::new();
+
+    // Cancellation flag
+    let cancel = Arc::clone(&state.pipeline_cancel);
+
+    // ── Chunked processing loop ──────────────────────────────────────────────
+    let mut lines_processed = 0usize;
+
+    for chunk_start in (0..total_lines).step_by(CHUNK_SIZE) {
+        // Check cancellation
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+
+        let chunk_end = (chunk_start + CHUNK_SIZE).min(total_lines);
+
+        // ── Parse chunk in parallel ──────────────────────────────────────────
+        let mut parsed_chunk: Vec<Option<crate::core::line::LineContext>> = (chunk_start..chunk_end)
+            .into_par_iter()
+            .map(|n| {
+                let raw = source_snapshot.raw_line(n).unwrap_or("");
+                parser.parse_line(raw, &source_id, n)
+            })
             .collect();
 
-        for line_opt in parsed_lines.iter_mut() {
-            if let Some(line) = line_opt.as_mut() {
-                let mut keep = true;
-                for run in transformer_runs.iter_mut() {
-                    if !run.process_line(line) {
-                        keep = false;
-                        break;
+        // ── Save pre-transform messages for state tracker processing ─────────
+        let pre_transform_msgs: HashMap<usize, String> =
+            if !transformer_defs.is_empty() && !tracker_defs.is_empty() {
+                parsed_chunk
+                    .iter()
+                    .filter_map(|opt| opt.as_ref().map(|l| (l.source_line_num, l.message.clone())))
+                    .collect()
+            } else {
+                HashMap::new()
+            };
+
+        // ── Layer 1: Transformers ────────────────────────────────────────────
+        if !transformer_defs.is_empty() {
+            for line_opt in parsed_chunk.iter_mut() {
+                if let Some(line) = line_opt.as_mut() {
+                    let mut keep = true;
+                    for run in transformer_runs.iter_mut() {
+                        if !run.process_line(line) {
+                            keep = false;
+                            break;
+                        }
                     }
-                }
-                if !keep {
-                    *line_opt = None;
+                    if !keep {
+                        *line_opt = None;
+                    }
                 }
             }
         }
 
-        // Forward mapping: raw→token.  Keep for post-processing state tracker values.
-        // Also store inverted (token→raw) for the reveal-PII UI feature.
+        // Collect non-dropped lines for downstream layers
+        let mut enriched_chunk: Vec<crate::core::line::LineContext> =
+            parsed_chunk.into_iter().flatten().collect();
+
+        // ── Layer 2a: StateTrackers ──────────────────────────────────────────
+        if !tracker_defs.is_empty() {
+            // Swap in pre-transform messages so capture regexes work on raw values.
+            let mut saved_post_transform: Vec<String> = Vec::new();
+            if !pre_transform_msgs.is_empty() {
+                saved_post_transform.reserve(enriched_chunk.len());
+                for line in enriched_chunk.iter_mut() {
+                    let orig = pre_transform_msgs
+                        .get(&line.source_line_num)
+                        .cloned()
+                        .unwrap_or_else(|| line.message.clone());
+                    saved_post_transform.push(std::mem::replace(&mut line.message, orig));
+                }
+            }
+
+            for (_, run) in tracker_runs.iter_mut() {
+                for line in &enriched_chunk {
+                    run.process_line(line);
+                }
+            }
+
+            // Restore post-transform messages for reporters.
+            if !saved_post_transform.is_empty() {
+                for (line, post_msg) in enriched_chunk.iter_mut().zip(saved_post_transform) {
+                    line.message = post_msg;
+                }
+            }
+        }
+
+        // ── Layer 2b: Reporters ──────────────────────────────────────────────
+        for (idx, ctx) in enriched_chunk.iter().enumerate() {
+            reporter_runs.par_iter_mut().for_each(|(run, ranges)| {
+                if let Some(ranges) = ranges {
+                    if !ranges.iter().any(|(s, e)| ctx.source_line_num >= *s && ctx.source_line_num <= *e) {
+                        return;
+                    }
+                }
+                run.process_line(ctx);
+            });
+
+            lines_processed += 1;
+            let chunk_idx = chunk_start + idx;
+            if chunk_idx % PROGRESS_INTERVAL == 0 || lines_processed == total_lines {
+                for proc_id in &processor_ids {
+                    let _ = app.emit(
+                        "pipeline-progress",
+                        PipelineProgress {
+                            processor_id: proc_id.clone(),
+                            lines_processed,
+                            total_lines,
+                            percent: lines_processed as f32 / total_lines.max(1) as f32 * 100.0,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Layer 2c: Correlators ────────────────────────────────────────────
+        for (_, run) in correlator_runs.iter_mut() {
+            for line in &enriched_chunk {
+                run.process_line(line);
+            }
+        }
+    }
+
+    // ── Collect PII forward mappings from transformer runs ───────────────────
+    if !transformer_defs.is_empty() {
         forward_pii = transformer_runs.iter()
             .flat_map(|r| r.get_pii_mappings())
             .collect();
@@ -197,37 +351,12 @@ pub async fn run_pipeline(
                 pm.insert(session_id.clone(), inverted);
             }
         }
-    } else {
-        forward_pii = HashMap::new();
     }
 
-    // Collect non-dropped lines for downstream layers
-    let mut enriched_lines: Vec<crate::core::line::LineContext> =
-        parsed_lines.into_iter().flatten().collect();
-
-    // ── Layer 2a: StateTrackers ────────────────────────────────────────────────
-    // Temporarily restore pre-transform messages so capture regexes work on
-    // real values.  After capture, changes are post-processed with forward_pii.
+    // ── Finalize state tracker results ───────────────────────────────────────
     if !tracker_defs.is_empty() {
-        // Swap in pre-transform messages; save post-transform ones for restoration.
-        let mut saved_post_transform: Vec<String> = Vec::with_capacity(enriched_lines.len());
-        if !pre_transform_msgs.is_empty() {
-            for line in enriched_lines.iter_mut() {
-                let orig = pre_transform_msgs
-                    .get(&line.source_line_num)
-                    .cloned()
-                    .unwrap_or_else(|| line.message.clone());
-                saved_post_transform.push(std::mem::replace(&mut line.message, orig));
-            }
-        }
-
-        let session_tracker_results: HashMap<String, _> = tracker_defs
-            .par_iter()
-            .map(|(tracker_id, def)| {
-                let mut run = StateTrackerRun::new(tracker_id, def);
-                for line in &enriched_lines {
-                    run.process_line(line);
-                }
+        let session_tracker_results: HashMap<String, _> = tracker_runs.into_iter()
+            .map(|(tracker_id, run)| {
                 let mut result = run.finish();
 
                 // Post-process: replace any captured raw PII values with tokens.
@@ -256,68 +385,20 @@ pub async fn run_pipeline(
                     }
                 }
 
-                (tracker_id.clone(), result)
+                (tracker_id, result)
             })
             .collect();
-
-        // Restore post-transform messages for reporters.
-        if !saved_post_transform.is_empty() {
-            for (line, post_msg) in enriched_lines.iter_mut().zip(saved_post_transform) {
-                line.message = post_msg;
-            }
-        }
 
         if let Ok(mut str_results) = state.state_tracker_results.lock() {
             str_results.insert(session_id.clone(), session_tracker_results);
         }
     }
 
-    // ── Layer 2b: Reporters (sequential — stateful accumulators) ──────────────
-    const PROGRESS_INTERVAL: usize = 5_000;
-
-    #[allow(clippy::type_complexity)]
-    let mut reporter_runs: Vec<(ProcessorRun<'_>, &Option<Vec<(usize, usize)>>)> = reporter_defs.iter()
-        .zip(section_ranges.iter())
-        .map(|((_, def), ranges)| (ProcessorRun::new(def), ranges))
-        .collect();
-
-    for (idx, ctx) in enriched_lines.iter().enumerate() {
-        reporter_runs.par_iter_mut().for_each(|(run, ranges)| {
-            if let Some(ranges) = ranges {
-                // Use the original file line number (ctx.source_line_num) for section range check
-                if !ranges.iter().any(|(s, e)| ctx.source_line_num >= *s && ctx.source_line_num <= *e) {
-                    return;
-                }
-            }
-            run.process_line(ctx);
-        });
-
-        if idx % PROGRESS_INTERVAL == 0 || idx + 1 == enriched_lines.len() {
-            for proc_id in &processor_ids {
-                let _ = app.emit(
-                    "pipeline-progress",
-                    PipelineProgress {
-                        processor_id: proc_id.clone(),
-                        lines_processed: idx + 1,
-                        total_lines,
-                        percent: (idx + 1) as f32 / total_lines.max(1) as f32 * 100.0,
-                    },
-                );
-            }
-        }
-    }
-
-    // ── Layer 2c: Correlators ─────────────────────────────────────────────────
+    // ── Finalize correlator results ──────────────────────────────────────────
     if !correlator_defs.is_empty() {
-        let mut session_correlator_results = HashMap::new();
-        for (corr_id, corr_def) in &correlator_defs {
-            let mut run = CorrelatorRun::new(corr_def);
-            for line in &enriched_lines {
-                run.process_line(line);
-            }
-            let result = run.finish();
-            session_correlator_results.insert(corr_id.clone(), result);
-        }
+        let session_correlator_results: HashMap<String, _> = correlator_runs.into_iter()
+            .map(|(cid, run)| (cid, run.finish()))
+            .collect();
         if let Ok(mut cr) = state.correlator_results.lock() {
             cr.insert(session_id.clone(), session_correlator_results);
         }
@@ -387,10 +468,11 @@ pub async fn run_pipeline(
 }
 
 // ---------------------------------------------------------------------------
-// stop_pipeline  (best-effort no-op — real cancellation needs tokio)
+// stop_pipeline — sets cancellation flag for the active pipeline run
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub async fn stop_pipeline() -> Result<(), String> {
+pub async fn stop_pipeline(state: State<'_, AppState>) -> Result<(), String> {
+    state.pipeline_cancel.store(true, Ordering::Relaxed);
     Ok(())
 }

@@ -155,17 +155,33 @@ export default function App() {
     setSections([]);
     setProcessorViewId(null);
     setSelectedLineNum(null);
-  }, [viewer, pipeline, stateTracker]);
+    // Remove all logviewer tabs (back to empty-pane state)
+    for (const pane of layout.panes) {
+      for (const tab of pane.tabs) {
+        if (tab.type === 'logviewer') {
+          layout.closeTab(tab.id, pane.id);
+        }
+      }
+    }
+  }, [viewer, pipeline, stateTracker, layout]);
 
-  // ── Rename logviewer tabs to filename when a file is loaded ──────────────
+  // ── Ensure a logviewer tab exists and rename it when a file is loaded ────
 
   useEffect(() => {
     if (!viewer.session?.sourceName) return;
     const name = viewer.session.sourceName;
-    for (const pane of layout.panes) {
-      for (const tab of pane.tabs) {
-        if (tab.type === 'logviewer') {
-          layout.renameTab(tab.id, name);
+    // Check if any logviewer tab already exists
+    const hasLogviewer = layout.panes.some((p) => p.tabs.some((t) => t.type === 'logviewer'));
+    if (!hasLogviewer) {
+      // Create one in the first pane with the filename as its label
+      layout.addTab(layout.panes[0].id, 'logviewer', name);
+    } else {
+      // Rename existing logviewer tabs to the file name
+      for (const pane of layout.panes) {
+        for (const tab of pane.tabs) {
+          if (tab.type === 'logviewer') {
+            layout.renameTab(tab.id, name);
+          }
         }
       }
     }
@@ -257,6 +273,7 @@ export default function App() {
     onOpenLibrary: () => setShowLibrary(true),
     selectedLineNum,
     setSelectedLineNum,
+    onCloseSession: handleCloseSession,
   };
 
   return (
@@ -276,13 +293,6 @@ export default function App() {
                 {viewer.session.sourceName} —{' '}
                 {viewer.session.totalLines.toLocaleString()} lines
                 {viewer.isStreaming && <span className="stream-label">live</span>}
-                <button
-                  className="session-close"
-                  onClick={handleCloseSession}
-                  title="Close session"
-                >
-                  ×
-                </button>
               </span>
             )}
             {processorViewId && (

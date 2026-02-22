@@ -154,6 +154,7 @@ pub struct HighlightSpan {
 #[serde(rename_all = "camelCase")]
 pub struct ViewLine {
     pub line_num: usize,
+    pub virtual_index: usize,
     pub raw: String,
     pub level: LogLevel,
     pub tag: String,

@@ -87,6 +87,7 @@
   white-space: nowrap;
 }
 
+
 .header-right {
   display: flex;
   gap: 8px;
@@ -316,12 +317,48 @@
 
 /* ── Log viewer ───────────────────────────────────────────────────────────── */
 
-.log-viewer {
+/* Outer wrapper: takes the flex slot so nav buttons can overlay the scroller. */
+.log-viewer-wrapper {
   flex: 1;
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.log-viewer {
+  height: 100%;
   overflow-y: auto;
   overflow-x: auto;
   font-size: 13px;
   line-height: 22px;
+}
+
+/* Jump buttons shown when file exceeds browser scroll height limit (~1.5M lines).
+   Absolutely positioned inside the wrapper so they always overlay the scroller. */
+.log-viewer-nav {
+  position: absolute;
+  z-index: 10;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface-elevated, #2a2a2a);
+  color: var(--text-accent, #4fc3f7);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  display: block;
+  width: fit-content;
+}
+.log-viewer-nav:hover {
+  background: var(--surface-hover, #333);
+}
+.log-viewer-nav--top {
+  top: 4px;
+}
+.log-viewer-nav--bottom {
+  bottom: 4px;
 }
 
 .log-viewer-empty {

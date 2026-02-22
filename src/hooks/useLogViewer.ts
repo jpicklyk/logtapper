@@ -8,6 +8,7 @@ import { onAdbBatch, onAdbStreamStopped, onFileIndexProgress, onFileIndexComplet
 import { parseFilter, matchesFilter, extractPackageNames, type FilterNode, FilterParseError } from '../filter';
 
 const WINDOW_SIZE = 500; // lines to fetch per request
+const LS_LAST_FILE = 'logtapper_last_file';
 
 export interface LogViewerState {
   session: LoadResult | null;
@@ -319,6 +320,8 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
       const result = await loadLogFile(path);
       setSession(result);
       sessionRef.current = result;
+      // Persist the file path so we can reopen it on next launch.
+      try { localStorage.setItem(LS_LAST_FILE, path); } catch { /* storage full */ }
       // Show the viewer immediately — the virtualizer will fetch visible rows naturally.
       setLoading(false);
       // Warm the cache for the first window in the background (best-effort, no await).
@@ -334,6 +337,8 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
         setCacheVersion((v) => v + 1);
       }).catch(() => { /* ignore — virtualizer will retry */ });
     } catch (e) {
+      // Clear saved path if the file can't be loaded (deleted/moved)
+      try { localStorage.removeItem(LS_LAST_FILE); } catch { /* ignore */ }
       setError(String(e));
       setLoading(false);
     }
@@ -359,6 +364,12 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
       unlisten?.();
     };
   }, [loadFile]);
+
+  // Restore the last-opened file on app startup.
+  useEffect(() => {
+    const saved = localStorage.getItem(LS_LAST_FILE);
+    if (saved) loadFile(saved);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Subscribe to progressive file-indexing events.
   // Same `cancelled` flag pattern for StrictMode safety.
@@ -634,6 +645,9 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
     } catch (e) {
       console.error('Error closing session:', e);
     }
+
+    // Clear persisted file path
+    try { localStorage.removeItem(LS_LAST_FILE); } catch { /* ignore */ }
 
     // Reset all frontend state
     resetSessionState();

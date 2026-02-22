@@ -44,7 +44,20 @@ export default function PaneContent({ pane }: Props) {
   }
 
   const activeTab = pane.tabs.find((t) => t.id === pane.activeTabId);
-  if (!activeTab) return null;
+  if (!activeTab) {
+    // No tabs — show the drop zone (same as empty logviewer)
+    return (
+      <div className="drop-zone">
+        <div className="drop-zone-content">
+          <p className="drop-zone-icon">📂</p>
+          <p>Drag a log file here or click <strong>Open Log File</strong></p>
+          <p className="drop-zone-hint">
+            Supports logcat, kernel (dmesg), bugreport, and dumpstate files
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   switch (activeTab.type) {
     case 'logviewer':
