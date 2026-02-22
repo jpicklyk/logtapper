@@ -73,6 +73,10 @@ impl SourceSnapshot {
                 }
                 let start = line_index[n] as usize;
                 let end = line_index[n + 1] as usize;
+                // Guard against corrupt/stale offsets (can happen during concurrent indexing)
+                if start >= end || end > mmap.len() {
+                    return None;
+                }
                 // Trim trailing \n and \r\n
                 let slice = &mmap[start..end];
                 let trimmed = if slice.ends_with(b"\r\n") {
