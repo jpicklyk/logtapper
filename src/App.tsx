@@ -27,7 +27,6 @@ import './App.css';
 export default function App() {
   const { settings, updateSetting, resetSettings } = useSettings();
   const anonymizerConfig = useAnonymizerConfig();
-  const viewer = useLogViewer(settings.streamFrontendCacheMax);
   const pipeline = usePipeline();
   const stateTracker = useStateTracker();
   const layout = usePaneLayout();
@@ -42,6 +41,13 @@ export default function App() {
   const [adbError, setAdbError] = useState<string | null>(null);
   const [selectedLineNum, setSelectedLineNum] = useState<number | null>(null);
 
+  const handleBeforeLoad = useCallback(() => {
+    setMetadata(null);
+    setSections([]);
+    stateTracker.clearTransitions();
+  }, [stateTracker.clearTransitions]);
+  const viewer = useLogViewer(settings.streamFrontendCacheMax, handleBeforeLoad);
+
   // ── File open ──────────────────────────────────────────────────────────────
 
   const handleOpenFile = useCallback(async () => {
@@ -53,29 +59,9 @@ export default function App() {
       ],
     });
     if (typeof selected === 'string') {
-      setMetadata(null);
-      setSections([]);
-      stateTracker.clearTransitions();
       await viewer.loadFile(selected);
     }
-  }, [viewer, stateTracker.clearTransitions]);
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      const file = e.dataTransfer.files[0];
-      if (file) {
-        const path = (file as File & { path?: string }).path;
-        if (path) {
-          setMetadata(null);
-          setSections([]);
-          stateTracker.clearTransitions();
-          viewer.loadFile(path);
-        }
-      }
-    },
-    [viewer, stateTracker.clearTransitions],
-  );
+  }, [viewer]);
 
   // ── ADB streaming ──────────────────────────────────────────────────────────
 
@@ -161,15 +147,41 @@ export default function App() {
     viewer.clearProcessorView();
   }, [viewer]);
 
-  // ── Rename logviewer tabs to filename when a file is loaded ──────────────
+  const handleCloseSession = useCallback(async () => {
+    await viewer.closeSession();
+    pipeline.clearResults();
+    stateTracker.clearTransitions();
+    setMetadata(null);
+    setSections([]);
+    setProcessorViewId(null);
+    setSelectedLineNum(null);
+    // Remove all logviewer tabs (back to empty-pane state)
+    for (const pane of layout.panes) {
+      for (const tab of pane.tabs) {
+        if (tab.type === 'logviewer') {
+          layout.closeTab(tab.id, pane.id);
+        }
+      }
+    }
+  }, [viewer, pipeline, stateTracker, layout]);
+
+  // ── Ensure a logviewer tab exists and rename it when a file is loaded ────
 
   useEffect(() => {
     if (!viewer.session?.sourceName) return;
     const name = viewer.session.sourceName;
-    for (const pane of layout.panes) {
-      for (const tab of pane.tabs) {
-        if (tab.type === 'logviewer') {
-          layout.renameTab(tab.id, name);
+    // Check if any logviewer tab already exists
+    const hasLogviewer = layout.panes.some((p) => p.tabs.some((t) => t.type === 'logviewer'));
+    if (!hasLogviewer) {
+      // Create one in the first pane with the filename as its label
+      layout.addTab(layout.panes[0].id, 'logviewer', name);
+    } else {
+      // Rename existing logviewer tabs to the file name
+      for (const pane of layout.panes) {
+        for (const tab of pane.tabs) {
+          if (tab.type === 'logviewer') {
+            layout.renameTab(tab.id, name);
+          }
         }
       }
     }
@@ -261,6 +273,7 @@ export default function App() {
     onOpenLibrary: () => setShowLibrary(true),
     selectedLineNum,
     setSelectedLineNum,
+    onCloseSession: handleCloseSession,
   };
 
   return (
@@ -268,7 +281,7 @@ export default function App() {
       <div
         className="app-layout"
         onDragOver={(e) => e.preventDefault()}
-        onDrop={handleDrop}
+        onDrop={(e) => e.preventDefault()}
       >
         {/* ── Header ── */}
         <header className="app-header">

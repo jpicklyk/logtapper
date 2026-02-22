@@ -158,6 +158,27 @@ pub async fn start_adb_stream(
     let source_id = format!("adb-{}", serial.replace(':', "-"));
     let device_label = format!("ADB: {serial}");
 
+    // ── Clear stale state from a previous stream for this session ────────────
+    // These locks are acquired and released individually (no nesting) to avoid
+    // deadlock.  Order does not matter since each block is independent.
+    {
+        if let Ok(mut sp) = state.stream_processor_state.lock() {
+            sp.remove(&session_id);
+        }
+        if let Ok(mut st) = state.stream_tracker_state.lock() {
+            st.remove(&session_id);
+        }
+        if let Ok(mut st) = state.stream_transformer_state.lock() {
+            st.remove(&session_id);
+        }
+        if let Ok(mut pr) = state.pipeline_results.lock() {
+            pr.remove(&session_id);
+        }
+        if let Ok(mut str_results) = state.state_tracker_results.lock() {
+            str_results.remove(&session_id);
+        }
+    }
+
     let mut session = AnalysisSession::new(session_id.clone());
     session.add_stream_source(source_id.clone(), device_label.clone());
 
@@ -303,6 +324,20 @@ pub async fn stop_adb_stream(
             .lock()
             .map_err(|_| "Stream tracker state lock poisoned")?;
         st.remove(&session_id);
+    }
+
+    // Clean up accumulated pipeline results from streaming
+    {
+        if let Ok(mut pr) = state.pipeline_results.lock() {
+            pr.remove(&session_id);
+        }
+    }
+
+    // Clean up state tracker results from streaming
+    {
+        if let Ok(mut str_results) = state.state_tracker_results.lock() {
+            str_results.remove(&session_id);
+        }
     }
 
     Ok(())
@@ -701,6 +736,7 @@ fn flush_batch(
         let view_line = if let Some(ctx) = parser.parse_line(&raw, source_id, line_num) {
             ViewLine {
                 line_num,
+                virtual_index: line_num,
                 raw: ctx.raw.clone(),
                 level: ctx.level,
                 tag: ctx.tag,
@@ -716,6 +752,7 @@ fn flush_batch(
         } else {
             ViewLine {
                 line_num,
+                virtual_index: line_num,
                 raw: raw.clone(),
                 level: pmeta.level,
                 tag: pmeta.tag.clone(),
@@ -756,6 +793,82 @@ fn flush_batch(
             let prefix_len = vl.raw.len().saturating_sub(vl.message.len());
             vl.raw = format!("{}{}", &vl.raw[..prefix_len], &anon_msg);
             vl.message = anon_msg;
+        }
+    }
+
+    // ── Step 2c: Apply user-defined transformers (if any active) ─────────────
+    {
+        let transformer_ids: Vec<String> = {
+            match state.stream_transformer_state.lock() {
+                Ok(st) => st.get(session_id).map(|m| m.keys().cloned().collect()).unwrap_or_default(),
+                Err(_) => Vec::new(),
+            }
+        };
+
+        if !transformer_ids.is_empty() {
+            let transformer_defs: Vec<(String, crate::processors::transformer::schema::TransformerDef)> = {
+                let procs = match state.processors.lock() {
+                    Ok(g) => g,
+                    Err(_) => return,
+                };
+                transformer_ids.iter()
+                    .filter_map(|id| procs.get(id.as_str())
+                        .and_then(|p| p.as_transformer())
+                        .map(|d| (id.clone(), d.clone())))
+                    .collect()
+            };
+
+            if !transformer_defs.is_empty() {
+                // Build transformer runs seeded with continuous state
+                let mut transformer_runs: Vec<(String, crate::processors::transformer::engine::TransformerRun)> = Vec::new();
+                for (t_id, def) in &transformer_defs {
+                    let cont = {
+                        let mut st = match state.stream_transformer_state.lock() {
+                            Ok(g) => g,
+                            Err(_) => continue,
+                        };
+                        st.get_mut(session_id)
+                            .and_then(|m| m.remove(t_id.as_str()))
+                            .unwrap_or_default()
+                    };
+                    let run = crate::processors::transformer::engine::TransformerRun::new_seeded(def, cont);
+                    transformer_runs.push((t_id.clone(), run));
+                }
+
+                // Apply transformers to each line's parsed LineContext, then update ViewLine
+                for (i, (_, _, vl)) in parsed.iter_mut().enumerate() {
+                    if let Some(mut ctx) = parser.parse_line(&vl.raw, source_id, first_new_line + i) {
+                        let mut keep = true;
+                        for (_, run) in transformer_runs.iter_mut() {
+                            if !run.process_line(&mut ctx) {
+                                keep = false;
+                                break;
+                            }
+                        }
+                        if keep {
+                            // Apply transformed message back to ViewLine
+                            if ctx.message != vl.message {
+                                let prefix_len = vl.raw.len().saturating_sub(vl.message.len());
+                                vl.raw = format!("{}{}", &vl.raw[..prefix_len], &ctx.message);
+                                vl.message = ctx.message;
+                            }
+                            vl.tag = ctx.tag;
+                        }
+                        // Note: we don't drop lines in streaming mode — transformers
+                        // only modify content, dropping would break the view stream.
+                    }
+                }
+
+                // Re-insert continuous state
+                for (t_id, run) in transformer_runs {
+                    let new_cont = run.into_continuous_state(first_new_line + parsed.len());
+                    if let Ok(mut st) = state.stream_transformer_state.lock() {
+                        st.entry(session_id.to_string())
+                            .or_default()
+                            .insert(t_id, new_cont);
+                    }
+                }
+            }
         }
     }
 

@@ -1,5 +1,6 @@
 import { Fragment } from 'react';
 import type { PaneLayoutState } from '../hooks/usePaneLayout';
+import { useAppContext } from '../context/AppContext';
 import TabBar from './TabBar';
 import PaneContent from './PaneContent';
 import DragHandle from './DragHandle';
@@ -14,6 +15,7 @@ interface Props {
 }
 
 export default function PaneLayout({ layout, pipelineHasResults, onOpenSettings }: Props) {
+  const { viewer, onCloseSession } = useAppContext();
   const {
     panes,
     preset,
@@ -54,13 +56,17 @@ export default function PaneLayout({ layout, pipelineHasResults, onOpenSettings 
               />
             )}
             <div className="pane" style={{ flex: pane.flexBasis }}>
-              <TabBar
-                pane={pane}
-                paneIndex={i}
-                paneCount={panes.length}
-                layout={layout}
-                pipelineHasResults={pipelineHasResults}
-              />
+              {pane.tabs.length > 0 && (
+                <TabBar
+                  pane={pane}
+                  paneIndex={i}
+                  paneCount={panes.length}
+                  layout={layout}
+                  pipelineHasResults={pipelineHasResults}
+                  hasSession={!!viewer.session}
+                  onCloseSession={onCloseSession}
+                />
+              )}
               <div className="pane-content">
                 <PaneContent pane={pane} />
               </div>

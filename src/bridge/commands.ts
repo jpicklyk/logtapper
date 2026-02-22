@@ -90,6 +90,10 @@ export function loadLogFile(path: string): Promise<LoadResult> {
   return invoke('load_log_file', { path });
 }
 
+export function closeSession(sessionId: string): Promise<void> {
+  return invoke('close_session', { sessionId });
+}
+
 export function getLines(request: LineRequest): Promise<LineWindow> {
   return invoke('get_lines', { request });
 }

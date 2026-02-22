@@ -36,7 +36,7 @@ export interface PaneLayoutState {
   splitRight: (tabId: string, fromPaneId: string) => void;
   closeTab: (tabId: string, paneId: string) => void;
   setActiveTab: (tabId: string, paneId: string) => void;
-  addTab: (paneId: string, type: TabType) => void;
+  addTab: (paneId: string, type: TabType, label?: string) => void;
   resizePane: (paneId: string, deltaFraction: number) => void;
   // Sidebar / tool window
   leftSidebarWidth: number;
@@ -99,8 +99,8 @@ function makePane(tabs: TabType[], flexBasis: number): Pane {
 // ---------------------------------------------------------------------------
 
 function defaultPanes(_preset: LayoutPreset): Pane[] {
-  // All presets start with a single logviewer pane; users split as needed.
-  return [makePane(['logviewer'], 1.0)];
+  // Start with an empty pane — a logviewer tab is created when a file is opened.
+  return [makePane([], 1.0)];
 }
 
 // ---------------------------------------------------------------------------
@@ -361,18 +361,22 @@ export function usePaneLayout(): PaneLayoutState {
       if (!pane) return prev;
       const tab = pane.tabs.find((t) => t.id === tabId);
       if (!tab) return prev;
-      if (tab.type === 'logviewer' && countLogviewers(prev) <= 1) return prev;
 
       const tabs = pane.tabs.filter((t) => t.id !== tabId);
       let next: Pane[];
 
       if (tabs.length === 0) {
-        const idx = prev.findIndex((p) => p.id === paneId);
-        next = redistribute(
-          prev.filter((p) => p.id !== paneId),
-          pane.flexBasis,
-          idx,
-        );
+        if (prev.length <= 1) {
+          // Last pane — keep it but with no tabs (empty state)
+          next = prev.map((p) => (p.id === paneId ? { ...p, tabs: [], activeTabId: '' } : p));
+        } else {
+          const idx = prev.findIndex((p) => p.id === paneId);
+          next = redistribute(
+            prev.filter((p) => p.id !== paneId),
+            pane.flexBasis,
+            idx,
+          );
+        }
       } else {
         const activeTabId =
           pane.activeTabId === tabId ? (tabs[0]?.id ?? '') : pane.activeTabId;
@@ -389,11 +393,12 @@ export function usePaneLayout(): PaneLayoutState {
     );
   }, [update]);
 
-  const addTab = useCallback((paneId: string, type: TabType) => {
+  const addTab = useCallback((paneId: string, type: TabType, label?: string) => {
     update((prev) =>
       prev.map((p) => {
         if (p.id !== paneId) return p;
         const tab = makeTab(type);
+        if (label) tab.label = label;
         return { ...p, tabs: [...p.tabs, tab], activeTabId: tab.id };
       }),
     );

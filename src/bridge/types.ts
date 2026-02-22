@@ -18,6 +18,7 @@ export interface HighlightSpan {
 
 export interface ViewLine {
   lineNum: number;
+  virtualIndex: number;  // sequential 0-based position in current view
   raw: string;
   level: LogLevel;
   tag: string;
