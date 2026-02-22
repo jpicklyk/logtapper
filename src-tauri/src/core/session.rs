@@ -1,5 +1,7 @@
+use memchr::memchr_iter;
 use memmap2::Mmap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
@@ -7,10 +9,54 @@ use std::sync::Arc;
 use crate::core::bugreport_parser::BugreportParser;
 use crate::core::index::CrossSourceIndex;
 use crate::core::kernel_parser::KernelParser;
-use crate::core::line::{LineMeta, LogLevel};
+use crate::core::line::{LineMeta, LogLevel, ParsedLineMeta};
 use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;
 use crate::core::timeline::{Timeline, TimelineEntry};
+
+// ---------------------------------------------------------------------------
+// TagInterner — maps tag strings to compact u16 IDs
+// ---------------------------------------------------------------------------
+
+pub struct TagInterner {
+    table: Vec<String>,
+    index: HashMap<String, u16>,
+}
+
+impl TagInterner {
+    pub fn new() -> Self {
+        let mut interner = Self {
+            table: Vec::new(),
+            index: HashMap::new(),
+        };
+        // Pre-intern the empty tag at ID 0 so default/empty tags are free.
+        interner.intern("");
+        interner
+    }
+
+    /// Return the u16 ID for `tag`, inserting it if not yet seen.
+    pub fn intern(&mut self, tag: &str) -> u16 {
+        if let Some(&id) = self.index.get(tag) {
+            return id;
+        }
+        let id = self.table.len() as u16;
+        self.table.push(tag.to_string());
+        self.index.insert(tag.to_string(), id);
+        id
+    }
+
+    /// Resolve a tag ID back to its string.  Panics if `id` is out of range
+    /// (which would indicate a bug — IDs are only produced by `intern`).
+    pub fn resolve(&self, id: u16) -> &str {
+        &self.table[id as usize]
+    }
+}
+
+impl Default for TagInterner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Source type
@@ -65,8 +111,10 @@ pub struct SectionInfo {
 pub enum LogSourceData {
     File {
         mmap: Arc<Mmap>,
-        /// (byte_offset, byte_len) for every indexed line.
-        line_index: Vec<(usize, usize)>,
+        /// Byte offsets for every indexed line, with a sentinel at the end
+        /// equal to the byte past the last line.  Line i spans
+        /// `offsets[i]..offsets[i+1]` (may include trailing \r\n).
+        line_index: Vec<u64>,
     },
     Stream {
         /// Raw line strings growing as new ADB lines arrive.
@@ -127,8 +175,21 @@ impl LogSource {
     pub fn raw_line(&self, line_num: usize) -> Option<&str> {
         match &self.data {
             LogSourceData::File { mmap, line_index } => {
-                let (off, len) = line_index.get(line_num)?;
-                std::str::from_utf8(&mmap[*off..*off + *len]).ok()
+                // line_index has N+1 entries (sentinel at end); valid line nums are 0..N-1
+                if line_num + 1 >= line_index.len() {
+                    return None;
+                }
+                let start = line_index[line_num] as usize;
+                let end = line_index[line_num + 1] as usize;
+                // Strip trailing \n and \r\n
+                let mut slice_end = end;
+                if slice_end > start && mmap[slice_end - 1] == b'\n' {
+                    slice_end -= 1;
+                }
+                if slice_end > start && mmap[slice_end - 1] == b'\r' {
+                    slice_end -= 1;
+                }
+                std::str::from_utf8(&mmap[start..slice_end]).ok()
             }
             LogSourceData::Stream { raw_lines, evicted_count, .. } => {
                 let local_idx = line_num.checked_sub(*evicted_count)?;
@@ -183,6 +244,7 @@ pub struct AnalysisSession {
     pub sources: Vec<LogSource>,
     pub timeline: Timeline,
     pub index: CrossSourceIndex,
+    pub tag_interner: TagInterner,
 }
 
 impl AnalysisSession {
@@ -192,7 +254,18 @@ impl AnalysisSession {
             sources: Vec::new(),
             timeline: Timeline::new(),
             index: CrossSourceIndex::build(&[]),
+            tag_interner: TagInterner::new(),
         }
+    }
+
+    /// Intern a tag string and return its compact u16 ID.
+    pub fn intern_tag(&mut self, tag: &str) -> u16 {
+        self.tag_interner.intern(tag)
+    }
+
+    /// Resolve a tag ID back to the original string.
+    pub fn resolve_tag(&self, tag_id: u16) -> &str {
+        self.tag_interner.resolve(tag_id)
     }
 
     /// Load a file, detect its type, build the line index, and add it.
@@ -212,8 +285,8 @@ impl AnalysisSession {
 
         let source_type = detect_source_type(&mmap);
 
-        let (line_index, line_meta) = build_line_index(&mmap, &source_type);
-        let sections = build_section_index(&line_meta, &source_type);
+        let (line_index, line_meta) = build_line_index(&mmap, &source_type, &mut self.tag_interner);
+        let sections = build_section_index(&line_meta, &source_type, &self.tag_interner);
 
         let name = path
             .file_name()
@@ -263,8 +336,8 @@ impl AnalysisSession {
         let source_type = detect_source_type(&mmap);
         let parser = parser_for(&source_type);
         let (line_index, line_meta, bytes_consumed) =
-            build_partial_line_index(mmap.as_ref(), parser.as_ref(), max_bytes);
-        let sections = build_section_index(&line_meta, &source_type);
+            build_partial_line_index(mmap.as_ref(), parser.as_ref(), &mut self.tag_interner, max_bytes);
+        let sections = build_section_index(&line_meta, &source_type, &self.tag_interner);
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
@@ -288,25 +361,34 @@ impl AnalysisSession {
     }
 
     /// Append new index entries to the source at `source_idx`.
+    /// `new_offsets` are byte offsets of newly indexed lines (no sentinel).
+    /// `sentinel` is the byte offset just past the last line in this batch.
     /// When `done` is true, rebuilds sections and timeline.
     pub fn extend_source_index(
         &mut self,
         source_idx: usize,
-        new_line_index: Vec<(usize, usize)>,
+        new_offsets: Vec<u64>,
         new_line_meta: Vec<LineMeta>,
+        sentinel: u64,
         done: bool,
     ) {
         {
             let source = &mut self.sources[source_idx];
             if let LogSourceData::File { ref mut line_index, .. } = source.data {
-                line_index.extend(new_line_index);
+                // Remove the old sentinel before appending new offsets.
+                if !line_index.is_empty() {
+                    line_index.pop();
+                }
+                line_index.extend(new_offsets);
+                // Push the new sentinel.
+                line_index.push(sentinel);
             }
             source.line_meta.extend(new_line_meta);
             source.is_indexing = !done;
         }
         if done {
             let source_type = self.sources[source_idx].source_type.clone();
-            let sections = build_section_index(&self.sources[source_idx].line_meta, &source_type);
+            let sections = build_section_index(&self.sources[source_idx].line_meta, &source_type, &self.tag_interner);
             self.sources[source_idx].sections = sections;
             self.rebuild_timeline();
         }
@@ -323,7 +405,7 @@ impl AnalysisSession {
                     source_line_num: i,
                     timestamp: m.timestamp,
                     level: m.level,
-                    tag: m.tag.clone(),
+                    tag: self.tag_interner.resolve(m.tag_id).to_string(),
                 })
             })
             .collect();
@@ -398,141 +480,185 @@ fn is_logcat_threadtime(sample: &str) -> bool {
 // Line indexer — scans the mmap once, builds per-line metadata
 // ---------------------------------------------------------------------------
 
+/// Convert a `ParsedLineMeta` (parser output with tag String) to a `LineMeta`
+/// (stored form with interned tag_id).
+fn intern_parsed_meta(parsed: ParsedLineMeta, interner: &mut TagInterner) -> LineMeta {
+    let tag_id = interner.intern(&parsed.tag);
+    LineMeta {
+        level: parsed.level,
+        tag_id,
+        timestamp: parsed.timestamp,
+        byte_offset: parsed.byte_offset,
+        byte_len: parsed.byte_len,
+        is_section_boundary: parsed.is_section_boundary,
+    }
+}
+
 fn build_line_index(
     mmap: &Mmap,
     source_type: &SourceType,
-) -> (Vec<(usize, usize)>, Vec<LineMeta>) {
+    interner: &mut TagInterner,
+) -> (Vec<u64>, Vec<LineMeta>) {
     let parser: Box<dyn LogParser> = parser_for(source_type);
     let data = mmap.as_ref();
 
-    // Pre-allocate rough estimate (avg 120 bytes/line)
+    // Pre-allocate rough estimate (avg 120 bytes/line) + 1 for sentinel
     let estimate = (data.len() / 120).max(1024);
-    let mut line_index: Vec<(usize, usize)> = Vec::with_capacity(estimate);
+    let mut line_index: Vec<u64> = Vec::with_capacity(estimate + 1);
     let mut line_meta: Vec<LineMeta> = Vec::with_capacity(estimate);
 
     let mut start = 0usize;
     let len = data.len();
 
-    for i in 0..len {
-        if data[i] == b'\n' || i == len - 1 {
-            let end = if data[i] == b'\n' { i } else { i + 1 };
+    // Helper closure: index a single line from data[start..end] (end excludes the newline).
+    let index_line = |start: usize, end: usize, line_index: &mut Vec<u64>, line_meta: &mut Vec<LineMeta>, interner: &mut TagInterner| {
+        // Strip trailing \r if present.
+        let content_end = if end > start && data[end - 1] == b'\r' {
+            end - 1
+        } else {
+            end
+        };
 
-            // Strip trailing \r if present.
-            let content_end = if end > start && data[end - 1] == b'\r' {
-                end - 1
-            } else {
-                end
-            };
-
-            let byte_len = content_end - start;
-            // Build meta: try to parse non-empty lines; blank/unparseable lines get a minimal default.
-            let meta = if byte_len > 0 {
-                match std::str::from_utf8(&data[start..content_end]) {
-                    Ok(s) if !s.trim().is_empty() => {
-                        parser.parse_meta(s.trim(), start).unwrap_or(LineMeta {
-                            level: LogLevel::Info,
-                            tag: String::new(),
-                            timestamp: 0,
-                            byte_offset: start,
-                            byte_len,
-                            is_section_boundary: false,
-                        })
-                    }
-                    _ => LineMeta {
-                        level: LogLevel::Verbose,
+        let byte_len = content_end - start;
+        let parsed = if byte_len > 0 {
+            match std::str::from_utf8(&data[start..content_end]) {
+                Ok(s) if !s.trim().is_empty() => {
+                    parser.parse_meta(s.trim(), start).unwrap_or(ParsedLineMeta {
+                        level: LogLevel::Info,
                         tag: String::new(),
                         timestamp: 0,
                         byte_offset: start,
                         byte_len,
                         is_section_boundary: false,
-                    },
+                    })
                 }
-            } else {
-                LineMeta {
+                _ => ParsedLineMeta {
                     level: LogLevel::Verbose,
                     tag: String::new(),
                     timestamp: 0,
                     byte_offset: start,
-                    byte_len: 0,
+                    byte_len,
                     is_section_boundary: false,
-                }
-            };
+                },
+            }
+        } else {
+            ParsedLineMeta {
+                level: LogLevel::Verbose,
+                tag: String::new(),
+                timestamp: 0,
+                byte_offset: start,
+                byte_len: 0,
+                is_section_boundary: false,
+            }
+        };
 
-            line_index.push((start, byte_len));
-            line_meta.push(meta);
-            start = i + 1;
-        }
+        line_index.push(start as u64);
+        line_meta.push(intern_parsed_meta(parsed, interner));
+    };
+
+    for nl_pos in memchr_iter(b'\n', data) {
+        index_line(start, nl_pos, &mut line_index, &mut line_meta, interner);
+        start = nl_pos + 1;
     }
+
+    // Handle trailing content after the last newline (no trailing \n).
+    if start < len {
+        index_line(start, len, &mut line_index, &mut line_meta, interner);
+    }
+
+    // Sentinel: byte offset past the last line
+    line_index.push(len as u64);
 
     (line_index, line_meta)
 }
 
 /// Like `build_line_index` but stops after scanning `max_bytes`.
 /// Returns `(line_index, line_meta, bytes_consumed)`.
+/// `line_index` includes a sentinel at the end.
 /// `bytes_consumed` is the byte offset just past the last complete line scanned.
 pub(crate) fn build_partial_line_index(
     data: &[u8],
     parser: &dyn LogParser,
+    interner: &mut TagInterner,
     max_bytes: usize,
-) -> (Vec<(usize, usize)>, Vec<LineMeta>, usize) {
+) -> (Vec<u64>, Vec<LineMeta>, usize) {
     let scan_limit = max_bytes.min(data.len());
     let estimate = (scan_limit / 120).max(1024);
-    let mut line_index: Vec<(usize, usize)> = Vec::with_capacity(estimate);
+    let mut line_index: Vec<u64> = Vec::with_capacity(estimate + 1);
     let mut line_meta: Vec<LineMeta> = Vec::with_capacity(estimate);
     let mut start = 0usize;
     let mut end_byte = 0usize;
 
-    for i in 0..data.len() {
-        if data[i] == b'\n' || i == data.len() - 1 {
-            let end = if data[i] == b'\n' { i } else { i + 1 };
-            let content_end = if end > start && data[end - 1] == b'\r' {
-                end - 1
-            } else {
-                end
-            };
+    // Helper closure: index a single line from data[start..end].
+    let index_line = |start: usize, end: usize, line_index: &mut Vec<u64>, line_meta: &mut Vec<LineMeta>, interner: &mut TagInterner| {
+        let content_end = if end > start && data[end - 1] == b'\r' {
+            end - 1
+        } else {
+            end
+        };
 
-            let byte_len = content_end - start;
-            let meta = if byte_len > 0 {
-                match std::str::from_utf8(&data[start..content_end]) {
-                    Ok(s) if !s.trim().is_empty() => {
-                        parser.parse_meta(s.trim(), start).unwrap_or(LineMeta {
-                            level: LogLevel::Info,
-                            tag: String::new(),
-                            timestamp: 0,
-                            byte_offset: start,
-                            byte_len,
-                            is_section_boundary: false,
-                        })
-                    }
-                    _ => LineMeta {
-                        level: LogLevel::Verbose,
+        let byte_len = content_end - start;
+        let parsed = if byte_len > 0 {
+            match std::str::from_utf8(&data[start..content_end]) {
+                Ok(s) if !s.trim().is_empty() => {
+                    parser.parse_meta(s.trim(), start).unwrap_or(ParsedLineMeta {
+                        level: LogLevel::Info,
                         tag: String::new(),
                         timestamp: 0,
                         byte_offset: start,
                         byte_len,
                         is_section_boundary: false,
-                    },
+                    })
                 }
-            } else {
-                LineMeta {
+                _ => ParsedLineMeta {
                     level: LogLevel::Verbose,
                     tag: String::new(),
                     timestamp: 0,
                     byte_offset: start,
-                    byte_len: 0,
+                    byte_len,
                     is_section_boundary: false,
-                }
-            };
+                },
+            }
+        } else {
+            ParsedLineMeta {
+                level: LogLevel::Verbose,
+                tag: String::new(),
+                timestamp: 0,
+                byte_offset: start,
+                byte_len: 0,
+                is_section_boundary: false,
+            }
+        };
 
-            line_index.push((start, byte_len));
-            line_meta.push(meta);
-            end_byte = i + 1;
-            start = i + 1;
-            if end_byte >= scan_limit && scan_limit < data.len() {
-                break;
+        line_index.push(start as u64);
+        line_meta.push(intern_parsed_meta(parsed, interner));
+    };
+
+    for nl_pos in memchr_iter(b'\n', data) {
+        index_line(start, nl_pos, &mut line_index, &mut line_meta, interner);
+        end_byte = nl_pos + 1;
+        start = nl_pos + 1;
+        if end_byte >= scan_limit && scan_limit < data.len() {
+            break;
+        }
+    }
+
+    // Handle trailing content after the last newline when scanning the full file
+    // (i.e., scan_limit == data.len() and no trailing newline).
+    if start < data.len() && (end_byte < scan_limit || scan_limit == data.len()) {
+        // Only index the trailing partial line if we haven't broken out early
+        if end_byte < scan_limit || scan_limit == data.len() {
+            // Check: did we exhaust all newlines without hitting scan_limit?
+            // If scan_limit < data.len(), we only want complete lines up to the limit.
+            if scan_limit == data.len() {
+                index_line(start, data.len(), &mut line_index, &mut line_meta, interner);
+                end_byte = data.len();
             }
         }
     }
+
+    // Sentinel: byte offset past the last indexed line
+    line_index.push(end_byte as u64);
 
     (line_index, line_meta, end_byte)
 }
@@ -550,7 +676,7 @@ pub(crate) fn build_partial_line_index(
 /// their own footer are silently discarded.
 ///
 /// Returns an empty Vec for all non-Bugreport source types.
-fn build_section_index(line_meta: &[LineMeta], source_type: &SourceType) -> Vec<SectionInfo> {
+fn build_section_index(line_meta: &[LineMeta], source_type: &SourceType, interner: &TagInterner) -> Vec<SectionInfo> {
     if !matches!(source_type, SourceType::Bugreport) {
         return Vec::new();
     }
@@ -563,12 +689,13 @@ fn build_section_index(line_meta: &[LineMeta], source_type: &SourceType) -> Vec<
         if !meta.is_section_boundary {
             continue;
         }
-        if meta.level == LogLevel::Info && !meta.tag.is_empty() && meta.tag != "dumpstate" {
+        let tag = interner.resolve(meta.tag_id);
+        if meta.level == LogLevel::Info && !tag.is_empty() && tag != "dumpstate" {
             // Section start header — push onto the stack.
-            pending.push((meta.tag.clone(), i));
-        } else if meta.level == LogLevel::Verbose && !meta.tag.is_empty() {
+            pending.push((tag.to_string(), i));
+        } else if meta.level == LogLevel::Verbose && !tag.is_empty() {
             // Duration footer — find the most recently opened section with this name.
-            if let Some(pos) = pending.iter().rposition(|(name, _)| name == &meta.tag) {
+            if let Some(pos) = pending.iter().rposition(|(name, _)| name == tag) {
                 let (name, start) = pending.remove(pos);
                 sections.push(SectionInfo {
                     name,
@@ -621,7 +748,7 @@ mod tests {
                 raw_lines.push(line);
                 src.line_meta.push(LineMeta {
                     level: LogLevel::Info,
-                    tag: format!("tag{}", evicted + i),
+                    tag_id: 0,
                     timestamp: (evicted + i) as i64,
                     byte_offset: 0,
                     byte_len: 0,

@@ -71,6 +71,15 @@ export interface SearchSummary {
   byTag: Record<string, number>;
 }
 
+export interface SearchProgress {
+  sessionId: string;
+  matchedSoFar: number;
+  linesScanned: number;
+  totalLines: number;
+  newMatches: number[];
+  done: boolean;
+}
+
 export interface LoadResult {
   sessionId: string;
   sourceId: string;

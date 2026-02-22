@@ -53,11 +53,24 @@ pub struct LineContext {
     pub annotations: Vec<Annotation>,
 }
 
+/// Intermediate per-line metadata returned by parsers (contains tag as String).
+/// Converted to `LineMeta` (with interned `tag_id`) during indexing.
+#[derive(Debug, Clone)]
+pub struct ParsedLineMeta {
+    pub level: LogLevel,
+    pub tag: String,
+    pub timestamp: i64,
+    pub byte_offset: usize,
+    pub byte_len: usize,
+    pub is_section_boundary: bool,
+}
+
 /// Lightweight per-line metadata stored alongside the mmap.
+/// Tags are interned via `TagInterner` — use `session.resolve_tag(tag_id)` to get the string.
 #[derive(Debug, Clone, Serialize)]
 pub struct LineMeta {
     pub level: LogLevel,
-    pub tag: String,
+    pub tag_id: u16,
     pub timestamp: i64,
     pub byte_offset: usize,
     pub byte_len: usize,

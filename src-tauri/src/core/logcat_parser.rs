@@ -8,7 +8,7 @@
 use regex::Regex;
 use std::sync::OnceLock;
 
-use crate::core::line::{LineContext, LineMeta, LogLevel};
+use crate::core::line::{LineContext, ParsedLineMeta, LogLevel};
 use crate::core::parser::LogParser;
 
 // ---------------------------------------------------------------------------
@@ -129,7 +129,7 @@ impl LogParser for LogcatParser {
         })
     }
 
-    fn parse_meta(&self, raw: &str, byte_offset: usize) -> Option<LineMeta> {
+    fn parse_meta(&self, raw: &str, byte_offset: usize) -> Option<ParsedLineMeta> {
         let raw = raw.trim_end_matches(['\r', '\n']);
 
         if raw.starts_with("-----") {
@@ -146,7 +146,7 @@ impl LogParser for LogcatParser {
                 .map(|m| m.as_str().trim().to_string())
                 .unwrap_or_default();
 
-            return Some(LineMeta {
+            return Some(ParsedLineMeta {
                 level: parse_level(level_char),
                 tag,
                 timestamp: parse_timestamp_ns(date, time),
@@ -163,7 +163,7 @@ impl LogParser for LogcatParser {
                 .get(2)
                 .map(|m| m.as_str().trim().to_string())
                 .unwrap_or_default();
-            return Some(LineMeta {
+            return Some(ParsedLineMeta {
                 level: parse_level(level_char),
                 tag,
                 timestamp: 0,
@@ -174,7 +174,7 @@ impl LogParser for LogcatParser {
         }
 
         // Unknown format — still index the line
-        Some(LineMeta {
+        Some(ParsedLineMeta {
             level: LogLevel::Info,
             tag: String::new(),
             timestamp: 0,

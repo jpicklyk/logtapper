@@ -7,7 +7,7 @@ use tokio::process::Command;
 use crate::anonymizer::LogAnonymizer;
 use crate::commands::AppState;
 use crate::commands::files::LoadResult;
-use crate::core::line::{LineMeta, LogLevel, ViewLine};
+use crate::core::line::{LineMeta, LogLevel, ParsedLineMeta, ViewLine};
 use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;
 use crate::core::session::{AnalysisSession, LogSourceData};
@@ -684,12 +684,12 @@ fn flush_batch(
     };
 
     // ── Step 2: Parse buffer lines with correct absolute line numbers ──────────
-    let mut parsed: Vec<(String, LineMeta, ViewLine)> = Vec::new();
+    let mut parsed: Vec<(String, ParsedLineMeta, ViewLine)> = Vec::new();
     for (i, raw) in buffer.drain(..).enumerate() {
         let line_num = first_new_line + i;
-        let meta = parser
+        let pmeta = parser
             .parse_meta(&raw, 0)
-            .unwrap_or_else(|| LineMeta {
+            .unwrap_or_else(|| ParsedLineMeta {
                 level: LogLevel::Info,
                 tag: String::new(),
                 timestamp: 0,
@@ -717,10 +717,10 @@ fn flush_batch(
             ViewLine {
                 line_num,
                 raw: raw.clone(),
-                level: meta.level,
-                tag: meta.tag.clone(),
+                level: pmeta.level,
+                tag: pmeta.tag.clone(),
                 message: raw.clone(),
-                timestamp: meta.timestamp,
+                timestamp: pmeta.timestamp,
                 pid: 0,
                 tid: 0,
                 source_id: source_id.to_string(),
@@ -730,7 +730,7 @@ fn flush_batch(
             }
         };
 
-        parsed.push((raw, meta, view_line));
+        parsed.push((raw, pmeta, view_line));
     }
 
     if parsed.is_empty() {
@@ -765,17 +765,18 @@ fn flush_batch(
             Ok(g) => g,
             Err(_) => return,
         };
-        let source = match sessions
-            .get_mut(session_id)
-            .and_then(|s| s.sources.first_mut())
-        {
+        let session = match sessions.get_mut(session_id) {
             Some(s) => s,
             None => return,
         };
 
         // Append parsed lines to both raw_lines and line_meta.
         // Access source.data and source.line_meta as separate fields to satisfy borrow checker.
-        for (raw, meta, _) in &parsed {
+        for (raw, pmeta, _) in &parsed {
+            let source = match session.sources.first_mut() {
+                Some(s) => s,
+                None => return,
+            };
             if let LogSourceData::Stream {
                 ref mut raw_lines,
                 ref mut byte_count,
@@ -785,13 +786,28 @@ fn flush_batch(
             {
                 *byte_count += (raw.len() + 1) as u64; // +1 for the newline
                 raw_lines.push(raw.clone());
-                if cached_first_ts.is_none() && meta.timestamp > 0 {
-                    *cached_first_ts = Some(meta.timestamp);
+                if cached_first_ts.is_none() && pmeta.timestamp > 0 {
+                    *cached_first_ts = Some(pmeta.timestamp);
                 }
             }
+            // Intern tag and convert ParsedLineMeta to LineMeta
+            let tag_id = session.intern_tag(&pmeta.tag);
+            let meta = LineMeta {
+                level: pmeta.level,
+                tag_id,
+                timestamp: pmeta.timestamp,
+                byte_offset: pmeta.byte_offset,
+                byte_len: pmeta.byte_len,
+                is_section_boundary: pmeta.is_section_boundary,
+            };
             // source.data borrow released at end of if-let block; now safe to borrow line_meta
-            source.line_meta.push(meta.clone());
+            session.sources[0].line_meta.push(meta);
         }
+
+        let source = match session.sources.first_mut() {
+            Some(s) => s,
+            None => return,
+        };
 
         // Evict oldest lines from the front if over the cap.
         // Compute excess separately to avoid simultaneous mutable + immutable borrows.

@@ -8,8 +8,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::AppState;
 use crate::core::line::{
-    HighlightKind, HighlightSpan, LineRequest, LineWindow, LogLevel, SearchQuery, SearchSummary,
-    ViewLine, ViewMode,
+    HighlightKind, HighlightSpan, LineRequest, LineWindow, LogLevel, ParsedLineMeta, SearchQuery,
+    SearchSummary, ViewLine, ViewMode,
 };
 use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;
@@ -174,6 +174,7 @@ pub async fn load_log_file(
     Ok(result)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_background_indexer(
     session_id: String,
     mmap: Arc<Mmap>,
@@ -190,8 +191,8 @@ async fn run_background_indexer(
     let parser = parser_for(&source_type);
     let data: &[u8] = mmap.as_ref();
 
-    let mut chunk_index: Vec<(usize, usize)> = Vec::with_capacity(CHUNK_LINES);
-    let mut chunk_meta: Vec<crate::core::line::LineMeta> = Vec::with_capacity(CHUNK_LINES);
+    let mut chunk_index: Vec<u64> = Vec::with_capacity(CHUNK_LINES);
+    let mut chunk_parsed: Vec<ParsedLineMeta> = Vec::with_capacity(CHUNK_LINES);
     // bytes_scanned is updated inside the loop before it is read; no valid initial value.
     let mut bytes_scanned: usize;
     let mut start = start_byte;
@@ -219,10 +220,10 @@ async fn run_background_indexer(
             };
 
             let byte_len = content_end - start;
-            let meta = if byte_len > 0 {
+            let parsed = if byte_len > 0 {
                 match std::str::from_utf8(&data[start..content_end]) {
                     Ok(s) if !s.trim().is_empty() => {
-                        parser.parse_meta(s.trim(), start).unwrap_or(crate::core::line::LineMeta {
+                        parser.parse_meta(s.trim(), start).unwrap_or(ParsedLineMeta {
                             level: LogLevel::Info,
                             tag: String::new(),
                             timestamp: 0,
@@ -231,7 +232,7 @@ async fn run_background_indexer(
                             is_section_boundary: false,
                         })
                     }
-                    _ => crate::core::line::LineMeta {
+                    _ => ParsedLineMeta {
                         level: LogLevel::Verbose,
                         tag: String::new(),
                         timestamp: 0,
@@ -241,7 +242,7 @@ async fn run_background_indexer(
                     },
                 }
             } else {
-                crate::core::line::LineMeta {
+                ParsedLineMeta {
                     level: LogLevel::Verbose,
                     tag: String::new(),
                     timestamp: 0,
@@ -250,22 +251,40 @@ async fn run_background_indexer(
                     is_section_boundary: false,
                 }
             };
-            chunk_index.push((start, byte_len));
-            chunk_meta.push(meta);
+            chunk_index.push(start as u64);
+            chunk_parsed.push(parsed);
 
             bytes_scanned = i + 1;
             start = i + 1;
 
-            if chunk_meta.len() >= CHUNK_LINES || i >= data.len() - 1 {
+            if chunk_parsed.len() >= CHUNK_LINES || i >= data.len() - 1 {
                 let done = i >= data.len() - 1;
                 let batch_index = std::mem::take(&mut chunk_index);
-                let batch_meta = std::mem::take(&mut chunk_meta);
-                total_indexed += batch_meta.len();
+                let batch_parsed = std::mem::take(&mut chunk_parsed);
+                total_indexed += batch_parsed.len();
+
+                // Sentinel: byte just past the last line in this batch
+                let sentinel = (i + 1) as u64;
 
                 if let Ok(mut sessions) = state.sessions.lock() {
                     let sessions: &mut std::collections::HashMap<String, crate::core::session::AnalysisSession> = &mut sessions;
                     if let Some(session) = sessions.get_mut(&session_id) {
-                        session.extend_source_index(0, batch_index, batch_meta, done);
+                        // Intern tags and convert to LineMeta under the session lock.
+                        let batch_meta: Vec<crate::core::line::LineMeta> = batch_parsed
+                            .into_iter()
+                            .map(|p| {
+                                let tag_id = session.intern_tag(&p.tag);
+                                crate::core::line::LineMeta {
+                                    level: p.level,
+                                    tag_id,
+                                    timestamp: p.timestamp,
+                                    byte_offset: p.byte_offset,
+                                    byte_len: p.byte_len,
+                                    is_section_boundary: p.is_section_boundary,
+                                }
+                            })
+                            .collect();
+                        session.extend_source_index(0, batch_index, batch_meta, sentinel, done);
                     }
                 }
 
@@ -296,7 +315,7 @@ async fn run_background_indexer(
                 }
 
                 chunk_index = Vec::with_capacity(CHUNK_LINES);
-                chunk_meta = Vec::with_capacity(CHUNK_LINES);
+                chunk_parsed = Vec::with_capacity(CHUNK_LINES);
 
                 // Yield to allow other tokio tasks (e.g. get_lines) to run.
                 tokio::task::yield_now().await;
@@ -372,7 +391,7 @@ pub async fn get_lines(
                         line_num: i,
                         raw: raw.clone(),
                         level: meta.map_or(LogLevel::Info, |m| m.level),
-                        tag: meta.map_or_else(String::new, |m| m.tag.clone()),
+                        tag: meta.map_or_else(String::new, |m| session.resolve_tag(m.tag_id).to_string()),
                         message: raw,
                         timestamp: meta.map_or(0, |m| m.timestamp),
                         pid: 0,
@@ -469,7 +488,7 @@ pub async fn get_lines(
                         line_num: ln,
                         raw: raw.clone(),
                         level: meta.level,
-                        tag: meta.tag.clone(),
+                        tag: session.resolve_tag(meta.tag_id).to_string(),
                         message: raw,
                         timestamp: meta.timestamp,
                         pid: 0,
@@ -550,7 +569,7 @@ pub async fn get_lines(
                         line_num: i,
                         raw: raw.clone(),
                         level: meta.level,
-                        tag: meta.tag.clone(),
+                        tag: inner_session.resolve_tag(meta.tag_id).to_string(),
                         message: raw,
                         timestamp: meta.timestamp,
                         pid: 0,
@@ -570,8 +589,19 @@ pub async fn get_lines(
 }
 
 // ---------------------------------------------------------------------------
-// search_logs
+// search_logs (streaming chunked results via events)
 // ---------------------------------------------------------------------------
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchProgress {
+    session_id: String,
+    matched_so_far: usize,
+    lines_scanned: usize,
+    total_lines: usize,
+    new_matches: Vec<usize>,
+    done: bool,
+}
 
 /// Parse "HH:MM" or "HH:MM:SS" into nanoseconds within a 24-hour day.
 /// Returns None on invalid input.
@@ -590,22 +620,27 @@ fn parse_time_to_day_ns(s: &str) -> Option<i64> {
     Some((h * 3600 + m * 60 + sec) * 1_000_000_000)
 }
 
+const SEARCH_CHUNK_SIZE: usize = 10_000;
+
 #[tauri::command]
 pub async fn search_logs(
     state: State<'_, AppState>,
+    app_handle: AppHandle,
     session_id: String,
     query: SearchQuery,
 ) -> Result<SearchSummary, String> {
-    let sessions = state
-        .sessions
-        .lock()
-        .map_err(|_| "State lock poisoned".to_string())?;
-
-    let session = sessions
-        .get(&session_id)
-        .ok_or_else(|| format!("Session '{session_id}' not found"))?;
-
-    let source = session.primary_source().ok_or("No sources in session")?;
+    // Acquire the lock briefly to read total_lines and validate the session exists.
+    let total_lines = {
+        let sessions = state
+            .sessions
+            .lock()
+            .map_err(|_| "State lock poisoned".to_string())?;
+        let session = sessions
+            .get(&session_id)
+            .ok_or_else(|| format!("Session '{session_id}' not found"))?;
+        let source = session.primary_source().ok_or("No sources in session")?;
+        source.total_lines()
+    };
 
     let compiled_re = if query.is_regex {
         let pattern = if query.case_sensitive {
@@ -630,61 +665,118 @@ pub async fn search_logs(
     let mut by_level: HashMap<String, usize> = HashMap::new();
     let mut by_tag: HashMap<String, usize> = HashMap::new();
 
-    for (i, meta) in source.line_meta.iter().enumerate() {
-        // Level filter
-        if let Some(min_level) = query.min_level {
-            if meta.level < min_level {
-                continue;
-            }
-        }
+    // Process in chunks, emitting progress events
+    let mut chunk_start = 0;
+    while chunk_start < total_lines {
+        let chunk_end = (chunk_start + SEARCH_CHUNK_SIZE).min(total_lines);
+        let mut chunk_matches: Vec<usize> = Vec::new();
 
-        // Tag filter
-        if let Some(ref tags) = query.tags {
-            if !tags.is_empty() && !tags.contains(&meta.tag) {
-                continue;
-            }
-        }
+        // Acquire lock briefly to read this chunk of lines
+        {
+            let sessions = state
+                .sessions
+                .lock()
+                .map_err(|_| "State lock poisoned".to_string())?;
+            let session = sessions
+                .get(&session_id)
+                .ok_or_else(|| format!("Session '{session_id}' not found"))?;
+            let source = session.primary_source().ok_or("No sources in session")?;
 
-        // Time range filter (compare time-of-day component only).
-        // Lines with timestamp == 0 have no parsed time and are excluded — they
-        // cannot be placed within a time range (section headers, plain content, etc).
-        if has_time_filter {
-            if meta.timestamp == 0 {
-                continue;
-            }
-            let ts_mod = meta.timestamp % DAY_NS;
-            if let Some(s) = start_ns {
-                if ts_mod < s {
-                    continue;
+            for i in chunk_start..chunk_end {
+                let meta = match source.meta_at(i) {
+                    Some(m) => m,
+                    None => continue,
+                };
+
+                // Level filter
+                if let Some(min_level) = query.min_level {
+                    if meta.level < min_level {
+                        continue;
+                    }
+                }
+
+                // Tag filter
+                if let Some(ref tags) = query.tags {
+                    let tag_str = session.resolve_tag(meta.tag_id);
+                    if !tags.is_empty() && !tags.iter().any(|t| t == tag_str) {
+                        continue;
+                    }
+                }
+
+                // Time range filter
+                if has_time_filter {
+                    if meta.timestamp == 0 {
+                        continue;
+                    }
+                    let ts_mod = meta.timestamp % DAY_NS;
+                    if let Some(s) = start_ns {
+                        if ts_mod < s {
+                            continue;
+                        }
+                    }
+                    if let Some(e) = end_ns {
+                        if ts_mod > e {
+                            continue;
+                        }
+                    }
+                }
+
+                // Text match
+                let raw = source.raw_line(i).unwrap_or("");
+                let matched = if let Some(ref re) = compiled_re {
+                    re.is_match(raw)
+                } else if query.case_sensitive {
+                    raw.contains(query.text.as_str())
+                } else {
+                    raw.to_lowercase().contains(&needle_lower)
+                };
+
+                if matched {
+                    chunk_matches.push(i);
+                    *by_level
+                        .entry(format!("{:?}", meta.level))
+                        .or_insert(0) += 1;
+                    let tag_str = session.resolve_tag(meta.tag_id);
+                    if !tag_str.is_empty() {
+                        *by_tag.entry(tag_str.to_string()).or_insert(0) += 1;
+                    }
                 }
             }
-            if let Some(e) = end_ns {
-                if ts_mod > e {
-                    continue;
-                }
-            }
-        }
+        } // lock released
 
-        // Text match (empty text matches everything — allows time/level/tag-only queries)
-        let raw = source.raw_line(i).unwrap_or("");
-        let matched = if let Some(ref re) = compiled_re {
-            re.is_match(raw)
-        } else if query.case_sensitive {
-            raw.contains(query.text.as_str())
-        } else {
-            raw.to_lowercase().contains(&needle_lower)
-        };
+        match_line_nums.extend_from_slice(&chunk_matches);
 
-        if matched {
-            match_line_nums.push(i);
-            *by_level
-                .entry(format!("{:?}", meta.level))
-                .or_insert(0) += 1;
-            if !meta.tag.is_empty() {
-                *by_tag.entry(meta.tag.clone()).or_insert(0) += 1;
-            }
-        }
+        // Emit progress event for this chunk
+        let _ = app_handle.emit(
+            "search-progress",
+            SearchProgress {
+                session_id: session_id.clone(),
+                matched_so_far: match_line_nums.len(),
+                lines_scanned: chunk_end,
+                total_lines,
+                new_matches: chunk_matches,
+                done: false,
+            },
+        );
+
+        chunk_start = chunk_end;
+
+        // Yield to allow other tasks to run between chunks
+        tokio::task::yield_now().await;
     }
+
+    // Emit final done event
+    let _ = app_handle.emit(
+        "search-progress",
+        SearchProgress {
+            session_id: session_id.clone(),
+            matched_so_far: match_line_nums.len(),
+            lines_scanned: total_lines,
+            total_lines,
+            new_matches: vec![],
+            done: true,
+        },
+    );
 
     Ok(SearchSummary {
         total_matches: match_line_nums.len(),
@@ -742,7 +834,7 @@ pub async fn get_dumpstate_metadata(
             if !raw.contains("was the duration of") {
                 // Section start header.
                 passed_first_section = true;
-                let tag = &line_m.tag;
+                let tag = session.resolve_tag(line_m.tag_id);
                 in_kernel_section = tag == "KERNEL VERSION";
                 in_props_section = tag == "SYSTEM PROPERTIES";
                 kernel_next = in_kernel_section;

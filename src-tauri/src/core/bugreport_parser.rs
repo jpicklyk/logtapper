@@ -29,7 +29,7 @@
 use regex::Regex;
 use std::sync::OnceLock;
 
-use crate::core::line::{LineContext, LineMeta, LogLevel};
+use crate::core::line::{LineContext, ParsedLineMeta, LogLevel};
 use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;
 
@@ -109,10 +109,10 @@ pub struct BugreportParser;
 impl BugreportParser {
     /// Shared logic: classify one raw line and return its metadata fields.
     /// Called by both `parse_meta` and `parse_line` to avoid duplication.
-    fn classify(&self, raw: &str, byte_offset: usize) -> LineMeta {
+    fn classify(&self, raw: &str, byte_offset: usize) -> ParsedLineMeta {
         // Decorative `====` separators at the top of the dumpstate header.
         if raw.starts_with("====") {
-            return LineMeta {
+            return ParsedLineMeta {
                 level: LogLevel::Verbose,
                 tag: String::new(),
                 timestamp: 0,
@@ -130,7 +130,7 @@ impl BugreportParser {
             let h: i64 = caps.get(4).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
             let mi: i64 = caps.get(5).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
             let s: i64 = caps.get(6).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-            return LineMeta {
+            return ParsedLineMeta {
                 level: LogLevel::Info,
                 tag: "dumpstate".to_string(),
                 timestamp: parse_dumpstate_timestamp(y, mo, d, h, mi, s),
@@ -154,7 +154,7 @@ impl BugreportParser {
                 // Section start header.
                 (extract_section_name(raw), LogLevel::Info)
             };
-            return LineMeta {
+            return ParsedLineMeta {
                 level,
                 tag,
                 timestamp: 0,
@@ -172,7 +172,7 @@ impl BugreportParser {
         }
 
         // Plain content line — key:value pairs, prose, numbers, etc.
-        LineMeta {
+        ParsedLineMeta {
             level: LogLevel::Info,
             tag: String::new(),
             timestamp: 0,
@@ -184,7 +184,7 @@ impl BugreportParser {
 }
 
 impl LogParser for BugreportParser {
-    fn parse_meta(&self, raw: &str, byte_offset: usize) -> Option<LineMeta> {
+    fn parse_meta(&self, raw: &str, byte_offset: usize) -> Option<ParsedLineMeta> {
         let raw = raw.trim_end_matches(['\r', '\n']);
         Some(self.classify(raw, byte_offset))
     }
