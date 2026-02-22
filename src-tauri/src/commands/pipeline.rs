@@ -47,7 +47,7 @@ pub struct PipelineRunSummary {
 enum SourceSnapshot {
     File {
         mmap: Arc<memmap2::Mmap>,
-        line_index: Vec<(usize, usize)>,
+        line_index: Vec<u64>,
     },
     Stream {
         raw_lines: Vec<String>,
@@ -57,7 +57,10 @@ enum SourceSnapshot {
 impl SourceSnapshot {
     fn total_lines(&self) -> usize {
         match self {
-            SourceSnapshot::File { line_index, .. } => line_index.len(),
+            // Sentinel-based: line_index has N+1 entries for N lines.
+            SourceSnapshot::File { line_index, .. } => {
+                if line_index.is_empty() { 0 } else { line_index.len() - 1 }
+            }
             SourceSnapshot::Stream { raw_lines } => raw_lines.len(),
         }
     }
@@ -65,8 +68,25 @@ impl SourceSnapshot {
     fn raw_line(&self, n: usize) -> Option<&str> {
         match self {
             SourceSnapshot::File { mmap, line_index } => {
-                let (off, len) = line_index.get(n)?;
-                std::str::from_utf8(&mmap[*off..*off + *len]).ok()
+                if n + 1 >= line_index.len() {
+                    return None;
+                }
+                let start = line_index[n] as usize;
+                let end = line_index[n + 1] as usize;
+                // Guard against corrupt/stale offsets (can happen during concurrent indexing)
+                if start >= end || end > mmap.len() {
+                    return None;
+                }
+                // Trim trailing \n and \r\n
+                let slice = &mmap[start..end];
+                let trimmed = if slice.ends_with(b"\r\n") {
+                    &slice[..slice.len() - 2]
+                } else if slice.ends_with(b"\n") {
+                    &slice[..slice.len() - 1]
+                } else {
+                    slice
+                };
+                std::str::from_utf8(trimmed).ok()
             }
             SourceSnapshot::Stream { raw_lines } => {
                 raw_lines.get(n).map(|s| s.as_str())

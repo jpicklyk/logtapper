@@ -2035,6 +2035,7 @@ dependencies = [
  "futures-util",
  "hex",
  "log",
+ "memchr",
  "memmap2",
  "rayon",
  "regex",

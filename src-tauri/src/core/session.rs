@@ -1,5 +1,7 @@
+use memchr::memchr_iter;
 use memmap2::Mmap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
@@ -7,10 +9,54 @@ use std::sync::Arc;
 use crate::core::bugreport_parser::BugreportParser;
 use crate::core::index::CrossSourceIndex;
 use crate::core::kernel_parser::KernelParser;
-use crate::core::line::{LineMeta, LogLevel};
+use crate::core::line::{LineMeta, LogLevel, ParsedLineMeta};
 use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;
 use crate::core::timeline::{Timeline, TimelineEntry};
+
+// ---------------------------------------------------------------------------
+// TagInterner — maps tag strings to compact u16 IDs
+// ---------------------------------------------------------------------------
+
+pub struct TagInterner {
+    table: Vec<String>,
+    index: HashMap<String, u16>,
+}
+
+impl TagInterner {
+    pub fn new() -> Self {
+        let mut interner = Self {
+            table: Vec::new(),
+            index: HashMap::new(),
+        };
+        // Pre-intern the empty tag at ID 0 so default/empty tags are free.
+        interner.intern("");
+        interner
+    }
+
+    /// Return the u16 ID for `tag`, inserting it if not yet seen.
+    pub fn intern(&mut self, tag: &str) -> u16 {
+        if let Some(&id) = self.index.get(tag) {
+            return id;
+        }
+        let id = self.table.len() as u16;
+        self.table.push(tag.to_string());
+        self.index.insert(tag.to_string(), id);
+        id
+    }
+
+    /// Resolve a tag ID back to its string.  Panics if `id` is out of range
+    /// (which would indicate a bug — IDs are only produced by `intern`).
+    pub fn resolve(&self, id: u16) -> &str {
+        &self.table[id as usize]
+    }
+}
+
+impl Default for TagInterner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Source type
@@ -65,8 +111,10 @@ pub struct SectionInfo {
 pub enum LogSourceData {
     File {
         mmap: Arc<Mmap>,
-        /// (byte_offset, byte_len) for every indexed line.
-        line_index: Vec<(usize, usize)>,
+        /// Byte offsets for every indexed line, with a sentinel at the end
+        /// equal to the byte past the last line.  Line i spans
+        /// `offsets[i]..offsets[i+1]` (may include trailing \r\n).
+        line_index: Vec<u64>,
     },
     Stream {
         /// Raw line strings growing as new ADB lines arrive.
@@ -127,8 +175,25 @@ impl LogSource {
     pub fn raw_line(&self, line_num: usize) -> Option<&str> {
         match &self.data {
             LogSourceData::File { mmap, line_index } => {
-                let (off, len) = line_index.get(line_num)?;
-                std::str::from_utf8(&mmap[*off..*off + *len]).ok()
+                // line_index has N+1 entries (sentinel at end); valid line nums are 0..N-1
+                if line_num + 1 >= line_index.len() {
+                    return None;
+                }
+                let start = line_index[line_num] as usize;
+                let end = line_index[line_num + 1] as usize;
+                // Guard against corrupt/stale offsets (can happen during concurrent indexing)
+                if start >= end || end > mmap.len() {
+                    return None;
+                }
+                // Strip trailing \n and \r\n
+                let mut slice_end = end;
+                if slice_end > start && mmap[slice_end - 1] == b'\n' {
+                    slice_end -= 1;
+                }
+                if slice_end > start && mmap[slice_end - 1] == b'\r' {
+                    slice_end -= 1;
+                }
+                std::str::from_utf8(&mmap[start..slice_end]).ok()
             }
             LogSourceData::Stream { raw_lines, evicted_count, .. } => {
                 let local_idx = line_num.checked_sub(*evicted_count)?;
@@ -183,6 +248,7 @@ pub struct AnalysisSession {
     pub sources: Vec<LogSource>,
     pub timeline: Timeline,
     pub index: CrossSourceIndex,
+    pub tag_interner: TagInterner,
 }
 
 impl AnalysisSession {
@@ -192,7 +258,18 @@ impl AnalysisSession {
             sources: Vec::new(),
             timeline: Timeline::new(),
             index: CrossSourceIndex::build(&[]),
+            tag_interner: TagInterner::new(),
         }
+    }
+
+    /// Intern a tag string and return its compact u16 ID.
+    pub fn intern_tag(&mut self, tag: &str) -> u16 {
+        self.tag_interner.intern(tag)
+    }
+
+    /// Resolve a tag ID back to the original string.
+    pub fn resolve_tag(&self, tag_id: u16) -> &str {
+        self.tag_interner.resolve(tag_id)
     }
 
     /// Load a file, detect its type, build the line index, and add it.
@@ -212,8 +289,8 @@ impl AnalysisSession {
 
         let source_type = detect_source_type(&mmap);
 
-        let (line_index, line_meta) = build_line_index(&mmap, &source_type);
-        let sections = build_section_index(&line_meta, &source_type);
+        let (line_index, line_meta) = build_line_index(&mmap, &source_type, &mut self.tag_interner);
+        let sections = build_section_index(&line_meta, &source_type, &self.tag_interner);
 
         let name = path
             .file_name()
@@ -263,8 +340,8 @@ impl AnalysisSession {
         let source_type = detect_source_type(&mmap);
         let parser = parser_for(&source_type);
         let (line_index, line_meta, bytes_consumed) =
-            build_partial_line_index(mmap.as_ref(), parser.as_ref(), max_bytes);
-        let sections = build_section_index(&line_meta, &source_type);
+            build_partial_line_index(mmap.as_ref(), parser.as_ref(), &mut self.tag_interner, max_bytes);
+        let sections = build_section_index(&line_meta, &source_type, &self.tag_interner);
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
@@ -288,25 +365,34 @@ impl AnalysisSession {
     }
 
     /// Append new index entries to the source at `source_idx`.
+    /// `new_offsets` are byte offsets of newly indexed lines (no sentinel).
+    /// `sentinel` is the byte offset just past the last line in this batch.
     /// When `done` is true, rebuilds sections and timeline.
     pub fn extend_source_index(
         &mut self,
         source_idx: usize,
-        new_line_index: Vec<(usize, usize)>,
+        new_offsets: Vec<u64>,
         new_line_meta: Vec<LineMeta>,
+        sentinel: u64,
         done: bool,
     ) {
         {
             let source = &mut self.sources[source_idx];
             if let LogSourceData::File { ref mut line_index, .. } = source.data {
-                line_index.extend(new_line_index);
+                // Remove the old sentinel before appending new offsets.
+                if !line_index.is_empty() {
+                    line_index.pop();
+                }
+                line_index.extend(new_offsets);
+                // Push the new sentinel.
+                line_index.push(sentinel);
             }
             source.line_meta.extend(new_line_meta);
             source.is_indexing = !done;
         }
         if done {
             let source_type = self.sources[source_idx].source_type.clone();
-            let sections = build_section_index(&self.sources[source_idx].line_meta, &source_type);
+            let sections = build_section_index(&self.sources[source_idx].line_meta, &source_type, &self.tag_interner);
             self.sources[source_idx].sections = sections;
             self.rebuild_timeline();
         }
@@ -323,7 +409,7 @@ impl AnalysisSession {
                     source_line_num: i,
                     timestamp: m.timestamp,
                     level: m.level,
-                    tag: m.tag.clone(),
+                    tag: self.tag_interner.resolve(m.tag_id).to_string(),
                 })
             })
             .collect();
@@ -427,141 +513,185 @@ fn looks_like_kernel(sample: &str) -> bool {
 // Line indexer — scans the mmap once, builds per-line metadata
 // ---------------------------------------------------------------------------
 
+/// Convert a `ParsedLineMeta` (parser output with tag String) to a `LineMeta`
+/// (stored form with interned tag_id).
+fn intern_parsed_meta(parsed: ParsedLineMeta, interner: &mut TagInterner) -> LineMeta {
+    let tag_id = interner.intern(&parsed.tag);
+    LineMeta {
+        level: parsed.level,
+        tag_id,
+        timestamp: parsed.timestamp,
+        byte_offset: parsed.byte_offset,
+        byte_len: parsed.byte_len,
+        is_section_boundary: parsed.is_section_boundary,
+    }
+}
+
 fn build_line_index(
     mmap: &Mmap,
     source_type: &SourceType,
-) -> (Vec<(usize, usize)>, Vec<LineMeta>) {
+    interner: &mut TagInterner,
+) -> (Vec<u64>, Vec<LineMeta>) {
     let parser: Box<dyn LogParser> = parser_for(source_type);
     let data = mmap.as_ref();
 
-    // Pre-allocate rough estimate (avg 120 bytes/line)
+    // Pre-allocate rough estimate (avg 120 bytes/line) + 1 for sentinel
     let estimate = (data.len() / 120).max(1024);
-    let mut line_index: Vec<(usize, usize)> = Vec::with_capacity(estimate);
+    let mut line_index: Vec<u64> = Vec::with_capacity(estimate + 1);
     let mut line_meta: Vec<LineMeta> = Vec::with_capacity(estimate);
 
     let mut start = 0usize;
     let len = data.len();
 
-    for i in 0..len {
-        if data[i] == b'\n' || i == len - 1 {
-            let end = if data[i] == b'\n' { i } else { i + 1 };
+    // Helper closure: index a single line from data[start..end] (end excludes the newline).
+    let index_line = |start: usize, end: usize, line_index: &mut Vec<u64>, line_meta: &mut Vec<LineMeta>, interner: &mut TagInterner| {
+        // Strip trailing \r if present.
+        let content_end = if end > start && data[end - 1] == b'\r' {
+            end - 1
+        } else {
+            end
+        };
 
-            // Strip trailing \r if present.
-            let content_end = if end > start && data[end - 1] == b'\r' {
-                end - 1
-            } else {
-                end
-            };
-
-            let byte_len = content_end - start;
-            // Build meta: try to parse non-empty lines; blank/unparseable lines get a minimal default.
-            let meta = if byte_len > 0 {
-                match std::str::from_utf8(&data[start..content_end]) {
-                    Ok(s) if !s.trim().is_empty() => {
-                        parser.parse_meta(s.trim(), start).unwrap_or(LineMeta {
-                            level: LogLevel::Info,
-                            tag: String::new(),
-                            timestamp: 0,
-                            byte_offset: start,
-                            byte_len,
-                            is_section_boundary: false,
-                        })
-                    }
-                    _ => LineMeta {
-                        level: LogLevel::Verbose,
+        let byte_len = content_end - start;
+        let parsed = if byte_len > 0 {
+            match std::str::from_utf8(&data[start..content_end]) {
+                Ok(s) if !s.trim().is_empty() => {
+                    parser.parse_meta(s.trim(), start).unwrap_or(ParsedLineMeta {
+                        level: LogLevel::Info,
                         tag: String::new(),
                         timestamp: 0,
                         byte_offset: start,
                         byte_len,
                         is_section_boundary: false,
-                    },
+                    })
                 }
-            } else {
-                LineMeta {
+                _ => ParsedLineMeta {
                     level: LogLevel::Verbose,
                     tag: String::new(),
                     timestamp: 0,
                     byte_offset: start,
-                    byte_len: 0,
+                    byte_len,
                     is_section_boundary: false,
-                }
-            };
+                },
+            }
+        } else {
+            ParsedLineMeta {
+                level: LogLevel::Verbose,
+                tag: String::new(),
+                timestamp: 0,
+                byte_offset: start,
+                byte_len: 0,
+                is_section_boundary: false,
+            }
+        };
 
-            line_index.push((start, byte_len));
-            line_meta.push(meta);
-            start = i + 1;
-        }
+        line_index.push(start as u64);
+        line_meta.push(intern_parsed_meta(parsed, interner));
+    };
+
+    for nl_pos in memchr_iter(b'\n', data) {
+        index_line(start, nl_pos, &mut line_index, &mut line_meta, interner);
+        start = nl_pos + 1;
     }
+
+    // Handle trailing content after the last newline (no trailing \n).
+    if start < len {
+        index_line(start, len, &mut line_index, &mut line_meta, interner);
+    }
+
+    // Sentinel: byte offset past the last line
+    line_index.push(len as u64);
 
     (line_index, line_meta)
 }
 
 /// Like `build_line_index` but stops after scanning `max_bytes`.
 /// Returns `(line_index, line_meta, bytes_consumed)`.
+/// `line_index` includes a sentinel at the end.
 /// `bytes_consumed` is the byte offset just past the last complete line scanned.
 pub(crate) fn build_partial_line_index(
     data: &[u8],
     parser: &dyn LogParser,
+    interner: &mut TagInterner,
     max_bytes: usize,
-) -> (Vec<(usize, usize)>, Vec<LineMeta>, usize) {
+) -> (Vec<u64>, Vec<LineMeta>, usize) {
     let scan_limit = max_bytes.min(data.len());
     let estimate = (scan_limit / 120).max(1024);
-    let mut line_index: Vec<(usize, usize)> = Vec::with_capacity(estimate);
+    let mut line_index: Vec<u64> = Vec::with_capacity(estimate + 1);
     let mut line_meta: Vec<LineMeta> = Vec::with_capacity(estimate);
     let mut start = 0usize;
     let mut end_byte = 0usize;
 
-    for i in 0..data.len() {
-        if data[i] == b'\n' || i == data.len() - 1 {
-            let end = if data[i] == b'\n' { i } else { i + 1 };
-            let content_end = if end > start && data[end - 1] == b'\r' {
-                end - 1
-            } else {
-                end
-            };
+    // Helper closure: index a single line from data[start..end].
+    let index_line = |start: usize, end: usize, line_index: &mut Vec<u64>, line_meta: &mut Vec<LineMeta>, interner: &mut TagInterner| {
+        let content_end = if end > start && data[end - 1] == b'\r' {
+            end - 1
+        } else {
+            end
+        };
 
-            let byte_len = content_end - start;
-            let meta = if byte_len > 0 {
-                match std::str::from_utf8(&data[start..content_end]) {
-                    Ok(s) if !s.trim().is_empty() => {
-                        parser.parse_meta(s.trim(), start).unwrap_or(LineMeta {
-                            level: LogLevel::Info,
-                            tag: String::new(),
-                            timestamp: 0,
-                            byte_offset: start,
-                            byte_len,
-                            is_section_boundary: false,
-                        })
-                    }
-                    _ => LineMeta {
-                        level: LogLevel::Verbose,
+        let byte_len = content_end - start;
+        let parsed = if byte_len > 0 {
+            match std::str::from_utf8(&data[start..content_end]) {
+                Ok(s) if !s.trim().is_empty() => {
+                    parser.parse_meta(s.trim(), start).unwrap_or(ParsedLineMeta {
+                        level: LogLevel::Info,
                         tag: String::new(),
                         timestamp: 0,
                         byte_offset: start,
                         byte_len,
                         is_section_boundary: false,
-                    },
+                    })
                 }
-            } else {
-                LineMeta {
+                _ => ParsedLineMeta {
                     level: LogLevel::Verbose,
                     tag: String::new(),
                     timestamp: 0,
                     byte_offset: start,
-                    byte_len: 0,
+                    byte_len,
                     is_section_boundary: false,
-                }
-            };
+                },
+            }
+        } else {
+            ParsedLineMeta {
+                level: LogLevel::Verbose,
+                tag: String::new(),
+                timestamp: 0,
+                byte_offset: start,
+                byte_len: 0,
+                is_section_boundary: false,
+            }
+        };
 
-            line_index.push((start, byte_len));
-            line_meta.push(meta);
-            end_byte = i + 1;
-            start = i + 1;
-            if end_byte >= scan_limit && scan_limit < data.len() {
-                break;
+        line_index.push(start as u64);
+        line_meta.push(intern_parsed_meta(parsed, interner));
+    };
+
+    for nl_pos in memchr_iter(b'\n', data) {
+        index_line(start, nl_pos, &mut line_index, &mut line_meta, interner);
+        end_byte = nl_pos + 1;
+        start = nl_pos + 1;
+        if end_byte >= scan_limit && scan_limit < data.len() {
+            break;
+        }
+    }
+
+    // Handle trailing content after the last newline when scanning the full file
+    // (i.e., scan_limit == data.len() and no trailing newline).
+    if start < data.len() && (end_byte < scan_limit || scan_limit == data.len()) {
+        // Only index the trailing partial line if we haven't broken out early
+        if end_byte < scan_limit || scan_limit == data.len() {
+            // Check: did we exhaust all newlines without hitting scan_limit?
+            // If scan_limit < data.len(), we only want complete lines up to the limit.
+            if scan_limit == data.len() {
+                index_line(start, data.len(), &mut line_index, &mut line_meta, interner);
+                end_byte = data.len();
             }
         }
     }
+
+    // Sentinel: byte offset past the last indexed line
+    line_index.push(end_byte as u64);
 
     (line_index, line_meta, end_byte)
 }
@@ -579,7 +709,7 @@ pub(crate) fn build_partial_line_index(
 /// their own footer are silently discarded.
 ///
 /// Returns an empty Vec for all non-Bugreport source types.
-fn build_section_index(line_meta: &[LineMeta], source_type: &SourceType) -> Vec<SectionInfo> {
+fn build_section_index(line_meta: &[LineMeta], source_type: &SourceType, interner: &TagInterner) -> Vec<SectionInfo> {
     if !matches!(source_type, SourceType::Bugreport) {
         return Vec::new();
     }
@@ -592,12 +722,13 @@ fn build_section_index(line_meta: &[LineMeta], source_type: &SourceType) -> Vec<
         if !meta.is_section_boundary {
             continue;
         }
-        if meta.level == LogLevel::Info && !meta.tag.is_empty() && meta.tag != "dumpstate" {
+        let tag = interner.resolve(meta.tag_id);
+        if meta.level == LogLevel::Info && !tag.is_empty() && tag != "dumpstate" {
             // Section start header — push onto the stack.
-            pending.push((meta.tag.clone(), i));
-        } else if meta.level == LogLevel::Verbose && !meta.tag.is_empty() {
+            pending.push((tag.to_string(), i));
+        } else if meta.level == LogLevel::Verbose && !tag.is_empty() {
             // Duration footer — find the most recently opened section with this name.
-            if let Some(pos) = pending.iter().rposition(|(name, _)| name == &meta.tag) {
+            if let Some(pos) = pending.iter().rposition(|(name, _)| name == tag) {
                 let (name, start) = pending.remove(pos);
                 sections.push(SectionInfo {
                     name,
@@ -650,7 +781,7 @@ mod tests {
                 raw_lines.push(line);
                 src.line_meta.push(LineMeta {
                     level: LogLevel::Info,
-                    tag: format!("tag{}", evicted + i),
+                    tag_id: 0,
                     timestamp: (evicted + i) as i64,
                     byte_offset: 0,
                     byte_len: 0,
@@ -762,44 +893,78 @@ mod tests {
         out.into_bytes()
     }
 
+    /// Helper to call build_partial_line_index with a fresh interner.
+    /// Returns (line_index_with_sentinel, line_meta, bytes_consumed, interner).
+    fn bpli(data: &[u8], parser: &dyn LogParser, max_bytes: usize)
+        -> (Vec<u64>, Vec<LineMeta>, usize, TagInterner)
+    {
+        let mut interner = TagInterner::new();
+        let (idx, meta, consumed) = build_partial_line_index(data, parser, &mut interner, max_bytes);
+        (idx, meta, consumed, interner)
+    }
+
+    /// Number of actual lines in a sentinel-based index (N+1 entries for N lines).
+    fn line_count(idx: &[u64]) -> usize {
+        if idx.is_empty() { 0 } else { idx.len() - 1 }
+    }
+
+    /// Extract line content from sentinel-based index: line i spans idx[i]..idx[i+1].
+    fn extract_line<'a>(data: &'a [u8], idx: &[u64], i: usize) -> &'a str {
+        let start = idx[i] as usize;
+        let end = idx[i + 1] as usize;
+        let slice = &data[start..end];
+        // Trim trailing \r\n or \n
+        let trimmed = if slice.ends_with(b"\r\n") {
+            &slice[..slice.len() - 2]
+        } else if slice.ends_with(b"\n") {
+            &slice[..slice.len() - 1]
+        } else {
+            slice
+        };
+        std::str::from_utf8(trimmed).unwrap()
+    }
+
     /// Simulate the background indexer (`run_background_indexer` in files.rs):
     /// scan remaining bytes in chunks using the same `build_partial_line_index`
     /// + offset adjustment pattern that the real code uses.
-    /// Returns combined (line_index, line_meta) for the extension portion only.
+    /// Returns combined (line_offsets_no_sentinel, line_meta) for the extension portion only.
     fn simulate_background_chunks(
         data: &[u8],
         parser: &dyn LogParser,
         initial_bytes_consumed: usize,
         chunk_bytes: usize,
-    ) -> (Vec<(usize, usize)>, Vec<LineMeta>) {
-        let mut all_index = Vec::new();
+    ) -> (Vec<u64>, Vec<LineMeta>) {
+        let mut all_offsets = Vec::new();
         let mut all_meta = Vec::new();
         let mut cursor = initial_bytes_consumed;
+        let mut interner = TagInterner::new();
 
         while cursor < data.len() {
             let remaining = &data[cursor..];
             let (mut chunk_idx, mut chunk_meta, bytes_in_chunk) =
-                build_partial_line_index(remaining, parser, chunk_bytes);
+                build_partial_line_index(remaining, parser, &mut interner, chunk_bytes);
 
             if bytes_in_chunk == 0 {
                 break;
             }
 
-            // Same offset adjustment as run_background_indexer:
-            // build_partial_line_index operates on a sub-slice starting at 0,
-            // but real byte_offsets are cursor + local_offset.
-            for entry in chunk_idx.iter_mut() {
-                entry.0 += cursor;
+            // Adjust offsets for the cursor position
+            for offset in chunk_idx.iter_mut() {
+                *offset += cursor as u64;
             }
             for m in chunk_meta.iter_mut() {
                 m.byte_offset += cursor;
             }
 
-            all_index.extend(chunk_idx);
+            // Remove sentinel before collecting (we only want line start offsets)
+            if !chunk_idx.is_empty() {
+                chunk_idx.pop();
+            }
+            all_offsets.extend(chunk_idx);
             all_meta.extend(chunk_meta);
             cursor += bytes_in_chunk;
         }
-        (all_index, all_meta)
+        (all_offsets, all_meta)
     }
 
     // --- A. build_partial_line_index unit tests ---
@@ -808,20 +973,18 @@ mod tests {
     fn partial_index_small_file_fits_in_one_chunk() {
         let data = make_logcat_data(5);
         let parser = LogcatParser;
-        let (idx, meta, consumed) =
-            build_partial_line_index(&data, &parser, data.len() + 1000);
+        let (idx, meta, consumed, _) = bpli(&data, &parser, data.len() + 1000);
 
-        assert_eq!(idx.len(), 5);
+        assert_eq!(line_count(&idx), 5);
         assert_eq!(meta.len(), 5);
         assert_eq!(consumed, data.len());
 
-        // Verify byte offsets are sequential and non-overlapping
-        for i in 1..idx.len() {
+        // Verify byte offsets are sequential
+        for i in 1..line_count(&idx) {
             assert!(
-                idx[i].0 >= idx[i - 1].0 + idx[i - 1].1,
-                "line {} offset should be >= end of line {}",
-                i,
-                i - 1
+                idx[i] >= idx[i - 1],
+                "line {} offset should be >= start of line {}",
+                i, i - 1
             );
         }
     }
@@ -831,22 +994,21 @@ mod tests {
         let data = make_logcat_data(10);
         let parser = LogcatParser;
 
-        // Find where line 3 ends (after its \n)
         let mut newline_count = 0;
         let mut cutoff = 0;
         for (i, &b) in data.iter().enumerate() {
             if b == b'\n' {
                 newline_count += 1;
                 if newline_count == 3 {
-                    cutoff = i + 1; // byte after 3rd \n
+                    cutoff = i + 1;
                     break;
                 }
             }
         }
 
-        let (idx, meta, consumed) = build_partial_line_index(&data, &parser, cutoff);
+        let (idx, meta, consumed, _) = bpli(&data, &parser, cutoff);
 
-        assert_eq!(idx.len(), 3, "should index exactly 3 lines");
+        assert_eq!(line_count(&idx), 3, "should index exactly 3 lines");
         assert_eq!(meta.len(), 3);
         assert_eq!(consumed, cutoff, "bytes_consumed should be right after 3rd newline");
     }
@@ -855,18 +1017,15 @@ mod tests {
     fn partial_index_line_content_matches() {
         let data = make_logcat_data(5);
         let parser = LogcatParser;
-        let (idx, _meta, _consumed) =
-            build_partial_line_index(&data, &parser, data.len() + 100);
+        let (idx, _meta, _consumed, _) = bpli(&data, &parser, data.len() + 100);
 
-        for (i, &(off, len)) in idx.iter().enumerate() {
-            let extracted = std::str::from_utf8(&data[off..off + len]).unwrap();
+        for i in 0..line_count(&idx) {
+            let content = extract_line(&data, &idx, i);
             let expected_suffix = format!("message {}", i);
             assert!(
-                extracted.contains(&expected_suffix),
+                content.contains(&expected_suffix),
                 "line {} content '{}' should contain '{}'",
-                i,
-                extracted,
-                expected_suffix
+                i, content, expected_suffix
             );
         }
     }
@@ -882,24 +1041,16 @@ mod tests {
         }
         let bytes = data.into_bytes();
         let parser = LogcatParser;
-        let (idx, meta, consumed) =
-            build_partial_line_index(&bytes, &parser, bytes.len() + 100);
+        let (idx, meta, consumed, _) = bpli(&bytes, &parser, bytes.len() + 100);
 
-        assert_eq!(idx.len(), 3);
+        assert_eq!(line_count(&idx), 3);
         assert_eq!(meta.len(), 3);
         assert_eq!(consumed, bytes.len());
 
-        // byte_len should exclude \r
-        for &(off, len) in &idx {
-            let content = &bytes[off..off + len];
-            assert!(
-                !content.contains(&b'\r'),
-                "byte_len should exclude \\r"
-            );
-            assert!(
-                !content.contains(&b'\n'),
-                "byte_len should exclude \\n"
-            );
+        for i in 0..line_count(&idx) {
+            let content = extract_line(&bytes, &idx, i);
+            assert!(!content.contains('\r'), "line content should not contain \\r");
+            assert!(!content.contains('\n'), "line content should not contain \\n");
         }
     }
 
@@ -907,9 +1058,9 @@ mod tests {
     fn partial_index_empty_data() {
         let data: &[u8] = &[];
         let parser = LogcatParser;
-        let (idx, meta, consumed) = build_partial_line_index(data, &parser, 1000);
+        let (idx, meta, consumed, _) = bpli(data, &parser, 1000);
 
-        assert_eq!(idx.len(), 0);
+        assert_eq!(line_count(&idx), 0);
         assert_eq!(meta.len(), 0);
         assert_eq!(consumed, 0);
     }
@@ -918,34 +1069,28 @@ mod tests {
     fn partial_index_single_line_no_newline() {
         let data = b"01-01 12:00:00.000  1000  1001 I TestTag: only line";
         let parser = LogcatParser;
-        let (idx, meta, consumed) = build_partial_line_index(data, &parser, data.len() + 100);
+        let (idx, meta, consumed, _) = bpli(data, &parser, data.len() + 100);
 
-        assert_eq!(idx.len(), 1, "should index the single line without trailing newline");
+        assert_eq!(line_count(&idx), 1, "should index the single line without trailing newline");
         assert_eq!(meta.len(), 1);
         assert_eq!(consumed, data.len());
-        assert_eq!(idx[0].0, 0);
-        assert_eq!(idx[0].1, data.len());
+        assert_eq!(idx[0], 0);
     }
 
     #[test]
     fn partial_index_preserves_timestamps() {
-        // Lines with distinct timestamps
         let data = b"01-15 08:30:00.000  1000  1001 I TestTag: first\n\
                      03-22 14:45:30.500  2000  2001 W OtherTag: second\n";
         let parser = LogcatParser;
-        let (_idx, meta, _consumed) =
-            build_partial_line_index(data, &parser, data.len() + 100);
+        let (_idx, meta, _consumed, _) = bpli(data, &parser, data.len() + 100);
 
         assert_eq!(meta.len(), 2);
-        // Both should have non-zero timestamps
         assert_ne!(meta[0].timestamp, 0, "first line should have parsed timestamp");
         assert_ne!(meta[1].timestamp, 0, "second line should have parsed timestamp");
-        // Second timestamp (March) should be later than first (January)
         assert!(
             meta[1].timestamp > meta[0].timestamp,
             "March timestamp {} should be > January timestamp {}",
-            meta[1].timestamp,
-            meta[0].timestamp
+            meta[1].timestamp, meta[0].timestamp
         );
     }
 
@@ -956,47 +1101,37 @@ mod tests {
         let data = make_logcat_data(20);
         let parser = LogcatParser;
 
-        // Full reference: build_partial_line_index with huge max_bytes
-        let (ref_idx, ref_meta, _) =
-            build_partial_line_index(&data, &parser, data.len() + 1000);
-        assert_eq!(ref_idx.len(), 20);
+        let (ref_idx, ref_meta, _, _) = bpli(&data, &parser, data.len() + 1000);
+        assert_eq!(line_count(&ref_idx), 20);
 
-        // Now do partial (~half) + extend
         let half = data.len() / 2;
-        let (part_idx, part_meta, consumed) =
-            build_partial_line_index(&data, &parser, half);
-        assert!(part_idx.len() < 20, "partial should index fewer than all 20 lines");
+        let (part_idx, part_meta, consumed, _) = bpli(&data, &parser, half);
+        assert!(line_count(&part_idx) < 20, "partial should index fewer than all 20 lines");
         assert!(consumed <= data.len());
 
-        // Simulate extension for remaining bytes
-        let (ext_idx, ext_meta) =
+        let (ext_offsets, ext_meta) =
             simulate_background_chunks(&data, &parser, consumed, data.len());
 
-        // Combine
-        let mut combined_idx = part_idx;
-        combined_idx.extend(ext_idx);
+        // Combine: strip sentinel from partial, add extension offsets, then add final sentinel
+        let mut combined_offsets: Vec<u64> = part_idx[..part_idx.len() - 1].to_vec();
+        combined_offsets.extend(&ext_offsets);
+        combined_offsets.push(*ref_idx.last().unwrap());
         let mut combined_meta = part_meta;
         combined_meta.extend(ext_meta);
 
         assert_eq!(
-            combined_idx.len(),
-            ref_idx.len(),
+            line_count(&combined_offsets), line_count(&ref_idx),
             "combined line count should match full index"
         );
-        // Verify every offset+length matches
-        for i in 0..ref_idx.len() {
-            assert_eq!(
-                combined_idx[i], ref_idx[i],
-                "line {} index mismatch: combined {:?} vs ref {:?}",
-                i, combined_idx[i], ref_idx[i]
-            );
+        for i in 0..line_count(&ref_idx) {
+            let ref_content = extract_line(&data, &ref_idx, i);
+            let combined_content = extract_line(&data, &combined_offsets, i);
+            assert_eq!(combined_content, ref_content, "line {} content mismatch", i);
         }
-        // Verify timestamps match
         for i in 0..ref_meta.len() {
             assert_eq!(
                 combined_meta[i].timestamp, ref_meta[i].timestamp,
-                "line {} timestamp mismatch",
-                i
+                "line {} timestamp mismatch", i
             );
         }
     }
@@ -1006,34 +1141,31 @@ mod tests {
         let data = make_logcat_data(30);
         let parser = LogcatParser;
 
-        // Full reference
-        let (ref_idx, _ref_meta, _) =
-            build_partial_line_index(&data, &parser, data.len() + 1000);
-        assert_eq!(ref_idx.len(), 30);
+        let (ref_idx, _ref_meta, _, _) = bpli(&data, &parser, data.len() + 1000);
+        assert_eq!(line_count(&ref_idx), 30);
 
-        // Small chunk size: ~2 lines worth of bytes at a time
-        let chunk_size = 120; // roughly one logcat line
-        let (first_idx, first_meta, consumed) =
-            build_partial_line_index(&data, &parser, chunk_size);
-        assert!(first_idx.len() < 30);
+        let chunk_size = 120;
+        let (first_idx, first_meta, consumed, _) = bpli(&data, &parser, chunk_size);
+        assert!(line_count(&first_idx) < 30);
 
-        let (ext_idx, ext_meta) =
+        let (ext_offsets, ext_meta) =
             simulate_background_chunks(&data, &parser, consumed, chunk_size);
 
-        let mut combined_idx = first_idx;
-        combined_idx.extend(ext_idx);
+        let mut combined_offsets: Vec<u64> = first_idx[..first_idx.len() - 1].to_vec();
+        combined_offsets.extend(&ext_offsets);
+        combined_offsets.push(*ref_idx.last().unwrap());
         let mut combined_meta = first_meta;
         combined_meta.extend(ext_meta);
 
         assert_eq!(
-            combined_idx.len(),
-            ref_idx.len(),
+            line_count(&combined_offsets), line_count(&ref_idx),
             "multi-chunk combined should match full: got {} vs {}",
-            combined_idx.len(),
-            ref_idx.len()
+            line_count(&combined_offsets), line_count(&ref_idx)
         );
-        for i in 0..ref_idx.len() {
-            assert_eq!(combined_idx[i], ref_idx[i], "line {} index mismatch", i);
+        for i in 0..line_count(&ref_idx) {
+            let ref_content = extract_line(&data, &ref_idx, i);
+            let combined_content = extract_line(&data, &combined_offsets, i);
+            assert_eq!(combined_content, ref_content, "line {} content mismatch", i);
         }
     }
 
@@ -1042,27 +1174,29 @@ mod tests {
         let data = make_logcat_data(10);
         let parser = LogcatParser;
 
-        // Build partial covering ~half
+        // Use a single interner for both partial and extension so tag IDs are consistent.
+        let mut interner = TagInterner::new();
+
         let half = data.len() / 2;
         let (part_idx, part_meta, consumed) =
-            build_partial_line_index(&data, &parser, half);
-        let part_count = part_idx.len();
+            build_partial_line_index(&data, &parser, &mut interner, half);
+        let part_count = line_count(&part_idx);
         assert!(part_count > 0 && part_count < 10);
 
-        // Build extension for the rest
+        // Build extension using the same interner
         let remaining = &data[consumed..];
         let (mut ext_idx, mut ext_meta, _) =
-            build_partial_line_index(remaining, &parser, remaining.len() + 100);
-        // Adjust offsets for extension
-        for entry in ext_idx.iter_mut() {
-            entry.0 += consumed;
+            build_partial_line_index(remaining, &parser, &mut interner, remaining.len() + 100);
+        for offset in ext_idx.iter_mut() {
+            *offset += consumed as u64;
         }
         for m in ext_meta.iter_mut() {
             m.byte_offset += consumed;
         }
-        let ext_count = ext_idx.len();
+        // Strip sentinel and pass it separately
+        let ext_sentinel = ext_idx.pop().unwrap_or(data.len() as u64);
+        let ext_count = ext_meta.len();
 
-        // Create session with a File-mode source manually (anon mmap with data copied in)
         let mut mmap_mut = memmap2::MmapOptions::new()
             .len(data.len())
             .map_anon()
@@ -1072,6 +1206,8 @@ mod tests {
         let mmap = Arc::new(mmap);
 
         let mut session = AnalysisSession::new("test-session".into());
+        // Transfer the shared interner to the session so tag IDs resolve correctly.
+        session.tag_interner = interner;
         session.sources.push(LogSource {
             id: "src1".into(),
             name: "test.log".into(),
@@ -1085,14 +1221,11 @@ mod tests {
             is_indexing: true,
         });
 
-        // Verify is_indexing is true
         assert!(session.sources[0].is_indexing);
         assert_eq!(session.sources[0].total_lines(), part_count);
 
-        // Extend with remaining lines
-        session.extend_source_index(0, ext_idx, ext_meta, true);
+        session.extend_source_index(0, ext_idx, ext_meta, ext_sentinel, true);
 
-        // Verify final state
         assert!(!session.sources[0].is_indexing, "should be done indexing");
         assert_eq!(
             session.sources[0].total_lines(),
@@ -1100,33 +1233,20 @@ mod tests {
             "total lines should be sum of partial + extension"
         );
 
-        // Verify raw_line works for ALL lines
         let source = &session.sources[0];
         for i in 0..source.total_lines() {
             let line = source.raw_line(i);
-            assert!(
-                line.is_some(),
-                "raw_line({}) should return Some after extend",
-                i
-            );
+            assert!(line.is_some(), "raw_line({}) should return Some after extend", i);
             let text = line.unwrap();
             let expected = format!("message {}", i);
             assert!(
                 text.contains(&expected),
-                "raw_line({}) = '{}' should contain '{}'",
-                i,
-                text,
-                expected
+                "raw_line({}) = '{}' should contain '{}'", i, text, expected
             );
         }
 
-        // Verify meta_at works for ALL lines
         for i in 0..source.total_lines() {
-            assert!(
-                source.meta_at(i).is_some(),
-                "meta_at({}) should return Some after extend",
-                i
-            );
+            assert!(source.meta_at(i).is_some(), "meta_at({}) should return Some after extend", i);
         }
     }
 
@@ -1138,26 +1258,23 @@ mod tests {
         let parser = LogcatParser;
 
         let chunk_size = 200;
-        let (first_idx, first_meta, consumed) =
-            build_partial_line_index(&data, &parser, chunk_size);
-        let (ext_idx, ext_meta) =
+        let (first_idx, first_meta, consumed, _) = bpli(&data, &parser, chunk_size);
+        let (ext_offsets, ext_meta) =
             simulate_background_chunks(&data, &parser, consumed, chunk_size);
 
-        let mut combined_idx = first_idx;
-        combined_idx.extend(ext_idx);
+        let mut combined_offsets: Vec<u64> = first_idx[..first_idx.len() - 1].to_vec();
+        combined_offsets.extend(&ext_offsets);
+        combined_offsets.push(data.len() as u64);
         let mut combined_meta = first_meta;
         combined_meta.extend(ext_meta);
 
-        // Verify every line extracts the right content
-        for (i, &(off, len)) in combined_idx.iter().enumerate() {
-            let content = std::str::from_utf8(&data[off..off + len]).unwrap();
+        for i in 0..line_count(&combined_offsets) {
+            let content = extract_line(&data, &combined_offsets, i);
             let expected = format!("message {}", i);
             assert!(
                 content.contains(&expected),
                 "line {} content '{}' should contain '{}'",
-                i,
-                content,
-                expected
+                i, content, expected
             );
         }
     }
@@ -1167,18 +1284,14 @@ mod tests {
         let data = make_logcat_data(10);
         let parser = LogcatParser;
 
-        // Partial: cover first ~4 lines
-        let (part_idx, part_meta, consumed) =
-            build_partial_line_index(&data, &parser, 300);
-        let boundary = part_idx.len();
+        let (part_idx, part_meta, consumed, _) = bpli(&data, &parser, 300);
+        let boundary = line_count(&part_idx);
         assert!(boundary > 0 && boundary < 10);
 
-        // Extension
         let remaining = &data[consumed..];
-        let (mut ext_idx, mut ext_meta, _) =
-            build_partial_line_index(remaining, &parser, remaining.len() + 100);
-        for entry in ext_idx.iter_mut() {
-            entry.0 += consumed;
+        let (mut ext_idx, mut ext_meta, _, _) = bpli(remaining, &parser, remaining.len() + 100);
+        for offset in ext_idx.iter_mut() {
+            *offset += consumed as u64;
         }
         for m in ext_meta.iter_mut() {
             m.byte_offset += consumed;
@@ -1187,7 +1300,6 @@ mod tests {
         let mut combined_meta = part_meta;
         combined_meta.extend(ext_meta);
 
-        // Check around the boundary
         let last_of_first = &combined_meta[boundary - 1];
         let first_of_second = &combined_meta[boundary];
 
@@ -1206,7 +1318,6 @@ mod tests {
         let data = make_logcat_data(5);
         let parser = LogcatParser;
 
-        // Find the start of line 2 (after 2nd \n), then set max_bytes to mid-line-2
         let mut newlines = 0;
         let mut line2_start = 0;
         for (i, &b) in data.iter().enumerate() {
@@ -1218,19 +1329,15 @@ mod tests {
                 }
             }
         }
-        let mid_line2 = line2_start + 10; // somewhere in the middle of line 2
+        let mid_line2 = line2_start + 10;
 
-        let (idx, _meta, consumed) = build_partial_line_index(&data, &parser, mid_line2);
+        let (idx, _meta, consumed, _) = bpli(&data, &parser, mid_line2);
 
-        // Should still fully index line 2 (scan continues to its \n),
-        // but NOT index line 3+
-        assert_eq!(idx.len(), 3, "should index lines 0, 1, 2 (scan past mid-line)");
-        // consumed should be past line 2's newline
+        assert_eq!(line_count(&idx), 3, "should index lines 0, 1, 2 (scan past mid-line)");
         assert!(
             consumed > mid_line2,
             "bytes_consumed {} should be past mid_line2 {}",
-            consumed,
-            mid_line2
+            consumed, mid_line2
         );
     }
 
@@ -1239,7 +1346,6 @@ mod tests {
         let data = make_logcat_data(5);
         let parser = LogcatParser;
 
-        // Find the exact position of the 3rd \n
         let mut newlines = 0;
         let mut third_nl = 0;
         for (i, &b) in data.iter().enumerate() {
@@ -1252,12 +1358,9 @@ mod tests {
             }
         }
 
-        // max_bytes = position of the 3rd newline (0-indexed byte)
-        let (idx, _meta, consumed) = build_partial_line_index(&data, &parser, third_nl);
+        let (idx, _meta, consumed, _) = bpli(&data, &parser, third_nl);
 
-        // The 3rd newline terminates line index 2 (0-based). After processing it,
-        // consumed = third_nl + 1, which equals scan_limit or exceeds it, so we break.
-        assert_eq!(idx.len(), 3, "should index exactly 3 lines");
+        assert_eq!(line_count(&idx), 3, "should index exactly 3 lines");
         assert_eq!(consumed, third_nl + 1);
     }
 
@@ -1266,10 +1369,10 @@ mod tests {
         let data = make_logcat_data(5);
         let parser = LogcatParser;
 
+        let mut interner = TagInterner::new();
         let (part_idx, part_meta, _consumed) =
-            build_partial_line_index(&data, &parser, data.len() + 100);
+            build_partial_line_index(&data, &parser, &mut interner, data.len() + 100);
 
-        // Create a File source manually with is_indexing = true
         let mut mmap_mut = memmap2::MmapOptions::new()
             .len(data.len())
             .map_anon()
@@ -1278,6 +1381,7 @@ mod tests {
         let mmap: Mmap = mmap_mut.make_read_only().unwrap();
 
         let mut session = AnalysisSession::new("test".into());
+        session.tag_interner = interner;
         session.sources.push(LogSource {
             id: "src1".into(),
             name: "test.log".into(),
@@ -1293,8 +1397,9 @@ mod tests {
 
         let original_count = session.sources[0].total_lines();
 
-        // Extend with empty batch, done=true
-        session.extend_source_index(0, Vec::new(), Vec::new(), true);
+        // Extend with empty batch; sentinel = current end
+        let sentinel = *part_idx.last().unwrap_or(&0);
+        session.extend_source_index(0, Vec::new(), Vec::new(), sentinel, true);
 
         assert!(!session.sources[0].is_indexing, "should be done indexing");
         assert_eq!(
@@ -1306,25 +1411,23 @@ mod tests {
 
     #[test]
     fn blank_lines_are_indexed() {
-        // Logcat lines with a blank line in between
         let data = b"01-01 12:00:00.000  1000  1001 I TestTag: line one\n\
                      \n\
                      01-01 12:00:02.000  1000  1001 I TestTag: line three\n";
         let parser = LogcatParser;
-        let (idx, meta, consumed) =
-            build_partial_line_index(data, &parser, data.len() + 100);
+        let (idx, meta, consumed, _) = bpli(data, &parser, data.len() + 100);
 
-        assert_eq!(idx.len(), 3, "blank line should be indexed too");
+        assert_eq!(line_count(&idx), 3, "blank line should be indexed too");
         assert_eq!(meta.len(), 3);
         assert_eq!(consumed, data.len());
 
-        // The blank line should have byte_len 0
-        assert_eq!(idx[1].1, 0, "blank line should have byte_len 0");
+        // The blank line should have empty content
+        let blank_content = extract_line(data, &idx, 1);
+        assert!(blank_content.is_empty(), "blank line should have empty content");
 
         // Lines after the blank should still have correct content
-        let (off, len) = idx[2];
-        let content = std::str::from_utf8(&data[off..off + len]).unwrap();
-        assert!(content.contains("line three"), "third line content should be correct");
+        let line3_content = extract_line(data, &idx, 2);
+        assert!(line3_content.contains("line three"), "third line content should be correct");
     }
 
     // --- Helper: build_partial_line_index signature adapter for equivalence tests ---

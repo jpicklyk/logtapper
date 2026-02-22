@@ -445,10 +445,42 @@ export function usePaneLayout(): PaneLayoutState {
 
   const openCenterTab = useCallback((type: TabType) => {
     update((prev) => {
-      // 1. Already exists somewhere → just activate it.
+      // 1. Already exists somewhere → activate it, but ensure non-logviewer
+      //    tabs don't stay in the same pane as the logviewer.
       for (const pane of prev) {
         const existing = pane.tabs.find((t) => t.type === type);
         if (existing) {
+          const hasLogviewer = pane.tabs.some((t) => t.type === 'logviewer');
+          if (hasLogviewer && type !== 'logviewer') {
+            // Tab is stuck in the logviewer pane — move it out.
+            const remainingTabs = pane.tabs.filter((t) => t.id !== existing.id);
+            const updatedFrom: Pane = {
+              ...pane,
+              tabs: remainingTabs,
+              activeTabId: remainingTabs.find((t) => t.type === 'logviewer')?.id ?? remainingTabs[0]?.id ?? '',
+            };
+
+            // If there's another pane, move to the last non-logviewer pane.
+            const otherPanes = prev.filter((p) => p.id !== pane.id);
+            if (otherPanes.length > 0) {
+              const target = otherPanes[otherPanes.length - 1];
+              return prev.map((p) => {
+                if (p.id === pane.id) return updatedFrom;
+                if (p.id === target.id) return { ...p, tabs: [...p.tabs, existing], activeTabId: existing.id };
+                return p;
+              });
+            }
+
+            // Only one pane — split into two.
+            const half = pane.flexBasis / 2;
+            const newPane: Pane = {
+              id: crypto.randomUUID(),
+              tabs: [existing],
+              activeTabId: existing.id,
+              flexBasis: half,
+            };
+            return [{ ...updatedFrom, flexBasis: half }, newPane];
+          }
           return prev.map((p) =>
             p.id === pane.id ? { ...p, activeTabId: existing.id } : p,
           );

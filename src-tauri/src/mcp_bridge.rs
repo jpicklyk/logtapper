@@ -227,7 +227,7 @@ async fn h_query(
                 Some(LineSnap {
                     line_num: i,
                     level: format!("{:?}", meta.level),
-                    tag: meta.tag.clone(),
+                    tag: session.resolve_tag(meta.tag_id).to_string(),
                     raw,
                 })
             })
@@ -288,7 +288,7 @@ async fn h_query(
             let level_str = format!("{:?}", meta.level);
             // Tag filter
             if let Some(ref tf) = params.tag {
-                if &meta.tag != tf { continue; }
+                if session.resolve_tag(meta.tag_id) != tf { continue; }
             }
             // Message filter (case-insensitive)
             if let Some(ref needle) = msg_needle {
@@ -298,7 +298,7 @@ async fn h_query(
             if let Some(ref lf) = params.level {
                 if !level_at_least(&level_str, lf) { continue; }
             }
-            matched.push(LineSnap { line_num: i, level: level_str, tag: meta.tag.clone(), raw: raw.to_string() });
+            matched.push(LineSnap { line_num: i, level: level_str, tag: session.resolve_tag(meta.tag_id).to_string(), raw: raw.to_string() });
         }
         // For "recent" we scanned newest→oldest; restore chronological order.
         if strategy == "recent" { matched.reverse(); }

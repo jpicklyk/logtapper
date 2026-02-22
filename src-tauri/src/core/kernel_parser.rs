@@ -1,7 +1,7 @@
 use std::sync::OnceLock;
 use regex::Regex;
 
-use crate::core::line::{LineContext, LineMeta, LogLevel};
+use crate::core::line::{LineContext, ParsedLineMeta, LogLevel};
 use crate::core::parser::LogParser;
 
 // ---------------------------------------------------------------------------
@@ -77,9 +77,9 @@ impl LogParser for KernelParser {
         })
     }
 
-    fn parse_meta(&self, raw: &str, byte_offset: usize) -> Option<LineMeta> {
+    fn parse_meta(&self, raw: &str, byte_offset: usize) -> Option<ParsedLineMeta> {
         let ctx = self.parse_line(raw, "", 0)?;
-        Some(LineMeta {
+        Some(ParsedLineMeta {
             level: ctx.level,
             tag: ctx.tag,
             timestamp: ctx.timestamp,

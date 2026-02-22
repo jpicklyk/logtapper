@@ -1,10 +1,10 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
-import type { ViewLine, SearchQuery, SearchSummary, LoadResult, AdbBatchPayload } from '../bridge/types';
+import type { ViewLine, SearchQuery, SearchSummary, SearchProgress, LoadResult, AdbBatchPayload } from '../bridge/types';
 import { loadLogFile, getLines, searchLogs, startAdbStream, stopAdbStream, getPackagePids, closeSession as closeSessionCmd } from '../bridge/commands';
 
-import { onAdbBatch, onAdbStreamStopped, onFileIndexProgress, onFileIndexComplete } from '../bridge/events';
+import { onAdbBatch, onAdbStreamStopped, onFileIndexProgress, onFileIndexComplete, onSearchProgress } from '../bridge/events';
 import { parseFilter, matchesFilter, extractPackageNames, type FilterNode, FilterParseError } from '../filter';
 
 const WINDOW_SIZE = 500; // lines to fetch per request
@@ -123,11 +123,15 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
   const adbBatchUnlistenRef = useRef<UnlistenFn | null>(null);
   const adbStoppedUnlistenRef = useRef<UnlistenFn | null>(null);
 
-  // Cleanup ADB subscriptions on unmount
+  // Search-progress event unlistener (for chunked streaming search results)
+  const searchProgressUnlistenRef = useRef<UnlistenFn | null>(null);
+
+  // Cleanup ADB and search subscriptions on unmount
   useEffect(() => {
     return () => {
       adbBatchUnlistenRef.current?.();
       adbStoppedUnlistenRef.current?.();
+      searchProgressUnlistenRef.current?.();
     };
   }, []);
 
@@ -561,6 +565,10 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
       searchRef.current = query;
       setCurrentMatchIndex(0);
 
+      // Cancel any in-flight search subscription
+      searchProgressUnlistenRef.current?.();
+      searchProgressUnlistenRef.current = null;
+
       if (!sess || !query) {
         setSearchSummary(null);
         lineCacheRef.current = new Map();
@@ -568,11 +576,47 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
         return;
       }
 
+      // Accumulator for incremental matches arriving via events
+      const accumulatedMatches: number[] = [];
+      let jumpedToFirst = false;
+
+      // Subscribe to search-progress BEFORE invoking the command
+      const unlisten = await onSearchProgress((payload: SearchProgress) => {
+        if (payload.sessionId !== sess.sessionId) return;
+
+        if (payload.newMatches.length > 0) {
+          accumulatedMatches.push(...payload.newMatches);
+
+          // Update searchSummary incrementally so the UI shows progress
+          setSearchSummary((prev) => ({
+            totalMatches: payload.matchedSoFar,
+            matchLineNums: [...accumulatedMatches],
+            byLevel: prev?.byLevel ?? {},
+            byTag: prev?.byTag ?? {},
+          }));
+
+          // Jump to the first match as soon as it's found
+          if (!jumpedToFirst) {
+            jumpedToFirst = true;
+            setScrollToLine(accumulatedMatches[0]);
+          }
+        }
+
+        if (payload.done) {
+          // Unsubscribe once search is complete
+          searchProgressUnlistenRef.current?.();
+          searchProgressUnlistenRef.current = null;
+        }
+      });
+      searchProgressUnlistenRef.current = unlisten;
+
       try {
+        // The command still returns the full SearchSummary at the end
         const summary = await searchLogs(sess.sessionId, query);
+        // Replace with the authoritative final result (includes byLevel/byTag)
         setSearchSummary(summary);
         setCurrentMatchIndex(0);
-        if (summary.matchLineNums.length > 0) {
+        if (summary.matchLineNums.length > 0 && !jumpedToFirst) {
           setScrollToLine(summary.matchLineNums[0]);
           setJumpSeq((s) => s + 1);
         }
@@ -580,6 +624,10 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
         setCacheVersion((v) => v + 1);
       } catch (e) {
         console.error('Search error:', e);
+      } finally {
+        // Ensure cleanup in case the done event was missed
+        searchProgressUnlistenRef.current?.();
+        searchProgressUnlistenRef.current = null;
       }
     },
     [],

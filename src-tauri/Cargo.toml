@@ -26,6 +26,7 @@ log = "0.4"
 
 # Phase 1: File I/O and parsing
 memmap2 = "0.9"
+memchr = "2"
 regex = "1.11"
 tauri-plugin-dialog = "2.6.0"
 

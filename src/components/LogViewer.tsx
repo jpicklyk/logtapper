@@ -4,8 +4,8 @@ import type { ViewLine, SearchQuery } from '../bridge/types';
 import LogLine from './LogLine';
 
 const LINE_HEIGHT = 22; // px — monospace, single line
-const OVERSCAN = 5;
-const FETCH_THRESHOLD = 50; // fetch when within this many lines of window edge
+const OVERSCAN = 10;
+const FETCH_THRESHOLD = 150; // fetch when within this many lines of window edge
 const AT_BOTTOM_THRESHOLD = 60; // px from bottom to consider "at bottom"
 
 // Chrome/Edge cap their DOM scrollHeight at 2^25 px. Beyond this the native
@@ -194,6 +194,7 @@ export default function LogViewer({
 
   // Fetch missing windows as the user scrolls
   const lastFetchRef = useRef({ offset: -1, count: 0 });
+  const rafRef = useRef<number | null>(null);
   // Reset fetch dedup whenever the cache Map is replaced (search wipe, mode switch, etc.).
   // Doing this in the render body (not an effect) ensures lastFetchRef is cleared in the
   // same cycle where lineCache changes, so the subsequent fetch effect sees a clean slate.
@@ -204,56 +205,64 @@ export default function LogViewer({
   }
 
   useEffect(() => {
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+
     if (items.length === 0) return;
     // Streaming with filter: all lines arrive via batch events — no fetching needed.
     if (lineNumbers && isStreaming) return;
 
-    const first = items[0].index;
-    const last = items[items.length - 1].index;
+    rafRef.current = requestAnimationFrame(() => {
+      const first = items[0].index;
+      const last = items[items.length - 1].index;
 
-    let fetchOffset: number;
-    let fetchCount: number;
+      let fetchOffset: number;
+      let fetchCount: number;
 
-    if (lineNumbers) {
-      // File mode with filter active: visible virtualizer indices map to actual
-      // line numbers via lineNumbers[]. Cache is keyed by actual line number.
-      let hasMiss = false;
-      for (let i = first; i <= last; i++) {
-        if (!lineCache.has(lineNumbers[i])) {
-          hasMiss = true;
-          break;
+      if (lineNumbers) {
+        // File mode with filter active: visible virtualizer indices map to actual
+        // line numbers via lineNumbers[]. Check those for cache misses.
+        let hasMiss = false;
+        for (let i = first; i <= last; i++) {
+          if (!lineCache.has(lineNumbers[i])) {
+            hasMiss = true;
+            break;
+          }
         }
-      }
-      if (!hasMiss) return;
+        if (!hasMiss) return;
 
-      // Fetch a window of actual file lines around the visible filtered range.
-      const firstActual = lineNumbers[first];
-      const lastActual = lineNumbers[Math.min(last, lineNumbers.length - 1)];
-      fetchOffset = Math.max(0, firstActual - FETCH_THRESHOLD);
-      fetchCount = lastActual - fetchOffset + FETCH_THRESHOLD * 2;
-    } else {
-      // Full file mode: virtualizer indices are relative to virtualBase.
-      // Translate to absolute file line numbers for cache lookup and fetch.
-      let hasMiss = false;
-      for (let i = first; i <= last; i++) {
-        if (!lineCache.has(virtualBase + i)) {
-          hasMiss = true;
-          break;
+        // Fetch a window of actual file lines around the visible filtered range.
+        const firstActual = lineNumbers[first];
+        const lastActual = lineNumbers[Math.min(last, lineNumbers.length - 1)];
+        fetchOffset = Math.max(0, firstActual - FETCH_THRESHOLD);
+        fetchCount = lastActual - fetchOffset + FETCH_THRESHOLD * 2;
+      } else {
+        // Full file mode: virtualizer indices are relative to virtualBase.
+        // Translate to absolute file line numbers for cache lookup and fetch.
+        let hasMiss = false;
+        for (let i = first; i <= last; i++) {
+          if (!lineCache.has(virtualBase + i)) {
+            hasMiss = true;
+            break;
+          }
         }
+        if (!hasMiss) return;
+
+        fetchOffset = Math.max(0, virtualBase + first - FETCH_THRESHOLD);
+        fetchCount = (virtualBase + last) - fetchOffset + FETCH_THRESHOLD * 2;
       }
-      if (!hasMiss) return;
 
-      fetchOffset = Math.max(0, virtualBase + first - FETCH_THRESHOLD);
-      fetchCount = (virtualBase + last) - fetchOffset + FETCH_THRESHOLD * 2;
-    }
+      if (
+        fetchOffset !== lastFetchRef.current.offset ||
+        fetchCount !== lastFetchRef.current.count
+      ) {
+        lastFetchRef.current = { offset: fetchOffset, count: fetchCount };
+        onFetchNeeded(fetchOffset, fetchCount);
+      }
+    });
 
-    if (
-      fetchOffset !== lastFetchRef.current.offset ||
-      fetchCount !== lastFetchRef.current.count
-    ) {
-      lastFetchRef.current = { offset: fetchOffset, count: fetchCount };
-      onFetchNeeded(fetchOffset, fetchCount);
-    }
+    return () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    };
   }, [items, lineCache, onFetchNeeded, lineNumbers, isStreaming, virtualBase]);
 
   // Scroll to a specific line when requested (jumpToLine / search navigation).
