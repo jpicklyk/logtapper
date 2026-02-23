@@ -178,15 +178,17 @@ fn quick_extract_message(raw: &str) -> Option<&str> {
     None
 }
 
-/// Collect the union of all tag filters from active processors.
+/// Collect the union of all tag filters from Layer 2 processors only.
+/// Transformers are excluded (they run in Layer 1 on all lines).
+///
 /// Returns `(tag_union, has_unfiltered)` where:
-/// - `tag_union`: set of all tags that any processor filters on
-/// - `has_unfiltered`: true if any processor has NO tag filter (must process all lines)
+/// - `tag_union`: set of all tags that any Layer 2 processor filters on
+/// - `has_unfiltered`: true if any Layer 2 processor has NO tag filter
 fn collect_tag_filters(
     reporter_defs: &[(String, crate::processors::reporter::schema::ReporterDef)],
     tracker_defs: &[(String, crate::processors::state_tracker::schema::StateTrackerDef)],
     correlator_defs: &[(String, crate::processors::correlator::schema::CorrelatorDef)],
-    transformer_defs: &[(String, crate::processors::transformer::schema::TransformerDef)],
+    _transformer_defs: &[(String, crate::processors::transformer::schema::TransformerDef)],
 ) -> (HashSet<String>, bool) {
     let mut tag_union = HashSet::new();
     let mut has_unfiltered = false;
@@ -240,24 +242,8 @@ fn collect_tag_filters(
         }
     }
 
-    // Transformers: check optional filter for TagMatch
-    for (_, def) in transformer_defs {
-        if let Some(filter_stage) = &def.filter {
-            let mut has_tag_filter = false;
-            for rule in &filter_stage.rules {
-                if let crate::processors::reporter::schema::FilterRule::TagMatch { tags, .. } = rule {
-                    has_tag_filter = true;
-                    tag_union.extend(tags.iter().cloned());
-                }
-            }
-            if !has_tag_filter {
-                has_unfiltered = true;
-            }
-        } else {
-            // No filter at all — transformer applies to all lines
-            has_unfiltered = true;
-        }
-    }
+    // Transformers intentionally excluded — they run in Layer 1 on ALL lines.
+    // Their lack of tag filters should not disable pre-filtering for Layer 2.
 
     (tag_union, has_unfiltered)
 }
