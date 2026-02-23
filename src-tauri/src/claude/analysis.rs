@@ -107,7 +107,7 @@ pub fn build_analysis_context(
         let mut lines_text = format!("## Log Lines from {}\n", source.name());
         for &n in &sample_nums {
             if let Some(raw) = source.raw_line(n) {
-                lines_text.push_str(&format!("[{}] {}\n", n + 1, raw));
+                lines_text.push_str(&format!("[{}] {}\n", n + 1, &*raw));
             }
         }
 

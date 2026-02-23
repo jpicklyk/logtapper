@@ -138,7 +138,7 @@ pub async fn get_matched_lines(
     let src = session.primary_source().ok_or("No sources in session")?;
     let result = line_nums.iter().map(|&n| MatchedLineInfo {
         line_num: n,
-        raw: src.raw_line(n).unwrap_or("").trim_end_matches(['\r', '\n']).to_string(),
+        raw: src.raw_line(n).as_deref().unwrap_or("").trim_end_matches(['\r', '\n']).to_string(),
     }).collect();
     Ok(result)
 }

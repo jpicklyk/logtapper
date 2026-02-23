@@ -15,6 +15,12 @@ const AT_BOTTOM_THRESHOLD = 60; // px from bottom to consider "at bottom"
 const MAX_BROWSER_SCROLL_PX = 33_554_428; // 2^25 − a few px (Chrome/Edge)
 const MAX_VIRTUAL_LINES = Math.floor(MAX_BROWSER_SCROLL_PX / LINE_HEIGHT); // ≈1,525,201
 
+/** Selection state for multi-line selection. */
+export interface Selection {
+  anchor: number | null;
+  selected: Set<number>;
+}
+
 interface Props {
   sessionId: string;
   totalLines: number;
@@ -48,6 +54,10 @@ interface Props {
   /** Optional global cache handle — when provided, fetched lines are stored here
    *  and cache misses fall through to fetchLines. */
   viewCache?: ViewCacheHandle | null;
+  /** Multi-line selection state. */
+  selection?: Selection;
+  /** Called when a line is selected (click, shift-click, ctrl-click). */
+  onLineSelect?: (lineNum: number, e: React.MouseEvent) => void;
 }
 
 export default function LogViewer({
@@ -65,9 +75,12 @@ export default function LogViewer({
   transitionLineNums,
   transitionsByLine,
   viewCache,
+  selection,
+  onLineSelect,
 }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
-  const [, setAutoScroll] = useState(true);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [newLinesCount, setNewLinesCount] = useState(0);
 
   // ── File-mode visible lines ──────────────────────────────────────────────────
   // In file mode, LogViewer fetches lines on demand. We use a ref (mutated in
@@ -159,6 +172,7 @@ export default function LogViewer({
         if (now - lastManualScrollUpMs.current < MANUAL_SCROLL_GUARD_MS) return;
         autoScrollRef.current = true;
         setAutoScroll(true);
+        setNewLinesCount(0);
       }
     };
 
@@ -173,6 +187,15 @@ export default function LogViewer({
   }, []);
 
   // ── Auto-scroll to bottom when new streaming lines arrive ────────────────────
+  const prevTotalRef = useRef(totalLines);
+  useEffect(() => {
+    if (isStreaming && !autoScrollRef.current) {
+      const delta = totalLines - prevTotalRef.current;
+      if (delta > 0) setNewLinesCount((n) => n + delta);
+    }
+    prevTotalRef.current = totalLines;
+  }, [totalLines, isStreaming]);
+
   useEffect(() => {
     if (!isStreaming || !autoScrollRef.current || effectiveCount === 0) return;
     lastProgrammaticScrollMs.current = Date.now();
@@ -311,8 +334,11 @@ export default function LogViewer({
   }, [virtualBase]);
 
   const handleLineClick = useCallback(
-    (lineNum: number) => onLineClick?.(lineNum),
-    [onLineClick],
+    (lineNum: number, e: React.MouseEvent) => {
+      if (onLineSelect) onLineSelect(lineNum, e);
+      onLineClick?.(lineNum);
+    },
+    [onLineClick, onLineSelect],
   );
 
   // Choose the data source based on mode.
@@ -329,6 +355,27 @@ export default function LogViewer({
   const getLine = (lineNum: number): ViewLine | undefined => {
     return primarySource.get(lineNum) ?? viewCache?.get(lineNum);
   };
+
+  // ── Ctrl+C copy handler for multi-line selection ──────────────────────────────
+  useEffect(() => {
+    if (!selection || selection.selected.size === 0) return;
+    const handleCopy = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+        e.preventDefault();
+        const sorted = Array.from(selection.selected).sort((a, b) => a - b);
+        const text = sorted
+          .map((n) => {
+            const line = primarySource.get(n) ?? viewCache?.get(n);
+            return line?.raw;
+          })
+          .filter(Boolean)
+          .join('\n');
+        navigator.clipboard.writeText(text);
+      }
+    };
+    window.addEventListener('keydown', handleCopy);
+    return () => window.removeEventListener('keydown', handleCopy);
+  }, [selection, primarySource, viewCache]);
 
   if (count === 0) {
     if (lineNumbers) {
@@ -360,6 +407,20 @@ export default function LogViewer({
           title="Jump to beginning of file"
         >
           ↑ Line 1
+        </button>
+      )}
+      {isStreaming && !autoScroll && newLinesCount > 0 && (
+        <button
+          className="new-lines-badge"
+          onClick={() => {
+            autoScrollRef.current = true;
+            setAutoScroll(true);
+            setNewLinesCount(0);
+            lastProgrammaticScrollMs.current = Date.now();
+            virtualizer.scrollToIndex(effectiveCount - 1, { align: 'end' });
+          }}
+        >
+          {newLinesCount > 999 ? '999+' : newLinesCount} new line{newLinesCount !== 1 ? 's' : ''} below
         </button>
       )}
       {hasMoreBelow && (
@@ -414,6 +475,7 @@ export default function LogViewer({
                   jumpSeq={isTarget ? jumpSeq : undefined}
                   hasTransition={transitionLineNums?.has(actualLineNum)}
                   transitionTrackers={transitionsByLine?.[actualLineNum]}
+                  isSelected={selection?.selected.has(actualLineNum)}
                 />
               ) : (
                 <div className="log-line log-line-skeleton" style={{ height: LINE_HEIGHT }}>

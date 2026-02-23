@@ -1,6 +1,9 @@
 use memmap2::Mmap;
 use std::any::Any;
-use std::sync::Arc;
+use std::borrow::Cow;
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use crate::core::line::LineMeta;
 use crate::core::session::{SectionInfo, SourceType};
@@ -17,7 +20,7 @@ pub trait LogSource: Send + Sync {
     fn name(&self) -> &str;
     fn source_type(&self) -> &SourceType;
     fn total_lines(&self) -> usize;
-    fn raw_line(&self, line_num: usize) -> Option<&str>;
+    fn raw_line(&self, line_num: usize) -> Option<Cow<'_, str>>;
     fn meta_at(&self, line_num: usize) -> Option<&LineMeta>;
     fn line_meta_slice(&self) -> &[LineMeta];
     fn is_live(&self) -> bool;
@@ -79,7 +82,7 @@ impl LogSource for FileLogSource {
         self.line_meta.len()
     }
 
-    fn raw_line(&self, line_num: usize) -> Option<&str> {
+    fn raw_line(&self, line_num: usize) -> Option<Cow<'_, str>> {
         if line_num + 1 >= self.line_index.len() {
             return None;
         }
@@ -96,7 +99,9 @@ impl LogSource for FileLogSource {
         if slice_end > start && self.mmap[slice_end - 1] == b'\r' {
             slice_end -= 1;
         }
-        std::str::from_utf8(&self.mmap[start..slice_end]).ok()
+        std::str::from_utf8(&self.mmap[start..slice_end])
+            .ok()
+            .map(Cow::Borrowed)
     }
 
     fn meta_at(&self, line_num: usize) -> Option<&LineMeta> {
@@ -172,6 +177,87 @@ impl FileLogSource {
 }
 
 // ---------------------------------------------------------------------------
+// SpillFile — temp file for evicted stream lines
+// ---------------------------------------------------------------------------
+
+/// Holds the spill file handle, byte offsets for each spilled line, and the
+/// file path (for cleanup and capture finalization).
+pub(crate) struct SpillFile {
+    /// Read+write handle.  Protected by Mutex because `raw_line(&self)` needs
+    /// to seek+read while the trait method takes `&self`.
+    file: Mutex<std::fs::File>,
+    /// Byte offset of each spilled line within the file.
+    line_offsets: Vec<u64>,
+    /// Total bytes written (== offset of next write).
+    total_bytes: u64,
+    /// Path on disk (for cleanup / finalization).
+    pub(crate) path: PathBuf,
+}
+
+impl SpillFile {
+    fn create(path: PathBuf) -> Result<Self, String> {
+        let file = std::fs::File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)
+            .map_err(|e| format!("Failed to create spill file {}: {e}", path.display()))?;
+        Ok(Self {
+            file: Mutex::new(file),
+            line_offsets: Vec::new(),
+            total_bytes: 0,
+            path,
+        })
+    }
+
+    /// Append a line to the spill file.  Records byte offset.
+    fn write_line(&mut self, line: &str) -> Result<(), String> {
+        let mut f = self.file.lock().map_err(|_| "spill file lock poisoned")?;
+        self.line_offsets.push(self.total_bytes);
+        let bytes = line.as_bytes();
+        f.write_all(bytes).map_err(|e| format!("spill write: {e}"))?;
+        f.write_all(b"\n").map_err(|e| format!("spill write: {e}"))?;
+        self.total_bytes += bytes.len() as u64 + 1;
+        Ok(())
+    }
+
+    /// Read a spilled line by its absolute line number (0-based within the spill).
+    pub(crate) fn read_line(&self, spill_idx: usize) -> Option<String> {
+        if spill_idx >= self.line_offsets.len() {
+            return None;
+        }
+        let offset = self.line_offsets[spill_idx];
+        let end = if spill_idx + 1 < self.line_offsets.len() {
+            self.line_offsets[spill_idx + 1]
+        } else {
+            self.total_bytes
+        };
+        // end includes the trailing '\n', so content length = end - offset - 1
+        if end <= offset {
+            return Some(String::new());
+        }
+        let content_len = (end - offset - 1) as usize; // strip trailing \n
+        let mut buf = vec![0u8; content_len];
+        let mut f = self.file.lock().ok()?;
+        f.seek(SeekFrom::Start(offset)).ok()?;
+        f.read_exact(&mut buf).ok()?;
+        Some(String::from_utf8_lossy(&buf).into_owned())
+    }
+
+    /// Total number of lines spilled.
+    pub(crate) fn total_spilled(&self) -> usize {
+        self.line_offsets.len()
+    }
+}
+
+impl Drop for SpillFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // StreamLogSource — append-only live stream source (ADB logcat)
 // ---------------------------------------------------------------------------
 
@@ -181,6 +267,7 @@ pub struct StreamLogSource {
     pub(crate) source_type: SourceType,
     /// Raw line strings growing as new ADB lines arrive.
     pub(crate) raw_lines: Vec<String>,
+    /// Metadata for ALL lines ever pushed (never drained — ~24 bytes each).
     pub(crate) line_meta: Vec<LineMeta>,
     /// Cumulative bytes received (including bytes of evicted lines).
     pub(crate) byte_count: u64,
@@ -188,10 +275,16 @@ pub struct StreamLogSource {
     pub(crate) evicted_count: usize,
     /// First non-zero timestamp ever seen; set once, never cleared after eviction.
     pub(crate) cached_first_ts: Option<i64>,
+    /// Temp file for evicted lines (created on first eviction).
+    pub(crate) spill: Option<SpillFile>,
+    /// Directory for temp spill files.
+    pub(crate) temp_dir: PathBuf,
+    /// Session ID for naming the spill file.
+    pub(crate) session_id: String,
 }
 
 impl StreamLogSource {
-    pub fn new(source_id: String, source_name: String) -> Self {
+    pub fn new(source_id: String, source_name: String, session_id: String, temp_dir: PathBuf) -> Self {
         Self {
             source_id,
             source_name,
@@ -201,6 +294,9 @@ impl StreamLogSource {
             byte_count: 0,
             evicted_count: 0,
             cached_first_ts: None,
+            spill: None,
+            temp_dir,
+            session_id,
         }
     }
 
@@ -231,13 +327,49 @@ impl StreamLogSource {
         }
     }
 
-    /// Evict the oldest `count` lines from the front of the buffer.
+    /// Evict the oldest `count` lines from the front of the in-memory buffer.
+    /// Evicted lines are written to the spill file so they remain accessible
+    /// via `raw_line()`.  Metadata (`line_meta`) is never drained — it stays
+    /// in memory for all lines (past and present).
     pub fn evict(&mut self, count: usize) {
-        if count > 0 {
-            self.raw_lines.drain(0..count);
-            self.line_meta.drain(0..count);
-            self.evicted_count += count;
+        if count == 0 {
+            return;
         }
+        // Create spill file on first eviction.
+        if self.spill.is_none() {
+            let spill_path = self.temp_dir.join(format!(
+                "logtapper-spill-{}.tmp",
+                self.session_id
+            ));
+            match SpillFile::create(spill_path) {
+                Ok(sf) => self.spill = Some(sf),
+                Err(e) => {
+                    eprintln!("Warning: failed to create spill file, evicted lines will be lost: {e}");
+                    // Fall through — evict without spilling (legacy behavior).
+                }
+            }
+        }
+        // Write evicted lines to spill file.
+        if let Some(ref mut spill) = self.spill {
+            for line in self.raw_lines.iter().take(count) {
+                if let Err(e) = spill.write_line(line) {
+                    eprintln!("Warning: spill write failed: {e}");
+                }
+            }
+        }
+        self.raw_lines.drain(0..count);
+        // NOTE: line_meta is NOT drained — metadata stays for all lines.
+        self.evicted_count += count;
+    }
+
+    /// Whether a spill file exists (evicted lines are recoverable).
+    pub fn has_spill(&self) -> bool {
+        self.spill.is_some()
+    }
+
+    /// Get the spill file path, if any.
+    pub fn spill_path(&self) -> Option<&PathBuf> {
+        self.spill.as_ref().map(|s| &s.path)
     }
 
     /// Number of raw lines currently retained in memory.
@@ -270,17 +402,27 @@ impl LogSource for StreamLogSource {
     }
 
     fn total_lines(&self) -> usize {
-        self.evicted_count + self.line_meta.len()
+        // line_meta is never drained, so it reflects ALL lines ever pushed.
+        self.line_meta.len()
     }
 
-    fn raw_line(&self, line_num: usize) -> Option<&str> {
-        let local_idx = line_num.checked_sub(self.evicted_count)?;
-        self.raw_lines.get(local_idx).map(|s| s.as_str())
+    fn raw_line(&self, line_num: usize) -> Option<Cow<'_, str>> {
+        if line_num < self.evicted_count {
+            // Evicted line — try the spill file.
+            self.spill
+                .as_ref()
+                .and_then(|sf| sf.read_line(line_num))
+                .map(Cow::Owned)
+        } else {
+            // In-memory line.
+            let local_idx = line_num - self.evicted_count;
+            self.raw_lines.get(local_idx).map(|s| Cow::Borrowed(s.as_str()))
+        }
     }
 
     fn meta_at(&self, line_num: usize) -> Option<&LineMeta> {
-        let local = line_num.checked_sub(self.evicted_count)?;
-        self.line_meta.get(local)
+        // line_meta covers ALL lines (never drained), so direct index works.
+        self.line_meta.get(line_num)
     }
 
     fn line_meta_slice(&self) -> &[LineMeta] {

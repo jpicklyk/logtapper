@@ -166,7 +166,7 @@ fn resolve_line_texts(
         if let Some(source) = session.primary_source() {
             for &ln in line_nums {
                 if let Some(raw) = source.raw_line(ln) {
-                    map.insert(ln, truncate_str(raw, 500));
+                    map.insert(ln, truncate_str(&raw, 500));
                 }
             }
         }
@@ -315,7 +315,7 @@ async fn h_query(
         let snaps = indices
             .into_iter()
             .filter_map(|i| {
-                let raw = source.raw_line(i)?.to_string();
+                let raw = source.raw_line(i)?.into_owned();
                 let meta = source.meta_at(i)?;
                 Some(LineSnap {
                     line_num: i,
@@ -391,7 +391,7 @@ async fn h_query(
             if let Some(ref lf) = params.level {
                 if !level_at_least(&level_str, lf) { continue; }
             }
-            matched.push(LineSnap { line_num: i, level: level_str, tag: session.resolve_tag(meta.tag_id).to_string(), raw: raw.to_string() });
+            matched.push(LineSnap { line_num: i, level: level_str, tag: session.resolve_tag(meta.tag_id).to_string(), raw: raw.into_owned() });
         }
         // For "recent" we scanned newest→oldest; restore chronological order.
         if strategy == "recent" { matched.reverse(); }
@@ -1136,7 +1136,7 @@ async fn h_search(
             if results.len() >= limit { break; }
             let Some(raw) = source.raw_line(i) else { continue };
 
-            if let Some(caps) = regex.captures(raw) {
+            if let Some(caps) = regex.captures(&raw) {
                 // Collect capture groups (skip group 0 = full match)
                 let captures: Vec<String> = (1..caps.len())
                     .filter_map(|j| caps.get(j).map(|m| m.as_str().to_string()))
@@ -1146,7 +1146,7 @@ async fn h_search(
                 let context_before: Vec<(usize, String)> = if context > 0 {
                     let start = i.saturating_sub(context);
                     (start..i)
-                        .filter_map(|j| source.raw_line(j).map(|r| (j, truncate_str(r, 500))))
+                        .filter_map(|j| source.raw_line(j).map(|r| (j, truncate_str(&r, 500))))
                         .collect()
                 } else {
                     vec![]
@@ -1155,7 +1155,7 @@ async fn h_search(
                 let context_after: Vec<(usize, String)> = if context > 0 {
                     let end = (i + 1 + context).min(total);
                     ((i + 1)..end)
-                        .filter_map(|j| source.raw_line(j).map(|r| (j, truncate_str(r, 500))))
+                        .filter_map(|j| source.raw_line(j).map(|r| (j, truncate_str(&r, 500))))
                         .collect()
                 } else {
                     vec![]
@@ -1163,7 +1163,7 @@ async fn h_search(
 
                 results.push(MatchResult {
                     line_num: i,
-                    raw: truncate_str(raw, 500),
+                    raw: truncate_str(&raw, 500),
                     captures,
                     context_before,
                     context_after,
@@ -1474,7 +1474,7 @@ async fn h_lines_around(
                 "lineNum": i,
                 "level": format!("{:?}", meta.level),
                 "tag": session.resolve_tag(meta.tag_id),
-                "raw": truncate_str(raw, 500),
+                "raw": truncate_str(&raw, 500),
                 "isCenter": i == center,
             }))
         })
@@ -1549,7 +1549,7 @@ async fn h_search_with_context(
         }
         let Some(raw) = source.raw_line(i) else { continue };
 
-        if regex.is_match(raw) {
+        if regex.is_match(&raw) {
             // Build context
             let ctx_start = i.saturating_sub(context_lines);
             let ctx_end = (i + context_lines + 1).min(total);
@@ -1562,7 +1562,7 @@ async fn h_search_with_context(
                         "lineNum": j,
                         "level": format!("{:?}", meta.level),
                         "tag": session.resolve_tag(meta.tag_id),
-                        "raw": truncate_str(line_raw, 500),
+                        "raw": truncate_str(&line_raw, 500),
                         "isMatch": j == i,
                     }))
                 })

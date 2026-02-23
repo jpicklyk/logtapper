@@ -5,7 +5,7 @@ import HighlightedText from './HighlightedText';
 interface Props {
   line: ViewLine;
   style: React.CSSProperties;
-  onClick?: (lineNum: number) => void;
+  onClick?: (lineNum: number, e: React.MouseEvent) => void;
   /** True when this line is the active jump target (section click, match jump). */
   isJumpTarget?: boolean;
   /** Incremented each time the same line is jumped to; triggers animation restart. */
@@ -14,6 +14,8 @@ interface Props {
   hasTransition?: boolean;
   /** Names of trackers that transitioned on this line (for tooltip). */
   transitionTrackers?: string[];
+  /** True when this line is part of the active multi-line selection. */
+  isSelected?: boolean;
 }
 
 const LEVEL_CLASS: Record<string, string> = {
@@ -25,7 +27,7 @@ const LEVEL_CLASS: Record<string, string> = {
   Fatal: 'level-f',
 };
 
-const LogLine = memo(function LogLine({ line, style, onClick, isJumpTarget, jumpSeq, hasTransition, transitionTrackers }: Props) {
+const LogLine = memo(function LogLine({ line, style, onClick, isJumpTarget, jumpSeq, hasTransition, transitionTrackers, isSelected }: Props) {
   const levelClass = LEVEL_CLASS[line.level] ?? '';
   const lineRef = useRef<HTMLDivElement>(null);
 
@@ -45,9 +47,9 @@ const LogLine = memo(function LogLine({ line, style, onClick, isJumpTarget, jump
   return (
     <div
       ref={lineRef}
-      className={`log-line ${levelClass} ${line.isContext ? 'context-line' : ''}${isJumpTarget ? ' log-line--jump-target' : ''}`}
+      className={`log-line ${levelClass} ${line.isContext ? 'context-line' : ''}${isJumpTarget ? ' log-line--jump-target' : ''}${isSelected ? ' log-line--selected' : ''}`}
       style={style}
-      onClick={() => onClick?.(line.lineNum)}
+      onClick={(e) => onClick?.(line.lineNum, e)}
     >
       <span className="log-gutter" title={tooltip}>
         {hasTransition && <span className="log-gutter-dot">◆</span>}

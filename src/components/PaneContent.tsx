@@ -1,7 +1,8 @@
-import { useCallback } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import { useAppContext } from '../context/AppContext';
 import type { Pane } from '../hooks/usePaneLayout';
 import LogViewer from './LogViewer';
+import type { Selection } from './LogViewer';
 import StreamFilterBar from './StreamFilterBar';
 import ProcessorDashboard from './ProcessorDashboard';
 import ScratchPad from './ScratchPad';
@@ -22,10 +23,36 @@ export default function PaneContent({ pane }: Props) {
     setSelectedLineNum,
   } = useAppContext();
 
+  const [selection, setSelection] = useState<Selection>({ anchor: null, selected: new Set() });
+
+  // Clear selection on session/mode changes
+  useEffect(() => {
+    setSelection({ anchor: null, selected: new Set() });
+  }, [viewer.session?.sessionId, processorViewId, viewer.streamFilter]);
+
   const handleLineClick = useCallback((lineNum: number) => {
     viewer.jumpToLine(lineNum);
     setSelectedLineNum(lineNum);
   }, [viewer, setSelectedLineNum]);
+
+  const handleLineSelect = useCallback((lineNum: number, e: React.MouseEvent) => {
+    setSelection((prev) => {
+      if (e.shiftKey && prev.anchor !== null) {
+        const start = Math.min(prev.anchor, lineNum);
+        const end = Math.max(prev.anchor, lineNum);
+        const newSet = new Set(prev.selected);
+        for (let i = start; i <= end; i++) newSet.add(i);
+        return { ...prev, selected: newSet };
+      } else if (e.ctrlKey || e.metaKey) {
+        const newSet = new Set(prev.selected);
+        if (newSet.has(lineNum)) newSet.delete(lineNum);
+        else newSet.add(lineNum);
+        return { anchor: lineNum, selected: newSet };
+      } else {
+        return { anchor: lineNum, selected: new Set([lineNum]) };
+      }
+    });
+  }, []);
 
   const handleCopyAll = useCallback(() => {
     const cache = viewer.filterLineCache;
@@ -113,6 +140,8 @@ export default function PaneContent({ pane }: Props) {
             filterLineCache={viewer.filterLineCache}
             transitionLineNums={stateTracker.allTransitionLineNums.size > 0 ? stateTracker.allTransitionLineNums : undefined}
             transitionsByLine={stateTracker.allTransitionLineNums.size > 0 ? stateTracker.transitionsByLine : undefined}
+            selection={selection}
+            onLineSelect={handleLineSelect}
           />
           {viewer.indexingProgress !== null && (
             <div className="indexing-progress">

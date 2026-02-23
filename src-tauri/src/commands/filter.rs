@@ -143,7 +143,8 @@ async fn scan_filter_background(
 
             let mut matches = Vec::new();
             for i in scanned..batch_end {
-                let Some(raw) = source.raw_line(i) else { continue };
+                let Some(raw_cow) = source.raw_line(i) else { continue };
+                let raw: &str = &raw_cow;
                 let Some(meta) = source.meta_at(i) else { continue };
 
                 let tag = session.resolve_tag(meta.tag_id);
@@ -251,7 +252,7 @@ pub async fn get_filtered_lines(
 
         for (idx, &ln) in page_line_nums.iter().enumerate() {
             let vi = offset + idx;
-            let raw = source.raw_line(ln).unwrap_or("").to_string();
+            let raw = source.raw_line(ln).as_deref().unwrap_or("").to_string();
             let meta = source.meta_at(ln);
 
             let view_line = if let Some(ctx) = parser.parse_line(&raw, source.id(), ln) {

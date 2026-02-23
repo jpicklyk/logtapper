@@ -215,8 +215,18 @@ impl AnalysisSession {
     }
 
     /// Add an empty streaming source (for ADB logcat sessions).
-    pub fn add_stream_source(&mut self, source_id: String, device_label: String) {
-        self.source = Some(Box::new(StreamLogSource::new(source_id, device_label)));
+    pub fn add_stream_source(
+        &mut self,
+        source_id: String,
+        device_label: String,
+        temp_dir: std::path::PathBuf,
+    ) {
+        self.source = Some(Box::new(StreamLogSource::new(
+            source_id,
+            device_label,
+            self.id.clone(),
+            temp_dir,
+        )));
     }
 
     /// Like `add_source_from_file` but only indexes the first `max_bytes` synchronously.
@@ -604,10 +614,29 @@ mod tests {
     use crate::core::line::LogLevel;
     use crate::core::log_source::{FileLogSource, LogSource, StreamLogSource};
 
-    /// Helper: build a StreamLogSource with `n` lines and `evicted` evicted.
+    /// Helper: build a StreamLogSource with `n` retained lines and `evicted`
+    /// evicted lines (simulated by setting evicted_count and pushing metadata
+    /// for all lines, but only raw text for the retained ones).
     fn make_stream_source(n: usize, evicted: usize) -> StreamLogSource {
-        let mut src = StreamLogSource::new("test".into(), "test".into());
+        let mut src = StreamLogSource::new(
+            "test".into(),
+            "test".into(),
+            "test-session".into(),
+            std::env::temp_dir(),
+        );
         src.evicted_count = evicted;
+        // Push metadata for evicted lines (no raw text — text was drained).
+        for i in 0..evicted {
+            src.line_meta.push(LineMeta {
+                level: LogLevel::Info,
+                tag_id: 0,
+                timestamp: i as i64,
+                byte_offset: 0,
+                byte_len: 0,
+                is_section_boundary: false,
+            });
+        }
+        // Push retained lines (raw text + metadata).
         for i in 0..n {
             let line = format!("line {}", evicted + i);
             src.byte_count += line.len() as u64 + 1;
@@ -674,9 +703,9 @@ mod tests {
         let (src, _mmap) = make_file_source(10);
         let trait_ref: &dyn LogSource = &src;
         assert_eq!(trait_ref.total_lines(), 10);
-        assert!(trait_ref.raw_line(0).is_some());
-        assert!(trait_ref.raw_line(9).is_some());
-        assert!(trait_ref.raw_line(10).is_none());
+        assert!(trait_ref.raw_line(0).as_deref().is_some());
+        assert!(trait_ref.raw_line(9).as_deref().is_some());
+        assert!(trait_ref.raw_line(10).as_deref().is_none());
         assert!(trait_ref.meta_at(0).is_some());
         assert!(trait_ref.meta_at(9).is_some());
         assert!(trait_ref.meta_at(10).is_none());
@@ -704,7 +733,7 @@ mod tests {
 
     #[test]
     fn stream_source_trait_id_name_type() {
-        let src = StreamLogSource::new("stream-1".into(), "ADB: device".into());
+        let src = StreamLogSource::new("stream-1".into(), "ADB: device".into(), "test".into(), std::env::temp_dir());
         let trait_ref: &dyn LogSource = &src;
         assert_eq!(trait_ref.id(), "stream-1");
         assert_eq!(trait_ref.name(), "ADB: device");
@@ -719,15 +748,15 @@ mod tests {
         let src = make_stream_source(5, 0);
         let trait_ref: &dyn LogSource = &src;
         assert_eq!(trait_ref.total_lines(), 5);
-        assert_eq!(trait_ref.raw_line(0), Some("line 0"));
-        assert_eq!(trait_ref.raw_line(4), Some("line 4"));
-        assert!(trait_ref.raw_line(5).is_none());
+        assert_eq!(trait_ref.raw_line(0).as_deref(), Some("line 0"));
+        assert_eq!(trait_ref.raw_line(4).as_deref(), Some("line 4"));
+        assert!(trait_ref.raw_line(5).as_deref().is_none());
         assert_eq!(trait_ref.line_meta_slice().len(), 5);
     }
 
     #[test]
     fn stream_source_first_timestamp_cached() {
-        let mut src = StreamLogSource::new("s".into(), "s".into());
+        let mut src = StreamLogSource::new("s".into(), "s".into(), "test".into(), std::env::temp_dir());
         // No lines → None
         assert!(src.first_timestamp().is_none());
         // Push a line with ts > 0
@@ -752,7 +781,7 @@ mod tests {
         let boxed: Box<dyn LogSource> = Box::new(src);
         assert_eq!(boxed.total_lines(), 3);
         assert!(!boxed.is_live());
-        assert!(boxed.raw_line(0).is_some());
+        assert!(boxed.raw_line(0).as_deref().is_some());
     }
 
     #[test]
@@ -761,7 +790,7 @@ mod tests {
         let boxed: Box<dyn LogSource> = Box::new(src);
         assert_eq!(boxed.total_lines(), 4);
         assert!(boxed.is_live());
-        assert_eq!(boxed.raw_line(3), Some("line 3"));
+        assert_eq!(boxed.raw_line(3).as_deref(), Some("line 3"));
     }
 
     // --- Downcasting via as_any / as_any_mut ---
@@ -808,7 +837,7 @@ mod tests {
     #[test]
     fn session_add_stream_source_and_accessors() {
         let mut session = AnalysisSession::new("s1".into());
-        session.add_stream_source("adb-123".into(), "ADB: Pixel".into());
+        session.add_stream_source("adb-123".into(), "ADB: Pixel".into(), std::env::temp_dir());
         assert!(session.primary_source().is_some());
         assert_eq!(session.primary_source().unwrap().id(), "adb-123");
         assert!(session.primary_source().unwrap().is_live());
@@ -865,11 +894,13 @@ mod tests {
     fn meta_at_after_eviction() {
         let src = make_stream_source(3, 7);
 
+        // Metadata is preserved for ALL lines (never drained), including evicted.
         for i in 0..7usize {
             assert!(
-                src.meta_at(i).is_none(),
-                "evicted line {i} should return None"
+                src.meta_at(i).is_some(),
+                "evicted line {i} metadata should still be available"
             );
+            assert_eq!(src.meta_at(i).unwrap().timestamp, i as i64);
         }
 
         assert_eq!(src.meta_at(7).unwrap().timestamp, 7);
@@ -882,8 +913,9 @@ mod tests {
     fn meta_at_large_eviction() {
         let src = make_stream_source(100, 10_000);
 
-        assert!(src.meta_at(0).is_none());
-        assert!(src.meta_at(9_999).is_none());
+        // Metadata is preserved for ALL lines including evicted.
+        assert!(src.meta_at(0).is_some());
+        assert!(src.meta_at(9_999).is_some());
         assert_eq!(src.meta_at(10_000).unwrap().timestamp, 10_000);
         assert_eq!(src.meta_at(10_099).unwrap().timestamp, 10_099);
         assert!(src.meta_at(10_100).is_none());
@@ -898,11 +930,12 @@ mod tests {
     #[test]
     fn raw_line_after_eviction() {
         let src = make_stream_source(3, 5);
-        assert!(src.raw_line(0).is_none());
-        assert!(src.raw_line(4).is_none());
-        assert_eq!(src.raw_line(5), Some("line 5"));
-        assert_eq!(src.raw_line(7), Some("line 7"));
-        assert!(src.raw_line(8).is_none());
+        // No spill file → evicted lines return None
+        assert!(src.raw_line(0).as_deref().is_none());
+        assert!(src.raw_line(4).as_deref().is_none());
+        assert_eq!(src.raw_line(5).as_deref(), Some("line 5"));
+        assert_eq!(src.raw_line(7).as_deref(), Some("line 7"));
+        assert!(src.raw_line(8).as_deref().is_none());
     }
 
     // =========================================================================
@@ -1426,7 +1459,7 @@ mod tests {
 
     #[test]
     fn session_metadata_level_distribution() {
-        let mut src = StreamLogSource::new("s".into(), "test".into());
+        let mut src = StreamLogSource::new("s".into(), "test".into(), "test".into(), std::env::temp_dir());
         // Push lines with different levels
         let levels = [LogLevel::Info, LogLevel::Error, LogLevel::Info, LogLevel::Warn, LogLevel::Info];
         for (i, &level) in levels.iter().enumerate() {
@@ -1458,7 +1491,7 @@ mod tests {
         let tag_a = session.intern_tag("ActivityManager");
         let tag_b = session.intern_tag("SystemServer");
 
-        let mut src = StreamLogSource::new("s".into(), "test".into());
+        let mut src = StreamLogSource::new("s".into(), "test".into(), "test".into(), std::env::temp_dir());
         // 3 lines with ActivityManager, 2 with SystemServer
         for _ in 0..3 {
             src.push_raw_line("am line".into());
@@ -1501,7 +1534,7 @@ mod tests {
 
     #[test]
     fn session_metadata_stream_byte_count() {
-        let mut src = StreamLogSource::new("s".into(), "test".into());
+        let mut src = StreamLogSource::new("s".into(), "test".into(), "test".into(), std::env::temp_dir());
         src.add_bytes(1000);
         src.add_bytes(500);
         assert_eq!(src.stream_byte_count(), 1500);
@@ -1524,5 +1557,149 @@ mod tests {
 
         let line3_content = extract_line(data, &idx, 2);
         assert!(line3_content.contains("line three"), "third line content should be correct");
+    }
+
+    // =========================================================================
+    // Spill-to-disk tests
+    // =========================================================================
+
+    /// Helper: create a StreamLogSource, push `n` lines, evict `evict_count`.
+    fn make_stream_with_eviction(n: usize, evict_count: usize) -> StreamLogSource {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let mut src = StreamLogSource::new(
+            "spill-test".into(),
+            "test".into(),
+            format!("spill-{}-{}", std::process::id(), unique),
+            std::env::temp_dir(),
+        );
+        for i in 0..n {
+            let line = format!("line {}", i);
+            src.push_raw_line(line);
+            src.push_meta(LineMeta {
+                level: LogLevel::Info,
+                tag_id: 0,
+                timestamp: i as i64,
+                byte_offset: 0,
+                byte_len: 0,
+                is_section_boundary: false,
+            });
+        }
+        if evict_count > 0 {
+            src.evict(evict_count);
+        }
+        src
+    }
+
+    #[test]
+    fn spill_write_and_read() {
+        let src = make_stream_with_eviction(10, 5);
+        // Evicted 5 lines → should have spill file
+        assert!(src.has_spill(), "spill file should exist after eviction");
+        assert_eq!(src.evicted_count(), 5);
+        assert_eq!(src.retained_count(), 5);
+        assert_eq!(src.total_lines(), 10);
+
+        // Spilled lines should be readable
+        for i in 0..5 {
+            let line = src.raw_line(i);
+            assert!(line.is_some(), "spilled line {} should be readable", i);
+        }
+        // Retained lines should be readable
+        for i in 5..10 {
+            let line = src.raw_line(i);
+            assert!(line.is_some(), "retained line {} should be readable", i);
+        }
+        // Out of range
+        assert!(src.raw_line(10).is_none());
+    }
+
+    #[test]
+    fn spill_line_content_matches() {
+        let src = make_stream_with_eviction(10, 5);
+
+        // Verify every line has correct content
+        for i in 0..10 {
+            let content = src.raw_line(i).expect(&format!("line {} should exist", i));
+            assert_eq!(
+                &*content,
+                &format!("line {}", i),
+                "line {} content mismatch",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn evict_with_spill_preserves_metadata() {
+        let src = make_stream_with_eviction(20, 10);
+
+        // ALL metadata should be accessible (never drained)
+        for i in 0..20 {
+            let meta = src.meta_at(i);
+            assert!(
+                meta.is_some(),
+                "meta_at({}) should be available even for evicted lines",
+                i
+            );
+            assert_eq!(meta.unwrap().timestamp, i as i64);
+        }
+        assert!(src.meta_at(20).is_none());
+    }
+
+    #[test]
+    fn save_capture_with_spill() {
+        let src = make_stream_with_eviction(15, 8);
+        let dir = std::env::temp_dir();
+        let output = dir.join(format!("logtapper-test-capture-{}.log", std::process::id()));
+
+        // Simulate what save_live_capture does
+        {
+            use std::io::Write;
+            let file = std::fs::File::create(&output).expect("create output");
+            let mut writer = std::io::BufWriter::new(file);
+            let mut count = 0u32;
+            // Write spilled lines
+            if let Some(ref spill) = src.spill {
+                for i in 0..spill.total_spilled() {
+                    if let Some(line) = spill.read_line(i) {
+                        writer.write_all(line.as_bytes()).unwrap();
+                        writer.write_all(b"\n").unwrap();
+                        count += 1;
+                    }
+                }
+            }
+            // Write retained lines
+            for raw in &src.raw_lines {
+                writer.write_all(raw.as_bytes()).unwrap();
+                writer.write_all(b"\n").unwrap();
+                count += 1;
+            }
+            writer.flush().unwrap();
+            assert_eq!(count, 15, "should write all 15 lines");
+        }
+
+        // Verify output file content
+        let content = std::fs::read_to_string(&output).expect("read output");
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines.len(), 15);
+        for (i, line) in lines.iter().enumerate() {
+            assert_eq!(*line, format!("line {}", i), "output line {} mismatch", i);
+        }
+
+        let _ = std::fs::remove_file(&output);
+    }
+
+    #[test]
+    fn spill_cleanup_on_drop() {
+        let spill_path;
+        {
+            let src = make_stream_with_eviction(10, 5);
+            spill_path = src.spill_path().cloned().expect("should have spill path");
+            assert!(spill_path.exists(), "spill file should exist while source is alive");
+        }
+        // After drop, the spill file should be deleted
+        assert!(!spill_path.exists(), "spill file should be cleaned up on drop");
     }
 }

@@ -383,7 +383,7 @@ pub async fn get_lines(
             let mut lines = Vec::with_capacity(end - start);
 
             for i in start..end {
-                let raw = source.raw_line(i).unwrap_or("").to_string();
+                let raw = source.raw_line(i).as_deref().unwrap_or("").to_string();
                 // meta_at() adjusts for stream eviction offset; avoids OOB panic.
                 let meta = source.meta_at(i);
 
@@ -483,7 +483,7 @@ pub async fn get_lines(
             let mut lines = Vec::with_capacity(page.len());
             for (pos, &ln) in page.iter().enumerate() {
                 let vi = page_start + pos;
-                let raw = source.raw_line(ln).unwrap_or("").to_string();
+                let raw = source.raw_line(ln).as_deref().unwrap_or("").to_string();
                 let Some(meta) = source.meta_at(ln) else { continue };
                 let highlights = request
                     .search
@@ -571,7 +571,7 @@ pub async fn get_lines(
 
             let mut lines = Vec::new();
             for i in start..end {
-                let raw = inner_source.raw_line(i).unwrap_or("").to_string();
+                let raw = inner_source.raw_line(i).as_deref().unwrap_or("").to_string();
                 let meta = inner_source.meta_at(i);
                 let highlights = sub_req
                     .search
@@ -763,7 +763,8 @@ pub async fn search_logs(
                 }
 
                 // Text match
-                let raw = source.raw_line(i).unwrap_or("");
+                let raw_cow = source.raw_line(i);
+                let raw = raw_cow.as_deref().unwrap_or("");
                 let matched = if let Some(ref re) = compiled_re {
                     re.is_match(raw)
                 } else if query.case_sensitive {
@@ -868,7 +869,8 @@ pub async fn get_dumpstate_metadata(
     let mut passed_first_section = false;
 
     for (i, line_m) in source.line_meta_slice().iter().enumerate() {
-        let raw = source.raw_line(i).unwrap_or("").trim_end_matches(['\r', '\n']);
+        let raw_cow = source.raw_line(i);
+        let raw = raw_cow.as_deref().unwrap_or("").trim_end_matches(['\r', '\n']);
 
         // Detect section boundaries from tag field (BugreportParser sets tag on ------ lines).
         if raw.starts_with("------") {
