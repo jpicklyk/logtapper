@@ -17,6 +17,13 @@ function formatNumber(n: number): string {
   return n.toLocaleString();
 }
 
+/** Estimate memory cost for N cached ViewLine objects (~500 bytes each). */
+function estimateCacheMB(lines: number): string {
+  const bytes = lines * 500;
+  if (bytes >= 1_000_000_000) return `~${(bytes / 1_000_000_000).toFixed(1)} GB`;
+  return `~${(bytes / 1_000_000).toFixed(0)} MB`;
+}
+
 const BUILTIN_IDS = new Set([
   'email', 'mac', 'ipv4', 'ipv6', 'imei', 'android_id', 'serial',
   'jwt', 'api_keys', 'bearer_token', 'gaid', 'session_id', 'url_credentials', 'phone',
@@ -149,65 +156,71 @@ export default function SettingsPanel({ settings, onUpdate, onReset, onClose, an
         <div className="settings-body">
           {/* ── General tab ── */}
           {activeTab === 'general' && (
-            <div className="settings-section">
-              <div className="settings-section-title">Streaming</div>
+            <>
+              <div className="settings-section">
+                <div className="settings-section-title">Viewer</div>
 
-              <div className="settings-row">
-                <div className="settings-label">
-                  <span className="settings-label-text">Frontend line cache</span>
-                  <span className="settings-label-hint">
-                    Max lines held in viewer memory. Oldest lines are dropped when exceeded.
-                    Default: {formatNumber(SETTING_DEFAULTS.streamFrontendCacheMax)}.
-                  </span>
-                </div>
-                <div className="settings-control">
-                  <input
-                    type="number"
-                    className="settings-input"
-                    value={settings.streamFrontendCacheMax}
-                    min={1_000}
-                    max={1_000_000}
-                    step={5_000}
-                    onChange={(e) =>
-                      handleNumberInput(
-                        'streamFrontendCacheMax',
-                        e.target.value,
-                        SETTING_DEFAULTS.streamFrontendCacheMax,
-                      )
-                    }
-                  />
-                  <span className="settings-unit">lines</span>
+                <div className="settings-row">
+                  <div className="settings-label">
+                    <span className="settings-label-text">Line cache</span>
+                    <span className="settings-label-hint">
+                      Total lines cached in the viewer for both file and streaming modes. Distributed
+                      by priority (focused view gets the largest share). Default: {formatNumber(SETTING_DEFAULTS.fileCacheBudget)}.
+                    </span>
+                  </div>
+                  <div className="settings-control">
+                    <input
+                      type="number"
+                      className="settings-input"
+                      value={settings.fileCacheBudget}
+                      min={10_000}
+                      max={1_000_000}
+                      step={10_000}
+                      onChange={(e) =>
+                        handleNumberInput(
+                          'fileCacheBudget',
+                          e.target.value,
+                          SETTING_DEFAULTS.fileCacheBudget,
+                        )
+                      }
+                    />
+                    <span className="settings-unit">lines ({estimateCacheMB(settings.fileCacheBudget)})</span>
+                  </div>
                 </div>
               </div>
 
-              <div className="settings-row">
-                <div className="settings-label">
-                  <span className="settings-label-text">Backend log buffer</span>
-                  <span className="settings-label-hint">
-                    Max raw log lines stored in the backend. Oldest lines are evicted when exceeded.
-                    Default: {formatNumber(SETTING_DEFAULTS.streamBackendLineMax)}.
-                  </span>
-                </div>
-                <div className="settings-control">
-                  <input
-                    type="number"
-                    className="settings-input"
-                    value={settings.streamBackendLineMax}
-                    min={10_000}
-                    max={5_000_000}
-                    step={50_000}
-                    onChange={(e) =>
-                      handleNumberInput(
-                        'streamBackendLineMax',
-                        e.target.value,
-                        SETTING_DEFAULTS.streamBackendLineMax,
-                      )
-                    }
-                  />
-                  <span className="settings-unit">lines</span>
+              <div className="settings-section">
+                <div className="settings-section-title">ADB Streaming</div>
+
+                <div className="settings-row">
+                  <div className="settings-label">
+                    <span className="settings-label-text">Backend log buffer</span>
+                    <span className="settings-label-hint">
+                      Max raw log lines stored in the backend. Evicted lines are spilled to disk.
+                      Default: {formatNumber(SETTING_DEFAULTS.streamBackendLineMax)}.
+                    </span>
+                  </div>
+                  <div className="settings-control">
+                    <input
+                      type="number"
+                      className="settings-input"
+                      value={settings.streamBackendLineMax}
+                      min={10_000}
+                      max={5_000_000}
+                      step={50_000}
+                      onChange={(e) =>
+                        handleNumberInput(
+                          'streamBackendLineMax',
+                          e.target.value,
+                          SETTING_DEFAULTS.streamBackendLineMax,
+                        )
+                      }
+                    />
+                    <span className="settings-unit">lines</span>
+                  </div>
                 </div>
               </div>
-            </div>
+            </>
           )}
 
           {/* ── PII Anonymization tab ── */}
