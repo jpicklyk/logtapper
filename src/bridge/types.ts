@@ -538,3 +538,22 @@ export interface AnalysisUpdateEvent {
   action: 'published' | 'updated' | 'deleted';
   artifactId: string;
 }
+
+// ---------------------------------------------------------------------------
+// Watch types (Phase 4)
+// ---------------------------------------------------------------------------
+
+export interface WatchInfo {
+  watchId: string;
+  sessionId: string;
+  totalMatches: number;
+  active: boolean;
+  criteria: FilterCriteria;
+}
+
+export interface WatchMatchEvent {
+  watchId: string;
+  sessionId: string;
+  newMatches: number;
+  totalMatches: number;
+}

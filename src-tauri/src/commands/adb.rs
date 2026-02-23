@@ -1112,6 +1112,20 @@ fn flush_batch(
         }
     }
 
+    // ── Step 4c: Evaluate active watches on new lines ──────────────────────────
+    let watch_results = crate::commands::watch::evaluate_watches(state, session_id, &parsed);
+    if !watch_results.is_empty() {
+        use crate::core::watch::WatchMatchEvent;
+        for (watch_id, new_matches, total_matches) in &watch_results {
+            let _ = app.emit("watch-match", WatchMatchEvent {
+                watch_id: watch_id.clone(),
+                session_id: session_id.to_string(),
+                new_matches: *new_matches,
+                total_matches: *total_matches,
+            });
+        }
+    }
+
     // ── Step 5: Emit events ────────────────────────────────────────────────────
     emit_batch(app, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
 
@@ -1140,4 +1154,42 @@ fn emit_batch(
             last_timestamp,
         },
     );
+}
+
+// ---------------------------------------------------------------------------
+// Save live capture to file
+// ---------------------------------------------------------------------------
+
+/// Write all retained raw lines from a live stream session to a file.
+/// Returns the number of lines written.
+#[tauri::command]
+pub fn save_live_capture(
+    state: State<'_, AppState>,
+    session_id: String,
+    output_path: String,
+) -> Result<u32, String> {
+    use std::io::Write;
+
+    let sessions = state.sessions.lock().map_err(|_| "lock poisoned")?;
+    let session = sessions
+        .get(&session_id)
+        .ok_or_else(|| format!("Session not found: {session_id}"))?;
+
+    let source = session
+        .stream_source()
+        .ok_or_else(|| "Session is not a streaming source".to_string())?;
+
+    let file = std::fs::File::create(&output_path)
+        .map_err(|e| format!("Failed to create file: {e}"))?;
+    let mut writer = std::io::BufWriter::new(file);
+
+    let mut count = 0u32;
+    for raw in &source.raw_lines {
+        writer.write_all(raw.as_bytes()).map_err(|e| format!("Write error: {e}"))?;
+        writer.write_all(b"\n").map_err(|e| format!("Write error: {e}"))?;
+        count += 1;
+    }
+    writer.flush().map_err(|e| format!("Flush error: {e}"))?;
+
+    Ok(count)
 }

@@ -17,7 +17,7 @@ pub enum CombineMode {
     Or,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FilterCriteria {
     /// Substring search (case-insensitive).

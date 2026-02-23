@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { AdbBatchPayload, AdbProcessorUpdate, AdbStreamStopped, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress, BookmarkUpdateEvent, AnalysisUpdateEvent } from './types';
+import type { AdbBatchPayload, AdbProcessorUpdate, AdbStreamStopped, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress, BookmarkUpdateEvent, AnalysisUpdateEvent, WatchMatchEvent } from './types';
 
 // ---------------------------------------------------------------------------
 // ADB streaming events
@@ -123,5 +123,15 @@ export function onAnalysisUpdate(
   cb: (payload: AnalysisUpdateEvent) => void,
 ): Promise<UnlistenFn> {
   return listen<AnalysisUpdateEvent>('analysis-update', (e) => cb(e.payload));
+}
+
+// ---------------------------------------------------------------------------
+// Watch match events (Phase 4)
+// ---------------------------------------------------------------------------
+
+export function onWatchMatch(
+  cb: (payload: WatchMatchEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<WatchMatchEvent>('watch-match', (e) => cb(e.payload));
 }
 

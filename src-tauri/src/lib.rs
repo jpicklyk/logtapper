@@ -102,6 +102,7 @@ pub fn run() {
             commands::adb::update_stream_trackers,
             commands::adb::update_stream_transformers,
             commands::adb::get_package_pids,
+            commands::adb::save_live_capture,
             commands::files::load_log_file,
             commands::files::get_lines,
             commands::files::search_logs,
@@ -153,6 +154,10 @@ pub fn run() {
             commands::analysis::list_analyses,
             commands::analysis::get_analysis,
             commands::analysis::delete_analysis,
+            // Phase 4 — Watch commands
+            commands::watch::create_watch,
+            commands::watch::cancel_watch,
+            commands::watch::list_watches,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

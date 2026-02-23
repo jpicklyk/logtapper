@@ -12,6 +12,7 @@ use crate::processors::transformer::types::ContinuousTransformerState;
 use crate::core::analysis::AnalysisArtifact;
 use crate::core::bookmark::Bookmark;
 use crate::core::filter::FilterSession;
+use crate::core::watch::WatchSession;
 use crate::processors::correlator::engine::CorrelatorResult;
 
 pub mod adb;
@@ -27,6 +28,7 @@ pub mod pipeline;
 pub mod processors;
 pub mod session;
 pub mod state_tracker;
+pub mod watch;
 
 /// Global application state managed by Tauri.
 pub struct AppState {
@@ -81,6 +83,8 @@ pub struct AppState {
     pub bookmarks: Mutex<HashMap<String, Vec<Bookmark>>>,
     /// Analysis artifacts: sessionId -> Vec<AnalysisArtifact>.
     pub analyses: Mutex<HashMap<String, Vec<AnalysisArtifact>>>,
+    /// Active watches: sessionId -> Vec<Arc<WatchSession>>.
+    pub active_watches: Mutex<HashMap<String, Vec<Arc<WatchSession>>>>,
 }
 
 impl Default for AppState {
@@ -119,6 +123,7 @@ impl AppState {
             active_filters: Mutex::new(HashMap::new()),
             bookmarks: Mutex::new(HashMap::new()),
             analyses: Mutex::new(HashMap::new()),
+            active_watches: Mutex::new(HashMap::new()),
         }
     }
 }

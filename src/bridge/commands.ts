@@ -29,6 +29,7 @@ import type {
   CreatedBy,
   AnalysisArtifact,
   AnalysisSection,
+  WatchInfo,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -378,4 +379,34 @@ export function getAnalysis(sessionId: string, artifactId: string): Promise<Anal
 
 export function deleteAnalysis(sessionId: string, artifactId: string): Promise<void> {
   return invoke('delete_analysis', { sessionId, artifactId });
+}
+
+// ---------------------------------------------------------------------------
+// Watch commands (Phase 4)
+// ---------------------------------------------------------------------------
+
+export function createWatch(
+  sessionId: string,
+  criteria: FilterCriteria,
+): Promise<WatchInfo> {
+  return invoke('create_watch', { sessionId, criteria });
+}
+
+export function cancelWatch(sessionId: string, watchId: string): Promise<void> {
+  return invoke('cancel_watch', { sessionId, watchId });
+}
+
+export function listWatches(sessionId: string): Promise<WatchInfo[]> {
+  return invoke('list_watches', { sessionId });
+}
+
+// ---------------------------------------------------------------------------
+// Capture save (Phase 4)
+// ---------------------------------------------------------------------------
+
+export function saveLiveCapture(
+  sessionId: string,
+  outputPath: string,
+): Promise<number> {
+  return invoke('save_live_capture', { sessionId, outputPath });
 }

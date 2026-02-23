@@ -1,0 +1,141 @@
+use std::sync::Arc;
+
+use tauri::State;
+use uuid::Uuid;
+
+use crate::commands::AppState;
+use crate::core::filter::FilterCriteria;
+use crate::core::watch::{WatchInfo, WatchSession};
+
+/// Create a new watch on a session. The watch evaluates new lines against
+/// the given criteria during each flush_batch and emits `watch-match` events
+/// when matches are found.
+#[tauri::command]
+pub fn create_watch(
+    state: State<'_, AppState>,
+    session_id: String,
+    criteria: FilterCriteria,
+) -> Result<WatchInfo, String> {
+    // Verify session exists
+    {
+        let sessions = state.sessions.lock().map_err(|_| "lock poisoned")?;
+        if !sessions.contains_key(&session_id) {
+            return Err(format!("Session not found: {session_id}"));
+        }
+    }
+
+    let watch_id = Uuid::new_v4().to_string();
+    let watch = Arc::new(WatchSession::new(
+        watch_id.clone(),
+        session_id.clone(),
+        criteria.clone(),
+    ));
+
+    let info = WatchInfo {
+        watch_id: watch.watch_id.clone(),
+        session_id: watch.session_id.clone(),
+        total_matches: 0,
+        active: true,
+        criteria,
+    };
+
+    {
+        let mut watches = state.active_watches.lock().map_err(|_| "lock poisoned")?;
+        watches
+            .entry(session_id)
+            .or_default()
+            .push(watch);
+    }
+
+    Ok(info)
+}
+
+/// Cancel a specific watch by ID.
+#[tauri::command]
+pub fn cancel_watch(
+    state: State<'_, AppState>,
+    session_id: String,
+    watch_id: String,
+) -> Result<(), String> {
+    let watches = state.active_watches.lock().map_err(|_| "lock poisoned")?;
+    if let Some(list) = watches.get(&session_id) {
+        if let Some(w) = list.iter().find(|w| w.watch_id == watch_id) {
+            w.cancel();
+            return Ok(());
+        }
+    }
+    Err(format!("Watch not found: {watch_id}"))
+}
+
+/// List all watches for a session (active and cancelled).
+#[tauri::command]
+pub fn list_watches(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<Vec<WatchInfo>, String> {
+    let watches = state.active_watches.lock().map_err(|_| "lock poisoned")?;
+    let list = watches.get(&session_id);
+    Ok(list
+        .map(|ws| {
+            ws.iter()
+                .map(|w| WatchInfo {
+                    watch_id: w.watch_id.clone(),
+                    session_id: w.session_id.clone(),
+                    total_matches: w.total_matches(),
+                    active: w.is_active(),
+                    criteria: w.criteria.clone(),
+                })
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// Evaluate all active watches for a session against a batch of new lines.
+/// Called from flush_batch. Returns a list of (watch_id, new_match_count, total_matches)
+/// for watches that found new matches.
+pub fn evaluate_watches(
+    state: &AppState,
+    session_id: &str,
+    lines: &[(String, crate::core::line::ParsedLineMeta, crate::core::line::ViewLine)],
+) -> Vec<(String, u32, u32)> {
+    use crate::core::filter::line_matches_criteria;
+
+    let watches = match state.active_watches.lock() {
+        Ok(g) => g,
+        Err(_) => return vec![],
+    };
+    let watch_list = match watches.get(session_id) {
+        Some(list) => list,
+        None => return vec![],
+    };
+
+    let mut results = Vec::new();
+
+    for watch in watch_list.iter() {
+        if !watch.is_active() {
+            continue;
+        }
+
+        let mut new_matches = 0u32;
+        for (_, pmeta, vl) in lines {
+            if line_matches_criteria(
+                &watch.criteria,
+                &vl.raw,
+                pmeta.level,
+                &vl.tag,
+                pmeta.timestamp,
+                vl.pid,
+                watch.compiled_regex.as_ref(),
+            ) {
+                new_matches += 1;
+            }
+        }
+
+        if new_matches > 0 {
+            let total = watch.add_matches(new_matches);
+            results.push((watch.watch_id.clone(), new_matches, total));
+        }
+    }
+
+    results
+}

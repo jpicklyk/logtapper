@@ -70,6 +70,9 @@ pub async fn start(handle: Handle) {
         // Phase 2 — Analysis artifacts
         .route("/mcp/sessions/{session_id}/analyses", get(h_list_analyses).post(h_publish_analysis))
         .route("/mcp/sessions/{session_id}/analyses/{artifact_id}", get(h_get_analysis).put(h_update_analysis).delete(h_delete_analysis))
+        // Phase 4 — Watches
+        .route("/mcp/sessions/{session_id}/watches", get(h_list_watches).post(h_create_watch))
+        .route("/mcp/sessions/{session_id}/watches/{watch_id}", delete(h_cancel_watch))
         .layer(middleware::from_fn_with_state(handle.clone(), record_activity))
         .with_state(handle.clone());
 
@@ -1848,6 +1851,101 @@ async fn h_delete_analysis(
     }
 
     Json(json!({"error": format!("Analysis not found: {artifact_id}")}))
+}
+
+// ---------------------------------------------------------------------------
+// Watch endpoints
+// ---------------------------------------------------------------------------
+
+async fn h_list_watches(
+    State(handle): State<Handle>,
+    Path(session_id): Path<String>,
+) -> Json<Value> {
+    let state = handle.state::<AppState>();
+    let watches = state.active_watches.lock().unwrap();
+    let list = watches.get(&session_id);
+    let infos: Vec<Value> = list
+        .map(|ws| {
+            ws.iter()
+                .map(|w| {
+                    json!({
+                        "watchId": w.watch_id,
+                        "sessionId": w.session_id,
+                        "totalMatches": w.total_matches(),
+                        "active": w.is_active(),
+                        "criteria": serde_json::to_value(&w.criteria).unwrap_or(json!(null)),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Json(json!(infos))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateWatchBody {
+    #[serde(flatten)]
+    criteria: crate::core::filter::FilterCriteria,
+}
+
+async fn h_create_watch(
+    State(handle): State<Handle>,
+    Path(session_id): Path<String>,
+    Json(body): Json<CreateWatchBody>,
+) -> Json<Value> {
+    use std::sync::Arc;
+    use crate::core::watch::{WatchSession, WatchInfo};
+
+    let state = handle.state::<AppState>();
+
+    // Verify session exists
+    {
+        let sessions = state.sessions.lock().unwrap();
+        if !sessions.contains_key(&session_id) {
+            return Json(json!({"error": format!("Session not found: {session_id}")}));
+        }
+    }
+
+    let watch_id = uuid::Uuid::new_v4().to_string();
+    let watch = Arc::new(WatchSession::new(
+        watch_id.clone(),
+        session_id.clone(),
+        body.criteria.clone(),
+    ));
+
+    let info = WatchInfo {
+        watch_id: watch.watch_id.clone(),
+        session_id: watch.session_id.clone(),
+        total_matches: 0,
+        active: true,
+        criteria: body.criteria,
+    };
+
+    {
+        let mut watches = state.active_watches.lock().unwrap();
+        watches
+            .entry(session_id)
+            .or_default()
+            .push(watch);
+    }
+
+    Json(json!(info))
+}
+
+async fn h_cancel_watch(
+    State(handle): State<Handle>,
+    Path((session_id, watch_id)): Path<(String, String)>,
+) -> Json<Value> {
+    let state = handle.state::<AppState>();
+    let watches = state.active_watches.lock().unwrap();
+    if let Some(list) = watches.get(&session_id) {
+        if let Some(w) = list.iter().find(|w| w.watch_id == watch_id) {
+            w.cancel();
+            return Json(json!({"ok": true}));
+        }
+    }
+    Json(json!({"error": format!("Watch not found: {watch_id}")}))
 }
 
 // ---------------------------------------------------------------------------
