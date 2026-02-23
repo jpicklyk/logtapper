@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -27,9 +28,23 @@ impl ProcessorDef {
         // Try as-is first; on failure, attempt auto-indent normalization
         // (handles Warp/terminal copy-paste that adds leading spaces to all
         //  lines after the first, corrupting top-level key alignment).
-        serde_yaml::from_str(yaml)
+        let mut def: Self = serde_yaml::from_str(yaml)
             .or_else(|_| serde_yaml::from_str(&normalize_yaml_indent(yaml)))
-            .map_err(|e| format!("YAML parse error: {e}"))
+            .map_err(|e| format!("YAML parse error: {e}"))?;
+        def.prepare_tag_sets();
+        Ok(def)
+    }
+
+    /// Populate the pre-built `HashSet` in every `TagMatch` filter rule
+    /// for O(1) tag lookup at pipeline runtime.
+    pub fn prepare_tag_sets(&mut self) {
+        for stage in &mut self.pipeline {
+            if let PipelineStage::Filter(fs) = stage {
+                for rule in &mut fs.rules {
+                    rule.prepare_tag_set();
+                }
+            }
+        }
     }
 
     pub fn to_yaml(&self) -> Result<String, String> {
@@ -199,12 +214,29 @@ pub struct FilterStage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FilterRule {
-    TagMatch { tags: Vec<String> },
+    TagMatch {
+        tags: Vec<String>,
+        /// Pre-built set for O(1) lookup. Populated by `FilterRule::prepare_tag_sets`.
+        #[serde(skip)]
+        tag_set: HashSet<String>,
+    },
     MessageContains { value: String },
     MessageContainsAny { values: Vec<String> },
     MessageRegex { pattern: String },
     LevelMin { level: String },
     TimeRange { from: String, to: String },
+}
+
+impl FilterRule {
+    /// Populate the `tag_set` HashSet from the `tags` Vec for O(1) lookup.
+    /// Call this once after deserialization, before processing lines.
+    pub fn prepare_tag_set(&mut self) {
+        if let FilterRule::TagMatch { tags, tag_set } = self {
+            if tag_set.is_empty() && !tags.is_empty() {
+                *tag_set = tags.iter().cloned().collect();
+            }
+        }
+    }
 }
 
 // ── Extract ──────────────────────────────────────────────────────────────────

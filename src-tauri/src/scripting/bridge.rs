@@ -1,6 +1,5 @@
 use rhai::{Dynamic, Map as RhaiMap, Scope};
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
 
 use crate::core::line::LineContext;
 use crate::processors::vars::{VarStore, dynamic_to_json};
@@ -11,7 +10,7 @@ use crate::processors::vars::{VarStore, dynamic_to_json};
 
 pub struct BridgeInput<'a> {
     pub line: &'a LineContext,
-    pub fields: &'a HashMap<String, JsonValue>,
+    pub fields: &'a [(String, JsonValue)],
     pub vars: &'a VarStore,
     pub history: &'a [LineContext],
 }
@@ -36,22 +35,22 @@ pub fn build_scope<'src>(input: &BridgeInput<'_>) -> Scope<'src> {
 
     // ── line ─────────────────────────────────────────────────────────────────
     let mut line_map = RhaiMap::new();
-    line_map.insert("raw".into(), Dynamic::from(input.line.raw.clone()));
+    line_map.insert("raw".into(), Dynamic::from(input.line.raw.to_string()));
     line_map.insert("timestamp".into(), Dynamic::from(input.line.timestamp));
     line_map.insert("level".into(), Dynamic::from(input.line.level.to_string()));
-    line_map.insert("tag".into(), Dynamic::from(input.line.tag.clone()));
+    line_map.insert("tag".into(), Dynamic::from(input.line.tag.to_string()));
     line_map.insert("pid".into(), Dynamic::from(input.line.pid as i64));
     line_map.insert("tid".into(), Dynamic::from(input.line.tid as i64));
-    line_map.insert("message".into(), Dynamic::from(input.line.message.clone()));
-    line_map.insert("source_id".into(), Dynamic::from(input.line.source_id.clone()));
-    scope.push_constant("line", Dynamic::from(line_map));
+    line_map.insert("message".into(), Dynamic::from(input.line.message.to_string()));
+    line_map.insert("source_id".into(), Dynamic::from(input.line.source_id.to_string()));
+    scope.push("line", Dynamic::from(line_map));
 
     // ── fields ────────────────────────────────────────────────────────────────
     let mut fields_map = RhaiMap::new();
-    for (k, v) in input.fields {
+    for (k, v) in input.fields.iter() {
         fields_map.insert(k.as_str().into(), json_to_dynamic(v));
     }
-    scope.push_constant("fields", Dynamic::from(fields_map));
+    scope.push("fields", Dynamic::from(fields_map));
 
     // ── vars (read/write) ─────────────────────────────────────────────────────
     scope.push("vars", input.vars.to_rhai_map());
@@ -65,6 +64,44 @@ pub fn build_scope<'src>(input: &BridgeInput<'_>) -> Scope<'src> {
     scope.push("_emits", Dynamic::from(rhai::Array::new()));
 
     scope
+}
+
+// ---------------------------------------------------------------------------
+// update_scope — update an existing scope in-place for a new line
+// ---------------------------------------------------------------------------
+
+/// Update a persistent `Scope` for the next script invocation.
+///
+/// Only `line`, `fields`, and `_emits` are overwritten.  `vars` is left
+/// untouched — it already contains the accumulated values from the previous
+/// execution, which is the desired behavior for cross-line accumulation.
+///
+/// **Critical:** `_emits` MUST be reset to an empty array every invocation,
+/// otherwise emissions from line N would be re-reported for line N+1.
+pub fn update_scope(scope: &mut Scope<'_>, input: &BridgeInput<'_>) {
+    // ── line ───────────────────────────────────────────────────────────────
+    let mut line_map = RhaiMap::new();
+    line_map.insert("raw".into(), Dynamic::from(input.line.raw.to_string()));
+    line_map.insert("timestamp".into(), Dynamic::from(input.line.timestamp));
+    line_map.insert("level".into(), Dynamic::from(input.line.level.to_string()));
+    line_map.insert("tag".into(), Dynamic::from(input.line.tag.to_string()));
+    line_map.insert("pid".into(), Dynamic::from(input.line.pid as i64));
+    line_map.insert("tid".into(), Dynamic::from(input.line.tid as i64));
+    line_map.insert("message".into(), Dynamic::from(input.line.message.to_string()));
+    line_map.insert("source_id".into(), Dynamic::from(input.line.source_id.to_string()));
+    scope.set_value("line", Dynamic::from(line_map));
+
+    // ── fields ─────────────────────────────────────────────────────────────
+    let mut fields_map = RhaiMap::new();
+    for (k, v) in input.fields.iter() {
+        fields_map.insert(k.as_str().into(), json_to_dynamic(v));
+    }
+    scope.set_value("fields", Dynamic::from(fields_map));
+
+    // ── _emits — MUST be cleared to prevent stale emission carry-over ──────
+    scope.set_value("_emits", Dynamic::from(rhai::Array::new()));
+
+    // `vars` is intentionally NOT updated — it persists from the previous execution.
 }
 
 // ---------------------------------------------------------------------------

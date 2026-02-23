@@ -1,6 +1,8 @@
+use aho_corasick::AhoCorasick;
 use rayon::prelude::*;
+use regex::RegexSet;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
@@ -96,11 +98,379 @@ impl SourceSnapshot {
 }
 
 // ---------------------------------------------------------------------------
+// Pre-filter: quick tag extraction without regex (~10ns vs ~200ns)
+// ---------------------------------------------------------------------------
+
+/// Extract the tag from a raw logcat threadtime line without regex.
+///
+/// Threadtime format: `MM-DD HH:MM:SS.mmm  PID  TID LEVEL TAG     : message`
+/// The level is a single char (V/D/I/W/E/F/S) preceded by whitespace.
+/// The tag follows the level, trimmed, up to the first `: ` or `:` delimiter.
+///
+/// Returns `None` if the line doesn't look like threadtime format.
+fn quick_extract_tag(raw: &str) -> Option<&str> {
+    let bytes = raw.as_bytes();
+    // Threadtime lines start with MM-DD (digit-digit-dash).
+    // Quick reject lines that clearly aren't threadtime.
+    if bytes.len() < 20 || !bytes[0].is_ascii_digit() {
+        return None;
+    }
+
+    // Find the log level character. After the timestamp + PID + TID block,
+    // there's a single level character. Scan for it starting after position 18
+    // (minimum: "MM-DD HH:MM:SS.mmm" = 18 chars).
+    // The level char is one of V/D/I/W/E/F/S, preceded by whitespace and
+    // followed by either a space or the tag directly.
+    let search_start = 18;
+    let mut i = search_start;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if matches!(b, b'V' | b'D' | b'I' | b'W' | b'E' | b'F' | b'S') {
+            // Verify: preceded by space, followed by space or end
+            if i > 0 && bytes[i - 1] == b' ' && (i + 1 >= bytes.len() || bytes[i + 1] == b' ') {
+                // Tag starts after the level + space
+                let tag_start = i + 2;
+                if tag_start >= bytes.len() {
+                    return None;
+                }
+                // Find the ": " delimiter that separates tag from message
+                // Tag may have trailing spaces (logcat pads tags to column width)
+                if let Some(colon_pos) = raw[tag_start..].find(": ") {
+                    let tag = raw[tag_start..tag_start + colon_pos].trim();
+                    if !tag.is_empty() {
+                        return Some(tag);
+                    }
+                }
+                // Also handle tag ending with ":" at end of visible content
+                if let Some(colon_pos) = raw[tag_start..].find(':') {
+                    let tag = raw[tag_start..tag_start + colon_pos].trim();
+                    if !tag.is_empty() {
+                        return Some(tag);
+                    }
+                }
+                return None;
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Extract the message portion from a raw logcat threadtime line.
+///
+/// Returns the substring after the first `: ` delimiter following the log level,
+/// or `None` if the line doesn't look like threadtime format.
+fn quick_extract_message(raw: &str) -> Option<&str> {
+    let bytes = raw.as_bytes();
+    if bytes.len() < 20 || !bytes[0].is_ascii_digit() {
+        return None;
+    }
+
+    // Find the first ": " after position 18 (past timestamp)
+    // This separates "tag     : message"
+    let search_start = 18;
+    if let Some(pos) = raw[search_start..].find(": ") {
+        let msg_start = search_start + pos + 2;
+        if msg_start < raw.len() {
+            return Some(&raw[msg_start..]);
+        }
+    }
+    None
+}
+
+/// Collect the union of all tag filters from active processors.
+/// Returns `(tag_union, has_unfiltered)` where:
+/// - `tag_union`: set of all tags that any processor filters on
+/// - `has_unfiltered`: true if any processor has NO tag filter (must process all lines)
+fn collect_tag_filters(
+    reporter_defs: &[(String, crate::processors::reporter::schema::ReporterDef)],
+    tracker_defs: &[(String, crate::processors::state_tracker::schema::StateTrackerDef)],
+    correlator_defs: &[(String, crate::processors::correlator::schema::CorrelatorDef)],
+    transformer_defs: &[(String, crate::processors::transformer::schema::TransformerDef)],
+) -> (HashSet<String>, bool) {
+    let mut tag_union = HashSet::new();
+    let mut has_unfiltered = false;
+
+    // Reporters: check pipeline filter stages for TagMatch rules
+    for (_, def) in reporter_defs {
+        let mut has_tag_filter = false;
+        for stage in &def.pipeline {
+            if let crate::processors::reporter::schema::PipelineStage::Filter(filter_stage) = stage {
+                for rule in &filter_stage.rules {
+                    if let crate::processors::reporter::schema::FilterRule::TagMatch { tags, .. } = rule {
+                        has_tag_filter = true;
+                        tag_union.extend(tags.iter().cloned());
+                    }
+                }
+            }
+        }
+        if !has_tag_filter {
+            has_unfiltered = true;
+        }
+    }
+
+    // State trackers: check each transition's filter.tag
+    for (_, def) in tracker_defs {
+        let mut has_tag_filter = true; // assume all transitions have tags
+        for transition in &def.transitions {
+            if transition.filter.tag.is_none() {
+                has_tag_filter = false;
+            } else if let Some(tag) = &transition.filter.tag {
+                tag_union.insert(tag.clone());
+            }
+        }
+        if !has_tag_filter || def.transitions.is_empty() {
+            has_unfiltered = true;
+        }
+    }
+
+    // Correlators: check each source's filter rules for TagMatch
+    for (_, def) in correlator_defs {
+        for source in &def.sources {
+            let mut has_tag_filter = false;
+            for rule in &source.filter {
+                if let crate::processors::reporter::schema::FilterRule::TagMatch { tags, .. } = rule {
+                    has_tag_filter = true;
+                    tag_union.extend(tags.iter().cloned());
+                }
+            }
+            if !has_tag_filter {
+                has_unfiltered = true;
+            }
+        }
+    }
+
+    // Transformers: check optional filter for TagMatch
+    for (_, def) in transformer_defs {
+        if let Some(filter_stage) = &def.filter {
+            let mut has_tag_filter = false;
+            for rule in &filter_stage.rules {
+                if let crate::processors::reporter::schema::FilterRule::TagMatch { tags, .. } = rule {
+                    has_tag_filter = true;
+                    tag_union.extend(tags.iter().cloned());
+                }
+            }
+            if !has_tag_filter {
+                has_unfiltered = true;
+            }
+        } else {
+            // No filter at all — transformer applies to all lines
+            has_unfiltered = true;
+        }
+    }
+
+    (tag_union, has_unfiltered)
+}
+
+/// Collect all `MessageContains` and `MessageContainsAny` substring patterns
+/// from active processors for Aho-Corasick pre-filtering.
+///
+/// Returns `(patterns, has_proc_without_substring_filter)` where:
+/// - `patterns`: deduplicated list of substrings to build into an AC automaton
+/// - `has_proc_without_substring_filter`: true if any processor that has a tag
+///   filter (or other filters) but NO substring/regex message filter — meaning
+///   it could match any message content and we can't skip based on substrings
+fn collect_substring_filters(
+    reporter_defs: &[(String, crate::processors::reporter::schema::ReporterDef)],
+    tracker_defs: &[(String, crate::processors::state_tracker::schema::StateTrackerDef)],
+    correlator_defs: &[(String, crate::processors::correlator::schema::CorrelatorDef)],
+) -> (Vec<String>, bool) {
+    let mut patterns: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut has_proc_without_substring_filter = false;
+
+    let mut add_pattern = |s: &str| {
+        if !seen.contains(s) {
+            seen.insert(s.to_string());
+            patterns.push(s.to_string());
+        }
+    };
+
+    // Reporters: check pipeline filter stages for MessageContains / MessageContainsAny / MessageRegex
+    for (_, def) in reporter_defs {
+        let mut has_message_filter = false;
+        for stage in &def.pipeline {
+            if let crate::processors::reporter::schema::PipelineStage::Filter(filter_stage) = stage {
+                for rule in &filter_stage.rules {
+                    match rule {
+                        crate::processors::reporter::schema::FilterRule::MessageContains { value } => {
+                            has_message_filter = true;
+                            add_pattern(value);
+                        }
+                        crate::processors::reporter::schema::FilterRule::MessageContainsAny { values } => {
+                            has_message_filter = true;
+                            for v in values {
+                                add_pattern(v);
+                            }
+                        }
+                        crate::processors::reporter::schema::FilterRule::MessageRegex { .. } => {
+                            // Has a message filter but it's regex — we can't add it to AC,
+                            // but the processor IS filtered on message content so it won't
+                            // match arbitrary lines. Mark as having a message filter.
+                            has_message_filter = true;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        if !has_message_filter {
+            has_proc_without_substring_filter = true;
+        }
+    }
+
+    // State trackers: check each transition's filter for message_contains
+    for (_, def) in tracker_defs {
+        let mut has_message_filter = true; // assume all transitions have message filters
+        for transition in &def.transitions {
+            let has_msg = transition.filter.message_contains.is_some()
+                || transition.filter.message_regex.is_some();
+            if !has_msg {
+                has_message_filter = false;
+            }
+            if let Some(mc) = &transition.filter.message_contains {
+                add_pattern(mc);
+            }
+        }
+        if !has_message_filter || def.transitions.is_empty() {
+            has_proc_without_substring_filter = true;
+        }
+    }
+
+    // Correlators: check each source's filter rules
+    for (_, def) in correlator_defs {
+        for source in &def.sources {
+            let mut has_message_filter = false;
+            for rule in &source.filter {
+                match rule {
+                    crate::processors::reporter::schema::FilterRule::MessageContains { value } => {
+                        has_message_filter = true;
+                        add_pattern(value);
+                    }
+                    crate::processors::reporter::schema::FilterRule::MessageContainsAny { values } => {
+                        has_message_filter = true;
+                        for v in values {
+                            add_pattern(v);
+                        }
+                    }
+                    crate::processors::reporter::schema::FilterRule::MessageRegex { .. } => {
+                        has_message_filter = true;
+                    }
+                    _ => {}
+                }
+            }
+            if !has_message_filter {
+                has_proc_without_substring_filter = true;
+            }
+        }
+    }
+
+    // Note: Transformers are excluded — they don't have message content filters
+    // that would allow skipping. A transformer without a filter applies to all
+    // lines, and that's already captured by `has_unfiltered` in collect_tag_filters.
+
+    (patterns, has_proc_without_substring_filter)
+}
+
+/// Collect all `MessageRegex` patterns from active processors for RegexSet
+/// pre-filtering. Returns `(patterns, has_proc_without_any_message_filter)` where:
+/// - `patterns`: deduplicated valid regex patterns from MessageRegex filters
+/// - `has_proc_without_any_message_filter`: true if any processor has NO message
+///   filter at all (neither substring nor regex) — meaning we can't skip lines
+///   based on message content alone
+fn collect_regex_filters(
+    reporter_defs: &[(String, crate::processors::reporter::schema::ReporterDef)],
+    tracker_defs: &[(String, crate::processors::state_tracker::schema::StateTrackerDef)],
+    correlator_defs: &[(String, crate::processors::correlator::schema::CorrelatorDef)],
+) -> (Vec<String>, bool) {
+    let mut patterns: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut has_proc_without_any_message_filter = false;
+
+    let mut add_pattern = |s: &str| {
+        if !seen.contains(s) {
+            // Only add if it compiles as a valid regex
+            if regex::Regex::new(s).is_ok() {
+                seen.insert(s.to_string());
+                patterns.push(s.to_string());
+            }
+        }
+    };
+
+    // Reporters: extract MessageRegex patterns
+    for (_, def) in reporter_defs {
+        let mut has_any_message_filter = false;
+        for stage in &def.pipeline {
+            if let crate::processors::reporter::schema::PipelineStage::Filter(filter_stage) = stage {
+                for rule in &filter_stage.rules {
+                    match rule {
+                        crate::processors::reporter::schema::FilterRule::MessageRegex { pattern } => {
+                            has_any_message_filter = true;
+                            add_pattern(pattern);
+                        }
+                        crate::processors::reporter::schema::FilterRule::MessageContains { .. }
+                        | crate::processors::reporter::schema::FilterRule::MessageContainsAny { .. } => {
+                            has_any_message_filter = true;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        if !has_any_message_filter {
+            has_proc_without_any_message_filter = true;
+        }
+    }
+
+    // State trackers: extract message_regex patterns
+    for (_, def) in tracker_defs {
+        let mut has_any_message_filter = true;
+        for transition in &def.transitions {
+            let has_msg = transition.filter.message_contains.is_some()
+                || transition.filter.message_regex.is_some();
+            if !has_msg {
+                has_any_message_filter = false;
+            }
+            if let Some(pattern) = &transition.filter.message_regex {
+                add_pattern(pattern);
+            }
+        }
+        if !has_any_message_filter || def.transitions.is_empty() {
+            has_proc_without_any_message_filter = true;
+        }
+    }
+
+    // Correlators: extract MessageRegex patterns from source filters
+    for (_, def) in correlator_defs {
+        for source in &def.sources {
+            let mut has_any_message_filter = false;
+            for rule in &source.filter {
+                match rule {
+                    crate::processors::reporter::schema::FilterRule::MessageRegex { pattern } => {
+                        has_any_message_filter = true;
+                        add_pattern(pattern);
+                    }
+                    crate::processors::reporter::schema::FilterRule::MessageContains { .. }
+                    | crate::processors::reporter::schema::FilterRule::MessageContainsAny { .. } => {
+                        has_any_message_filter = true;
+                    }
+                    _ => {}
+                }
+            }
+            if !has_any_message_filter {
+                has_proc_without_any_message_filter = true;
+            }
+        }
+    }
+
+    (patterns, has_proc_without_any_message_filter)
+}
+
+// ---------------------------------------------------------------------------
 // run_pipeline
 // ---------------------------------------------------------------------------
 
 const CHUNK_SIZE: usize = 50_000;
-const PROGRESS_INTERVAL: usize = 5_000;
 
 #[tauri::command]
 pub async fn run_pipeline(
@@ -241,6 +611,45 @@ pub async fn run_pipeline(
     // Cancellation flag
     let cancel = Arc::clone(&state.pipeline_cancel);
 
+    // ── Pre-filter: collect tag union from all active processors ─────────────
+    let (tag_union, has_unfiltered) = collect_tag_filters(
+        &reporter_defs, &tracker_defs, &correlator_defs, &transformer_defs,
+    );
+
+    // ── Pre-filter: collect substring patterns for Aho-Corasick ─────────────
+    let (ac_patterns, _has_proc_without_substring_filter) = collect_substring_filters(
+        &reporter_defs, &tracker_defs, &correlator_defs,
+    );
+
+    // ── Pre-filter: collect regex patterns for RegexSet ───────────────────────
+    let (regex_patterns, has_proc_without_any_message_filter) = collect_regex_filters(
+        &reporter_defs, &tracker_defs, &correlator_defs,
+    );
+
+    // Build AC automaton from substring patterns (if any exist)
+    let ac_automaton: Option<AhoCorasick> = if !ac_patterns.is_empty() {
+        AhoCorasick::new(&ac_patterns).ok()
+    } else {
+        None
+    };
+
+    // Build RegexSet from regex patterns (if any exist and aren't covered by AC)
+    let regex_set: Option<RegexSet> = if !regex_patterns.is_empty() {
+        RegexSet::new(&regex_patterns).ok()
+    } else {
+        None
+    };
+
+    // Content pre-filter is usable when:
+    // 1. We're not bypassed by has_unfiltered (some processor has no tag filter)
+    // 2. Every processor has SOME message filter (substring or regex)
+    // 3. We have at least one content filter mechanism built (AC or RegexSet)
+    let use_content_prefilter = !has_unfiltered
+        && !has_proc_without_any_message_filter
+        && (ac_automaton.is_some() || regex_set.is_some());
+
+    let use_tag_prefilter = !has_unfiltered && !tag_union.is_empty();
+
     // ── Chunked processing loop ──────────────────────────────────────────────
     let mut lines_processed = 0usize;
 
@@ -252,8 +661,60 @@ pub async fn run_pipeline(
 
         let chunk_end = (chunk_start + CHUNK_SIZE).min(total_lines);
 
-        // ── Parse chunk in parallel ──────────────────────────────────────────
-        let mut parsed_chunk: Vec<Option<crate::core::line::LineContext>> = (chunk_start..chunk_end)
+        // ── Pre-filter: build list of lines worth parsing ────────────────────
+        // Three-level pre-filter:
+        // 1. Tag filter: skip lines whose tag doesn't match any processor (~10ns)
+        // 2. Aho-Corasick: skip lines that don't contain any required substring (~20ns)
+        // 3. RegexSet: skip lines that don't match any required regex (~50-200ns)
+        // Levels 2+3 are OR-ed: a line passes if AC matches OR RegexSet matches.
+        // All are conservative: if we can't determine, we assume the line matches.
+        let line_indices: Vec<usize> = if use_tag_prefilter || use_content_prefilter {
+            (chunk_start..chunk_end)
+                .filter(|&n| {
+                    let raw = source_snapshot.raw_line(n).unwrap_or("");
+
+                    // Level 1: tag check
+                    if use_tag_prefilter {
+                        if let Some(tag) = quick_extract_tag(raw) {
+                            if !tag_union.contains(tag) {
+                                return false;
+                            }
+                        }
+                    }
+
+                    // Levels 2+3: content check (AC substring OR RegexSet)
+                    // A line passes if ANY content filter matches.
+                    if use_content_prefilter {
+                        // Short-circuit: try AC first (cheaper, ~20ns)
+                        if let Some(ref ac) = ac_automaton {
+                            if ac.find(raw.as_bytes()).is_some() {
+                                return true; // AC matched — no need to check RegexSet
+                            }
+                        }
+
+                        // Try RegexSet on the message portion only (more expensive)
+                        if let Some(ref rs) = regex_set {
+                            let msg = quick_extract_message(raw).unwrap_or(raw);
+                            if rs.is_match(msg) {
+                                return true; // RegexSet matched
+                            }
+                        }
+
+                        // Neither AC nor RegexSet matched — skip this line
+                        return false;
+                    }
+
+                    true
+                })
+                .collect()
+        } else {
+            (chunk_start..chunk_end).collect()
+        };
+
+        let chunk_line_count = chunk_end - chunk_start;
+
+        // ── Parse filtered lines in parallel ─────────────────────────────────
+        let mut parsed_chunk: Vec<Option<crate::core::line::LineContext>> = line_indices
             .into_par_iter()
             .map(|n| {
                 let raw = source_snapshot.raw_line(n).unwrap_or("");
@@ -262,11 +723,11 @@ pub async fn run_pipeline(
             .collect();
 
         // ── Save pre-transform messages for state tracker processing ─────────
-        let pre_transform_msgs: HashMap<usize, String> =
+        let pre_transform_msgs: HashMap<usize, Arc<str>> =
             if !transformer_defs.is_empty() && !tracker_defs.is_empty() {
                 parsed_chunk
                     .iter()
-                    .filter_map(|opt| opt.as_ref().map(|l| (l.source_line_num, l.message.clone())))
+                    .filter_map(|opt| opt.as_ref().map(|l| (l.source_line_num, Arc::clone(&l.message))))
                     .collect()
             } else {
                 HashMap::new()
@@ -291,71 +752,83 @@ pub async fn run_pipeline(
         }
 
         // Collect non-dropped lines for downstream layers
-        let mut enriched_chunk: Vec<crate::core::line::LineContext> =
+        let enriched_chunk: Vec<crate::core::line::LineContext> =
             parsed_chunk.into_iter().flatten().collect();
 
-        // ── Layer 2a: StateTrackers ──────────────────────────────────────────
-        if !tracker_defs.is_empty() {
-            // Swap in pre-transform messages so capture regexes work on raw values.
-            let mut saved_post_transform: Vec<String> = Vec::new();
-            if !pre_transform_msgs.is_empty() {
-                saved_post_transform.reserve(enriched_chunk.len());
-                for line in enriched_chunk.iter_mut() {
-                    let orig = pre_transform_msgs
-                        .get(&line.source_line_num)
-                        .cloned()
-                        .unwrap_or_else(|| line.message.clone());
-                    saved_post_transform.push(std::mem::replace(&mut line.message, orig));
-                }
-            }
-
-            for (_, run) in tracker_runs.iter_mut() {
-                for line in &enriched_chunk {
-                    run.process_line(line);
-                }
-            }
-
-            // Restore post-transform messages for reporters.
-            if !saved_post_transform.is_empty() {
-                for (line, post_msg) in enriched_chunk.iter_mut().zip(saved_post_transform) {
-                    line.message = post_msg;
-                }
-            }
-        }
-
-        // ── Layer 2b: Reporters ──────────────────────────────────────────────
-        for (idx, ctx) in enriched_chunk.iter().enumerate() {
-            reporter_runs.par_iter_mut().for_each(|(run, ranges)| {
-                if let Some(ranges) = ranges {
-                    if !ranges.iter().any(|(s, e)| ctx.source_line_num >= *s && ctx.source_line_num <= *e) {
-                        return;
+        // ── Prepare pre-transform messages for state trackers ──────────────
+        // State trackers need raw (pre-transform) messages for capture regexes,
+        // while reporters need post-transform messages. Build both views upfront.
+        let tracker_chunk: Vec<crate::core::line::LineContext> =
+            if !tracker_defs.is_empty() && !pre_transform_msgs.is_empty() {
+                enriched_chunk.iter().map(|line| {
+                    let mut clone = line.clone();
+                    if let Some(orig) = pre_transform_msgs.get(&line.source_line_num) {
+                        clone.message = Arc::clone(orig);
                     }
-                }
-                run.process_line(ctx);
-            });
+                    clone
+                }).collect()
+            } else {
+                Vec::new() // empty — trackers will use enriched_chunk directly
+            };
+        let tracker_lines: &[crate::core::line::LineContext] =
+            if !tracker_chunk.is_empty() { &tracker_chunk } else { &enriched_chunk };
 
-            lines_processed += 1;
-            let chunk_idx = chunk_start + idx;
-            if chunk_idx % PROGRESS_INTERVAL == 0 || lines_processed == total_lines {
-                for proc_id in &processor_ids {
-                    let _ = app.emit(
-                        "pipeline-progress",
-                        PipelineProgress {
-                            processor_id: proc_id.clone(),
-                            lines_processed,
-                            total_lines,
-                            percent: lines_processed as f32 / total_lines.max(1) as f32 * 100.0,
-                        },
-                    );
-                }
+        // ── Layers 2a/2b/2c: Data-parallel by processor ─────────────────────
+        // Each processor gets its own rayon task iterating all lines in the chunk.
+        // State trackers, reporters, and correlators run in parallel with each other.
+        rayon::scope(|s| {
+            // Layer 2a: StateTrackers — one task per tracker
+            for (_, run) in tracker_runs.iter_mut() {
+                let lines = tracker_lines;
+                s.spawn(move |_| {
+                    for line in lines {
+                        run.process_line(line);
+                    }
+                });
             }
-        }
 
-        // ── Layer 2c: Correlators ────────────────────────────────────────────
-        for (_, run) in correlator_runs.iter_mut() {
-            for line in &enriched_chunk {
-                run.process_line(line);
+            // Layer 2b: Reporters — one task per reporter
+            for (run, ranges) in reporter_runs.iter_mut() {
+                let lines = &enriched_chunk;
+                s.spawn(move |_| {
+                    for ctx in lines.iter() {
+                        if let Some(ranges) = ranges {
+                            if !ranges.iter().any(|(start, end)| {
+                                ctx.source_line_num >= *start && ctx.source_line_num <= *end
+                            }) {
+                                continue;
+                            }
+                        }
+                        run.process_line(ctx);
+                    }
+                });
             }
+
+            // Layer 2c: Correlators — one task per correlator
+            for (_, run) in correlator_runs.iter_mut() {
+                let lines = &enriched_chunk;
+                s.spawn(move |_| {
+                    for line in lines.iter() {
+                        run.process_line(line);
+                    }
+                });
+            }
+        });
+
+        // ── Progress emission (after chunk completes) ────────────────────────
+        // Report progress based on chunk boundaries (all lines in the chunk,
+        // including pre-filtered ones, count toward progress).
+        lines_processed += chunk_line_count;
+        for proc_id in &processor_ids {
+            let _ = app.emit(
+                "pipeline-progress",
+                PipelineProgress {
+                    processor_id: proc_id.clone(),
+                    lines_processed,
+                    total_lines,
+                    percent: lines_processed as f32 / total_lines.max(1) as f32 * 100.0,
+                },
+            );
         }
     }
 

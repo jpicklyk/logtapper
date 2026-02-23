@@ -1,6 +1,8 @@
 use regex::Regex;
 use serde_json::Value as JsonValue;
+use smallvec::SmallVec;
 use std::collections::{HashMap, HashSet, VecDeque};
+
 
 use crate::core::line::LineContext;
 use super::schema::{
@@ -8,6 +10,9 @@ use super::schema::{
 };
 use super::vars::VarStore;
 use crate::scripting::engine::ScriptEngine;
+
+/// Inline field storage — most extract stages produce <= 4 fields per line.
+type FieldVec = SmallVec<[(String, JsonValue); 4]>;
 
 // ---------------------------------------------------------------------------
 // Emission — one row pushed via emit() or the aggregate stage
@@ -70,6 +75,9 @@ impl<'a> ProcessorRun<'a> {
                 PipelineStage::Filter(fs) => {
                     let mut rules = fs.rules.clone();
                     rules.sort_by_key(|r| r.cost_rank());
+                    for rule in &mut rules {
+                        rule.prepare_tag_set();
+                    }
                     Some(rules)
                 }
                 _ => None,
@@ -96,6 +104,9 @@ impl<'a> ProcessorRun<'a> {
                 PipelineStage::Filter(fs) => {
                     let mut rules = fs.rules.clone();
                     rules.sort_by_key(|r| r.cost_rank());
+                    for rule in &mut rules {
+                        rule.prepare_tag_set();
+                    }
                     Some(rules)
                 }
                 _ => None,
@@ -118,7 +129,7 @@ impl<'a> ProcessorRun<'a> {
     /// Process a single line through the entire pipeline.
     pub fn process_line(&mut self, line: &LineContext) {
         // Extracted fields accumulate across stages.
-        let mut fields: HashMap<String, JsonValue> = HashMap::new();
+        let mut fields: FieldVec = SmallVec::new();
         let mut filter_idx = 0usize;
 
         for stage in &self.def.pipeline {
@@ -137,7 +148,7 @@ impl<'a> ProcessorRun<'a> {
                     let engine = self.script_engine.get_or_insert_with(ScriptEngine::new);
                     let input = BridgeInput {
                         line,
-                        fields: &fields,
+                        fields: fields.as_slice(),
                         vars: &self.vars,
                         history: self.history.make_contiguous(),
                     };
@@ -236,7 +247,13 @@ impl<'a> ProcessorRun<'a> {
     fn rule_matches(&mut self, rule: &FilterRule, line: &LineContext) -> bool {
         use crate::core::line::LogLevel;
         match rule {
-            FilterRule::TagMatch { tags } => tags.iter().any(|t| t == &line.tag),
+            FilterRule::TagMatch { tag_set, tags } => {
+                if !tag_set.is_empty() {
+                    tag_set.contains(&*line.tag)
+                } else {
+                    tags.iter().any(|t| t.as_str() == &*line.tag)
+                }
+            }
             FilterRule::MessageContains { value } => line.message.contains(value.as_str()),
             FilterRule::MessageContainsAny { values } => {
                 values.iter().any(|v| line.message.contains(v.as_str()))
@@ -286,7 +303,7 @@ impl<'a> ProcessorRun<'a> {
         &mut self,
         fields: &[ExtractField],
         line: &LineContext,
-        out: &mut HashMap<String, JsonValue>,
+        out: &mut FieldVec,
     ) {
         for field in fields {
             let re = match self.get_or_compile(&field.pattern.clone()) {
@@ -315,7 +332,7 @@ impl<'a> ProcessorRun<'a> {
                         .unwrap_or(JsonValue::String(raw.to_string())),
                     _ => JsonValue::String(raw.to_string()),
                 };
-                out.insert(field.name.clone(), val);
+                out.push((field.name.clone(), val));
             }
         }
     }
@@ -328,7 +345,7 @@ impl<'a> ProcessorRun<'a> {
         &mut self,
         agg_type: &AggType,
         field: Option<&str>,
-        fields: &HashMap<String, JsonValue>,
+        fields: &[(String, JsonValue)],
         timestamp: i64,
         window_ms: Option<u64>,
         threshold: Option<usize>,
@@ -344,7 +361,7 @@ impl<'a> ProcessorRun<'a> {
             }
             AggType::CountBy => {
                 if let Some(fname) = field {
-                    if let Some(JsonValue::String(group)) = fields.get(fname) {
+                    if let Some(JsonValue::String(group)) = fields.iter().find(|(k, _)| k == fname).map(|(_, v)| v) {
                         self.emissions.push(Emission {
                             line_num: 0,
                             fields: vec![
@@ -363,7 +380,7 @@ impl<'a> ProcessorRun<'a> {
                 let burst_threshold = threshold.unwrap_or(20);
 
                 let key = field
-                    .and_then(|f| fields.get(f))
+                    .and_then(|f| fields.iter().find(|(k, _)| k == f).map(|(_, v)| v))
                     .and_then(|v| v.as_str())
                     .unwrap_or("_default")
                     .to_string();
@@ -474,6 +491,7 @@ fn parse_time_hms(s: &str) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use crate::core::line::{LineContext, LogLevel};
     use crate::processors::reporter::schema::ReporterDef;
 
@@ -481,14 +499,14 @@ mod tests {
 
     fn make_line(tag: &str, message: &str, level: LogLevel, line_num: usize) -> LineContext {
         LineContext {
-            raw: format!("01-01 00:00:00.000  123  456 {:?} {tag}: {message}", level),
+            raw: Arc::from(format!("01-01 00:00:00.000  123  456 {:?} {tag}: {message}", level).as_str()),
             timestamp: 1_000_000_000i64 * (line_num as i64 + 1),
             level,
-            tag: tag.to_string(),
+            tag: Arc::from(tag),
             pid: 123,
             tid: 456,
-            message: message.to_string(),
-            source_id: "test".to_string(),
+            message: Arc::from(message),
+            source_id: Arc::from("test"),
             source_line_num: line_num,
             fields: HashMap::new(),
             annotations: vec![],

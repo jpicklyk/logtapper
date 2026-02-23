@@ -737,10 +737,10 @@ fn flush_batch(
             ViewLine {
                 line_num,
                 virtual_index: line_num,
-                raw: ctx.raw.clone(),
+                raw: ctx.raw.to_string(),
                 level: ctx.level,
-                tag: ctx.tag,
-                message: ctx.message,
+                tag: ctx.tag.to_string(),
+                message: ctx.message.to_string(),
                 timestamp: ctx.timestamp,
                 pid: ctx.pid,
                 tid: ctx.tid,
@@ -847,12 +847,12 @@ fn flush_batch(
                         }
                         if keep {
                             // Apply transformed message back to ViewLine
-                            if ctx.message != vl.message {
+                            if *ctx.message != vl.message {
                                 let prefix_len = vl.raw.len().saturating_sub(vl.message.len());
                                 vl.raw = format!("{}{}", &vl.raw[..prefix_len], &ctx.message);
-                                vl.message = ctx.message;
+                                vl.message = ctx.message.to_string();
                             }
-                            vl.tag = ctx.tag;
+                            vl.tag = ctx.tag.to_string();
                         }
                         // Note: we don't drop lines in streaming mode — transformers
                         // only modify content, dropping would break the view stream.

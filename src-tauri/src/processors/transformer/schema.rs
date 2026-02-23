@@ -14,6 +14,18 @@ pub struct TransformerDef {
     pub builtin: Option<BuiltinTransformer>,
 }
 
+impl TransformerDef {
+    /// Populate the pre-built `HashSet` in every `TagMatch` filter rule
+    /// for O(1) tag lookup at pipeline runtime.
+    pub fn prepare_tag_sets(&mut self) {
+        if let Some(fs) = &mut self.filter {
+            for rule in &mut fs.rules {
+                rule.prepare_tag_set();
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BuiltinTransformer {

@@ -6,7 +6,7 @@
 /// Also handles the less-common brief/long formats by falling through
 /// to a raw-line representation rather than failing.
 use regex::Regex;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use crate::core::line::{LineContext, ParsedLineMeta, LogLevel};
 use crate::core::parser::LogParser;
@@ -114,15 +114,16 @@ impl LogParser for LogcatParser {
         }
 
         // Unrecognised — emit as raw Info line so nothing is lost
+        let raw_arc: Arc<str> = Arc::from(raw);
         Some(LineContext {
-            raw: raw.to_string(),
+            raw: Arc::clone(&raw_arc),
             timestamp: 0,
             level: LogLevel::Info,
-            tag: String::new(),
+            tag: Arc::from(""),
             pid: 0,
             tid: 0,
-            message: raw.to_string(),
-            source_id: source_id.to_string(),
+            message: raw_arc,
+            source_id: Arc::from(source_id),
             source_line_num: line_num,
             fields: Default::default(),
             annotations: Vec::new(),
@@ -206,18 +207,18 @@ fn parse_threadtime(raw: &str, source_id: &str, line_num: usize) -> Option<LineC
         (pid, tid, 6usize, 7usize, 8usize)
     };
     let level_char = caps.get(level_idx)?.as_str();
-    let tag = caps.get(tag_idx)?.as_str().trim().to_string();
-    let message = caps.get(msg_idx)?.as_str().to_string();
+    let tag: Arc<str> = Arc::from(caps.get(tag_idx)?.as_str().trim());
+    let message: Arc<str> = Arc::from(caps.get(msg_idx)?.as_str());
 
     Some(LineContext {
-        raw: raw.to_string(),
+        raw: Arc::from(raw),
         timestamp: parse_timestamp_ns(date, time_str),
         level: parse_level(level_char),
         tag,
         pid,
         tid,
         message,
-        source_id: source_id.to_string(),
+        source_id: Arc::from(source_id),
         source_line_num: line_num,
         fields: Default::default(),
         annotations: Vec::new(),
@@ -228,19 +229,19 @@ fn parse_brief(raw: &str, source_id: &str, line_num: usize) -> Option<LineContex
     let caps = brief_re().captures(raw)?;
 
     let level_char = caps.get(1)?.as_str();
-    let tag = caps.get(2)?.as_str().trim().to_string();
+    let tag: Arc<str> = Arc::from(caps.get(2)?.as_str().trim());
     let pid: i32 = caps.get(3)?.as_str().parse().unwrap_or(0);
-    let message = caps.get(4)?.as_str().to_string();
+    let message: Arc<str> = Arc::from(caps.get(4)?.as_str());
 
     Some(LineContext {
-        raw: raw.to_string(),
+        raw: Arc::from(raw),
         timestamp: 0,
         level: parse_level(level_char),
         tag,
         pid,
         tid: 0,
         message,
-        source_id: source_id.to_string(),
+        source_id: Arc::from(source_id),
         source_line_num: line_num,
         fields: Default::default(),
         annotations: Vec::new(),
@@ -258,8 +259,8 @@ mod tests {
         let parser = LogcatParser;
         let ctx = parser.parse_line(line, "test", 0).unwrap();
         assert_eq!(ctx.level, LogLevel::Error);
-        assert_eq!(ctx.tag, "ActivityManager");
-        assert_eq!(ctx.message, "Something went wrong");
+        assert_eq!(&*ctx.tag, "ActivityManager");
+        assert_eq!(&*ctx.message, "Something went wrong");
         assert_eq!(ctx.pid, 1234);
         assert_eq!(ctx.tid, 5678);
     }
@@ -271,8 +272,8 @@ mod tests {
         let parser = LogcatParser;
         let ctx = parser.parse_line(line, "test", 0).unwrap();
         assert_eq!(ctx.level, LogLevel::Error);
-        assert_eq!(ctx.tag, "PolicyManager");
-        assert_eq!(ctx.message, "Exception in foo");
+        assert_eq!(&*ctx.tag, "PolicyManager");
+        assert_eq!(&*ctx.message, "Exception in foo");
         assert_eq!(ctx.pid, 4922);
         assert_eq!(ctx.tid, 5064);
     }
@@ -283,7 +284,7 @@ mod tests {
         let parser = LogcatParser;
         let ctx = parser.parse_line(line, "test", 0).unwrap();
         assert_eq!(ctx.level, LogLevel::Debug);
-        assert_eq!(ctx.tag, "MyTag");
+        assert_eq!(&*ctx.tag, "MyTag");
         assert_eq!(ctx.pid, 999);
     }
 
@@ -330,7 +331,7 @@ mod tests {
             "parse_meta and parse_line must produce identical timestamps"
         );
         assert_eq!(meta.level, ctx.level);
-        assert_eq!(meta.tag, ctx.tag);
+        assert_eq!(meta.tag, &*ctx.tag);
     }
 
     #[test]

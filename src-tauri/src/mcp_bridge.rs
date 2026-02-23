@@ -1259,7 +1259,7 @@ async fn h_processor_defs_single(
                 match stage {
                     PipelineStage::Filter(fs) => {
                         let rules: Vec<String> = fs.rules.iter().map(|r| match r {
-                            crate::processors::reporter::schema::FilterRule::TagMatch { tags } => format!("tag_match: [{}]", tags.join(", ")),
+                            crate::processors::reporter::schema::FilterRule::TagMatch { tags, .. } => format!("tag_match: [{}]", tags.join(", ")),
                             crate::processors::reporter::schema::FilterRule::MessageContains { value } => format!("message_contains: \"{}\"", value),
                             crate::processors::reporter::schema::FilterRule::MessageContainsAny { values } => format!("message_contains_any: [{}]", values.join(", ")),
                             crate::processors::reporter::schema::FilterRule::MessageRegex { pattern } => format!("message_regex: \"{}\"", pattern),

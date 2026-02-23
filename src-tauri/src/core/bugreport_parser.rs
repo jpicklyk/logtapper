@@ -27,7 +27,7 @@
 //! empty tag and are shown as raw text.
 
 use regex::Regex;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use crate::core::line::{LineContext, ParsedLineMeta, LogLevel};
 use crate::core::logcat_parser::LogcatParser;
@@ -199,15 +199,16 @@ impl LogParser for BugreportParser {
         }
 
         let meta = self.classify(raw, 0);
+        let raw_arc: Arc<str> = Arc::from(raw);
         Some(LineContext {
-            raw: raw.to_string(),
+            raw: Arc::clone(&raw_arc),
             timestamp: meta.timestamp,
             level: meta.level,
-            tag: meta.tag,
+            tag: Arc::from(meta.tag.as_str()),
             pid: 0,
             tid: 0,
-            message: raw.to_string(),
-            source_id: source_id.to_string(),
+            message: raw_arc,
+            source_id: Arc::from(source_id),
             source_line_num: line_num,
             fields: Default::default(),
             annotations: Vec::new(),
