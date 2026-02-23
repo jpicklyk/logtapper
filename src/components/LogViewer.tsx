@@ -37,6 +37,9 @@ interface Props {
    * Used when a stream filter is active.
    */
   lineNumbers?: number[];
+  /** Pre-populated cache of ViewLine objects for all filter matches (file mode).
+   *  When provided, LogViewer uses this instead of fetching on demand. */
+  filterLineCache?: Map<number, ViewLine>;
   /** Set of line numbers that have a StateTracker transition — shows gutter dot. */
   transitionLineNums?: Set<number>;
   /** lineNum → list of tracker IDs that transitioned on that line. */
@@ -54,6 +57,7 @@ export default function LogViewer({
   processorId,
   isStreaming,
   lineNumbers,
+  filterLineCache,
   transitionLineNums,
   transitionsByLine,
 }: Props) {
@@ -61,15 +65,18 @@ export default function LogViewer({
   const [, setAutoScroll] = useState(true);
 
   // ── File-mode visible lines ──────────────────────────────────────────────────
-  // In file mode, LogViewer fetches lines on demand and stores only the current
-  // visible window. This replaces the shared lineCache from useLogViewer.
-  const [visibleLines, setVisibleLines] = useState<Map<number, ViewLine>>(new Map());
+  // In file mode, LogViewer fetches lines on demand. We use a ref (mutated in
+  // place) + a version counter to trigger re-renders. This avoids O(N) Map
+  // copies that the previous useState<Map> approach caused on every fetch.
+  const visibleLinesRef = useRef<Map<number, ViewLine>>(new Map());
+  const [, setVisibleVersion] = useState(0);
   const fetchGenRef = useRef(0); // generation counter to discard stale fetches
 
   // Reset visible lines when session or processor view changes
   useEffect(() => {
     fetchGenRef.current++;
-    setVisibleLines(new Map());
+    visibleLinesRef.current = new Map();
+    setVisibleVersion((v) => v + 1);
   }, [sessionId, processorId]);
 
   // ── Large-file virtual base ──────────────────────────────────────────────────
@@ -170,6 +177,13 @@ export default function LogViewer({
 
   // ── File-mode: fetch visible lines from backend on scroll ────────────────────
   const lastFetchRef = useRef({ offset: -1, count: 0 });
+
+  // When the filter result changes, allow new fetches but do NOT clear the cache.
+  // The cache is keyed by actual file line numbers which remain valid as the
+  // filter result grows or changes. Clearing would cause placeholder flicker.
+  useEffect(() => {
+    lastFetchRef.current = { offset: -1, count: 0 };
+  }, [lineNumbers]);
   const rafRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -182,6 +196,7 @@ export default function LogViewer({
     rafRef.current = requestAnimationFrame(() => {
       const first = items[0].index;
       const last = items[items.length - 1].index;
+      const map = visibleLinesRef.current;
 
       let fetchOffset: number;
       let fetchCount: number;
@@ -191,7 +206,7 @@ export default function LogViewer({
         // line numbers via lineNumbers[]. Check those for cache misses.
         let hasMiss = false;
         for (let i = first; i <= last; i++) {
-          if (!visibleLines.has(lineNumbers[i])) {
+          if (!map.has(lineNumbers[i])) {
             hasMiss = true;
             break;
           }
@@ -206,7 +221,7 @@ export default function LogViewer({
         // Full file mode: virtualizer indices are relative to virtualBase.
         let hasMiss = false;
         for (let i = first; i <= last; i++) {
-          if (!visibleLines.has(virtualBase + i)) {
+          if (!map.has(virtualBase + i)) {
             hasMiss = true;
             break;
           }
@@ -227,13 +242,15 @@ export default function LogViewer({
           .then((window: LineWindow) => {
             // Discard stale fetches from a previous session/mode
             if (gen !== fetchGenRef.current) return;
-            setVisibleLines((prev) => {
-              const merged = new Map(prev);
-              for (const line of window.lines) {
-                merged.set(line.virtualIndex ?? line.lineNum, line);
-              }
-              return merged;
-            });
+            // Mutate in place — no O(N) copy. Bump version to trigger re-render.
+            // Key by lineNum (actual file line number), NOT virtualIndex which
+            // is window-relative and resets to 0 for each fetch — using it would
+            // overwrite earlier entries with wrong content.
+            const m = visibleLinesRef.current;
+            for (const line of window.lines) {
+              m.set(line.lineNum, line);
+            }
+            setVisibleVersion((v) => v + 1);
           })
           .catch(console.error);
       }
@@ -242,7 +259,9 @@ export default function LogViewer({
     return () => {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
     };
-  }, [items, isStreaming, lineNumbers, virtualBase, visibleLines, fetchLines]);
+  // Note: visibleLinesRef is a ref — not in deps. The effect re-runs when
+  // items/virtualBase change (scroll), which is when we need to check for misses.
+  }, [items, isStreaming, lineNumbers, virtualBase, fetchLines]);
 
   // Scroll to a specific line when requested (jumpToLine / search navigation).
   useEffect(() => {
@@ -287,8 +306,14 @@ export default function LogViewer({
     [onLineClick],
   );
 
-  // Choose the data source based on mode
-  const lineSource = isStreaming ? streamCache : visibleLines;
+  // Choose the data source based on mode.
+  // When a file-mode filter is active, prefer filterLineCache (pre-populated
+  // during the scan) so lines render instantly without on-demand fetching.
+  const lineSource = isStreaming
+    ? streamCache
+    : (lineNumbers && filterLineCache && filterLineCache.size > 0)
+      ? filterLineCache
+      : visibleLinesRef.current;
 
   if (count === 0) {
     if (lineNumbers) {

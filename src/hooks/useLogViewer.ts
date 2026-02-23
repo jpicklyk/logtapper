@@ -28,11 +28,15 @@ export interface LogViewerState {
   streamFilter: string;
   /** Parse error from the last setStreamFilter call */
   filterParseError: string | null;
+  /** True while a file-mode filter scan is in progress */
+  filterScanning: boolean;
   /**
    * When a filter is active, this array maps virtualizer index → actual
    * line number. null means no filter (show all lines).
    */
   filteredLineNums: number[] | null;
+  /** Pre-populated cache of ViewLine objects for all filter matches (file mode). */
+  filterLineCache: Map<number, ViewLine>;
   /** Maximum streaming cache size in lines (0 = unlimited). */
   streamBufferMax: number;
   /** Non-null while background file indexing is in progress. */
@@ -82,6 +86,7 @@ export function useLogViewer(streamCacheMax: number = 50_000, onBeforeLoad?: () 
   const [streamFilter, setStreamFilterExpr] = useState('');
   const [filterParseError, setFilterParseError] = useState<string | null>(null);
   const [filteredLineNums, setFilteredLineNums] = useState<number[] | null>(null);
+  const [filterScanning, setFilterScanning] = useState(false);
   const [timeStart, setTimeStartState] = useState('');
   const [timeEnd, setTimeEndState] = useState('');
   const [timeFilterLineNums, setTimeFilterLineNums] = useState<number[] | null>(null);
@@ -108,6 +113,9 @@ export function useLogViewer(streamCacheMax: number = 50_000, onBeforeLoad?: () 
   const streamDeviceSerialRef = useRef<string | null>(null);
   // Generation counter to cancel stale file-mode filter scans
   const filterScanGenRef = useRef(0);
+  // Cache of ViewLine objects for lines matching the current file-mode filter.
+  // Populated during the filter scan so LogViewer doesn't need to re-fetch.
+  const filterLineCacheRef = useRef<Map<number, ViewLine>>(new Map());
 
   // Streaming-only cache — holds lines from ADB batch events.
   // Not used in file mode; file mode fetches directly from the backend.
@@ -140,8 +148,10 @@ export function useLogViewer(streamCacheMax: number = 50_000, onBeforeLoad?: () 
     // Reset filter state
     setStreamFilterExpr('');
     setFilterParseError(null);
+    setFilterScanning(false);
     setFilteredLineNums(null);
     filterAstRef.current = null;
+    filterLineCacheRef.current = new Map();
     packagePidsRef.current = new Map();
     // Reset time range filter
     setTimeStartState('');
@@ -215,6 +225,7 @@ export function useLogViewer(streamCacheMax: number = 50_000, onBeforeLoad?: () 
       setFilterParseError(null);
       setFilteredLineNums(null);
       filterAstRef.current = null;
+      filterLineCacheRef.current = new Map();
       return;
     }
 
@@ -266,19 +277,24 @@ export function useLogViewer(streamCacheMax: number = 50_000, onBeforeLoad?: () 
       setFilteredLineNums(nums);
     } else {
       // File mode: scan the file in batches via the backend.
-      // We read totalLines from the backend response (authoritative) rather than
-      // sessionRef, which may hold a stale count from before background indexing.
+      // We set filteredLineNums ONCE at the end to avoid repeated virtualizer
+      // resizing that causes flickering. A scanning indicator is shown instead.
       const sess = sessionRef.current;
       if (!sess) return;
 
+      setFilterScanning(true);
       const BATCH = 5000;
       const matches: number[] = [];
+      const lineCache = new Map<number, ViewLine>();
       let offset = 0;
       let total = Infinity;
 
       while (offset < total) {
         // Abort if filter changed while scanning
-        if (filterScanGenRef.current !== gen) return;
+        if (filterScanGenRef.current !== gen) {
+          setFilterScanning(false);
+          return;
+        }
 
         try {
           const window = await getLines({
@@ -291,17 +307,24 @@ export function useLogViewer(streamCacheMax: number = 50_000, onBeforeLoad?: () 
           // Backend's totalLines is authoritative
           total = window.totalLines;
           for (const line of window.lines) {
-            if (matchesFilter(ast, line, pids)) matches.push(line.lineNum);
+            if (matchesFilter(ast, line, pids)) {
+              matches.push(line.lineNum);
+              lineCache.set(line.lineNum, line);
+            }
           }
           offset += window.lines.length;
           // No lines returned — we've reached the end
           if (window.lines.length === 0) break;
-          // Show incremental results so the user sees matches appearing
-          if (filterScanGenRef.current !== gen) return;
-          setFilteredLineNums([...matches]);
         } catch {
           break;
         }
+      }
+      // Set results once at the end — single virtualizer resize, no flicker.
+      // The lineCache is populated so LogViewer can render instantly.
+      if (filterScanGenRef.current === gen) {
+        filterLineCacheRef.current = lineCache;
+        setFilteredLineNums(matches.length > 0 ? matches : null);
+        setFilterScanning(false);
       }
     }
   }, []);
@@ -367,7 +390,13 @@ export function useLogViewer(streamCacheMax: number = 50_000, onBeforeLoad?: () 
     });
   }, []);
 
+  const loadingGuardRef = useRef(false);
   const loadFile = useCallback(async (path: string) => {
+    // Prevent concurrent loads — StrictMode or rapid user clicks could otherwise
+    // trigger two backend loadLogFile calls, racing the background indexer.
+    if (loadingGuardRef.current) return;
+    loadingGuardRef.current = true;
+
     // Let the caller (App.tsx) clear app-level state (metadata, sections, etc.)
     onBeforeLoadRef.current?.();
 
@@ -396,6 +425,8 @@ export function useLogViewer(streamCacheMax: number = 50_000, onBeforeLoad?: () 
       try { localStorage.removeItem(LS_LAST_FILE); } catch { /* ignore */ }
       setError(String(e));
       setLoading(false);
+    } finally {
+      loadingGuardRef.current = false;
     }
   }, [resetSessionState]);
 
@@ -421,7 +452,13 @@ export function useLogViewer(streamCacheMax: number = 50_000, onBeforeLoad?: () 
   }, [loadFile]);
 
   // Restore the last-opened file on app startup.
+  // Use a ref guard to prevent StrictMode double-mount from loading the file
+  // twice — two concurrent loadLogFile calls race on the backend indexer
+  // cancellation, causing the line index to double in size.
+  const hasRestoredRef = useRef(false);
   useEffect(() => {
+    if (hasRestoredRef.current) return;
+    hasRestoredRef.current = true;
     const saved = localStorage.getItem(LS_LAST_FILE);
     if (saved) loadFile(saved);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -689,7 +726,9 @@ export function useLogViewer(streamCacheMax: number = 50_000, onBeforeLoad?: () 
     isStreaming,
     streamFilter,
     filterParseError,
+    filterScanning,
     filteredLineNums,
+    filterLineCache: filterLineCacheRef.current,
     streamBufferMax: streamCacheMax,
     indexingProgress,
     timeStart,

@@ -27,6 +27,17 @@ export default function PaneContent({ pane }: Props) {
     setSelectedLineNum(lineNum);
   }, [viewer, setSelectedLineNum]);
 
+  const handleCopyAll = useCallback(() => {
+    const cache = viewer.filterLineCache;
+    const nums = viewer.filteredLineNums;
+    if (!nums || cache.size === 0) return;
+    const text = nums
+      .map((n) => cache.get(n)?.raw ?? '')
+      .filter(Boolean)
+      .join('\n');
+    navigator.clipboard.writeText(text).catch(console.error);
+  }, [viewer.filterLineCache, viewer.filteredLineNums]);
+
   // Merge stream filter (filteredLineNums) and time range filter (timeFilterLineNums).
   // When both are active, show only lines that satisfy both (intersection).
   const sf = viewer.filteredLineNums;
@@ -83,6 +94,8 @@ export default function PaneContent({ pane }: Props) {
               matchCount={viewer.filteredLineNums?.length ?? null}
               totalCount={viewer.session?.totalLines ?? 0}
               parseError={viewer.filterParseError}
+              scanning={viewer.filterScanning}
+              onCopyAll={viewer.filteredLineNums ? handleCopyAll : undefined}
             />
           )}
           <LogViewer
@@ -97,6 +110,7 @@ export default function PaneContent({ pane }: Props) {
             processorId={processorViewId ?? undefined}
             isStreaming={viewer.isStreaming}
             lineNumbers={effectiveLineNums}
+            filterLineCache={viewer.filterLineCache}
             transitionLineNums={stateTracker.allTransitionLineNums.size > 0 ? stateTracker.allTransitionLineNums : undefined}
             transitionsByLine={stateTracker.allTransitionLineNums.size > 0 ? stateTracker.transitionsByLine : undefined}
           />

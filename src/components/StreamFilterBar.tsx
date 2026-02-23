@@ -9,6 +9,10 @@ interface Props {
   totalCount: number;
   /** Parse error from the last expression, or null if valid */
   parseError: string | null;
+  /** True while a file-mode filter scan is in progress */
+  scanning?: boolean;
+  /** Called when the user clicks "Copy all". Handler should copy all matched lines. */
+  onCopyAll?: () => void;
 }
 
 const CHIPS: { label: string; hint: string }[] = [
@@ -24,6 +28,8 @@ export default function StreamFilterBar({
   matchCount,
   totalCount,
   parseError,
+  scanning,
+  onCopyAll,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -58,12 +64,27 @@ export default function StreamFilterBar({
             {chip.label}
           </button>
         ))}
-        {isFiltering && !hasError && matchCount !== null && (
-          <span className="filter-count">
-            {matchCount.toLocaleString()} / {totalCount.toLocaleString()} lines
+        {isFiltering && !hasError && scanning && (
+          <span className="filter-count filter-count--scanning">
+            Scanning...
           </span>
         )}
-        {isFiltering && !hasError && matchCount === null && (
+        {isFiltering && !hasError && !scanning && matchCount !== null && (
+          <span className="filter-count">
+            {matchCount.toLocaleString()} / {totalCount.toLocaleString()} lines
+            {onCopyAll && (
+              <button
+                className="filter-copy-btn"
+                onClick={onCopyAll}
+                title="Copy all matched lines to clipboard"
+                tabIndex={-1}
+              >
+                Copy all
+              </button>
+            )}
+          </span>
+        )}
+        {isFiltering && !hasError && !scanning && matchCount === null && (
           <span className="filter-count">
             {totalCount.toLocaleString()} lines
           </span>
