@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { FetchScheduler } from './FetchScheduler';
+import type { FetchRange } from './FetchScheduler';
 
 describe('FetchScheduler', () => {
   beforeEach(() => {
@@ -19,6 +20,27 @@ describe('FetchScheduler', () => {
     scheduler.reportScroll(100, 150, 10000);
     // velocity is 0 on first call (no prior position)
     expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls callback with separate viewport and prefetch ranges', () => {
+    const scheduler = new FetchScheduler({
+      prefetchLines: 200,
+      velocityThreshold: 999, // Always "settled"
+    });
+    const fetchFn = vi.fn();
+    scheduler.onFetch(fetchFn);
+
+    scheduler.reportScroll(500, 550, 10000);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+
+    const [viewport, prefetch] = fetchFn.mock.calls[0] as [FetchRange, FetchRange];
+    // Viewport is exactly the visible range
+    expect(viewport).toEqual({ offset: 500, count: 51 });
+    // Prefetch extends ahead (down direction on first call: firstVisible >= 0)
+    // behind = floor(200 * 0.25) = 50, ahead = 200
+    // pfStart = max(0, 500 - 50) = 450
+    // pfEnd = min(10000, 550 + 200) = 750
+    expect(prefetch).toEqual({ offset: 450, count: 300 });
   });
 
   it('defers fetch during fast scroll until settled', () => {
@@ -74,28 +96,22 @@ describe('FetchScheduler', () => {
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
-  it('forceFetch bypasses velocity check', () => {
+  it('forceFetch bypasses velocity check and dedup', () => {
     const scheduler = new FetchScheduler({ velocityThreshold: 999 });
     const fetchFn = vi.fn();
     scheduler.onFetch(fetchFn);
 
-    scheduler.forceFetch(0, 500);
-    expect(fetchFn).toHaveBeenCalledWith(0, 500);
-  });
+    // Set up a pending range first
+    scheduler.reportScroll(0, 50, 10000);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
 
-  it('includes prefetch lines in fetch range', () => {
-    const scheduler = new FetchScheduler({
-      prefetchLines: 200,
-      velocityThreshold: 999, // Always "settled"
-    });
-    const fetchFn = vi.fn();
-    scheduler.onFetch(fetchFn);
+    // Report same scroll — dedup should skip
+    scheduler.reportScroll(0, 50, 10000);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
 
-    scheduler.reportScroll(500, 550, 10000);
-    expect(fetchFn).toHaveBeenCalledWith(300, 450);
-    // offset = max(0, 500 - 200) = 300
-    // end = min(10000, 550 + 200) = 750
-    // count = 750 - 300 = 450
+    // Force fetch — should fire even with same range
+    scheduler.forceFetch();
+    expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
   it('clamps fetch range to [0, totalLines]', () => {
@@ -107,10 +123,11 @@ describe('FetchScheduler', () => {
     scheduler.onFetch(fetchFn);
 
     scheduler.reportScroll(50, 100, 200);
-    expect(fetchFn).toHaveBeenCalledWith(0, 200);
-    // offset = max(0, 50 - 200) = 0
-    // end = min(200, 100 + 200) = 200
-    // count = 200 - 0 = 200
+    const [, prefetch] = fetchFn.mock.calls[0] as [FetchRange, FetchRange];
+    // pfStart = max(0, 50 - 50) = 0  (behind = floor(200*0.25) = 50)
+    // pfEnd = min(200, 100 + 200) = 200
+    expect(prefetch.offset).toBe(0);
+    expect(prefetch.offset + prefetch.count).toBeLessThanOrEqual(200);
   });
 
   it('dispose stops all timers and callbacks', () => {
@@ -156,5 +173,49 @@ describe('FetchScheduler', () => {
     scheduler.reportScroll(100, 150, 10000);
     // After immediate execution, pendingFetch should be cleared
     expect(scheduler.pendingFetch).toBeNull();
+  });
+
+  it('computes direction correctly — scroll down vs up', () => {
+    const scheduler = new FetchScheduler({
+      prefetchLines: 200,
+      velocityThreshold: 999,
+    });
+    const fetchFn = vi.fn();
+    scheduler.onFetch(fetchFn);
+
+    // First scroll — position goes from 0 to 500 (down)
+    scheduler.reportScroll(500, 550, 10000);
+    const [, pfDown] = fetchFn.mock.calls[0] as [FetchRange, FetchRange];
+
+    // Now scroll up
+    scheduler.reportScroll(200, 250, 10000);
+    const [, pfUp] = fetchFn.mock.calls[1] as [FetchRange, FetchRange];
+
+    // Scrolling down: more lines ahead (below), less behind
+    // pfDown: start = 500 - 50 = 450, end = 550 + 200 = 750
+    expect(pfDown.offset).toBe(450);
+    expect(pfDown.offset + pfDown.count).toBe(750);
+
+    // Scrolling up: more lines ahead (above), less behind
+    // pfUp: start = max(0, 200 - 200) = 0, end = 250 + 50 = 300
+    expect(pfUp.offset).toBe(0);
+    expect(pfUp.offset + pfUp.count).toBe(300);
+  });
+
+  it('dedup skips fetch when ranges unchanged', () => {
+    const scheduler = new FetchScheduler({ velocityThreshold: 999 });
+    const fetchFn = vi.fn();
+    scheduler.onFetch(fetchFn);
+
+    scheduler.reportScroll(100, 150, 10000);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+
+    // Same position — should be skipped (dedup)
+    scheduler.reportScroll(100, 150, 10000);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+
+    // Different position — should fire
+    scheduler.reportScroll(200, 250, 10000);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 });

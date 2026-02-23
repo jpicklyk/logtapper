@@ -2,11 +2,12 @@ import { useRef, useCallback, useEffect, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ViewLine, SearchQuery, LineWindow } from '../bridge/types';
 import type { ViewCacheHandle } from '../cache';
+import { FetchScheduler } from '../cache';
+import type { FetchRange } from '../cache';
 import LogLine from './LogLine';
 
 const LINE_HEIGHT = 22; // px — monospace, single line
 const OVERSCAN = 10;
-const FETCH_THRESHOLD = 2000; // lines to pre-fetch beyond visible range (each side)
 const AT_BOTTOM_THRESHOLD = 60; // px from bottom to consider "at bottom"
 
 // Chrome/Edge cap their DOM scrollHeight at 2^25 px. Beyond this the native
@@ -24,8 +25,6 @@ export interface Selection {
 interface Props {
   sessionId: string;
   totalLines: number;
-  /** Streaming-only cache: holds lines from ADB batch events. Only used when isStreaming. */
-  streamCache: Map<number, ViewLine>;
   /** Fetch lines from backend for file mode. Returns a LineWindow. */
   fetchLines: (offset: number, count: number) => Promise<LineWindow>;
   search?: SearchQuery;
@@ -63,7 +62,6 @@ interface Props {
 export default function LogViewer({
   sessionId,
   totalLines,
-  streamCache,
   fetchLines,
   onLineClick,
   scrollToLine,
@@ -203,97 +201,145 @@ export default function LogViewer({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveCount]);
 
-  // ── File-mode: fetch visible lines from backend on scroll ────────────────────
-  const lastFetchRef = useRef({ offset: -1, count: 0 });
+  // ── File-mode: FetchScheduler-driven two-phase fetch ─────────────────────────
+  const schedulerRef = useRef<FetchScheduler | null>(null);
+  const fetchInFlightRef = useRef(false);
 
-  // When the filter result changes, allow new fetches but do NOT clear the cache.
-  // The cache is keyed by actual file line numbers which remain valid as the
-  // filter result grows or changes. Clearing would cause placeholder flicker.
+  // Create scheduler once on mount, dispose on unmount.
   useEffect(() => {
-    lastFetchRef.current = { offset: -1, count: 0 };
-  }, [lineNumbers]);
-  const rafRef = useRef<number | null>(null);
+    schedulerRef.current = new FetchScheduler();
+    return () => {
+      schedulerRef.current?.dispose();
+      schedulerRef.current = null;
+    };
+  }, []);
 
+  // Register the fetch callback. Recreated when dependencies change so it
+  // captures current refs/props. The scheduler stores only the latest callback.
   useEffect(() => {
-    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    const scheduler = schedulerRef.current;
+    if (!scheduler) return;
 
-    if (items.length === 0) return;
-    // Streaming: all lines arrive via batch events — no fetching needed.
-    if (isStreaming) return;
+    scheduler.onFetch((viewport: FetchRange, prefetch: FetchRange) => {
+      if (isStreaming) return;
+      if (fetchInFlightRef.current) return; // wait for current fetch to finish
 
-    rafRef.current = requestAnimationFrame(() => {
-      const first = items[0].index;
-      const last = items[items.length - 1].index;
       const map = visibleLinesRef.current;
 
-      let fetchOffset: number;
-      let fetchCount: number;
-
-      if (lineNumbers) {
-        // File mode with filter active: visible virtualizer indices map to actual
-        // line numbers via lineNumbers[]. Check those for cache misses.
-        let hasMiss = false;
-        for (let i = first; i <= last; i++) {
-          if (!map.has(lineNumbers[i])) {
-            hasMiss = true;
-            break;
-          }
+      // Check cache misses in the viewport range
+      let hasMiss = false;
+      const vpStart = viewport.offset;
+      const vpEnd = viewport.offset + viewport.count;
+      for (let line = vpStart; line < vpEnd; line++) {
+        // In filter mode, viewport offset/count are actual line numbers.
+        // In full mode, they are actual line numbers (virtualBase + index).
+        if (!map.has(line) && !(viewCache?.get(line))) {
+          hasMiss = true;
+          break;
         }
-        if (!hasMiss) return;
-
-        const firstActual = lineNumbers[first];
-        const lastActual = lineNumbers[Math.min(last, lineNumbers.length - 1)];
-        fetchOffset = Math.max(0, firstActual - FETCH_THRESHOLD);
-        fetchCount = lastActual - fetchOffset + FETCH_THRESHOLD * 2;
-      } else {
-        // Full file mode: virtualizer indices are relative to virtualBase.
-        let hasMiss = false;
-        for (let i = first; i <= last; i++) {
-          if (!map.has(virtualBase + i)) {
-            hasMiss = true;
-            break;
-          }
-        }
-        if (!hasMiss) return;
-
-        fetchOffset = Math.max(0, virtualBase + first - FETCH_THRESHOLD);
-        fetchCount = (virtualBase + last) - fetchOffset + FETCH_THRESHOLD * 2;
       }
 
-      if (
-        fetchOffset !== lastFetchRef.current.offset ||
-        fetchCount !== lastFetchRef.current.count
-      ) {
-        lastFetchRef.current = { offset: fetchOffset, count: fetchCount };
-        const gen = fetchGenRef.current;
-        fetchLines(fetchOffset, fetchCount)
-          .then((window: LineWindow) => {
-            // Discard stale fetches from a previous session/mode
-            if (gen !== fetchGenRef.current) return;
-            // Mutate in place — no O(N) copy. Bump version to trigger re-render.
-            // Key by lineNum (actual file line number), NOT virtualIndex which
-            // is window-relative and resets to 0 for each fetch — using it would
-            // overwrite earlier entries with wrong content.
-            const m = visibleLinesRef.current;
-            for (const line of window.lines) {
-              m.set(line.lineNum, line);
+      if (!hasMiss) {
+        // Viewport is cached. Try prefetch only if allowed.
+        if (viewCache?.prefetchAllowed()) {
+          let hasPrefetchMiss = false;
+          const pfStart = prefetch.offset;
+          const pfEnd = prefetch.offset + prefetch.count;
+          for (let line = pfStart; line < pfEnd; line++) {
+            if (!map.has(line) && !(viewCache?.get(line))) {
+              hasPrefetchMiss = true;
+              break;
             }
-            // Also populate the global ViewCacheHandle if provided
-            if (viewCache) {
-              viewCache.put(window.lines);
-            }
-            setVisibleVersion((v) => v + 1);
-          })
-          .catch(console.error);
+          }
+          if (hasPrefetchMiss) {
+            fetchInFlightRef.current = true;
+            const gen = fetchGenRef.current;
+            fetchLines(prefetch.offset, prefetch.count)
+              .then((window: LineWindow) => {
+                if (gen !== fetchGenRef.current) return;
+                // Prefetch: populate viewCache only, not visibleLinesRef
+                if (viewCache) {
+                  viewCache.put(window.lines);
+                }
+                // Also put in visibleLinesRef for immediate availability
+                const m = visibleLinesRef.current;
+                for (const l of window.lines) {
+                  m.set(l.lineNum, l);
+                }
+                setVisibleVersion((v) => v + 1);
+              })
+              .catch(console.error)
+              .finally(() => { fetchInFlightRef.current = false; });
+          }
+        }
+        return;
       }
+
+      // Phase 1: viewport fill
+      fetchInFlightRef.current = true;
+      const gen = fetchGenRef.current;
+      fetchLines(viewport.offset, viewport.count)
+        .then((window: LineWindow) => {
+          if (gen !== fetchGenRef.current) return;
+          const m = visibleLinesRef.current;
+          for (const l of window.lines) {
+            m.set(l.lineNum, l);
+          }
+          if (viewCache) {
+            viewCache.put(window.lines);
+          }
+          setVisibleVersion((v) => v + 1);
+
+          // Phase 2: directional prefetch (after viewport fill completes)
+          if (viewCache?.prefetchAllowed()) {
+            const pfGen = fetchGenRef.current;
+            fetchLines(prefetch.offset, prefetch.count)
+              .then((pfWindow: LineWindow) => {
+                if (pfGen !== fetchGenRef.current) return;
+                const pm = visibleLinesRef.current;
+                for (const l of pfWindow.lines) {
+                  pm.set(l.lineNum, l);
+                }
+                if (viewCache) {
+                  viewCache.put(pfWindow.lines);
+                }
+                setVisibleVersion((v) => v + 1);
+              })
+              .catch(console.error)
+              .finally(() => { fetchInFlightRef.current = false; });
+          } else {
+            fetchInFlightRef.current = false;
+          }
+        })
+        .catch((err) => {
+          console.error(err);
+          fetchInFlightRef.current = false;
+        });
     });
+  }, [isStreaming, lineNumbers, fetchLines, viewCache]);
 
-    return () => {
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
-    };
-  // Note: visibleLinesRef is a ref — not in deps. The effect re-runs when
-  // items/virtualBase change (scroll), which is when we need to check for misses.
-  }, [items, isStreaming, lineNumbers, virtualBase, fetchLines, viewCache]);
+  // Report scroll position to the scheduler whenever visible items change.
+  useEffect(() => {
+    if (items.length === 0 || isStreaming) return;
+    const scheduler = schedulerRef.current;
+    if (!scheduler) return;
+
+    const first = items[0].index;
+    const last = items[items.length - 1].index;
+
+    let firstActual: number;
+    let lastActual: number;
+
+    if (lineNumbers) {
+      firstActual = lineNumbers[first];
+      lastActual = lineNumbers[Math.min(last, lineNumbers.length - 1)];
+    } else {
+      firstActual = virtualBase + first;
+      lastActual = virtualBase + last;
+    }
+
+    scheduler.reportScroll(firstActual, lastActual, totalLines);
+  }, [items, isStreaming, lineNumbers, virtualBase, totalLines]);
 
   // Scroll to a specific line when requested (jumpToLine / search navigation).
   useEffect(() => {
@@ -304,13 +350,17 @@ export default function LogViewer({
 
     if (lineNumbers) {
       const pos = lineNumbers.indexOf(scrollToLine);
-      if (pos !== -1) virtualizer.scrollToIndex(pos, { align: 'center' });
+      if (pos !== -1) {
+        virtualizer.scrollToIndex(pos, { align: 'center' });
+        schedulerRef.current?.forceFetch();
+      }
       return;
     }
 
     const relIndex = scrollToLine - virtualBaseRef.current;
     if (relIndex >= 0 && relIndex < MAX_VIRTUAL_LINES) {
       virtualizer.scrollToIndex(relIndex, { align: 'center' });
+      schedulerRef.current?.forceFetch();
     } else {
       const half = Math.floor(MAX_VIRTUAL_LINES / 2);
       const newBase = Math.max(0, Math.min(scrollToLine - half, Math.max(0, totalLines - MAX_VIRTUAL_LINES)));
@@ -329,6 +379,7 @@ export default function LogViewer({
     if (relIndex >= 0 && relIndex < MAX_VIRTUAL_LINES) {
       pendingScrollTarget.current = null;
       virtualizer.scrollToIndex(relIndex, { align: 'center' });
+      schedulerRef.current?.forceFetch();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [virtualBase]);
@@ -345,11 +396,10 @@ export default function LogViewer({
   // When a file-mode filter is active, prefer filterLineCache (pre-populated
   // during the scan) so lines render instantly without on-demand fetching.
   // The viewCache provides a secondary lookup for cache hits from the global manager.
-  const primarySource = isStreaming
-    ? streamCache
-    : (lineNumbers && filterLineCache && filterLineCache.size > 0)
-      ? filterLineCache
-      : visibleLinesRef.current;
+  // During streaming, visibleLinesRef is empty, so getLine falls through to viewCache.
+  const primarySource = (lineNumbers && filterLineCache && filterLineCache.size > 0)
+    ? filterLineCache
+    : visibleLinesRef.current;
 
   // Combined lookup: primary source first, then viewCache fallback
   const getLine = (lineNum: number): ViewLine | undefined => {

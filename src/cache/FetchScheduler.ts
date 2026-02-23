@@ -2,8 +2,15 @@
  * Velocity-aware fetch scheduler.
  *
  * Skips fetches during fast scrolling and triggers on settle (~100ms pause
- * or velocity drops below threshold). Supports directional prefetch.
+ * or velocity drops below threshold). Supports directional prefetch with
+ * separate viewport and prefetch ranges.
  */
+
+/** A contiguous range of lines. */
+export interface FetchRange {
+  offset: number;
+  count: number;
+}
 
 /** Configuration for the FetchScheduler. */
 export interface FetchSchedulerConfig {
@@ -19,7 +26,12 @@ const DEFAULT_SETTLE_MS = 100;
 const DEFAULT_VELOCITY_THRESHOLD = 5; // lines per ms
 const DEFAULT_PREFETCH_LINES = 2000;
 
-export type FetchCallback = (offset: number, count: number) => void;
+/**
+ * Callback receives two ranges:
+ * - viewport: the currently visible lines (always fetched)
+ * - prefetch: extended range in the scroll direction (fetched when allowed)
+ */
+export type FetchCallback = (viewport: FetchRange, prefetch: FetchRange) => void;
 
 export class FetchScheduler {
   private _settleMs: number;
@@ -30,7 +42,10 @@ export class FetchScheduler {
   private _lastScrollPos = 0;
   private _velocity = 0;
   private _settleTimer: ReturnType<typeof setTimeout> | null = null;
-  private _pendingFetch: { offset: number; count: number } | null = null;
+  private _pendingViewport: FetchRange | null = null;
+  private _pendingPrefetch: FetchRange | null = null;
+  private _lastFetchedViewport: FetchRange | null = null;
+  private _lastFetchedPrefetch: FetchRange | null = null;
   private _fetchCb: FetchCallback | null = null;
   private _disposed = false;
 
@@ -48,8 +63,8 @@ export class FetchScheduler {
     return this._velocity < this._velocityThreshold;
   }
 
-  get pendingFetch(): { offset: number; count: number } | null {
-    return this._pendingFetch;
+  get pendingFetch(): FetchRange | null {
+    return this._pendingViewport;
   }
 
   /** Register the function called when a fetch should be issued. */
@@ -70,6 +85,9 @@ export class FetchScheduler {
 
     const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
     const dt = now - this._lastScrollTime;
+
+    // Compute direction BEFORE updating _lastScrollPos
+    const direction = firstVisible >= this._lastScrollPos ? 1 : -1;
     const dp = Math.abs(firstVisible - this._lastScrollPos);
 
     if (dt > 0) {
@@ -79,17 +97,28 @@ export class FetchScheduler {
     this._lastScrollTime = now;
     this._lastScrollPos = firstVisible;
 
-    // Compute the desired fetch range with prefetch
-    const direction = firstVisible >= this._lastScrollPos ? 1 : -1;
-    const prefetchAhead = direction === 1
-      ? this._prefetchLines
-      : this._prefetchLines;
+    // Asymmetric prefetch: more lines ahead in scroll direction, fewer behind
+    const ahead = this._prefetchLines;
+    const behind = Math.floor(this._prefetchLines * 0.25);
 
-    const fetchOffset = Math.max(0, firstVisible - this._prefetchLines);
-    const fetchEnd = Math.min(totalLines, lastVisible + prefetchAhead);
-    const fetchCount = fetchEnd - fetchOffset;
+    // Viewport range — exactly what's visible
+    const vpOffset = firstVisible;
+    const vpCount = lastVisible - firstVisible + 1;
+    this._pendingViewport = { offset: vpOffset, count: vpCount };
 
-    this._pendingFetch = { offset: fetchOffset, count: fetchCount };
+    // Prefetch range — extends in scroll direction
+    let pfStart: number;
+    let pfEnd: number;
+    if (direction >= 0) {
+      // Scrolling down: prefetch more below, less above
+      pfStart = Math.max(0, firstVisible - behind);
+      pfEnd = Math.min(totalLines, lastVisible + ahead);
+    } else {
+      // Scrolling up: prefetch more above, less below
+      pfStart = Math.max(0, firstVisible - ahead);
+      pfEnd = Math.min(totalLines, lastVisible + behind);
+    }
+    this._pendingPrefetch = { offset: pfStart, count: pfEnd - pfStart };
 
     // Clear any existing settle timer
     if (this._settleTimer !== null) {
@@ -110,10 +139,12 @@ export class FetchScheduler {
     }, this._settleMs);
   }
 
-  /** Force a fetch at the given range, bypassing velocity checks. */
-  forceFetch(offset: number, count: number): void {
+  /** Force a fetch bypassing velocity checks and dedup. */
+  forceFetch(): void {
     if (this._disposed) return;
-    this._pendingFetch = { offset, count };
+    // Clear dedup so the next execute always fires
+    this._lastFetchedViewport = null;
+    this._lastFetchedPrefetch = null;
     this._executeFetch();
   }
 
@@ -127,10 +158,28 @@ export class FetchScheduler {
     this._fetchCb = null;
   }
 
+  private _rangesEqual(a: FetchRange | null, b: FetchRange | null): boolean {
+    if (a === null || b === null) return a === b;
+    return a.offset === b.offset && a.count === b.count;
+  }
+
   private _executeFetch(): void {
-    if (!this._pendingFetch || !this._fetchCb) return;
-    const { offset, count } = this._pendingFetch;
-    this._pendingFetch = null;
-    this._fetchCb(offset, count);
+    if (!this._pendingViewport || !this._pendingPrefetch || !this._fetchCb) return;
+
+    // Dedup: skip if both ranges match the last fetch
+    if (
+      this._rangesEqual(this._pendingViewport, this._lastFetchedViewport) &&
+      this._rangesEqual(this._pendingPrefetch, this._lastFetchedPrefetch)
+    ) {
+      return;
+    }
+
+    const viewport = this._pendingViewport;
+    const prefetch = this._pendingPrefetch;
+    this._lastFetchedViewport = { ...viewport };
+    this._lastFetchedPrefetch = { ...prefetch };
+    this._pendingViewport = null;
+    this._pendingPrefetch = null;
+    this._fetchCb(viewport, prefetch);
   }
 }
