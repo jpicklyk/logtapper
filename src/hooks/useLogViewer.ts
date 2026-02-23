@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
-import type { ViewLine, SearchQuery, SearchSummary, SearchProgress, LoadResult, AdbBatchPayload } from '../bridge/types';
+import type { ViewLine, SearchQuery, SearchSummary, SearchProgress, LoadResult, AdbBatchPayload, LineWindow } from '../bridge/types';
 import { loadLogFile, getLines, searchLogs, startAdbStream, stopAdbStream, getPackagePids, closeSession as closeSessionCmd } from '../bridge/commands';
 
 import { onAdbBatch, onAdbStreamStopped, onFileIndexProgress, onFileIndexComplete, onSearchProgress } from '../bridge/events';
@@ -12,7 +12,8 @@ const LS_LAST_FILE = 'logtapper_last_file';
 
 export interface LogViewerState {
   session: LoadResult | null;
-  lineCache: Map<number, ViewLine>;
+  /** Streaming-only cache: holds lines received via ADB batch events. */
+  streamCache: Map<number, ViewLine>;
   search: SearchQuery | null;
   searchSummary: SearchSummary | null;
   currentMatchIndex: number;
@@ -33,8 +34,8 @@ export interface LogViewerState {
    * line number. null means no filter (show all lines).
    */
   filteredLineNums: number[] | null;
-  /** Maximum frontend cache size in lines (0 = unlimited). */
-  cacheMax: number;
+  /** Maximum streaming cache size in lines (0 = unlimited). */
+  streamBufferMax: number;
   /** Non-null while background file indexing is in progress. */
   indexingProgress: { percent: number; indexedLines: number } | null;
   /** Current time range filter start ("HH:MM"), empty = not set */
@@ -52,7 +53,8 @@ export interface LogViewerState {
   stopStream: () => Promise<void>;
   setStreamFilter: (expr: string) => Promise<void>;
   setTimeFilter: (start: string, end: string) => Promise<void>;
-  handleFetchNeeded: (offset: number, count: number) => void;
+  /** Fetch lines from backend for file mode. Returns a LineWindow. */
+  fetchLines: (offset: number, count: number) => Promise<LineWindow>;
   handleSearch: (query: SearchQuery | null) => void;
   jumpToMatch: (direction: 1 | -1) => void;
   jumpToLine: (lineNum: number) => void;
@@ -63,12 +65,11 @@ export interface LogViewerState {
 }
 
 /**
- * @param frontendCacheMax - Maximum number of ViewLine entries kept in the
- *   frontend lineCache. When exceeded, the oldest entries (lowest lineNum) are
- *   evicted. 0 = unlimited. Updated via useEffect so changes take effect on the
- *   next streaming batch.
+ * @param streamCacheMax - Maximum number of ViewLine entries kept in the
+ *   streaming cache. When exceeded, the oldest entries (lowest lineNum) are
+ *   evicted. 0 = unlimited. Only applies during ADB streaming.
  */
-export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: () => void): LogViewerState {
+export function useLogViewer(streamCacheMax: number = 50_000, onBeforeLoad?: () => void): LogViewerState {
   const [session, setSession] = useState<LoadResult | null>(null);
   const [search, setSearch] = useState<SearchQuery | null>(null);
   const [searchSummary, setSearchSummary] = useState<SearchSummary | null>(null);
@@ -89,19 +90,14 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
   const timeStartRef = useRef('');
   const timeEndRef = useRef('');
 
-  // Cache version triggers re-renders when lineCacheRef is mutated (file fetch path).
-  const [, setCacheVersion] = useState(0);
-
-  // Track in-flight fetch requests to avoid duplicates
-  const pendingFetches = useRef<Set<string>>(new Set());
   const sessionRef = useRef<LoadResult | null>(null);
   const searchRef = useRef<SearchQuery | null>(null);
   const processorIdRef = useRef<string | null>(null);
   const isStreamingRef = useRef(false);
 
-  // Keep frontendCacheMax in a ref so handleAdbBatch (stable callback) reads the latest value.
-  const frontendCacheMaxRef = useRef(frontendCacheMax);
-  useEffect(() => { frontendCacheMaxRef.current = frontendCacheMax; }, [frontendCacheMax]);
+  // Keep streamCacheMax in a ref so handleAdbBatch (stable callback) reads the latest value.
+  const streamCacheMaxRef = useRef(streamCacheMax);
+  useEffect(() => { streamCacheMaxRef.current = streamCacheMax; }, [streamCacheMax]);
 
   // Keep onBeforeLoad in a ref so loadFile (stable callback) sees the latest value.
   const onBeforeLoadRef = useRef(onBeforeLoad);
@@ -112,12 +108,9 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
   const packagePidsRef = useRef<Map<string, number[]>>(new Map());
   const streamDeviceSerialRef = useRef<string | null>(null);
 
-  // Mutable lineCache backing store — never replaced during streaming batches,
-  // only mutated in place. This eliminates the O(N) new Map(prev) copy every 50 ms.
-  // Re-renders are triggered by:
-  //   • setSession()  — streaming batch path (updates totalLines + file info)
-  //   • setCacheVersion() — file fetch path (no session update needed)
-  const lineCacheRef = useRef<Map<number, ViewLine>>(new Map());
+  // Streaming-only cache — holds lines from ADB batch events.
+  // Not used in file mode; file mode fetches directly from the backend.
+  const streamCacheRef = useRef<Map<number, ViewLine>>(new Map());
 
   // ADB event unlisteners
   const adbBatchUnlistenRef = useRef<UnlistenFn | null>(null);
@@ -136,15 +129,13 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
   }, []);
 
   const resetSessionState = useCallback(() => {
-    lineCacheRef.current = new Map<number, ViewLine>();
-    setCacheVersion((v) => v + 1);
+    streamCacheRef.current = new Map<number, ViewLine>();
     setSearch(null);
     searchRef.current = null;
     setSearchSummary(null);
     setCurrentMatchIndex(0);
     setProcessorId(null);
     processorIdRef.current = null;
-    pendingFetches.current.clear();
     // Reset filter state
     setStreamFilterExpr('');
     setFilterParseError(null);
@@ -162,14 +153,14 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
   const handleAdbBatch = useCallback((payload: AdbBatchPayload) => {
     if (payload.sessionId !== sessionRef.current?.sessionId) return;
 
-    // Mutate lineCache in place — no O(N) copy.
-    const cache = lineCacheRef.current;
+    // Mutate streaming cache in place — no O(N) copy.
+    const cache = streamCacheRef.current;
     for (const line of payload.lines) {
       cache.set(line.virtualIndex ?? line.lineNum, line);
     }
 
-    // Evict oldest entries if over the frontend cap (Map iteration is insertion-ordered).
-    const cap = frontendCacheMaxRef.current;
+    // Evict oldest entries if over the streaming cap (Map iteration is insertion-ordered).
+    const cap = streamCacheMaxRef.current;
     if (cap > 0 && cache.size > cap) {
       let toEvict = cache.size - cap;
       for (const key of cache.keys()) {
@@ -207,7 +198,7 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
 
   /**
    * Parse and apply a composable filter expression.
-   * Resolves any package: atoms to PIDs via adb, then scans the full lineCache
+   * Resolves any package: atoms to PIDs via adb, then scans the streaming cache
    * to produce an initial filteredLineNums array.  Subsequent batches are
    * filtered incrementally in handleAdbBatch.
    */
@@ -257,10 +248,10 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
       await Promise.all(resolvePromises);
     }
 
-    // Full scan of current cache to build initial filtered list
+    // Full scan of current streaming cache to build initial filtered list
     const pids = packagePidsRef.current;
     const nums: number[] = [];
-    for (const [lineNum, line] of lineCacheRef.current) {
+    for (const [lineNum, line] of streamCacheRef.current) {
       if (matchesFilter(ast, line, pids)) nums.push(lineNum);
     }
     nums.sort((a, b) => a - b);
@@ -304,6 +295,30 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
     }
   }, []);
 
+  /**
+   * Fetch lines from the backend for file mode rendering.
+   * Wraps the bridge getLines() with current session/mode/processor/search context.
+   */
+  const fetchLines = useCallback((offset: number, count: number): Promise<LineWindow> => {
+    const sess = sessionRef.current;
+    if (!sess) return Promise.resolve({ totalLines: 0, lines: [] });
+
+    const pid = processorIdRef.current;
+    const mode = pid
+      ? { mode: 'Processor' as const }
+      : { mode: 'Full' as const };
+
+    return getLines({
+      sessionId: sess.sessionId,
+      mode,
+      offset,
+      count: Math.min(count, WINDOW_SIZE),
+      context: 3,
+      processorId: pid ?? undefined,
+      search: searchRef.current ?? undefined,
+    });
+  }, []);
+
   const loadFile = useCallback(async (path: string) => {
     // Let the caller (App.tsx) clear app-level state (metadata, sections, etc.)
     onBeforeLoadRef.current?.();
@@ -326,20 +341,8 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
       sessionRef.current = result;
       // Persist the file path so we can reopen it on next launch.
       try { localStorage.setItem(LS_LAST_FILE, path); } catch { /* storage full */ }
-      // Show the viewer immediately — the virtualizer will fetch visible rows naturally.
+      // Show the viewer immediately — LogViewer will fetch visible rows on demand.
       setLoading(false);
-      // Warm the cache for the first window in the background (best-effort, no await).
-      getLines({
-        sessionId: result.sessionId,
-        mode: { mode: 'Full' },
-        offset: 0,
-        count: WINDOW_SIZE,
-        context: 0,
-      }).then((first) => {
-        if (sessionRef.current?.sessionId !== result.sessionId) return;
-        for (const line of first.lines) lineCacheRef.current.set(line.virtualIndex ?? line.lineNum, line);
-        setCacheVersion((v) => v + 1);
-      }).catch(() => { /* ignore — virtualizer will retry */ });
     } catch (e) {
       // Clear saved path if the file can't be loaded (deleted/moved)
       try { localStorage.removeItem(LS_LAST_FILE); } catch { /* ignore */ }
@@ -484,80 +487,6 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
     isStreamingRef.current = false;
   }, []);
 
-  const handleFetchNeeded = useCallback(
-    (offset: number, count: number) => {
-      // Skip file fetches during active streaming — all lines arrive via batch events.
-      if (isStreamingRef.current) return;
-
-      const sess = sessionRef.current;
-      if (!sess) return;
-      const pid = processorIdRef.current;
-      const key = `${pid ?? 'full'}:${offset}:${count}`;
-      if (pendingFetches.current.has(key)) return;
-      pendingFetches.current.add(key);
-
-      const mode = pid
-        ? { mode: 'Processor' as const }
-        : { mode: 'Full' as const };
-
-      // Capture session ID now; discard results if session changes before response arrives.
-      const sessionId = sess.sessionId;
-      getLines({
-        sessionId,
-        mode,
-        offset,
-        count: Math.min(count, WINDOW_SIZE),
-        context: 3,
-        processorId: pid ?? undefined,
-        search: searchRef.current ?? undefined,
-      })
-        .then((window) => {
-          // Guard: discard stale results from a previous session (e.g. in-flight
-          // file fetches that complete after a stream session has replaced the file).
-          if (sessionRef.current?.sessionId !== sessionId) return;
-
-          // Self-correct totalLines: backend is authoritative. If file-index-complete
-          // was missed (timing / lifecycle race), this ensures the virtualizer count
-          // eventually catches up to the true line count.
-          setSession((prev) => {
-            if (!prev || prev.sessionId !== sessionId) return prev;
-            if (window.totalLines <= (prev.totalLines ?? 0)) return prev;
-            return { ...prev, totalLines: window.totalLines };
-          });
-          for (const line of window.lines) lineCacheRef.current.set(line.virtualIndex ?? line.lineNum, line);
-          // Evict oldest entries if over the cap (same ring-buffer logic as streaming).
-          const cap = frontendCacheMaxRef.current;
-          if (cap > 0 && lineCacheRef.current.size > cap) {
-            let toEvict = lineCacheRef.current.size - cap;
-            for (const key of lineCacheRef.current.keys()) {
-              if (toEvict <= 0) break;
-              lineCacheRef.current.delete(key);
-              toEvict--;
-            }
-          }
-          // Re-apply active filter to newly fetched lines (file session incremental filter).
-          const ast = filterAstRef.current;
-          if (ast) {
-            const pids = packagePidsRef.current;
-            const newMatches = window.lines
-              .filter((line) => matchesFilter(ast, line, pids))
-              .map((line) => line.lineNum);
-            if (newMatches.length > 0) {
-              setFilteredLineNums((prev) => {
-                const merged = [...(prev ?? []), ...newMatches];
-                merged.sort((a, b) => a - b);
-                return merged;
-              });
-            }
-          }
-          setCacheVersion((v) => v + 1);
-        })
-        .catch(console.error)
-        .finally(() => pendingFetches.current.delete(key));
-    },
-    [],
-  );
-
   const handleSearch = useCallback(
     async (query: SearchQuery | null) => {
       const sess = sessionRef.current;
@@ -571,8 +500,6 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
 
       if (!sess || !query) {
         setSearchSummary(null);
-        lineCacheRef.current = new Map();
-        setCacheVersion((v) => v + 1);
         return;
       }
 
@@ -620,8 +547,6 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
           setScrollToLine(summary.matchLineNums[0]);
           setJumpSeq((s) => s + 1);
         }
-        lineCacheRef.current = new Map();
-        setCacheVersion((v) => v + 1);
       } catch (e) {
         console.error('Search error:', e);
       } finally {
@@ -665,17 +590,11 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
   const setProcessorView = useCallback((id: string) => {
     setProcessorId(id);
     processorIdRef.current = id;
-    lineCacheRef.current = new Map();
-    setCacheVersion((v) => v + 1);
-    pendingFetches.current.clear();
   }, []);
 
   const clearProcessorView = useCallback(() => {
     setProcessorId(null);
     processorIdRef.current = null;
-    lineCacheRef.current = new Map();
-    setCacheVersion((v) => v + 1);
-    pendingFetches.current.clear();
   }, []);
 
   const closeSession = useCallback(async () => {
@@ -710,7 +629,7 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
 
   return {
     session,
-    lineCache: lineCacheRef.current,
+    streamCache: streamCacheRef.current,
     search,
     searchSummary,
     currentMatchIndex,
@@ -723,7 +642,7 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
     streamFilter,
     filterParseError,
     filteredLineNums,
-    cacheMax: frontendCacheMax,
+    streamBufferMax: streamCacheMax,
     indexingProgress,
     timeStart,
     timeEnd,
@@ -733,7 +652,7 @@ export function useLogViewer(frontendCacheMax: number = 50_000, onBeforeLoad?: (
     stopStream,
     setStreamFilter,
     setTimeFilter,
-    handleFetchNeeded,
+    fetchLines,
     handleSearch,
     jumpToMatch,
     jumpToLine,
