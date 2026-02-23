@@ -142,6 +142,17 @@ pub fn run() {
             commands::filter::cancel_filter,
             commands::filter::get_filter_info,
             commands::filter::close_filter,
+            // Phase 2 — Bookmark commands
+            commands::bookmark::create_bookmark,
+            commands::bookmark::list_bookmarks,
+            commands::bookmark::update_bookmark,
+            commands::bookmark::delete_bookmark,
+            // Phase 2 — Analysis commands
+            commands::analysis::publish_analysis,
+            commands::analysis::update_analysis,
+            commands::analysis::list_analyses,
+            commands::analysis::get_analysis,
+            commands::analysis::delete_analysis,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

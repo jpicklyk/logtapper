@@ -480,3 +480,61 @@ export interface SessionMetadata {
   logLevelDistribution: Record<string, number>;
   topTags: TagCount[];
 }
+
+// ---------------------------------------------------------------------------
+// Bookmark types (Phase 2)
+// ---------------------------------------------------------------------------
+
+export type CreatedBy = 'User' | 'Agent';
+
+export interface Bookmark {
+  id: string;
+  sessionId: string;
+  lineNumber: number;
+  label: string;
+  note: string;
+  createdBy: CreatedBy;
+  createdAt: number;
+}
+
+export interface BookmarkUpdateEvent {
+  sessionId: string;
+  action: 'created' | 'updated' | 'deleted';
+  bookmark: Bookmark;
+}
+
+// ---------------------------------------------------------------------------
+// Analysis types (Phase 2)
+// ---------------------------------------------------------------------------
+
+export type HighlightTypeAnnotation = 'Annotation' | 'Anchor';
+
+export type AnalysisSeverity = 'Info' | 'Warning' | 'Error' | 'Critical';
+
+export interface SourceReference {
+  lineNumber: number;
+  endLine: number | null;
+  label: string;
+  highlightType: HighlightTypeAnnotation;
+}
+
+export interface AnalysisSection {
+  heading: string;
+  body: string;
+  references: SourceReference[];
+  severity: AnalysisSeverity | null;
+}
+
+export interface AnalysisArtifact {
+  id: string;
+  sessionId: string;
+  title: string;
+  createdAt: number;
+  sections: AnalysisSection[];
+}
+
+export interface AnalysisUpdateEvent {
+  sessionId: string;
+  action: 'published' | 'updated' | 'deleted';
+  artifactId: string;
+}

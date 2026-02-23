@@ -1,3 +1,5 @@
+pub mod analysis;
+pub mod bookmark;
 pub mod bugreport_parser;
 pub mod filter;
 pub mod index;

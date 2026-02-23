@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { AdbBatchPayload, AdbProcessorUpdate, AdbStreamStopped, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress } from './types';
+import type { AdbBatchPayload, AdbProcessorUpdate, AdbStreamStopped, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress, BookmarkUpdateEvent, AnalysisUpdateEvent } from './types';
 
 // ---------------------------------------------------------------------------
 // ADB streaming events
@@ -103,5 +103,25 @@ export function onFilterProgress(
   cb: (payload: FilterProgress) => void,
 ): Promise<UnlistenFn> {
   return listen<FilterProgress>('filter-progress', (e) => cb(e.payload));
+}
+
+// ---------------------------------------------------------------------------
+// Bookmark update events (Phase 2)
+// ---------------------------------------------------------------------------
+
+export function onBookmarkUpdate(
+  cb: (payload: BookmarkUpdateEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<BookmarkUpdateEvent>('bookmark-update', (e) => cb(e.payload));
+}
+
+// ---------------------------------------------------------------------------
+// Analysis update events (Phase 2)
+// ---------------------------------------------------------------------------
+
+export function onAnalysisUpdate(
+  cb: (payload: AnalysisUpdateEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<AnalysisUpdateEvent>('analysis-update', (e) => cb(e.payload));
 }
 

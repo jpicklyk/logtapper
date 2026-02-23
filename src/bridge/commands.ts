@@ -25,6 +25,10 @@ import type {
   FilteredLinesResult,
   FilterInfo,
   SessionMetadata,
+  Bookmark,
+  CreatedBy,
+  AnalysisArtifact,
+  AnalysisSection,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -300,4 +304,78 @@ export function closeFilter(filterId: string): Promise<void> {
 
 export function getSessionMetadata(sessionId: string): Promise<SessionMetadata> {
   return invoke('get_session_metadata', { sessionId });
+}
+
+// ---------------------------------------------------------------------------
+// Bookmark commands (Phase 2)
+// ---------------------------------------------------------------------------
+
+export function createBookmark(
+  sessionId: string,
+  lineNumber: number,
+  label: string,
+  note: string,
+  createdBy: CreatedBy,
+): Promise<Bookmark> {
+  return invoke('create_bookmark', { sessionId, lineNumber, label, note, createdBy });
+}
+
+export function listBookmarks(sessionId: string): Promise<Bookmark[]> {
+  return invoke('list_bookmarks', { sessionId });
+}
+
+export function updateBookmark(
+  sessionId: string,
+  bookmarkId: string,
+  label?: string,
+  note?: string,
+): Promise<Bookmark> {
+  return invoke('update_bookmark', {
+    sessionId,
+    bookmarkId,
+    label: label ?? null,
+    note: note ?? null,
+  });
+}
+
+export function deleteBookmark(sessionId: string, bookmarkId: string): Promise<void> {
+  return invoke('delete_bookmark', { sessionId, bookmarkId });
+}
+
+// ---------------------------------------------------------------------------
+// Analysis commands (Phase 2)
+// ---------------------------------------------------------------------------
+
+export function publishAnalysis(
+  sessionId: string,
+  title: string,
+  sections: AnalysisSection[],
+): Promise<AnalysisArtifact> {
+  return invoke('publish_analysis', { sessionId, title, sections });
+}
+
+export function updateAnalysis(
+  sessionId: string,
+  artifactId: string,
+  title?: string,
+  sections?: AnalysisSection[],
+): Promise<AnalysisArtifact> {
+  return invoke('update_analysis', {
+    sessionId,
+    artifactId,
+    title: title ?? null,
+    sections: sections ?? null,
+  });
+}
+
+export function listAnalyses(sessionId: string): Promise<AnalysisArtifact[]> {
+  return invoke('list_analyses', { sessionId });
+}
+
+export function getAnalysis(sessionId: string, artifactId: string): Promise<AnalysisArtifact> {
+  return invoke('get_analysis', { sessionId, artifactId });
+}
+
+export function deleteAnalysis(sessionId: string, artifactId: string): Promise<void> {
+  return invoke('delete_analysis', { sessionId, artifactId });
 }

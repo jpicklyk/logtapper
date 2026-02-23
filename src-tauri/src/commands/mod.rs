@@ -9,11 +9,15 @@ use crate::processors::AnyProcessor;
 use crate::processors::interpreter::{ContinuousRunState, RunResult};
 use crate::processors::state_tracker::types::{StateTrackerResult, ContinuousTrackerState};
 use crate::processors::transformer::types::ContinuousTransformerState;
+use crate::core::analysis::AnalysisArtifact;
+use crate::core::bookmark::Bookmark;
 use crate::core::filter::FilterSession;
 use crate::processors::correlator::engine::CorrelatorResult;
 
 pub mod adb;
+pub mod analysis;
 pub mod anonymizer;
+pub mod bookmark;
 pub mod charts;
 pub mod claude;
 pub mod correlator;
@@ -73,6 +77,10 @@ pub struct AppState {
     pub pipeline_cancel: Arc<AtomicBool>,
     /// Active filter sessions: filterId -> FilterSession.
     pub active_filters: Mutex<HashMap<String, Arc<FilterSession>>>,
+    /// Bookmarks: sessionId -> Vec<Bookmark>.
+    pub bookmarks: Mutex<HashMap<String, Vec<Bookmark>>>,
+    /// Analysis artifacts: sessionId -> Vec<AnalysisArtifact>.
+    pub analyses: Mutex<HashMap<String, Vec<AnalysisArtifact>>>,
 }
 
 impl Default for AppState {
@@ -109,6 +117,8 @@ impl AppState {
             correlator_results: Mutex::new(HashMap::new()),
             pipeline_cancel: Arc::new(AtomicBool::new(false)),
             active_filters: Mutex::new(HashMap::new()),
+            bookmarks: Mutex::new(HashMap::new()),
+            analyses: Mutex::new(HashMap::new()),
         }
     }
 }

@@ -47,5 +47,8 @@ smallvec = "1"
 # MCP bridge — local HTTP server for AI agent tool access
 axum = "0.8"
 
+# Phase 2: Bookmarks + Analysis
+uuid = { version = "1", features = ["v4"] }
+
 # Window state persistence (saves position/size across restarts)
 tauri-plugin-window-state = "2"

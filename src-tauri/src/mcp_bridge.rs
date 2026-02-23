@@ -13,7 +13,7 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State},
     middleware,
-    routing::get,
+    routing::{delete, get},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -64,6 +64,12 @@ pub async fn start(handle: Handle) {
         .route("/mcp/sessions/{session_id}/search_with_context", get(h_search_with_context))
         .route("/mcp/processors", get(h_processor_defs_list))
         .route("/mcp/processors/{processor_id}", get(h_processor_defs_single))
+        // Phase 2 — Bookmarks
+        .route("/mcp/sessions/{session_id}/bookmarks", get(h_list_bookmarks).post(h_create_bookmark))
+        .route("/mcp/sessions/{session_id}/bookmarks/{bookmark_id}", delete(h_delete_bookmark))
+        // Phase 2 — Analysis artifacts
+        .route("/mcp/sessions/{session_id}/analyses", get(h_list_analyses).post(h_publish_analysis))
+        .route("/mcp/sessions/{session_id}/analyses/{artifact_id}", get(h_get_analysis).put(h_update_analysis).delete(h_delete_analysis))
         .layer(middleware::from_fn_with_state(handle.clone(), record_activity))
         .with_state(handle.clone());
 
@@ -1576,6 +1582,272 @@ async fn h_search_with_context(
         "totalLinesInSession": total,
         "matches": results,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// Bookmark endpoints
+// ---------------------------------------------------------------------------
+
+async fn h_list_bookmarks(
+    State(handle): State<Handle>,
+    Path(session_id): Path<String>,
+) -> Json<Value> {
+    let state = handle.state::<AppState>();
+    let bookmarks = state.bookmarks.lock().unwrap();
+    let list = bookmarks.get(&session_id).cloned().unwrap_or_default();
+    Json(json!(list))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateBookmarkBody {
+    line_number: u32,
+    #[serde(default)]
+    label: String,
+    #[serde(default)]
+    note: String,
+}
+
+async fn h_create_bookmark(
+    State(handle): State<Handle>,
+    Path(session_id): Path<String>,
+    Json(body): Json<CreateBookmarkBody>,
+) -> Json<Value> {
+    use crate::core::bookmark::{Bookmark, BookmarkUpdateEvent, CreatedBy};
+
+    let state = handle.state::<AppState>();
+
+    // Verify session exists
+    {
+        let sessions = state.sessions.lock().unwrap();
+        if !sessions.contains_key(&session_id) {
+            return Json(json!({"error": format!("Session not found: {session_id}")}));
+        }
+    }
+
+    let bookmark = Bookmark {
+        id: uuid::Uuid::new_v4().to_string(),
+        session_id: session_id.clone(),
+        line_number: body.line_number,
+        label: body.label,
+        note: body.note,
+        created_by: CreatedBy::Agent,
+        created_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64,
+    };
+
+    {
+        let mut bookmarks = state.bookmarks.lock().unwrap();
+        bookmarks
+            .entry(session_id.clone())
+            .or_default()
+            .push(bookmark.clone());
+    }
+
+    use tauri::Emitter;
+    let _ = handle.emit(
+        "bookmark-update",
+        BookmarkUpdateEvent {
+            session_id,
+            action: "created".to_string(),
+            bookmark: bookmark.clone(),
+        },
+    );
+
+    Json(json!(bookmark))
+}
+
+async fn h_delete_bookmark(
+    State(handle): State<Handle>,
+    Path((session_id, bookmark_id)): Path<(String, String)>,
+) -> Json<Value> {
+    use crate::core::bookmark::BookmarkUpdateEvent;
+
+    let state = handle.state::<AppState>();
+    let mut bookmarks = state.bookmarks.lock().unwrap();
+
+    if let Some(list) = bookmarks.get_mut(&session_id) {
+        if let Some(idx) = list.iter().position(|b| b.id == bookmark_id) {
+            let removed = list.remove(idx);
+            drop(bookmarks);
+
+            use tauri::Emitter;
+            let _ = handle.emit(
+                "bookmark-update",
+                BookmarkUpdateEvent {
+                    session_id,
+                    action: "deleted".to_string(),
+                    bookmark: removed,
+                },
+            );
+
+            return Json(json!({"ok": true}));
+        }
+    }
+
+    Json(json!({"error": format!("Bookmark not found: {bookmark_id}")}))
+}
+
+// ---------------------------------------------------------------------------
+// Analysis endpoints
+// ---------------------------------------------------------------------------
+
+async fn h_list_analyses(
+    State(handle): State<Handle>,
+    Path(session_id): Path<String>,
+) -> Json<Value> {
+    let state = handle.state::<AppState>();
+    let analyses = state.analyses.lock().unwrap();
+    let list = analyses.get(&session_id).cloned().unwrap_or_default();
+    Json(json!(list))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PublishAnalysisBody {
+    title: String,
+    sections: Vec<crate::core::analysis::AnalysisSection>,
+}
+
+async fn h_publish_analysis(
+    State(handle): State<Handle>,
+    Path(session_id): Path<String>,
+    Json(body): Json<PublishAnalysisBody>,
+) -> Json<Value> {
+    use crate::core::analysis::{AnalysisArtifact, AnalysisUpdateEvent};
+
+    let state = handle.state::<AppState>();
+
+    // Verify session exists
+    {
+        let sessions = state.sessions.lock().unwrap();
+        if !sessions.contains_key(&session_id) {
+            return Json(json!({"error": format!("Session not found: {session_id}")}));
+        }
+    }
+
+    let artifact = AnalysisArtifact {
+        id: uuid::Uuid::new_v4().to_string(),
+        session_id: session_id.clone(),
+        title: body.title,
+        created_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64,
+        sections: body.sections,
+    };
+
+    {
+        let mut analyses = state.analyses.lock().unwrap();
+        analyses
+            .entry(session_id.clone())
+            .or_default()
+            .push(artifact.clone());
+    }
+
+    use tauri::Emitter;
+    let _ = handle.emit(
+        "analysis-update",
+        AnalysisUpdateEvent {
+            session_id,
+            action: "published".to_string(),
+            artifact_id: artifact.id.clone(),
+        },
+    );
+
+    Json(json!(artifact))
+}
+
+async fn h_get_analysis(
+    State(handle): State<Handle>,
+    Path((session_id, artifact_id)): Path<(String, String)>,
+) -> Json<Value> {
+    let state = handle.state::<AppState>();
+    let analyses = state.analyses.lock().unwrap();
+    if let Some(list) = analyses.get(&session_id) {
+        if let Some(art) = list.iter().find(|a| a.id == artifact_id) {
+            return Json(json!(art));
+        }
+    }
+    Json(json!({"error": format!("Analysis not found: {artifact_id}")}))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateAnalysisBody {
+    title: Option<String>,
+    sections: Option<Vec<crate::core::analysis::AnalysisSection>>,
+}
+
+async fn h_update_analysis(
+    State(handle): State<Handle>,
+    Path((session_id, artifact_id)): Path<(String, String)>,
+    Json(body): Json<UpdateAnalysisBody>,
+) -> Json<Value> {
+    use crate::core::analysis::AnalysisUpdateEvent;
+
+    let state = handle.state::<AppState>();
+    let mut analyses = state.analyses.lock().unwrap();
+
+    if let Some(list) = analyses.get_mut(&session_id) {
+        if let Some(art) = list.iter_mut().find(|a| a.id == artifact_id) {
+            if let Some(t) = body.title {
+                art.title = t;
+            }
+            if let Some(s) = body.sections {
+                art.sections = s;
+            }
+            let updated = art.clone();
+            drop(analyses);
+
+            use tauri::Emitter;
+            let _ = handle.emit(
+                "analysis-update",
+                AnalysisUpdateEvent {
+                    session_id,
+                    action: "updated".to_string(),
+                    artifact_id: updated.id.clone(),
+                },
+            );
+
+            return Json(json!(updated));
+        }
+    }
+
+    Json(json!({"error": format!("Analysis not found: {artifact_id}")}))
+}
+
+async fn h_delete_analysis(
+    State(handle): State<Handle>,
+    Path((session_id, artifact_id)): Path<(String, String)>,
+) -> Json<Value> {
+    use crate::core::analysis::AnalysisUpdateEvent;
+
+    let state = handle.state::<AppState>();
+    let mut analyses = state.analyses.lock().unwrap();
+
+    if let Some(list) = analyses.get_mut(&session_id) {
+        if let Some(idx) = list.iter().position(|a| a.id == artifact_id) {
+            list.remove(idx);
+            drop(analyses);
+
+            use tauri::Emitter;
+            let _ = handle.emit(
+                "analysis-update",
+                AnalysisUpdateEvent {
+                    session_id,
+                    action: "deleted".to_string(),
+                    artifact_id,
+                },
+            );
+
+            return Json(json!({"ok": true}));
+        }
+    }
+
+    Json(json!({"error": format!("Analysis not found: {artifact_id}")}))
 }
 
 // ---------------------------------------------------------------------------
