@@ -5,7 +5,7 @@ import LogLine from './LogLine';
 
 const LINE_HEIGHT = 22; // px — monospace, single line
 const OVERSCAN = 10;
-const FETCH_THRESHOLD = 150; // fetch when within this many lines of window edge
+const FETCH_THRESHOLD = 2000; // lines to pre-fetch beyond visible range (each side)
 const AT_BOTTOM_THRESHOLD = 60; // px from bottom to consider "at bottom"
 
 // Chrome/Edge cap their DOM scrollHeight at 2^25 px. Beyond this the native
