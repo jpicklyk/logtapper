@@ -10,9 +10,9 @@ Every public function in this directory is a `#[tauri::command]` registered in `
 2. **Never hold `sessions` while trying to acquire `pipeline_results`** (or vice versa) — that lock ordering is undefined and could deadlock.
 3. Lock with `state.foo.lock().map_err(|_| "lock poisoned")?` — propagate poison as a command error.
 
-### Lock-per-line pattern in `pipeline.rs`
+### Source snapshot pattern in `pipeline.rs`
 
-`run_pipeline` re-acquires `sessions` for every line in the main loop (line ~96). This is intentional and correct, but coarse. The comment explains: the mmap stays valid for the session lifetime, so a copy of the raw bytes is cheap. A future optimization would clone the whole `LogSource` arc before the loop.
+`run_pipeline` snapshots the session source data (mmap + line index via `SourceSnapshot`) once before the processing loop. No locks are held during pipeline execution. Processing happens in 50,000-line chunks with a three-level pre-filter (tag union, Aho-Corasick, RegexSet) to skip irrelevant lines before parsing. Layer 2 processors run in parallel via `rayon::scope` (one task per processor).
 
 ## Command inventory
 
@@ -36,7 +36,7 @@ Every public function in this directory is a `#[tauri::command]` registered in `
 
 ## Events emitted by commands
 
-- `pipeline-progress` — emitted by `pipeline.rs` every 5,000 lines and on final line.  
+- `pipeline-progress` — emitted by `pipeline.rs` once per 50,000-line chunk.  
   Payload: `{ processorId, linesProcessed, totalLines, percent }` (camelCase).
 - `claude-stream` — emitted by `claude/client.rs` for each SSE token.  
   Payload: `{ kind: "text"|"done"|"error", text?, error? }`.

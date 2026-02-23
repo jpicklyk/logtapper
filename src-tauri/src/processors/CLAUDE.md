@@ -27,7 +27,7 @@ The sample YAML in `schema.rs` tests and the full schema in `claude/generator.rs
 ProcessorRun::new(def)        — creates VarStore from def.vars defaults; no Rhai engine yet
 ProcessorRun::process_line()  — called once per log line:
   1. Filter stage  — all rules ANDed; any failure short-circuits (returns early)
-  2. Extract stage — regex captures stored in per-line `fields` HashMap
+  2. Extract stage — regex captures stored in per-line `fields` SmallVec<[(String, JsonValue); 4]>
   3. Script stage  — Rhai executes; fields/vars/emissions updated
   4. Aggregate stage — declarative counters (Count, CountBy, etc.)
   (lines that pass all stages are added to matched_line_nums)

@@ -2,7 +2,7 @@
 
 ## What scripts see
 
-Scripts receive a Rhai scope built in `bridge.rs:build_scope()`. Four variables are always available:
+Scripts receive a Rhai scope built once via `bridge.rs:build_scope()` and updated in-place on subsequent lines via `update_scope()`. The `vars` map persists across lines without rebuilding; only `line`, `fields`, and `_emits` are refreshed per invocation. Four variables are always available:
 
 | Variable | Rhai type | Access | Contents |
 |---|---|---|---|

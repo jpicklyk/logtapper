@@ -5,7 +5,7 @@
 | Type | Where used | What it contains |
 |---|---|---|
 | `LineMeta` | Stored permanently in `LogSource.line_meta` | level, tag, timestamp, byte_offset, byte_len. Lightweight — one per indexed line. |
-| `LineContext` | Created on-demand during pipeline runs and `get_lines` | Full parsed content: raw, level, tag, pid, tid, message, source_id, source_line_num, fields. |
+| `LineContext` | Created on-demand during pipeline runs and `get_lines` | Full parsed content: raw (`Arc<str>`), level, tag (`Arc<str>`), pid, tid, message (`Arc<str>`), source_id (`Arc<str>`), source_line_num, fields. String fields use `Arc<str>` for cheap cloning across processors. |
 
 `parse_meta()` is called once during file load (indexing). `parse_line()` is called at read time (pipeline, viewer). Both methods on `LogParser` must stay consistent — they parse the same bytes, just at different times.
 

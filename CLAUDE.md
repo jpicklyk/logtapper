@@ -181,7 +181,7 @@ To add a command: implement in `commands/*.rs`, register in `src-tauri/src/lib.r
 
 | Event | Emitted by | Payload | Timing |
 |---|---|---|---|
-| `pipeline-progress` | `pipeline.rs` | `{ processorId, linesProcessed, totalLines, percent }` | Every 5,000 lines + final |
+| `pipeline-progress` | `pipeline.rs` | `{ processorId, linesProcessed, totalLines, percent }` | Once per 50,000-line chunk |
 | `claude-stream` | `claude/client.rs` | `{ kind: "text"\|"done"\|"error", text?, error? }` | Per SSE token |
 | `adb-batch` | `adb.rs` flush_batch | `{ sessionId, lines: ViewLine[], totalLines, byteCount, firstTimestamp, lastTimestamp }` | Every 50ms or 100 lines |
 | `adb-processor-update` | `adb.rs` flush_batch | `{ sessionId, processorId, matchedLines, emissionCount }` | Per-batch, per reporter |
@@ -205,16 +205,22 @@ To add a command: implement in `commands/*.rs`, register in `src-tauri/src/lib.r
 Both `run_pipeline` (file mode) and `flush_batch` (streaming) follow the same layered model:
 
 ```
-Raw lines → parse → LineContext
+Raw lines ─► Pre-filter (tag union, Aho-Corasick, RegexSet) ─► skip unneeded lines
+    │
+    ▼ Parse (only lines that pass pre-filter) → LineContext
     │
     ▼ Layer 1: Transformers (sequential per line)
     │   Modifies message/fields; may drop line (returns None)
     │   Built-in: PII Anonymizer
-    ▼ Layer 2a: StateTrackers (parallel across trackers)
-    │   Records StateTransitions; queryable by line_num
-    ▼ Layer 2b: Reporters (parallel across reporters)
-        Filter / Extract / Script / Aggregate
+    ▼ Layer 2a/2b/2c: rayon::scope — one task per processor, each iterates all lines
+    │   2a: StateTrackers — records StateTransitions
+    │   2b: Reporters — Filter / Extract / Script / Aggregate
+    │   2c: Correlators — cross-source event matching
 ```
+
+**Pre-filter design (pipeline.rs):** Before parsing, `quick_extract_tag()` (~10ns byte scan) and Aho-Corasick/RegexSet check whether any Layer 2 processor could match the line. Lines that fail are skipped entirely (not parsed, not transformed). **Transformers are excluded from pre-filter consideration** — they run in Layer 1 on all parsed lines but only narrow (never broaden) what reaches Layer 2. Including them would set `has_unfiltered=true` and disable the entire pre-filter (e.g., `__pii_anonymizer` has no tag filter).
+
+**Parallelism model:** `rayon::scope` spawns one task per processor (not per line). Each processor iterates all lines in the chunk sequentially, giving full cache locality. This replaced the old per-line `par_iter_mut` dispatch which had excessive scheduling overhead.
 
 ### Frontend hook ownership
 
@@ -273,6 +279,8 @@ setTrackerStates((prev) => {
 - Multiple filter rules are AND-ed. For OR logic, use `message_regex: "foo|bar"` or `message_contains_any: [...]`.
 - `validate_for_install()` only validates Rhai syntax — invalid filter regexes pass install but silently produce 0 matches at runtime.
 - Clippy: `impl Default for Foo` where the body only calls field defaults → replace with `#[derive(Default)]`.
+- **Pre-filter and transformers:** `collect_tag_filters()` must exclude transformers. Transformers run in Layer 1 on all lines and only narrow what reaches Layer 2. If a transformer (e.g., `__pii_anonymizer`) has no tag filter, including it sets `has_unfiltered=true` and disables the entire pre-filter, negating the optimization.
+- `LineContext` string fields (`raw`, `tag`, `message`, `source_id`) are `Arc<str>`, not `String`. Use `Arc::from(s)` to construct, `&*field` or `.as_ref()` for `&str` access, and `.to_string()` when an owned `String` is needed (e.g., Rhai scope, IPC boundaries).
 
 ### React StrictMode + async event listeners (CRITICAL)
 
