@@ -1,6 +1,7 @@
 import { useRef, useCallback, useEffect, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ViewLine, SearchQuery, LineWindow } from '../bridge/types';
+import type { ViewCacheHandle } from '../cache';
 import LogLine from './LogLine';
 
 const LINE_HEIGHT = 22; // px — monospace, single line
@@ -44,6 +45,9 @@ interface Props {
   transitionLineNums?: Set<number>;
   /** lineNum → list of tracker IDs that transitioned on that line. */
   transitionsByLine?: Record<number, string[]>;
+  /** Optional global cache handle — when provided, fetched lines are stored here
+   *  and cache misses fall through to fetchLines. */
+  viewCache?: ViewCacheHandle | null;
 }
 
 export default function LogViewer({
@@ -60,6 +64,7 @@ export default function LogViewer({
   filterLineCache,
   transitionLineNums,
   transitionsByLine,
+  viewCache,
 }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [, setAutoScroll] = useState(true);
@@ -250,6 +255,10 @@ export default function LogViewer({
             for (const line of window.lines) {
               m.set(line.lineNum, line);
             }
+            // Also populate the global ViewCacheHandle if provided
+            if (viewCache) {
+              viewCache.put(window.lines);
+            }
             setVisibleVersion((v) => v + 1);
           })
           .catch(console.error);
@@ -261,7 +270,7 @@ export default function LogViewer({
     };
   // Note: visibleLinesRef is a ref — not in deps. The effect re-runs when
   // items/virtualBase change (scroll), which is when we need to check for misses.
-  }, [items, isStreaming, lineNumbers, virtualBase, fetchLines]);
+  }, [items, isStreaming, lineNumbers, virtualBase, fetchLines, viewCache]);
 
   // Scroll to a specific line when requested (jumpToLine / search navigation).
   useEffect(() => {
@@ -309,11 +318,17 @@ export default function LogViewer({
   // Choose the data source based on mode.
   // When a file-mode filter is active, prefer filterLineCache (pre-populated
   // during the scan) so lines render instantly without on-demand fetching.
-  const lineSource = isStreaming
+  // The viewCache provides a secondary lookup for cache hits from the global manager.
+  const primarySource = isStreaming
     ? streamCache
     : (lineNumbers && filterLineCache && filterLineCache.size > 0)
       ? filterLineCache
       : visibleLinesRef.current;
+
+  // Combined lookup: primary source first, then viewCache fallback
+  const getLine = (lineNum: number): ViewLine | undefined => {
+    return primarySource.get(lineNum) ?? viewCache?.get(lineNum);
+  };
 
   if (count === 0) {
     if (lineNumbers) {
@@ -376,7 +391,7 @@ export default function LogViewer({
           const actualLineNum = lineNumbers
             ? lineNumbers[virtualItem.index]
             : virtualBase + virtualItem.index;
-          const line = lineSource.get(actualLineNum);
+          const line = getLine(actualLineNum);
           const isTarget = scrollToLine != null && actualLineNum === scrollToLine;
           return (
             <div
@@ -401,11 +416,11 @@ export default function LogViewer({
                   transitionTrackers={transitionsByLine?.[actualLineNum]}
                 />
               ) : (
-                <div className="log-line log-line-loading" style={{ height: LINE_HEIGHT }}>
+                <div className="log-line log-line-skeleton" style={{ height: LINE_HEIGHT }}>
                   <span className="log-linenum">
                     {String(actualLineNum + 1).padStart(7, ' ')}
                   </span>
-                  <span className="log-loading-indicator">…</span>
+                  <span className="log-skeleton-bar" />
                 </div>
               )}
             </div>
