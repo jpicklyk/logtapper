@@ -70,8 +70,20 @@ pub struct AdbTrackerUpdate {
 // ---------------------------------------------------------------------------
 
 /// List all connected ADB devices. Returns an empty vec if ADB is not on PATH.
+/// Retries once after a short delay if the first call returns no devices, which
+/// handles the case where the ADB daemon wasn't running and needs time to start.
 #[tauri::command]
 pub async fn list_adb_devices() -> Result<Vec<AdbDevice>, String> {
+    let devices = query_adb_devices().await?;
+    if !devices.is_empty() {
+        return Ok(devices);
+    }
+    // ADB daemon may have just started — retry after a brief delay.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    query_adb_devices().await
+}
+
+async fn query_adb_devices() -> Result<Vec<AdbDevice>, String> {
     let output = Command::new("adb")
         .arg("devices")
         .arg("-l")
