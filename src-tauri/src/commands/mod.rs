@@ -9,6 +9,7 @@ use crate::processors::AnyProcessor;
 use crate::processors::interpreter::{ContinuousRunState, RunResult};
 use crate::processors::state_tracker::types::{StateTrackerResult, ContinuousTrackerState};
 use crate::processors::transformer::types::ContinuousTransformerState;
+use crate::core::filter::FilterSession;
 use crate::processors::correlator::engine::CorrelatorResult;
 
 pub mod adb;
@@ -17,6 +18,7 @@ pub mod charts;
 pub mod claude;
 pub mod correlator;
 pub mod files;
+pub mod filter;
 pub mod pipeline;
 pub mod processors;
 pub mod session;
@@ -69,6 +71,8 @@ pub struct AppState {
     pub stream_transformer_state: Mutex<HashMap<String, HashMap<String, ContinuousTransformerState>>>,
     /// Cancellation flag for the active pipeline run.
     pub pipeline_cancel: Arc<AtomicBool>,
+    /// Active filter sessions: filterId -> FilterSession.
+    pub active_filters: Mutex<HashMap<String, Arc<FilterSession>>>,
 }
 
 impl Default for AppState {
@@ -104,6 +108,7 @@ impl AppState {
             stream_transformer_state: Mutex::new(HashMap::new()),
             correlator_results: Mutex::new(HashMap::new()),
             pipeline_cancel: Arc::new(AtomicBool::new(false)),
+            active_filters: Mutex::new(HashMap::new()),
         }
     }
 }

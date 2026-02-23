@@ -59,6 +59,9 @@ pub async fn start(handle: Handle) {
         .route("/mcp/sessions/{session_id}/processor/{processor_id}", get(h_processor_detail))
         .route("/mcp/sessions/{session_id}/tracker/{tracker_id}/state_at", get(h_state_at_line))
         .route("/mcp/sessions/{session_id}/search", get(h_search))
+        .route("/mcp/sessions/{session_id}/metadata", get(h_metadata))
+        .route("/mcp/sessions/{session_id}/lines_around", get(h_lines_around))
+        .route("/mcp/sessions/{session_id}/search_with_context", get(h_search_with_context))
         .route("/mcp/processors", get(h_processor_defs_list))
         .route("/mcp/processors/{processor_id}", get(h_processor_defs_single))
         .layer(middleware::from_fn_with_state(handle.clone(), record_activity))
@@ -1351,6 +1354,228 @@ async fn h_processor_defs_single(
     }
 
     Json(result)
+}
+
+// ---------------------------------------------------------------------------
+// GET /mcp/sessions/{session_id}/metadata
+// ---------------------------------------------------------------------------
+
+async fn h_metadata(
+    State(handle): State<Handle>,
+    Path(session_id): Path<String>,
+) -> Json<Value> {
+    let state = handle.state::<AppState>();
+
+    let sessions = state.sessions.lock().unwrap();
+    let Some(session) = sessions.get(&session_id) else {
+        return Json(json!({ "error": "session not found", "sessionId": session_id }));
+    };
+    let Some(source) = session.primary_source() else {
+        return Json(json!({ "error": "session has no sources", "sessionId": session_id }));
+    };
+
+    let total_lines = source.total_lines();
+    let first_ts = source.first_timestamp();
+    let last_ts = source.last_timestamp();
+
+    let file_size = if let Some(file_src) = session.file_source() {
+        file_src.mmap().len() as u64
+    } else if let Some(stream_src) = session.stream_source() {
+        stream_src.stream_byte_count()
+    } else {
+        0
+    };
+
+    // Scan line meta for level distribution and tag counts
+    let mut level_dist: HashMap<String, usize> = HashMap::new();
+    let mut tag_counts: HashMap<u16, usize> = HashMap::new();
+    for meta in source.line_meta_slice() {
+        *level_dist.entry(format!("{:?}", meta.level)).or_insert(0) += 1;
+        *tag_counts.entry(meta.tag_id).or_insert(0) += 1;
+    }
+
+    // Resolve tag IDs and sort by count descending
+    let mut top_tags: Vec<Value> = tag_counts
+        .into_iter()
+        .map(|(tag_id, count)| {
+            json!({ "tag": session.resolve_tag(tag_id), "count": count })
+        })
+        .collect();
+    top_tags.sort_by(|a, b| {
+        b["count"].as_u64().unwrap_or(0).cmp(&a["count"].as_u64().unwrap_or(0))
+    });
+    top_tags.truncate(50);
+
+    Json(json!({
+        "sessionId": session_id,
+        "sourceName": source.name(),
+        "sourceType": source.source_type().to_string(),
+        "totalLines": total_lines,
+        "fileSize": file_size,
+        "isLive": source.is_live(),
+        "isIndexing": source.is_indexing(),
+        "firstTimestamp": first_ts,
+        "lastTimestamp": last_ts,
+        "logLevelDistribution": level_dist,
+        "topTags": top_tags,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// GET /mcp/sessions/{session_id}/lines_around?line=N&before=50&after=20
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct LinesAroundParams {
+    /// Center line number (required).
+    line: usize,
+    /// Number of lines before the center (default 20, max 100).
+    before: Option<usize>,
+    /// Number of lines after the center (default 20, max 100).
+    after: Option<usize>,
+}
+
+async fn h_lines_around(
+    State(handle): State<Handle>,
+    Path(session_id): Path<String>,
+    Query(params): Query<LinesAroundParams>,
+) -> Json<Value> {
+    let state = handle.state::<AppState>();
+    let before = params.before.unwrap_or(20).min(100);
+    let after = params.after.unwrap_or(20).min(100);
+    let center = params.line;
+
+    let sessions = state.sessions.lock().unwrap();
+    let Some(session) = sessions.get(&session_id) else {
+        return Json(json!({ "error": "session not found", "sessionId": session_id }));
+    };
+    let Some(source) = session.primary_source() else {
+        return Json(json!({ "error": "session has no sources", "sessionId": session_id }));
+    };
+
+    let total = source.total_lines();
+    let start = center.saturating_sub(before);
+    let end = (center + after + 1).min(total);
+
+    let lines: Vec<Value> = (start..end)
+        .filter_map(|i| {
+            let raw = source.raw_line(i)?;
+            let meta = source.meta_at(i)?;
+            Some(json!({
+                "lineNum": i,
+                "level": format!("{:?}", meta.level),
+                "tag": session.resolve_tag(meta.tag_id),
+                "raw": truncate_str(raw, 500),
+                "isCenter": i == center,
+            }))
+        })
+        .collect();
+
+    Json(json!({
+        "sessionId": session_id,
+        "centerLine": center,
+        "totalLinesInSession": total,
+        "lineCount": lines.len(),
+        "lines": lines,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// GET /mcp/sessions/{session_id}/search_with_context
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct SearchWithContextParams {
+    /// Search query (regex pattern).
+    query: String,
+    /// Max matches to return (default 10, max 50).
+    max_results: Option<usize>,
+    /// Context lines before and after each match (default 3, max 10).
+    context_lines: Option<usize>,
+    /// Case insensitive (default false).
+    #[serde(default)]
+    case_insensitive: Option<bool>,
+}
+
+async fn h_search_with_context(
+    State(handle): State<Handle>,
+    Path(session_id): Path<String>,
+    Query(params): Query<SearchWithContextParams>,
+) -> Json<Value> {
+    let state = handle.state::<AppState>();
+    let max_results = params.max_results.unwrap_or(10).min(50);
+    let context_lines = params.context_lines.unwrap_or(3).min(10);
+    let case_insensitive = params.case_insensitive.unwrap_or(false);
+
+    let pattern_str = if case_insensitive {
+        format!("(?i){}", params.query)
+    } else {
+        params.query.clone()
+    };
+
+    let regex = match regex::Regex::new(&pattern_str) {
+        Ok(re) => re,
+        Err(e) => {
+            return Json(json!({
+                "error": format!("invalid regex: {e}"),
+                "query": params.query,
+            }));
+        }
+    };
+
+    let sessions = state.sessions.lock().unwrap();
+    let Some(session) = sessions.get(&session_id) else {
+        return Json(json!({ "error": "session not found", "sessionId": session_id }));
+    };
+    let Some(source) = session.primary_source() else {
+        return Json(json!({ "error": "session has no sources", "sessionId": session_id }));
+    };
+
+    let total = source.total_lines();
+    let mut results: Vec<Value> = Vec::new();
+
+    for i in 0..total {
+        if results.len() >= max_results {
+            break;
+        }
+        let Some(raw) = source.raw_line(i) else { continue };
+
+        if regex.is_match(raw) {
+            // Build context
+            let ctx_start = i.saturating_sub(context_lines);
+            let ctx_end = (i + context_lines + 1).min(total);
+
+            let context: Vec<Value> = (ctx_start..ctx_end)
+                .filter_map(|j| {
+                    let line_raw = source.raw_line(j)?;
+                    let meta = source.meta_at(j)?;
+                    Some(json!({
+                        "lineNum": j,
+                        "level": format!("{:?}", meta.level),
+                        "tag": session.resolve_tag(meta.tag_id),
+                        "raw": truncate_str(line_raw, 500),
+                        "isMatch": j == i,
+                    }))
+                })
+                .collect();
+
+            results.push(json!({
+                "matchLineNum": i,
+                "context": context,
+            }));
+        }
+    }
+
+    Json(json!({
+        "sessionId": session_id,
+        "query": params.query,
+        "caseInsensitive": case_insensitive,
+        "matchCount": results.len(),
+        "maxResults": max_results,
+        "contextLines": context_lines,
+        "totalLinesInSession": total,
+        "matches": results,
+    }))
 }
 
 // ---------------------------------------------------------------------------

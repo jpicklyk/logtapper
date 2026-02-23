@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { AdbBatchPayload, AdbProcessorUpdate, AdbStreamStopped, FileIndexProgress, FileIndexComplete, SearchProgress } from './types';
+import type { AdbBatchPayload, AdbProcessorUpdate, AdbStreamStopped, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress } from './types';
 
 // ---------------------------------------------------------------------------
 // ADB streaming events
@@ -93,5 +93,15 @@ export function onChartUpdate(
   cb: (data: unknown) => void,
 ): Promise<UnlistenFn> {
   return listen(`chart-update-${processorId}-${chartId}`, (e) => cb(e.payload));
+}
+
+// ---------------------------------------------------------------------------
+// Filter progress events (Phase 1)
+// ---------------------------------------------------------------------------
+
+export function onFilterProgress(
+  cb: (payload: FilterProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<FilterProgress>('filter-progress', (e) => cb(e.payload));
 }
 

@@ -1,4 +1,5 @@
 pub mod bugreport_parser;
+pub mod filter;
 pub mod index;
 pub mod kernel_parser;
 pub mod line;

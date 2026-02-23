@@ -410,3 +410,73 @@ export interface CorrelatorResult {
   guidance: string | null;
   events: CorrelationEvent[];
 }
+
+// ---------------------------------------------------------------------------
+// Filter types (Phase 1)
+// ---------------------------------------------------------------------------
+
+export type CombineMode = 'And' | 'Or';
+
+export interface FilterCriteria {
+  textSearch?: string;
+  regex?: string;
+  logLevels?: LogLevel[];
+  tags?: string[];
+  timeStart?: number;
+  timeEnd?: number;
+  pids?: number[];
+  combine?: CombineMode;
+}
+
+export interface FilterCreateResult {
+  filterId: string;
+  sessionId: string;
+  totalLines: number;
+}
+
+export interface FilterProgress {
+  filterId: string;
+  matchedSoFar: number;
+  linesScanned: number;
+  totalLines: number;
+  done: boolean;
+}
+
+export interface FilteredLinesResult {
+  filterId: string;
+  totalMatches: number;
+  lines: ViewLine[];
+  status: 'scanning' | 'complete' | 'cancelled';
+}
+
+export interface FilterInfo {
+  filterId: string;
+  sessionId: string;
+  totalMatches: number;
+  linesScanned: number;
+  totalLines: number;
+  status: 'scanning' | 'complete' | 'cancelled';
+}
+
+// ---------------------------------------------------------------------------
+// Session metadata (Phase 1B)
+// ---------------------------------------------------------------------------
+
+export interface TagCount {
+  tag: string;
+  count: number;
+}
+
+export interface SessionMetadata {
+  sessionId: string;
+  sourceName: string;
+  sourceType: string;
+  totalLines: number;
+  fileSize: number;
+  isLive: boolean;
+  isIndexing: boolean;
+  firstTimestamp: number | null;
+  lastTimestamp: number | null;
+  logLevelDistribution: Record<string, number>;
+  topTags: TagCount[];
+}

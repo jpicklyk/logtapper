@@ -20,6 +20,11 @@ import type {
   McpStatus,
   CorrelatorResult,
   TimelineSeriesData,
+  FilterCriteria,
+  FilterCreateResult,
+  FilteredLinesResult,
+  FilterInfo,
+  SessionMetadata,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -256,4 +261,43 @@ export function getCorrelatorEvents(
 
 export function setMcpAnonymize(enabled: boolean): Promise<void> {
   return invoke('set_mcp_anonymize', { enabled });
+}
+
+// ---------------------------------------------------------------------------
+// Filter commands (Phase 1)
+// ---------------------------------------------------------------------------
+
+export function createFilter(
+  sessionId: string,
+  criteria: FilterCriteria,
+): Promise<FilterCreateResult> {
+  return invoke('create_filter', { sessionId, criteria });
+}
+
+export function getFilteredLines(
+  filterId: string,
+  offset: number,
+  count: number,
+): Promise<FilteredLinesResult> {
+  return invoke('get_filtered_lines', { filterId, offset, count });
+}
+
+export function cancelFilter(filterId: string): Promise<void> {
+  return invoke('cancel_filter', { filterId });
+}
+
+export function getFilterInfo(filterId: string): Promise<FilterInfo> {
+  return invoke('get_filter_info', { filterId });
+}
+
+export function closeFilter(filterId: string): Promise<void> {
+  return invoke('close_filter', { filterId });
+}
+
+// ---------------------------------------------------------------------------
+// Session metadata (Phase 1B)
+// ---------------------------------------------------------------------------
+
+export function getSessionMetadata(sessionId: string): Promise<SessionMetadata> {
+  return invoke('get_session_metadata', { sessionId });
 }

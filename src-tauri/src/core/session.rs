@@ -1422,6 +1422,91 @@ mod tests {
         );
     }
 
+    // --- Session metadata computation tests ---
+
+    #[test]
+    fn session_metadata_level_distribution() {
+        let mut src = StreamLogSource::new("s".into(), "test".into());
+        // Push lines with different levels
+        let levels = [LogLevel::Info, LogLevel::Error, LogLevel::Info, LogLevel::Warn, LogLevel::Info];
+        for (i, &level) in levels.iter().enumerate() {
+            src.push_raw_line(format!("line {}", i));
+            src.push_meta(LineMeta {
+                level,
+                tag_id: 0,
+                timestamp: (i + 1) as i64,
+                byte_offset: 0,
+                byte_len: 0,
+                is_section_boundary: false,
+            });
+        }
+        let trait_ref: &dyn LogSource = &src;
+
+        let mut level_dist: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for meta in trait_ref.line_meta_slice() {
+            *level_dist.entry(format!("{:?}", meta.level)).or_insert(0) += 1;
+        }
+        assert_eq!(level_dist.get("Info"), Some(&3));
+        assert_eq!(level_dist.get("Error"), Some(&1));
+        assert_eq!(level_dist.get("Warn"), Some(&1));
+        assert_eq!(level_dist.get("Debug"), None);
+    }
+
+    #[test]
+    fn session_metadata_tag_counts() {
+        let mut session = AnalysisSession::new("s".into());
+        let tag_a = session.intern_tag("ActivityManager");
+        let tag_b = session.intern_tag("SystemServer");
+
+        let mut src = StreamLogSource::new("s".into(), "test".into());
+        // 3 lines with ActivityManager, 2 with SystemServer
+        for _ in 0..3 {
+            src.push_raw_line("am line".into());
+            src.push_meta(LineMeta {
+                level: LogLevel::Info, tag_id: tag_a, timestamp: 1,
+                byte_offset: 0, byte_len: 0, is_section_boundary: false,
+            });
+        }
+        for _ in 0..2 {
+            src.push_raw_line("ss line".into());
+            src.push_meta(LineMeta {
+                level: LogLevel::Info, tag_id: tag_b, timestamp: 1,
+                byte_offset: 0, byte_len: 0, is_section_boundary: false,
+            });
+        }
+        session.source = Some(Box::new(src));
+
+        let source = session.primary_source().unwrap();
+        let mut tag_counts: std::collections::HashMap<u16, usize> = std::collections::HashMap::new();
+        for meta in source.line_meta_slice() {
+            *tag_counts.entry(meta.tag_id).or_insert(0) += 1;
+        }
+        assert_eq!(tag_counts.get(&tag_a), Some(&3));
+        assert_eq!(tag_counts.get(&tag_b), Some(&2));
+        assert_eq!(session.resolve_tag(tag_a), "ActivityManager");
+        assert_eq!(session.resolve_tag(tag_b), "SystemServer");
+    }
+
+    #[test]
+    fn session_metadata_file_size_from_mmap() {
+        let (src, mmap) = make_file_source(10);
+        let mmap_len = mmap.len();
+        let mut session = AnalysisSession::new("f".into());
+        session.source = Some(Box::new(src));
+
+        let file_src = session.file_source().unwrap();
+        assert_eq!(file_src.mmap().len(), mmap_len);
+        assert!(mmap_len > 0, "mmap should have non-zero length");
+    }
+
+    #[test]
+    fn session_metadata_stream_byte_count() {
+        let mut src = StreamLogSource::new("s".into(), "test".into());
+        src.add_bytes(1000);
+        src.add_bytes(500);
+        assert_eq!(src.stream_byte_count(), 1500);
+    }
+
     #[test]
     fn blank_lines_are_indexed() {
         let data = b"01-01 12:00:00.000  1000  1001 I TestTag: line one\n\

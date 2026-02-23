@@ -135,6 +135,13 @@ pub fn run() {
             commands::correlator::get_correlator_events,
             commands::session::get_mcp_status,
             commands::session::set_mcp_anonymize,
+            commands::session::get_session_metadata,
+            // Phase 1 — Filter commands
+            commands::filter::create_filter,
+            commands::filter::get_filtered_lines,
+            commands::filter::cancel_filter,
+            commands::filter::get_filter_info,
+            commands::filter::close_filter,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
