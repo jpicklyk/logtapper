@@ -2,6 +2,7 @@
 ///
 /// Phase 1: Filter and Extract stages only (no scripting, no aggregation).
 /// Phase 2: Adds Script stage (Rhai), Aggregate stage, and variable system.
+use std::collections::HashSet;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -25,7 +26,11 @@ pub enum Stage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FilterRule {
-    TagMatch { tags: Vec<String> },
+    TagMatch {
+        tags: Vec<String>,
+        #[serde(skip)]
+        tag_set: HashSet<String>,
+    },
     MessageContains { value: String },
     MessageContainsAny { values: Vec<String> },
     MessageRegex { pattern: String },
@@ -70,17 +75,22 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
-    pub fn new(stages: Vec<Stage>) -> Self {
-        // Pre-compile all regex patterns
+    pub fn new(mut stages: Vec<Stage>) -> Self {
+        // Pre-compile all regex patterns and prepare tag HashSets
         let mut filter_regexes = Vec::new();
         let mut extract_regexes = Vec::new();
 
-        for stage in &stages {
+        for stage in &mut stages {
             match stage {
                 Stage::Filter { rules } => {
                     for rule in rules {
                         if let FilterRule::MessageRegex { pattern } = rule {
                             filter_regexes.push(Regex::new(pattern).ok());
+                        }
+                        if let FilterRule::TagMatch { tags, tag_set } = rule {
+                            if tag_set.is_empty() && !tags.is_empty() {
+                                *tag_set = tags.iter().cloned().collect();
+                            }
                         }
                     }
                 }
@@ -110,8 +120,12 @@ impl Pipeline {
                 Stage::Filter { rules } => {
                     for rule in rules {
                         let passes = match rule {
-                            FilterRule::TagMatch { tags } => {
-                                tags.iter().any(|t| t == &ctx.tag)
+                            FilterRule::TagMatch { tag_set, tags } => {
+                                if !tag_set.is_empty() {
+                                    tag_set.contains(&*ctx.tag)
+                                } else {
+                                    tags.iter().any(|t| t.as_str() == &*ctx.tag)
+                                }
                             }
                             FilterRule::MessageContains { value } => {
                                 ctx.message.contains(value.as_str())

@@ -7,6 +7,7 @@ use serde_json::Value as JsonValue;
 use std::collections::{HashMap, VecDeque};
 
 use crate::core::line::LineContext;
+// Arc<str> fields deref to &str, so most comparisons work via deref.
 use super::schema::{CorrelatorDef, ExtractField, FilterRule, SourceDef};
 
 // ---------------------------------------------------------------------------
@@ -91,7 +92,7 @@ impl<'a> CorrelatorRun<'a> {
                     line_num: line.source_line_num,
                     timestamp: line.timestamp,
                     fields: fields.clone(),
-                    raw_line: line.raw.clone(),
+                    raw_line: line.raw.to_string(),
                 };
                 if let Some(buf) = self.source_buffers.get_mut(&src_id) {
                     buf.push_back(record);
@@ -143,7 +144,7 @@ impl<'a> CorrelatorRun<'a> {
                         trigger_timestamp: trigger_ts,
                         trigger_source_id: trigger_id.clone(),
                         trigger_fields: fields,
-                        trigger_raw_line: line.raw.clone(),
+                        trigger_raw_line: line.raw.to_string(),
                         matched_sources,
                         message,
                     });
@@ -209,7 +210,13 @@ impl<'a> CorrelatorRun<'a> {
         use crate::core::line::LogLevel;
         use super::schema::FilterRule;
         match rule {
-            FilterRule::TagMatch { tags } => tags.iter().any(|t| t == &line.tag),
+            FilterRule::TagMatch { tag_set, tags } => {
+                if !tag_set.is_empty() {
+                    tag_set.contains(&*line.tag)
+                } else {
+                    tags.iter().any(|t| t.as_str() == &*line.tag)
+                }
+            }
             FilterRule::MessageContains { value } => line.message.contains(value.as_str()),
             FilterRule::MessageContainsAny { values } => {
                 values.iter().any(|v| line.message.contains(v.as_str()))

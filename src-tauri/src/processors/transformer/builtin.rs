@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use crate::anonymizer::{LogAnonymizer, config::AnonymizerConfig};
 use crate::core::line::LineContext;
 
@@ -27,7 +28,7 @@ impl PiiTransformer {
     /// raw_value to token mapping for consistency within a session.
     pub fn apply(&mut self, line: &mut LineContext) {
         let (anonymized, _spans) = self.anonymizer.anonymize(&line.message);
-        line.message = anonymized;
+        line.message = Arc::from(anonymized.as_str());
     }
 
     /// Snapshot of accumulated PII mappings (raw value to token).

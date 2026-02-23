@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use regex::Regex;
 
 use crate::core::line::{LineContext, ParsedLineMeta, LogLevel};
@@ -55,22 +55,24 @@ impl LogParser for KernelParser {
         const BASE_NS: i64 = 946_684_800_000_000_000;
         let timestamp = BASE_NS + (timestamp_sec * 1_000_000_000.0) as i64;
 
-        let tag = caps
+        let tag: Arc<str> = caps
             .get(3)
-            .map(|m| m.as_str().to_string())
-            .unwrap_or_else(|| "kernel".to_string());
+            .map(|m| Arc::from(m.as_str()))
+            .unwrap_or_else(|| Arc::from("kernel"));
 
-        let message = caps.get(4).map(|m| m.as_str().to_string()).unwrap_or_default();
+        let message: Arc<str> = caps.get(4)
+            .map(|m| Arc::from(m.as_str()))
+            .unwrap_or_else(|| Arc::from(""));
 
         Some(LineContext {
-            raw: raw.to_string(),
+            raw: Arc::from(raw),
             timestamp,
             level,
             tag,
             pid: 0,
             tid: 0,
             message,
-            source_id: source_id.to_string(),
+            source_id: Arc::from(source_id),
             source_line_num: line_num,
             fields: Default::default(),
             annotations: Vec::new(),
@@ -81,7 +83,7 @@ impl LogParser for KernelParser {
         let ctx = self.parse_line(raw, "", 0)?;
         Some(ParsedLineMeta {
             level: ctx.level,
-            tag: ctx.tag,
+            tag: ctx.tag.to_string(),
             timestamp: ctx.timestamp,
             byte_offset,
             byte_len: raw.len(),
@@ -103,7 +105,7 @@ mod tests {
         let line = "[12345.678901] wlan: firmware crash detected";
         let p = KernelParser;
         let ctx = p.parse_line(line, "kernel", 0).unwrap();
-        assert_eq!(ctx.tag, "kernel");
+        assert_eq!(&*ctx.tag, "kernel");
         assert!(ctx.message.contains("firmware crash"));
         assert!(ctx.timestamp > 0);
     }
@@ -114,7 +116,7 @@ mod tests {
         let p = KernelParser;
         let ctx = p.parse_line(line, "kernel", 0).unwrap();
         assert_eq!(ctx.level, LogLevel::Error);
-        assert_eq!(ctx.tag, "swapper");
+        assert_eq!(&*ctx.tag, "swapper");
     }
 
     // --- parse_meta() tests (exercising the indexing path) ---
@@ -144,7 +146,7 @@ mod tests {
             "parse_meta and parse_line must produce identical timestamps"
         );
         assert_eq!(meta.level, ctx.level);
-        assert_eq!(meta.tag, ctx.tag);
+        assert_eq!(meta.tag, &*ctx.tag);
     }
 
     #[test]

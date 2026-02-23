@@ -36,7 +36,7 @@ impl StateTrackerRun {
         }
     }
     pub fn process_line(&mut self, line: &LineContext) {
-        for rule in &self.def.transitions.clone() {
+        for rule in &self.def.transitions {
             if !matches_filter(&rule.filter, line) {
                 continue;
             }
@@ -158,7 +158,7 @@ fn level_char(level: &LogLevel) -> &'static str {
 
 fn matches_filter(filter: &TransitionFilter, line: &LineContext) -> bool {
     if let Some(tag) = &filter.tag {
-        if &line.tag != tag {
+        if &*line.tag != tag.as_str() {
             return false;
         }
     }
@@ -250,6 +250,7 @@ fn compute_changes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use crate::processors::state_tracker::schema::{
         StateFieldDecl, StateFieldType, StateTrackerOutput, TransitionRule,
     };
@@ -314,14 +315,14 @@ mod tests {
     fn make_line(source_line_num: usize, tag: &str, message: &str) -> LineContext {
         LineContext {
             source_line_num,
-            tag: tag.to_string(),
-            message: message.to_string(),
-            raw: format!("{} {}", tag, message),
+            tag: Arc::from(tag),
+            message: Arc::from(message),
+            raw: Arc::from(format!("{} {}", tag, message).as_str()),
             pid: 0,
             tid: 0,
             timestamp: source_line_num as i64 * 1000,
             level: LogLevel::Info,
-            source_id: String::new(),
+            source_id: Arc::from(""),
             fields: Default::default(),
             annotations: vec![],
         }

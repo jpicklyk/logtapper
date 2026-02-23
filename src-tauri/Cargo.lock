@@ -2031,6 +2031,7 @@ dependencies = [
 name = "log-tapper"
 version = "0.1.0"
 dependencies = [
+ "aho-corasick",
  "axum",
  "futures-util",
  "hex",
@@ -2045,6 +2046,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2",
+ "smallvec",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

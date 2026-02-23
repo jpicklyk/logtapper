@@ -174,13 +174,15 @@ impl AnyProcessor {
 
         let kind = match shard.processor_type.as_deref().unwrap_or("reporter") {
             "reporter" => {
-                let def: ReporterDef = serde_yaml::from_str(yaml)
+                let mut def: ReporterDef = serde_yaml::from_str(yaml)
                     .map_err(|e| format!("Reporter YAML parse error: {e}"))?;
+                def.prepare_tag_sets();
                 ProcessorKind::Reporter(def)
             }
             "transformer" => {
-                let def: TransformerDef = serde_yaml::from_str(yaml)
+                let mut def: TransformerDef = serde_yaml::from_str(yaml)
                     .map_err(|e| format!("Transformer YAML parse error: {e}"))?;
+                def.prepare_tag_sets();
                 ProcessorKind::Transformer(def)
             }
             "state_tracker" => {
@@ -189,8 +191,9 @@ impl AnyProcessor {
                 ProcessorKind::StateTracker(def)
             }
             "correlator" => {
-                let def: CorrelatorDef = serde_yaml::from_str(yaml)
+                let mut def: CorrelatorDef = serde_yaml::from_str(yaml)
                     .map_err(|e| format!("Correlator YAML parse error: {e}"))?;
+                def.prepare_tag_sets();
                 ProcessorKind::Correlator(def)
             }
             "annotator" => {

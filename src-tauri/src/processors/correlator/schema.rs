@@ -18,6 +18,18 @@ pub struct CorrelatorDef {
     pub output: CorrelatorOutput,
 }
 
+impl CorrelatorDef {
+    /// Populate the pre-built `HashSet` in every `TagMatch` filter rule
+    /// for O(1) tag lookup at pipeline runtime.
+    pub fn prepare_tag_sets(&mut self) {
+        for src in &mut self.sources {
+            for rule in &mut src.filter {
+                rule.prepare_tag_set();
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Source definition
 // ---------------------------------------------------------------------------

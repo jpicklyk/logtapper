@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -37,14 +38,14 @@ pub struct Annotation {
 /// Full parsed representation of a single log line — used by processors/scripts.
 #[derive(Debug, Clone, Serialize)]
 pub struct LineContext {
-    pub raw: String,
+    pub raw: Arc<str>,
     pub timestamp: i64, // nanos since 2000-01-01 UTC
     pub level: LogLevel,
-    pub tag: String,
+    pub tag: Arc<str>,
     pub pid: i32,
     pub tid: i32,
-    pub message: String,
-    pub source_id: String,
+    pub message: Arc<str>,
+    pub source_id: Arc<str>,
     pub source_line_num: usize,
     /// Fields extracted by upstream pipeline stages.
     pub fields: HashMap<String, serde_json::Value>,

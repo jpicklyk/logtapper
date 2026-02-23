@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use regex::Regex;
 use crate::core::line::{LineContext, LogLevel};
 use crate::processors::reporter::schema::{FilterRule, FilterStage};
@@ -55,16 +56,16 @@ impl TransformerRun {
     }
 
     pub fn process_line(&mut self, line: &mut LineContext) -> bool {
-        if let Some(filter) = &self.def.filter.clone() {
-            if !self.apply_filter(filter, line) {
+        if let Some(filter) = &self.def.filter {
+            if !apply_filter(&mut self.regex_cache, filter, line) {
                 return false;
             }
         }
         if let Some(pii) = &mut self.pii_transformer {
             pii.apply(line);
         }
-        for op in self.def.transforms.clone() {
-            self.apply_transform_op(&op, line);
+        for op in &self.def.transforms {
+            apply_transform_op(&mut self.regex_cache, op, line);
         }
         true
     }
@@ -88,79 +89,86 @@ impl TransformerRun {
         }
     }
 
-    fn apply_filter(&mut self, stage: &FilterStage, line: &LineContext) -> bool {
-        for rule in &stage.rules {
-            if !self.rule_matches(rule, line) {
-                return false;
-            }
-        }
-        true
-    }
+}
 
-    fn rule_matches(&mut self, rule: &FilterRule, line: &LineContext) -> bool {
-        match rule {
-            FilterRule::TagMatch { tags } => tags.iter().any(|t| t == &line.tag),
-            FilterRule::MessageContains { value } => line.message.contains(value.as_str()),
-            FilterRule::MessageContainsAny { values } => {
-                values.iter().any(|v| line.message.contains(v.as_str()))
-            }
-            FilterRule::MessageRegex { pattern } => {
-                let pattern = pattern.clone();
-                match self.get_or_compile(&pattern) {
-                    Some(re) => re.is_match(&line.message),
-                    None => false,
-                }
-            }
-            FilterRule::LevelMin { level } => {
-                let min = parse_level(level).unwrap_or(LogLevel::Verbose);
-                line.level >= min
-            }
-            FilterRule::TimeRange { from, to } => {
-                let nanos_per_day = 86_400_000_000_000i64;
-                let time_of_day = line.timestamp.rem_euclid(nanos_per_day);
-                let from_ns = parse_time_hms(from);
-                let to_ns = parse_time_hms(to);
-                time_of_day >= from_ns && time_of_day <= to_ns
-            }
+fn apply_filter(regex_cache: &mut HashMap<String, Regex>, stage: &FilterStage, line: &LineContext) -> bool {
+    for rule in &stage.rules {
+        if !rule_matches(regex_cache, rule, line) {
+            return false;
         }
     }
+    true
+}
 
-    fn get_or_compile(&mut self, pattern: &str) -> Option<&Regex> {
-        if !self.regex_cache.contains_key(pattern) {
-            if let Ok(re) = Regex::new(pattern) {
-                self.regex_cache.insert(pattern.to_string(), re);
+fn rule_matches(regex_cache: &mut HashMap<String, Regex>, rule: &FilterRule, line: &LineContext) -> bool {
+    match rule {
+        FilterRule::TagMatch { tag_set, tags } => {
+            if !tag_set.is_empty() {
+                tag_set.contains(&*line.tag)
             } else {
-                return None;
+                tags.iter().any(|t| t.as_str() == &*line.tag)
             }
         }
-        self.regex_cache.get(pattern)
+        FilterRule::MessageContains { value } => line.message.contains(value.as_str()),
+        FilterRule::MessageContainsAny { values } => {
+            values.iter().any(|v| line.message.contains(v.as_str()))
+        }
+        FilterRule::MessageRegex { pattern } => {
+            match get_or_compile(regex_cache, pattern) {
+                Some(re) => re.is_match(&line.message),
+                None => false,
+            }
+        }
+        FilterRule::LevelMin { level } => {
+            let min = parse_level(level).unwrap_or(LogLevel::Verbose);
+            line.level >= min
+        }
+        FilterRule::TimeRange { from, to } => {
+            let nanos_per_day = 86_400_000_000_000i64;
+            let time_of_day = line.timestamp.rem_euclid(nanos_per_day);
+            let from_ns = parse_time_hms(from);
+            let to_ns = parse_time_hms(to);
+            time_of_day >= from_ns && time_of_day <= to_ns
+        }
     }
+}
 
-    fn apply_transform_op(&mut self, op: &TransformOp, line: &mut LineContext) {
-        match op {
-            TransformOp::ReplaceField { field, regex, replacement } => {
-                let regex = regex.clone();
-                if let Some(re) = self.get_or_compile(&regex) {
-                    if field == "message" {
-                        line.message = re.replace_all(&line.message, replacement.as_str()).to_string();
-                    } else if field == "tag" {
-                        line.tag = re.replace_all(&line.tag, replacement.as_str()).to_string();
-                    } else if let Some(serde_json::Value::String(val)) = line.fields.get(field) {
-                        let new_val = re.replace_all(val, replacement.as_str()).to_string();
-                        line.fields.insert(field.clone(), serde_json::Value::String(new_val));
-                    }
+fn get_or_compile<'a>(regex_cache: &'a mut HashMap<String, Regex>, pattern: &str) -> Option<&'a Regex> {
+    if !regex_cache.contains_key(pattern) {
+        if let Ok(re) = Regex::new(pattern) {
+            regex_cache.insert(pattern.to_string(), re);
+        } else {
+            return None;
+        }
+    }
+    regex_cache.get(pattern)
+}
+
+fn apply_transform_op(regex_cache: &mut HashMap<String, Regex>, op: &TransformOp, line: &mut LineContext) {
+    match op {
+        TransformOp::ReplaceField { field, regex, replacement } => {
+            if let Some(re) = get_or_compile(regex_cache, regex) {
+                if field == "message" {
+                    let new_msg = re.replace_all(&line.message, replacement.as_str());
+                    line.message = Arc::from(new_msg.as_ref());
+                } else if field == "tag" {
+                    let new_tag = re.replace_all(&line.tag, replacement.as_str());
+                    line.tag = Arc::from(new_tag.as_ref());
+                } else if let Some(serde_json::Value::String(val)) = line.fields.get(field) {
+                    let new_val = re.replace_all(val, replacement.as_str()).to_string();
+                    line.fields.insert(field.clone(), serde_json::Value::String(new_val));
                 }
             }
-            TransformOp::SetField { name, value } => {
-                let json_val = yaml_to_json(value);
-                line.fields.insert(name.clone(), json_val);
-            }
-            TransformOp::DropField { name } => {
-                line.fields.remove(name);
-            }
-            TransformOp::AddField { name, script: _script } => {
-                line.fields.entry(name.clone()).or_insert(serde_json::Value::String(String::new()));
-            }
+        }
+        TransformOp::SetField { name, value } => {
+            let json_val = yaml_to_json(value);
+            line.fields.insert(name.clone(), json_val);
+        }
+        TransformOp::DropField { name } => {
+            line.fields.remove(name);
+        }
+        TransformOp::AddField { name, script: _script } => {
+            line.fields.entry(name.clone()).or_insert(serde_json::Value::String(String::new()));
         }
     }
 }
@@ -219,14 +227,14 @@ mod tests {
 
     fn make_line(message: &str) -> LineContext {
         LineContext {
-            raw: message.to_string(),
+            raw: Arc::from(message),
             timestamp: 0,
             level: LogLevel::Info,
-            tag: "TestTag".to_string(),
+            tag: Arc::from("TestTag"),
             pid: 0,
             tid: 0,
-            message: message.to_string(),
-            source_id: String::new(),
+            message: Arc::from(message),
+            source_id: Arc::from(""),
             source_line_num: 1,
             fields: HashMap::new(),
             annotations: vec![],
@@ -252,7 +260,7 @@ mod tests {
         let mut line = make_line("Error on 2024-01-15: something failed");
         let keep = run.process_line(&mut line);
         assert!(keep);
-        assert_eq!(line.message, "Error on DATE: something failed");
+        assert_eq!(&*line.message, "Error on DATE: something failed");
     }
 
     #[test]
