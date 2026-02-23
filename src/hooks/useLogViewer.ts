@@ -107,6 +107,8 @@ export function useLogViewer(streamCacheMax: number = 50_000, onBeforeLoad?: () 
   const filterAstRef = useRef<FilterNode | null>(null);
   const packagePidsRef = useRef<Map<string, number[]>>(new Map());
   const streamDeviceSerialRef = useRef<string | null>(null);
+  // Generation counter to cancel stale file-mode filter scans
+  const filterScanGenRef = useRef(0);
 
   // Streaming-only cache — holds lines from ADB batch events.
   // Not used in file mode; file mode fetches directly from the backend.
@@ -198,12 +200,17 @@ export function useLogViewer(streamCacheMax: number = 50_000, onBeforeLoad?: () 
 
   /**
    * Parse and apply a composable filter expression.
-   * Resolves any package: atoms to PIDs via adb, then scans the streaming cache
-   * to produce an initial filteredLineNums array.  Subsequent batches are
-   * filtered incrementally in handleAdbBatch.
+   *
+   * Streaming mode: scans the streaming cache for an initial filtered list,
+   * then subsequent batches are filtered incrementally in handleAdbBatch.
+   *
+   * File mode: scans the file in batches via get_lines, applying the filter
+   * to each batch and collecting matching line numbers.
    */
   const setStreamFilter = useCallback(async (expr: string) => {
     setStreamFilterExpr(expr);
+    // Bump generation so any in-flight file scan is discarded
+    const gen = ++filterScanGenRef.current;
 
     if (!expr.trim()) {
       setFilterParseError(null);
@@ -248,14 +255,56 @@ export function useLogViewer(streamCacheMax: number = 50_000, onBeforeLoad?: () 
       await Promise.all(resolvePromises);
     }
 
-    // Full scan of current streaming cache to build initial filtered list
     const pids = packagePidsRef.current;
-    const nums: number[] = [];
-    for (const [lineNum, line] of streamCacheRef.current) {
-      if (matchesFilter(ast, line, pids)) nums.push(lineNum);
+
+    if (isStreamingRef.current) {
+      // Streaming mode: scan in-memory cache
+      const nums: number[] = [];
+      for (const [lineNum, line] of streamCacheRef.current) {
+        if (matchesFilter(ast, line, pids)) nums.push(lineNum);
+      }
+      nums.sort((a, b) => a - b);
+      setFilteredLineNums(nums);
+    } else {
+      // File mode: scan the file in batches via the backend.
+      // We read totalLines from the backend response (authoritative) rather than
+      // sessionRef, which may hold a stale count from before background indexing.
+      const sess = sessionRef.current;
+      if (!sess) return;
+
+      const BATCH = 5000;
+      const matches: number[] = [];
+      let offset = 0;
+      let total = Infinity;
+
+      while (offset < total) {
+        // Abort if filter changed while scanning
+        if (filterScanGenRef.current !== gen) return;
+
+        try {
+          const window = await getLines({
+            sessionId: sess.sessionId,
+            mode: { mode: 'Full' },
+            offset,
+            count: BATCH,
+            context: 0,
+          });
+          // Backend's totalLines is authoritative
+          total = window.totalLines;
+          for (const line of window.lines) {
+            if (matchesFilter(ast, line, pids)) matches.push(line.lineNum);
+          }
+          offset += window.lines.length;
+          // No lines returned — we've reached the end
+          if (window.lines.length === 0) break;
+          // Show incremental results so the user sees matches appearing
+          if (filterScanGenRef.current !== gen) return;
+          setFilteredLineNums([...matches]);
+        } catch {
+          break;
+        }
+      }
     }
-    nums.sort((a, b) => a - b);
-    setFilteredLineNums(nums);
   }, []);
 
   /**
