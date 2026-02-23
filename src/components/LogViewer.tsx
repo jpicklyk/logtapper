@@ -227,11 +227,13 @@ export default function LogViewer({
           .then((window: LineWindow) => {
             // Discard stale fetches from a previous session/mode
             if (gen !== fetchGenRef.current) return;
-            const newMap = new Map<number, ViewLine>();
-            for (const line of window.lines) {
-              newMap.set(line.virtualIndex ?? line.lineNum, line);
-            }
-            setVisibleLines(newMap);
+            setVisibleLines((prev) => {
+              const merged = new Map(prev);
+              for (const line of window.lines) {
+                merged.set(line.virtualIndex ?? line.lineNum, line);
+              }
+              return merged;
+            });
           })
           .catch(console.error);
       }
