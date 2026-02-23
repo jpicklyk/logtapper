@@ -1,4 +1,4 @@
-# core/ — Parsers, Session, Line Types
+# core/ — Parsers, Session, Line Types, LogSource
 
 ## Two line representations
 
@@ -20,51 +20,41 @@ pub trait LogParser: Send + Sync {
 
 Returning `None` from `parse_meta()` **silently drops the line from the index**. The line will never appear in any viewer or search result. Only `LogcatParser` has a fallback that returns `Some` for unrecognized lines; `KernelParser` does not (known bug).
 
-## Timestamp convention
-
-All timestamps are **nanoseconds since 2000-01-01 00:00:00 UTC** (not Unix epoch). The constant `BASE_NS = 946_684_800_000_000_000` appears in `logcat_parser.rs` and `kernel_parser.rs`. Year 2000 was chosen because logcat strips the year — using 2000 as base keeps relative ordering correct within a session.
-
-Lines without a parseable timestamp get `timestamp: 0`. Timeline queries treat 0 as "unknown" and sort to the front.
-
-## `build_line_index()` (`session.rs`)
-
-Scans the mmap byte-by-byte looking for `\n`. For each line:
-1. Skips empty lines (after `trim()`).
-2. Calls `parser.parse_meta()`. If `None` → line is excluded from index.
-3. If `Some(meta)` → pushes `(byte_offset, byte_len)` to `line_index` and `meta` to `line_meta`.
-
-`LogSource.total_lines()` returns `line_index.len()` — the **indexed** count, which may be smaller than the physical line count if lines were dropped.
-
-## `detect_source_type()` (`session.rs`) — known issue
-
-The heuristic `text.starts_with('[')` is too broad: any file whose first 4KB starts with `[` is classified as `Kernel`. A logcat file with bracketed metadata in a preamble would be misdetected. The correct fix is to check for the kernel timestamp pattern `^\[\s*\d+\.\d+\]` in the first few non-empty lines.
-
-## Parsers summary
-
 | Parser | Used for | `parse_meta` fallback |
 |---|---|---|
 | `LogcatParser` | Logcat, Radio, Events, default | Yes — all non-separator lines are indexed |
 | `KernelParser` | Kernel (dmesg) | **No** — non-matching lines are dropped |
 | `BugreportParser` | Bugreport | Yes — delegates to `LogcatParser`, skips `------` dividers |
 
-## Session / Source structure
+`parser_for(&source_type)` in `session.rs` selects the correct parser based on detected source type. Used by `pipeline.rs`, `files.rs`, and `filter.rs`.
 
+## Timestamp convention
+
+All timestamps are **nanoseconds since 2000-01-01 00:00:00 UTC** (not Unix epoch). Year 2000 was chosen because logcat strips the year — using 2000 as base keeps relative ordering correct within a session. Lines without a parseable timestamp get `timestamp: 0` (sorted to the front).
+
+## LogSource trait (`log_source.rs`)
+
+`LogSource` is a trait providing polymorphic access to log data. Two implementations:
+
+- **FileLogSource** — memory-mapped file (`Arc<Mmap>`) + byte-offset line index (`Vec<u64>`). Immutable after construction. Supports progressive indexing via `extend_index()`.
+- **StreamLogSource** — append-only `Vec<String>` for ADB logcat. Evicts old lines to a `SpillFile` (temp disk file with byte-offset indexing). `evicted_count` tracks offset so line numbers remain stable. `raw_line()` transparently reads from spill file or memory.
+
+Both implement `raw_line(n)`, `meta_at(n)`, `total_lines()`, `is_live()`, and downcast support via `as_any()`.
+
+## AnalysisSession (`session.rs`)
+
+```rust
+pub struct AnalysisSession {
+    pub id: String,
+    pub source: Option<Box<dyn LogSource>>,  // trait object — FileLogSource or StreamLogSource
+    pub timeline: Timeline,
+    pub index: CrossSourceIndex,
+    pub tag_interner: TagInterner,
+}
 ```
-AnalysisSession
-  id: String
-  sources: Vec<LogSource>   ← typically 1; multi-source is Phase 3+
-  timeline: Timeline         ← chronological index across all sources
-  index: CrossSourceIndex    ← lookup by tag/level/timestamp
 
-LogSource
-  id, name, source_type
-  mmap: Mmap                 ← memory-mapped file; stays valid for session lifetime
-  line_index: Vec<(usize, usize)>   ← (byte_offset, byte_len) per indexed line
-  line_meta: Vec<LineMeta>          ← parallel to line_index
-```
+Accessor helpers: `primary_source()`, `file_source()` / `stream_source()` (downcast to concrete types), and mutable variants.
 
-`primary_source()` returns `sources.first()` — convenience for the common single-file case used throughout Phase 1/2 commands.
+## `detect_source_type()` — known issue
 
-## `pipeline.rs` parser coupling
-
-`commands/pipeline.rs` hardcodes `LogcatParser` regardless of the session's detected source type. Lines that don't match the logcat format (including kernel lines) will return `None` from `parse_line()` and be silently skipped by the pipeline. This is a known limitation.
+The heuristic `text.starts_with('[')` is too broad: any file whose first 4KB starts with `[` is classified as `Kernel`. The correct fix is to check for the kernel timestamp pattern `^\[\s*\d+\.\d+\]` in the first few non-empty lines.

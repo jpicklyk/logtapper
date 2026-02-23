@@ -1,23 +1,20 @@
 # src/hooks/ — Stateful Frontend Logic
 
-These hooks are the single source of truth for all app state. Components receive state and callbacks as props; they do not call bridge functions directly.
+These hooks are the single source of truth for all app state. Components receive state and callbacks via `useAppContext()` — they do not call bridge functions directly.
 
-## Hook ownership in `App.tsx`
+## Hook architecture
 
-```
-App.tsx
-  useLogViewer()   →  file loading, virtual scroll cache, search, processor view mode
-  usePipeline()    →  processor CRUD, run/stop, progress, results
-  useClaude()      →  chat history, streaming, API key
-```
+All hooks are instantiated in `App.tsx` and shared via `AppContext`. The root CLAUDE.md documents the full hook ownership table. Key architectural patterns:
 
-The three hooks are independent. There is **no shared state** between them at the hook level. Coordination happens through props in `App.tsx` (e.g., passing `sessionId` from `viewer.session` to `pipeline.run()`).
+### Unified cache architecture (`useLogViewer`)
 
-## `useLogViewer` — separated cache architecture
+All frontend line caching is unified through the `CacheManager` (`src/cache/`). `PaneContent` allocates a `ViewCacheHandle` via `useViewCache()` and pushes it into `useLogViewer` via `viewer.setViewCache(handle)`. The handle is stored in `viewCacheRef` (a ref, not state).
 
-**Streaming cache** (`streamCache: Map<number, ViewLine>`): Dedicated to ADB streaming only. Populated by `handleAdbBatch`, evicted via FIFO ring buffer when over `streamCacheMax`. `setStreamFilter` scans this cache. Not used in file mode.
+**Streaming mode**: `handleAdbBatch` calls `viewCacheRef.current.put(payload.lines)` — the CacheManager handles LRU eviction based on the global `fileCacheBudget` setting. `setStreamFilter` scans `viewCacheRef.current.entries()` for initial filter matches; subsequent batches are filtered incrementally.
 
-**File-mode rendering**: LogViewer manages its own internal `visibleLines` state. It calls `fetchLines(offset, count)` (a wrapper around the bridge `getLines()`) when the virtualizer's visible range changes, and replaces the local Map entirely with each fetch response. No shared cache, no eviction logic, no cache version counter.
+**File mode**: `LogViewer` manages its own internal `visibleLinesRef` state. It calls `fetchLines(offset, count)` (a wrapper around the bridge `getLines()`) when the virtualizer's visible range changes. Fetched lines are also stored in the `ViewCacheHandle` for cache fallback.
+
+### Ref + state dual-update pattern
 
 `fetchLines` is a stable `useCallback` that reads `sessionRef`, `processorIdRef`, and `searchRef` via refs. When switching modes, update the ref AND the state:
 ```typescript
@@ -25,13 +22,7 @@ processorIdRef.current = id;  // ref — for stable callbacks
 setProcessorId(id);           // state — for re-renders
 ```
 
-## `usePipeline` — event subscription lifecycle
-
-`usePipeline` subscribes to `pipeline-progress` in a `useEffect` on mount. The unlisten function is stored in `unlistenRef` and called on unmount. The subscription is set up once and never re-created, because the hook lives for the lifetime of the `App` component.
-
-`pipeline.run()` depends on `activeProcessorIds` (in its `useCallback` deps). If `activeProcessorIds` changes after `run` was called but before the backend responds, the closure captures the old set. The backend receives the correct `ids` array regardless because it's computed at call time.
-
-## `useClaude` — streaming index tracking
+### Claude streaming index tracking (`useClaude`)
 
 `streamingIndexRef` holds the index of the currently-streaming assistant message in the `messages` array. It is set to `-1` when not streaming.
 
@@ -43,6 +34,6 @@ The streaming flow:
 
 **API key storage**: `localStorage` key `logtapper_claude_api_key`. On mount, the key is read from localStorage and synced to the backend via `setClaudeApiKey()`. If the backend restarts (dev mode), the key is re-synced automatically because `useClaude` is remounted.
 
-## `useChartData` — on-demand fetch
+### Chart data fetching (`useChartData`)
 
 `useChartData` (used by `ProcessorDashboard`) fetches chart data only when the "Charts" tab is selected. It stores results keyed by `"${sessionId}:${processorId}"`. It does **not** invalidate on new pipeline runs — if the user re-runs, they must switch away from and back to the Charts tab to refresh.
