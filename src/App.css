@@ -2729,6 +2729,7 @@ mark {
   overflow: hidden;
   border-right: 1px solid var(--border);
   background: var(--bg-base);
+  position: relative;
 }
 
 .pane:last-child {
@@ -2856,6 +2857,62 @@ mark {
 .tab-add-btn:hover {
   color: var(--text-muted);
   background: var(--border);
+}
+
+/* ── Tab drag-and-drop ────────────────────────────────────────────────────── */
+
+.tab--dragging {
+  opacity: 0.3;
+}
+
+.tab-drag-overlay {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  border-radius: 5px 5px 0 0;
+  pointer-events: none;
+  z-index: 1000;
+}
+
+.tab-drop-zone {
+  position: absolute;
+  top: 0;
+  width: 50%;
+  height: 100%;
+  z-index: 50;
+  pointer-events: all;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  border: 2px solid transparent;
+  box-sizing: border-box;
+}
+
+.tab-drop-zone--left {
+  left: 0;
+  border-radius: 6px 0 0 6px;
+}
+
+.tab-drop-zone--right {
+  right: 0;
+  border-radius: 0 6px 6px 0;
+}
+
+.tab-drop-zone--active {
+  background: rgba(31, 111, 235, 0.12);
+  border-color: rgba(31, 111, 235, 0.4);
+}
+
+.tab-bar-drop-target {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 36px;
+  z-index: 51;
+  pointer-events: all;
+}
+
+.tab-bar-drop-target--active {
+  background: rgba(31, 111, 235, 0.15);
+  outline: 2px dashed rgba(31, 111, 235, 0.5);
+  outline-offset: -2px;
 }
 
 /* ── Context menu ─────────────────────────────────────────────────────────── */

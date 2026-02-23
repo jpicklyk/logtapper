@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import type { Pane, PaneLayoutState, TabType, PaneTab } from '../hooks/usePaneLayout';
 import { TAB_LABELS } from '../hooks/usePaneLayout';
 
@@ -23,6 +25,113 @@ interface ContextMenu {
   tab: PaneTab;
 }
 
+// ── Sortable Tab Item ───────────────────────────────────────────────────────
+
+interface SortableTabProps {
+  tab: PaneTab;
+  active: boolean;
+  disabled: boolean;
+  closeable: boolean;
+  isCompact: boolean;
+  renamingTabId: string | null;
+  renameValue: string;
+  renameInputRef: React.RefObject<HTMLInputElement>;
+  onSetActive: () => void;
+  onClose: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+  onStartRename: () => void;
+  onRenameChange: (v: string) => void;
+  onRenameCommit: () => void;
+  onRenameCancel: () => void;
+  paneId: string;
+}
+
+function SortableTab({
+  tab,
+  active,
+  disabled,
+  closeable,
+  isCompact,
+  renamingTabId,
+  renameValue,
+  renameInputRef,
+  onSetActive,
+  onClose,
+  onContextMenu,
+  onStartRename,
+  onRenameChange,
+  onRenameCommit,
+  onRenameCancel,
+  paneId,
+}: SortableTabProps) {
+  const isRenaming = renamingTabId === tab.id;
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: tab.id,
+    disabled: isCompact || isRenaming,
+    data: { type: 'tab', tab, paneId },
+  });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.3 : undefined,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`tab${active ? ' tab--active' : ''}${disabled ? ' tab--disabled' : ''}${isDragging ? ' tab--dragging' : ''}`}
+      onClick={() => !disabled && !isRenaming && onSetActive()}
+      onContextMenu={onContextMenu}
+      {...attributes}
+      {...listeners}
+    >
+      <span
+        className="tab-label"
+        onDoubleClick={(e) => { e.stopPropagation(); onStartRename(); }}
+      >
+        {isRenaming ? (
+          <input
+            ref={renameInputRef}
+            className="tab-rename-input"
+            value={renameValue}
+            onChange={(e) => onRenameChange(e.target.value)}
+            onBlur={onRenameCommit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); onRenameCommit(); }
+              if (e.key === 'Escape') onRenameCancel();
+            }}
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+          />
+        ) : (
+          tab.label
+        )}
+      </span>
+      {closeable && (
+        <button
+          className="tab-close"
+          title={tab.type === 'logviewer' ? 'Close file' : 'Close tab'}
+          onClick={(e) => { e.stopPropagation(); onClose(); }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          ×
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── TabBar ──────────────────────────────────────────────────────────────────
+
 export default function TabBar({
   pane,
   paneIndex,
@@ -32,7 +141,6 @@ export default function TabBar({
   hasSession,
   onCloseSession,
 }: TabBarProps) {
-  const [dragOver, setDragOver] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
   const [addMenuPos, setAddMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
@@ -95,93 +203,53 @@ export default function TabBar({
   const canClose = (tab: PaneTab) => {
     if (isCompact) return false;
     if (tab.type === 'logviewer') {
-      // Logviewer tab can be closed when a session is loaded (closes the session)
       return hasSession;
     }
     return true;
   };
 
   // Tabs already in this pane — exclude non-scratch types that are already present.
-  // Scratch can always be added (allows multiple scratch tabs).
   const presentTypes = new Set(pane.tabs.map((t) => t.type));
   const addableTypes = CENTER_TAB_TYPES.filter((t) => {
-    if (t === 'scratch') return true; // always addable
+    if (t === 'scratch') return true;
     return !presentTypes.has(t);
   });
 
   return (
     <>
-      <div
-        className={`tab-bar${dragOver ? ' tab-bar--drag-over' : ''}`}
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragOver(false);
-          const tabId = e.dataTransfer.getData('tab-id');
-          const fromPane = e.dataTransfer.getData('from-pane');
-          if (tabId && fromPane && fromPane !== pane.id) {
-            layout.moveTab(tabId, fromPane, pane.id);
-          }
-        }}
-      >
+      <div className="tab-bar" data-pane-id={pane.id}>
         {pane.tabs.map((tab) => {
           const active = tab.id === pane.activeTabId;
           const disabled = isTabDisabled(tab.type);
           return (
-            <div
+            <SortableTab
               key={tab.id}
-              className={`tab${active ? ' tab--active' : ''}${disabled ? ' tab--disabled' : ''}`}
-              draggable={!isCompact && renamingTabId !== tab.id}
-              onDragStart={(e) => {
-                e.dataTransfer.setData('tab-id', tab.id);
-                e.dataTransfer.setData('from-pane', pane.id);
-                e.dataTransfer.effectAllowed = 'move';
+              tab={tab}
+              active={active}
+              disabled={disabled}
+              closeable={canClose(tab)}
+              isCompact={isCompact}
+              renamingTabId={renamingTabId}
+              renameValue={renameValue}
+              renameInputRef={renameInputRef}
+              onSetActive={() => layout.setActiveTab(tab.id, pane.id)}
+              onClose={() => {
+                if (tab.type === 'logviewer' && onCloseSession) {
+                  onCloseSession();
+                } else {
+                  layout.closeTab(tab.id, pane.id);
+                }
               }}
-              onClick={() => !disabled && renamingTabId !== tab.id && layout.setActiveTab(tab.id, pane.id)}
               onContextMenu={(e) => {
                 e.preventDefault();
                 setContextMenu({ x: e.clientX, y: e.clientY, tab });
               }}
-            >
-              <span
-                className="tab-label"
-                onDoubleClick={(e) => { e.stopPropagation(); startRename(tab); }}
-              >
-                {renamingTabId === tab.id ? (
-                  <input
-                    ref={renameInputRef}
-                    className="tab-rename-input"
-                    value={renameValue}
-                    onChange={(e) => setRenameValue(e.target.value)}
-                    onBlur={commitRename}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
-                      if (e.key === 'Escape') setRenamingTabId(null);
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                ) : (
-                  tab.label
-                )}
-              </span>
-              {canClose(tab) && (
-                <button
-                  className="tab-close"
-                  title={tab.type === 'logviewer' ? 'Close file' : 'Close tab'}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (tab.type === 'logviewer' && onCloseSession) {
-                      onCloseSession();
-                    } else {
-                      layout.closeTab(tab.id, pane.id);
-                    }
-                  }}
-                >
-                  ×
-                </button>
-              )}
-            </div>
+              onStartRename={() => startRename(tab)}
+              onRenameChange={setRenameValue}
+              onRenameCommit={commitRename}
+              onRenameCancel={() => setRenamingTabId(null)}
+              paneId={pane.id}
+            />
           );
         })}
 
@@ -293,5 +361,15 @@ export default function TabBar({
         </div>
       )}
     </>
+  );
+}
+
+// ── Tab Drag Overlay (rendered in PaneLayout's DragOverlay) ─────────────────
+
+export function TabDragOverlay({ tab }: { tab: PaneTab }) {
+  return (
+    <div className="tab tab--active tab-drag-overlay">
+      <span className="tab-label">{tab.label}</span>
+    </div>
   );
 }

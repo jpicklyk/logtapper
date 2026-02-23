@@ -33,7 +33,10 @@ export interface PaneLayoutState {
   /** Ref for the center pane-area div — used to compute fraction deltas when resizing. */
   centerRef: React.RefObject<HTMLDivElement>;
   moveTab: (tabId: string, fromPaneId: string, toPaneId: string) => void;
-  splitRight: (tabId: string, fromPaneId: string) => void;
+  moveTabToIndex: (tabId: string, fromPaneId: string, toPaneId: string, insertIndex: number) => void;
+  reorderTab: (paneId: string, fromIndex: number, toIndex: number) => void;
+  splitRight: (tabId: string, fromPaneId: string, forceMove?: boolean) => void;
+  splitLeft: (tabId: string, fromPaneId: string, forceMove?: boolean) => void;
   closeTab: (tabId: string, paneId: string) => void;
   setActiveTab: (tabId: string, paneId: string) => void;
   addTab: (paneId: string, type: TabType, label?: string) => void;
@@ -122,7 +125,7 @@ const VALID_TAB_TYPES = new Set<string>(['logviewer', 'dashboard', 'scratch', 's
 
 /** Strip tabs with tab types that no longer exist (e.g. from a previous schema). */
 function sanitizePanes(panes: Pane[]): Pane[] {
-  return panes
+  const result = panes
     .map((pane) => {
       const tabs = pane.tabs.filter((t) => VALID_TAB_TYPES.has(t.type));
       if (tabs.length === 0) return null;
@@ -132,6 +135,9 @@ function sanitizePanes(panes: Pane[]): Pane[] {
       return { ...pane, tabs, activeTabId };
     })
     .filter((p): p is Pane => p !== null);
+  // Ensure at least one pane always exists.
+  if (result.length === 0) result.push(makePane([], 1.0));
+  return result;
 }
 
 function loadPanes(): PersistedPanes {
@@ -312,7 +318,58 @@ export function usePaneLayout(): PaneLayoutState {
     });
   }, [update]);
 
-  const splitRight = useCallback((tabId: string, fromPaneId: string) => {
+  const reorderTab = useCallback((paneId: string, fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex) return;
+    update((prev) =>
+      prev.map((p) => {
+        if (p.id !== paneId) return p;
+        const tabs = [...p.tabs];
+        const [moved] = tabs.splice(fromIndex, 1);
+        tabs.splice(toIndex, 0, moved);
+        return { ...p, tabs };
+      }),
+    );
+  }, [update]);
+
+  const moveTabToIndex = useCallback((tabId: string, fromPaneId: string, toPaneId: string, insertIndex: number) => {
+    if (fromPaneId === toPaneId) return;
+    update((prev) => {
+      const tab = prev.flatMap((p) => p.tabs).find((t) => t.id === tabId);
+      if (!tab) return prev;
+      const fromPane = prev.find((p) => p.id === fromPaneId);
+      if (!fromPane) return prev;
+      if (tab.type === 'logviewer' && countLogviewers(prev) <= 1) return prev;
+
+      let next = prev.map((p) => {
+        if (p.id === fromPaneId) {
+          const tabs = p.tabs.filter((t) => t.id !== tabId);
+          const activeTabId =
+            p.activeTabId === tabId ? (tabs[0]?.id ?? '') : p.activeTabId;
+          return { ...p, tabs, activeTabId };
+        }
+        if (p.id === toPaneId) {
+          const tabs = [...p.tabs];
+          tabs.splice(Math.min(insertIndex, tabs.length), 0, tab);
+          return { ...p, tabs, activeTabId: tab.id };
+        }
+        return p;
+      });
+
+      const removedPanes = next.filter((p) => p.tabs.length === 0);
+      for (const rp of removedPanes) {
+        const idx = next.findIndex((p) => p.id === rp.id);
+        next = redistribute(
+          next.filter((p) => p.id !== rp.id),
+          rp.flexBasis,
+          idx,
+        );
+      }
+
+      return next;
+    });
+  }, [update]);
+
+  const splitRight = useCallback((tabId: string, fromPaneId: string, forceMove = false) => {
     update((prev) => {
       const fromIdx = prev.findIndex((p) => p.id === fromPaneId);
       if (fromIdx === -1) return prev;
@@ -320,8 +377,8 @@ export function usePaneLayout(): PaneLayoutState {
       const tab = fromPane.tabs.find((t) => t.id === tabId);
       if (!tab) return prev;
 
-      if (tab.type === 'logviewer' && countLogviewers(prev) <= 1) {
-        // Create a new logviewer tab in the new pane (allow multiple views).
+      if (!forceMove && tab.type === 'logviewer' && countLogviewers(prev) <= 1) {
+        // Context-menu split: duplicate logviewer so both panes show the log.
         const newTab = makeTab('logviewer');
         const half = fromPane.flexBasis / 2;
         const updatedFrom = { ...fromPane, flexBasis: half };
@@ -333,8 +390,22 @@ export function usePaneLayout(): PaneLayoutState {
         return result;
       }
 
-      const half = fromPane.flexBasis / 2;
       const updatedTabs = fromPane.tabs.filter((t) => t.id !== tabId);
+
+      if (updatedTabs.length === 0) {
+        // Source pane is now empty — just replace it with the new pane (no actual split needed).
+        const newPane: Pane = {
+          id: crypto.randomUUID(),
+          tabs: [tab],
+          activeTabId: tab.id,
+          flexBasis: fromPane.flexBasis,
+        };
+        const result = [...prev];
+        result[fromIdx] = newPane;
+        return result;
+      }
+
+      const half = fromPane.flexBasis / 2;
       const updatedFrom: Pane = {
         ...fromPane,
         flexBasis: half,
@@ -351,6 +422,62 @@ export function usePaneLayout(): PaneLayoutState {
       const result = [...prev];
       result[fromIdx] = updatedFrom;
       result.splice(fromIdx + 1, 0, newPane);
+      return result;
+    });
+  }, [update]);
+
+  const splitLeft = useCallback((tabId: string, fromPaneId: string, forceMove = false) => {
+    update((prev) => {
+      const fromIdx = prev.findIndex((p) => p.id === fromPaneId);
+      if (fromIdx === -1) return prev;
+      const fromPane = prev[fromIdx];
+      const tab = fromPane.tabs.find((t) => t.id === tabId);
+      if (!tab) return prev;
+
+      if (!forceMove && tab.type === 'logviewer' && countLogviewers(prev) <= 1) {
+        const newTab = makeTab('logviewer');
+        const half = fromPane.flexBasis / 2;
+        const updatedFrom = { ...fromPane, flexBasis: half };
+        const newPane = makePane([], half);
+        const newPaneWithTab: Pane = { ...newPane, tabs: [newTab], activeTabId: newTab.id };
+        const result = [...prev];
+        result[fromIdx] = updatedFrom;
+        result.splice(fromIdx, 0, newPaneWithTab); // insert BEFORE
+        return result;
+      }
+
+      const updatedTabs = fromPane.tabs.filter((t) => t.id !== tabId);
+
+      if (updatedTabs.length === 0) {
+        // Source pane is now empty — just replace it with the new pane (no actual split needed).
+        const newPane: Pane = {
+          id: crypto.randomUUID(),
+          tabs: [tab],
+          activeTabId: tab.id,
+          flexBasis: fromPane.flexBasis,
+        };
+        const result = [...prev];
+        result[fromIdx] = newPane;
+        return result;
+      }
+
+      const half = fromPane.flexBasis / 2;
+      const updatedFrom: Pane = {
+        ...fromPane,
+        flexBasis: half,
+        tabs: updatedTabs,
+        activeTabId:
+          fromPane.activeTabId === tabId ? (updatedTabs[0]?.id ?? '') : fromPane.activeTabId,
+      };
+      const newPane: Pane = {
+        id: crypto.randomUUID(),
+        tabs: [tab],
+        activeTabId: tab.id,
+        flexBasis: half,
+      };
+      const result = [...prev];
+      result[fromIdx] = updatedFrom;
+      result.splice(fromIdx, 0, newPane); // insert BEFORE
       return result;
     });
   }, [update]);
@@ -534,7 +661,10 @@ export function usePaneLayout(): PaneLayoutState {
     containerRef,
     centerRef,
     moveTab,
+    moveTabToIndex,
+    reorderTab,
     splitRight,
+    splitLeft,
     closeTab,
     setActiveTab,
     addTab,

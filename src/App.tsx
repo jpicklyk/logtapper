@@ -174,7 +174,7 @@ export default function App() {
     const hasLogviewer = layout.panes.some((p) => p.tabs.some((t) => t.type === 'logviewer'));
     if (!hasLogviewer) {
       // Create one in the first pane with the filename as its label
-      layout.addTab(layout.panes[0].id, 'logviewer', name);
+      if (layout.panes[0]) layout.addTab(layout.panes[0].id, 'logviewer', name);
     } else {
       // Rename existing logviewer tabs to the file name
       for (const pane of layout.panes) {
