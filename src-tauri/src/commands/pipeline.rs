@@ -470,6 +470,16 @@ pub async fn run_pipeline(
     #[allow(unused_variables)]
     anonymize: bool,
 ) -> Result<Vec<PipelineRunSummary>, String> {
+    execute_pipeline(&state, &app, &session_id, &processor_ids)
+}
+
+/// Core pipeline execution logic. Called by both the Tauri command and the MCP bridge.
+pub fn execute_pipeline(
+    state: &AppState,
+    app: &AppHandle,
+    session_id: &str,
+    processor_ids: &[String],
+) -> Result<Vec<PipelineRunSummary>, String> {
     // Reset cancellation flag at the start
     state.pipeline_cancel.store(false, Ordering::Relaxed);
 
@@ -480,8 +490,8 @@ pub async fn run_pipeline(
         let mut r_ids: Vec<String> = Vec::new();
         let mut s_ids: Vec<String> = Vec::new();
         let mut c_ids: Vec<String> = Vec::new();
-        for id in &processor_ids {
-            if let Some(p) = procs.get(id) {
+        for id in processor_ids {
+            if let Some(p) = procs.get(id.as_str()) {
                 match &p.kind {
                     ProcessorKind::Transformer(_) => t_ids.push(id.clone()),
                     ProcessorKind::Reporter(_) => r_ids.push(id.clone()),
@@ -526,7 +536,7 @@ pub async fn run_pipeline(
     // ── Snapshot source data + section ranges ────────────────────────────────
     let (source_snapshot, source_id, section_ranges, source_type) = {
         let sessions = state.sessions.lock().map_err(|_| "Session lock poisoned")?;
-        let session = sessions.get(&session_id)
+        let session = sessions.get(session_id)
             .ok_or_else(|| format!("Session '{session_id}' not found"))?;
         let src = session.primary_source().ok_or("No sources in session")?;
 
@@ -811,7 +821,7 @@ pub async fn run_pipeline(
         // Report progress based on chunk boundaries (all lines in the chunk,
         // including pre-filtered ones, count toward progress).
         lines_processed += chunk_line_count;
-        for proc_id in &processor_ids {
+        for proc_id in processor_ids {
             let _ = app.emit(
                 "pipeline-progress",
                 PipelineProgress {
@@ -833,7 +843,7 @@ pub async fn run_pipeline(
             let inverted: HashMap<String, String> =
                 forward_pii.iter().map(|(raw, tok)| (tok.clone(), raw.clone())).collect();
             if let Ok(mut pm) = state.pii_mappings.lock() {
-                pm.insert(session_id.clone(), inverted);
+                pm.insert(session_id.to_string(), inverted);
             }
         }
     }
@@ -875,7 +885,7 @@ pub async fn run_pipeline(
             .collect();
 
         if let Ok(mut str_results) = state.state_tracker_results.lock() {
-            str_results.insert(session_id.clone(), session_tracker_results);
+            str_results.insert(session_id.to_string(), session_tracker_results);
         }
     }
 
@@ -885,7 +895,7 @@ pub async fn run_pipeline(
             .map(|(cid, run)| (cid, run.finish()))
             .collect();
         if let Ok(mut cr) = state.correlator_results.lock() {
-            cr.insert(session_id.clone(), session_correlator_results);
+            cr.insert(session_id.to_string(), session_correlator_results);
         }
     }
 
@@ -906,7 +916,7 @@ pub async fn run_pipeline(
 
     // StateTracker summaries (transition count as matched_lines)
     if let Ok(str_results) = state.state_tracker_results.lock() {
-        if let Some(session_str) = str_results.get(&session_id) {
+        if let Some(session_str) = str_results.get(session_id) {
             for tracker_id in &tracker_ids {
                 if let Some(result) = session_str.get(tracker_id) {
                     summaries.push(PipelineRunSummary {
@@ -930,7 +940,7 @@ pub async fn run_pipeline(
 
     // Correlator summaries (event count as emission_count)
     if let Ok(cr) = state.correlator_results.lock() {
-        if let Some(session_map) = cr.get(&session_id) {
+        if let Some(session_map) = cr.get(session_id) {
             for corr_id in &correlator_ids {
                 if let Some(result) = session_map.get(corr_id) {
                     summaries.push(PipelineRunSummary {
@@ -946,7 +956,7 @@ pub async fn run_pipeline(
     {
         let mut pr = state.pipeline_results.lock()
             .map_err(|_| "Pipeline results lock poisoned")?;
-        pr.insert(session_id, session_pipeline_results);
+        pr.insert(session_id.to_string(), session_pipeline_results);
     }
 
     Ok(summaries)

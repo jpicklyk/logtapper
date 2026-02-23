@@ -13,7 +13,7 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State},
     middleware,
-    routing::{delete, get},
+    routing::{delete, get, post},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -70,6 +70,8 @@ pub async fn start(handle: Handle) {
         // Phase 2 — Analysis artifacts
         .route("/mcp/sessions/{session_id}/analyses", get(h_list_analyses).post(h_publish_analysis))
         .route("/mcp/sessions/{session_id}/analyses/{artifact_id}", get(h_get_analysis).put(h_update_analysis).delete(h_delete_analysis))
+        // Pipeline run trigger (MCP)
+        .route("/mcp/sessions/{session_id}/run_pipeline", post(h_run_pipeline))
         // Phase 4 — Watches
         .route("/mcp/sessions/{session_id}/watches", get(h_list_watches).post(h_create_watch))
         .route("/mcp/sessions/{session_id}/watches/{watch_id}", delete(h_cancel_watch))
@@ -102,6 +104,66 @@ pub async fn start(handle: Handle) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Parse a datetime string into the same timestamp format used by the logcat
+/// parser: BASE_NS (946_684_800_000_000_000, i.e. 2000-01-01 as Unix nanos)
+/// plus day-of-year offset. This matches `parse_timestamp_ns()` in
+/// `logcat_parser.rs`.
+///
+/// Accepts formats:
+/// - "MM-DD HH:MM:SS.mmm"  (logcat native — recommended)
+/// - "YYYY-MM-DDThh:mm:ss[.fff]" or "YYYY-MM-DD hh:mm:ss[.fff]"
+///   (ISO 8601 — year is IGNORED; only month-day is used, since logcat
+///   timestamps have no year and are stored with a year-2000 base)
+///
+/// Returns None if the string cannot be parsed.
+fn parse_iso_to_nanos_2000(s: &str) -> Option<i64> {
+    // Must match logcat_parser.rs: BASE_NS + yday * 86_400e9 + time nanos
+    const BASE_NS: i64 = 946_684_800_000_000_000; // 2000-01-01 00:00:00 UTC as Unix nanos
+    const MONTH_DAYS: [i64; 12] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+
+    let s = s.trim();
+    let s_normalized = s.replace('T', " ");
+    let parts: Vec<&str> = s_normalized.splitn(2, ' ').collect();
+    if parts.len() != 2 { return None; }
+
+    let date_part = parts[0];
+    let time_part = parts[1];
+
+    // Extract month and day (ignore year if present)
+    let date_segments: Vec<&str> = date_part.split('-').collect();
+    let (month, day) = if date_segments.len() == 3 {
+        // YYYY-MM-DD — ignore year
+        let m = date_segments[1].parse::<i64>().ok()?;
+        let d = date_segments[2].parse::<i64>().ok()?;
+        (m, d)
+    } else if date_segments.len() == 2 {
+        // MM-DD
+        let m = date_segments[0].parse::<i64>().ok()?;
+        let d = date_segments[1].parse::<i64>().ok()?;
+        (m, d)
+    } else {
+        return None;
+    };
+
+    let yday = MONTH_DAYS.get((month as usize).saturating_sub(1)).copied().unwrap_or(0) + (day - 1);
+
+    // Parse time: "HH:MM:SS[.mmm]"
+    let t: Vec<&str> = time_part.splitn(4, [':', '.']).collect();
+    let h: i64 = t.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let m: i64 = t.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let sec: i64 = t.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let ms: i64 = t.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
+
+    Some(
+        BASE_NS
+            + yday * 86_400_000_000_000
+            + h * 3_600_000_000_000
+            + m * 60_000_000_000
+            + sec * 1_000_000_000
+            + ms * 1_000_000,
+    )
+}
 
 /// Truncate a string to at most `max_chars` characters, appending "..." if cut.
 /// Uses char boundaries to avoid splitting multi-byte UTF-8 sequences.
@@ -281,6 +343,14 @@ struct QueryParams {
     tag: Option<String>,
     /// Substring filter applied to the raw line.
     message: Option<String>,
+    /// Restrict results to lines >= start_line (0-based, inclusive).
+    start_line: Option<usize>,
+    /// Restrict results to lines < end_line (0-based, exclusive).
+    end_line: Option<usize>,
+    /// Filter to lines with timestamp >= this value (ISO 8601, e.g. "2024-01-15T10:30:00").
+    time_start: Option<String>,
+    /// Filter to lines with timestamp <= this value (ISO 8601, e.g. "2024-01-15T11:00:00").
+    time_end: Option<String>,
 }
 
 async fn h_query(
@@ -291,6 +361,10 @@ async fn h_query(
     let state = handle.state::<AppState>();
     let n = params.n.unwrap_or(50).min(200);
     let strategy = params.strategy.as_deref().unwrap_or("recent");
+
+    // Parse time range filters upfront (ISO 8601 → nanos since 2000-01-01)
+    let time_start_ns = params.time_start.as_deref().and_then(parse_iso_to_nanos_2000);
+    let time_end_ns = params.time_end.as_deref().and_then(parse_iso_to_nanos_2000);
 
     // Snapshot the lines we need without holding the lock into async territory.
     struct LineSnap {
@@ -310,7 +384,21 @@ async fn h_query(
         };
 
         let total = source.total_lines();
-        let indices = sample_indices(total, n, strategy, params.around_line);
+
+        // Clamp sample range to [start_line, end_line)
+        let range_start = params.start_line.unwrap_or(0).min(total);
+        let range_end = params.end_line.unwrap_or(total).min(total);
+        let clamped_total = range_end.saturating_sub(range_start);
+
+        let indices = if params.start_line.is_some() || params.end_line.is_some() {
+            // Apply range clamping to sample_indices
+            sample_indices(clamped_total, n, strategy, params.around_line.map(|a| a.saturating_sub(range_start)))
+                .into_iter()
+                .map(|i| i + range_start)
+                .collect()
+        } else {
+            sample_indices(total, n, strategy, params.around_line)
+        };
 
         let snaps = indices
             .into_iter()
@@ -335,7 +423,8 @@ async fn h_query(
     //   recent   → scan newest→oldest (stop after n matches)
     //   around   → scan outward from around_line (stop after n matches)
     //   uniform  → scan all, then space the matches evenly
-    let has_filter = params.tag.is_some() || params.message.is_some() || params.level.is_some();
+    let has_filter = params.tag.is_some() || params.message.is_some()
+        || params.level.is_some() || time_start_ns.is_some() || time_end_ns.is_some();
     const SCAN_CAP: usize = 100_000;
 
     let snaps = if has_filter {
@@ -348,17 +437,22 @@ async fn h_query(
             return Json(json!({ "error": "session has no sources", "sessionId": session_id }));
         };
 
-        // Build the scan order based on strategy.
+        // Clamp scan range to [start_line, end_line)
+        let range_start = params.start_line.unwrap_or(0).min(total_lines);
+        let range_end = params.end_line.unwrap_or(total_lines).min(total_lines);
+
+        // Build the scan order based on strategy (clamped to range).
         let scan_indices: Vec<usize> = match strategy {
             "recent" => {
-                let start = total_lines.saturating_sub(SCAN_CAP);
-                (start..total_lines).rev().collect()
+                let start = range_start.max(range_end.saturating_sub(SCAN_CAP));
+                (start..range_end).rev().collect()
             }
             "around" => {
-                let center = params.around_line.unwrap_or(total_lines.saturating_sub(1));
+                let center = params.around_line.unwrap_or(range_end.saturating_sub(1))
+                    .clamp(range_start, range_end.saturating_sub(1));
                 let half = SCAN_CAP / 2;
-                let start = center.saturating_sub(half);
-                let end = (center + half).min(total_lines);
+                let start = center.saturating_sub(half).max(range_start);
+                let end = (center + half).min(range_end);
                 // Interleave outward from center: center, center-1, center+1, …
                 let before: Vec<usize> = (start..=center).rev().collect();
                 let after: Vec<usize> = ((center + 1)..end).collect();
@@ -368,7 +462,7 @@ async fn h_query(
             }
             _ => {
                 // uniform: scan all lines in order so rare events aren't missed
-                (0..total_lines).collect()
+                (range_start..range_end).collect()
             }
         };
 
@@ -390,6 +484,13 @@ async fn h_query(
             // Level filter
             if let Some(ref lf) = params.level {
                 if !level_at_least(&level_str, lf) { continue; }
+            }
+            // Time range filter
+            if let Some(ts) = time_start_ns {
+                if meta.timestamp < ts { continue; }
+            }
+            if let Some(ts) = time_end_ns {
+                if meta.timestamp > ts { continue; }
             }
             matched.push(LineSnap { line_num: i, level: level_str, tag: session.resolve_tag(meta.tag_id).to_string(), raw: raw.into_owned() });
         }
@@ -1415,6 +1516,11 @@ async fn h_metadata(
     });
     top_tags.truncate(50);
 
+    // Sections (bugreport/dumpstate only — empty for logcat/kernel)
+    let sections: Vec<Value> = source.sections().iter().map(|s| {
+        json!(s)
+    }).collect();
+
     Json(json!({
         "sessionId": session_id,
         "sourceName": source.name(),
@@ -1427,6 +1533,7 @@ async fn h_metadata(
         "lastTimestamp": last_ts,
         "logLevelDistribution": level_dist,
         "topTags": top_tags,
+        "sections": sections,
     }))
 }
 
@@ -1504,6 +1611,8 @@ struct SearchWithContextParams {
     /// Case insensitive (default false).
     #[serde(default)]
     case_insensitive: Option<bool>,
+    /// Number of matches to skip before collecting results (default 0).
+    offset: Option<usize>,
 }
 
 async fn h_search_with_context(
@@ -1515,6 +1624,7 @@ async fn h_search_with_context(
     let max_results = params.max_results.unwrap_or(10).min(50);
     let context_lines = params.context_lines.unwrap_or(3).min(10);
     let case_insensitive = params.case_insensitive.unwrap_or(false);
+    let offset = params.offset.unwrap_or(0);
 
     let pattern_str = if case_insensitive {
         format!("(?i){}", params.query)
@@ -1542,6 +1652,7 @@ async fn h_search_with_context(
 
     let total = source.total_lines();
     let mut results: Vec<Value> = Vec::new();
+    let mut skipped: usize = 0;
 
     for i in 0..total {
         if results.len() >= max_results {
@@ -1550,6 +1661,11 @@ async fn h_search_with_context(
         let Some(raw) = source.raw_line(i) else { continue };
 
         if regex.is_match(&raw) {
+            // Skip the first `offset` matches
+            if skipped < offset {
+                skipped += 1;
+                continue;
+            }
             // Build context
             let ctx_start = i.saturating_sub(context_lines);
             let ctx_end = (i + context_lines + 1).min(total);
@@ -1582,6 +1698,7 @@ async fn h_search_with_context(
         "matchCount": results.len(),
         "maxResults": max_results,
         "contextLines": context_lines,
+        "offset": offset,
         "totalLinesInSession": total,
         "matches": results,
     }))
@@ -1946,6 +2063,65 @@ async fn h_cancel_watch(
         }
     }
     Json(json!({"error": format!("Watch not found: {watch_id}")}))
+}
+
+// ---------------------------------------------------------------------------
+// POST /mcp/sessions/{session_id}/run_pipeline
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RunPipelineBody {
+    /// Processor IDs to run. If omitted, runs all installed processors.
+    processor_ids: Option<Vec<String>>,
+}
+
+async fn h_run_pipeline(
+    State(handle): State<Handle>,
+    Path(session_id): Path<String>,
+    Json(body): Json<RunPipelineBody>,
+) -> Json<Value> {
+    use crate::commands::pipeline::execute_pipeline;
+
+    let state = handle.state::<AppState>();
+
+    // Verify session exists
+    {
+        let sessions = state.sessions.lock().unwrap();
+        if !sessions.contains_key(&session_id) {
+            return Json(json!({"error": format!("Session not found: {session_id}")}));
+        }
+    }
+
+    // Resolve processor IDs — use provided list or all installed processors
+    let processor_ids = match body.processor_ids {
+        Some(ids) if !ids.is_empty() => ids,
+        _ => {
+            let procs = state.processors.lock().unwrap();
+            procs.keys().cloned().collect()
+        }
+    };
+
+    // Pipeline is CPU-heavy (rayon); run on a blocking thread to avoid starving
+    // the Axum async runtime.
+    let handle_clone = handle.clone();
+    let sid = session_id.clone();
+    let pids = processor_ids.clone();
+
+    let result = tokio::task::spawn_blocking(move || {
+        let state_ref = handle_clone.state::<AppState>();
+        execute_pipeline(&state_ref, &handle_clone, &sid, &pids)
+    }).await;
+
+    match result {
+        Ok(Ok(ref summaries)) => Json(json!({
+            "sessionId": session_id,
+            "summaries": summaries,
+            "processorCount": summaries.len(),
+        })),
+        Ok(Err(e)) => Json(json!({ "error": e })),
+        Err(e) => Json(json!({ "error": format!("Pipeline task panicked: {e}") })),
+    }
 }
 
 // ---------------------------------------------------------------------------

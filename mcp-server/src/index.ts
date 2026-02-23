@@ -16,10 +16,10 @@ const BRIDGE_PORT = 40404;
 const BASE_URL = `http://127.0.0.1:${BRIDGE_PORT}`;
 
 // ---------------------------------------------------------------------------
-// Bridge client — thin wrapper around fetch with a 5s timeout
+// Bridge client — thin wrappers around fetch with an 8s timeout
 // ---------------------------------------------------------------------------
 
-async function bridgeGet(path: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+async function bridgeGet(path: string, query?: Record<string, string | number | boolean | undefined>): Promise<unknown> {
   const url = new URL(`${BASE_URL}${path}`);
   if (query) {
     for (const [k, v] of Object.entries(query)) {
@@ -34,6 +34,68 @@ async function bridgeGet(path: string, query?: Record<string, string | number | 
   if (!res.ok) {
     const body = await res.text().catch(() => "(no body)");
     throw new Error(`Bridge HTTP ${res.status}: ${body}`);
+  }
+
+  return res.json();
+}
+
+async function bridgePost(path: string, body: unknown): Promise<unknown> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(8000),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "(no body)");
+    throw new Error(`Bridge HTTP ${res.status}: ${text}`);
+  }
+
+  return res.json();
+}
+
+async function bridgePostLong(path: string, body: unknown, timeoutMs = 120_000): Promise<unknown> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "(no body)");
+    throw new Error(`Bridge HTTP ${res.status}: ${text}`);
+  }
+
+  return res.json();
+}
+
+async function bridgePut(path: string, body: unknown): Promise<unknown> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(8000),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "(no body)");
+    throw new Error(`Bridge HTTP ${res.status}: ${text}`);
+  }
+
+  return res.json();
+}
+
+async function bridgeDelete(path: string): Promise<unknown> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: "DELETE",
+    signal: AbortSignal.timeout(8000),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "(no body)");
+    throw new Error(`Bridge HTTP ${res.status}: ${text}`);
   }
 
   return res.json();
@@ -78,7 +140,7 @@ const server = new McpServer({
     "processor results before designing new YAML processors.",
 });
 
-// ── logtapper_get_status ───────────────────────────────────────────────────
+// ── 1. logtapper_get_status ─────────────────────────────────────────────
 
 server.tool(
   "logtapper_get_status",
@@ -95,7 +157,7 @@ server.tool(
   }
 );
 
-// ── logtapper_list_sessions ───────────────────────────────────────────────
+// ── 2. logtapper_list_sessions ──────────────────────────────────────────
 
 server.tool(
   "logtapper_list_sessions",
@@ -113,7 +175,35 @@ server.tool(
   }
 );
 
-// ── logtapper_query ───────────────────────────────────────────────────────
+// ── 3. logtapper_get_metadata ───────────────────────────────────────────
+
+server.tool(
+  "logtapper_get_metadata",
+  "Get rich metadata for a log session. Returns source name/type, total line " +
+    "count, file size, whether the session is live (ADB), time range, log level " +
+    "distribution, and top 50 tags by frequency. For bugreport/dumpstate files, " +
+    "also returns a sections array with {name, startLine, endLine} for each " +
+    "section (e.g. 'DUMPSYS ACTIVITY', 'SYSTEM LOG'). Bugreport files contain " +
+    "many sections — logcat data lives inside sections like 'SYSTEM LOG', " +
+    "'EVENT LOG', 'RADIO LOG', etc. Use startLine/endLine from these sections " +
+    "with logtapper_query's start_line/end_line to target specific sections. " +
+    "Call this as the first query against a session to orient before sampling " +
+    "lines or running searches.",
+  {
+    session_id: z.string().describe("Session ID from logtapper_get_status or logtapper_list_sessions"),
+  },
+  async ({ session_id }) => {
+    try {
+      return ok(
+        await bridgeGet(`/mcp/sessions/${encodeURIComponent(session_id)}/metadata`)
+      );
+    } catch (err) {
+      return ok({ error: String(err) });
+    }
+  }
+);
+
+// ── 4. logtapper_query ──────────────────────────────────────────────────
 
 server.tool(
   "logtapper_query",
@@ -127,7 +217,10 @@ server.tool(
     "\nFilters (all optional, all AND-ed):\n" +
     "  level   — minimum level: V D I W E F\n" +
     "  tag     — exact tag string\n" +
-    "  message — substring match against the raw line",
+    "  message — substring match against the raw line\n" +
+    "\nRange restriction:\n" +
+    "  start_line / end_line — restrict sampling/scanning to a line range\n" +
+    "  time_start / time_end — restrict to a timestamp range (ISO 8601)",
   {
     session_id: z.string().describe("Session ID from logtapper_get_status or logtapper_list_sessions"),
     n: z
@@ -155,8 +248,28 @@ server.tool(
       .string()
       .optional()
       .describe("Substring that must appear in the raw line"),
+    start_line: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("Restrict to lines >= start_line (0-based, inclusive)"),
+    end_line: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("Restrict to lines < end_line (0-based, exclusive)"),
+    time_start: z
+      .string()
+      .optional()
+      .describe("Filter to lines with timestamp >= this value (ISO 8601, e.g. '2024-01-15T10:30:00')"),
+    time_end: z
+      .string()
+      .optional()
+      .describe("Filter to lines with timestamp <= this value (ISO 8601, e.g. '2024-01-15T11:00:00')"),
   },
-  async ({ session_id, n, strategy, around_line, level, tag, message }) => {
+  async ({ session_id, n, strategy, around_line, level, tag, message, start_line, end_line, time_start, time_end }) => {
     try {
       return ok(
         await bridgeGet(`/mcp/sessions/${encodeURIComponent(session_id)}/query`, {
@@ -166,6 +279,10 @@ server.tool(
           level,
           tag,
           message,
+          start_line,
+          end_line,
+          time_start,
+          time_end,
         })
       );
     } catch (err) {
@@ -174,7 +291,110 @@ server.tool(
   }
 );
 
-// ── logtapper_get_pipeline_results ───────────────────────────────────────
+// ── 5. logtapper_search_with_context ────────────────────────────────────
+
+server.tool(
+  "logtapper_search_with_context",
+  "Search log lines using regex patterns with surrounding context. Returns " +
+    "grouped matches where each group includes the matched line plus " +
+    "configurable context lines before/after, each marked with an isMatch " +
+    "flag. More powerful than logtapper_query's substring matching — use for " +
+    "pattern-based investigation like finding all crash signatures or " +
+    "specific error sequences. Use offset for pagination through large " +
+    "result sets (skip first N matches).",
+  {
+    session_id: z.string().describe("Session ID"),
+    query: z.string().describe("Regex pattern to search for"),
+    max_results: z
+      .number()
+      .int()
+      .min(1)
+      .max(50)
+      .optional()
+      .describe("Max match groups to return (default 10, max 50)"),
+    context_lines: z
+      .number()
+      .int()
+      .min(0)
+      .max(10)
+      .optional()
+      .describe("Lines of context before/after each match (default 3, max 10)"),
+    case_insensitive: z
+      .boolean()
+      .optional()
+      .describe("Case-insensitive matching (default false)"),
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("Number of matches to skip before collecting results (default 0). Use for pagination."),
+  },
+  async ({ session_id, query, max_results, context_lines, case_insensitive, offset }) => {
+    try {
+      return ok(
+        await bridgeGet(
+          `/mcp/sessions/${encodeURIComponent(session_id)}/search_with_context`,
+          {
+            query,
+            max_results,
+            context_lines,
+            case_insensitive: case_insensitive !== undefined ? String(case_insensitive) : undefined,
+            offset,
+          }
+        )
+      );
+    } catch (err) {
+      return ok({ error: String(err) });
+    }
+  }
+);
+
+// ── 6. logtapper_get_lines_around ───────────────────────────────────────
+
+server.tool(
+  "logtapper_get_lines_around",
+  "Get raw log lines centered on a specific line number. Returns lines with " +
+    "level, tag, and raw text, plus an isCenter flag on the target line. Use " +
+    "this to examine context around a known line of interest (e.g., a crash " +
+    "line, a state transition, or a bookmarked location).",
+  {
+    session_id: z.string().describe("Session ID"),
+    line: z
+      .number()
+      .int()
+      .min(0)
+      .describe("Target line number to center on"),
+    before: z
+      .number()
+      .int()
+      .min(0)
+      .max(100)
+      .optional()
+      .describe("Lines before the target (default 20, max 100)"),
+    after: z
+      .number()
+      .int()
+      .min(0)
+      .max(100)
+      .optional()
+      .describe("Lines after the target (default 20, max 100)"),
+  },
+  async ({ session_id, line, before, after }) => {
+    try {
+      return ok(
+        await bridgeGet(
+          `/mcp/sessions/${encodeURIComponent(session_id)}/lines_around`,
+          { line, before, after }
+        )
+      );
+    } catch (err) {
+      return ok({ error: String(err) });
+    }
+  }
+);
+
+// ── 7. logtapper_get_pipeline_results ───────────────────────────────────
 
 server.tool(
   "logtapper_get_pipeline_results",
@@ -200,7 +420,7 @@ server.tool(
   }
 );
 
-// ── logtapper_get_events ─────────────────────────────────────────────────
+// ── 8. logtapper_get_events ─────────────────────────────────────────────
 
 server.tool(
   "logtapper_get_events",
@@ -234,7 +454,7 @@ server.tool(
   }
 );
 
-// ── logtapper_get_processor_detail ────────────────────────────────────────
+// ── 9. logtapper_get_processor_detail ───────────────────────────────────
 
 server.tool(
   "logtapper_get_processor_detail",
@@ -286,7 +506,7 @@ server.tool(
   }
 );
 
-// ── logtapper_get_state_at_line ──────────────────────────────────────────
+// ── 10. logtapper_get_state_at_line ─────────────────────────────────────
 
 server.tool(
   "logtapper_get_state_at_line",
@@ -317,7 +537,7 @@ server.tool(
   }
 );
 
-// ── logtapper_get_correlations ───────────────────────────────────────────
+// ── 11. logtapper_get_correlations ──────────────────────────────────────
 
 server.tool(
   "logtapper_get_correlations",
@@ -354,7 +574,7 @@ server.tool(
   }
 );
 
-// ── logtapper_get_processor_definitions ──────────────────────────────────
+// ── 12. logtapper_get_processor_definitions ─────────────────────────────
 
 server.tool(
   "logtapper_get_processor_definitions",
@@ -381,42 +601,265 @@ server.tool(
   }
 );
 
-// ── logtapper_search ─────────────────────────────────────────────────────
+// ── 13. logtapper_bookmarks ─────────────────────────────────────────────
 
 server.tool(
-  "logtapper_search",
-  "Search log lines using regex patterns. More powerful than logtapper_query's " +
-    "substring matching. Returns matched lines with capture groups and optional " +
-    "context lines before/after each match. Use for pattern-based investigation " +
-    "like finding all 'FATAL EXCEPTION.*Process: (\\S+)' matches.",
+  "logtapper_bookmarks",
+  "Manage bookmarks on log lines within a session. Bookmarks mark lines of " +
+    "interest for quick navigation. Use action 'list' to see all bookmarks, " +
+    "'create' to add a new bookmark at a line, or 'delete' to remove one.",
   {
     session_id: z.string().describe("Session ID"),
-    pattern: z.string().describe("Regex pattern to search for"),
-    limit: z
-      .number()
-      .int()
-      .min(1)
-      .max(200)
-      .optional()
-      .describe("Max results to return (default 50)"),
-    case_insensitive: z
-      .boolean()
-      .optional()
-      .describe("Case-insensitive matching (default false)"),
-    context: z
+    action: z
+      .enum(["list", "create", "delete"])
+      .describe("Action to perform: list all bookmarks, create a new one, or delete an existing one"),
+    line_number: z
       .number()
       .int()
       .min(0)
-      .max(5)
       .optional()
-      .describe("Lines of context before/after each match (default 0)"),
+      .describe("Line number to bookmark (required for 'create')"),
+    label: z
+      .string()
+      .optional()
+      .describe("Short label for the bookmark (required for 'create')"),
+    note: z
+      .string()
+      .optional()
+      .describe("Optional longer note for the bookmark (used with 'create')"),
+    bookmark_id: z
+      .string()
+      .optional()
+      .describe("Bookmark ID to delete (required for 'delete')"),
   },
-  async ({ session_id, pattern, limit, case_insensitive, context }) => {
+  async ({ session_id, action, line_number, label, note, bookmark_id }) => {
+    const sid = encodeURIComponent(session_id);
+    try {
+      switch (action) {
+        case "list":
+          return ok(await bridgeGet(`/mcp/sessions/${sid}/bookmarks`));
+        case "create":
+          if (line_number === undefined || !label) {
+            return ok({ error: "line_number and label are required for 'create'" });
+          }
+          return ok(
+            await bridgePost(`/mcp/sessions/${sid}/bookmarks`, {
+              lineNumber: line_number,
+              label,
+              note: note ?? "",
+            })
+          );
+        case "delete":
+          if (!bookmark_id) {
+            return ok({ error: "bookmark_id is required for 'delete'" });
+          }
+          return ok(
+            await bridgeDelete(
+              `/mcp/sessions/${sid}/bookmarks/${encodeURIComponent(bookmark_id)}`
+            )
+          );
+      }
+    } catch (err) {
+      return ok({ error: String(err) });
+    }
+  }
+);
+
+// ── 14. logtapper_analyses ──────────────────────────────────────────────
+
+server.tool(
+  "logtapper_analyses",
+  "Manage analysis artifacts — structured narratives with line references that " +
+    "appear in the LogTapper UI. Use 'list' to see all analyses, 'get' for full " +
+    "content, 'publish' to create a new analysis, 'update' to revise, or 'delete' " +
+    "to remove. Each analysis has a title and sections with headings, body text, " +
+    "optional severity, and line references.",
+  {
+    session_id: z.string().describe("Session ID"),
+    action: z
+      .enum(["list", "get", "publish", "update", "delete"])
+      .describe("Action: list, get, publish, update, or delete"),
+    artifact_id: z
+      .string()
+      .optional()
+      .describe("Analysis artifact ID (required for get, update, delete)"),
+    title: z
+      .string()
+      .optional()
+      .describe("Analysis title (required for publish, optional for update)"),
+    sections: z
+      .array(
+        z.object({
+          heading: z.string().describe("Section heading"),
+          body: z.string().describe("Section body text (markdown supported)"),
+          severity: z
+            .enum(["Info", "Warning", "Error", "Critical"])
+            .optional()
+            .describe("Optional severity level for this section"),
+          references: z
+            .array(
+              z.object({
+                lineNumber: z.number().int().describe("Start line number"),
+                endLine: z.number().int().optional().describe("End line number for ranges"),
+                label: z.string().describe("Reference label shown in UI"),
+                highlightType: z
+                  .enum(["Annotation", "Anchor"])
+                  .optional()
+                  .describe("Highlight style: 'Annotation' (subtle) or 'Anchor' (prominent). Default 'Annotation'."),
+              })
+            )
+            .optional()
+            .describe("Line references within this section"),
+        })
+      )
+      .optional()
+      .describe("Analysis sections (required for publish, optional for update)"),
+  },
+  async ({ session_id, action, artifact_id, title, sections }) => {
+    const sid = encodeURIComponent(session_id);
+    try {
+      switch (action) {
+        case "list":
+          return ok(await bridgeGet(`/mcp/sessions/${sid}/analyses`));
+        case "get":
+          if (!artifact_id) {
+            return ok({ error: "artifact_id is required for 'get'" });
+          }
+          return ok(
+            await bridgeGet(
+              `/mcp/sessions/${sid}/analyses/${encodeURIComponent(artifact_id)}`
+            )
+          );
+        case "publish":
+          if (!title || !sections) {
+            return ok({ error: "title and sections are required for 'publish'" });
+          }
+          return ok(
+            await bridgePost(`/mcp/sessions/${sid}/analyses`, { title, sections })
+          );
+        case "update":
+          if (!artifact_id) {
+            return ok({ error: "artifact_id is required for 'update'" });
+          }
+          return ok(
+            await bridgePut(
+              `/mcp/sessions/${sid}/analyses/${encodeURIComponent(artifact_id)}`,
+              { title, sections }
+            )
+          );
+        case "delete":
+          if (!artifact_id) {
+            return ok({ error: "artifact_id is required for 'delete'" });
+          }
+          return ok(
+            await bridgeDelete(
+              `/mcp/sessions/${sid}/analyses/${encodeURIComponent(artifact_id)}`
+            )
+          );
+      }
+    } catch (err) {
+      return ok({ error: String(err) });
+    }
+  }
+);
+
+// ── 15. logtapper_watches ───────────────────────────────────────────────
+
+server.tool(
+  "logtapper_watches",
+  "Manage watches — push-based filter notifications during live ADB streaming. " +
+    "A watch evaluates filter criteria against every new batch of lines and fires " +
+    "when matches are found. Use 'list' to see active watches, 'create' to set up " +
+    "a new watch with filter criteria, or 'cancel' to stop one.",
+  {
+    session_id: z.string().describe("Session ID"),
+    action: z
+      .enum(["list", "create", "cancel"])
+      .describe("Action: list active watches, create a new watch, or cancel an existing one"),
+    watch_id: z
+      .string()
+      .optional()
+      .describe("Watch ID to cancel (required for 'cancel')"),
+    text_search: z
+      .string()
+      .optional()
+      .describe("Substring to match in log lines (used with 'create')"),
+    regex: z
+      .string()
+      .optional()
+      .describe("Regex pattern to match (used with 'create')"),
+    log_levels: z
+      .array(z.string())
+      .optional()
+      .describe("Log levels to match — use PascalCase: 'Verbose', 'Debug', 'Info', 'Warn', 'Error', 'Fatal' (used with 'create')"),
+    tags: z
+      .array(z.string())
+      .optional()
+      .describe("Tags to match (used with 'create')"),
+    pids: z
+      .array(z.number().int())
+      .optional()
+      .describe("Process IDs to match (used with 'create')"),
+    combine: z
+      .enum(["and", "or"])
+      .optional()
+      .describe("How to combine criteria: 'and' (all must match) or 'or' (any match) (default 'and')"),
+  },
+  async ({ session_id, action, watch_id, text_search, regex, log_levels, tags, pids, combine }) => {
+    const sid = encodeURIComponent(session_id);
+    try {
+      switch (action) {
+        case "list":
+          return ok(await bridgeGet(`/mcp/sessions/${sid}/watches`));
+        case "create":
+          return ok(
+            await bridgePost(`/mcp/sessions/${sid}/watches`, {
+              textSearch: text_search,
+              regex,
+              logLevels: log_levels,
+              tags,
+              pids,
+              combine: combine ?? "and",
+            })
+          );
+        case "cancel":
+          if (!watch_id) {
+            return ok({ error: "watch_id is required for 'cancel'" });
+          }
+          return ok(
+            await bridgeDelete(
+              `/mcp/sessions/${sid}/watches/${encodeURIComponent(watch_id)}`
+            )
+          );
+      }
+    } catch (err) {
+      return ok({ error: String(err) });
+    }
+  }
+);
+
+// ── 16. logtapper_run_pipeline ───────────────────────────────────────────
+
+server.tool(
+  "logtapper_run_pipeline",
+  "Trigger a pipeline run on a session. Executes all installed processors " +
+    "(or a specified subset) against the session's log data. Use this to " +
+    "generate pipeline results that can then be queried with " +
+    "logtapper_get_pipeline_results and logtapper_get_processor_detail. " +
+    "This operation may take significant time on large files (1M+ lines).",
+  {
+    session_id: z.string().describe("Session ID"),
+    processor_ids: z
+      .array(z.string())
+      .optional()
+      .describe("Processor IDs to run. If omitted, runs all installed processors."),
+  },
+  async ({ session_id, processor_ids }) => {
     try {
       return ok(
-        await bridgeGet(
-          `/mcp/sessions/${encodeURIComponent(session_id)}/search`,
-          { pattern, limit, case_insensitive: case_insensitive !== undefined ? String(case_insensitive) : undefined, context }
+        await bridgePostLong(
+          `/mcp/sessions/${encodeURIComponent(session_id)}/run_pipeline`,
+          { processorIds: processor_ids }
         )
       );
     } catch (err) {
