@@ -88,9 +88,9 @@ export default function PaneContent({ pane }: Props) {
           <LogViewer
             sessionId={viewer.session?.sessionId ?? ''}
             totalLines={viewer.session?.totalLines ?? 0}
-            lineCache={viewer.lineCache}
+            streamCache={viewer.streamCache}
+            fetchLines={viewer.fetchLines}
             search={viewer.search ?? undefined}
-            onFetchNeeded={viewer.handleFetchNeeded}
             onLineClick={handleLineClick}
             scrollToLine={viewer.scrollToLine}
             jumpSeq={viewer.jumpSeq}

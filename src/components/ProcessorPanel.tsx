@@ -602,7 +602,9 @@ export default function ProcessorPanel({ pipeline, sessionId, isStreaming, onOpe
 
         {/* Post-pipeline visualizations */}
         <div className="pipeline-post-chain">
-          <RingBufferWidget cacheSize={cacheSize} cacheMax={cacheMax} isStreaming={isStreaming} />
+          {isStreaming && (
+            <RingBufferWidget cacheSize={cacheSize} cacheMax={cacheMax} isStreaming={isStreaming} />
+          )}
           <div className="pipeline-post-divider" />
           <McpStatusWidget />
         </div>

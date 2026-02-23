@@ -13,20 +13,17 @@ App.tsx
 
 The three hooks are independent. There is **no shared state** between them at the hook level. Coordination happens through props in `App.tsx` (e.g., passing `sessionId` from `viewer.session` to `pipeline.run()`).
 
-## `useLogViewer` — critical cache key semantics
+## `useLogViewer` — separated cache architecture
 
-`lineCache: Map<number, ViewLine>` is the virtualizer's backing store. The key **must** equal the virtualizer's `virtualItem.index` (0-based sequential).
+**Streaming cache** (`streamCache: Map<number, ViewLine>`): Dedicated to ADB streaming only. Populated by `handleAdbBatch`, evicted via FIFO ring buffer when over `streamCacheMax`. `setStreamFilter` scans this cache. Not used in file mode.
 
-- **Full mode**: `get_lines` returns `ViewLine.lineNum` = sequential index (0, 1, 2…). Cache key = `line.lineNum`. Virtualizer index = `line.lineNum`. ✓ Match.
-- **Processor mode**: `get_lines` returns `ViewLine.lineNum` = **actual file line number** (e.g., 42, 57). Cache key = `line.lineNum`. Virtualizer index = 0, 1, 2… ✗ Mismatch. Known bug — processor view shows nothing.
+**File-mode rendering**: LogViewer manages its own internal `visibleLines` state. It calls `fetchLines(offset, count)` (a wrapper around the bridge `getLines()`) when the virtualizer's visible range changes, and replaces the local Map entirely with each fetch response. No shared cache, no eviction logic, no cache version counter.
 
-`handleFetchNeeded` is a stable `useCallback` with `[]` deps, so it captures `sessionRef` and `processorIdRef` via refs, not state. When switching modes, always update the ref AND the state:
+`fetchLines` is a stable `useCallback` that reads `sessionRef`, `processorIdRef`, and `searchRef` via refs. When switching modes, update the ref AND the state:
 ```typescript
 processorIdRef.current = id;  // ref — for stable callbacks
 setProcessorId(id);           // state — for re-renders
 ```
-
-`pendingFetches` deduplicates by `"${mode}:${offset}:${count}"` string key. It is cleared on mode switches (`setProcessorView`, `clearProcessorView`) to prevent stale requests from populating the new mode's cache.
 
 ## `usePipeline` — event subscription lifecycle
 
