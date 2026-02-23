@@ -201,18 +201,16 @@ async fn h_sessions(State(handle): State<Handle>) -> Json<Value> {
         sessions
             .values()
             .map(|session| {
-                let sources: Vec<Value> = session
-                    .sources
-                    .iter()
-                    .map(|src| {
-                        json!({
-                            "id": src.id,
-                            "name": src.name,
-                            "sourceType": src.source_type.to_string(),
-                            "totalLines": src.total_lines(),
-                        })
-                    })
-                    .collect();
+                let sources: Vec<Value> = if let Some(src) = session.primary_source() {
+                    vec![json!({
+                        "id": src.id(),
+                        "name": src.name(),
+                        "sourceType": src.source_type().to_string(),
+                        "totalLines": src.total_lines(),
+                    })]
+                } else {
+                    vec![]
+                };
                 json!({
                     "id": session.id,
                     "sources": sources,

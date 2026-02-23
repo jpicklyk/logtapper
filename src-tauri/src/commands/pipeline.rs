@@ -8,7 +8,8 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::AppState;
-use crate::core::session::{LogSourceData, parser_for};
+use crate::core::log_source::FileLogSource;
+use crate::core::session::parser_for;
 use crate::processors::ProcessorKind;
 use crate::processors::correlator::engine::CorrelatorRun;
 use crate::processors::reporter::engine::ProcessorRun;
@@ -529,27 +530,32 @@ pub async fn run_pipeline(
             .ok_or_else(|| format!("Session '{session_id}' not found"))?;
         let src = session.primary_source().ok_or("No sources in session")?;
 
-        let sid = src.id.clone();
-        let stype = src.source_type.clone();
+        let sid = src.id().to_string();
+        let stype = src.source_type().clone();
 
-        let snapshot = match &src.data {
-            LogSourceData::File { mmap, line_index } => SourceSnapshot::File {
-                mmap: Arc::clone(mmap),
-                line_index: line_index.clone(),
-            },
-            LogSourceData::Stream { raw_lines, .. } => SourceSnapshot::Stream {
-                raw_lines: raw_lines.clone(),
-            },
+        // Build snapshot by downcasting to concrete type
+        let snapshot = if let Some(file_src) = src.as_any().downcast_ref::<FileLogSource>() {
+            SourceSnapshot::File {
+                mmap: Arc::clone(file_src.mmap()),
+                line_index: file_src.line_index().to_vec(),
+            }
+        } else {
+            // StreamLogSource — clone the raw lines
+            let stream_src = session.stream_source().ok_or("Source is neither File nor Stream")?;
+            SourceSnapshot::Stream {
+                raw_lines: stream_src.raw_lines.clone(),
+            }
         };
 
         // Section ranges indexed parallel to reporter_defs
+        let sections = src.sections();
         let ranges: Vec<Option<Vec<(usize, usize)>>> = reporter_defs.iter()
             .map(|(_, def)| {
                 if def.sections.is_empty() {
                     None
                 } else {
                     let r: Vec<(usize, usize)> = def.sections.iter()
-                        .filter_map(|name| src.sections.iter().find(|s| s.name == *name))
+                        .filter_map(|name| sections.iter().find(|s| s.name == *name))
                         .map(|s| (s.start_line, s.end_line))
                         .collect();
                     if r.is_empty() { None } else { Some(r) }

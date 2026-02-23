@@ -108,17 +108,17 @@ pub async fn load_log_file(
     const INITIAL_BYTES: usize = 1_000_000; // 1 MB initial chunk
 
     let mut session = AnalysisSession::new(session_id.clone());
-    let (source_idx, mmap_arc, total_bytes, bytes_consumed) =
+    let (mmap_arc, total_bytes, bytes_consumed) =
         session.add_source_partial(path_obj, source_id.clone(), INITIAL_BYTES)?;
 
-    let source = &session.sources[source_idx];
+    let source = session.primary_source().ok_or("No source after partial load")?;
     let total_lines = source.total_lines();
     let first_ts = source.first_timestamp();
     let last_ts = source.last_timestamp();
-    let source_type_str = source.source_type.to_string();
-    let source_name = source.name.clone();
-    let is_indexing = source.is_indexing;
-    let source_type = session.sources[source_idx].source_type.clone();
+    let source_type_str = source.source_type().to_string();
+    let source_name = source.name().to_string();
+    let is_indexing = source.is_indexing();
+    let source_type = source.source_type().clone();
 
     let result = LoadResult {
         session_id: session_id.clone(),
@@ -307,7 +307,7 @@ async fn run_background_indexer(
                 let done = new_cursor >= data.len();
                 let chunk_line_count = chunk_meta.len();
 
-                session.extend_source_index(0, chunk_index, chunk_meta, sentinel, done);
+                session.extend_source_index(chunk_index, chunk_meta, sentinel, done);
                 (chunk_line_count, bytes_in_chunk)
             }
         }; // session lock released
@@ -373,7 +373,7 @@ pub async fn get_lines(
         .ok_or("No sources in session")?;
 
     let total_lines = source.total_lines();
-    let parser = parser_for(&source.source_type);
+    let parser = parser_for(source.source_type());
 
     match request.mode {
         ViewMode::Full => {
@@ -393,7 +393,7 @@ pub async fn get_lines(
                     .map(|q| compute_search_highlights(&raw, q))
                     .unwrap_or_default();
 
-                let view_line = if let Some(ctx) = parser.parse_line(&raw, &source.id, i) {
+                let view_line = if let Some(ctx) = parser.parse_line(&raw, source.id(), i) {
                     ViewLine {
                         line_num: i,
                         virtual_index: i,
@@ -422,7 +422,7 @@ pub async fn get_lines(
                         timestamp: meta.map_or(0, |m| m.timestamp),
                         pid: 0,
                         tid: 0,
-                        source_id: source.id.clone(),
+                        source_id: source.id().to_string(),
                         highlights,
                         matched_by: vec![],
                         is_context: false,
@@ -491,7 +491,7 @@ pub async fn get_lines(
                     .map(|q| compute_search_highlights(&raw, q))
                     .unwrap_or_default();
 
-                let view_line = if let Some(ctx) = parser.parse_line(&raw, &source.id, ln) {
+                let view_line = if let Some(ctx) = parser.parse_line(&raw, source.id(), ln) {
                     ViewLine {
                         line_num: ln,
                         virtual_index: vi,
@@ -522,7 +522,7 @@ pub async fn get_lines(
                         timestamp: meta.timestamp,
                         pid: 0,
                         tid: 0,
-                        source_id: source.id.clone(),
+                        source_id: source.id().to_string(),
                         highlights,
                         matched_by: if matched_set.contains(&ln) {
                             vec![proc_id.to_string()]
@@ -572,13 +572,13 @@ pub async fn get_lines(
             let mut lines = Vec::new();
             for i in start..end {
                 let raw = inner_source.raw_line(i).unwrap_or("").to_string();
-                let meta = &inner_source.line_meta[i];
+                let meta = inner_source.meta_at(i);
                 let highlights = sub_req
                     .search
                     .as_ref()
                     .map(|q| compute_search_highlights(&raw, q))
                     .unwrap_or_default();
-                let ctx = parser.parse_line(&raw, &inner_source.id, i);
+                let ctx = parser.parse_line(&raw, inner_source.id(), i);
                 let view_line = match ctx {
                     Some(c) => ViewLine {
                         line_num: i,
@@ -595,20 +595,30 @@ pub async fn get_lines(
                         matched_by: vec![],
                         is_context: i != center,
                     },
-                    None => ViewLine {
-                        line_num: i,
-                        virtual_index: i,
-                        raw: raw.clone(),
-                        level: meta.level,
-                        tag: inner_session.resolve_tag(meta.tag_id).to_string(),
-                        message: raw,
-                        timestamp: meta.timestamp,
-                        pid: 0,
-                        tid: 0,
-                        source_id: inner_source.id.clone(),
-                        highlights,
-                        matched_by: vec![],
-                        is_context: i != center,
+                    None => {
+                        let m = meta.unwrap_or(&crate::core::line::LineMeta {
+                            level: LogLevel::Info,
+                            tag_id: 0,
+                            timestamp: 0,
+                            byte_offset: 0,
+                            byte_len: 0,
+                            is_section_boundary: false,
+                        });
+                        ViewLine {
+                            line_num: i,
+                            virtual_index: i,
+                            raw: raw.clone(),
+                            level: m.level,
+                            tag: inner_session.resolve_tag(m.tag_id).to_string(),
+                            message: raw,
+                            timestamp: m.timestamp,
+                            pid: 0,
+                            tid: 0,
+                            source_id: inner_source.id().to_string(),
+                            highlights,
+                            matched_by: vec![],
+                            is_context: i != center,
+                        }
                     },
                 };
                 lines.push(view_line);
@@ -857,7 +867,7 @@ pub async fn get_dumpstate_metadata(
     let mut in_props_section = false;
     let mut passed_first_section = false;
 
-    for (i, line_m) in source.line_meta.iter().enumerate() {
+    for (i, line_m) in source.line_meta_slice().iter().enumerate() {
         let raw = source.raw_line(i).unwrap_or("").trim_end_matches(['\r', '\n']);
 
         // Detect section boundaries from tag field (BugreportParser sets tag on ------ lines).
@@ -974,7 +984,7 @@ pub async fn get_sections(
         .get(&session_id)
         .ok_or_else(|| format!("Session '{session_id}' not found"))?;
     let src = session.primary_source().ok_or("No sources in session")?;
-    Ok(src.sections.clone())
+    Ok(src.sections().to_vec())
 }
 
 // ---------------------------------------------------------------------------

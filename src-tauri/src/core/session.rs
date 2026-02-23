@@ -10,6 +10,7 @@ use crate::core::bugreport_parser::BugreportParser;
 use crate::core::index::CrossSourceIndex;
 use crate::core::kernel_parser::KernelParser;
 use crate::core::line::{LineMeta, LogLevel, ParsedLineMeta};
+use crate::core::log_source::{FileLogSource, LogSource, StreamLogSource};
 use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;
 use crate::core::timeline::{Timeline, TimelineEntry};
@@ -105,147 +106,12 @@ pub struct SectionInfo {
 }
 
 // ---------------------------------------------------------------------------
-// LogSourceData — backing store (file mmap or live stream)
-// ---------------------------------------------------------------------------
-
-pub enum LogSourceData {
-    File {
-        mmap: Arc<Mmap>,
-        /// Byte offsets for every indexed line, with a sentinel at the end
-        /// equal to the byte past the last line.  Line i spans
-        /// `offsets[i]..offsets[i+1]` (may include trailing \r\n).
-        line_index: Vec<u64>,
-    },
-    Stream {
-        /// Raw line strings growing as new ADB lines arrive.
-        raw_lines: Vec<String>,
-        /// Cumulative bytes received (including bytes of evicted lines).
-        byte_count: u64,
-        /// Lines drained from the front to enforce the size cap.
-        evicted_count: usize,
-        /// First non-zero timestamp ever seen; set once, never cleared after eviction.
-        cached_first_ts: Option<i64>,
-    },
-}
-
-// ---------------------------------------------------------------------------
-// LogSource — one source (file or ADB stream)
-// ---------------------------------------------------------------------------
-
-pub struct LogSource {
-    pub id: String,
-    pub name: String,
-    pub source_type: SourceType,
-    pub data: LogSourceData,
-    /// Lightweight metadata for every indexed line (shared by both variants).
-    pub line_meta: Vec<LineMeta>,
-    /// Named sections (Bugreport only; empty for all other source types).
-    pub sections: Vec<SectionInfo>,
-    /// True while a background indexing task is still scanning the remainder of the file.
-    pub is_indexing: bool,
-}
-
-impl LogSource {
-    /// Create an empty streaming source.
-    pub fn new_stream(id: String, name: String) -> Self {
-        Self {
-            id,
-            name,
-            source_type: SourceType::Logcat,
-            data: LogSourceData::Stream {
-                raw_lines: Vec::new(),
-                byte_count: 0,
-                evicted_count: 0,
-                cached_first_ts: None,
-            },
-            line_meta: Vec::new(),
-            sections: Vec::new(),
-            is_indexing: false,
-        }
-    }
-
-    pub fn total_lines(&self) -> usize {
-        match &self.data {
-            LogSourceData::File { .. } => self.line_meta.len(),
-            // Cumulative total: evicted + currently retained
-            LogSourceData::Stream { evicted_count, .. } => evicted_count + self.line_meta.len(),
-        }
-    }
-
-    pub fn raw_line(&self, line_num: usize) -> Option<&str> {
-        match &self.data {
-            LogSourceData::File { mmap, line_index } => {
-                // line_index has N+1 entries (sentinel at end); valid line nums are 0..N-1
-                if line_num + 1 >= line_index.len() {
-                    return None;
-                }
-                let start = line_index[line_num] as usize;
-                let end = line_index[line_num + 1] as usize;
-                // Guard against corrupt/stale offsets (can happen during concurrent indexing)
-                if start >= end || end > mmap.len() {
-                    return None;
-                }
-                // Strip trailing \n and \r\n
-                let mut slice_end = end;
-                if slice_end > start && mmap[slice_end - 1] == b'\n' {
-                    slice_end -= 1;
-                }
-                if slice_end > start && mmap[slice_end - 1] == b'\r' {
-                    slice_end -= 1;
-                }
-                std::str::from_utf8(&mmap[start..slice_end]).ok()
-            }
-            LogSourceData::Stream { raw_lines, evicted_count, .. } => {
-                let local_idx = line_num.checked_sub(*evicted_count)?;
-                raw_lines.get(local_idx).map(|s| s.as_str())
-            }
-        }
-    }
-
-    /// Cumulative byte count for streaming sources; 0 for file sources.
-    pub fn stream_byte_count(&self) -> u64 {
-        if let LogSourceData::Stream { byte_count, .. } = &self.data {
-            *byte_count
-        } else {
-            0
-        }
-    }
-
-    pub fn first_timestamp(&self) -> Option<i64> {
-        match &self.data {
-            // Return cached value so eviction doesn't lose the original first timestamp.
-            LogSourceData::Stream { cached_first_ts, .. } => *cached_first_ts,
-            _ => self.line_meta.iter().find(|m| m.timestamp > 0).map(|m| m.timestamp),
-        }
-    }
-
-    pub fn last_timestamp(&self) -> Option<i64> {
-        self.line_meta
-            .iter()
-            .rev()
-            .find(|m| m.timestamp > 0)
-            .map(|m| m.timestamp)
-    }
-
-    /// Return the `LineMeta` for absolute line number `n`, correctly adjusted
-    /// for stream eviction.  Returns `None` when the line has been evicted from
-    /// the in-memory buffer or `n` is out of range.
-    pub fn meta_at(&self, n: usize) -> Option<&LineMeta> {
-        let local = match &self.data {
-            LogSourceData::Stream { evicted_count, .. } => n.checked_sub(*evicted_count)?,
-            LogSourceData::File { .. } => n,
-        };
-        self.line_meta.get(local)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// AnalysisSession — owns all sources for one "workspace"
+// AnalysisSession — owns the source for one "workspace"
 // ---------------------------------------------------------------------------
 
 pub struct AnalysisSession {
     pub id: String,
-    pub sources: Vec<LogSource>,
+    pub source: Option<Box<dyn LogSource>>,
     pub timeline: Timeline,
     pub index: CrossSourceIndex,
     pub tag_interner: TagInterner,
@@ -255,7 +121,7 @@ impl AnalysisSession {
     pub fn new(id: String) -> Self {
         Self {
             id,
-            sources: Vec::new(),
+            source: None,
             timeline: Timeline::new(),
             index: CrossSourceIndex::build(&[]),
             tag_interner: TagInterner::new(),
@@ -272,18 +138,53 @@ impl AnalysisSession {
         self.tag_interner.resolve(tag_id)
     }
 
-    /// Load a file, detect its type, build the line index, and add it.
-    /// Returns the new source's index in `self.sources`.
+    /// Access the primary source (read-only).
+    pub fn primary_source(&self) -> Option<&dyn LogSource> {
+        self.source.as_deref()
+    }
+
+    /// Access the primary source (mutable).
+    pub fn primary_source_mut(&mut self) -> Option<&mut (dyn LogSource + 'static)> {
+        self.source.as_deref_mut()
+    }
+
+    /// Downcast the source to a FileLogSource (read-only).
+    pub fn file_source(&self) -> Option<&FileLogSource> {
+        self.source
+            .as_ref()
+            .and_then(|s| s.as_any().downcast_ref::<FileLogSource>())
+    }
+
+    /// Downcast the source to a FileLogSource (mutable).
+    pub fn file_source_mut(&mut self) -> Option<&mut FileLogSource> {
+        self.source
+            .as_mut()
+            .and_then(|s| s.as_any_mut().downcast_mut::<FileLogSource>())
+    }
+
+    /// Downcast the source to a StreamLogSource (read-only).
+    pub fn stream_source(&self) -> Option<&StreamLogSource> {
+        self.source
+            .as_ref()
+            .and_then(|s| s.as_any().downcast_ref::<StreamLogSource>())
+    }
+
+    /// Downcast the source to a StreamLogSource (mutable).
+    pub fn stream_source_mut(&mut self) -> Option<&mut StreamLogSource> {
+        self.source
+            .as_mut()
+            .and_then(|s| s.as_any_mut().downcast_mut::<StreamLogSource>())
+    }
+
+    /// Load a file, detect its type, build the line index, and set it as the source.
     pub fn add_source_from_file(
         &mut self,
         path: &Path,
         source_id: String,
-    ) -> Result<usize, String> {
+    ) -> Result<(), String> {
         let file =
             File::open(path).map_err(|e| format!("Cannot open '{}': {e}", path.display()))?;
 
-        // Safety: the file is opened read-only; other processes may write to it,
-        // but we accept that risk for large-file performance.
         let mmap =
             Arc::new(unsafe { Mmap::map(&file) }.map_err(|e| format!("Cannot mmap file: {e}"))?);
 
@@ -298,40 +199,35 @@ impl AnalysisSession {
             .unwrap_or("unknown")
             .to_string();
 
-        let idx = self.sources.len();
-        self.sources.push(LogSource {
-            id: source_id,
-            name,
+        self.source = Some(Box::new(FileLogSource {
+            source_id,
+            source_name: name,
             source_type,
-            data: LogSourceData::File { mmap, line_index },
+            mmap,
+            line_index,
             line_meta,
-            sections,
-            is_indexing: false,
-        });
+            section_info: sections,
+            indexing: false,
+        }));
 
-        // Rebuild the timeline and index after adding a new source.
         self.rebuild_timeline();
-
-        Ok(idx)
+        Ok(())
     }
 
     /// Add an empty streaming source (for ADB logcat sessions).
-    /// Returns the new source's index in `self.sources`.
-    pub fn add_stream_source(&mut self, source_id: String, device_label: String) -> usize {
-        let idx = self.sources.len();
-        self.sources.push(LogSource::new_stream(source_id, device_label));
-        idx
+    pub fn add_stream_source(&mut self, source_id: String, device_label: String) {
+        self.source = Some(Box::new(StreamLogSource::new(source_id, device_label)));
     }
 
     /// Like `add_source_from_file` but only indexes the first `max_bytes` synchronously.
-    /// Returns `(source_idx, Arc<Mmap>, total_file_bytes, bytes_consumed)`.
+    /// Returns `(Arc<Mmap>, total_file_bytes, bytes_consumed)`.
     /// The caller is responsible for background-indexing the remainder.
     pub fn add_source_partial(
         &mut self,
         path: &Path,
         source_id: String,
         max_bytes: usize,
-    ) -> Result<(usize, Arc<Mmap>, usize, usize), String> {
+    ) -> Result<(Arc<Mmap>, usize, usize), String> {
         let file = File::open(path).map_err(|e| format!("Cannot open '{}': {e}", path.display()))?;
         let mmap = Arc::new(
             unsafe { Mmap::map(&file) }.map_err(|e| format!("Cannot mmap file: {e}"))?,
@@ -348,86 +244,76 @@ impl AnalysisSession {
             .unwrap_or("unknown")
             .to_string();
         let is_indexing = bytes_consumed < total_bytes;
-        let idx = self.sources.len();
-        self.sources.push(LogSource {
-            id: source_id,
-            name,
+
+        let mmap_clone = Arc::clone(&mmap);
+        self.source = Some(Box::new(FileLogSource {
+            source_id,
+            source_name: name,
             source_type,
-            data: LogSourceData::File { mmap: Arc::clone(&mmap), line_index },
+            mmap,
+            line_index,
             line_meta,
-            sections,
-            is_indexing,
-        });
+            section_info: sections,
+            indexing: is_indexing,
+        }));
+
         if !is_indexing {
             self.rebuild_timeline();
         }
-        Ok((idx, mmap, total_bytes, bytes_consumed))
+        Ok((mmap_clone, total_bytes, bytes_consumed))
     }
 
-    /// Append new index entries to the source at `source_idx`.
-    /// `new_offsets` are byte offsets of newly indexed lines (no sentinel).
-    /// `sentinel` is the byte offset just past the last line in this batch.
+    /// Extend the file source index with new entries from background indexing.
     /// When `done` is true, rebuilds sections and timeline.
     pub fn extend_source_index(
         &mut self,
-        source_idx: usize,
         new_offsets: Vec<u64>,
         new_line_meta: Vec<LineMeta>,
         sentinel: u64,
         done: bool,
     ) {
-        {
-            let source = &mut self.sources[source_idx];
-            if let LogSourceData::File { ref mut line_index, .. } = source.data {
-                // Remove the old sentinel before appending new offsets.
-                if !line_index.is_empty() {
-                    line_index.pop();
-                }
-                line_index.extend(new_offsets);
-                // Push the new sentinel.
-                line_index.push(sentinel);
-            }
-            source.line_meta.extend(new_line_meta);
-            source.is_indexing = !done;
+        if let Some(file_src) = self.file_source_mut() {
+            file_src.extend_index(new_offsets, new_line_meta, sentinel, done);
         }
         if done {
-            let source_type = self.sources[source_idx].source_type.clone();
-            let sections = build_section_index(&self.sources[source_idx].line_meta, &source_type, &self.tag_interner);
-            self.sources[source_idx].sections = sections;
+            // Rebuild sections from the completed index. We access the file source
+            // fields via raw pointer arithmetic to avoid overlapping borrows with
+            // tag_interner. Instead, clone what we need.
+            if let Some(file_src) = self.file_source() {
+                let source_type = file_src.source_type.clone();
+                let line_meta_ref = &file_src.line_meta;
+                let sections = build_section_index(line_meta_ref, &source_type, &self.tag_interner);
+                // Re-borrow mutably to set sections
+                if let Some(file_src) = self.file_source_mut() {
+                    file_src.set_sections(sections);
+                }
+            }
             self.rebuild_timeline();
         }
     }
 
-    /// Rebuild the unified timeline and cross-source index from all loaded sources.
+    /// Rebuild the unified timeline and cross-source index.
     pub fn rebuild_timeline(&mut self) {
-        let all_entries: Vec<TimelineEntry> = self
-            .sources
-            .iter()
-            .flat_map(|src| {
-                src.line_meta.iter().enumerate().map(|(i, m)| TimelineEntry {
-                    source_id: src.id.clone(),
+        let all_entries: Vec<TimelineEntry> = if let Some(ref src) = self.source {
+            src.line_meta_slice()
+                .iter()
+                .enumerate()
+                .map(|(i, m)| TimelineEntry {
+                    source_id: src.id().to_string(),
                     source_line_num: i,
                     timestamp: m.timestamp,
                     level: m.level,
                     tag: self.tag_interner.resolve(m.tag_id).to_string(),
                 })
-            })
-            .collect();
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         self.timeline = Timeline::build(
-            // Pass a single "all entries" iterator; Timeline::build just flattens.
             std::iter::once(("", all_entries.into_iter())),
         );
         self.index = CrossSourceIndex::build(&self.timeline.entries);
-    }
-
-    pub fn source_by_id(&self, id: &str) -> Option<&LogSource> {
-        self.sources.iter().find(|s| s.id == id)
-    }
-
-    /// First source — convenience for single-source Phase 1 usage.
-    pub fn primary_source(&self) -> Option<&LogSource> {
-        self.sources.first()
     }
 }
 
@@ -436,13 +322,9 @@ impl AnalysisSession {
 // ---------------------------------------------------------------------------
 
 fn detect_source_type(mmap: &Mmap) -> SourceType {
-    // Sample the first 4 KB for heuristics
     let sample = &mmap[..mmap.len().min(4096)];
     let text = std::str::from_utf8(sample).unwrap_or("");
 
-    // Dumpstate must be checked first: dumpstate files embed logcat sections
-    // that contain "--------- beginning of", which would otherwise trigger the
-    // Logcat branch below.
     if text.contains("== dumpstate:") || text.contains("Bugreport format version:") {
         return SourceType::Bugreport;
     }
@@ -456,16 +338,14 @@ fn detect_source_type(mmap: &Mmap) -> SourceType {
         return SourceType::Radio;
     }
 
-    SourceType::Logcat // safe default
+    SourceType::Logcat
 }
 
 fn is_logcat_threadtime(sample: &str) -> bool {
-    // Check if the first non-empty line matches the threadtime pattern
     for line in sample.lines().take(10) {
         if line.starts_with("-----") {
             continue;
         }
-        // Quick byte-level check: "MM-DD HH:MM:SS"
         let b = line.as_bytes();
         if b.len() > 14
             && b[2] == b'-'
@@ -480,8 +360,6 @@ fn is_logcat_threadtime(sample: &str) -> bool {
     false
 }
 
-/// Check if the first non-empty line looks like a kernel log timestamp: `[ NNNNN.NNNNNN]`.
-/// Guards against false positives from lines that merely start with `[`.
 fn looks_like_kernel(sample: &str) -> bool {
     for line in sample.lines().take(10) {
         let trimmed = line.trim();
@@ -494,8 +372,6 @@ fn looks_like_kernel(sample: &str) -> bool {
         if let Some(close) = trimmed.find(']') {
             if close > 1 {
                 let inner = &trimmed[1..close];
-                // Must look like a numeric timestamp: digits, dots, and spaces only,
-                // with at least one dot.
                 if inner.contains('.')
                     && inner
                         .chars()
@@ -513,8 +389,6 @@ fn looks_like_kernel(sample: &str) -> bool {
 // Line indexer — scans the mmap once, builds per-line metadata
 // ---------------------------------------------------------------------------
 
-/// Convert a `ParsedLineMeta` (parser output with tag String) to a `LineMeta`
-/// (stored form with interned tag_id).
 fn intern_parsed_meta(parsed: ParsedLineMeta, interner: &mut TagInterner) -> LineMeta {
     let tag_id = interner.intern(&parsed.tag);
     LineMeta {
@@ -535,7 +409,6 @@ fn build_line_index(
     let parser: Box<dyn LogParser> = parser_for(source_type);
     let data = mmap.as_ref();
 
-    // Pre-allocate rough estimate (avg 120 bytes/line) + 1 for sentinel
     let estimate = (data.len() / 120).max(1024);
     let mut line_index: Vec<u64> = Vec::with_capacity(estimate + 1);
     let mut line_meta: Vec<LineMeta> = Vec::with_capacity(estimate);
@@ -543,9 +416,7 @@ fn build_line_index(
     let mut start = 0usize;
     let len = data.len();
 
-    // Helper closure: index a single line from data[start..end] (end excludes the newline).
     let index_line = |start: usize, end: usize, line_index: &mut Vec<u64>, line_meta: &mut Vec<LineMeta>, interner: &mut TagInterner| {
-        // Strip trailing \r if present.
         let content_end = if end > start && data[end - 1] == b'\r' {
             end - 1
         } else {
@@ -594,12 +465,10 @@ fn build_line_index(
         start = nl_pos + 1;
     }
 
-    // Handle trailing content after the last newline (no trailing \n).
     if start < len {
         index_line(start, len, &mut line_index, &mut line_meta, interner);
     }
 
-    // Sentinel: byte offset past the last line
     line_index.push(len as u64);
 
     (line_index, line_meta)
@@ -622,7 +491,6 @@ pub(crate) fn build_partial_line_index(
     let mut start = 0usize;
     let mut end_byte = 0usize;
 
-    // Helper closure: index a single line from data[start..end].
     let index_line = |start: usize, end: usize, line_index: &mut Vec<u64>, line_meta: &mut Vec<LineMeta>, interner: &mut TagInterner| {
         let content_end = if end > start && data[end - 1] == b'\r' {
             end - 1
@@ -676,46 +544,23 @@ pub(crate) fn build_partial_line_index(
         }
     }
 
-    // Handle trailing content after the last newline when scanning the full file
-    // (i.e., scan_limit == data.len() and no trailing newline).
-    if start < data.len() && (end_byte < scan_limit || scan_limit == data.len()) {
-        // Only index the trailing partial line if we haven't broken out early
-        if end_byte < scan_limit || scan_limit == data.len() {
-            // Check: did we exhaust all newlines without hitting scan_limit?
-            // If scan_limit < data.len(), we only want complete lines up to the limit.
-            if scan_limit == data.len() {
-                index_line(start, data.len(), &mut line_index, &mut line_meta, interner);
-                end_byte = data.len();
-            }
-        }
+    if start < data.len() && scan_limit == data.len() {
+        index_line(start, data.len(), &mut line_index, &mut line_meta, interner);
+        end_byte = data.len();
     }
 
-    // Sentinel: byte offset past the last indexed line
     line_index.push(end_byte as u64);
 
     (line_index, line_meta, end_byte)
 }
 
 /// Scan `line_meta` to extract named section boundaries for Bugreport files.
-///
-/// BugreportParser sets `LineMeta.tag` to the section name on `------` lines:
-/// - Start header: `level = Info`, non-empty tag (not "dumpstate")
-/// - Duration footer: `level = Verbose`, non-empty tag
-///
-/// Uses a stack so that nested sub-section headers (e.g. the many
-/// `BLOCK STAT (/sys/block/…)` lines inside `DUMP BLOCK STAT`) are NOT
-/// emitted as separate sections.  A `SectionInfo` is only created when a
-/// matching duration footer is found.  Sub-section headers that never receive
-/// their own footer are silently discarded.
-///
-/// Returns an empty Vec for all non-Bugreport source types.
-fn build_section_index(line_meta: &[LineMeta], source_type: &SourceType, interner: &TagInterner) -> Vec<SectionInfo> {
+pub(crate) fn build_section_index(line_meta: &[LineMeta], source_type: &SourceType, interner: &TagInterner) -> Vec<SectionInfo> {
     if !matches!(source_type, SourceType::Bugreport) {
         return Vec::new();
     }
 
     let mut sections = Vec::new();
-    // Stack of (section_name, start_line_idx) — top is the most recently opened.
     let mut pending: Vec<(String, usize)> = Vec::new();
 
     for (i, meta) in line_meta.iter().enumerate() {
@@ -724,10 +569,8 @@ fn build_section_index(line_meta: &[LineMeta], source_type: &SourceType, interne
         }
         let tag = interner.resolve(meta.tag_id);
         if meta.level == LogLevel::Info && !tag.is_empty() && tag != "dumpstate" {
-            // Section start header — push onto the stack.
             pending.push((tag.to_string(), i));
         } else if meta.level == LogLevel::Verbose && !tag.is_empty() {
-            // Duration footer — find the most recently opened section with this name.
             if let Some(pos) = pending.iter().rposition(|(name, _)| name == tag) {
                 let (name, start) = pending.remove(pos);
                 sections.push(SectionInfo {
@@ -736,12 +579,9 @@ fn build_section_index(line_meta: &[LineMeta], source_type: &SourceType, interne
                     end_line: i,
                 });
             }
-            // Sub-section headers without a matching footer remain on the stack
-            // and are discarded at the end — they are NOT emitted as sections.
         }
     }
 
-    // Any unmatched stack entries are orphan sub-section headers; drop them.
     sections
 }
 
@@ -762,34 +602,251 @@ pub(crate) fn parser_for(source_type: &SourceType) -> Box<dyn LogParser> {
 mod tests {
     use super::*;
     use crate::core::line::LogLevel;
+    use crate::core::log_source::{FileLogSource, LogSource, StreamLogSource};
 
-    /// Helper: build a LogSource in Stream mode with `n` lines already in
-    /// raw_lines / line_meta, and `evicted` lines already evicted from the front.
-    fn make_stream_source(n: usize, evicted: usize) -> LogSource {
-        let mut src = LogSource::new_stream("test".into(), "test".into());
-        if let LogSourceData::Stream {
-            ref mut raw_lines,
-            ref mut evicted_count,
-            ref mut byte_count,
-            ..
-        } = src.data
-        {
-            *evicted_count = evicted;
-            for i in 0..n {
-                let line = format!("line {}", evicted + i);
-                *byte_count += line.len() as u64 + 1;
-                raw_lines.push(line);
-                src.line_meta.push(LineMeta {
-                    level: LogLevel::Info,
-                    tag_id: 0,
-                    timestamp: (evicted + i) as i64,
-                    byte_offset: 0,
-                    byte_len: 0,
-                    is_section_boundary: false,
-                });
-            }
+    /// Helper: build a StreamLogSource with `n` lines and `evicted` evicted.
+    fn make_stream_source(n: usize, evicted: usize) -> StreamLogSource {
+        let mut src = StreamLogSource::new("test".into(), "test".into());
+        src.evicted_count = evicted;
+        for i in 0..n {
+            let line = format!("line {}", evicted + i);
+            src.byte_count += line.len() as u64 + 1;
+            src.raw_lines.push(line);
+            src.line_meta.push(LineMeta {
+                level: LogLevel::Info,
+                tag_id: 0,
+                timestamp: (evicted + i) as i64,
+                byte_offset: 0,
+                byte_len: 0,
+                is_section_boundary: false,
+            });
         }
         src
+    }
+
+    // =========================================================================
+    // LogSource trait + AnalysisSession accessor tests
+    // =========================================================================
+
+    /// Helper: build a FileLogSource backed by an anonymous mmap from logcat data.
+    fn make_file_source(n: usize) -> (FileLogSource, Arc<Mmap>) {
+        let data = make_logcat_data(n);
+        let mut mmap_mut = memmap2::MmapOptions::new()
+            .len(data.len())
+            .map_anon()
+            .expect("anon mmap");
+        mmap_mut.copy_from_slice(&data);
+        let mmap: Mmap = mmap_mut.make_read_only().unwrap();
+        let mmap = Arc::new(mmap);
+
+        let mut interner = TagInterner::new();
+        let (line_index, line_meta) = build_line_index(&mmap, &SourceType::Logcat, &mut interner);
+        let sections = build_section_index(&line_meta, &SourceType::Logcat, &interner);
+
+        let src = FileLogSource {
+            source_id: "file-src".into(),
+            source_name: "test.log".into(),
+            source_type: SourceType::Logcat,
+            mmap: Arc::clone(&mmap),
+            line_index,
+            line_meta,
+            section_info: sections,
+            indexing: false,
+        };
+        (src, mmap)
+    }
+
+    // --- LogSource trait: FileLogSource ---
+
+    #[test]
+    fn file_source_trait_id_name_type() {
+        let (src, _mmap) = make_file_source(5);
+        let trait_ref: &dyn LogSource = &src;
+        assert_eq!(trait_ref.id(), "file-src");
+        assert_eq!(trait_ref.name(), "test.log");
+        assert!(matches!(trait_ref.source_type(), SourceType::Logcat));
+        assert!(!trait_ref.is_live());
+        assert!(!trait_ref.is_indexing());
+    }
+
+    #[test]
+    fn file_source_trait_total_lines_and_access() {
+        let (src, _mmap) = make_file_source(10);
+        let trait_ref: &dyn LogSource = &src;
+        assert_eq!(trait_ref.total_lines(), 10);
+        assert!(trait_ref.raw_line(0).is_some());
+        assert!(trait_ref.raw_line(9).is_some());
+        assert!(trait_ref.raw_line(10).is_none());
+        assert!(trait_ref.meta_at(0).is_some());
+        assert!(trait_ref.meta_at(9).is_some());
+        assert!(trait_ref.meta_at(10).is_none());
+        assert_eq!(trait_ref.line_meta_slice().len(), 10);
+    }
+
+    #[test]
+    fn file_source_trait_timestamps() {
+        let (src, _mmap) = make_file_source(5);
+        let trait_ref: &dyn LogSource = &src;
+        let first = trait_ref.first_timestamp();
+        let last = trait_ref.last_timestamp();
+        assert!(first.is_some(), "should have a first timestamp");
+        assert!(last.is_some(), "should have a last timestamp");
+        assert!(last.unwrap() >= first.unwrap(), "last >= first");
+    }
+
+    #[test]
+    fn file_source_sections_empty_for_logcat() {
+        let (src, _mmap) = make_file_source(5);
+        assert!(src.sections().is_empty(), "logcat files have no sections");
+    }
+
+    // --- LogSource trait: StreamLogSource ---
+
+    #[test]
+    fn stream_source_trait_id_name_type() {
+        let src = StreamLogSource::new("stream-1".into(), "ADB: device".into());
+        let trait_ref: &dyn LogSource = &src;
+        assert_eq!(trait_ref.id(), "stream-1");
+        assert_eq!(trait_ref.name(), "ADB: device");
+        assert!(matches!(trait_ref.source_type(), SourceType::Logcat));
+        assert!(trait_ref.is_live());
+        assert!(!trait_ref.is_indexing());
+        assert!(trait_ref.sections().is_empty());
+    }
+
+    #[test]
+    fn stream_source_trait_with_lines() {
+        let src = make_stream_source(5, 0);
+        let trait_ref: &dyn LogSource = &src;
+        assert_eq!(trait_ref.total_lines(), 5);
+        assert_eq!(trait_ref.raw_line(0), Some("line 0"));
+        assert_eq!(trait_ref.raw_line(4), Some("line 4"));
+        assert!(trait_ref.raw_line(5).is_none());
+        assert_eq!(trait_ref.line_meta_slice().len(), 5);
+    }
+
+    #[test]
+    fn stream_source_first_timestamp_cached() {
+        let mut src = StreamLogSource::new("s".into(), "s".into());
+        // No lines → None
+        assert!(src.first_timestamp().is_none());
+        // Push a line with ts > 0
+        src.push_raw_line("line 0".into());
+        src.push_meta(LineMeta {
+            level: LogLevel::Info, tag_id: 0, timestamp: 42,
+            byte_offset: 0, byte_len: 0, is_section_boundary: false,
+        });
+        src.maybe_set_first_ts(42);
+        assert_eq!(src.first_timestamp(), Some(42));
+        // Evict it — cached_first_ts survives
+        src.evict(1);
+        assert_eq!(src.retained_count(), 0);
+        assert_eq!(src.first_timestamp(), Some(42));
+    }
+
+    // --- Trait object polymorphism (Box<dyn LogSource>) ---
+
+    #[test]
+    fn boxed_trait_object_file() {
+        let (src, _mmap) = make_file_source(3);
+        let boxed: Box<dyn LogSource> = Box::new(src);
+        assert_eq!(boxed.total_lines(), 3);
+        assert!(!boxed.is_live());
+        assert!(boxed.raw_line(0).is_some());
+    }
+
+    #[test]
+    fn boxed_trait_object_stream() {
+        let src = make_stream_source(4, 0);
+        let boxed: Box<dyn LogSource> = Box::new(src);
+        assert_eq!(boxed.total_lines(), 4);
+        assert!(boxed.is_live());
+        assert_eq!(boxed.raw_line(3), Some("line 3"));
+    }
+
+    // --- Downcasting via as_any / as_any_mut ---
+
+    #[test]
+    fn downcast_file_source() {
+        let (src, _mmap) = make_file_source(2);
+        let boxed: Box<dyn LogSource> = Box::new(src);
+        assert!(boxed.as_any().downcast_ref::<FileLogSource>().is_some());
+        assert!(boxed.as_any().downcast_ref::<StreamLogSource>().is_none());
+    }
+
+    #[test]
+    fn downcast_stream_source() {
+        let src = make_stream_source(2, 0);
+        let boxed: Box<dyn LogSource> = Box::new(src);
+        assert!(boxed.as_any().downcast_ref::<StreamLogSource>().is_some());
+        assert!(boxed.as_any().downcast_ref::<FileLogSource>().is_none());
+    }
+
+    #[test]
+    fn downcast_mut_stream_source() {
+        let src = make_stream_source(2, 0);
+        let mut boxed: Box<dyn LogSource> = Box::new(src);
+        let stream = boxed.as_any_mut().downcast_mut::<StreamLogSource>().unwrap();
+        stream.push_raw_line("new line".into());
+        stream.push_meta(LineMeta {
+            level: LogLevel::Info, tag_id: 0, timestamp: 99,
+            byte_offset: 0, byte_len: 0, is_section_boundary: false,
+        });
+        assert_eq!(boxed.total_lines(), 3);
+    }
+
+    // --- AnalysisSession accessor helpers ---
+
+    #[test]
+    fn session_primary_source_none_when_empty() {
+        let session = AnalysisSession::new("empty".into());
+        assert!(session.primary_source().is_none());
+        assert!(session.file_source().is_none());
+        assert!(session.stream_source().is_none());
+    }
+
+    #[test]
+    fn session_add_stream_source_and_accessors() {
+        let mut session = AnalysisSession::new("s1".into());
+        session.add_stream_source("adb-123".into(), "ADB: Pixel".into());
+        assert!(session.primary_source().is_some());
+        assert_eq!(session.primary_source().unwrap().id(), "adb-123");
+        assert!(session.primary_source().unwrap().is_live());
+        // Downcast accessors
+        assert!(session.stream_source().is_some());
+        assert!(session.file_source().is_none());
+        // Mutable downcast
+        let stream = session.stream_source_mut().unwrap();
+        stream.push_raw_line("test line".into());
+        stream.push_meta(LineMeta {
+            level: LogLevel::Info, tag_id: 0, timestamp: 1,
+            byte_offset: 0, byte_len: 0, is_section_boundary: false,
+        });
+        assert_eq!(session.primary_source().unwrap().total_lines(), 1);
+    }
+
+    #[test]
+    fn session_file_source_accessors() {
+        let (src, _mmap) = make_file_source(5);
+        let mut session = AnalysisSession::new("f1".into());
+        session.source = Some(Box::new(src));
+        assert!(session.primary_source().is_some());
+        assert!(!session.primary_source().unwrap().is_live());
+        assert!(session.file_source().is_some());
+        assert!(session.stream_source().is_none());
+        assert_eq!(session.file_source().unwrap().mmap().len(), _mmap.len());
+    }
+
+    #[test]
+    fn session_file_source_mut_set_indexing() {
+        let (src, _mmap) = make_file_source(5);
+        let mut session = AnalysisSession::new("f2".into());
+        session.source = Some(Box::new(src));
+        assert!(!session.primary_source().unwrap().is_indexing());
+        session.file_source_mut().unwrap().set_indexing(true);
+        assert!(session.primary_source().unwrap().is_indexing());
+        session.file_source_mut().unwrap().set_indexing(false);
+        assert!(!session.primary_source().unwrap().is_indexing());
     }
 
     // --- meta_at() correctness tests ---
@@ -797,21 +854,17 @@ mod tests {
     #[test]
     fn meta_at_no_eviction() {
         let src = make_stream_source(5, 0);
-        // Line 0..4 should all be accessible
         for i in 0..5usize {
             let meta = src.meta_at(i).expect("meta_at should return Some");
             assert_eq!(meta.timestamp, i as i64);
         }
-        // Line 5 is out of range
         assert!(src.meta_at(5).is_none());
     }
 
     #[test]
     fn meta_at_after_eviction() {
-        // 3 lines retained; first 7 evicted → absolute line nums 7, 8, 9
         let src = make_stream_source(3, 7);
 
-        // Lines 0..6 are evicted — must return None, NOT panic
         for i in 0..7usize {
             assert!(
                 src.meta_at(i).is_none(),
@@ -819,62 +872,43 @@ mod tests {
             );
         }
 
-        // Lines 7, 8, 9 are live
         assert_eq!(src.meta_at(7).unwrap().timestamp, 7);
         assert_eq!(src.meta_at(8).unwrap().timestamp, 8);
         assert_eq!(src.meta_at(9).unwrap().timestamp, 9);
-
-        // Line 10 is beyond the buffer
         assert!(src.meta_at(10).is_none());
     }
 
     #[test]
     fn meta_at_large_eviction() {
-        // Simulate heavy eviction: 10_000 evicted, only 100 retained
         let src = make_stream_source(100, 10_000);
 
-        // Should not panic for any evicted line
         assert!(src.meta_at(0).is_none());
         assert!(src.meta_at(9_999).is_none());
-
-        // First retained line
         assert_eq!(src.meta_at(10_000).unwrap().timestamp, 10_000);
-        // Last retained line
         assert_eq!(src.meta_at(10_099).unwrap().timestamp, 10_099);
-
-        // Past the end
         assert!(src.meta_at(10_100).is_none());
     }
-
-    // --- total_lines() reflects cumulative count through eviction ---
 
     #[test]
     fn total_lines_counts_evicted() {
         let src = make_stream_source(50, 200);
-        // 200 evicted + 50 retained = 250 total
         assert_eq!(src.total_lines(), 250);
     }
-
-    // --- raw_line() mirrors meta_at() semantics ---
 
     #[test]
     fn raw_line_after_eviction() {
         let src = make_stream_source(3, 5);
-        // Evicted lines return None
         assert!(src.raw_line(0).is_none());
         assert!(src.raw_line(4).is_none());
-        // Live lines return the correct string
         assert_eq!(src.raw_line(5), Some("line 5"));
         assert_eq!(src.raw_line(7), Some("line 7"));
-        assert!(src.raw_line(8).is_none()); // past end
+        assert!(src.raw_line(8).is_none());
     }
 
     // =========================================================================
     // Progressive file loading tests
     // =========================================================================
 
-    /// Generate `n` well-formed logcat threadtime lines as bytes.
-    /// Each line has a unique timestamp and message for verification.
     fn make_logcat_data(n: usize) -> Vec<u8> {
         let mut out = String::new();
         for i in 0..n {
@@ -893,8 +927,6 @@ mod tests {
         out.into_bytes()
     }
 
-    /// Helper to call build_partial_line_index with a fresh interner.
-    /// Returns (line_index_with_sentinel, line_meta, bytes_consumed, interner).
     fn bpli(data: &[u8], parser: &dyn LogParser, max_bytes: usize)
         -> (Vec<u64>, Vec<LineMeta>, usize, TagInterner)
     {
@@ -903,17 +935,14 @@ mod tests {
         (idx, meta, consumed, interner)
     }
 
-    /// Number of actual lines in a sentinel-based index (N+1 entries for N lines).
     fn line_count(idx: &[u64]) -> usize {
         if idx.is_empty() { 0 } else { idx.len() - 1 }
     }
 
-    /// Extract line content from sentinel-based index: line i spans idx[i]..idx[i+1].
     fn extract_line<'a>(data: &'a [u8], idx: &[u64], i: usize) -> &'a str {
         let start = idx[i] as usize;
         let end = idx[i + 1] as usize;
         let slice = &data[start..end];
-        // Trim trailing \r\n or \n
         let trimmed = if slice.ends_with(b"\r\n") {
             &slice[..slice.len() - 2]
         } else if slice.ends_with(b"\n") {
@@ -924,10 +953,6 @@ mod tests {
         std::str::from_utf8(trimmed).unwrap()
     }
 
-    /// Simulate the background indexer (`run_background_indexer` in files.rs):
-    /// scan remaining bytes in chunks using the same `build_partial_line_index`
-    /// + offset adjustment pattern that the real code uses.
-    /// Returns combined (line_offsets_no_sentinel, line_meta) for the extension portion only.
     fn simulate_background_chunks(
         data: &[u8],
         parser: &dyn LogParser,
@@ -948,7 +973,6 @@ mod tests {
                 break;
             }
 
-            // Adjust offsets for the cursor position
             for offset in chunk_idx.iter_mut() {
                 *offset += cursor as u64;
             }
@@ -956,7 +980,6 @@ mod tests {
                 m.byte_offset += cursor;
             }
 
-            // Remove sentinel before collecting (we only want line start offsets)
             if !chunk_idx.is_empty() {
                 chunk_idx.pop();
             }
@@ -979,7 +1002,6 @@ mod tests {
         assert_eq!(meta.len(), 5);
         assert_eq!(consumed, data.len());
 
-        // Verify byte offsets are sequential
         for i in 1..line_count(&idx) {
             assert!(
                 idx[i] >= idx[i - 1],
@@ -1112,7 +1134,6 @@ mod tests {
         let (ext_offsets, ext_meta) =
             simulate_background_chunks(&data, &parser, consumed, data.len());
 
-        // Combine: strip sentinel from partial, add extension offsets, then add final sentinel
         let mut combined_offsets: Vec<u64> = part_idx[..part_idx.len() - 1].to_vec();
         combined_offsets.extend(&ext_offsets);
         combined_offsets.push(*ref_idx.last().unwrap());
@@ -1174,7 +1195,6 @@ mod tests {
         let data = make_logcat_data(10);
         let parser = LogcatParser;
 
-        // Use a single interner for both partial and extension so tag IDs are consistent.
         let mut interner = TagInterner::new();
 
         let half = data.len() / 2;
@@ -1183,7 +1203,6 @@ mod tests {
         let part_count = line_count(&part_idx);
         assert!(part_count > 0 && part_count < 10);
 
-        // Build extension using the same interner
         let remaining = &data[consumed..];
         let (mut ext_idx, mut ext_meta, _) =
             build_partial_line_index(remaining, &parser, &mut interner, remaining.len() + 100);
@@ -1193,7 +1212,6 @@ mod tests {
         for m in ext_meta.iter_mut() {
             m.byte_offset += consumed;
         }
-        // Strip sentinel and pass it separately
         let ext_sentinel = ext_idx.pop().unwrap_or(data.len() as u64);
         let ext_count = ext_meta.len();
 
@@ -1206,34 +1224,32 @@ mod tests {
         let mmap = Arc::new(mmap);
 
         let mut session = AnalysisSession::new("test-session".into());
-        // Transfer the shared interner to the session so tag IDs resolve correctly.
         session.tag_interner = interner;
-        session.sources.push(LogSource {
-            id: "src1".into(),
-            name: "test.log".into(),
+        session.source = Some(Box::new(FileLogSource {
+            source_id: "src1".into(),
+            source_name: "test.log".into(),
             source_type: SourceType::Logcat,
-            data: LogSourceData::File {
-                mmap: Arc::clone(&mmap),
-                line_index: part_idx,
-            },
+            mmap: Arc::clone(&mmap),
+            line_index: part_idx,
             line_meta: part_meta,
-            sections: Vec::new(),
-            is_indexing: true,
-        });
+            section_info: Vec::new(),
+            indexing: true,
+        }));
 
-        assert!(session.sources[0].is_indexing);
-        assert_eq!(session.sources[0].total_lines(), part_count);
+        let source = session.primary_source().unwrap();
+        assert!(source.is_indexing());
+        assert_eq!(source.total_lines(), part_count);
 
-        session.extend_source_index(0, ext_idx, ext_meta, ext_sentinel, true);
+        session.extend_source_index(ext_idx, ext_meta, ext_sentinel, true);
 
-        assert!(!session.sources[0].is_indexing, "should be done indexing");
+        let source = session.primary_source().unwrap();
+        assert!(!source.is_indexing(), "should be done indexing");
         assert_eq!(
-            session.sources[0].total_lines(),
+            source.total_lines(),
             part_count + ext_count,
             "total lines should be sum of partial + extension"
         );
 
-        let source = &session.sources[0];
         for i in 0..source.total_lines() {
             let line = source.raw_line(i);
             assert!(line.is_some(), "raw_line({}) should return Some after extend", i);
@@ -1382,28 +1398,25 @@ mod tests {
 
         let mut session = AnalysisSession::new("test".into());
         session.tag_interner = interner;
-        session.sources.push(LogSource {
-            id: "src1".into(),
-            name: "test.log".into(),
+        let original_count = line_count(&part_idx);
+        session.source = Some(Box::new(FileLogSource {
+            source_id: "src1".into(),
+            source_name: "test.log".into(),
             source_type: SourceType::Logcat,
-            data: LogSourceData::File {
-                mmap: Arc::new(mmap),
-                line_index: part_idx.clone(),
-            },
-            line_meta: part_meta.clone(),
-            sections: Vec::new(),
-            is_indexing: true,
-        });
+            mmap: Arc::new(mmap),
+            line_index: part_idx.clone(),
+            line_meta: part_meta,
+            section_info: Vec::new(),
+            indexing: true,
+        }));
 
-        let original_count = session.sources[0].total_lines();
-
-        // Extend with empty batch; sentinel = current end
         let sentinel = *part_idx.last().unwrap_or(&0);
-        session.extend_source_index(0, Vec::new(), Vec::new(), sentinel, true);
+        session.extend_source_index(Vec::new(), Vec::new(), sentinel, true);
 
-        assert!(!session.sources[0].is_indexing, "should be done indexing");
+        let source = session.primary_source().unwrap();
+        assert!(!source.is_indexing(), "should be done indexing");
         assert_eq!(
-            session.sources[0].total_lines(),
+            source.total_lines(),
             original_count,
             "line count should not change with empty batch"
         );
@@ -1421,16 +1434,10 @@ mod tests {
         assert_eq!(meta.len(), 3);
         assert_eq!(consumed, data.len());
 
-        // The blank line should have empty content
         let blank_content = extract_line(data, &idx, 1);
         assert!(blank_content.is_empty(), "blank line should have empty content");
 
-        // Lines after the blank should still have correct content
         let line3_content = extract_line(data, &idx, 2);
         assert!(line3_content.contains("line three"), "third line content should be correct");
     }
-
-    // --- Helper: build_partial_line_index signature adapter for equivalence tests ---
-    // (build_line_index takes &Mmap, but we use build_partial_line_index with huge
-    //  max_bytes as the "full" reference since the logic is identical)
 }

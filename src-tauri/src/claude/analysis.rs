@@ -57,26 +57,23 @@ pub fn build_analysis_context(
     let mut context_parts: Vec<String> = Vec::new();
 
     // --- Session overview ---
-    let total_lines: usize = session.sources.iter().map(|s| s.total_lines()).sum();
+    let source = session.primary_source();
+    let total_lines: usize = source.map(|s| s.total_lines()).unwrap_or(0);
+    let source_desc = source
+        .map(|s| format!("{} ({})", s.name(), s.source_type()))
+        .unwrap_or_else(|| "none".to_string());
     context_parts.push(format!(
         "## Log Session Overview\n\
          Sources: {}\n\
          Total lines: {}\n",
-        session
-            .sources
-            .iter()
-            .map(|s| format!("{} ({})", s.name, s.source_type))
-            .collect::<Vec<_>>()
-            .join(", "),
+        source_desc,
         total_lines,
     ));
 
     // --- Sample log lines (head + tail + middle) ---
-    for source in &session.sources {
+    if let Some(source) = source {
         let source_lines = source.total_lines();
-        if source_lines == 0 {
-            continue;
-        }
+        if source_lines > 0 {
 
         let mut sample_nums: Vec<usize> = Vec::new();
 
@@ -107,7 +104,7 @@ pub fn build_analysis_context(
 
         sample_nums.sort_unstable();
 
-        let mut lines_text = format!("## Log Lines from {}\n", source.name);
+        let mut lines_text = format!("## Log Lines from {}\n", source.name());
         for &n in &sample_nums {
             if let Some(raw) = source.raw_line(n) {
                 lines_text.push_str(&format!("[{}] {}\n", n + 1, raw));
@@ -115,7 +112,8 @@ pub fn build_analysis_context(
         }
 
         context_parts.push(lines_text);
-    }
+        } // source_lines > 0
+    } // if let Some(source)
 
     // --- Processor results (if selected) ---
     if let Some(pid) = processor_id {

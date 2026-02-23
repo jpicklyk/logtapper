@@ -10,7 +10,8 @@ use crate::commands::files::LoadResult;
 use crate::core::line::{LineMeta, LogLevel, ParsedLineMeta, ViewLine};
 use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;
-use crate::core::session::{AnalysisSession, LogSourceData};
+use crate::core::log_source::LogSource;
+use crate::core::session::AnalysisSession;
 use crate::processors::interpreter::{ContinuousRunState, ProcessorRun};
 use crate::processors::reporter::schema::ReporterDef;
 
@@ -883,85 +884,47 @@ fn flush_batch(
             None => return,
         };
 
-        // Append parsed lines to both raw_lines and line_meta.
-        // Access source.data and source.line_meta as separate fields to satisfy borrow checker.
-        for (raw, pmeta, _) in &parsed {
-            let source = match session.sources.first_mut() {
-                Some(s) => s,
-                None => return,
-            };
-            if let LogSourceData::Stream {
-                ref mut raw_lines,
-                ref mut byte_count,
-                ref mut cached_first_ts,
-                ..
-            } = source.data
-            {
-                *byte_count += (raw.len() + 1) as u64; // +1 for the newline
-                raw_lines.push(raw.clone());
-                if cached_first_ts.is_none() && pmeta.timestamp > 0 {
-                    *cached_first_ts = Some(pmeta.timestamp);
-                }
-            }
-            // Intern tag and convert ParsedLineMeta to LineMeta
+        // Intern tags first (needs &mut session for tag_interner).
+        let metas: Vec<LineMeta> = parsed.iter().map(|(_, pmeta, _)| {
             let tag_id = session.intern_tag(&pmeta.tag);
-            let meta = LineMeta {
+            LineMeta {
                 level: pmeta.level,
                 tag_id,
                 timestamp: pmeta.timestamp,
                 byte_offset: pmeta.byte_offset,
                 byte_len: pmeta.byte_len,
                 is_section_boundary: pmeta.is_section_boundary,
-            };
-            // source.data borrow released at end of if-let block; now safe to borrow line_meta
-            session.sources[0].line_meta.push(meta);
-        }
+            }
+        }).collect();
 
-        let source = match session.sources.first_mut() {
+        // Append to stream source.
+        let stream = match session.stream_source_mut() {
             Some(s) => s,
             None => return,
         };
 
-        // Evict oldest lines from the front if over the cap.
-        // Compute excess separately to avoid simultaneous mutable + immutable borrows.
-        let excess = if let LogSourceData::Stream { ref raw_lines, .. } = source.data {
-            raw_lines.len().saturating_sub(max_raw_lines)
-        } else {
-            0
-        };
+        for ((raw, pmeta, _), meta) in parsed.iter().zip(metas.into_iter()) {
+            stream.add_bytes((raw.len() + 1) as u64);
+            stream.push_raw_line(raw.clone());
+            stream.maybe_set_first_ts(pmeta.timestamp);
+            stream.push_meta(meta);
+        }
 
+        // Evict oldest lines from the front if over the cap.
+        let excess = stream.retained_count().saturating_sub(max_raw_lines);
         if excess > 0 {
-            if let LogSourceData::Stream {
-                ref mut raw_lines,
-                ref mut evicted_count,
-                ..
-            } = source.data
-            {
-                raw_lines.drain(0..excess);
-                *evicted_count += excess;
-            }
-            // source.data borrow released; now drain the parallel line_meta slice
-            source.line_meta.drain(0..excess);
+            stream.evict(excess);
         }
 
         // Collect stats for the batch event payload.
-        let total = source.total_lines();
-        let (bc, first_ts, last_ts) = if let LogSourceData::Stream {
-            byte_count,
-            cached_first_ts,
-            ..
-        } = &source.data
-        {
-            let last = source
-                .line_meta
-                .iter()
-                .rev()
-                .find(|m| m.timestamp > 0)
-                .map(|m| m.timestamp);
-            (*byte_count, *cached_first_ts, last)
-        } else {
-            (0, None, None)
-        };
+        let total = stream.total_lines();
+        let bc = stream.stream_byte_count();
+        let first_ts = stream.cached_first_ts();
+        let last_ts = stream.line_meta_slice()
+            .iter()
+            .rev()
+            .find(|m| m.timestamp > 0)
+            .map(|m| m.timestamp);
 
         (total, bc, first_ts, last_ts)
     };

@@ -2,6 +2,7 @@ pub mod bugreport_parser;
 pub mod index;
 pub mod kernel_parser;
 pub mod line;
+pub mod log_source;
 pub mod logcat_parser;
 pub mod parser;
 pub mod pipeline;
