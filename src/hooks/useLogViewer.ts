@@ -7,7 +7,6 @@ import { loadLogFile, getLines, searchLogs, startAdbStream, stopAdbStream, getPa
 import { onAdbBatch, onAdbStreamStopped, onFileIndexProgress, onFileIndexComplete, onSearchProgress } from '../bridge/events';
 import { parseFilter, matchesFilter, extractPackageNames, type FilterNode, FilterParseError } from '../filter';
 
-const WINDOW_SIZE = 500; // lines to fetch per request
 const LS_LAST_FILE = 'logtapper_last_file';
 
 export interface LogViewerState {
@@ -361,7 +360,7 @@ export function useLogViewer(streamCacheMax: number = 50_000, onBeforeLoad?: () 
       sessionId: sess.sessionId,
       mode,
       offset,
-      count: Math.min(count, WINDOW_SIZE),
+      count,
       context: 3,
       processorId: pid ?? undefined,
       search: searchRef.current ?? undefined,
