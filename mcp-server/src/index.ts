@@ -178,20 +178,21 @@ server.tool(
 
 server.tool(
   "logtapper_get_pipeline_results",
-  "Get the results of the last pipeline run for a session. Returns per-processor " +
-    "summaries for all processor types:\n" +
-    "  reporters     — matchedLines count, emission count, accumulated vars\n" +
-    "  state_trackers — transitionCount, finalState snapshot, 5 most recent transitions\n" +
-    "\nUse this to verify the pipeline ran correctly and to understand what each " +
-    "processor found before querying raw lines or events. " +
+  "Get a compact summary of the last pipeline run. Returns per-processor overviews:\n" +
+    "  reporters     — matchedLines count, emission count, top vars (large maps truncated to top 20), 10 recent emissions with extracted fields, 5 sample matched lines with raw text\n" +
+    "  state_trackers — transitionCount, finalState, 20 most recent transitions with raw line text\n" +
+    "\nFor detailed drill-down into a single processor's emissions and matched lines, use logtapper_get_processor_detail.\n" +
     "Returns hasResults:false if the pipeline has not been run yet.",
   {
     session_id: z.string().describe("Session ID"),
+    processor_id: z.string().optional().describe("Filter to a single processor ID"),
   },
-  async ({ session_id }) => {
+  async ({ session_id, processor_id }) => {
     try {
       return ok(
-        await bridgeGet(`/mcp/sessions/${encodeURIComponent(session_id)}/pipeline`)
+        await bridgeGet(`/mcp/sessions/${encodeURIComponent(session_id)}/pipeline`, {
+          processor_id,
+        })
       );
     } catch (err) {
       return ok({ error: String(err) });
@@ -226,6 +227,197 @@ server.tool(
         await bridgeGet(`/mcp/sessions/${encodeURIComponent(session_id)}/events`, {
           limit,
         })
+      );
+    } catch (err) {
+      return ok({ error: String(err) });
+    }
+  }
+);
+
+// ── logtapper_get_processor_detail ────────────────────────────────────────
+
+server.tool(
+  "logtapper_get_processor_detail",
+  "Drill into a single processor's detailed results. For reporters: full vars, " +
+    "optional paginated emissions with extracted fields, matched line numbers. " +
+    "For state trackers: full transition list. Use include_emissions=true to see " +
+    "emission data. Use include_line_text=true to include raw log line snippets " +
+    "(avoids separate logtapper_query calls).",
+  {
+    session_id: z.string().describe("Session ID"),
+    processor_id: z.string().describe("Processor ID to drill into"),
+    include_emissions: z
+      .boolean()
+      .optional()
+      .describe("Include emission data (default false)"),
+    emission_limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe("Max emissions to return (default 50, max 200)"),
+    emission_offset: z
+      .number()
+      .int()
+      .optional()
+      .describe("Offset for emission pagination (default 0)"),
+    include_line_text: z
+      .boolean()
+      .optional()
+      .describe("Include raw log line text for matched lines (default false)"),
+  },
+  async ({ session_id, processor_id, include_emissions, emission_limit, emission_offset, include_line_text }) => {
+    try {
+      return ok(
+        await bridgeGet(
+          `/mcp/sessions/${encodeURIComponent(session_id)}/processor/${encodeURIComponent(processor_id)}`,
+          {
+            include_emissions: include_emissions !== undefined ? String(include_emissions) : undefined,
+            emission_limit,
+            emission_offset,
+            include_line_text: include_line_text !== undefined ? String(include_line_text) : undefined,
+          }
+        )
+      );
+    } catch (err) {
+      return ok({ error: String(err) });
+    }
+  }
+);
+
+// ── logtapper_get_state_at_line ──────────────────────────────────────────
+
+server.tool(
+  "logtapper_get_state_at_line",
+  "Reconstruct a state tracker's state at a specific log line. Useful for " +
+    "answering questions like 'what was the WiFi state when this crash happened?' " +
+    "Returns the state snapshot with all field values at the given line, plus the " +
+    "most recent transition before that line.",
+  {
+    session_id: z.string().describe("Session ID"),
+    tracker_id: z.string().describe("State tracker processor ID"),
+    line_num: z
+      .number()
+      .int()
+      .min(0)
+      .describe("Line number to reconstruct state at"),
+  },
+  async ({ session_id, tracker_id, line_num }) => {
+    try {
+      return ok(
+        await bridgeGet(
+          `/mcp/sessions/${encodeURIComponent(session_id)}/tracker/${encodeURIComponent(tracker_id)}/state_at`,
+          { line: line_num }
+        )
+      );
+    } catch (err) {
+      return ok({ error: String(err) });
+    }
+  }
+);
+
+// ── logtapper_get_correlations ───────────────────────────────────────────
+
+server.tool(
+  "logtapper_get_correlations",
+  "Get correlation events showing cross-signal relationships. Correlators detect " +
+    "when events from different log sources co-occur within a time/line window " +
+    "(e.g., FD spikes correlated with EBADF errors). Returns trigger line, matched " +
+    "sources, and formatted diagnostic message.",
+  {
+    session_id: z.string().describe("Session ID"),
+    correlator_id: z
+      .string()
+      .optional()
+      .describe("Filter to a specific correlator ID"),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe("Max events to return (default 50)"),
+    offset: z.number().int().optional().describe("Pagination offset (default 0)"),
+  },
+  async ({ session_id, correlator_id, limit, offset }) => {
+    try {
+      return ok(
+        await bridgeGet(
+          `/mcp/sessions/${encodeURIComponent(session_id)}/correlations`,
+          { correlator_id, limit, offset }
+        )
+      );
+    } catch (err) {
+      return ok({ error: String(err) });
+    }
+  }
+);
+
+// ── logtapper_get_processor_definitions ──────────────────────────────────
+
+server.tool(
+  "logtapper_get_processor_definitions",
+  "Get processor definitions to understand what each processor detects. " +
+    "Without processor_id: returns a summary list (id, name, type, description). " +
+    "With processor_id: returns the full definition including filter rules, extract " +
+    "patterns, aggregations, state fields, and transition names. Use this to " +
+    "understand pipeline results before drilling into specifics.",
+  {
+    processor_id: z
+      .string()
+      .optional()
+      .describe("Specific processor ID for full definition (omit for summary list)"),
+  },
+  async ({ processor_id }) => {
+    try {
+      const path = processor_id
+        ? `/mcp/processors/${encodeURIComponent(processor_id)}`
+        : "/mcp/processors";
+      return ok(await bridgeGet(path));
+    } catch (err) {
+      return ok({ error: String(err) });
+    }
+  }
+);
+
+// ── logtapper_search ─────────────────────────────────────────────────────
+
+server.tool(
+  "logtapper_search",
+  "Search log lines using regex patterns. More powerful than logtapper_query's " +
+    "substring matching. Returns matched lines with capture groups and optional " +
+    "context lines before/after each match. Use for pattern-based investigation " +
+    "like finding all 'FATAL EXCEPTION.*Process: (\\S+)' matches.",
+  {
+    session_id: z.string().describe("Session ID"),
+    pattern: z.string().describe("Regex pattern to search for"),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe("Max results to return (default 50)"),
+    case_insensitive: z
+      .boolean()
+      .optional()
+      .describe("Case-insensitive matching (default false)"),
+    context: z
+      .number()
+      .int()
+      .min(0)
+      .max(5)
+      .optional()
+      .describe("Lines of context before/after each match (default 0)"),
+  },
+  async ({ session_id, pattern, limit, case_insensitive, context }) => {
+    try {
+      return ok(
+        await bridgeGet(
+          `/mcp/sessions/${encodeURIComponent(session_id)}/search`,
+          { pattern, limit, case_insensitive: case_insensitive !== undefined ? String(case_insensitive) : undefined, context }
+        )
       );
     } catch (err) {
       return ok({ error: String(err) });
