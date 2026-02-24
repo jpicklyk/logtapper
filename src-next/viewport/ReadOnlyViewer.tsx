@@ -409,7 +409,16 @@ export default function ReadOnlyViewer({
   const handleLineClick = useCallback(
     (lineNum: number, e: React.MouseEvent) => {
       if (e.altKey) return;
+
+      // Plain click after a drag-select: the user selected text within a line.
+      // Don't activate line selection — let the browser own the copy.
+      const hasTextSel = !!window.getSelection()?.toString();
+      if (hasTextSel && !e.shiftKey && !e.ctrlKey && !e.metaKey) return;
+
       setBoxSel(null);
+      // Clear any browser text selection so Ctrl+C unambiguously hits our handler.
+      window.getSelection()?.removeAllRanges();
+
       // Notify selection change if handler provided
       if (onSelectionChange) {
         const sel = selection;
@@ -484,22 +493,47 @@ export default function ReadOnlyViewer({
   useEffect(() => {
     const hasSelection = boxSel != null || (selection?.selected.size ?? 0) > 0;
     if (!hasSelection) return;
+
+    // Robust clipboard write: async Clipboard API with synchronous execCommand fallback.
+    // navigator.clipboard can silently fail in Tauri WebView2 without the clipboard plugin.
+    const writeClipboard = (text: string) => {
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(text).catch(() => execCommandCopy(text));
+      } else {
+        execCommandCopy(text);
+      }
+    };
+
+    const execCommandCopy = (text: string) => {
+      const el = document.createElement('textarea');
+      el.value = text;
+      el.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+      document.body.appendChild(el);
+      el.focus();
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+    };
+
     const handleCopy = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey) || e.key !== 'c') return;
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'c') return;
+      // If the browser has a native text selection (user dragged within a line),
+      // let the browser handle the copy — don't intercept.
+      if (window.getSelection()?.toString()) return;
       e.preventDefault();
       if (boxSel) {
         const rows: string[] = [];
         for (let i = boxSel.startLine; i <= boxSel.endLine; i++) {
           rows.push((dataSource.getLine(i)?.raw ?? '').slice(boxSel.startCol, boxSel.endCol));
         }
-        navigator.clipboard.writeText(rows.join('\n'));
+        writeClipboard(rows.join('\n'));
       } else if (selection?.selected.size) {
         const sorted = Array.from(selection.selected).sort((a, b) => a - b);
         const text = sorted
           .map((n) => dataSource.getLine(n)?.raw)
           .filter(Boolean)
           .join('\n');
-        navigator.clipboard.writeText(text);
+        writeClipboard(text);
       }
     };
     window.addEventListener('keydown', handleCopy);
@@ -581,18 +615,6 @@ export default function ReadOnlyViewer({
             position: 'relative',
           }}
         >
-          {boxSel && boxSel.endCol > boxSel.startCol && (
-            <div
-              className={styles.boxOverlay}
-              style={{
-                position: 'absolute',
-                top: (boxSel.startLine - virtualBase) * LINE_HEIGHT,
-                height: (boxSel.endLine - boxSel.startLine + 1) * LINE_HEIGHT,
-                left: gutterWidthRef.current + boxSel.startCol * charWidthRef.current,
-                width: (boxSel.endCol - boxSel.startCol) * charWidthRef.current,
-              }}
-            />
-          )}
           {items.map((virtualItem) => {
             const actualLineNum = virtualBase + virtualItem.index;
             const line = dataSource.getLine(actualLineNum);
@@ -627,6 +649,18 @@ export default function ReadOnlyViewer({
               </div>
             );
           })}
+          {boxSel && boxSel.endCol > boxSel.startCol && (
+            <div
+              className={styles.boxOverlay}
+              style={{
+                position: 'absolute',
+                top: (boxSel.startLine - virtualBase) * LINE_HEIGHT,
+                height: (boxSel.endLine - boxSel.startLine + 1) * LINE_HEIGHT,
+                left: gutterWidthRef.current + boxSel.startCol * charWidthRef.current,
+                width: (boxSel.endCol - boxSel.startCol) * charWidthRef.current,
+              }}
+            />
+          )}
         </div>
       </div>
     </div>
