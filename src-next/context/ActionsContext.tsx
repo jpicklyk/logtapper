@@ -1,10 +1,10 @@
-import { createContext, useCallback, useContext, useMemo, type ReactNode } from 'react';
+import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import type { SearchQuery } from '../bridge/types';
 
-interface ActionsContextValue {
+export interface ActionsContextValue {
   loadFile: (path: string) => Promise<void>;
   openFileDialog: () => Promise<void>;
-  startStream: (deviceId: string) => Promise<void>;
+  startStream: (deviceId?: string) => Promise<void>;
   stopStream: () => Promise<void>;
   closeSession: () => void;
   runPipeline: () => Promise<void>;
@@ -18,45 +18,43 @@ interface ActionsContextValue {
   openTab: (type: string) => void;
 }
 
-const ActionsContext = createContext<ActionsContextValue | null>(null);
-
 const noop = () => { /* stub */ };
 const noopAsync = () => Promise.resolve();
 
-export function ActionsProvider({ children }: { children: ReactNode }) {
-  const loadFile = useCallback((_path: string) => noopAsync(), []);
-  const openFileDialog = useCallback(() => noopAsync(), []);
-  const startStream = useCallback((_deviceId: string) => noopAsync(), []);
-  const stopStream = useCallback(() => noopAsync(), []);
-  const closeSession = useCallback(noop, []);
-  const runPipeline = useCallback(() => noopAsync(), []);
-  const stopPipeline = useCallback(noop, []);
-  const clearResults = useCallback(noop, []);
-  const installProcessor = useCallback((_yaml: string) => noopAsync(), []);
-  const removeProcessor = useCallback((_id: string) => noop(), []);
-  const toggleProcessor = useCallback((_id: string) => noop(), []);
-  const jumpToLine = useCallback((_lineNum: number) => noop(), []);
-  const setSearch = useCallback((_query: SearchQuery | null) => noop(), []);
-  const openTab = useCallback((_type: string) => noop(), []);
+const DEFAULT_ACTIONS: ActionsContextValue = {
+  loadFile: (_path: string) => noopAsync(),
+  openFileDialog: () => noopAsync(),
+  startStream: (_deviceId?: string) => noopAsync(),
+  stopStream: () => noopAsync(),
+  closeSession: noop,
+  runPipeline: () => noopAsync(),
+  stopPipeline: noop,
+  clearResults: noop,
+  installProcessor: (_yaml: string) => noopAsync(),
+  removeProcessor: (_id: string) => noop(),
+  toggleProcessor: (_id: string) => noop(),
+  jumpToLine: (_lineNum: number) => noop(),
+  setSearch: (_query: SearchQuery | null) => noop(),
+  openTab: (_type: string) => noop(),
+};
 
+const ActionsContext = createContext<ActionsContextValue | null>(null);
+
+interface ActionsProviderProps {
+  actions?: Partial<ActionsContextValue>;
+  children: ReactNode;
+}
+
+/**
+ * Provides action callbacks to the app.
+ * Accepts injected actions via props — real implementations from hooks
+ * override the default stubs.
+ */
+export function ActionsProvider({ actions, children }: ActionsProviderProps) {
   const value = useMemo<ActionsContextValue>(() => ({
-    loadFile,
-    openFileDialog,
-    startStream,
-    stopStream,
-    closeSession,
-    runPipeline,
-    stopPipeline,
-    clearResults,
-    installProcessor,
-    removeProcessor,
-    toggleProcessor,
-    jumpToLine,
-    setSearch,
-    openTab,
-  }), [loadFile, openFileDialog, startStream, stopStream, closeSession,
-       runPipeline, stopPipeline, clearResults, installProcessor,
-       removeProcessor, toggleProcessor, jumpToLine, setSearch, openTab]);
+    ...DEFAULT_ACTIONS,
+    ...actions,
+  }), [actions]);
 
   return (
     <ActionsContext.Provider value={value}>

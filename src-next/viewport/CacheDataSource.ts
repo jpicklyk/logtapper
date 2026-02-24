@@ -1,153 +1,47 @@
 import type { ViewLine, LineWindow } from '../bridge/types';
 import type { DataSource } from './DataSource';
 import type { ViewCacheHandle } from '../cache';
-import { FetchScheduler } from '../cache';
-import type { FetchRange } from '../cache';
+import type { DataSourceRegistry } from './DataSourceRegistry';
 
 interface CacheDataSourceOptions {
   sessionId: string;
   viewCache: ViewCacheHandle;
   fetchLines: (offset: number, count: number) => Promise<LineWindow>;
-  isStreaming: boolean;
   /** For processor view -- maps virtual index to actual file line number */
   lineNumbers?: number[];
-  /** For file-mode filter -- pre-populated cache of filter matches */
-  filterLineCache?: Map<number, ViewLine>;
+  /** Registry for streaming push — auto-registers on create, auto-unregisters on dispose */
+  registry?: DataSourceRegistry;
 }
 
 /**
- * Creates a DataSource backed by ViewCacheHandle + FetchScheduler.
+ * Creates a DataSource backed by a single ViewCacheHandle (bounded LRU).
  *
- * File mode: uses FetchScheduler for velocity-aware prefetch; fetches on cache miss.
- * Streaming mode: reads from viewCache (populated externally via broadcastToSession).
- * Processor mode: lineNumbers array maps virtual index -> actual file line number.
+ * All line data lives exclusively in the ViewCacheHandle, which is managed
+ * by the global CacheManager budget. No shadow caches, no unbounded Maps.
+ *
+ * File mode: ReadOnlyViewer drives fetches via its FetchScheduler. getLines()
+ *   checks the cache, fetches misses from the backend, and stores via put().
+ * Streaming mode: broadcastToSession() populates the ViewCacheHandle externally.
+ *   pushStreamingLines() fires onAppend listeners for tail-mode auto-scroll.
+ * Processor mode: lineNumbers array maps virtual index -> actual file line.
  */
-export function createCacheDataSource(options: CacheDataSourceOptions): DataSource {
+export function createCacheDataSource(options: CacheDataSourceOptions): CacheDataSource {
   const {
     sessionId,
     viewCache,
     fetchLines,
-    isStreaming,
     lineNumbers,
-    filterLineCache,
+    registry,
   } = options;
 
-  // -- Internal state --
   let _totalLines = lineNumbers ? lineNumbers.length : 0;
   let _disposed = false;
-  let _fetchInFlight = false;
   let _fetchGen = 0;
 
-  // Local map for lines fetched during this source's lifetime (supplements viewCache)
-  const _visibleLines = new Map<number, ViewLine>();
-
-  // Append subscribers (streaming mode)
+  // Append subscribers (streaming mode — tail-mode auto-scroll)
   const _appendListeners = new Set<(newLines: ViewLine[], total: number) => void>();
 
-  // FetchScheduler for file mode
-  const scheduler = new FetchScheduler();
-
-  // Wire up the two-phase fetch callback
-  scheduler.onFetch((viewport: FetchRange, prefetch: FetchRange) => {
-    if (isStreaming || _disposed) return;
-    if (_fetchInFlight) return;
-
-    // Phase 1: check viewport cache misses
-    let hasMiss = false;
-    const vpEnd = viewport.offset + viewport.count;
-    for (let line = viewport.offset; line < vpEnd; line++) {
-      const actualLine = lineNumbers ? lineNumbers[line] : line;
-      if (actualLine === undefined) continue;
-      if (!_resolveLineFromCaches(actualLine)) {
-        hasMiss = true;
-        break;
-      }
-    }
-
-    if (!hasMiss) {
-      // Viewport is cached -- try prefetch if allowed
-      if (viewCache.prefetchAllowed()) {
-        _fetchPrefetchRange(prefetch);
-      }
-      return;
-    }
-
-    // Viewport has misses -- fetch viewport first, then prefetch
-    _fetchInFlight = true;
-    const gen = ++_fetchGen;
-    const fetchOffset = lineNumbers ? viewport.offset : viewport.offset;
-    fetchLines(fetchOffset, viewport.count)
-      .then((window: LineWindow) => {
-        if (gen !== _fetchGen || _disposed) return;
-        _ingestLines(window);
-
-        // Phase 2: prefetch after viewport fill
-        if (viewCache.prefetchAllowed()) {
-          const pfGen = _fetchGen;
-          fetchLines(prefetch.offset, prefetch.count)
-            .then((pfWindow: LineWindow) => {
-              if (pfGen !== _fetchGen || _disposed) return;
-              _ingestLines(pfWindow);
-            })
-            .catch(() => {})
-            .finally(() => { _fetchInFlight = false; });
-        } else {
-          _fetchInFlight = false;
-        }
-      })
-      .catch(() => { _fetchInFlight = false; });
-  });
-
-  // -- Helpers --
-
-  function _resolveLineFromCaches(lineNum: number): ViewLine | undefined {
-    return filterLineCache?.get(lineNum)
-      ?? _visibleLines.get(lineNum)
-      ?? viewCache.get(lineNum);
-  }
-
-  function _ingestLines(window: LineWindow): void {
-    if (window.totalLines > _totalLines && !lineNumbers) {
-      _totalLines = window.totalLines;
-    }
-    viewCache.put(window.lines);
-    for (const l of window.lines) {
-      _visibleLines.set(l.lineNum, l);
-    }
-  }
-
-  function _fetchPrefetchRange(prefetch: FetchRange): void {
-    let hasPrefetchMiss = false;
-    const pfEnd = prefetch.offset + prefetch.count;
-    for (let line = prefetch.offset; line < pfEnd; line++) {
-      const actualLine = lineNumbers ? lineNumbers[line] : line;
-      if (actualLine === undefined) continue;
-      if (!_resolveLineFromCaches(actualLine)) {
-        hasPrefetchMiss = true;
-        break;
-      }
-    }
-    if (!hasPrefetchMiss) return;
-
-    _fetchInFlight = true;
-    const gen = _fetchGen;
-    fetchLines(prefetch.offset, prefetch.count)
-      .then((window: LineWindow) => {
-        if (gen !== _fetchGen || _disposed) return;
-        _ingestLines(window);
-      })
-      .catch(() => {})
-      .finally(() => { _fetchInFlight = false; });
-  }
-
-  // -- DataSource implementation --
-
-  const source: DataSource & {
-    updateTotalLines(n: number): void;
-    pushStreamingLines(lines: ViewLine[], total: number): void;
-    invalidate(): void;
-    dispose(): void;
-  } = {
+  const source: CacheDataSource = {
     get totalLines(): number {
       return lineNumbers ? lineNumbers.length : _totalLines;
     },
@@ -158,23 +52,22 @@ export function createCacheDataSource(options: CacheDataSourceOptions): DataSour
 
     getLine(lineNum: number): ViewLine | undefined {
       if (lineNumbers) {
-        // Processor mode: lineNum is a virtual index
         const actualLine = lineNumbers[lineNum];
         if (actualLine === undefined) return undefined;
-        return _resolveLineFromCaches(actualLine);
+        return viewCache.get(actualLine);
       }
-      return _resolveLineFromCaches(lineNum);
+      return viewCache.get(lineNum);
     },
 
     getLines(offset: number, count: number): Promise<ViewLine[]> {
-      // Try to serve entirely from cache first
+      // Try to serve entirely from cache
       const result: ViewLine[] = [];
       let allCached = true;
       for (let i = 0; i < count; i++) {
         const idx = offset + i;
         const actualLine = lineNumbers ? lineNumbers[idx] : idx;
         if (actualLine === undefined) break;
-        const cached = _resolveLineFromCaches(actualLine);
+        const cached = viewCache.get(actualLine);
         if (cached) {
           result.push(cached);
         } else {
@@ -186,18 +79,16 @@ export function createCacheDataSource(options: CacheDataSourceOptions): DataSour
         return Promise.resolve(result);
       }
 
-      // Cache miss -- fetch from backend
+      // Cache miss — fetch from backend, store in ViewCacheHandle (bounded LRU)
       const gen = ++_fetchGen;
       return fetchLines(offset, count).then((window: LineWindow) => {
         if (gen !== _fetchGen || _disposed) return [];
-        _ingestLines(window);
+        if (window.totalLines > _totalLines && !lineNumbers) {
+          _totalLines = window.totalLines;
+        }
+        viewCache.put(window.lines);
         return window.lines;
       });
-    },
-
-    notifyVisible(firstLine: number, lastLine: number): void {
-      if (isStreaming || _disposed) return;
-      scheduler.reportScroll(firstLine, lastLine, _totalLines);
     },
 
     onAppend(cb: (newLines: ViewLine[], totalLines: number) => void): () => void {
@@ -205,41 +96,39 @@ export function createCacheDataSource(options: CacheDataSourceOptions): DataSour
       return () => { _appendListeners.delete(cb); };
     },
 
-    // -- Extended methods (not part of DataSource interface) --
-
-    /** Update totalLines externally (e.g. from streaming batches or index progress). */
     updateTotalLines(n: number): void {
       _totalLines = n;
     },
 
-    /** Push new streaming lines and notify append listeners. */
+    /** Notify append listeners only. Lines are already in ViewCacheHandle
+     *  via broadcastToSession(). No local storage needed. */
     pushStreamingLines(lines: ViewLine[], total: number): void {
       _totalLines = total;
-      for (const l of lines) {
-        _visibleLines.set(l.lineNum, l);
-      }
       for (const cb of _appendListeners) {
         cb(lines, total);
       }
     },
 
-    /** Invalidate fetch generation (e.g. on source change). Discards in-flight fetches. */
     invalidate(): void {
       _fetchGen++;
-      _visibleLines.clear();
     },
 
-    /** Clean up scheduler and internal state. */
     dispose(): void {
       _disposed = true;
-      scheduler.dispose();
+      registry?.unregister(sessionId, source);
       _appendListeners.clear();
-      _visibleLines.clear();
     },
   };
+
+  registry?.register(sessionId, source);
 
   return source;
 }
 
 /** Extended DataSource with cache-specific control methods. */
-export type CacheDataSource = ReturnType<typeof createCacheDataSource>;
+export interface CacheDataSource extends DataSource {
+  updateTotalLines(n: number): void;
+  pushStreamingLines(lines: ViewLine[], total: number): void;
+  invalidate(): void;
+  dispose(): void;
+}

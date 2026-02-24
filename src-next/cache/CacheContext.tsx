@@ -1,10 +1,16 @@
-import { createContext, useContext, useRef, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, type ReactNode } from 'react';
 import { CacheManager, type ViewCacheHandle } from './CacheManager';
+import { DataSourceRegistry } from '../viewport/DataSourceRegistry';
 
 /** Default total line budget — matches SETTING_DEFAULTS.fileCacheBudget. */
 const DEFAULT_BUDGET = 100_000;
 
-const CacheManagerContext = createContext<CacheManager | null>(null);
+interface CacheContextValue {
+  manager: CacheManager;
+  registry: DataSourceRegistry;
+}
+
+const CacheManagerContext = createContext<CacheContextValue | null>(null);
 
 interface CacheProviderProps {
   budget?: number;
@@ -12,16 +18,19 @@ interface CacheProviderProps {
 }
 
 /**
- * Wraps the app with a global CacheManager instance.
- * The CacheManager is created once and persists for the lifetime of the app.
+ * Wraps the app with a global CacheManager + DataSourceRegistry.
+ * Both are created once and persist for the lifetime of the app.
  */
 export function CacheProvider({ budget = DEFAULT_BUDGET, children }: CacheProviderProps) {
-  const mgrRef = useRef<CacheManager | null>(null);
-  if (mgrRef.current === null) {
-    mgrRef.current = new CacheManager(budget);
+  const ctxRef = useRef<CacheContextValue | null>(null);
+  if (ctxRef.current === null) {
+    ctxRef.current = {
+      manager: new CacheManager(budget),
+      registry: new DataSourceRegistry(),
+    };
   }
   return (
-    <CacheManagerContext.Provider value={mgrRef.current}>
+    <CacheManagerContext.Provider value={ctxRef.current}>
       {children}
     </CacheManagerContext.Provider>
   );
@@ -29,11 +38,20 @@ export function CacheProvider({ budget = DEFAULT_BUDGET, children }: CacheProvid
 
 /** Access the global CacheManager. Throws if used outside CacheProvider. */
 export function useCacheManager(): CacheManager {
-  const mgr = useContext(CacheManagerContext);
-  if (!mgr) {
+  const ctx = useContext(CacheManagerContext);
+  if (!ctx) {
     throw new Error('useCacheManager must be used within a CacheProvider');
   }
-  return mgr;
+  return ctx.manager;
+}
+
+/** Access the global DataSourceRegistry. Throws if used outside CacheProvider. */
+export function useDataSourceRegistry(): DataSourceRegistry {
+  const ctx = useContext(CacheManagerContext);
+  if (!ctx) {
+    throw new Error('useDataSourceRegistry must be used within a CacheProvider');
+  }
+  return ctx.registry;
 }
 
 /**
@@ -43,7 +61,8 @@ export function useCacheManager(): CacheManager {
  * @param sessionId  Optional session ID — enables session-level broadcast via CacheManager.
  */
 export function useViewCache(viewId: string | null, sessionId?: string | null): ViewCacheHandle | null {
-  const mgr = useContext(CacheManagerContext);
+  const ctx = useContext(CacheManagerContext);
+  const mgr = ctx?.manager ?? null;
   const prevIdRef = useRef<string | null>(null);
   const handleRef = useRef<ViewCacheHandle | null>(null);
 
@@ -67,4 +86,19 @@ export function useViewCache(viewId: string | null, sessionId?: string | null): 
   }
 
   return handleRef.current;
+}
+
+/**
+ * Set focus on a view for cache budget prioritization (60% to focused pane).
+ * Calls CacheManager.setFocus() on mount and when viewId changes.
+ */
+export function useCacheFocus(viewId: string | null): void {
+  const ctx = useContext(CacheManagerContext);
+  const mgr = ctx?.manager ?? null;
+
+  useEffect(() => {
+    if (mgr && viewId) {
+      mgr.setFocus(viewId);
+    }
+  }, [mgr, viewId]);
 }

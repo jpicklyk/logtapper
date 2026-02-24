@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
-import type { ViewLine, SearchQuery, SearchProgress, LoadResult, AdbBatchPayload, LineWindow } from '../bridge/types';
+import type { SearchQuery, SearchProgress, LoadResult, AdbBatchPayload, LineWindow } from '../bridge/types';
 import {
   loadLogFile,
   getLines,
@@ -15,6 +15,7 @@ import {
   updateStreamTransformers,
 } from '../bridge/commands';
 import type { CacheManager } from '../cache';
+import type { DataSourceRegistry } from '../viewport/DataSourceRegistry';
 import {
   onAdbBatch,
   onAdbStreamStopped,
@@ -47,7 +48,6 @@ export interface LogViewerActions {
   /** Current parsed filter state for file-mode filter scans */
   filterScanning: boolean;
   filteredLineNums: number[] | null;
-  filterLineCache: Map<number, ViewLine>;
   filterParseError: string | null;
   /** Non-null while background file indexing is in progress. */
   indexingProgress: { percent: number; indexedLines: number } | null;
@@ -55,7 +55,7 @@ export interface LogViewerActions {
   timeFilterLineNums: number[] | null;
 }
 
-export function useLogViewer(cacheManager: CacheManager): LogViewerActions {
+export function useLogViewer(cacheManager: CacheManager, registry: DataSourceRegistry): LogViewerActions {
   // -- Context setters --
   const {
     session, setSession,
@@ -99,7 +99,6 @@ export function useLogViewer(cacheManager: CacheManager): LogViewerActions {
   const packagePidsRef = useRef<Map<string, number[]>>(new Map());
   const streamDeviceSerialRef = useRef<string | null>(null);
   const filterScanGenRef = useRef(0);
-  const filterLineCacheRef = useRef<Map<number, ViewLine>>(new Map());
 
   // ADB event unlisteners
   const adbBatchUnlistenRef = useRef<UnlistenFn | null>(null);
@@ -129,7 +128,6 @@ export function useLogViewer(cacheManager: CacheManager): LogViewerActions {
     setFilterScanning(false);
     setFilteredLineNums(null);
     filterAstRef.current = null;
-    filterLineCacheRef.current = new Map();
     packagePidsRef.current = new Map();
     setTimeFilterStartCtx('');
     setTimeFilterEndCtx('');
@@ -140,7 +138,10 @@ export function useLogViewer(cacheManager: CacheManager): LogViewerActions {
   const handleAdbBatch = useCallback((payload: AdbBatchPayload) => {
     if (payload.sessionId !== sessionRef.current?.sessionId) return;
 
+    // Populate ViewCacheHandle LRU for all handles on this session
     cacheManager.broadcastToSession(payload.sessionId, payload.lines);
+    // Fire onAppend listeners on all CacheDataSources for this session (tail-mode)
+    registry.pushToSession(payload.sessionId, payload.lines, payload.totalLines);
 
     setSession((prev) => {
       if (!prev) return prev;
@@ -164,7 +165,7 @@ export function useLogViewer(cacheManager: CacheManager): LogViewerActions {
         setFilteredLineNums((prev) => [...(prev ?? []), ...newMatches]);
       }
     }
-  }, [cacheManager, setSession]);
+  }, [cacheManager, registry, setSession]);
 
   /**
    * Parse and apply a composable filter expression.
@@ -177,7 +178,6 @@ export function useLogViewer(cacheManager: CacheManager): LogViewerActions {
       setFilterParseError(null);
       setFilteredLineNums(null);
       filterAstRef.current = null;
-      filterLineCacheRef.current = new Map();
       return;
     }
 
@@ -238,7 +238,6 @@ export function useLogViewer(cacheManager: CacheManager): LogViewerActions {
       setFilterScanning(true);
       const BATCH = 5000;
       const matches: number[] = [];
-      const lineCache = new Map<number, ViewLine>();
       let offset = 0;
       let total = Infinity;
 
@@ -260,7 +259,6 @@ export function useLogViewer(cacheManager: CacheManager): LogViewerActions {
           for (const line of window.lines) {
             if (matchesFilter(ast, line, pids)) {
               matches.push(line.lineNum);
-              lineCache.set(line.lineNum, line);
             }
           }
           offset += window.lines.length;
@@ -270,7 +268,6 @@ export function useLogViewer(cacheManager: CacheManager): LogViewerActions {
         }
       }
       if (filterScanGenRef.current === gen) {
-        filterLineCacheRef.current = lineCache;
         setFilteredLineNums(matches.length > 0 ? matches : null);
         setFilterScanning(false);
       }
@@ -680,7 +677,6 @@ export function useLogViewer(cacheManager: CacheManager): LogViewerActions {
     closeSession,
     filterScanning,
     filteredLineNums,
-    filterLineCache: filterLineCacheRef.current,
     filterParseError,
     indexingProgress,
     timeFilterLineNums,

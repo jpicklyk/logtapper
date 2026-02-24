@@ -1,6 +1,5 @@
 import { useRef, useCallback, useEffect, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import type { ViewLine } from '../bridge/types';
 import type { DataSource } from './DataSource';
 import type { GutterColumnDef } from './GutterColumn';
 import type { LineDecoratorDef } from './LineDecorator';
@@ -49,16 +48,17 @@ export default function ReadOnlyViewer({
   const [autoScroll, setAutoScroll] = useState(true);
   const [newLinesCount, setNewLinesCount] = useState(0);
 
-  // ── File-mode visible lines ────────────────────────────────────────────
-  const visibleLinesRef = useRef<Map<number, ViewLine>>(new Map());
-  const [, setVisibleVersion] = useState(0);
+  // ── Cache version counter ───────────────────────────────────────────────
+  // Bumped after every fetch completion or streaming append to trigger
+  // a re-render so the virtualizer re-evaluates dataSource.getLine().
+  const [, setCacheVersion] = useState(0);
+  const bumpCacheVersion = () => setCacheVersion((v) => v + 1);
   const fetchGenRef = useRef(0);
 
-  // Reset visible lines when data source changes.
+  // Reset when data source changes.
   useEffect(() => {
     fetchGenRef.current++;
-    visibleLinesRef.current = new Map();
-    setVisibleVersion((v) => v + 1);
+    bumpCacheVersion();
   }, [dataSource.sourceId]);
 
   // ── Large-file virtual base ────────────────────────────────────────────
@@ -155,13 +155,11 @@ export default function ReadOnlyViewer({
   useEffect(() => {
     setStreamTotal(dataSource.totalLines);
     if (!dataSource.onAppend) return;
-    const unsubscribe = dataSource.onAppend((newLines, total) => {
-      // Store new lines in the local map
-      for (const l of newLines) {
-        visibleLinesRef.current.set(l.lineNum, l);
-      }
+    const unsubscribe = dataSource.onAppend((_newLines, total) => {
+      // Lines are already in ViewCacheHandle via broadcastToSession().
+      // Just update total and trigger re-render.
       setStreamTotal(total);
-      setVisibleVersion((v) => v + 1);
+      bumpCacheVersion();
     });
     return unsubscribe;
   }, [dataSource]);
@@ -222,10 +220,10 @@ export default function ReadOnlyViewer({
       if (dataSource.onAppend) return; // streaming mode, skip file-fetch
       if (fetchInFlightRef.current) return;
 
-      const map = visibleLinesRef.current;
+      // Check viewport for cache misses via dataSource.getLine() → ViewCacheHandle
       let hasMiss = false;
       for (let line = viewport.offset; line < viewport.offset + viewport.count; line++) {
-        if (!map.has(line) && !dataSource.getLine(line)) {
+        if (!dataSource.getLine(line)) {
           hasMiss = true;
           break;
         }
@@ -235,7 +233,7 @@ export default function ReadOnlyViewer({
         // Viewport cached. Try prefetch.
         let hasPrefetchMiss = false;
         for (let line = prefetch.offset; line < prefetch.offset + prefetch.count; line++) {
-          if (!map.has(line) && !dataSource.getLine(line)) {
+          if (!dataSource.getLine(line)) {
             hasPrefetchMiss = true;
             break;
           }
@@ -243,15 +241,11 @@ export default function ReadOnlyViewer({
         if (hasPrefetchMiss) {
           fetchInFlightRef.current = true;
           const gen = fetchGenRef.current;
-          const result = dataSource.getLines(prefetch.offset, prefetch.count);
-          Promise.resolve(result)
-            .then((lines) => {
+          Promise.resolve(dataSource.getLines(prefetch.offset, prefetch.count))
+            .then(() => {
               if (gen !== fetchGenRef.current) return;
-              const m = visibleLinesRef.current;
-              for (const l of lines) {
-                m.set(l.lineNum, l);
-              }
-              setVisibleVersion((v) => v + 1);
+              // Lines are now in ViewCacheHandle via dataSource.getLines().
+              bumpCacheVersion();
             })
             .catch(console.error)
             .finally(() => { fetchInFlightRef.current = false; });
@@ -263,24 +257,16 @@ export default function ReadOnlyViewer({
       fetchInFlightRef.current = true;
       const gen = fetchGenRef.current;
       Promise.resolve(dataSource.getLines(viewport.offset, viewport.count))
-        .then((lines) => {
+        .then(() => {
           if (gen !== fetchGenRef.current) return;
-          const m = visibleLinesRef.current;
-          for (const l of lines) {
-            m.set(l.lineNum, l);
-          }
-          setVisibleVersion((v) => v + 1);
+          bumpCacheVersion();
 
           // Phase 2: directional prefetch
           const pfGen = fetchGenRef.current;
           Promise.resolve(dataSource.getLines(prefetch.offset, prefetch.count))
-            .then((pfLines) => {
+            .then(() => {
               if (pfGen !== fetchGenRef.current) return;
-              const pm = visibleLinesRef.current;
-              for (const l of pfLines) {
-                pm.set(l.lineNum, l);
-              }
-              setVisibleVersion((v) => v + 1);
+              bumpCacheVersion();
             })
             .catch(console.error)
             .finally(() => { fetchInFlightRef.current = false; });
@@ -304,9 +290,6 @@ export default function ReadOnlyViewer({
     const lastActual = virtualBase + last;
 
     scheduler.reportScroll(firstActual, lastActual, liveTotalLines);
-
-    // Notify the data source of visible range
-    dataSource.notifyVisible?.(firstActual, lastActual);
   }, [items, dataSource, virtualBase, liveTotalLines]);
 
   // Scroll to a specific line when requested.
@@ -368,11 +351,6 @@ export default function ReadOnlyViewer({
     [onLineClick, onSelectionChange, selection],
   );
 
-  // Combined lookup: local map + data source sync cache
-  const getLine = (lineNum: number): ViewLine | undefined => {
-    return visibleLinesRef.current.get(lineNum) ?? dataSource.getLine(lineNum);
-  };
-
   // ── Ctrl+C copy handler for multi-line selection ───────────────────────
   useEffect(() => {
     if (!selection || selection.selected.size === 0) return;
@@ -381,7 +359,7 @@ export default function ReadOnlyViewer({
         e.preventDefault();
         const sorted = Array.from(selection.selected).sort((a, b) => a - b);
         const text = sorted
-          .map((n) => getLine(n)?.raw)
+          .map((n) => dataSource.getLine(n)?.raw)
           .filter(Boolean)
           .join('\n');
         navigator.clipboard.writeText(text);
@@ -390,7 +368,7 @@ export default function ReadOnlyViewer({
     window.addEventListener('keydown', handleCopy);
     return () => window.removeEventListener('keydown', handleCopy);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selection]);
+  }, [selection, dataSource]);
 
   if (liveTotalLines === 0) {
     return (
@@ -461,7 +439,7 @@ export default function ReadOnlyViewer({
         >
           {items.map((virtualItem) => {
             const actualLineNum = virtualBase + virtualItem.index;
-            const line = getLine(actualLineNum);
+            const line = dataSource.getLine(actualLineNum);
             const isTarget = scrollToLine != null && actualLineNum === scrollToLine;
             return (
               <div

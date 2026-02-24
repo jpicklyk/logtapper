@@ -5,7 +5,7 @@ import type { LineDecoratorDef } from '../../viewport/LineDecorator';
 import type { Selection } from '../../viewport/SelectionManager';
 import { ReadOnlyViewer, createCacheDataSource } from '../../viewport';
 import type { CacheDataSource } from '../../viewport';
-import { useViewCache } from '../../cache';
+import { useViewCache, useCacheFocus, useDataSourceRegistry } from '../../cache';
 import {
   useSession,
   useIsStreaming,
@@ -21,14 +21,12 @@ interface Props {
   paneId: string;
   fetchLines: (offset: number, count: number) => Promise<{ totalLines: number; lines: ViewLine[] }>;
   lineNumbers?: number[];
-  filterLineCache?: Map<number, ViewLine>;
 }
 
 const LogViewer = React.memo(function LogViewer({
   paneId,
   fetchLines,
   lineNumbers,
-  filterLineCache,
 }: Props) {
   const session = useSession();
   const isStreaming = useIsStreaming();
@@ -52,10 +50,12 @@ const LogViewer = React.memo(function LogViewer({
 
   // View cache handle
   const sessionId = session?.sessionId ?? null;
-  const viewCache = useViewCache(
-    sessionId ? `pane-${paneId}-${sessionId}` : null,
-    sessionId,
-  );
+  const viewId = sessionId ? `pane-${paneId}-${sessionId}` : null;
+  const viewCache = useViewCache(viewId, sessionId);
+  const registry = useDataSourceRegistry();
+
+  // Focus management: give this pane 60% of cache budget when active
+  useCacheFocus(viewId);
 
   // Create CacheDataSource
   const dataSourceRef = useRef<CacheDataSource | null>(null);
@@ -73,22 +73,21 @@ const LogViewer = React.memo(function LogViewer({
       sessionId,
       viewCache,
       fetchLines,
-      isStreaming,
       lineNumbers,
-      filterLineCache,
+      registry,
     });
 
     // Set initial total lines
-    ds.updateTotalLines?.(sessionData?.totalLines ?? 0);
+    ds.updateTotalLines(sessionData?.totalLines ?? 0);
 
     dataSourceRef.current = ds;
     return ds;
-  }, [sessionId, viewCache, fetchLines, isStreaming, lineNumbers, filterLineCache, sessionData?.totalLines]);
+  }, [sessionId, viewCache, fetchLines, lineNumbers, sessionData?.totalLines, registry]);
 
   // Update total lines when session changes
   useEffect(() => {
     if (dataSourceRef.current && sessionData?.totalLines) {
-      dataSourceRef.current.updateTotalLines?.(sessionData.totalLines);
+      dataSourceRef.current.updateTotalLines(sessionData.totalLines);
     }
   }, [sessionData?.totalLines]);
 

@@ -14,3 +14,4 @@ export { default as TextLine, TextLineSkeleton } from './TextLine';
 // Data sources
 export { createCacheDataSource } from './CacheDataSource';
 export type { CacheDataSource } from './CacheDataSource';
+export { DataSourceRegistry } from './DataSourceRegistry';
