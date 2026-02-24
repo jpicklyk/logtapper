@@ -8,7 +8,7 @@ import {
   useIsStreaming,
   useScrollTarget,
   useTrackerTransitions,
-  useViewerActions,
+
   useProcessorId,
   useTotalLines,
 } from '../../context';
@@ -29,7 +29,7 @@ const LogViewer = React.memo(function LogViewer({
   const isStreaming = useIsStreaming();
   const { lineNum: scrollToLine, seq: jumpSeq } = useScrollTarget();
   const { allLineNums: transitionLineNums, byLine: transitionsByLine } = useTrackerTransitions();
-  const { jumpToLine } = useViewerActions();
+
   const processorId = useProcessorId();
   const totalLines = useTotalLines();
 
@@ -166,10 +166,10 @@ const LogViewer = React.memo(function LogViewer({
   );
 
   const handleLineClick = useCallback(
-    (lineNum: number) => {
-      jumpToLine(lineNum);
+    (_lineNum: number) => {
+      // Selection is handled via onSelectionChange — no scroll jump needed.
     },
-    [jumpToLine],
+    [],
   );
 
   const handleSelectionChange = useCallback((sel: Selection) => {
