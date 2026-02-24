@@ -80,7 +80,8 @@ export function createCacheDataSource(options: CacheDataSourceOptions): CacheDat
       }
 
       // Cache miss — fetch from backend, store in ViewCacheHandle (bounded LRU)
-      const gen = ++_fetchGen;
+      // Capture current gen (only invalidate() and dispose() bump it)
+      const gen = _fetchGen;
       return fetchLines(offset, count).then((window: LineWindow) => {
         if (gen !== _fetchGen || _disposed) return [];
         if (window.totalLines > _totalLines && !lineNumbers) {

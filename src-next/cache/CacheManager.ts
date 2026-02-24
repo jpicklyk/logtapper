@@ -13,14 +13,31 @@ const PRIORITY_FRACTIONS: Record<ViewPriority, number> = {
 /** Minimum lines a view is guaranteed even in the lowest tier. */
 const MIN_FLOOR = 2000;
 
+/** Doubly-linked list node for O(1) LRU tracking. */
+interface LruNode {
+  key: number;
+  prev: LruNode | null;
+  next: LruNode | null;
+}
+
+/** Typed empty iterator — avoids allocating a new Map on every call. */
+function* emptyIterator(): IterableIterator<[number, ViewLine]> {
+  // yields nothing
+}
+
 /**
  * A handle to a single view's slice of the global cache.
  * Keyed by actual file line number (works across filter transitions).
+ *
+ * LRU tracking uses a doubly-linked list + Map for O(1) get/put/evict.
  */
 export class ViewCacheHandle {
   private _cache = new Map<number, ViewLine>();
   private _allocation: number;
-  private _accessOrder: number[] = []; // LRU tracking — most recent at end
+  // O(1) LRU: doubly-linked list with Map for node lookup
+  private _orderMap = new Map<number, LruNode>();
+  private _head: LruNode | null = null; // least recently used
+  private _tail: LruNode | null = null; // most recently used
 
   constructor(allocation: number) {
     this._allocation = Math.max(allocation, MIN_FLOOR);
@@ -38,12 +55,7 @@ export class ViewCacheHandle {
   get(lineNumber: number): ViewLine | undefined {
     const line = this._cache.get(lineNumber);
     if (line !== undefined) {
-      // Move to end of access order (most recently used)
-      const idx = this._accessOrder.indexOf(lineNumber);
-      if (idx !== -1) {
-        this._accessOrder.splice(idx, 1);
-      }
-      this._accessOrder.push(lineNumber);
+      this._promote(lineNumber);
     }
     return line;
   }
@@ -51,15 +63,14 @@ export class ViewCacheHandle {
   /** Insert lines into the cache. Evicts LRU entries if over allocation. */
   put(lines: ViewLine[]): void {
     for (const line of lines) {
-      if (!this._cache.has(line.lineNum)) {
+      if (this._cache.has(line.lineNum)) {
+        // Update existing entry, promote in LRU
         this._cache.set(line.lineNum, line);
-        this._accessOrder.push(line.lineNum);
+        this._promote(line.lineNum);
       } else {
-        // Update existing entry, refresh access order
+        // New entry — append at tail
         this._cache.set(line.lineNum, line);
-        const idx = this._accessOrder.indexOf(line.lineNum);
-        if (idx !== -1) this._accessOrder.splice(idx, 1);
-        this._accessOrder.push(line.lineNum);
+        this._appendNode(line.lineNum);
       }
     }
     this._evict();
@@ -79,7 +90,9 @@ export class ViewCacheHandle {
   /** Clear all cached lines. */
   clear(): void {
     this._cache.clear();
-    this._accessOrder = [];
+    this._orderMap.clear();
+    this._head = null;
+    this._tail = null;
   }
 
   /** Check if a line is cached (without updating LRU). */
@@ -92,10 +105,61 @@ export class ViewCacheHandle {
     return this._cache.entries();
   }
 
+  /** Move an existing node to the tail (most recently used). O(1). */
+  private _promote(key: number): void {
+    const node = this._orderMap.get(key);
+    if (!node || node === this._tail) return;
+    this._unlinkNode(node);
+    this._linkAtTail(node);
+  }
+
+  /** Create a new node and append at tail. O(1). */
+  private _appendNode(key: number): void {
+    const node: LruNode = { key, prev: null, next: null };
+    this._orderMap.set(key, node);
+    this._linkAtTail(node);
+  }
+
+  /** Link a node at the tail of the list. */
+  private _linkAtTail(node: LruNode): void {
+    node.next = null;
+    node.prev = this._tail;
+    if (this._tail) {
+      this._tail.next = node;
+    } else {
+      this._head = node;
+    }
+    this._tail = node;
+  }
+
+  /** Unlink a node from the list (does not remove from _orderMap). */
+  private _unlinkNode(node: LruNode): void {
+    if (node.prev) {
+      node.prev.next = node.next;
+    } else {
+      this._head = node.next;
+    }
+    if (node.next) {
+      node.next.prev = node.prev;
+    } else {
+      this._tail = node.prev;
+    }
+    node.prev = null;
+    node.next = null;
+  }
+
+  /** Evict from head (LRU) until within allocation. O(1) per eviction. */
   private _evict(): void {
-    while (this._cache.size > this._allocation && this._accessOrder.length > 0) {
-      const oldest = this._accessOrder.shift()!;
-      this._cache.delete(oldest);
+    while (this._cache.size > this._allocation && this._head) {
+      const node = this._head;
+      this._head = node.next;
+      if (this._head) {
+        this._head.prev = null;
+      } else {
+        this._tail = null;
+      }
+      this._cache.delete(node.key);
+      this._orderMap.delete(node.key);
     }
   }
 }
@@ -209,8 +273,7 @@ export class CacheManager {
       }
     }
     if (best) return best.entries();
-    // Return an empty iterator
-    return (new Map<number, ViewLine>()).entries();
+    return emptyIterator();
   }
 
   /** Clear all handles that belong to the given session. */
@@ -225,6 +288,7 @@ export class CacheManager {
   /**
    * Redistribute budget across all views based on priorities.
    * Focused: 60%, Visible (non-focused): 30% shared, Background: 10% shared.
+   * Accounts for MIN_FLOOR enforcement to avoid exceeding total budget.
    */
   private _redistribute(): void {
     if (this._views.size === 0) return;
@@ -255,26 +319,37 @@ export class CacheManager {
 
     // Single-view optimization: give it the full budget
     if (this._views.size === 1) {
-      const [, entry] = [...this._views.entries()][0];
-      entry.handle.setAllocation(this._totalBudget);
+      this._views.values().next().value!.handle.setAllocation(this._totalBudget);
       return;
     }
 
-    // Compute allocations
+    // Compute raw allocations
     const focusedBudget = Math.floor(this._totalBudget * PRIORITY_FRACTIONS.focused);
     const visibleBudget = Math.floor(this._totalBudget * PRIORITY_FRACTIONS.visible);
     const backgroundBudget = Math.floor(this._totalBudget * PRIORITY_FRACTIONS.background);
 
-    for (const id of focused) {
-      this._views.get(id)!.handle.setAllocation(focusedBudget);
+    const perVisible = visible.length > 0 ? Math.floor(visibleBudget / visible.length) : 0;
+    const perBackground = background.length > 0 ? Math.floor(backgroundBudget / background.length) : 0;
+
+    // Account for MIN_FLOOR clamping: count how many non-focused views
+    // will be clamped up to the floor and compute the overshoot.
+    let floorOvershoot = 0;
+    if (perVisible < MIN_FLOOR) {
+      floorOvershoot += visible.length * (MIN_FLOOR - perVisible);
+    }
+    if (perBackground < MIN_FLOOR) {
+      floorOvershoot += background.length * (MIN_FLOOR - perBackground);
     }
 
-    const perVisible = visible.length > 0 ? Math.floor(visibleBudget / visible.length) : 0;
+    // Reduce focused allocation to absorb the floor overshoot (down to its own floor)
+    const adjustedFocused = Math.max(MIN_FLOOR, focusedBudget - floorOvershoot);
+
+    for (const id of focused) {
+      this._views.get(id)!.handle.setAllocation(adjustedFocused);
+    }
     for (const id of visible) {
       this._views.get(id)!.handle.setAllocation(perVisible);
     }
-
-    const perBackground = background.length > 0 ? Math.floor(backgroundBudget / background.length) : 0;
     for (const id of background) {
       this._views.get(id)!.handle.setAllocation(perBackground);
     }

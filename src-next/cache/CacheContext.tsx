@@ -29,6 +29,12 @@ export function CacheProvider({ budget = DEFAULT_BUDGET, children }: CacheProvid
       registry: new DataSourceRegistry(),
     };
   }
+
+  // Propagate budget changes to the existing CacheManager instance
+  useEffect(() => {
+    ctxRef.current?.manager.setTotalBudget(budget);
+  }, [budget]);
+
   return (
     <CacheManagerContext.Provider value={ctxRef.current}>
       {children}
@@ -84,6 +90,17 @@ export function useViewCache(viewId: string | null, sessionId?: string | null): 
     handleRef.current = mgr.allocateView(viewId, sessionId ?? undefined);
     prevIdRef.current = viewId;
   }
+
+  // Release handle on unmount to prevent ghost handles consuming budget
+  useEffect(() => {
+    return () => {
+      if (prevIdRef.current && mgr) {
+        mgr.releaseView(prevIdRef.current);
+        prevIdRef.current = null;
+        handleRef.current = null;
+      }
+    };
+  }, [mgr, viewId]);
 
   return handleRef.current;
 }
