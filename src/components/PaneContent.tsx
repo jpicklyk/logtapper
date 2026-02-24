@@ -25,12 +25,16 @@ export default function PaneContent({ pane }: Props) {
   } = useAppContext();
 
   // Allocate a CacheManager view for this pane's session.
-  // sessionGeneration is included in the viewId so that switching from file→stream
-  // (both use sessionId="default") forces a fresh handle, discarding stale lines.
+  // The sessionId is passed through so CacheManager can broadcast streaming batches
+  // to ALL handles for the same session (multi-consumer support).
+  // Note: sessionId is always "default" — stale data across file→stream transitions
+  // is handled by clearSession() in resetSessionState + isStreaming dep in LogViewer's
+  // visibleLinesRef reset. Do NOT include a generation counter in the viewId — it
+  // causes a race where early stream batches go to the old handle before PaneContent
+  // re-renders and allocates a new one.
   const sessionId = viewer.session?.sessionId ?? null;
-  const gen = viewer.sessionGeneration;
   const viewCache = useViewCache(
-    sessionId ? `pane-${pane.id}-${sessionId}-g${gen}` : null,
+    sessionId ? `pane-${pane.id}-${sessionId}` : null,
     sessionId,
   );
 

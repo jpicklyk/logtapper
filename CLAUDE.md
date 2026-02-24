@@ -163,7 +163,7 @@ Hooks live in `App.tsx` and are shared via `AppContext`. Access via `useAppConte
 | `useAnalysis` | Analysis artifact CRUD, `analysis-update` subscription |
 | `useWatches` | Watch lifecycle, `watch-match` subscription |
 
-**CacheManager:** Each `PaneContent` allocates a `ViewCacheHandle` via `useViewCache(viewId, sessionId)`. During streaming, `handleAdbBatch` calls `cacheManager.broadcastToSession()` to write lines into ALL handles for the session (multi-consumer). During file mode, `LogViewer` fetches on demand. The `fileCacheBudget` setting controls the global budget. **Session ID is always `"default"`** — both file and stream use the same ID. `sessionGeneration` (incremented in `useLogViewer` on every load/stream start) is included in the `viewId` to force fresh cache handles across transitions.
+**CacheManager:** Each `PaneContent` allocates a `ViewCacheHandle` via `useViewCache(viewId, sessionId)`. During streaming, `handleAdbBatch` calls `cacheManager.broadcastToSession()` to write lines into ALL handles for the session (multi-consumer). During file mode, `LogViewer` fetches on demand. The `fileCacheBudget` setting controls the global budget. **Session ID is always `"default"`** — both file and stream use the same ID. Stale data across transitions is handled by `clearSession()` in `resetSessionState` + `isStreaming` dep in LogViewer's `visibleLinesRef` reset. Do NOT put a generation counter in the `viewId` — it causes a race where early stream batches go to the old handle before PaneContent re-renders.
 
 ### High-frequency streaming UI patterns
 

@@ -111,7 +111,23 @@ export default function LogViewer({
 
   const autoScrollRef = useRef(true);
   const userScrollingDownRef = useRef(false);
-  const programmaticScrollRef = useRef(false);
+  /** scrollTop value after our last programmatic scroll-to-bottom.
+   *  -1 = no programmatic scroll has happened yet. */
+  const lastSetScrollTopRef = useRef(-1);
+
+  // Re-enable auto-scroll and reset virtualBase when a new stream starts.
+  // Without this, stopping+restarting ADB leaves autoScrollRef=false from
+  // the previous session, causing lines to pile up with "N new lines below".
+  useEffect(() => {
+    if (isStreaming) {
+      autoScrollRef.current = true;
+      setAutoScroll(true);
+      setNewLinesCount(0);
+      userScrollingDownRef.current = false;
+      virtualBaseRef.current = 0;
+      setVirtualBase(0);
+    }
+  }, [isStreaming]);
 
   // When lineNumbers is provided (filter active), use its length as the count.
   const count = lineNumbers ? lineNumbers.length : totalLines;
@@ -157,26 +173,13 @@ export default function LogViewer({
       }
     };
 
-    // onScroll detects scrollbar drags and other non-wheel scroll input.
-    // This is the PRIMARY mechanism for disabling auto-scroll during
-    // scrollbar drags — pointerdown does NOT fire for scrollbar interaction
-    // in WebView2 (Windows).
+    // onScroll handles re-engaging auto-scroll when the user scrolls DOWN
+    // to the bottom. Disabling auto-scroll on scrollbar drag is NOT done
+    // here — it's handled by scroll-position drift detection in the
+    // auto-scroll useEffect (comparing el.scrollTop to lastSetScrollTopRef).
     const onScroll = () => {
-      // Skip scroll events caused by our own programmatic scrollTop assignment.
-      if (programmaticScrollRef.current) {
-        programmaticScrollRef.current = false;
-        return;
-      }
-
       const nearBottom =
         el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_THRESHOLD;
-
-      // Disable auto-scroll when user scrolls away from bottom.
-      if (!nearBottom && autoScrollRef.current) {
-        autoScrollRef.current = false;
-        setAutoScroll(false);
-        return;
-      }
 
       // Re-engage auto-scroll ONLY when the user actively scrolled DOWN
       // to the bottom (not from content growth pushing the threshold).
@@ -212,11 +215,24 @@ export default function LogViewer({
     if (!isStreaming || !autoScrollRef.current || effectiveCount === 0) return;
     const el = parentRef.current;
     if (!el) return;
-    // Flag so onScroll ignores the scroll event caused by this assignment.
-    // User-initiated scroll events (scrollbar drag, touch) fire WITHOUT
-    // this flag, so onScroll can detect them and disable auto-scroll.
-    programmaticScrollRef.current = true;
+
+    // Drift detection: after our last programmatic scroll, el.scrollTop was
+    // recorded in lastSetScrollTopRef. If the user has dragged the scrollbar
+    // since then, el.scrollTop will have changed. This is a direct measurement
+    // that doesn't depend on event timing — no race with scroll events.
+    if (lastSetScrollTopRef.current >= 0) {
+      const drift = Math.abs(el.scrollTop - lastSetScrollTopRef.current);
+      if (drift > 2) {
+        // User has moved the scrollbar — disable auto-scroll.
+        autoScrollRef.current = false;
+        setAutoScroll(false);
+        lastSetScrollTopRef.current = -1;
+        return;
+      }
+    }
+
     el.scrollTop = el.scrollHeight;
+    lastSetScrollTopRef.current = el.scrollTop;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveCount]);
 
@@ -487,8 +503,8 @@ export default function LogViewer({
             setNewLinesCount(0);
             const el = parentRef.current;
             if (el) {
-              programmaticScrollRef.current = true;
               el.scrollTop = el.scrollHeight;
+              lastSetScrollTopRef.current = el.scrollTop;
             }
           }}
         >
