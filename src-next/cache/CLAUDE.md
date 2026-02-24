@@ -6,6 +6,31 @@
 
 If you are writing code that stores a ViewLine in a local variable, that's fine (stack/temporary). If you are writing code that stores ViewLine objects in a `Map`, `Set`, `Array`, `useRef`, or any persistent structure — **stop**. You are creating an unbounded shadow cache that defeats the memory budget.
 
+## Public/Private API Split
+
+The barrel (`cache/index.ts`) exports **narrow interfaces and hooks only** — not implementation classes. External code must import from the barrel; internal files import from each other directly.
+
+### Three interface tiers
+
+```
+ViewCache (read-only)          — components that display cached lines
+  └─ WritableViewCache         — CacheDataSource (stores fetched lines via put())
+       └─ ViewCacheHandle      — CacheManager internals only (clear, setAllocation, entries)
+
+CacheController (narrow)       — hooks that manage streaming (broadcast, clear, scan)
+  └─ CacheManager              — CacheContext internals only (allocateView, releaseView, setFocus, etc.)
+```
+
+| Interface | Methods | Used by |
+|---|---|---|
+| `ViewCache` | `size`, `allocation`, `get()`, `has()`, `prefetchAllowed()` | Components displaying cached lines |
+| `WritableViewCache` | extends ViewCache + `put()` | `CacheDataSource`, `useViewCache()` return type |
+| `CacheController` | `broadcastToSession()`, `clearSession()`, `getSessionEntries()` | `useLogViewer`, `useCacheManager()` return type |
+
+### What's NOT exported
+
+`CacheManager` class, `ViewCacheHandle` class — these are internal to the cache module. `CacheContext.tsx` creates and manages them; external code only sees the narrow interfaces.
+
 ## Why This Matters
 
 A ViewLine is ~500-1000 bytes (raw text, tag, message, sourceId — all strings). A 2M-line log file at 500 bytes/line = 1 GB of ViewLine objects. The CacheManager budget (default 100K lines) caps memory at ~50-100 MB. Any unbounded collection that retains ViewLine references outside ViewCacheHandle bypasses this cap and will eventually exhaust memory during long streaming sessions.

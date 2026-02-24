@@ -27,6 +27,9 @@ Hooks must not depend on each other's internal state through effects in `App.tsx
 ### 7. Stable callback references
 Action callbacks (`onViewProcessor`, `onCloseSession`, `onOpenLibrary`) must be `useCallback` with stable deps and placed in a dedicated context that never changes. Consumers of these callbacks should never re-render due to unrelated state changes.
 
+### 8. Barrel exports control public API — never import internal modules directly
+Every module directory (`cache/`, `viewport/`, `hooks/`) must have an `index.ts` barrel that defines its public API. Components and hooks outside a module must import from the barrel only, never from internal files. The barrel exports narrow interfaces and hooks — not implementation classes. Internal files import from each other directly within the same module. Test files may import internals for white-box testing.
+
 ### Current violations (migration backlog)
 The codebase currently has a single `AppContext` bundling `viewer` + `pipeline` + `stateTracker` + loose values, no `React.memo` usage, unmemoized context value in `App.tsx`, and cross-hook effects in `App.tsx`. These are known debt — new code must not add to it, and refactoring should incrementally fix it.
 

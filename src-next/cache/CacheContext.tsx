@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, type ReactNode } from 'react';
-import { CacheManager, type ViewCacheHandle } from './CacheManager';
+import { CacheManager, type WritableViewCache, type CacheController } from './CacheManager';
 import { DataSourceRegistry } from '../viewport/DataSourceRegistry';
 
 /** Default total line budget — matches SETTING_DEFAULTS.fileCacheBudget. */
@@ -43,7 +43,7 @@ export function CacheProvider({ budget = DEFAULT_BUDGET, children }: CacheProvid
 }
 
 /** Access the global CacheManager. Throws if used outside CacheProvider. */
-export function useCacheManager(): CacheManager {
+export function useCacheManager(): CacheController {
   const ctx = useContext(CacheManagerContext);
   if (!ctx) {
     throw new Error('useCacheManager must be used within a CacheProvider');
@@ -66,11 +66,11 @@ export function useDataSourceRegistry(): DataSourceRegistry {
  * When viewId changes, the old handle is released and a new one is allocated.
  * @param sessionId  Optional session ID — enables session-level broadcast via CacheManager.
  */
-export function useViewCache(viewId: string | null, sessionId?: string | null): ViewCacheHandle | null {
+export function useViewCache(viewId: string | null, sessionId?: string | null): WritableViewCache | null {
   const ctx = useContext(CacheManagerContext);
   const mgr = ctx?.manager ?? null;
   const prevIdRef = useRef<string | null>(null);
-  const handleRef = useRef<ViewCacheHandle | null>(null);
+  const handleRef = useRef<WritableViewCache | null>(null);
 
   if (!mgr || !viewId) {
     // Release any existing handle

@@ -3,6 +3,29 @@ import type { ViewLine } from '../bridge/types';
 /** Priority tiers for cache allocation. */
 export type ViewPriority = 'focused' | 'visible' | 'background';
 
+// ── Public interfaces (narrow API surface) ────────────────────────────
+
+/** Read-only view of a cache handle. For components that display cached lines. */
+export interface ViewCache {
+  readonly size: number;
+  readonly allocation: number;
+  get(lineNumber: number): ViewLine | undefined;
+  has(lineNumber: number): boolean;
+  prefetchAllowed(): boolean;
+}
+
+/** Writable view of a cache handle. For CacheDataSource (stores fetched lines). */
+export interface WritableViewCache extends ViewCache {
+  put(lines: ViewLine[]): void;
+}
+
+/** Narrow controller interface for hooks that manage streaming data. */
+export interface CacheController {
+  broadcastToSession(sessionId: string, lines: ViewLine[]): void;
+  clearSession(sessionId: string): void;
+  getSessionEntries(sessionId: string): IterableIterator<[number, ViewLine]>;
+}
+
 /** Budget fractions per priority tier. */
 const PRIORITY_FRACTIONS: Record<ViewPriority, number> = {
   focused: 0.6,
@@ -31,7 +54,7 @@ function* emptyIterator(): IterableIterator<[number, ViewLine]> {
  *
  * LRU tracking uses a doubly-linked list + Map for O(1) get/put/evict.
  */
-export class ViewCacheHandle {
+export class ViewCacheHandle implements WritableViewCache {
   private _cache = new Map<number, ViewLine>();
   private _allocation: number;
   // O(1) LRU: doubly-linked list with Map for node lookup
@@ -178,7 +201,7 @@ export class ViewCacheHandle {
  * Multi-consumer streaming:
  *   mgr.broadcastToSession('sess-abc', lines);  // writes to ALL handles for that session
  */
-export class CacheManager {
+export class CacheManager implements CacheController {
   private _totalBudget: number;
   private _views = new Map<string, { handle: ViewCacheHandle; priority: ViewPriority; sessionId: string | null }>();
   private _focusedId: string | null = null;

@@ -1,11 +1,11 @@
 import type { ViewLine, LineWindow } from '../bridge/types';
 import type { DataSource } from './DataSource';
-import type { ViewCacheHandle } from '../cache';
+import type { WritableViewCache } from '../cache';
 import type { DataSourceRegistry } from './DataSourceRegistry';
 
 interface CacheDataSourceOptions {
   sessionId: string;
-  viewCache: ViewCacheHandle;
+  viewCache: WritableViewCache;
   fetchLines: (offset: number, count: number) => Promise<LineWindow>;
   /** For processor view -- maps virtual index to actual file line number */
   lineNumbers?: number[];

@@ -1,5 +1,6 @@
-export { CacheManager, ViewCacheHandle } from './CacheManager';
-export type { ViewPriority } from './CacheManager';
+// Public API — hooks + narrow interfaces only
+export { CacheProvider, useCacheManager, useViewCache, useCacheFocus, useDataSourceRegistry } from './CacheContext';
+export type { ViewCache, WritableViewCache, CacheController, ViewPriority } from './CacheManager';
 export { FetchScheduler } from './FetchScheduler';
 export type { FetchSchedulerConfig, FetchCallback, FetchRange } from './FetchScheduler';
-export { CacheProvider, useCacheManager, useViewCache, useCacheFocus, useDataSourceRegistry } from './CacheContext';
+// CacheManager class and ViewCacheHandle class are NOT exported

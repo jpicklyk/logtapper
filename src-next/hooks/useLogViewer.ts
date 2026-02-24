@@ -14,7 +14,7 @@ import {
   updateStreamTrackers,
   updateStreamTransformers,
 } from '../bridge/commands';
-import type { CacheManager } from '../cache';
+import type { CacheController } from '../cache';
 import type { DataSourceRegistry } from '../viewport/DataSourceRegistry';
 import {
   onAdbBatch,
@@ -55,7 +55,7 @@ export interface LogViewerActions {
   timeFilterLineNums: number[] | null;
 }
 
-export function useLogViewer(cacheManager: CacheManager, registry: DataSourceRegistry): LogViewerActions {
+export function useLogViewer(cacheManager: CacheController, registry: DataSourceRegistry): LogViewerActions {
   // -- Context setters --
   const {
     session, setSession,
