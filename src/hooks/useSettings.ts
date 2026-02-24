@@ -1,17 +1,17 @@
 import { useState, useCallback } from 'react';
 
 export interface AppSettings {
-  /** Max lines held in the streaming cache. Oldest entries are evicted above this. */
-  streamFrontendCacheMax: number;
-  /** Max raw log lines kept in the backend buffer. Oldest lines are evicted above this. */
+  /** Max raw log lines kept in the backend ADB buffer. Oldest lines are evicted above this. */
   streamBackendLineMax: number;
+  /** Total line budget for the CacheManager (distributed across views). Covers both file and streaming modes. */
+  fileCacheBudget: number;
 }
 
 const STORAGE_KEY = 'logtapper_settings';
 
 export const SETTING_DEFAULTS: AppSettings = {
-  streamFrontendCacheMax: 50_000,
   streamBackendLineMax: 500_000,
+  fileCacheBudget: 100_000,
 };
 
 function loadSettings(): AppSettings {

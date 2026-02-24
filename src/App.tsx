@@ -6,6 +6,7 @@ import { usePaneLayout } from './hooks/usePaneLayout';
 import { useSettings } from './hooks/useSettings';
 import { useAnonymizerConfig } from './hooks/useAnonymizerConfig';
 import { useStateTracker } from './hooks/useStateTracker';
+import { useCacheManager } from './cache';
 import { AppContext } from './context/AppContext';
 import {
   getDumpstateMetadata,
@@ -27,9 +28,15 @@ import './App.css';
 export default function App() {
   const { settings, updateSetting, resetSettings } = useSettings();
   const anonymizerConfig = useAnonymizerConfig();
+  const cacheManager = useCacheManager();
   const pipeline = usePipeline();
   const stateTracker = useStateTracker();
   const layout = usePaneLayout();
+
+  // Sync CacheManager budget with settings
+  useEffect(() => {
+    cacheManager.setTotalBudget(settings.fileCacheBudget);
+  }, [cacheManager, settings.fileCacheBudget]);
 
   const [processorViewId, setProcessorViewId] = useState<string | null>(null);
   const [sections, setSections] = useState<SectionEntry[]>([]);
@@ -46,7 +53,7 @@ export default function App() {
     setSections([]);
     stateTracker.clearTransitions();
   }, [stateTracker.clearTransitions]);
-  const viewer = useLogViewer(settings.streamFrontendCacheMax, handleBeforeLoad);
+  const viewer = useLogViewer(cacheManager, handleBeforeLoad);
 
   // ── File open ──────────────────────────────────────────────────────────────
 
@@ -155,6 +162,9 @@ export default function App() {
     setSections([]);
     setProcessorViewId(null);
     setSelectedLineNum(null);
+    hadResultsRef.current = false;
+    hadTimelineRef.current = false;
+    hadCorrelationsRef.current = false;
     // Remove all logviewer tabs (back to empty-pane state)
     for (const pane of layout.panes) {
       for (const tab of pane.tabs) {
@@ -198,32 +208,42 @@ export default function App() {
     hadResultsRef.current = hasResults;
   }, [pipeline.lastResults.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Refresh StateTracker transitions + auto-open State Timeline ──────────
+  // ── Refresh StateTracker transitions on every pipeline tick ──────────
 
   useEffect(() => {
     if (!viewer.session) return;
-    // In streaming mode, refresh whenever runCount ticks (adb-processor-update).
-    // In file mode, only refresh after the pipeline has actually run.
     if (!viewer.isStreaming && pipeline.lastResults.length === 0) return;
     stateTracker.refreshTransitionLines(viewer.session.sessionId).catch(() => {});
+  }, [pipeline.runCount]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Auto-open Timeline if any StateTracker or timeline-enabled Reporter processors ran
-    const hasActiveTrackers = pipeline.processors.some(
-      (p) => p.processorType === 'state_tracker' && pipeline.activeProcessorIds.has(p.id),
-    );
-    const hasActiveReporters = pipeline.processors.some(
-      (p) => p.processorType === 'reporter' && pipeline.activeProcessorIds.has(p.id),
-    );
-    if (hasActiveTrackers || hasActiveReporters) {
-      layout.openCenterTab('statetimeline');
+  // ── Auto-open Timeline / Correlations — fires once per session ──────────
+
+  const hadTimelineRef = useRef(false);
+  const hadCorrelationsRef = useRef(false);
+  useEffect(() => {
+    if (pipeline.runCount === 0) return;
+
+    if (!hadTimelineRef.current) {
+      const hasActiveTrackers = pipeline.processors.some(
+        (p) => p.processorType === 'state_tracker' && pipeline.activeProcessorIds.has(p.id),
+      );
+      const hasActiveReporters = pipeline.processors.some(
+        (p) => p.processorType === 'reporter' && pipeline.activeProcessorIds.has(p.id),
+      );
+      if (hasActiveTrackers || hasActiveReporters) {
+        hadTimelineRef.current = true;
+        layout.openCenterTab('statetimeline');
+      }
     }
 
-    // Auto-open Correlations tab if any correlator processors are in the chain
-    const hasActiveCorrelators = pipeline.processors.some(
-      (p) => p.processorType === 'correlator' && pipeline.activeProcessorIds.has(p.id),
-    );
-    if (hasActiveCorrelators) {
-      layout.openCenterTab('correlations');
+    if (!hadCorrelationsRef.current) {
+      const hasActiveCorrelators = pipeline.processors.some(
+        (p) => p.processorType === 'correlator' && pipeline.activeProcessorIds.has(p.id),
+      );
+      if (hasActiveCorrelators) {
+        hadCorrelationsRef.current = true;
+        layout.openCenterTab('correlations');
+      }
     }
   }, [pipeline.runCount]); // eslint-disable-line react-hooks/exhaustive-deps
 

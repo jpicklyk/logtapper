@@ -1,5 +1,6 @@
 import { useCallback, useState, useEffect } from 'react';
 import { useAppContext } from '../context/AppContext';
+import { useViewCache } from '../cache';
 import type { Pane } from '../hooks/usePaneLayout';
 import LogViewer from './LogViewer';
 import type { Selection } from './LogViewer';
@@ -22,6 +23,15 @@ export default function PaneContent({ pane }: Props) {
     onViewProcessor,
     setSelectedLineNum,
   } = useAppContext();
+
+  // Allocate a CacheManager view for this pane's session.
+  // The sessionId is passed through so CacheManager can broadcast streaming batches
+  // to ALL handles for the same session (multi-consumer support).
+  const sessionId = viewer.session?.sessionId ?? null;
+  const viewCache = useViewCache(
+    sessionId ? `pane-${pane.id}-${sessionId}` : null,
+    sessionId,
+  );
 
   const [selection, setSelection] = useState<Selection>({ anchor: null, selected: new Set() });
 
@@ -128,7 +138,6 @@ export default function PaneContent({ pane }: Props) {
           <LogViewer
             sessionId={viewer.session?.sessionId ?? ''}
             totalLines={viewer.session?.totalLines ?? 0}
-            streamCache={viewer.streamCache}
             fetchLines={viewer.fetchLines}
             search={viewer.search ?? undefined}
             onLineClick={handleLineClick}
@@ -140,6 +149,7 @@ export default function PaneContent({ pane }: Props) {
             filterLineCache={viewer.filterLineCache}
             transitionLineNums={stateTracker.allTransitionLineNums.size > 0 ? stateTracker.allTransitionLineNums : undefined}
             transitionsByLine={stateTracker.allTransitionLineNums.size > 0 ? stateTracker.transitionsByLine : undefined}
+            viewCache={viewCache}
             selection={selection}
             onLineSelect={handleLineSelect}
           />

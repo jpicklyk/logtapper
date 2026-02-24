@@ -724,7 +724,10 @@ fn flush_batch(
     let first_new_line = {
         let sessions = match state.sessions.lock() {
             Ok(g) => g,
-            Err(_) => return,
+            Err(e) => {
+                eprintln!("[adb flush_batch] sessions lock poisoned (step 1): {e}");
+                return;
+            }
         };
         sessions
             .get(session_id)
@@ -794,11 +797,13 @@ fn flush_batch(
     // as stream_processor_state). Using the same instance across batches keeps
     // token numbering stable: the same raw value always maps to the same token.
     let anon: Option<LogAnonymizer> = {
-        let mut sa = match state.stream_anonymizers.lock() {
-            Ok(g) => g,
-            Err(_) => return,
-        };
-        sa.remove(session_id)
+        match state.stream_anonymizers.lock() {
+            Ok(mut sa) => sa.remove(session_id),
+            Err(e) => {
+                eprintln!("[adb flush_batch] stream_anonymizers lock poisoned: {e}");
+                None // skip anonymization, don't abort the whole batch
+            }
+        }
     };
 
     if let Some(ref a) = anon {
@@ -822,15 +827,17 @@ fn flush_batch(
 
         if !transformer_ids.is_empty() {
             let transformer_defs: Vec<(String, crate::processors::transformer::schema::TransformerDef)> = {
-                let procs = match state.processors.lock() {
-                    Ok(g) => g,
-                    Err(_) => return,
-                };
-                transformer_ids.iter()
-                    .filter_map(|id| procs.get(id.as_str())
-                        .and_then(|p| p.as_transformer())
-                        .map(|d| (id.clone(), d.clone())))
-                    .collect()
+                match state.processors.lock() {
+                    Ok(procs) => transformer_ids.iter()
+                        .filter_map(|id| procs.get(id.as_str())
+                            .and_then(|p| p.as_transformer())
+                            .map(|d| (id.clone(), d.clone())))
+                        .collect(),
+                    Err(e) => {
+                        eprintln!("[adb flush_batch] processors lock poisoned (transformers): {e}");
+                        Vec::new() // skip transformers, don't abort the whole batch
+                    }
+                }
             };
 
             if !transformer_defs.is_empty() {
@@ -891,7 +898,10 @@ fn flush_batch(
     let (total_lines, byte_count, first_ts, last_ts) = {
         let mut sessions = match state.sessions.lock() {
             Ok(g) => g,
-            Err(_) => return,
+            Err(e) => {
+                eprintln!("[adb flush_batch] sessions lock poisoned (step 3): {e}");
+                return;
+            }
         };
         let session = match sessions.get_mut(session_id) {
             Some(s) => s,
@@ -957,16 +967,15 @@ fn flush_batch(
 
         if !tracker_ids.is_empty() {
             let tracker_defs: HashMap<String, crate::processors::state_tracker::schema::StateTrackerDef> = {
-                let procs = match state.processors.lock() {
-                    Ok(g) => g,
-                    Err(_) => {
-                        // Can't get defs, skip tracker pass this batch
-                        return;
+                match state.processors.lock() {
+                    Ok(procs) => tracker_ids.iter()
+                        .filter_map(|id| procs.get(id.as_str()).and_then(|p| p.as_state_tracker()).map(|d| (id.clone(), d.clone())))
+                        .collect(),
+                    Err(e) => {
+                        eprintln!("[adb flush_batch] processors lock poisoned (trackers): {e}");
+                        HashMap::new() // skip trackers, don't abort the whole batch
                     }
-                };
-                tracker_ids.iter()
-                    .filter_map(|id| procs.get(id.as_str()).and_then(|p| p.as_state_tracker()).map(|d| (id.clone(), d.clone())))
-                    .collect()
+                }
             };
 
             for t_id in &tracker_ids {

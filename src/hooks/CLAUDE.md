@@ -8,9 +8,9 @@ All hooks are instantiated in `App.tsx` and shared via `AppContext`. The root CL
 
 ### Unified cache architecture (`useLogViewer`)
 
-All frontend line caching is unified through the `CacheManager` (`src/cache/`). `PaneContent` allocates a `ViewCacheHandle` via `useViewCache()` and pushes it into `useLogViewer` via `viewer.setViewCache(handle)`. The handle is stored in `viewCacheRef` (a ref, not state).
+All frontend line caching is unified through the `CacheManager` (`src/cache/`). Each `PaneContent` allocates a `ViewCacheHandle` via `useViewCache(viewId, sessionId)` — the sessionId enables multi-consumer broadcasting. `useLogViewer` receives the `CacheManager` directly (not individual handles).
 
-**Streaming mode**: `handleAdbBatch` calls `viewCacheRef.current.put(payload.lines)` — the CacheManager handles LRU eviction based on the global `fileCacheBudget` setting. `setStreamFilter` scans `viewCacheRef.current.entries()` for initial filter matches; subsequent batches are filtered incrementally.
+**Streaming mode**: `handleAdbBatch` calls `cacheManager.broadcastToSession(sessionId, lines)` — this writes the batch into ALL allocated handles for that session, so every pane (logviewer, dashboard, etc.) sees the same data. `setStreamFilter` scans `cacheManager.getSessionEntries(sessionId)` for initial filter matches; subsequent batches are filtered incrementally.
 
 **File mode**: `LogViewer` manages its own internal `visibleLinesRef` state. It calls `fetchLines(offset, count)` (a wrapper around the bridge `getLines()`) when the virtualizer's visible range changes. Fetched lines are also stored in the `ViewCacheHandle` for cache fallback.
 

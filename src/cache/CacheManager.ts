@@ -105,15 +105,18 @@ export class ViewCacheHandle {
  *
  * Usage:
  *   const mgr = new CacheManager(100_000);
- *   const handle = mgr.allocateView('session-1');
- *   mgr.setFocus('session-1');
+ *   const handle = mgr.allocateView('pane-1-sess-abc', 'sess-abc');
+ *   mgr.setFocus('pane-1-sess-abc');
  *   handle.put(lines);
  *   handle.get(42);
- *   mgr.releaseView('session-1');
+ *   mgr.releaseView('pane-1-sess-abc');
+ *
+ * Multi-consumer streaming:
+ *   mgr.broadcastToSession('sess-abc', lines);  // writes to ALL handles for that session
  */
 export class CacheManager {
   private _totalBudget: number;
-  private _views = new Map<string, { handle: ViewCacheHandle; priority: ViewPriority }>();
+  private _views = new Map<string, { handle: ViewCacheHandle; priority: ViewPriority; sessionId: string | null }>();
   private _focusedId: string | null = null;
 
   constructor(totalBudget: number = 100_000) {
@@ -128,14 +131,15 @@ export class CacheManager {
     return this._views.size;
   }
 
-  /** Create a new view handle and allocate cache budget for it. */
-  allocateView(viewId: string): ViewCacheHandle {
+  /** Create a new view handle and allocate cache budget for it.
+   *  @param sessionId  Optional session ID — enables broadcastToSession(). */
+  allocateView(viewId: string, sessionId?: string): ViewCacheHandle {
     if (this._views.has(viewId)) {
       return this._views.get(viewId)!.handle;
     }
     const priority: ViewPriority = this._focusedId === null ? 'focused' : 'visible';
     const handle = new ViewCacheHandle(MIN_FLOOR);
-    this._views.set(viewId, { handle, priority });
+    this._views.set(viewId, { handle, priority, sessionId: sessionId ?? null });
     if (this._focusedId === null) {
       this._focusedId = viewId;
     }
@@ -182,6 +186,40 @@ export class CacheManager {
   /** Get the current priority for a view. */
   getPriority(viewId: string): ViewPriority | undefined {
     return this._views.get(viewId)?.priority;
+  }
+
+  /** Write lines into ALL handles that belong to the given session. */
+  broadcastToSession(sessionId: string, lines: ViewLine[]): void {
+    for (const [, entry] of this._views) {
+      if (entry.sessionId === sessionId) {
+        entry.handle.put(lines);
+      }
+    }
+  }
+
+  /** Return an iterable of cached entries from the largest handle for the session.
+   *  Useful for filter scanning in streaming mode. */
+  getSessionEntries(sessionId: string): IterableIterator<[number, ViewLine]> {
+    let best: ViewCacheHandle | null = null;
+    let bestSize = -1;
+    for (const [, entry] of this._views) {
+      if (entry.sessionId === sessionId && entry.handle.size > bestSize) {
+        best = entry.handle;
+        bestSize = entry.handle.size;
+      }
+    }
+    if (best) return best.entries();
+    // Return an empty iterator
+    return (new Map<number, ViewLine>()).entries();
+  }
+
+  /** Clear all handles that belong to the given session. */
+  clearSession(sessionId: string): void {
+    for (const [, entry] of this._views) {
+      if (entry.sessionId === sessionId) {
+        entry.handle.clear();
+      }
+    }
   }
 
   /**

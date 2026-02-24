@@ -608,6 +608,8 @@ export function usePaneLayout(): PaneLayoutState {
             };
             return [{ ...updatedFrom, flexBasis: half }, newPane];
           }
+          // Tab already exists and is already active — no state change needed.
+          if (pane.activeTabId === existing.id) return prev;
           return prev.map((p) =>
             p.id === pane.id ? { ...p, activeTabId: existing.id } : p,
           );

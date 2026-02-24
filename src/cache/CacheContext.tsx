@@ -1,7 +1,7 @@
 import { createContext, useContext, useRef, type ReactNode } from 'react';
 import { CacheManager, type ViewCacheHandle } from './CacheManager';
 
-/** Default total line budget. */
+/** Default total line budget — matches SETTING_DEFAULTS.fileCacheBudget. */
 const DEFAULT_BUDGET = 100_000;
 
 const CacheManagerContext = createContext<CacheManager | null>(null);
@@ -40,8 +40,9 @@ export function useCacheManager(): CacheManager {
  * Get or create a ViewCacheHandle for a specific view ID.
  * The handle is allocated on first call and reused on subsequent renders.
  * When viewId changes, the old handle is released and a new one is allocated.
+ * @param sessionId  Optional session ID — enables session-level broadcast via CacheManager.
  */
-export function useViewCache(viewId: string | null): ViewCacheHandle | null {
+export function useViewCache(viewId: string | null, sessionId?: string | null): ViewCacheHandle | null {
   const mgr = useContext(CacheManagerContext);
   const prevIdRef = useRef<string | null>(null);
   const handleRef = useRef<ViewCacheHandle | null>(null);
@@ -61,7 +62,7 @@ export function useViewCache(viewId: string | null): ViewCacheHandle | null {
     if (prevIdRef.current) {
       mgr.releaseView(prevIdRef.current);
     }
-    handleRef.current = mgr.allocateView(viewId);
+    handleRef.current = mgr.allocateView(viewId, sessionId ?? undefined);
     prevIdRef.current = viewId;
   }
 

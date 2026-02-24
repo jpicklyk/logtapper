@@ -163,7 +163,7 @@ Hooks live in `App.tsx` and are shared via `AppContext`. Access via `useAppConte
 | `useAnalysis` | Analysis artifact CRUD, `analysis-update` subscription |
 | `useWatches` | Watch lifecycle, `watch-match` subscription |
 
-**CacheManager:** `PaneContent` allocates a `ViewCacheHandle` via `useViewCache()` and pushes it into `useLogViewer` via `setViewCache()`. During streaming, `handleAdbBatch` writes lines into this handle; during file mode, `LogViewer` fetches on demand. The `fileCacheBudget` setting controls the global budget.
+**CacheManager:** Each `PaneContent` allocates a `ViewCacheHandle` via `useViewCache(viewId, sessionId)`. During streaming, `handleAdbBatch` calls `cacheManager.broadcastToSession()` to write lines into ALL handles for the session (multi-consumer). During file mode, `LogViewer` fetches on demand. The `fileCacheBudget` setting controls the global budget.
 
 ### High-frequency streaming UI patterns
 
@@ -229,3 +229,5 @@ useEffect(() => {
 ```
 
 This applies to ALL Tauri async listener APIs: `listen()`, `once()`, `onDragDropEvent()`, etc.
+
+**StrictMode also breaks `requestAnimationFrame` cleanup.** Double-mount means: effect → cleanup → effect. If the cleanup calls `cancelAnimationFrame`, the first rAF is cancelled before it fires. The second rAF works, but rapid re-renders can cancel it too. **Never return `cancelAnimationFrame` from a useEffect cleanup.** Instead, guard the rAF callback with a ref check (`if (!autoScrollRef.current) return`) and let stale rAFs fire harmlessly.

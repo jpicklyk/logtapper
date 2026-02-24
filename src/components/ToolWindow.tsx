@@ -19,8 +19,6 @@ export default function ToolWindow({ tool, width }: Props) {
           sessionId={viewer.session?.sessionId ?? null}
           isStreaming={viewer.isStreaming}
           onOpenLibrary={onOpenLibrary}
-          cacheSize={viewer.streamCache.size}
-          cacheMax={viewer.streamBufferMax}
         />
       )}
       {tool === 'marketplace' && (

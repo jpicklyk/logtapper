@@ -108,8 +108,7 @@ export default function LogViewer({
   }, [sessionId]);
 
   const autoScrollRef = useRef(true);
-  const lastProgrammaticScrollMs = useRef(0);
-  const lastManualScrollUpMs = useRef(0);
+  const userScrollingDownRef = useRef(false);
 
   // When lineNumbers is provided (filter active), use its length as the count.
   const count = lineNumbers ? lineNumbers.length : totalLines;
@@ -133,41 +132,47 @@ export default function LogViewer({
     const el = parentRef.current;
     if (!el) return;
 
-    const PROGRAMMATIC_GUARD_MS = 150;
-    const MANUAL_SCROLL_GUARD_MS = 600;
-
     const onWheel = (e: WheelEvent) => {
       if (e.deltaY < 0) {
-        lastManualScrollUpMs.current = Date.now();
+        // Scrolling up — immediately disable auto-scroll
+        userScrollingDownRef.current = false;
         autoScrollRef.current = false;
         setAutoScroll(false);
+      } else if (e.deltaY > 0) {
+        // Scrolling down — track for re-engagement at bottom
+        userScrollingDownRef.current = true;
       }
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (['ArrowUp', 'PageUp', 'Home'].includes(e.key)) {
-        lastManualScrollUpMs.current = Date.now();
+        userScrollingDownRef.current = false;
         autoScrollRef.current = false;
         setAutoScroll(false);
+      } else if (['ArrowDown', 'PageDown', 'End'].includes(e.key)) {
+        userScrollingDownRef.current = true;
       }
     };
 
+    // onScroll detects scrollbar drags and other non-wheel scroll input.
+    // This is the PRIMARY mechanism for disabling auto-scroll during
+    // scrollbar drags — pointerdown does NOT fire for scrollbar interaction
+    // in WebView2 (Windows).
     const onScroll = () => {
-      const now = Date.now();
-      if (now - lastProgrammaticScrollMs.current < PROGRAMMATIC_GUARD_MS) return;
-
       const nearBottom =
         el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_THRESHOLD;
 
+      // Disable auto-scroll when user scrolls away from bottom.
       if (!nearBottom && autoScrollRef.current) {
-        lastManualScrollUpMs.current = now;
         autoScrollRef.current = false;
         setAutoScroll(false);
         return;
       }
 
-      if (nearBottom && !autoScrollRef.current) {
-        if (now - lastManualScrollUpMs.current < MANUAL_SCROLL_GUARD_MS) return;
+      // Re-engage auto-scroll ONLY when the user actively scrolled DOWN
+      // to the bottom (not from content growth pushing the threshold).
+      if (nearBottom && !autoScrollRef.current && userScrollingDownRef.current) {
+        userScrollingDownRef.current = false;
         autoScrollRef.current = true;
         setAutoScroll(true);
         setNewLinesCount(0);
@@ -196,8 +201,17 @@ export default function LogViewer({
 
   useEffect(() => {
     if (!isStreaming || !autoScrollRef.current || effectiveCount === 0) return;
-    lastProgrammaticScrollMs.current = Date.now();
-    virtualizer.scrollToIndex(effectiveCount - 1, { align: 'end' });
+    const el = parentRef.current;
+    if (!el) return;
+    // Defer to rAF so the browser processes pending scroll events first.
+    // onScroll will detect a user's scrollbar drag and clear autoScrollRef
+    // before the rAF callback checks it.
+    // No cleanup — letting stale rAFs fire is harmless (scroll-to-bottom is
+    // idempotent) and avoids StrictMode double-mount cancelling the rAF.
+    requestAnimationFrame(() => {
+      if (!autoScrollRef.current) return;
+      el.scrollTop = el.scrollHeight;
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveCount]);
 
@@ -346,7 +360,7 @@ export default function LogViewer({
     if (scrollToLine == null || scrollToLine < 0) return;
     autoScrollRef.current = false;
     setAutoScroll(false);
-    lastManualScrollUpMs.current = Date.now();
+    userScrollingDownRef.current = false;
 
     if (lineNumbers) {
       const pos = lineNumbers.indexOf(scrollToLine);
@@ -466,8 +480,8 @@ export default function LogViewer({
             autoScrollRef.current = true;
             setAutoScroll(true);
             setNewLinesCount(0);
-            lastProgrammaticScrollMs.current = Date.now();
-            virtualizer.scrollToIndex(effectiveCount - 1, { align: 'end' });
+            const el = parentRef.current;
+            if (el) el.scrollTop = el.scrollHeight;
           }}
         >
           {newLinesCount > 999 ? '999+' : newLinesCount} new line{newLinesCount !== 1 ? 's' : ''} below

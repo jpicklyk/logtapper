@@ -101,6 +101,12 @@ export function usePipeline(): PipelineState {
   }, []);
 
   // Subscribe to adb-processor-update events (continuous streaming runs).
+  // lastResults is updated immediately (lightweight stat display).
+  // runCount is THROTTLED to at most once per 2 seconds — this prevents
+  // Dashboard/Timeline/Correlations from re-fetching backend data ~20x/sec.
+  const streamRunCountTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingRunCountBumpRef = useRef(false);
+
   useEffect(() => {
     let cancelled = false;
     listen<AdbProcessorUpdate>('adb-processor-update', (event) => {
@@ -118,7 +124,17 @@ export function usePipeline(): PipelineState {
           },
         ];
       });
-      setRunCount((n) => n + 1);
+      // Throttle runCount: schedule an increment if one isn't already pending.
+      pendingRunCountBumpRef.current = true;
+      if (!streamRunCountTimerRef.current) {
+        streamRunCountTimerRef.current = setTimeout(() => {
+          streamRunCountTimerRef.current = null;
+          if (pendingRunCountBumpRef.current) {
+            pendingRunCountBumpRef.current = false;
+            setRunCount((n) => n + 1);
+          }
+        }, 2000);
+      }
     }).then((fn) => {
       if (cancelled) fn();
       else adbProcUnlistenRef.current = fn;
@@ -126,6 +142,10 @@ export function usePipeline(): PipelineState {
     return () => {
       cancelled = true;
       adbProcUnlistenRef.current?.();
+      if (streamRunCountTimerRef.current) {
+        clearTimeout(streamRunCountTimerRef.current);
+        streamRunCountTimerRef.current = null;
+      }
     };
   }, []);
 

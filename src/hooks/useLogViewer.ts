@@ -3,6 +3,7 @@ import { type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import type { ViewLine, SearchQuery, SearchSummary, SearchProgress, LoadResult, AdbBatchPayload, LineWindow } from '../bridge/types';
 import { loadLogFile, getLines, searchLogs, startAdbStream, stopAdbStream, getPackagePids, closeSession as closeSessionCmd } from '../bridge/commands';
+import type { CacheManager } from '../cache';
 
 import { onAdbBatch, onAdbStreamStopped, onFileIndexProgress, onFileIndexComplete, onSearchProgress } from '../bridge/events';
 import { parseFilter, matchesFilter, extractPackageNames, type FilterNode, FilterParseError } from '../filter';
@@ -11,8 +12,6 @@ const LS_LAST_FILE = 'logtapper_last_file';
 
 export interface LogViewerState {
   session: LoadResult | null;
-  /** Streaming-only cache: holds lines received via ADB batch events. */
-  streamCache: Map<number, ViewLine>;
   search: SearchQuery | null;
   searchSummary: SearchSummary | null;
   currentMatchIndex: number;
@@ -37,8 +36,6 @@ export interface LogViewerState {
   filteredLineNums: number[] | null;
   /** Pre-populated cache of ViewLine objects for all filter matches (file mode). */
   filterLineCache: Map<number, ViewLine>;
-  /** Maximum streaming cache size in lines (0 = unlimited). */
-  streamBufferMax: number;
   /** Non-null while background file indexing is in progress. */
   indexingProgress: { percent: number; indexedLines: number } | null;
   /** Current time range filter start ("HH:MM"), empty = not set */
@@ -67,12 +64,7 @@ export interface LogViewerState {
   closeSession: () => Promise<void>;
 }
 
-/**
- * @param streamCacheMax - Maximum number of ViewLine entries kept in the
- *   streaming cache. When exceeded, the oldest entries (lowest lineNum) are
- *   evicted. 0 = unlimited. Only applies during ADB streaming.
- */
-export function useLogViewer(streamCacheMax: number = 50_000, onBeforeLoad?: () => void): LogViewerState {
+export function useLogViewer(cacheManager: CacheManager, onBeforeLoad?: () => void): LogViewerState {
   const [session, setSession] = useState<LoadResult | null>(null);
   const [search, setSearch] = useState<SearchQuery | null>(null);
   const [searchSummary, setSearchSummary] = useState<SearchSummary | null>(null);
@@ -99,10 +91,6 @@ export function useLogViewer(streamCacheMax: number = 50_000, onBeforeLoad?: () 
   const processorIdRef = useRef<string | null>(null);
   const isStreamingRef = useRef(false);
 
-  // Keep streamCacheMax in a ref so handleAdbBatch (stable callback) reads the latest value.
-  const streamCacheMaxRef = useRef(streamCacheMax);
-  useEffect(() => { streamCacheMaxRef.current = streamCacheMax; }, [streamCacheMax]);
-
   // Keep onBeforeLoad in a ref so loadFile (stable callback) sees the latest value.
   const onBeforeLoadRef = useRef(onBeforeLoad);
   useEffect(() => { onBeforeLoadRef.current = onBeforeLoad; }, [onBeforeLoad]);
@@ -116,10 +104,6 @@ export function useLogViewer(streamCacheMax: number = 50_000, onBeforeLoad?: () 
   // Cache of ViewLine objects for lines matching the current file-mode filter.
   // Populated during the filter scan so LogViewer doesn't need to re-fetch.
   const filterLineCacheRef = useRef<Map<number, ViewLine>>(new Map());
-
-  // Streaming-only cache — holds lines from ADB batch events.
-  // Not used in file mode; file mode fetches directly from the backend.
-  const streamCacheRef = useRef<Map<number, ViewLine>>(new Map());
 
   // ADB event unlisteners
   const adbBatchUnlistenRef = useRef<UnlistenFn | null>(null);
@@ -138,7 +122,8 @@ export function useLogViewer(streamCacheMax: number = 50_000, onBeforeLoad?: () 
   }, []);
 
   const resetSessionState = useCallback(() => {
-    streamCacheRef.current = new Map<number, ViewLine>();
+    const sid = sessionRef.current?.sessionId;
+    if (sid) cacheManager.clearSession(sid);
     setSearch(null);
     searchRef.current = null;
     setSearchSummary(null);
@@ -164,22 +149,8 @@ export function useLogViewer(streamCacheMax: number = 50_000, onBeforeLoad?: () 
   const handleAdbBatch = useCallback((payload: AdbBatchPayload) => {
     if (payload.sessionId !== sessionRef.current?.sessionId) return;
 
-    // Mutate streaming cache in place — no O(N) copy.
-    const cache = streamCacheRef.current;
-    for (const line of payload.lines) {
-      cache.set(line.virtualIndex ?? line.lineNum, line);
-    }
-
-    // Evict oldest entries if over the streaming cap (Map iteration is insertion-ordered).
-    const cap = streamCacheMaxRef.current;
-    if (cap > 0 && cache.size > cap) {
-      let toEvict = cache.size - cap;
-      for (const key of cache.keys()) {
-        if (toEvict <= 0) break;
-        cache.delete(key);
-        toEvict--;
-      }
-    }
+    // Broadcast lines to ALL CacheManager handles for this session.
+    cacheManager.broadcastToSession(payload.sessionId, payload.lines);
 
     // Update session metadata — this setState triggers the re-render that shows new lines.
     setSession((prev) => {
@@ -268,10 +239,13 @@ export function useLogViewer(streamCacheMax: number = 50_000, onBeforeLoad?: () 
     const pids = packagePidsRef.current;
 
     if (isStreamingRef.current) {
-      // Streaming mode: scan in-memory cache
+      // Streaming mode: scan CacheManager session entries (picks the largest handle)
       const nums: number[] = [];
-      for (const [lineNum, line] of streamCacheRef.current) {
-        if (matchesFilter(ast, line, pids)) nums.push(lineNum);
+      const sess = sessionRef.current;
+      if (sess) {
+        for (const [lineNum, line] of cacheManager.getSessionEntries(sess.sessionId)) {
+          if (matchesFilter(ast, line, pids)) nums.push(lineNum);
+        }
       }
       nums.sort((a, b) => a - b);
       setFilteredLineNums(nums);
@@ -714,7 +688,6 @@ export function useLogViewer(streamCacheMax: number = 50_000, onBeforeLoad?: () 
 
   return {
     session,
-    streamCache: streamCacheRef.current,
     search,
     searchSummary,
     currentMatchIndex,
@@ -729,7 +702,6 @@ export function useLogViewer(streamCacheMax: number = 50_000, onBeforeLoad?: () 
     filterScanning,
     filteredLineNums,
     filterLineCache: filterLineCacheRef.current,
-    streamBufferMax: streamCacheMax,
     indexingProgress,
     timeStart,
     timeEnd,

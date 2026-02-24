@@ -22,124 +22,6 @@ interface Props {
   sessionId: string | null;
   isStreaming: boolean;
   onOpenLibrary: () => void;
-  cacheSize: number;
-  cacheMax: number;
-}
-
-// ── RingBufferWidget ─────────────────────────────────────────────────────────
-
-function RingBufferWidget({ cacheSize, cacheMax, isStreaming }: {
-  cacheSize: number;
-  cacheMax: number;
-  isStreaming: boolean;
-}) {
-  const R = 30;
-  const CX = 44;
-  const CY = 44;
-  const TRACK_W = 7;
-  const circumference = 2 * Math.PI * R;
-  const fill = cacheMax > 0 ? Math.min(cacheSize / cacheMax, 1) : 0;
-  const dashOffset = circumference * (1 - fill);
-  const pct = fill < 0.005 ? 0 : Math.round(fill * 100);
-
-  // Colour shifts amber when buffer is nearly full — a warning cue
-  const arcColor  = fill > 0.88 ? '#f59e0b' : fill > 0.65 ? '#3b82f6' : '#2563eb';
-  const glowColor = fill > 0.88 ? '#f59e0b55' : '#3b82f650';
-  const evicting  = isStreaming && cacheMax > 0 && cacheSize >= cacheMax;
-
-  const TICK_COUNT = 24;
-
-  return (
-    <div className="ring-buf-widget">
-      <div className="ring-buf-header">
-        <span className="ring-buf-title">Display Cache</span>
-        {isStreaming && (
-          <span className={`ring-buf-badge ${evicting ? 'ring-buf-badge--evict' : 'ring-buf-badge--live'}`}>
-            {evicting ? 'EVICTING' : 'LIVE'}
-          </span>
-        )}
-      </div>
-
-      <div className="ring-buf-body">
-        <svg width="88" height="88" viewBox="0 0 88 88" className="ring-buf-svg">
-          {/* Gauge tick marks */}
-          {Array.from({ length: TICK_COUNT }, (_, i) => {
-            const angleDeg = (i / TICK_COUNT) * 360 - 90;
-            const rad = (angleDeg * Math.PI) / 180;
-            const isFilled = i / TICK_COUNT < fill;
-            const inner = R + TRACK_W / 2 + 3;
-            const outer = inner + (i % 6 === 0 ? 5 : 3);
-            return (
-              <line
-                key={i}
-                x1={CX + inner * Math.cos(rad)} y1={CY + inner * Math.sin(rad)}
-                x2={CX + outer * Math.cos(rad)} y2={CY + outer * Math.sin(rad)}
-                stroke={isFilled ? arcColor : '#1c2640'}
-                strokeWidth={i % 6 === 0 ? 2 : 1}
-                strokeLinecap="round"
-                style={{ opacity: isFilled ? 0.9 : 0.5 }}
-              />
-            );
-          })}
-
-          {/* Track */}
-          <circle cx={CX} cy={CY} r={R} fill="none" stroke="#0f1729" strokeWidth={TRACK_W} />
-
-          {/* Fill arc with glow */}
-          <circle
-            cx={CX} cy={CY} r={R}
-            fill="none"
-            stroke={arcColor}
-            strokeWidth={TRACK_W}
-            strokeDasharray={circumference}
-            strokeDashoffset={fill > 0 ? dashOffset : circumference}
-            strokeLinecap="round"
-            transform={`rotate(-90 ${CX} ${CY})`}
-            className="ring-fill-arc"
-            style={{ filter: `drop-shadow(0 0 6px ${glowColor})` }}
-          />
-
-          {/* Orbiting flow particles — 3 staggered, only while streaming */}
-          {isStreaming && [0, 0.73, 1.47].map((delay, i) => (
-            <g
-              key={i}
-              className="ring-orbit-group"
-              style={{ animationDelay: `${delay}s`, opacity: 1 - i * 0.25 }}
-            >
-              <circle cx={CX + R} cy={CY} r={i === 0 ? 3 : 2} fill="#93c5fd" />
-            </g>
-          ))}
-
-          {/* Inner dark backing */}
-          <circle cx={CX} cy={CY} r={R - TRACK_W / 2 - 1} fill="#080c14" />
-
-          {/* Centre readout */}
-          <text x={CX} y={CY - 4} textAnchor="middle" className="ring-pct-text">
-            {cacheMax === 0 ? '∞' : `${pct}%`}
-          </text>
-          <text x={CX} y={CY + 9} textAnchor="middle" className="ring-sub-text">
-            full
-          </text>
-        </svg>
-
-        <div className="ring-buf-stats">
-          <div className="ring-stat-row">
-            <span className="ring-stat-key">cached</span>
-            <span className="ring-stat-val">{cacheSize.toLocaleString()}</span>
-          </div>
-          <div className="ring-stat-row">
-            <span className="ring-stat-key">cap</span>
-            <span className="ring-stat-val">
-              {cacheMax > 0 ? cacheMax.toLocaleString() : '∞'}
-            </span>
-          </div>
-          {evicting && (
-            <div className="ring-evict-note">oldest lines dropping</div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
 }
 
 // ── McpStatusWidget ──────────────────────────────────────────────────────────
@@ -459,7 +341,7 @@ function PinnedChainNode({
 
 // ── ProcessorPanel ───────────────────────────────────────────────────────────
 
-export default function ProcessorPanel({ pipeline, sessionId, isStreaming, onOpenLibrary, cacheSize, cacheMax }: Props) {
+export default function ProcessorPanel({ pipeline, sessionId, isStreaming, onOpenLibrary }: Props) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   useEffect(() => {
@@ -602,10 +484,6 @@ export default function ProcessorPanel({ pipeline, sessionId, isStreaming, onOpe
 
         {/* Post-pipeline visualizations */}
         <div className="pipeline-post-chain">
-          {isStreaming && (
-            <RingBufferWidget cacheSize={cacheSize} cacheMax={cacheMax} isStreaming={isStreaming} />
-          )}
-          <div className="pipeline-post-divider" />
           <McpStatusWidget />
         </div>
       </div>
