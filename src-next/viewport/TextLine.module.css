@@ -7,8 +7,10 @@
   white-space: pre;
   font-family: var(--font-mono);
   font-size: 12px;
+  line-height: 22px;
   border-left: 2px solid transparent;
   color: var(--text);
+  overflow: hidden;
 }
 
 .line:hover {

@@ -479,11 +479,11 @@ export default function ReadOnlyViewer({
                 key={virtualItem.key}
                 style={{
                   position: 'absolute',
-                  top: 0,
+                  top: virtualItem.start,
                   left: 0,
                   width: '100%',
-                  height: `${virtualItem.size}px`,
-                  transform: `translateY(${virtualItem.start}px)`,
+                  height: virtualItem.size,
+                  overflow: 'hidden',
                 }}
               >
                 {line ? (
