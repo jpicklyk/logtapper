@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   FileText,
   Activity,
@@ -9,6 +9,7 @@ import {
   Eye,
   Cpu,
   Store,
+  Settings,
 } from 'lucide-react';
 import { ToolBar } from '../ToolBar';
 import { ToolPane } from '../ToolPane';
@@ -19,6 +20,9 @@ import { LeftPane } from '../../components/LeftPane';
 import { RightPane } from '../../components/RightPane';
 import { BottomPane } from '../../components/BottomPane';
 import { PaneContent } from '../../components/PaneContent';
+import { SettingsPanel } from '../../components/SettingsPanel';
+import { useSettings, useAnonymizerConfig } from '../../hooks';
+import { useCacheManager } from '../../cache';
 import type {
   WorkspaceLayoutState,
   CenterPane,
@@ -52,7 +56,21 @@ const RIGHT_TOP_ITEMS = [
   { id: 'marketplace', icon: Store, label: 'Marketplace' },
 ];
 
+const RIGHT_BOTTOM_ITEMS = [
+  { id: 'settings', icon: Settings, label: 'Settings' },
+];
+
 export const AppShell = React.memo(function AppShell({ workspace }: AppShellProps) {
+  const settingsHook = useSettings();
+  const anonymizerConfig = useAnonymizerConfig();
+  const cacheManager = useCacheManager();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Sync fileCacheBudget setting → CacheManager whenever it changes
+  useEffect(() => {
+    cacheManager.setTotalBudget(settingsHook.settings.fileCacheBudget);
+  }, [cacheManager, settingsHook.settings.fileCacheBudget]);
+
   // -- Left toolbar handlers --
   const handleLeftTopToggle = useCallback(
     (id: string) => {
@@ -75,6 +93,10 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
     },
     [workspace.toggleRightPane],
   );
+
+  const handleRightBottomToggle = useCallback((id: string) => {
+    if (id === 'settings') setSettingsOpen(true);
+  }, []);
 
   // -- Resize handlers --
   const handleLeftResize = useCallback(
@@ -220,12 +242,25 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
       <div className={styles.rtoolbar}>
         <ToolBar
           topItems={RIGHT_TOP_ITEMS}
+          bottomItems={RIGHT_BOTTOM_ITEMS}
           activeTopId={activeRightId}
           activeBottomId={null}
           onTopToggle={handleRightTopToggle}
+          onBottomToggle={handleRightBottomToggle}
           position="right"
         />
       </div>
+
+      {/* Settings modal */}
+      {settingsOpen && (
+        <SettingsPanel
+          settings={settingsHook.settings}
+          onUpdate={settingsHook.updateSetting}
+          onReset={settingsHook.resetSettings}
+          onClose={() => setSettingsOpen(false)}
+          anonymizerConfig={anonymizerConfig}
+        />
+      )}
 
       {/* Bottom pane */}
       <div className={styles.bottom}>

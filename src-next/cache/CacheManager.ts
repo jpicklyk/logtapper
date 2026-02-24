@@ -24,6 +24,7 @@ export interface CacheController {
   broadcastToSession(sessionId: string, lines: ViewLine[]): void;
   clearSession(sessionId: string): void;
   getSessionEntries(sessionId: string): IterableIterator<[number, ViewLine]>;
+  setTotalBudget(budget: number): void;
 }
 
 /** Budget fractions per priority tier. */

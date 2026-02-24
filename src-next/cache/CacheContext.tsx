@@ -5,6 +5,19 @@ import { DataSourceRegistry, type DataSourceRegistrar } from '../viewport/DataSo
 /** Default total line budget — matches SETTING_DEFAULTS.fileCacheBudget. */
 const DEFAULT_BUDGET = 100_000;
 
+/** Read the persisted fileCacheBudget from localStorage at startup. Falls back to DEFAULT_BUDGET. */
+function readPersistedBudget(): number {
+  try {
+    const raw = localStorage.getItem('logtapper_settings');
+    if (!raw) return DEFAULT_BUDGET;
+    const parsed = JSON.parse(raw) as { fileCacheBudget?: unknown };
+    const v = parsed.fileCacheBudget;
+    return typeof v === 'number' && v > 0 ? v : DEFAULT_BUDGET;
+  } catch {
+    return DEFAULT_BUDGET;
+  }
+}
+
 interface CacheContextValue {
   manager: CacheManager;
   registry: DataSourceRegistry;
@@ -21,18 +34,20 @@ interface CacheProviderProps {
  * Wraps the app with a global CacheManager + DataSourceRegistry.
  * Both are created once and persist for the lifetime of the app.
  */
-export function CacheProvider({ budget = DEFAULT_BUDGET, children }: CacheProviderProps) {
+export function CacheProvider({ budget, children }: CacheProviderProps) {
   const ctxRef = useRef<CacheContextValue | null>(null);
   if (ctxRef.current === null) {
     ctxRef.current = {
-      manager: new CacheManager(budget),
+      manager: new CacheManager(budget ?? readPersistedBudget()),
       registry: new DataSourceRegistry(),
     };
   }
 
   // Propagate budget changes to the existing CacheManager instance
   useEffect(() => {
-    ctxRef.current?.manager.setTotalBudget(budget);
+    if (budget !== undefined) {
+      ctxRef.current?.manager.setTotalBudget(budget);
+    }
   }, [budget]);
 
   return (
