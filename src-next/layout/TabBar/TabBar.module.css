@@ -25,20 +25,33 @@
   color: var(--text-muted);
   font-size: 12px;
   font-family: var(--font-mono);
-  cursor: pointer;
+  cursor: grab;
   white-space: nowrap;
   transition: background var(--transition-fast), color var(--transition-fast);
   flex-shrink: 0;
+  touch-action: none;
+}
+
+.tab:active {
+  cursor: grabbing;
 }
 
 .md .tab {
   height: 32px;
 }
 
+.md {
+  min-height: 32px;
+}
+
 .sm .tab {
   height: 26px;
   padding: 0 8px;
   font-size: 11px;
+}
+
+.sm {
+  min-height: 26px;
 }
 
 .tab:hover {
@@ -50,6 +63,10 @@
   background: var(--bg-raised);
   color: var(--text);
   border-bottom-color: var(--accent);
+}
+
+.tab.dragging {
+  cursor: grabbing;
 }
 
 .label {
@@ -76,6 +93,27 @@
 }
 
 .close:hover {
+  background: var(--bg-overlay);
+  color: var(--text);
+}
+
+.addTab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  align-self: center;
+  margin: 0 2px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.addTab:hover {
   background: var(--bg-overlay);
   color: var(--text);
 }

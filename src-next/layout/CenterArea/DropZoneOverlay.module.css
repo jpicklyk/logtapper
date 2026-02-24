@@ -1,0 +1,36 @@
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+}
+
+/* -- Hit zones (pointer-events enabled) -- */
+
+.zone {
+  position: absolute;
+  pointer-events: all;
+}
+
+.top    { top: 0;   left: 0;   right: 0;  height: 25%; }
+.bottom { bottom: 0; left: 0;  right: 0;  height: 25%; }
+.left   { top: 25%; left: 0;   width: 25%; height: 50%; }
+.right  { top: 25%; right: 0;  width: 25%; height: 50%; }
+.center { top: 25%; left: 25%; right: 25%; bottom: 25%; }
+
+/* -- Preview highlights (pointer-events: none, shown when zone isOver) -- */
+
+.preview {
+  position: absolute;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border: 2px solid var(--accent);
+  border-radius: 3px;
+  pointer-events: none;
+  z-index: 51;
+}
+
+.previewLeft   { top: 0; left: 0; bottom: 0; width: 50%; }
+.previewRight  { top: 0; right: 0; bottom: 0; width: 50%; }
+.previewTop    { top: 0; left: 0; right: 0; height: 50%; }
+.previewBottom { bottom: 0; left: 0; right: 0; height: 50%; }
+.previewCenter { inset: 0; background: color-mix(in srgb, var(--accent) 10%, transparent); }

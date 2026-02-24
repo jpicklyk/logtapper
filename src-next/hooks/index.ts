@@ -20,6 +20,7 @@ export type {
   CenterPane,
   SplitNode,
   WorkspaceLayoutState,
+  DropZone,
 } from './useWorkspaceLayout';
 export { useSettings, SETTING_DEFAULTS } from './useSettings';
 export type { AppSettings, UseSettingsResult } from './useSettings';

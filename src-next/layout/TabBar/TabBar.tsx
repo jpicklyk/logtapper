@@ -1,5 +1,7 @@
 import React, { useCallback } from 'react';
-import { X } from 'lucide-react';
+import { X, Plus } from 'lucide-react';
+import { useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import clsx from 'clsx';
 import styles from './TabBar.module.css';
 
@@ -12,47 +14,82 @@ interface TabBarTab {
 interface TabBarProps {
   tabs: TabBarTab[];
   activeTabId: string;
+  paneId: string;
   onActivate: (tabId: string) => void;
   onClose?: (tabId: string) => void;
+  onAdd?: () => void;
+  onReorder?: (fromIndex: number, toIndex: number) => void;
   size?: 'sm' | 'md';
 }
 
 export const TabBar = React.memo(function TabBar({
   tabs,
   activeTabId,
+  paneId,
   onActivate,
   onClose,
+  onAdd,
   size = 'md',
 }: TabBarProps) {
   return (
     <div className={clsx(styles.bar, styles[size])}>
       {tabs.map((tab) => (
-        <TabButton
+        <SortableTabButton
           key={tab.id}
           tab={tab}
           active={tab.id === activeTabId}
+          paneId={paneId}
           onActivate={onActivate}
           onClose={onClose}
         />
       ))}
+      {onAdd && (
+        <button className={styles.addTab} onClick={onAdd} title="New tab">
+          <Plus size={12} />
+        </button>
+      )}
     </div>
   );
 });
 
-interface TabButtonProps {
+interface SortableTabButtonProps {
   tab: TabBarTab;
   active: boolean;
+  paneId: string;
   onActivate: (tabId: string) => void;
   onClose?: (tabId: string) => void;
 }
 
-const TabButton = React.memo(function TabButton({
+const SortableTabButton = React.memo(function SortableTabButton({
   tab,
   active,
+  paneId,
   onActivate,
   onClose,
-}: TabButtonProps) {
-  const handleClick = useCallback(() => onActivate(tab.id), [onActivate, tab.id]);
+}: SortableTabButtonProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: tab.id,
+    data: { type: 'tab', tabId: tab.id, paneId, label: tab.label },
+  });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.35 : undefined,
+    zIndex: isDragging ? 1 : undefined,
+  };
+
+  const handleClick = useCallback(() => {
+    if (!isDragging) onActivate(tab.id);
+  }, [onActivate, tab.id, isDragging]);
+
   const handleClose = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
@@ -63,9 +100,13 @@ const TabButton = React.memo(function TabButton({
 
   return (
     <button
-      className={clsx(styles.tab, active && styles.active)}
+      ref={setNodeRef}
+      style={style}
+      className={clsx(styles.tab, active && styles.active, isDragging && styles.dragging)}
       onClick={handleClick}
       title={tab.label}
+      {...attributes}
+      {...listeners}
     >
       <span className={styles.label}>{tab.label}</span>
       {tab.closable && (

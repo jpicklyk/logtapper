@@ -36,4 +36,21 @@
   min-height: 0;
   overflow: auto;
   background: var(--bg-raised);
+  position: relative;
+}
+
+.tabGhost {
+  padding: 0 12px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  background: var(--bg-raised);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  opacity: 0.9;
 }

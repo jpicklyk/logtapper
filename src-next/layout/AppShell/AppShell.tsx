@@ -24,6 +24,7 @@ import type {
   CenterPane,
   LeftPaneTab,
   BottomTabType,
+  DropZone,
 } from '../../hooks';
 import styles from './AppShell.module.css';
 
@@ -112,11 +113,32 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
     [workspace.closeTab],
   );
 
+  const handleTabAdd = useCallback(
+    (paneId: string) => {
+      workspace.addCenterTab(paneId, 'scratch');
+    },
+    [workspace.addCenterTab],
+  );
+
   const handleSplitResize = useCallback(
     (nodeId: string, ratio: number) => {
       workspace.resizeSplit(nodeId, ratio);
     },
     [workspace.resizeSplit],
+  );
+
+  const handleTabDrop = useCallback(
+    (tabId: string, fromPaneId: string, toPaneId: string, zone: DropZone) => {
+      workspace.dropTabOnPane(tabId, fromPaneId, toPaneId, zone);
+    },
+    [workspace.dropTabOnPane],
+  );
+
+  const handleTabReorder = useCallback(
+    (paneId: string, fromIndex: number, toIndex: number) => {
+      workspace.reorderTab(paneId, fromIndex, toIndex);
+    },
+    [workspace.reorderTab],
   );
 
   const renderCenterContent = useCallback(
@@ -175,7 +197,10 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
           renderContent={renderCenterContent}
           onTabActivate={handleTabActivate}
           onTabClose={handleTabClose}
+          onTabAdd={handleTabAdd}
           onSplitResize={handleSplitResize}
+          onTabDrop={handleTabDrop}
+          onTabReorder={handleTabReorder}
         />
       </div>
 

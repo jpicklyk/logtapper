@@ -11,6 +11,7 @@ export type BottomTabType = 'timeline' | 'correlations' | 'search-results' | 'wa
 export type LeftPaneTab = 'info' | 'state' | 'bookmarks' | 'analysis';
 export type RightPaneTab = 'processors' | 'marketplace';
 export type LayoutPreset = 'compact' | 'standard' | 'wide';
+export type DropZone = 'left' | 'right' | 'top' | 'bottom' | 'center';
 
 export interface Tab {
   id: string;
@@ -48,6 +49,7 @@ export interface WorkspaceLayoutState {
   resizeSplit: (splitNodeId: string, ratio: number) => void;
   renameTab: (tabId: string, label: string) => void;
   openCenterTab: (type: CenterTabType, label?: string) => void;
+  dropTabOnPane: (tabId: string, fromPaneId: string, toPaneId: string, zone: DropZone) => void;
 
   // Right pane
   rightPaneVisible: boolean;
@@ -111,7 +113,7 @@ function makeTab(type: CenterTabType, label?: string): Tab {
     id: crypto.randomUUID(),
     type,
     label: label ?? TAB_LABELS[type],
-    closable: type !== 'logviewer',
+    closable: true,
   };
 }
 
@@ -243,7 +245,9 @@ function sanitizeTree(node: SplitNode): SplitNode | null {
 
   if (node.type === 'leaf') {
     if (!node.pane || !Array.isArray(node.pane.tabs)) return null;
-    const tabs = node.pane.tabs.filter((t) => VALID_CENTER_TYPES.has(t.type));
+    const tabs = node.pane.tabs
+      .filter((t) => VALID_CENTER_TYPES.has(t.type))
+      .map((t) => ({ ...t, closable: true }));
     // Empty panes are valid (the default state is an empty leaf)
     const activeTabId = tabs.find((t) => t.id === node.pane.activeTabId)
       ? node.pane.activeTabId
@@ -644,6 +648,74 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
     });
   }, [updateTree]);
 
+  const dropTabOnPane = useCallback((
+    tabId: string,
+    fromPaneId: string,
+    toPaneId: string,
+    zone: DropZone,
+  ) => {
+    updateTree((tree) => {
+      const fromLeaf = findLeafByPaneId(tree, fromPaneId);
+      if (!fromLeaf) return tree;
+      const tab = fromLeaf.pane.tabs.find((t) => t.id === tabId);
+      if (!tab) return tree;
+
+      if (fromPaneId === toPaneId && zone === 'center') return tree;
+
+      const remainingTabs = fromLeaf.pane.tabs.filter((t) => t.id !== tabId);
+
+      // Splitting off the last tab of a pane onto itself = no-op
+      if (fromPaneId === toPaneId && remainingTabs.length === 0) return tree;
+
+      // Remove tab from source
+      let updated: SplitNode;
+      if (remainingTabs.length === 0) {
+        const collapsed = removeLeaf(tree, fromPaneId);
+        updated = collapsed ?? tree;
+      } else {
+        updated = updateLeaf(tree, fromPaneId, (pane) => ({
+          ...pane,
+          tabs: remainingTabs,
+          activeTabId: pane.activeTabId === tabId ? remainingTabs[0].id : pane.activeTabId,
+        }));
+      }
+
+      if (zone === 'center') {
+        return updateLeaf(updated, toPaneId, (pane) => ({
+          ...pane,
+          tabs: [...pane.tabs, tab],
+          activeTabId: tab.id,
+        }));
+      }
+
+      const toLeaf = findLeafByPaneId(updated, toPaneId);
+      if (!toLeaf) {
+        const target = firstLeaf(updated);
+        return updateLeaf(updated, target.pane.id, (pane) => ({
+          ...pane,
+          tabs: [...pane.tabs, tab],
+          activeTabId: tab.id,
+        }));
+      }
+
+      const newPane: CenterPane = { id: crypto.randomUUID(), tabs: [tab], activeTabId: tab.id };
+      const direction = zone === 'left' || zone === 'right' ? 'horizontal' : 'vertical';
+      const newFirst = zone === 'left' || zone === 'top';
+      const newLeafNode: SplitNode = { type: 'leaf', id: crypto.randomUUID(), pane: newPane };
+      const existingLeafNode: SplitNode = { ...toLeaf };
+
+      const splitNode: SplitNode = {
+        type: 'split',
+        id: crypto.randomUUID(),
+        direction,
+        children: newFirst ? [newLeafNode, existingLeafNode] : [existingLeafNode, newLeafNode],
+        ratio: 0.5,
+      };
+
+      return replaceNode(updated, toLeaf.id, splitNode);
+    });
+  }, [updateTree]);
+
   // ---------------------------------------------------------------------------
   // Right pane actions
   // ---------------------------------------------------------------------------
@@ -768,6 +840,7 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
     resizeSplit,
     renameTab,
     openCenterTab,
+    dropTabOnPane,
 
     // Right pane
     rightPaneVisible: rightPane.visible,
