@@ -1,0 +1,15 @@
+.editor {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor :global(.cm-editor) {
+  flex: 1;
+  outline: none;
+}
+
+.editor :global(.cm-scroller) {
+  overflow: auto;
+}

@@ -1,0 +1,49 @@
+.viewer {
+  height: 100%;
+}
+
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-dimmed);
+  font-size: 13px;
+}
+
+.lineNum {
+  color: var(--text-dimmed);
+  font-size: 11px;
+  white-space: pre;
+  user-select: none;
+}
+
+.transitionDot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+}
+
+.contextLine {
+  opacity: 0.5;
+}
+
+.selected {
+  background-color: rgba(88, 166, 255, 0.12);
+}
+
+.jumpTarget {
+  animation: flashHighlight 1.5s ease-out;
+}
+
+@keyframes flashHighlight {
+  0% {
+    background-color: rgba(88, 166, 255, 0.3);
+  }
+  100% {
+    background-color: transparent;
+  }
+}

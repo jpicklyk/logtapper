@@ -1,0 +1,1 @@
+export { CenterArea } from './CenterArea';

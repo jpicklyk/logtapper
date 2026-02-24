@@ -2,6 +2,34 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Frontend Isolation Principles (MANDATORY)
+
+These rules govern ALL frontend work. Every new component, hook, or context change must follow them. Violating these principles is how "fixing one thing breaks another."
+
+### 1. Split context by change frequency — never use a single monolithic context
+Group context values by how often they change. High-frequency state (streaming batches at ~50ms) must not share a context with low-frequency state (session metadata, stable callbacks). A change in one context must not re-render consumers of another.
+
+### 2. Memoize all context values
+Every context provider value must be wrapped in `useMemo` with correct dependencies. A bare object literal `{ foo, bar }` in a provider creates a new reference on every render, defeating React's bailout.
+
+### 3. Use `React.memo` on component boundaries
+Any component that receives props from a context-consuming parent must be wrapped in `React.memo`. This prevents parent re-renders from cascading into children whose props haven't changed. Especially critical for leaf components like `LogViewer`, `ProcessorDashboard`, `SearchBar`.
+
+### 4. Selector hooks over raw context access
+Components must not call a broad context hook and destructure. Instead, provide small focused hooks (`useSelectedLine()`, `useIsStreaming()`) that read from the appropriate narrow context. This makes dependencies explicit and greppable.
+
+### 5. Colocate state with consumers
+State that only one component subtree needs must stay local to that subtree — do not hoist to a global context. `useBookmarks`, `useAnalysis`, `useWatches`, `useFilter` are good examples of this. Only promote to context when multiple unrelated subtrees need the same state.
+
+### 6. No cross-hook orchestration in render components
+Hooks must not depend on each other's internal state through effects in `App.tsx`. Use a typed event bus or explicit orchestration layer so hooks react to events independently (e.g., `pipeline:run-complete` → tracker refreshes itself) rather than App.tsx watching one hook and calling another.
+
+### 7. Stable callback references
+Action callbacks (`onViewProcessor`, `onCloseSession`, `onOpenLibrary`) must be `useCallback` with stable deps and placed in a dedicated context that never changes. Consumers of these callbacks should never re-render due to unrelated state changes.
+
+### Current violations (migration backlog)
+The codebase currently has a single `AppContext` bundling `viewer` + `pipeline` + `stateTracker` + loose values, no `React.memo` usage, unmemoized context value in `App.tsx`, and cross-hook effects in `App.tsx`. These are known debt — new code must not add to it, and refactoring should incrementally fix it.
+
 ## Implementation Plans
 
 All feature and performance implementation plans live in `plans/` at the project root. The directory is `.gitignore`d (local working docs only). Name files descriptively: `plans/<feature-name>-<tier-or-phase>.md` (e.g. `plans/perf-tier1-quick-wins.md`). When asked to plan a feature or create an implementation plan, write it there.

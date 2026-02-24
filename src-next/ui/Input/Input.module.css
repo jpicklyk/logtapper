@@ -1,0 +1,46 @@
+.wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  transition: border-color var(--transition-fast);
+}
+
+.wrapper:focus-within {
+  border-color: var(--accent);
+}
+
+.error {
+  border-color: var(--danger, #c0392b);
+}
+
+.error:focus-within {
+  border-color: var(--danger, #c0392b);
+}
+
+.icon {
+  display: flex;
+  align-items: center;
+  color: var(--text);
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+.input {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  outline: none;
+  width: 100%;
+  line-height: 1.4;
+}
+
+.input::placeholder {
+  color: var(--text);
+  opacity: 0.4;
+}

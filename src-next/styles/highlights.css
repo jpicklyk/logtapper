@@ -1,0 +1,7 @@
+/* ── Highlight classes (used by HighlightedText) ────────────────────────── */
+
+.hl-search { background: #bb800066; border-radius: 2px; }
+.hl-search-active { background: #d29922cc; border-radius: 2px; }
+.hl-processor { border-bottom: 2px solid currentColor; }
+.hl-field { text-decoration: underline; text-underline-offset: 2px; }
+.hl-pii { background: #5a1e1e88; border-radius: 2px; }

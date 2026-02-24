@@ -1,0 +1,84 @@
+/* ── ReadOnlyViewer ─────────────────────────────────────────────────────── */
+
+.wrapper {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.viewer {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* ── Large-file navigation buttons ────────────────────────────────────── */
+
+.navButton {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  padding: 2px 12px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity var(--transition-fast), background var(--transition-fast);
+}
+
+.navButton:hover {
+  opacity: 1;
+  background: var(--bg-overlay);
+}
+
+.navTop {
+  top: 4px;
+}
+
+.navBottom {
+  bottom: 4px;
+}
+
+/* ── "N new lines below" badge ────────────────────────────────────────── */
+
+.newLinesBadge {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  padding: 4px 16px;
+  font-size: 12px;
+  color: var(--bg-base);
+  background: var(--accent);
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  animation: slideUp 0.25s ease-out;
+  font-weight: 500;
+}
+
+.newLinesBadge:hover {
+  background: var(--accent-base);
+}
+
+/* ── Empty state ──────────────────────────────────────────────────────── */
+
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: var(--text-dimmed);
+  font-size: 13px;
+  padding: 40px;
+  text-align: center;
+}

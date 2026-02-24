@@ -1,0 +1,212 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+  gap: 8px;
+  padding: 8px;
+}
+
+.placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 6px;
+  color: var(--text-dimmed);
+  font-size: 13px;
+  text-align: center;
+}
+
+.placeholderSub {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+/* CorrelationPanel */
+.panel {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+
+.panelEmpty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  gap: 4px;
+  color: var(--text-dimmed);
+  font-size: 12px;
+}
+
+.panelError {
+  padding: 12px;
+  color: var(--red);
+  font-size: 12px;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panelTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.eventCount {
+  font-size: 11px;
+  color: var(--text-dimmed);
+  font-family: var(--font-mono);
+}
+
+.guidance {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(88, 166, 255, 0.06);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dimmed);
+}
+
+.guidanceText {
+  margin: 0;
+  line-height: 1.4;
+}
+
+.eventList {
+  display: flex;
+  flex-direction: column;
+}
+
+.event {
+  border-bottom: 1px solid var(--border);
+}
+
+.event:last-child {
+  border-bottom: none;
+}
+
+.eventHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.eventHeader:hover {
+  background: var(--bg-overlay);
+}
+
+.eventLine {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.lineLink {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.lineLink:hover {
+  color: var(--text);
+}
+
+.sourceBadge {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--bg-overlay);
+  color: var(--text-dimmed);
+  font-family: var(--font-mono);
+}
+
+.eventMsg {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.expandIcon {
+  font-size: 10px;
+  color: var(--text-dimmed);
+  flex-shrink: 0;
+}
+
+/* Detail */
+.eventDetail {
+  padding: 4px 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sectionLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--text-dimmed);
+}
+
+.rawLine {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text);
+  background: var(--bg-base);
+  padding: 4px 8px;
+  border-radius: 4px;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.matchBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fieldPills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.fieldPill {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-overlay);
+  color: var(--text-dimmed);
+  font-family: var(--font-mono);
+}

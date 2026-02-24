@@ -1,0 +1,45 @@
+.handle {
+  flex-shrink: 0;
+  background: transparent;
+  position: relative;
+  z-index: 10;
+  touch-action: none;
+}
+
+.handle::after {
+  content: '';
+  position: absolute;
+  background: var(--border);
+  transition: background var(--transition-fast);
+}
+
+.handle:hover::after,
+.handle:active::after {
+  background: var(--accent);
+}
+
+/* Vertical orientation = horizontal resize (left-right drag) */
+.vertical {
+  width: 5px;
+  cursor: col-resize;
+}
+
+.vertical::after {
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 1px;
+}
+
+/* Horizontal orientation = vertical resize (up-down drag) */
+.horizontal {
+  height: 5px;
+  cursor: row-resize;
+}
+
+.horizontal::after {
+  left: 0;
+  right: 0;
+  top: 2px;
+  height: 1px;
+}

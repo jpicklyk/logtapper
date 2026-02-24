@@ -1,0 +1,81 @@
+.shell {
+  display: grid;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  grid-template-areas:
+    "header   header    header    header   header"
+    "ltoolbar left      center    right    rtoolbar"
+    "ltoolbar bottom    bottom    bottom   rtoolbar"
+    "status   status    status    status   status";
+  grid-template-columns: 40px auto 1fr auto 40px;
+  grid-template-rows: auto 1fr auto 24px;
+  background: var(--bg-base);
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+/* Grid area assignments */
+
+.header {
+  grid-area: header;
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 12px;
+  background: var(--bg-base);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+
+.logo {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.02em;
+}
+
+.ltoolbar {
+  grid-area: ltoolbar;
+  display: flex;
+}
+
+.left {
+  grid-area: left;
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.center {
+  grid-area: center;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.right {
+  grid-area: right;
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.rtoolbar {
+  grid-area: rtoolbar;
+  display: flex;
+}
+
+.bottom {
+  grid-area: bottom;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.status {
+  grid-area: status;
+  display: flex;
+}
+

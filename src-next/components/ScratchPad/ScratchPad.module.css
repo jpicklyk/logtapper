@@ -1,0 +1,11 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.editor {
+  flex: 1;
+  min-height: 0;
+}

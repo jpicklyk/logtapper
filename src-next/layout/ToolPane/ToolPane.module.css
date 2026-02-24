@@ -1,0 +1,41 @@
+.pane {
+  display: flex;
+  background: var(--bg-raised);
+  overflow: hidden;
+  transition: width 150ms ease, height 150ms ease;
+}
+
+.collapsed {
+  pointer-events: none;
+}
+
+/* Left/right panes are horizontal flex (handle + content or content + handle) */
+.left,
+.right {
+  flex-direction: row;
+}
+
+/* Bottom pane is vertical flex (handle on top, then content) */
+.bottom {
+  flex-direction: column;
+  width: 100%;
+}
+
+.left {
+  border-right: 1px solid var(--border);
+}
+
+.right {
+  border-left: 1px solid var(--border);
+}
+
+.bottom {
+  border-top: 1px solid var(--border);
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}

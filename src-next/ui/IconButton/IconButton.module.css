@@ -1,0 +1,30 @@
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.iconButton:hover:not(:disabled) {
+  background: var(--bg-raised);
+}
+
+.iconButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.active {
+  background: var(--bg-raised);
+  color: var(--accent);
+}
+
+.active:hover:not(:disabled) {
+  background: var(--bg-raised);
+}

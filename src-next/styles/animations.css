@@ -1,0 +1,142 @@
+/* ── Animations ─────────────────────────────────────────────────────────── */
+/* Extracted from App.css — all @keyframes in one place.                    */
+
+/* Log viewer */
+
+@keyframes jump-flash {
+  0%   { background-color: rgba(255, 185, 0, 0.40); }
+  40%  { background-color: rgba(255, 185, 0, 0.30); }
+  100% { background-color: rgba(255, 185, 0, 0.10); }
+}
+
+@keyframes skeleton-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@keyframes stream-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+/* Processor panel */
+
+@keyframes proc-slide-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes proc-shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+
+@keyframes proc-pulse-ring {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent); }
+  70%  { box-shadow: 0 0 0 5px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+@keyframes proc-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes proc-results-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes proc-import-drop {
+  from { opacity: 0; transform: translateY(-4px); max-height: 0; }
+  to   { opacity: 1; transform: translateY(0);  max-height: 400px; }
+}
+
+/* State tracker */
+
+@keyframes state-tracker-flash {
+  0%   { background: #1a3a6044; border-color: #2a5ea0; }
+  50%  { background: #1a3a6022; border-color: #1e4a80; }
+  100% { background: transparent; border-color: var(--border); }
+}
+
+@keyframes state-field-flash {
+  0%   { background: #1e4a8055; }
+  100% { background: transparent; }
+}
+
+@keyframes state-skel-shimmer {
+  0%   { background-position: -200px 0; }
+  100% { background-position: 200px 0; }
+}
+
+@keyframes state-panel-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes state-pulse-ring {
+  0%   { transform: scale(1); opacity: 1; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+/* Auto-blocker */
+
+@keyframes ab-dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.35; transform: scale(0.65); }
+}
+
+@keyframes ab-active-in {
+  from { opacity: 0; transform: scaleY(0.9); }
+  to   { opacity: 1; transform: scaleY(1); }
+}
+
+/* Timeline */
+
+@keyframes timeline-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes timeline-tick-pop {
+  0%   { transform: translateX(-50%) scaleY(0.4); opacity: 0; }
+  60%  { transform: translateX(-50%) scaleY(1.2); }
+  100% { transform: translateX(-50%) scaleY(1); opacity: 1; }
+}
+
+/* Correlator / chain */
+
+@keyframes chain-flow {
+  0%   { top: 0%;   opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+
+@keyframes badge-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+
+@keyframes ring-orbit {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* MCP bridge */
+
+@keyframes mcp-slide {
+  from { left: -8px; opacity: 0; }
+  5%   { opacity: 1; }
+  90%  { opacity: 1; }
+  to   { left: 100%; opacity: 0; }
+}

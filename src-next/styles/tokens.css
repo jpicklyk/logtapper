@@ -1,0 +1,38 @@
+/* ── Design tokens ───────────────────────────────────────────────────────── */
+
+:root {
+  /* Backgrounds */
+  --bg-base:    #0d1117;
+  --bg-input:   #0f1117;
+  --bg-raised:  #161b22;
+  --bg-overlay: #1c2128;
+
+  /* Borders */
+  --border:        #21262d;
+  --border-subtle: #30363d;
+
+  /* Text */
+  --text-dimmed:  #484f58;
+  --text-muted:   #8b949e;
+  --text-subtle:  #9faab4;
+  --text:         #b8c4ce;
+
+  /* Accent (blue) */
+  --accent:      #58a6ff;
+  --accent-base: #1f6feb;
+
+  /* Semantic */
+  --success:       #3fb950;
+  --success-dark:  #238636;
+  --success-dark-hover: #2ea043;
+  --danger:        #f85149;
+  --warning:       #f0a500;
+  --warning-muted: #c9a227;
+
+  /* New tokens */
+  --focus-ring: rgba(88, 166, 255, 0.4);
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --transition-fast: 80ms ease;
+  --font-mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+}
