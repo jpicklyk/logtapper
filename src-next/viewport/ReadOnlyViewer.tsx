@@ -21,6 +21,8 @@ const MAX_VIRTUAL_LINES = Math.floor(MAX_BROWSER_SCROLL_PX / LINE_HEIGHT);
 
 interface ReadOnlyViewerProps {
   dataSource: DataSource;
+  /** External total line count — drives virtualizer size for file mode. */
+  totalLineCount?: number;
   scrollToLine?: number;
   jumpSeq?: number;
   tailMode?: boolean;
@@ -34,6 +36,7 @@ interface ReadOnlyViewerProps {
 
 export default function ReadOnlyViewer({
   dataSource,
+  totalLineCount,
   scrollToLine,
   jumpSeq,
   tailMode,
@@ -55,9 +58,16 @@ export default function ReadOnlyViewer({
   const bumpCacheVersion = () => setCacheVersion((v) => v + 1);
   const fetchGenRef = useRef(0);
 
+  // Tracks whether the initial viewport fetch has been triggered for the
+  // current data source. Reset on sourceId change. Used to force the
+  // FetchScheduler on the first meaningful reportScroll.
+  const initialFetchDoneRef = useRef(false);
+
   // Reset when data source changes.
   useEffect(() => {
     fetchGenRef.current++;
+    fetchInFlightRef.current = false;
+    initialFetchDoneRef.current = false;
     bumpCacheVersion();
   }, [dataSource.sourceId]);
 
@@ -89,7 +99,7 @@ export default function ReadOnlyViewer({
     }
   }, [tailMode]);
 
-  const totalLines = dataSource.totalLines;
+  const totalLines = totalLineCount ?? dataSource.totalLines;
 
   const effectiveCount = Math.min(Math.max(0, totalLines - virtualBase), MAX_VIRTUAL_LINES);
 
@@ -154,7 +164,7 @@ export default function ReadOnlyViewer({
 
   useEffect(() => {
     setStreamTotal(dataSource.totalLines);
-    if (!dataSource.onAppend) return;
+    if (!tailMode || !dataSource.onAppend) return;
     const unsubscribe = dataSource.onAppend((_newLines, total) => {
       // Lines are already in ViewCacheHandle via broadcastToSession().
       // Just update total and trigger re-render.
@@ -162,10 +172,10 @@ export default function ReadOnlyViewer({
       bumpCacheVersion();
     });
     return unsubscribe;
-  }, [dataSource]);
+  }, [dataSource, tailMode]);
 
   // Use streamTotal for streaming, dataSource.totalLines for file mode
-  const liveTotalLines = dataSource.onAppend ? streamTotal : totalLines;
+  const liveTotalLines = tailMode ? streamTotal : totalLines;
 
   // ── Auto-scroll to bottom when new streaming lines arrive ──────────────
   const prevTotalRef = useRef(liveTotalLines);
@@ -215,9 +225,11 @@ export default function ReadOnlyViewer({
   useEffect(() => {
     const scheduler = schedulerRef.current;
     if (!scheduler) return;
+    // Reset on every rebind — ensures HMR / data source swap never leaves it stuck
+    fetchInFlightRef.current = false;
 
     scheduler.onFetch((viewport: FetchRange, prefetch: FetchRange) => {
-      if (dataSource.onAppend) return; // streaming mode, skip file-fetch
+      if (tailMode) return; // streaming mode, skip file-fetch
       if (fetchInFlightRef.current) return;
 
       // Check viewport for cache misses via dataSource.getLine() → ViewCacheHandle
@@ -258,7 +270,7 @@ export default function ReadOnlyViewer({
       const gen = fetchGenRef.current;
       Promise.resolve(dataSource.getLines(viewport.offset, viewport.count))
         .then(() => {
-          if (gen !== fetchGenRef.current) return;
+          if (gen !== fetchGenRef.current) { fetchInFlightRef.current = false; return; }
           bumpCacheVersion();
 
           // Phase 2: directional prefetch
@@ -276,11 +288,24 @@ export default function ReadOnlyViewer({
           fetchInFlightRef.current = false;
         });
     });
-  }, [dataSource]);
+
+    // Safety net: flush any pending ranges that reportScroll may have queued
+    // before this callback was bound (race between ResizeObserver timing and
+    // effect execution order). The setTimeout(0) defers to after the current
+    // React render + effects cycle so reportScroll has had a chance to fire.
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    if (!tailMode) {
+      timer = setTimeout(() => { scheduler.forceFetch(); }, 0);
+    }
+
+    return () => {
+      if (timer !== null) clearTimeout(timer);
+    };
+  }, [dataSource, tailMode]);
 
   // Report scroll position to the scheduler whenever visible items change.
   useEffect(() => {
-    if (items.length === 0 || dataSource.onAppend) return;
+    if (items.length === 0 || tailMode) return;
     const scheduler = schedulerRef.current;
     if (!scheduler) return;
 
@@ -290,6 +315,14 @@ export default function ReadOnlyViewer({
     const lastActual = virtualBase + last;
 
     scheduler.reportScroll(firstActual, lastActual, liveTotalLines);
+
+    // On the first reportScroll for a new data source, force the scheduler
+    // to bypass dedup. This handles edge cases where the initial fetch was
+    // silently skipped due to timing between ResizeObserver and effect order.
+    if (!initialFetchDoneRef.current) {
+      initialFetchDoneRef.current = true;
+      scheduler.forceFetch();
+    }
   }, [items, dataSource, virtualBase, liveTotalLines]);
 
   // Scroll to a specific line when requested.

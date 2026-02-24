@@ -79,9 +79,11 @@ const LogViewer = React.memo(function LogViewer({
 
     dataSourceRef.current = ds;
     return ds;
-  }, [sessionId, viewCache, fetchLines, lineNumbers, totalLines, registry]);
+  // totalLines excluded — updated imperatively below to avoid recreating the data source
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, viewCache, fetchLines, lineNumbers, registry]);
 
-  // Update total lines when session changes
+  // Update total lines imperatively without recreating the data source
   useEffect(() => {
     if (dataSourceRef.current && totalLines) {
       dataSourceRef.current.updateTotalLines(totalLines);
@@ -141,6 +143,15 @@ const LogViewer = React.memo(function LogViewer({
           if (line.isContext) {
             cls.push(styles.contextLine);
           }
+          if (line.highlights.length > 0) {
+            const hasActive = line.highlights.some((h) => h.kind.type === 'SearchActive');
+            const hasSearch = hasActive || line.highlights.some((h) => h.kind.type === 'Search');
+            if (hasActive) {
+              cls.push(styles.searchActive);
+            } else if (hasSearch) {
+              cls.push(styles.searchMatch);
+            }
+          }
           if (isSelected) {
             cls.push(styles.selected);
           }
@@ -176,6 +187,7 @@ const LogViewer = React.memo(function LogViewer({
   return (
     <ReadOnlyViewer
       dataSource={dataSource}
+      totalLineCount={totalLines}
       scrollToLine={scrollToLine ?? undefined}
       jumpSeq={jumpSeq}
       tailMode={isStreaming}

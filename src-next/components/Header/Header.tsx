@@ -1,29 +1,14 @@
 import React from 'react';
 import clsx from 'clsx';
 import { FolderOpen, Radio } from 'lucide-react';
-import { useSession, useIsStreaming } from '../../context/selectors';
+import { useSession, useIsStreaming, useViewerActions } from '../../context';
 import { SearchBar } from '../SearchBar';
 import styles from './Header.module.css';
 
-interface HeaderProps {
-  onOpenFile?: () => void;
-  onStartStream?: () => void;
-  onTimeFilter?: (start: string, end: string) => void;
-  timeStart?: string;
-  timeEnd?: string;
-  timeFilterCount?: number | null;
-}
-
-export const Header = React.memo<HeaderProps>(function Header({
-  onOpenFile,
-  onStartStream,
-  onTimeFilter,
-  timeStart,
-  timeEnd,
-  timeFilterCount,
-}) {
+export const Header = React.memo(function Header() {
   const session = useSession();
   const isStreaming = useIsStreaming();
+  const { openFileDialog, startStream } = useViewerActions();
 
   return (
     <header className={styles.header}>
@@ -34,7 +19,7 @@ export const Header = React.memo<HeaderProps>(function Header({
       <div className={styles.actions}>
         <button
           className={styles.actionBtn}
-          onClick={onOpenFile}
+          onClick={openFileDialog}
           title="Open log file"
         >
           <FolderOpen size={14} />
@@ -42,7 +27,7 @@ export const Header = React.memo<HeaderProps>(function Header({
         </button>
         <button
           className={clsx(styles.actionBtn, isStreaming && styles.actionBtnActive)}
-          onClick={onStartStream}
+          onClick={() => startStream()}
           title="Start ADB stream"
         >
           <Radio size={14} />
@@ -51,13 +36,7 @@ export const Header = React.memo<HeaderProps>(function Header({
       </div>
 
       <div className={styles.searchArea}>
-        <SearchBar
-          disabled={!session}
-          onTimeFilter={onTimeFilter}
-          timeStart={timeStart}
-          timeEnd={timeEnd}
-          timeFilterCount={timeFilterCount}
-        />
+        <SearchBar disabled={!session} />
       </div>
     </header>
   );

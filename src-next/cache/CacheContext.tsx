@@ -79,11 +79,8 @@ export function useViewCache(viewId: string | null, sessionId?: string | null): 
     }
     prevIdRef.current = null;
     handleRef.current = null;
-    return null;
-  }
-
-  // Allocate on first call or when viewId changes
-  if (prevIdRef.current !== viewId) {
+  } else if (prevIdRef.current !== viewId) {
+    // Allocate on first call or when viewId changes
     if (prevIdRef.current) {
       mgr.releaseView(prevIdRef.current);
     }
@@ -91,7 +88,8 @@ export function useViewCache(viewId: string | null, sessionId?: string | null): 
     prevIdRef.current = viewId;
   }
 
-  // Release handle on unmount to prevent ghost handles consuming budget
+  // Release handle on unmount to prevent ghost handles consuming budget.
+  // Must always be called (Rules of Hooks) — guard body with refs.
   useEffect(() => {
     return () => {
       if (prevIdRef.current && mgr) {

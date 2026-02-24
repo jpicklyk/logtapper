@@ -1,4 +1,5 @@
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useCallback, type ReactNode } from 'react';
+import { open } from '@tauri-apps/plugin-dialog';
 import { SessionProvider } from './SessionContext';
 import { ViewerProvider } from './ViewerContext';
 import { PipelineProvider } from './PipelineContext';
@@ -18,16 +19,31 @@ function HookWiring({ children }: { children: ReactNode }) {
   const registry = useDataSourceRegistry();
   const logViewer = useLogViewer(cacheManager, registry);
 
+  const openFileDialog = useCallback(async () => {
+    const selected = await open({
+      multiple: false,
+      filters: [
+        { name: 'Log Files', extensions: ['log', 'txt', 'gz'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+    if (typeof selected === 'string') {
+      await logViewer.loadFile(selected);
+    }
+  }, [logViewer.loadFile]);
+
   const actions = useMemo<Partial<ActionsContextValue>>(() => ({
     loadFile: logViewer.loadFile,
+    openFileDialog,
     startStream: (deviceId?: string) => logViewer.startStream(deviceId),
     stopStream: logViewer.stopStream,
     closeSession: logViewer.closeSession,
     jumpToLine: logViewer.jumpToLine,
+    jumpToMatch: logViewer.jumpToMatch,
     setSearch: logViewer.handleSearch,
     openTab: (type: string) => { bus.emit('layout:open-tab', { type }); },
-  }), [logViewer.loadFile, logViewer.startStream, logViewer.stopStream,
-       logViewer.closeSession, logViewer.jumpToLine, logViewer.handleSearch]);
+  }), [logViewer.loadFile, openFileDialog, logViewer.startStream, logViewer.stopStream,
+       logViewer.closeSession, logViewer.jumpToLine, logViewer.jumpToMatch, logViewer.handleSearch]);
 
   return (
     <ActionsProvider actions={actions}>

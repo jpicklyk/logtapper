@@ -14,6 +14,7 @@ export interface ActionsContextValue {
   removeProcessor: (id: string) => void;
   toggleProcessor: (id: string) => void;
   jumpToLine: (lineNum: number) => void;
+  jumpToMatch: (direction: 1 | -1) => void;
   setSearch: (query: SearchQuery | null) => void;
   openTab: (type: string) => void;
 }
@@ -34,6 +35,7 @@ const DEFAULT_ACTIONS: ActionsContextValue = {
   removeProcessor: (_id: string) => noop(),
   toggleProcessor: (_id: string) => noop(),
   jumpToLine: (_lineNum: number) => noop(),
+  jumpToMatch: (_direction: 1 | -1) => noop(),
   setSearch: (_query: SearchQuery | null) => noop(),
   openTab: (_type: string) => noop(),
 };

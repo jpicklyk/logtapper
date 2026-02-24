@@ -20,7 +20,7 @@ export const SearchBar = React.memo<SearchBarProps>(function SearchBar({
   timeFilterCount,
 }) {
   const { summary, matchIndex } = useSearch();
-  const { setSearch, jumpToLine } = useViewerActions();
+  const { setSearch, jumpToMatch } = useViewerActions();
 
   const [text, setText] = useState('');
   const [isRegex, setIsRegex] = useState(false);
@@ -82,14 +82,9 @@ export const SearchBar = React.memo<SearchBarProps>(function SearchBar({
 
   const handleJump = useCallback(
     (direction: 1 | -1) => {
-      if (!summary || !summary.totalMatches) return;
-      const total = summary.totalMatches;
-      const next = ((matchIndex + direction) % total + total) % total;
-      if (summary.matchLineNums[next] != null) {
-        jumpToLine(summary.matchLineNums[next]);
-      }
+      jumpToMatch(direction);
     },
-    [summary, matchIndex, jumpToLine],
+    [jumpToMatch],
   );
 
   const handleStartChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -157,8 +152,11 @@ export const SearchBar = React.memo<SearchBarProps>(function SearchBar({
           onChange={handleTextChange}
           disabled={disabled}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' || e.key === 'ArrowDown') {
               handleJump(e.shiftKey ? -1 : 1);
+              e.preventDefault();
+            } else if (e.key === 'ArrowUp') {
+              handleJump(-1);
               e.preventDefault();
             }
           }}

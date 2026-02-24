@@ -31,19 +31,24 @@
   opacity: 0.5;
 }
 
+.searchMatch {
+  background-color: rgba(255, 200, 50, 0.10);
+}
+
+.searchActive {
+  background-color: rgba(255, 200, 50, 0.22);
+}
+
 .selected {
   background-color: rgba(88, 166, 255, 0.12);
 }
 
 .jumpTarget {
-  animation: flashHighlight 1.5s ease-out;
+  animation: flashHighlight 1.8s ease-out forwards;
 }
 
 @keyframes flashHighlight {
-  0% {
-    background-color: rgba(88, 166, 255, 0.3);
-  }
-  100% {
-    background-color: transparent;
-  }
+  0%   { background-color: rgba(255, 185, 0, 0.40); }
+  40%  { background-color: rgba(255, 185, 0, 0.30); }
+  100% { background-color: rgba(255, 185, 0, 0.10); }
 }

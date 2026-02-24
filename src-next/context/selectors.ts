@@ -82,9 +82,9 @@ export function useTrackerTransitions(): {
 
 export function useViewerActions() {
   const { loadFile, openFileDialog, startStream, stopStream, closeSession,
-          jumpToLine, setSearch, openTab } = useActionsContext();
+          jumpToLine, jumpToMatch, setSearch, openTab } = useActionsContext();
   return { loadFile, openFileDialog, startStream, stopStream, closeSession,
-           jumpToLine, setSearch, openTab };
+           jumpToLine, jumpToMatch, setSearch, openTab };
 }
 
 export function usePipelineActions() {

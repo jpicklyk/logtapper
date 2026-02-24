@@ -94,7 +94,6 @@ const TextLine = memo(function TextLine({
           {col.render(line.lineNum)}
         </span>
       ))}
-      <span className={styles.lineNum}>{line.lineNum + 1}</span>
       <span className={styles.msg}>
         <HighlightedText text={line.raw} highlights={line.highlights} />
       </span>
