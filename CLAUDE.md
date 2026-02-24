@@ -163,7 +163,7 @@ Hooks live in `App.tsx` and are shared via `AppContext`. Access via `useAppConte
 | `useAnalysis` | Analysis artifact CRUD, `analysis-update` subscription |
 | `useWatches` | Watch lifecycle, `watch-match` subscription |
 
-**CacheManager:** Each `PaneContent` allocates a `ViewCacheHandle` via `useViewCache(viewId, sessionId)`. During streaming, `handleAdbBatch` calls `cacheManager.broadcastToSession()` to write lines into ALL handles for the session (multi-consumer). During file mode, `LogViewer` fetches on demand. The `fileCacheBudget` setting controls the global budget.
+**CacheManager:** Each `PaneContent` allocates a `ViewCacheHandle` via `useViewCache(viewId, sessionId)`. During streaming, `handleAdbBatch` calls `cacheManager.broadcastToSession()` to write lines into ALL handles for the session (multi-consumer). During file mode, `LogViewer` fetches on demand. The `fileCacheBudget` setting controls the global budget. **Session ID is always `"default"`** — both file and stream use the same ID. `sessionGeneration` (incremented in `useLogViewer` on every load/stream start) is included in the `viewId` to force fresh cache handles across transitions.
 
 ### High-frequency streaming UI patterns
 
@@ -172,7 +172,7 @@ Components that update on every ADB batch (~50ms) require explicit stabilization
 - **`useRef` for imperative guards** — timestamps, scroll positions, "has-fetched" flags belong in refs, not state.
 - **Functional setState with referential bail-out** — return `prev` reference when data is unchanged to skip re-renders.
 - **`hasDataRef` for skeleton suppression** — show skeletons only on first fetch; subsequent fetches are silent.
-- **Auto-scroll timing guards** — `lastProgrammaticScrollMs` (150ms) and `lastManualScrollUpMs` (600ms) refs prevent scroll event races.
+- **Programmatic scroll flag** — `programmaticScrollRef` is set `true` before every `el.scrollTop = el.scrollHeight` assignment. `onScroll` checks and clears it so it can distinguish our scrolls from user scrollbar drags. Do NOT use `requestAnimationFrame` for scroll deferral — WebView2 does not guarantee scroll events fire before rAF callbacks.
 
 ### Known bugs
 
@@ -230,4 +230,4 @@ useEffect(() => {
 
 This applies to ALL Tauri async listener APIs: `listen()`, `once()`, `onDragDropEvent()`, etc.
 
-**StrictMode also breaks `requestAnimationFrame` cleanup.** Double-mount means: effect → cleanup → effect. If the cleanup calls `cancelAnimationFrame`, the first rAF is cancelled before it fires. The second rAF works, but rapid re-renders can cancel it too. **Never return `cancelAnimationFrame` from a useEffect cleanup.** Instead, guard the rAF callback with a ref check (`if (!autoScrollRef.current) return`) and let stale rAFs fire harmlessly.
+**StrictMode also breaks `requestAnimationFrame` cleanup.** Double-mount means: effect → cleanup → effect. If the cleanup calls `cancelAnimationFrame`, the first rAF is cancelled before it fires. **Never return `cancelAnimationFrame` from a useEffect cleanup.** Either omit cleanup (let stale rAFs fire harmlessly with a ref guard) or avoid rAF entirely — prefer a `programmaticScrollRef` flag pattern for distinguishing programmatic from user-initiated scrolls (see LogViewer.tsx).

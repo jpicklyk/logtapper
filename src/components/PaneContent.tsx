@@ -25,11 +25,12 @@ export default function PaneContent({ pane }: Props) {
   } = useAppContext();
 
   // Allocate a CacheManager view for this pane's session.
-  // The sessionId is passed through so CacheManager can broadcast streaming batches
-  // to ALL handles for the same session (multi-consumer support).
+  // sessionGeneration is included in the viewId so that switching from file→stream
+  // (both use sessionId="default") forces a fresh handle, discarding stale lines.
   const sessionId = viewer.session?.sessionId ?? null;
+  const gen = viewer.sessionGeneration;
   const viewCache = useViewCache(
-    sessionId ? `pane-${pane.id}-${sessionId}` : null,
+    sessionId ? `pane-${pane.id}-${sessionId}-g${gen}` : null,
     sessionId,
   );
 

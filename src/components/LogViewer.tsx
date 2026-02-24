@@ -88,12 +88,14 @@ export default function LogViewer({
   const [, setVisibleVersion] = useState(0);
   const fetchGenRef = useRef(0); // generation counter to discard stale fetches
 
-  // Reset visible lines when session or processor view changes
+  // Reset visible lines when session, processor view, or streaming mode changes.
+  // isStreaming is needed because sessionId is always "default" — switching from
+  // a loaded file to ADB streaming wouldn't clear stale file lines otherwise.
   useEffect(() => {
     fetchGenRef.current++;
     visibleLinesRef.current = new Map();
     setVisibleVersion((v) => v + 1);
-  }, [sessionId, processorId]);
+  }, [sessionId, processorId, isStreaming]);
 
   // ── Large-file virtual base ──────────────────────────────────────────────────
   const [virtualBase, setVirtualBase] = useState(0);
@@ -109,6 +111,7 @@ export default function LogViewer({
 
   const autoScrollRef = useRef(true);
   const userScrollingDownRef = useRef(false);
+  const programmaticScrollRef = useRef(false);
 
   // When lineNumbers is provided (filter active), use its length as the count.
   const count = lineNumbers ? lineNumbers.length : totalLines;
@@ -159,6 +162,12 @@ export default function LogViewer({
     // scrollbar drags — pointerdown does NOT fire for scrollbar interaction
     // in WebView2 (Windows).
     const onScroll = () => {
+      // Skip scroll events caused by our own programmatic scrollTop assignment.
+      if (programmaticScrollRef.current) {
+        programmaticScrollRef.current = false;
+        return;
+      }
+
       const nearBottom =
         el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_THRESHOLD;
 
@@ -203,15 +212,11 @@ export default function LogViewer({
     if (!isStreaming || !autoScrollRef.current || effectiveCount === 0) return;
     const el = parentRef.current;
     if (!el) return;
-    // Defer to rAF so the browser processes pending scroll events first.
-    // onScroll will detect a user's scrollbar drag and clear autoScrollRef
-    // before the rAF callback checks it.
-    // No cleanup — letting stale rAFs fire is harmless (scroll-to-bottom is
-    // idempotent) and avoids StrictMode double-mount cancelling the rAF.
-    requestAnimationFrame(() => {
-      if (!autoScrollRef.current) return;
-      el.scrollTop = el.scrollHeight;
-    });
+    // Flag so onScroll ignores the scroll event caused by this assignment.
+    // User-initiated scroll events (scrollbar drag, touch) fire WITHOUT
+    // this flag, so onScroll can detect them and disable auto-scroll.
+    programmaticScrollRef.current = true;
+    el.scrollTop = el.scrollHeight;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveCount]);
 
@@ -481,7 +486,10 @@ export default function LogViewer({
             setAutoScroll(true);
             setNewLinesCount(0);
             const el = parentRef.current;
-            if (el) el.scrollTop = el.scrollHeight;
+            if (el) {
+              programmaticScrollRef.current = true;
+              el.scrollTop = el.scrollHeight;
+            }
           }}
         >
           {newLinesCount > 999 ? '999+' : newLinesCount} new line{newLinesCount !== 1 ? 's' : ''} below

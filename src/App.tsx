@@ -394,13 +394,6 @@ export default function App() {
             {viewer.searchSummary && (
               <span>{viewer.searchSummary.totalMatches.toLocaleString()} matches</span>
             )}
-            {pipeline.lastResults.length > 0 && (
-              <span>
-                {pipeline.lastResults
-                  .map((r) => `${r.processorId}: ${r.matchedLines.toLocaleString()} matched`)
-                  .join(' · ')}
-              </span>
-            )}
           </footer>
         )}
 

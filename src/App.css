@@ -501,9 +501,11 @@
   white-space: pre;
 }
 
-.level-w { background: #1a110000; }
-.level-e { background: #1f0e0e; }
-.level-f { background: #2d1010; }
+.level-v { color: #6e7681; }
+.level-d { color: #9ca3af; }
+.level-w { color: #d29922; background: #1a130008; }
+.level-e { color: #f47067; background: #2d1117; }
+.level-f { color: #ff6e6e; background: #3d1118; font-weight: 600; }
 
 /* ── Highlights ───────────────────────────────────────────────────────────── */
 

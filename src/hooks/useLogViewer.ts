@@ -12,6 +12,9 @@ const LS_LAST_FILE = 'logtapper_last_file';
 
 export interface LogViewerState {
   session: LoadResult | null;
+  /** Incremented every time a new session is created (file load or ADB stream start).
+   *  Used by PaneContent to bust the CacheManager viewId so stale handles are released. */
+  sessionGeneration: number;
   search: SearchQuery | null;
   searchSummary: SearchSummary | null;
   currentMatchIndex: number;
@@ -66,6 +69,7 @@ export interface LogViewerState {
 
 export function useLogViewer(cacheManager: CacheManager, onBeforeLoad?: () => void): LogViewerState {
   const [session, setSession] = useState<LoadResult | null>(null);
+  const [sessionGeneration, setSessionGeneration] = useState(0);
   const [search, setSearch] = useState<SearchQuery | null>(null);
   const [searchSummary, setSearchSummary] = useState<SearchSummary | null>(null);
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
@@ -388,6 +392,7 @@ export function useLogViewer(cacheManager: CacheManager, onBeforeLoad?: () => vo
     resetSessionState();
     try {
       const result = await loadLogFile(path);
+      setSessionGeneration((g) => g + 1);
       setSession(result);
       sessionRef.current = result;
       // Persist the file path so we can reopen it on next launch.
@@ -502,6 +507,7 @@ export function useLogViewer(cacheManager: CacheManager, onBeforeLoad?: () => vo
 
     try {
       const result = await startAdbStream(deviceId, packageFilter, activeProcessorIds, maxRawLines);
+      setSessionGeneration((g) => g + 1);
       setSession(result);
       sessionRef.current = result;
       setIsStreaming(true);
@@ -688,6 +694,7 @@ export function useLogViewer(cacheManager: CacheManager, onBeforeLoad?: () => vo
 
   return {
     session,
+    sessionGeneration,
     search,
     searchSummary,
     currentMatchIndex,
