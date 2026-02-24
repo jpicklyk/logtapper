@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect, useState } from 'react';
+import { useRef, useCallback, useEffect, useState, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { DataSource } from './DataSource';
 import type { GutterColumnDef } from './GutterColumn';
@@ -87,6 +87,15 @@ export default function ReadOnlyViewer({
   const userScrollingDownRef = useRef(false);
   const lastSetScrollTopRef = useRef(-1);
 
+  // ── Box selection state ─────────────────────────────────────────────────
+  const charWidthRef = useRef(7.2);
+  const gutterWidthRef = useRef(0);
+  const boxDragging = useRef(false);
+  const boxAnchor = useRef<{ line: number; col: number } | null>(null);
+  const [boxSel, setBoxSel] = useState<{
+    startLine: number; endLine: number; startCol: number; endCol: number;
+  } | null>(null);
+
   // Re-enable auto-scroll when entering tail mode.
   useEffect(() => {
     if (tailMode) {
@@ -101,6 +110,12 @@ export default function ReadOnlyViewer({
 
   const totalLines = totalLineCount ?? dataSource.totalLines;
 
+  const gutterWidth = useMemo(
+    () => (gutterColumns ?? []).reduce((sum, col) => sum + col.width, 0),
+    [gutterColumns],
+  );
+  useEffect(() => { gutterWidthRef.current = gutterWidth; }, [gutterWidth]);
+
   const effectiveCount = Math.min(Math.max(0, totalLines - virtualBase), MAX_VIRTUAL_LINES);
 
   const virtualizer = useVirtualizer({
@@ -111,6 +126,38 @@ export default function ReadOnlyViewer({
   });
 
   const items = virtualizer.getVirtualItems();
+
+  // ── Char width measurement (once at mount) ─────────────────────────────
+  useEffect(() => {
+    const span = document.createElement('span');
+    Object.assign(span.style, {
+      position: 'fixed', top: '-9999px', visibility: 'hidden',
+      whiteSpace: 'pre', fontSize: '12px', fontFamily: 'monospace',
+    });
+    const monoFont = getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim();
+    if (monoFont) span.style.fontFamily = monoFont;
+    span.textContent = 'x'.repeat(100);
+    document.body.appendChild(span);
+    const w = span.offsetWidth;
+    document.body.removeChild(span);
+    if (w > 0) charWidthRef.current = w / 100;
+  }, []);
+
+  // ── Alt key → crosshair cursor (no React state, no re-renders) ─────────
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Alt') parentRef.current?.classList.add(styles.altMode);
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Alt') parentRef.current?.classList.remove(styles.altMode);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+    };
+  }, []);
 
   // ── Scroll / interaction listeners ──────────────────────────────────────
   useEffect(() => {
@@ -361,6 +408,8 @@ export default function ReadOnlyViewer({
 
   const handleLineClick = useCallback(
     (lineNum: number, e: React.MouseEvent) => {
+      if (e.altKey) return;
+      setBoxSel(null);
       // Notify selection change if handler provided
       if (onSelectionChange) {
         const sel = selection;
@@ -384,12 +433,67 @@ export default function ReadOnlyViewer({
     [onLineClick, onSelectionChange, selection],
   );
 
-  // ── Ctrl+C copy handler for multi-line selection ───────────────────────
+  // ── Box selection pointer handlers ──────────────────────────────────────
+  const getLineColFromPointer = useCallback((clientX: number, clientY: number) => {
+    const el = parentRef.current!;
+    const rect = el.getBoundingClientRect();
+    const y = clientY - rect.top + el.scrollTop;
+    const x = clientX - rect.left;
+    const lineNum = virtualBaseRef.current + Math.max(0, Math.floor(y / LINE_HEIGHT));
+    const col = Math.max(0, Math.floor((x - gutterWidthRef.current) / charWidthRef.current));
+    return { lineNum, col };
+  }, []);
+
+  const handleViewerPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!e.altKey) return;
+      e.preventDefault();
+      const { lineNum, col } = getLineColFromPointer(e.clientX, e.clientY);
+      boxDragging.current = true;
+      boxAnchor.current = { line: lineNum, col };
+      e.currentTarget.setPointerCapture(e.pointerId);
+      e.currentTarget.classList.add(styles.dragging);
+      onSelectionChange?.({ anchor: null, selected: new Set(), mode: 'line' });
+      setBoxSel({ startLine: lineNum, endLine: lineNum, startCol: col, endCol: col });
+    },
+    [getLineColFromPointer, onSelectionChange],
+  );
+
+  const handleViewerPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!boxDragging.current || !boxAnchor.current) return;
+      const anchor = boxAnchor.current;
+      const { lineNum, col } = getLineColFromPointer(e.clientX, e.clientY);
+      setBoxSel({
+        startLine: Math.min(anchor.line, lineNum),
+        endLine: Math.max(anchor.line, lineNum),
+        startCol: Math.min(anchor.col, col),
+        endCol: Math.max(anchor.col, col),
+      });
+    },
+    [getLineColFromPointer],
+  );
+
+  const handleViewerPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    boxDragging.current = false;
+    boxAnchor.current = null;
+    e.currentTarget.classList.remove(styles.dragging);
+  }, []);
+
+  // ── Ctrl+C copy handler for line and box selection ─────────────────────
   useEffect(() => {
-    if (!selection || selection.selected.size === 0) return;
+    const hasSelection = boxSel != null || (selection?.selected.size ?? 0) > 0;
+    if (!hasSelection) return;
     const handleCopy = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
-        e.preventDefault();
+      if (!(e.ctrlKey || e.metaKey) || e.key !== 'c') return;
+      e.preventDefault();
+      if (boxSel) {
+        const rows: string[] = [];
+        for (let i = boxSel.startLine; i <= boxSel.endLine; i++) {
+          rows.push((dataSource.getLine(i)?.raw ?? '').slice(boxSel.startCol, boxSel.endCol));
+        }
+        navigator.clipboard.writeText(rows.join('\n'));
+      } else if (selection?.selected.size) {
         const sorted = Array.from(selection.selected).sort((a, b) => a - b);
         const text = sorted
           .map((n) => dataSource.getLine(n)?.raw)
@@ -401,7 +505,7 @@ export default function ReadOnlyViewer({
     window.addEventListener('keydown', handleCopy);
     return () => window.removeEventListener('keydown', handleCopy);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selection, dataSource]);
+  }, [selection, boxSel, dataSource]);
 
   if (liveTotalLines === 0) {
     return (
@@ -462,7 +566,14 @@ export default function ReadOnlyViewer({
           Line {(virtualBase + MAX_VIRTUAL_LINES + 1).toLocaleString()}
         </button>
       )}
-      <div ref={parentRef} className={styles.viewer}>
+      <div
+        ref={parentRef}
+        className={styles.viewer}
+        onPointerDown={handleViewerPointerDown}
+        onPointerMove={handleViewerPointerMove}
+        onPointerUp={handleViewerPointerUp}
+        onPointerCancel={handleViewerPointerUp}
+      >
         <div
           style={{
             height: virtualizer.getTotalSize(),
@@ -470,10 +581,23 @@ export default function ReadOnlyViewer({
             position: 'relative',
           }}
         >
+          {boxSel && boxSel.endCol > boxSel.startCol && (
+            <div
+              className={styles.boxOverlay}
+              style={{
+                position: 'absolute',
+                top: (boxSel.startLine - virtualBase) * LINE_HEIGHT,
+                height: (boxSel.endLine - boxSel.startLine + 1) * LINE_HEIGHT,
+                left: gutterWidthRef.current + boxSel.startCol * charWidthRef.current,
+                width: (boxSel.endCol - boxSel.startCol) * charWidthRef.current,
+              }}
+            />
+          )}
           {items.map((virtualItem) => {
             const actualLineNum = virtualBase + virtualItem.index;
             const line = dataSource.getLine(actualLineNum);
             const isTarget = scrollToLine != null && actualLineNum === scrollToLine;
+            const isLineSelected = boxSel == null && (selection?.selected.has(actualLineNum) ?? false);
             return (
               <div
                 key={virtualItem.key}
@@ -492,7 +616,7 @@ export default function ReadOnlyViewer({
                     lineHeight={LINE_HEIGHT}
                     gutterColumns={gutterColumns}
                     decorators={lineDecorators}
-                    isSelected={selection?.selected.has(actualLineNum)}
+                    isSelected={isLineSelected}
                     isJumpTarget={isTarget}
                     jumpSeq={isTarget ? jumpSeq : undefined}
                     onClick={handleLineClick}
