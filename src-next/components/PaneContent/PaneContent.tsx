@@ -3,7 +3,6 @@ import { LogViewer } from '../LogViewer';
 import { ProcessorDashboard } from '../ProcessorDashboard';
 import { ScratchPad } from '../ScratchPad';
 import { useSession, useIsStreaming, useIsLoading } from '../../context';
-import { useSessionContext } from '../../context/SessionContext';
 import { useLogViewerActions } from './useLogViewerActions';
 import styles from './PaneContent.module.css';
 
@@ -26,7 +25,6 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
   const session = useSession();
   useIsStreaming();
   const isLoading = useIsLoading();
-  useSessionContext();
   const { fetchLines } = useLogViewerActions();
 
   const activeTab = pane.tabs.find((t) => t.id === pane.activeTabId);

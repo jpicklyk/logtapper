@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, type ReactNode } from 'react';
 import { CacheManager, type WritableViewCache, type CacheController } from './CacheManager';
-import { DataSourceRegistry } from '../viewport/DataSourceRegistry';
+import { DataSourceRegistry, type DataSourceRegistrar } from '../viewport/DataSourceRegistry';
 
 /** Default total line budget — matches SETTING_DEFAULTS.fileCacheBudget. */
 const DEFAULT_BUDGET = 100_000;
@@ -52,7 +52,7 @@ export function useCacheManager(): CacheController {
 }
 
 /** Access the global DataSourceRegistry. Throws if used outside CacheProvider. */
-export function useDataSourceRegistry(): DataSourceRegistry {
+export function useDataSourceRegistry(): DataSourceRegistrar {
   const ctx = useContext(CacheManagerContext);
   if (!ctx) {
     throw new Error('useDataSourceRegistry must be used within a CacheProvider');

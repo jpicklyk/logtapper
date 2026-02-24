@@ -8,7 +8,7 @@ import {
   usePipelineResults,
   useViewerActions,
 } from '../../context';
-import { useStateTracker } from '../../hooks/useStateTracker';
+import { useStateTracker } from '../../hooks';
 import styles from './StateTimeline.module.css';
 
 type Viewport = readonly [number, number];

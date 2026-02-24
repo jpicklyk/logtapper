@@ -1,8 +1,7 @@
 import { useCallback, useRef } from 'react';
 import type { LineWindow } from '../../bridge/types';
 import { getLines } from '../../bridge/commands';
-import { useSession } from '../../context';
-import { useViewerContext } from '../../context/ViewerContext';
+import { useSession, useProcessorId, useSearchQuery } from '../../context';
 
 /**
  * Provides the fetchLines callback for file-mode rendering.
@@ -10,7 +9,8 @@ import { useViewerContext } from '../../context/ViewerContext';
  */
 export function useLogViewerActions() {
   const session = useSession();
-  const { processorId, search } = useViewerContext();
+  const processorId = useProcessorId();
+  const search = useSearchQuery();
 
   const sessionRef = useRef(session);
   sessionRef.current = session;

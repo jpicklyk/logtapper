@@ -52,13 +52,6 @@ export function AppProviders({ children }: { children: ReactNode }) {
   );
 }
 
-// Re-export context hooks for convenience
-export { useSessionContext } from './SessionContext';
-export { useViewerContext } from './ViewerContext';
-export { usePipelineContext } from './PipelineContext';
-export { useTrackerContext } from './TrackerContext';
-export { useActionsContext } from './ActionsContext';
-
 // Re-export selector hooks
 export {
   useSession,
@@ -76,6 +69,11 @@ export {
   useViewerActions,
   usePipelineActions,
   useTrackerActions,
+  useProcessorId,
+  useSearchQuery,
+  usePipelineProgress,
+  usePipelineError,
+  useTotalLines,
 } from './selectors';
 
 // Re-export types

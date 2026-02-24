@@ -8,8 +8,7 @@ import {
   usePipelineResults,
   useViewerActions,
 } from '../../context';
-import { usePipeline } from '../../hooks/usePipeline';
-import { useChartData } from '../../hooks/useChartData';
+import { usePipeline, useChartData } from '../../hooks';
 import styles from './ProcessorDashboard.module.css';
 
 // ── Var rendering helpers ────────────────────────────────────────────────────

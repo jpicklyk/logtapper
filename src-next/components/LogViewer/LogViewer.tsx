@@ -1,10 +1,7 @@
 import React, { useMemo, useCallback, useEffect, useState, useRef } from 'react';
 import type { ViewLine } from '../../bridge/types';
-import type { GutterColumnDef } from '../../viewport/GutterColumn';
-import type { LineDecoratorDef } from '../../viewport/LineDecorator';
-import type { Selection } from '../../viewport/SelectionManager';
+import type { GutterColumnDef, LineDecoratorDef, Selection, CacheDataSource } from '../../viewport';
 import { ReadOnlyViewer, createCacheDataSource } from '../../viewport';
-import type { CacheDataSource } from '../../viewport';
 import { useViewCache, useCacheFocus, useDataSourceRegistry } from '../../cache';
 import {
   useSession,
@@ -12,9 +9,9 @@ import {
   useScrollTarget,
   useTrackerTransitions,
   useViewerActions,
+  useProcessorId,
+  useTotalLines,
 } from '../../context';
-import { useViewerContext } from '../../context/ViewerContext';
-import { useSessionContext } from '../../context/SessionContext';
 import styles from './LogViewer.module.css';
 
 interface Props {
@@ -33,8 +30,8 @@ const LogViewer = React.memo(function LogViewer({
   const { lineNum: scrollToLine, seq: jumpSeq } = useScrollTarget();
   const { allLineNums: transitionLineNums, byLine: transitionsByLine } = useTrackerTransitions();
   const { jumpToLine } = useViewerActions();
-  const { processorId } = useViewerContext();
-  const { session: sessionData } = useSessionContext();
+  const processorId = useProcessorId();
+  const totalLines = useTotalLines();
 
   // Selection state (local to this viewer)
   const [selection, setSelection] = useState<Selection>({
@@ -78,18 +75,18 @@ const LogViewer = React.memo(function LogViewer({
     });
 
     // Set initial total lines
-    ds.updateTotalLines(sessionData?.totalLines ?? 0);
+    ds.updateTotalLines(totalLines);
 
     dataSourceRef.current = ds;
     return ds;
-  }, [sessionId, viewCache, fetchLines, lineNumbers, sessionData?.totalLines, registry]);
+  }, [sessionId, viewCache, fetchLines, lineNumbers, totalLines, registry]);
 
   // Update total lines when session changes
   useEffect(() => {
-    if (dataSourceRef.current && sessionData?.totalLines) {
-      dataSourceRef.current.updateTotalLines(sessionData.totalLines);
+    if (dataSourceRef.current && totalLines) {
+      dataSourceRef.current.updateTotalLines(totalLines);
     }
-  }, [sessionData?.totalLines]);
+  }, [totalLines]);
 
   // Cleanup on unmount
   useEffect(() => {

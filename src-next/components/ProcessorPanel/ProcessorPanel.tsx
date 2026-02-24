@@ -22,9 +22,10 @@ import {
   usePipelineChain,
   usePipelineRunning,
   usePipelineResults,
+  usePipelineProgress,
+  usePipelineError,
 } from '../../context';
-import { usePipelineContext } from '../../context/PipelineContext';
-import { usePipeline } from '../../hooks/usePipeline';
+import { usePipeline } from '../../hooks';
 import styles from './ProcessorPanel.module.css';
 
 // ── McpStatusWidget ──────────────────────────────────────────────────────────
@@ -303,7 +304,8 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
   const pipelineChain = usePipelineChain();
   const running = usePipelineRunning();
   const { results: lastResults } = usePipelineResults();
-  const { progress } = usePipelineContext();
+  const progress = usePipelineProgress();
+  const pipelineError = usePipelineError();
   const pipeline = usePipeline();
 
   const sensors = useSensors(
@@ -522,8 +524,8 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
       )}
 
       {/* Error */}
-      {usePipelineContext().error && (
-        <div className={styles.error}>{usePipelineContext().error}</div>
+      {pipelineError && (
+        <div className={styles.error}>{pipelineError}</div>
       )}
     </div>
   );

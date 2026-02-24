@@ -3,8 +3,8 @@ import ReactDOM from 'react-dom';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { ProcessorSummary, RegistryEntry } from '../../bridge/types';
 import { fetchRegistry, installFromRegistry, loadProcessorFromFile } from '../../bridge/commands';
-import { usePipeline } from '../../hooks/usePipeline';
-import { useProcessors, usePipelineChain } from '../../context/selectors';
+import { usePipeline } from '../../hooks';
+import { useProcessors, usePipelineChain } from '../../context';
 import css from './ProcessorLibrary.module.css';
 
 type Tab = 'installed' | 'discover' | 'yaml';

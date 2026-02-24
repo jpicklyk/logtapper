@@ -1,4 +1,4 @@
-import { useWorkspaceLayout } from './hooks/useWorkspaceLayout';
+import { useWorkspaceLayout } from './hooks';
 import { AppShell } from './layout/AppShell';
 import './styles/animations.css';
 import './styles/highlights.css';

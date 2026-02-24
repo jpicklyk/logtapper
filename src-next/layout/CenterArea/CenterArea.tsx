@@ -1,7 +1,7 @@
 import React, { useCallback } from 'react';
 import { DragHandle } from '../DragHandle';
 import { TabBar } from '../TabBar';
-import type { SplitNode, CenterPane } from '../../hooks/useWorkspaceLayout';
+import type { SplitNode, CenterPane } from '../../hooks';
 import styles from './CenterArea.module.css';
 
 interface CenterAreaProps {

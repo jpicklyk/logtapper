@@ -7,7 +7,7 @@ import {
   usePipelineResults,
   useTrackerTransitions,
 } from '../../context';
-import { useStateTracker } from '../../hooks/useStateTracker';
+import { useStateTracker } from '../../hooks';
 import styles from './StatePanel.module.css';
 
 interface TrackerState {

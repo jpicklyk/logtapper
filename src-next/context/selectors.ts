@@ -99,3 +99,27 @@ export function useTrackerActions() {
   // For now, return an empty object to establish the pattern.
   return {};
 }
+
+// ---------------------------------------------------------------------------
+// Additional narrow selectors (for component migration away from raw context)
+// ---------------------------------------------------------------------------
+
+export function useProcessorId(): string | null {
+  return useViewerContext().processorId;
+}
+
+export function useSearchQuery(): SearchQuery | null {
+  return useViewerContext().search;
+}
+
+export function usePipelineProgress(): { current: number; total: number } | null {
+  return usePipelineContext().progress;
+}
+
+export function usePipelineError(): string | null {
+  return usePipelineContext().error;
+}
+
+export function useTotalLines(): number {
+  return useSessionContext().session?.totalLines ?? 0;
+}

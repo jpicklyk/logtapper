@@ -133,3 +133,15 @@ When adding a new component that displays log lines:
 3. Pass the CacheDataSource to `ReadOnlyViewer` (or use `dataSource.getLine()` directly)
 4. Call `useCacheFocus(viewId)` if this view should get priority budget when active
 5. **Do not** create any intermediate storage for ViewLine objects
+
+## StreamPusher interface
+
+External code that needs to push streaming lines does not import `DataSourceRegistry` directly. Instead, it uses the `StreamPusher` interface (exported from viewport barrel):
+
+```typescript
+interface StreamPusher {
+  pushToSession(sessionId: string, lines: ViewLine[], totalLines: number): void;
+}
+```
+
+`useDataSourceRegistry()` returns `DataSourceRegistrar` (extends `StreamPusher` with `register`/`unregister`), not the full `DataSourceRegistry` class. Hooks that only push lines (like `useLogViewer`) accept the narrower `StreamPusher` type. Only `CacheContext.tsx` imports the class directly for construction — this is intentional (cache module owns the lifecycle).

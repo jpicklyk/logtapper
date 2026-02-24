@@ -1,7 +1,7 @@
 import type { ViewLine, LineWindow } from '../bridge/types';
 import type { DataSource } from './DataSource';
 import type { WritableViewCache } from '../cache';
-import type { DataSourceRegistry } from './DataSourceRegistry';
+import type { DataSourceRegistrar } from './DataSourceRegistry';
 
 interface CacheDataSourceOptions {
   sessionId: string;
@@ -10,7 +10,7 @@ interface CacheDataSourceOptions {
   /** For processor view -- maps virtual index to actual file line number */
   lineNumbers?: number[];
   /** Registry for streaming push — auto-registers on create, auto-unregisters on dispose */
-  registry?: DataSourceRegistry;
+  registry?: DataSourceRegistrar;
 }
 
 /**

@@ -31,7 +31,7 @@ Action callbacks (`onViewProcessor`, `onCloseSession`, `onOpenLibrary`) must be 
 Every module directory (`cache/`, `viewport/`, `hooks/`) must have an `index.ts` barrel that defines its public API. Components and hooks outside a module must import from the barrel only, never from internal files. The barrel exports narrow interfaces and hooks — not implementation classes. Internal files import from each other directly within the same module. Test files may import internals for white-box testing.
 
 ### Current violations (migration backlog)
-The codebase currently has a single `AppContext` bundling `viewer` + `pipeline` + `stateTracker` + loose values, no `React.memo` usage, unmemoized context value in `App.tsx`, and cross-hook effects in `App.tsx`. These are known debt — new code must not add to it, and refactoring should incrementally fix it.
+The legacy `src/` codebase has a single `AppContext` bundling all state, no `React.memo` usage, unmemoized context value, and cross-hook effects in `App.tsx`. The `src-next/` rewrite follows all principles: 5 split contexts, selector hooks, event bus coordination, React.memo boundaries, and barrel exports. New code must target `src-next/`.
 
 ## Implementation Plans
 
@@ -78,13 +78,20 @@ src-tauri/src/claude/           ← Claude API client (SSE streaming), processor
 src-tauri/src/mcp_bridge.rs     ← Axum HTTP server (127.0.0.1:40404) exposing sessions to MCP clients
 ```
 
-### Frontend layout
+### Frontend modules
+
+Each module directory under `src-next/` has its own `CLAUDE.md` with architecture, public API, and gotchas. See those for module-specific details.
 
 ```
-src/bridge/       ← invoke() wrappers (commands.ts) + event listeners (events.ts) + shared types (types.ts)
-src/hooks/        ← stateful logic: useLogViewer, usePipeline, useClaude, useStateTracker, useChartData, usePaneLayout, useFilter, useBookmarks, useAnalysis, useWatches
-src/cache/        ← CacheManager (priority-based LRU) + ViewCacheHandle + CacheContext provider
-src/components/   ← React components, consume hooks only via useAppContext()
+src-next/bridge/      ← invoke() wrappers, event listeners, shared types
+src-next/context/     ← 5 split contexts + selector hooks
+src-next/hooks/       ← domain hooks (useLogViewer, usePipeline, useStateTracker) + utility hooks
+src-next/cache/       ← CacheManager (priority-based LRU) + ViewCacheHandle + CacheContext
+src-next/viewport/    ← ReadOnlyViewer, DataSource, CacheDataSource, FetchScheduler
+src-next/events/      ← typed event bus (mitt-based)
+src-next/components/  ← application components (consume state via selector hooks)
+src-next/layout/      ← structural shell (AppShell, CenterArea, ToolBar, etc.)
+src-next/ui/          ← primitive UI components (Button, Modal, Tooltip, etc.)
 ```
 
 ### Core data model
@@ -177,33 +184,9 @@ Raw lines ─► Pre-filter (tag union, Aho-Corasick, RegexSet) ─► skip unne
 
 **Always use `source.meta_at(n)` and `source.raw_line(n)` instead of direct indexing** — these adjust for eviction offset transparently.
 
-### Frontend hook ownership
+### Frontend hook ownership, cache, and streaming patterns
 
-Hooks live in `App.tsx` and are shared via `AppContext`. Access via `useAppContext()`.
-
-| Hook | Owns |
-|---|---|
-| `useLogViewer` | File loading, ADB streaming, search, stream filter, processor view mode, `selectedLineNum` |
-| `usePipeline` | Processor CRUD, pipeline runs, progress tracking, results, `adb-processor-update` subscription |
-| `useFilter` | Persistent filter sessions (create/paginate/cancel), `filter-progress` subscription |
-| `useClaude` | Chat history, streaming, API key sync (localStorage + backend) |
-| `useStateTracker` | Transition line sets, `getSnapshot`, `getTransitions`, `adb-tracker-update` subscription |
-| `useChartData` | On-demand chart fetching (keyed by `sessionId:processorId`) |
-| `usePaneLayout` | Multi-pane layout, sidebar/panel sizing |
-| `useBookmarks` | Bookmark CRUD, `bookmark-update` subscription |
-| `useAnalysis` | Analysis artifact CRUD, `analysis-update` subscription |
-| `useWatches` | Watch lifecycle, `watch-match` subscription |
-
-**CacheManager:** Each `PaneContent` allocates a `ViewCacheHandle` via `useViewCache(viewId, sessionId)`. During streaming, `handleAdbBatch` calls `cacheManager.broadcastToSession()` to write lines into ALL handles for the session (multi-consumer). During file mode, `LogViewer` fetches on demand. The `fileCacheBudget` setting controls the global budget. **Session ID is always `"default"`** — both file and stream use the same ID. Stale data across transitions is handled by `clearSession()` in `resetSessionState` + `isStreaming` dep in LogViewer's `visibleLinesRef` reset. Do NOT put a generation counter in the `viewId` — it causes a race where early stream batches go to the old handle before PaneContent re-renders.
-
-### High-frequency streaming UI patterns
-
-Components that update on every ADB batch (~50ms) require explicit stabilization:
-
-- **`useRef` for imperative guards** — timestamps, scroll positions, "has-fetched" flags belong in refs, not state.
-- **Functional setState with referential bail-out** — return `prev` reference when data is unchanged to skip re-renders.
-- **`hasDataRef` for skeleton suppression** — show skeletons only on first fetch; subsequent fetches are silent.
-- **Programmatic scroll flag** — `programmaticScrollRef` is set `true` before every `el.scrollTop = el.scrollHeight` assignment. `onScroll` checks and clears it so it can distinguish our scrolls from user scrollbar drags. Do NOT use `requestAnimationFrame` for scroll deferral — WebView2 does not guarantee scroll events fire before rAF callbacks.
+See `src-next/hooks/CLAUDE.md` for the hook ownership table, domain hook patterns, and high-frequency streaming stabilization techniques. See `src-next/cache/CLAUDE.md` for CacheManager architecture, budget allocation, and common mistakes.
 
 ### Known bugs
 

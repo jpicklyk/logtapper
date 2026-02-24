@@ -1,7 +1,6 @@
 import { memo, useState, useCallback } from 'react';
-import type { AppSettings, UseSettingsResult } from '../../hooks/useSettings';
-import { SETTING_DEFAULTS } from '../../hooks/useSettings';
-import type { UseAnonymizerConfigResult } from '../../hooks/useAnonymizerConfig';
+import type { AppSettings, UseSettingsResult, UseAnonymizerConfigResult } from '../../hooks';
+import { SETTING_DEFAULTS } from '../../hooks';
 import css from './SettingsPanel.module.css';
 
 type SettingsTab = 'general' | 'pii';

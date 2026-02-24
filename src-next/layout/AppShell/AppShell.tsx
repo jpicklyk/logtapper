@@ -24,7 +24,7 @@ import type {
   CenterPane,
   LeftPaneTab,
   BottomTabType,
-} from '../../hooks/useWorkspaceLayout';
+} from '../../hooks';
 import styles from './AppShell.module.css';
 
 interface AppShellProps {
