@@ -61,7 +61,7 @@ Key: `broadcastToSession` stores lines in ViewCacheHandle. `pushStreamingLines` 
 | Component | Role | Stores ViewLine? |
 |---|---|---|
 | `CacheManager` | Budget distribution, view lifecycle, session broadcast | NO (delegates to ViewCacheHandle) |
-| `ViewCacheHandle` | Bounded LRU Map keyed by line number | **YES — the only store** |
+| `ViewCacheHandle` | Bounded LRU (doubly-linked list + Map) keyed by line number. All ops O(1). | **YES — the only store** |
 | `CacheDataSource` | Stateless facade: lookup, fetch-on-miss, streaming notification | NO |
 | `DataSourceRegistry` | Routes streaming push to all CacheDataSources for a session | NO |
 | `FetchScheduler` | Velocity-aware debounce, computes viewport + prefetch ranges | NO |
@@ -81,7 +81,9 @@ Key: `broadcastToSession` stores lines in ViewCacheHandle. `pushStreamingLines` 
 
 Single-view optimization: if only one view exists, it gets 100% of the budget.
 
-Minimum floor: every view is guaranteed at least 2,000 lines regardless of budget math.
+Minimum floor: every view is guaranteed at least 2,000 lines (`MIN_FLOOR`) regardless of budget math. When many non-focused views get clamped up to the floor, the overshoot is absorbed by reducing the focused view's allocation (down to its own `MIN_FLOOR`). This prevents the sum of actual allocations from exceeding the total budget.
+
+`CacheProvider` accepts a `budget` prop that is reactive — changing it calls `setTotalBudget()` and redistributes immediately.
 
 ## Common Mistakes to Avoid
 
@@ -95,11 +97,13 @@ Minimum floor: every view is guaranteed at least 2,000 lines regardless of budge
 
 5. **Creating a "visible lines" Map in ReadOnlyViewer.** Previous versions had a `visibleLinesRef` that accumulated lines without eviction. This was removed. The cacheVersion counter + `dataSource.getLine()` pattern replaces it.
 
+6. **Calling `allocateView`/`releaseView` directly from components.** Always use `useViewCache(viewId, sessionId)` — it handles allocation, re-allocation on viewId change, and cleanup on unmount automatically. Calling `allocateView` without a matching `releaseView` creates ghost handles that consume budget indefinitely.
+
 ## Adding New Views or Data Paths
 
 When adding a new component that displays log lines:
 
-1. Use `useViewCache(viewId, sessionId)` to get a ViewCacheHandle from CacheManager
+1. Use `useViewCache(viewId, sessionId)` to get a ViewCacheHandle from CacheManager. It auto-releases on unmount and re-allocates when viewId changes — no manual cleanup needed.
 2. Create a `CacheDataSource` via `createCacheDataSource({ sessionId, viewCache, fetchLines, registry })`
 3. Pass the CacheDataSource to `ReadOnlyViewer` (or use `dataSource.getLine()` directly)
 4. Call `useCacheFocus(viewId)` if this view should get priority budget when active
