@@ -829,16 +829,21 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
       }
     };
 
-    const onSessionClosed = (e: { sourceType: string; paneId: string }) => {
+    const onSessionClosed = (e: { sourceType: string; paneId: string; tabId?: string }) => {
       if (e.sourceType === 'Bugreport') {
         setLeftPaneTabRaw('state');
       }
-      // Reset the logviewer tab label in the closed pane so the stale filename
-      // doesn't persist in localStorage and reappear after a refresh.
+      // Reset the closed tab's label so the stale filename doesn't persist in
+      // localStorage and reappear after a refresh.
+      // When a tabId is provided, target that specific tab. If the tab was already
+      // removed from the tree (normal tab-close path), the find returns undefined
+      // and this becomes a no-op — preventing the remaining tab from being renamed.
       setCenterTree((prev) => {
         const leaf = findLeafByPaneId(prev, e.paneId);
         if (!leaf) return prev;
-        const logviewerTab = leaf.pane.tabs.find((t) => t.type === 'logviewer');
+        const logviewerTab = e.tabId
+          ? leaf.pane.tabs.find((t) => t.id === e.tabId)
+          : leaf.pane.tabs.find((t) => t.type === 'logviewer');
         if (!logviewerTab || logviewerTab.label === TAB_LABELS.logviewer) return prev;
         const next = updateLeaf(prev, e.paneId, (pane) => ({
           ...pane,

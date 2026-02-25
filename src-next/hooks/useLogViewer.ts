@@ -800,7 +800,7 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
       terminateSession(sessionId);
     }
 
-    bus.emit('session:closed', { sessionId, paneId: targetPaneId, sourceType });
+    bus.emit('session:closed', { sessionId, paneId: targetPaneId, sourceType, tabId });
   }, [focusedPaneId, resetSessionState, stopStream,
       setIndexingProgressCtx, unregisterSession, terminateSession]);
 
