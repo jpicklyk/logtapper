@@ -2,11 +2,11 @@ import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import type { SearchQuery } from '../bridge/types';
 
 export interface ActionsContextValue {
-  loadFile: (path: string) => Promise<void>;
+  loadFile: (path: string, paneId?: string) => Promise<void>;
   openFileDialog: () => Promise<void>;
   startStream: (deviceId?: string) => Promise<void>;
   stopStream: () => Promise<void>;
-  closeSession: () => void;
+  closeSession: (paneId?: string) => Promise<void>;
   runPipeline: () => Promise<void>;
   stopPipeline: () => void;
   clearResults: () => void;
@@ -17,17 +17,19 @@ export interface ActionsContextValue {
   jumpToMatch: (direction: 1 | -1) => void;
   setSearch: (query: SearchQuery | null) => void;
   openTab: (type: string) => void;
+  /** Focus a specific pane, updating SessionContext and emitting session:focused. */
+  setFocusedPane: (paneId: string) => void;
 }
 
 const noop = () => { /* stub */ };
 const noopAsync = () => Promise.resolve();
 
 const DEFAULT_ACTIONS: ActionsContextValue = {
-  loadFile: (_path: string) => noopAsync(),
+  loadFile: (_path: string, _paneId?: string) => noopAsync(),
   openFileDialog: () => noopAsync(),
   startStream: (_deviceId?: string) => noopAsync(),
   stopStream: () => noopAsync(),
-  closeSession: noop,
+  closeSession: (_paneId?: string) => noopAsync(),
   runPipeline: () => noopAsync(),
   stopPipeline: noop,
   clearResults: noop,
@@ -38,6 +40,7 @@ const DEFAULT_ACTIONS: ActionsContextValue = {
   jumpToMatch: (_direction: 1 | -1) => noop(),
   setSearch: (_query: SearchQuery | null) => noop(),
   openTab: (_type: string) => noop(),
+  setFocusedPane: (_paneId: string) => noop(),
 };
 
 const ActionsContext = createContext<ActionsContextValue | null>(null);

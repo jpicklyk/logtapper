@@ -1,6 +1,6 @@
 import { useCallback, useRef, useEffect } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { ProcessorSummary, PipelineRunSummary, PipelineProgress, AdbProcessorUpdate } from '../bridge/types';
+import type { PipelineProgress, AdbProcessorUpdate } from '../bridge/types';
 import {
   listProcessors,
   loadProcessorYaml,
@@ -10,14 +10,10 @@ import {
   getProcessorVars,
   setMcpAnonymize,
 } from '../bridge/commands';
-import { arrayMove } from '@dnd-kit/sortable';
 import { usePipelineContext } from '../context/PipelineContext';
 import { bus } from '../events/bus';
 
 const LS_KEY = 'logtapper_pipeline_chain';
-
-/** Processors that must always stay at the end of the chain. */
-const PINNED_TAIL_IDS = new Set(['__pii_anonymizer']);
 
 function loadChainFromStorage(validIds: Set<string>): string[] {
   try {
@@ -47,36 +43,29 @@ export interface PipelineActions {
 }
 
 export function usePipeline(): PipelineActions {
-  const {
-    setProcessors,
-    setPipelineChain,
-    setActiveProcessorIds,
-    setRunning,
-    setProgress,
-    setLastResults,
-    setRunCount,
-    setError,
-    pipelineChain,
-  } = usePipelineContext();
+  const { processors, pipelineChain, runCount, dispatch } = usePipelineContext();
+
+  // Refs for stable access in callbacks without stale closures
+  const processorsRef = useRef(processors);
+  useEffect(() => { processorsRef.current = processors; }, [processors]);
+
+  const pipelineChainRef = useRef(pipelineChain);
+  useEffect(() => { pipelineChainRef.current = pipelineChain; }, [pipelineChain]);
+
+  const runCountRef = useRef(runCount);
+  useEffect(() => { runCountRef.current = runCount; }, [runCount]);
 
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const adbProcUnlistenRef = useRef<UnlistenFn | null>(null);
   const chainInitializedRef = useRef(false);
-  // Local ref for pipelineChain to avoid stale closure in callbacks
-  const pipelineChainRef = useRef(pipelineChain);
-  useEffect(() => { pipelineChainRef.current = pipelineChain; }, [pipelineChain]);
 
-  // Persist chain to localStorage whenever it changes (after initialization)
+  // Persist chain to localStorage and sync MCP anonymize flag whenever chain changes
   useEffect(() => {
     if (!chainInitializedRef.current) return;
     localStorage.setItem(LS_KEY, JSON.stringify(pipelineChain));
-    // Also update activeProcessorIds from chain
-    setActiveProcessorIds([...pipelineChain]);
-    // Emit chain-changed bus event
     bus.emit('pipeline:chain-changed', { chain: pipelineChain });
-  }, [pipelineChain, setActiveProcessorIds]);
+  }, [pipelineChain]);
 
-  // Sync MCP anonymization flag whenever the chain changes
   useEffect(() => {
     if (!chainInitializedRef.current) return;
     setMcpAnonymize(pipelineChain.includes('__pii_anonymizer')).catch(() => {});
@@ -87,7 +76,7 @@ export function usePipeline(): PipelineActions {
     let cancelled = false;
     listen<PipelineProgress>('pipeline-progress', (event) => {
       if (cancelled) return;
-      setProgress({ current: event.payload.linesProcessed, total: event.payload.totalLines });
+      dispatch({ type: 'run:progress', current: event.payload.linesProcessed, total: event.payload.totalLines });
     }).then((fn) => {
       if (cancelled) fn();
       else unlistenRef.current = fn;
@@ -96,10 +85,10 @@ export function usePipeline(): PipelineActions {
       cancelled = true;
       unlistenRef.current?.();
     };
-  }, [setProgress]);
+  }, [dispatch]);
 
-  // Subscribe to adb-processor-update events (continuous streaming runs).
-  // lastResults is updated immediately. runCount is THROTTLED to at most once per 2s.
+  // Subscribe to adb-processor-update events.
+  // Results are updated immediately; runCount is throttled to at most once per 2s.
   const streamRunCountTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingRunCountBumpRef = useRef(false);
 
@@ -108,27 +97,15 @@ export function usePipeline(): PipelineActions {
     listen<AdbProcessorUpdate>('adb-processor-update', (event) => {
       if (cancelled) return;
       const { processorId, matchedLines, emissionCount } = event.payload;
-      setLastResults((prev: unknown[]) => {
-        const typedPrev = prev as PipelineRunSummary[];
-        const existing = typedPrev.find((r) => r.processorId === processorId);
-        const without = typedPrev.filter((r) => r.processorId !== processorId);
-        return [
-          ...without,
-          {
-            processorId,
-            matchedLines: (existing?.matchedLines ?? 0) + matchedLines,
-            emissionCount: (existing?.emissionCount ?? 0) + emissionCount,
-          },
-        ];
-      });
-      // Throttle runCount
+      dispatch({ type: 'adb:results-update', processorId, matchedLines, emissionCount });
+      // Throttle runCount bump to at most once per 2s
       pendingRunCountBumpRef.current = true;
       if (!streamRunCountTimerRef.current) {
         streamRunCountTimerRef.current = setTimeout(() => {
           streamRunCountTimerRef.current = null;
           if (pendingRunCountBumpRef.current) {
             pendingRunCountBumpRef.current = false;
-            setRunCount((n: number) => n + 1);
+            dispatch({ type: 'adb:run-count-bump' });
           }
         }, 2000);
       }
@@ -144,140 +121,113 @@ export function usePipeline(): PipelineActions {
         streamRunCountTimerRef.current = null;
       }
     };
-  }, [setLastResults, setRunCount]);
+  }, [dispatch]);
 
   // Subscribe to session:pre-load to auto-clear results
   useEffect(() => {
-    const handlePreLoad = () => {
-      setLastResults([]);
-      setProgress(null);
-      setError(null);
-    };
+    const handlePreLoad = () => { dispatch({ type: 'pre-load:cleared' }); };
     bus.on('session:pre-load', handlePreLoad);
     return () => { bus.off('session:pre-load', handlePreLoad); };
-  }, [setLastResults, setProgress, setError]);
+  }, [dispatch]);
 
   const loadProcessors = useCallback(async () => {
     try {
       const list = await listProcessors();
-      setProcessors(list);
-      // Initialize chain from localStorage on first load
       if (!chainInitializedRef.current) {
         chainInitializedRef.current = true;
         const validIds = new Set(list.map((p) => p.id));
-        const saved = loadChainFromStorage(validIds);
-        setPipelineChain(saved);
+        const initialChain = loadChainFromStorage(validIds);
+        dispatch({ type: 'processors:loaded', processors: list, initialChain });
+      } else {
+        dispatch({ type: 'processors:loaded', processors: list });
       }
     } catch (e) {
-      setError(String(e));
+      dispatch({ type: 'error:set', error: String(e) });
     }
-  }, [setProcessors, setPipelineChain, setError]);
+  }, [dispatch]);
 
   const installFromYaml = useCallback(async (yaml: string) => {
-    setError(null);
+    dispatch({ type: 'error:clear' });
     try {
-      const summary = await loadProcessorYaml(yaml);
-      setProcessors((prev: ProcessorSummary[]) => {
-        const without = prev.filter((p) => p.id !== summary.id);
-        return [...without, summary].sort((a, b) => a.name.localeCompare(b.name));
-      });
+      const processor = await loadProcessorYaml(yaml);
+      dispatch({ type: 'processor:installed', processor });
     } catch (e) {
-      setError(String(e));
+      dispatch({ type: 'error:set', error: String(e) });
       throw e;
     }
-  }, [setProcessors, setError]);
+  }, [dispatch]);
 
   const removeProcessor = useCallback(async (id: string) => {
     try {
       await uninstallProcessor(id);
-      setProcessors((prev: ProcessorSummary[]) => prev.filter((p) => p.id !== id));
-      setPipelineChain((prev: string[]) => prev.filter((chainId) => chainId !== id));
+      dispatch({ type: 'processor:removed', id });
     } catch (e) {
-      setError(String(e));
+      dispatch({ type: 'error:set', error: String(e) });
     }
-  }, [setProcessors, setPipelineChain, setError]);
+  }, [dispatch]);
 
   const addToChain = useCallback((id: string) => {
-    setPipelineChain((prev: string[]) => {
-      if (prev.includes(id)) return prev;
-      if (PINNED_TAIL_IDS.has(id)) {
-        return [...prev, id];
-      }
-      const firstPinnedIdx = prev.findIndex((x) => PINNED_TAIL_IDS.has(x));
-      if (firstPinnedIdx !== -1) {
-        return [...prev.slice(0, firstPinnedIdx), id, ...prev.slice(firstPinnedIdx)];
-      }
-      return [...prev, id];
-    });
-  }, [setPipelineChain]);
+    dispatch({ type: 'chain:add', id });
+  }, [dispatch]);
 
   const removeFromChain = useCallback((id: string) => {
-    setPipelineChain((prev: string[]) => prev.filter((chainId) => chainId !== id));
-  }, [setPipelineChain]);
+    dispatch({ type: 'chain:remove', id });
+  }, [dispatch]);
 
   const reorderChain = useCallback((fromIndex: number, toIndex: number) => {
-    setPipelineChain((prev: string[]) => {
-      if (PINNED_TAIL_IDS.has(prev[fromIndex])) return prev;
-      const firstPinnedIdx = prev.findIndex((x) => PINNED_TAIL_IDS.has(x));
-      const clampedTo =
-        firstPinnedIdx !== -1 ? Math.min(toIndex, firstPinnedIdx - 1) : toIndex;
-      return arrayMove(prev, fromIndex, clampedTo);
-    });
-  }, [setPipelineChain]);
+    dispatch({ type: 'chain:reorder', fromIndex, toIndex });
+  }, [dispatch]);
 
   const toggleProcessor = useCallback((id: string) => {
-    setPipelineChain((prev: string[]) => {
-      if (prev.includes(id)) return prev.filter((chainId) => chainId !== id);
-      return [...prev, id];
-    });
-  }, [setPipelineChain]);
+    // Implemented via add/remove to keep logic in the reducer
+    dispatch(pipelineChainRef.current.includes(id)
+      ? { type: 'chain:remove', id }
+      : { type: 'chain:add', id });
+  }, [dispatch]);
 
   const run = useCallback(
     async (sessionId: string, anonymize = false) => {
       const chain = pipelineChainRef.current;
       if (chain.length === 0) return;
-      setRunning(true);
-      setProgress(null);
-      setError(null);
+      dispatch({ type: 'run:started' });
       try {
         const results = await runPipeline(sessionId, chain, anonymize);
-        setLastResults(results as unknown[]);
-        setRunCount((n: number) => n + 1);
-        // Emit pipeline:completed for downstream consumers (e.g. state tracker)
+        // Compute newRunCount before dispatching — the reducer will set runCount to this value.
+        const newRunCount = runCountRef.current + 1;
+        dispatch({ type: 'run:complete', results, newRunCount });
+
+        // Determine which processor types are active in this run
+        const chainSet = new Set(chain);
+        const activeProcessors = processorsRef.current.filter((p) => chainSet.has(p.id));
         bus.emit('pipeline:completed', {
           sessionId,
-          runCount: 0, // will be set by the context
-          hasTrackers: true,
-          hasReporters: true,
-          hasCorrelators: true,
+          runCount: newRunCount,
+          hasTrackers: activeProcessors.some((p) => p.processorType === 'state_tracker'),
+          hasReporters: activeProcessors.some((p) => p.processorType === 'reporter'),
+          hasCorrelators: activeProcessors.some((p) => p.processorType === 'correlator'),
         });
       } catch (e) {
-        setError(String(e));
-      } finally {
-        setRunning(false);
+        dispatch({ type: 'run:failed', error: String(e) });
       }
     },
-    [setRunning, setProgress, setError, setLastResults, setRunCount],
+    [dispatch],
   );
 
   const clearResults = useCallback(() => {
-    setLastResults([]);
-    setProgress(null);
+    dispatch({ type: 'results:cleared' });
     bus.emit('pipeline:cleared', undefined);
-  }, [setLastResults, setProgress]);
+  }, [dispatch]);
 
   const stop = useCallback(async () => {
     try {
       await stopPipeline();
     } finally {
-      setRunning(false);
+      dispatch({ type: 'run:stopped' });
     }
-  }, [setRunning]);
+  }, [dispatch]);
 
   const getVars = useCallback(
-    async (sessionId: string, processorId: string) => {
-      return getProcessorVars(sessionId, processorId);
-    },
+    async (sessionId: string, processorId: string) => getProcessorVars(sessionId, processorId),
     [],
   );
 

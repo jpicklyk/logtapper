@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
-import type { SearchQuery, SearchProgress, LoadResult, AdbBatchPayload, LineWindow } from '../bridge/types';
+import type { SearchQuery, SearchProgress, LoadResult, AdbBatchPayload, LineWindow, SourceType } from '../bridge/types';
 import {
   loadLogFile,
   getLines,
@@ -29,9 +29,11 @@ import { useViewerContext } from '../context/ViewerContext';
 import { bus } from '../events/bus';
 
 const LS_LAST_FILE = 'logtapper_last_file';
+/** Synthetic pane ID used for startup restore when no pane is focused yet. */
+const DEFAULT_PANE_ID = 'primary';
 
 export interface LogViewerActions {
-  loadFile: (path: string) => Promise<void>;
+  loadFile: (path: string, paneId?: string) => Promise<void>;
   startStream: (deviceId?: string, packageFilter?: string, activeProcessorIds?: string[], maxRawLines?: number) => Promise<void>;
   stopStream: () => Promise<void>;
   setStreamFilter: (expr: string) => Promise<void>;
@@ -44,26 +46,30 @@ export interface LogViewerActions {
   jumpToEnd: () => void;
   setProcessorView: (processorId: string) => void;
   clearProcessorView: () => void;
-  closeSession: () => Promise<void>;
+  closeSession: (paneId?: string) => Promise<void>;
+  /** Non-null while background file indexing is in progress (focused session). */
+  indexingProgress: { percent: number; indexedLines: number } | null;
   /** Current parsed filter state for file-mode filter scans */
   filterScanning: boolean;
   filteredLineNums: number[] | null;
   filterParseError: string | null;
-  /** Non-null while background file indexing is in progress. */
-  indexingProgress: { percent: number; indexedLines: number } | null;
   /** Current time range filter results */
   timeFilterLineNums: number[] | null;
 }
 
 export function useLogViewer(cacheManager: CacheController, registry: StreamPusher): LogViewerActions {
-  // -- Context setters --
+  // -- Session registry (new API) --
   const {
-    session, setSession,
-    setSessionGeneration,
-    setIsStreaming,
-    setLoading,
-    setError,
+    sessions,
+    paneSessionMap,
+    focusedPaneId,
+    registerSession,
+    unregisterSession,
+    updateSession,
+    setLoadingPane,
+    setErrorPane,
     setIndexingProgress: setIndexingProgressCtx,
+    setStreamingSession,
   } = useSessionContext();
 
   const {
@@ -78,23 +84,35 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     setTimeFilterEnd: setTimeFilterEndCtx,
   } = useViewerContext();
 
-  // -- Local state for filter scanning (not in context) --
+  // -- Local state for filter scanning and display progress --
   const [filterScanning, setFilterScanning] = useState(false);
   const [filteredLineNums, setFilteredLineNums] = useState<number[] | null>(null);
   const [filterParseError, setFilterParseError] = useState<string | null>(null);
-  const [indexingProgress, setIndexingProgress] = useState<{ percent: number; indexedLines: number } | null>(null);
+  /** UI-facing progress (percent + lines) for the focused session's indexing. */
+  const [indexingProgress, setIndexingProgressLocal] = useState<{ percent: number; indexedLines: number } | null>(null);
   const [timeFilterLineNums, setTimeFilterLineNums] = useState<number[] | null>(null);
 
-  // -- Refs for stable callback access --
+  // -- Stable refs --
+
+  /**
+   * sessionRef always points to the focused pane's session.
+   * Updated synchronously on each render (no useState needed — just a ref for callbacks).
+   */
   const sessionRef = useRef<LoadResult | null>(null);
+  // Compute and sync on every render (synchronous — no extra renders caused)
+  const focusedSessionId = focusedPaneId ? paneSessionMap.get(focusedPaneId) : undefined;
+  const focusedSession = focusedSessionId ? (sessions.get(focusedSessionId) ?? null) : null;
+  sessionRef.current = focusedSession;
+
   const searchRef = useRef<SearchQuery | null>(null);
   const processorIdRef = useRef<string | null>(null);
+
+  /** paneId the active ADB stream belongs to. */
+  const streamingPaneIdRef = useRef<string | null>(null);
+  /** sessionId the active ADB stream belongs to. */
+  const streamingSessionIdRef = useRef<string | null>(null);
   const isStreamingRef = useRef(false);
 
-  // Keep session ref in sync
-  useEffect(() => { sessionRef.current = session; }, [session]);
-
-  // Filter refs
   const filterAstRef = useRef<FilterNode | null>(null);
   const packagePidsRef = useRef<Map<string, number[]>>(new Map());
   const streamDeviceSerialRef = useRef<string | null>(null);
@@ -115,8 +133,8 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
   }, []);
 
   const resetSessionState = useCallback(() => {
-    const sid = sessionRef.current?.sessionId;
-    if (sid) cacheManager.clearSession(sid);
+    const sess = sessionRef.current;
+    if (sess) cacheManager.clearSession(sess.sessionId);
     setSearch(null);
     searchRef.current = null;
     setSearchSummary(null);
@@ -136,23 +154,19 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
       setStreamFilterCtx, setTimeFilterStartCtx, setTimeFilterEndCtx]);
 
   const handleAdbBatch = useCallback((payload: AdbBatchPayload) => {
-    if (payload.sessionId !== sessionRef.current?.sessionId) return;
+    // Only handle batches for the active stream's session
+    if (payload.sessionId !== streamingSessionIdRef.current) return;
 
-    // Populate ViewCacheHandle LRU for all handles on this session
     cacheManager.broadcastToSession(payload.sessionId, payload.lines);
-    // Fire onAppend listeners on all CacheDataSources for this session (tail-mode)
     registry.pushToSession(payload.sessionId, payload.lines, payload.totalLines);
 
-    setSession((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        totalLines: payload.totalLines,
-        fileSize: payload.byteCount,
-        firstTimestamp: prev.firstTimestamp ?? payload.firstTimestamp,
-        lastTimestamp: payload.lastTimestamp,
-      };
-    });
+    updateSession(payload.sessionId, (prev) => ({
+      ...prev,
+      totalLines: payload.totalLines,
+      fileSize: payload.byteCount,
+      firstTimestamp: prev.firstTimestamp ?? payload.firstTimestamp,
+      lastTimestamp: payload.lastTimestamp,
+    }));
 
     // Incremental filter: check only new lines from this batch
     const ast = filterAstRef.current;
@@ -165,11 +179,8 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
         setFilteredLineNums((prev) => [...(prev ?? []), ...newMatches]);
       }
     }
-  }, [cacheManager, registry, setSession]);
+  }, [cacheManager, registry, updateSession]);
 
-  /**
-   * Parse and apply a composable filter expression.
-   */
   const setStreamFilter = useCallback(async (expr: string) => {
     setStreamFilterCtx(expr);
     const gen = ++filterScanGenRef.current;
@@ -200,7 +211,6 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
 
     filterAstRef.current = ast;
 
-    // Resolve package: atoms to PIDs
     const packageNames = extractPackageNames(ast);
     const serial = streamDeviceSerialRef.current;
     if (serial && packageNames.length > 0) {
@@ -220,7 +230,6 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     const pids = packagePidsRef.current;
 
     if (isStreamingRef.current) {
-      // Streaming mode: scan CacheManager session entries
       const nums: number[] = [];
       const sess = sessionRef.current;
       if (sess) {
@@ -231,7 +240,6 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
       nums.sort((a, b) => a - b);
       setFilteredLineNums(nums);
     } else {
-      // File mode: scan the file in batches
       const sess = sessionRef.current;
       if (!sess) return;
 
@@ -246,7 +254,6 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
           setFilterScanning(false);
           return;
         }
-
         try {
           const window = await getLines({
             sessionId: sess.sessionId,
@@ -257,9 +264,7 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
           });
           total = window.totalLines;
           for (const line of window.lines) {
-            if (matchesFilter(ast, line, pids)) {
-              matches.push(line.lineNum);
-            }
+            if (matchesFilter(ast, line, pids)) matches.push(line.lineNum);
           }
           offset += window.lines.length;
           if (window.lines.length === 0) break;
@@ -274,9 +279,6 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     }
   }, [cacheManager, setStreamFilterCtx]);
 
-  /**
-   * Apply a time-of-day range filter.
-   */
   const setTimeFilter = useCallback(async (start: string, end: string) => {
     setTimeFilterStartCtx(start);
     setTimeFilterEndCtx(end);
@@ -306,9 +308,6 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     }
   }, [setTimeFilterStartCtx, setTimeFilterEndCtx]);
 
-  /**
-   * Fetch lines from the backend for file mode rendering.
-   */
   const fetchLines = useCallback((offset: number, count: number): Promise<LineWindow> => {
     const sess = sessionRef.current;
     if (!sess) return Promise.resolve({ totalLines: 0, lines: [] });
@@ -330,47 +329,82 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
   }, []);
 
   const loadingGuardRef = useRef(false);
-  const loadFile = useCallback(async (path: string) => {
+
+  const loadFile = useCallback(async (path: string, paneId?: string) => {
     if (loadingGuardRef.current) return;
     loadingGuardRef.current = true;
 
-    // Emit pre-load event (replaces onBeforeLoad callback)
+    const targetPaneId = paneId ?? focusedPaneId ?? DEFAULT_PANE_ID;
+
     bus.emit('session:pre-load', undefined);
 
-    // Clean up any active stream first
-    adbBatchUnlistenRef.current?.();
-    adbBatchUnlistenRef.current = null;
-    adbStoppedUnlistenRef.current?.();
-    adbStoppedUnlistenRef.current = null;
-    setIsStreaming(false);
-    isStreamingRef.current = false;
+    // Clean up any active stream on this pane
+    if (streamingPaneIdRef.current === targetPaneId) {
+      adbBatchUnlistenRef.current?.();
+      adbBatchUnlistenRef.current = null;
+      adbStoppedUnlistenRef.current?.();
+      adbStoppedUnlistenRef.current = null;
+      if (streamingSessionIdRef.current) {
+        setStreamingSession(streamingSessionIdRef.current, false);
+      }
+      isStreamingRef.current = false;
+      streamingPaneIdRef.current = null;
+      streamingSessionIdRef.current = null;
+    }
 
-    setIndexingProgress(null);
-    setIndexingProgressCtx(null);
-    setLoading(true);
-    setError(null);
+    setLoadingPane(targetPaneId, true);
+    setErrorPane(targetPaneId, null);
+    setIndexingProgressLocal(null);
     resetSessionState();
+
     try {
       const result = await loadLogFile(path);
-      setSessionGeneration((g) => g + 1);
-      setSession(result);
-      sessionRef.current = result;
+
+      registerSession(targetPaneId, result);
+
+      // If result is still indexing, set a sentinel so useFileInfo waits for completion.
+      if (result.isIndexing) {
+        setIndexingProgressCtx(result.sessionId, { linesIndexed: 0, totalLines: 0, done: false });
+      }
+
+      setLoadingPane(targetPaneId, false);
+
       try { localStorage.setItem(LS_LAST_FILE, path); } catch { /* storage full */ }
-      setLoading(false);
-      // Emit session:loaded
+
+      // Auto-focus: emitting session:focused updates both SessionContext and WorkspaceLayout.
+      bus.emit('session:focused', { sessionId: result.sessionId, paneId: targetPaneId });
       bus.emit('session:loaded', {
         sourceName: result.sourceName,
-        sourceType: result.sourceType,
+        sourceType: result.sourceType as SourceType,
         sessionId: result.sessionId,
+        paneId: targetPaneId,
       });
+
+      // Source-type-specific events
+      if (result.sourceType === 'Bugreport') {
+        bus.emit('session:dumpstate:opened', {
+          sessionId: result.sessionId,
+          paneId: targetPaneId,
+          sourceName: result.sourceName,
+        });
+      } else if (result.sourceType === 'Logcat') {
+        bus.emit('session:logcat:opened', {
+          sessionId: result.sessionId,
+          paneId: targetPaneId,
+          sourceName: result.sourceName,
+        });
+      }
     } catch (e) {
       try { localStorage.removeItem(LS_LAST_FILE); } catch { /* ignore */ }
-      setError(String(e));
-      setLoading(false);
+      setErrorPane(targetPaneId, String(e));
+      setLoadingPane(targetPaneId, false);
     } finally {
       loadingGuardRef.current = false;
     }
-  }, [resetSessionState, setIsStreaming, setLoading, setError, setSession, setSessionGeneration, setIndexingProgressCtx]);
+  }, [
+    focusedPaneId, registerSession, setLoadingPane, setErrorPane,
+    setIndexingProgressCtx, setStreamingSession, resetSessionState,
+  ]);
 
   // Wire up Tauri file drag-and-drop (StrictMode-safe)
   useEffect(() => {
@@ -408,16 +442,24 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
 
     onFileIndexProgress((payload) => {
       if (cancelled) return;
-      if (payload.sessionId !== sessionRef.current?.sessionId) return;
+      // Update whichever session is indexing (could be any pane)
+      updateSession(payload.sessionId, (prev) => ({
+        ...prev,
+        totalLines: payload.indexedLines,
+      }));
       const percent = payload.totalBytes > 0
         ? (payload.bytesScanned / payload.totalBytes) * 100
         : 0;
-      setIndexingProgress({ percent, indexedLines: payload.indexedLines });
-      setIndexingProgressCtx({ linesIndexed: payload.indexedLines, totalLines: 0, done: false });
-      setSession((prev) => {
-        if (!prev || prev.sessionId !== payload.sessionId) return prev;
-        return { ...prev, totalLines: payload.indexedLines };
+      // Update context progress for useFileInfo reactive dep
+      setIndexingProgressCtx(payload.sessionId, {
+        linesIndexed: payload.indexedLines,
+        totalLines: payload.totalBytes > 0 ? payload.totalBytes : 0,
+        done: false,
       });
+      // Update local UI progress only for the focused session
+      if (payload.sessionId === sessionRef.current?.sessionId) {
+        setIndexingProgressLocal({ percent, indexedLines: payload.indexedLines });
+      }
     }).then((fn) => {
       if (cancelled) fn();
       else unlistenProgress = fn;
@@ -425,13 +467,24 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
 
     onFileIndexComplete((payload) => {
       if (cancelled) return;
-      if (payload.sessionId !== sessionRef.current?.sessionId) return;
-      setSession((prev) => {
-        if (!prev || prev.sessionId !== payload.sessionId) return prev;
-        return { ...prev, totalLines: payload.totalLines };
+      updateSession(payload.sessionId, (prev) => ({
+        ...prev,
+        totalLines: payload.totalLines,
+        isIndexing: false,
+      }));
+      // Signal completion — null means "done"
+      setIndexingProgressCtx(payload.sessionId, null);
+      if (payload.sessionId === sessionRef.current?.sessionId) {
+        setIndexingProgressLocal(null);
+      }
+      // Emit generic and source-type-specific indexing-complete events
+      bus.emit('session:indexing-complete', {
+        sessionId: payload.sessionId,
+        totalLines: payload.totalLines,
       });
-      setIndexingProgress(null);
-      setIndexingProgressCtx(null);
+      // Find the session to determine source type
+      // (sessions Map is read via closure — will have the latest value at call time)
+      // We emit dumpstate:indexing-complete if the session is a Bugreport
     }).then((fn) => {
       if (cancelled) fn();
       else unlistenComplete = fn;
@@ -442,7 +495,23 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
       unlistenProgress?.();
       unlistenComplete?.();
     };
-  }, [setSession, setIndexingProgressCtx]);
+  }, [updateSession, setIndexingProgressCtx]);
+
+  // Emit session:dumpstate:indexing-complete when indexing completes for Bugreport sessions.
+  // Separate effect so it can read the current sessions Map without stale closure.
+  useEffect(() => {
+    const handler = (e: { sessionId: string; totalLines: number }) => {
+      const sess = sessions.get(e.sessionId);
+      if (sess?.sourceType === 'Bugreport') {
+        bus.emit('session:dumpstate:indexing-complete', {
+          sessionId: e.sessionId,
+          totalLines: e.totalLines,
+        });
+      }
+    };
+    bus.on('session:indexing-complete', handler);
+    return () => { bus.off('session:indexing-complete', handler); };
+  }, [sessions]);
 
   const startStream = useCallback(async (
     deviceId?: string,
@@ -455,57 +524,73 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     adbStoppedUnlistenRef.current?.();
     adbStoppedUnlistenRef.current = null;
 
-    // Emit pre-load event
     bus.emit('session:pre-load', undefined);
 
-    setLoading(true);
-    setError(null);
+    const targetPaneId = focusedPaneId ?? DEFAULT_PANE_ID;
+    setLoadingPane(targetPaneId, true);
+    setErrorPane(targetPaneId, null);
     resetSessionState();
 
     streamDeviceSerialRef.current = deviceId ?? null;
 
     try {
       const result = await startAdbStream(deviceId, packageFilter, activeProcessorIds, maxRawLines);
-      setSessionGeneration((g) => g + 1);
-      setSession(result);
-      sessionRef.current = result;
-      setIsStreaming(true);
-      isStreamingRef.current = true;
 
-      // Subscribe to incoming line batches
+      registerSession(targetPaneId, result);
+      setStreamingSession(result.sessionId, true);
+      isStreamingRef.current = true;
+      streamingPaneIdRef.current = targetPaneId;
+      streamingSessionIdRef.current = result.sessionId;
+
       const unlistenBatch = await onAdbBatch(handleAdbBatch);
       adbBatchUnlistenRef.current = unlistenBatch;
 
-      // Subscribe to stream-stopped
       const unlistenStopped = await onAdbStreamStopped((payload) => {
-        if (payload.sessionId !== sessionRef.current?.sessionId) return;
-        setIsStreaming(false);
+        if (payload.sessionId !== streamingSessionIdRef.current) return;
+        setStreamingSession(payload.sessionId, false);
         isStreamingRef.current = false;
+        const stoppedPaneId = streamingPaneIdRef.current ?? targetPaneId;
+        streamingPaneIdRef.current = null;
+        streamingSessionIdRef.current = null;
         adbBatchUnlistenRef.current?.();
         adbBatchUnlistenRef.current = null;
-        bus.emit('stream:stopped', { sessionId: payload.sessionId });
+        bus.emit('stream:stopped', { sessionId: payload.sessionId, paneId: stoppedPaneId });
       });
       adbStoppedUnlistenRef.current = unlistenStopped;
 
-      // Emit stream:started
+      setLoadingPane(targetPaneId, false);
+
+      // Auto-focus the streaming pane
+      bus.emit('session:focused', { sessionId: result.sessionId, paneId: targetPaneId });
       bus.emit('stream:started', {
         sessionId: result.sessionId,
+        paneId: targetPaneId,
         deviceSerial: deviceId ?? '',
       });
+      bus.emit('session:logcat:opened', {
+        sessionId: result.sessionId,
+        paneId: targetPaneId,
+        sourceName: result.sourceName,
+      });
     } catch (e) {
-      setError(String(e));
-      setIsStreaming(false);
+      setErrorPane(targetPaneId, String(e));
+      setStreamingSession('', false);
       isStreamingRef.current = false;
-    } finally {
-      setLoading(false);
+      streamingPaneIdRef.current = null;
+      streamingSessionIdRef.current = null;
+      setLoadingPane(targetPaneId, false);
     }
-  }, [resetSessionState, handleAdbBatch, setLoading, setError, setSession, setSessionGeneration, setIsStreaming]);
+  }, [
+    focusedPaneId, registerSession, setLoadingPane, setErrorPane,
+    setStreamingSession, handleAdbBatch, resetSessionState,
+  ]);
 
   const stopStream = useCallback(async () => {
-    const sess = sessionRef.current;
-    if (!sess) return;
+    const sessionId = streamingSessionIdRef.current;
+    const paneId = streamingPaneIdRef.current;
+    if (!sessionId) return;
     try {
-      await stopAdbStream(sess.sessionId);
+      await stopAdbStream(sessionId);
     } catch (e) {
       console.error('Error stopping ADB stream:', e);
     }
@@ -513,10 +598,13 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     adbBatchUnlistenRef.current = null;
     adbStoppedUnlistenRef.current?.();
     adbStoppedUnlistenRef.current = null;
-    setIsStreaming(false);
+    setStreamingSession(sessionId, false);
     isStreamingRef.current = false;
-    bus.emit('stream:stopped', { sessionId: sess.sessionId });
-  }, [setIsStreaming]);
+    const stoppedPaneId = paneId ?? (focusedPaneId ?? DEFAULT_PANE_ID);
+    streamingPaneIdRef.current = null;
+    streamingSessionIdRef.current = null;
+    bus.emit('stream:stopped', { sessionId, paneId: stoppedPaneId });
+  }, [setStreamingSession, focusedPaneId]);
 
   const handleSearch = useCallback(
     async (query: SearchQuery | null) => {
@@ -541,14 +629,12 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
 
         if (payload.newMatches.length > 0) {
           accumulatedMatches.push(...payload.newMatches);
-
           setSearchSummary((prev) => ({
             totalMatches: payload.matchedSoFar,
             matchLineNums: [...accumulatedMatches],
             byLevel: prev?.byLevel ?? {},
             byTag: prev?.byTag ?? {},
           }));
-
           if (!jumpedToFirst) {
             jumpedToFirst = true;
             setScrollToLine(accumulatedMatches[0]);
@@ -619,16 +705,19 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     processorIdRef.current = null;
   }, [setProcessorId]);
 
-  const closeSession = useCallback(async () => {
-    const sess = sessionRef.current;
-    if (!sess) return;
+  const closeSession = useCallback(async (paneId?: string) => {
+    const targetPaneId = paneId ?? focusedPaneId ?? DEFAULT_PANE_ID;
+    const sessionId = paneSessionMap.get(targetPaneId);
 
-    if (isStreamingRef.current) {
+    if (!sessionId) return;
+
+    // Stop stream if this pane is streaming
+    if (streamingSessionIdRef.current === sessionId) {
       await stopStream();
     }
 
     try {
-      await closeSessionCmd(sess.sessionId);
+      await closeSessionCmd(sessionId);
     } catch (e) {
       console.error('Error closing session:', e);
     }
@@ -636,26 +725,22 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     try { localStorage.removeItem(LS_LAST_FILE); } catch { /* ignore */ }
 
     resetSessionState();
-    setSession(null);
-    sessionRef.current = null;
-    setLoading(false);
-    setError(null);
-    setIndexingProgress(null);
-    setIndexingProgressCtx(null);
-    setIsStreaming(false);
-    isStreamingRef.current = false;
-    bus.emit('session:closed', undefined);
-  }, [resetSessionState, stopStream, setSession, setLoading, setError, setIsStreaming, setIndexingProgressCtx]);
+    setIndexingProgressLocal(null);
+    setIndexingProgressCtx(sessionId, null);
+    unregisterSession(targetPaneId);
+
+    bus.emit('session:closed', { sessionId, paneId: targetPaneId });
+  }, [focusedPaneId, paneSessionMap, resetSessionState, stopStream,
+      setIndexingProgressCtx, unregisterSession]);
 
   // Subscribe to pipeline:chain-changed to update stream processors/trackers/transformers
   useEffect(() => {
     const handleChainChanged = (data: { chain: string[] }) => {
-      const sess = sessionRef.current;
-      if (!sess || !isStreamingRef.current) return;
-      // Fire-and-forget updates to the backend
-      updateStreamProcessors(sess.sessionId, data.chain).catch(() => {});
-      updateStreamTrackers(sess.sessionId, data.chain).catch(() => {});
-      updateStreamTransformers(sess.sessionId, data.chain).catch(() => {});
+      const sessionId = streamingSessionIdRef.current;
+      if (!sessionId || !isStreamingRef.current) return;
+      updateStreamProcessors(sessionId, data.chain).catch(() => {});
+      updateStreamTrackers(sessionId, data.chain).catch(() => {});
+      updateStreamTransformers(sessionId, data.chain).catch(() => {});
     };
     bus.on('pipeline:chain-changed', handleChainChanged);
     return () => { bus.off('pipeline:chain-changed', handleChainChanged); };
@@ -675,10 +760,10 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     setProcessorView,
     clearProcessorView,
     closeSession,
+    indexingProgress,
     filterScanning,
     filteredLineNums,
     filterParseError,
-    indexingProgress,
     timeFilterLineNums,
   };
 }

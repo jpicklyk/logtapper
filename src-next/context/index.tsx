@@ -1,6 +1,7 @@
 import { useMemo, useCallback, type ReactNode } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { SessionProvider } from './SessionContext';
+import { useSessionContext } from './SessionContext';
 import { ViewerProvider } from './ViewerContext';
 import { PipelineProvider } from './PipelineContext';
 import { TrackerProvider } from './TrackerContext';
@@ -17,6 +18,7 @@ import { bus } from '../events/bus';
 function HookWiring({ children }: { children: ReactNode }) {
   const cacheManager = useCacheManager();
   const registry = useDataSourceRegistry();
+  const { paneSessionMap } = useSessionContext();
   const logViewer = useLogViewer(cacheManager, registry);
 
   const openFileDialog = useCallback(async () => {
@@ -28,9 +30,17 @@ function HookWiring({ children }: { children: ReactNode }) {
       ],
     });
     if (typeof selected === 'string') {
+      // loadFile reads focusedPaneId internally; no need to pass it explicitly here
       await logViewer.loadFile(selected);
     }
   }, [logViewer.loadFile]);
+
+  // All focus changes go through the bus so SessionContext and WorkspaceLayout
+  // both update from a single emission point.
+  const setFocusedPane = useCallback((paneId: string) => {
+    const sessionId = paneSessionMap.get(paneId) ?? null;
+    bus.emit('session:focused', { sessionId, paneId });
+  }, [paneSessionMap]);
 
   const actions = useMemo<Partial<ActionsContextValue>>(() => ({
     loadFile: logViewer.loadFile,
@@ -42,8 +52,10 @@ function HookWiring({ children }: { children: ReactNode }) {
     jumpToMatch: logViewer.jumpToMatch,
     setSearch: logViewer.handleSearch,
     openTab: (type: string) => { bus.emit('layout:open-tab', { type }); },
+    setFocusedPane,
   }), [logViewer.loadFile, openFileDialog, logViewer.startStream, logViewer.stopStream,
-       logViewer.closeSession, logViewer.jumpToLine, logViewer.jumpToMatch, logViewer.handleSearch]);
+       logViewer.closeSession, logViewer.jumpToLine, logViewer.jumpToMatch,
+       logViewer.handleSearch, setFocusedPane]);
 
   return (
     <ActionsProvider actions={actions}>
@@ -71,8 +83,13 @@ export function AppProviders({ children }: { children: ReactNode }) {
 // Re-export selector hooks
 export {
   useSession,
+  useFocusedSession,
+  useSessionForPane,
+  useFocusedPaneId,
+  useIndexingProgress,
   useIsStreaming,
   useIsLoading,
+  useIsLoadingForPane,
   useSessionError,
   useSearch,
   useScrollTarget,

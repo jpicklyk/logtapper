@@ -11,7 +11,6 @@ import type {
   ChartData,
   RegistryEntry,
   DumpstateMetadata,
-  SectionInfo,
   AdbDevice,
   AnonymizerConfig,
   AnonymizerTestResult,
@@ -188,9 +187,6 @@ export function getDumpstateMetadata(sessionId: string): Promise<DumpstateMetada
   return invoke('get_dumpstate_metadata', { sessionId });
 }
 
-export function getSections(sessionId: string): Promise<SectionInfo[]> {
-  return invoke('get_sections', { sessionId });
-}
 
 // ---------------------------------------------------------------------------
 // Phase 4 — Registry

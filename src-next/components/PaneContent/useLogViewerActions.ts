@@ -1,14 +1,14 @@
 import { useCallback, useRef } from 'react';
 import type { LineWindow } from '../../bridge/types';
 import { getLines } from '../../bridge/commands';
-import { useSession, useProcessorId, useSearchQuery } from '../../context';
+import { useSessionForPane, useProcessorId, useSearchQuery } from '../../context';
 
 /**
  * Provides the fetchLines callback for file-mode rendering.
- * Encapsulates session/processor state so PaneContent doesn't need to.
+ * Uses the session associated with the given pane, not the global focused session.
  */
-export function useLogViewerActions() {
-  const session = useSession();
+export function useLogViewerActions(paneId: string) {
+  const session = useSessionForPane(paneId);
   const processorId = useProcessorId();
   const search = useSearchQuery();
 

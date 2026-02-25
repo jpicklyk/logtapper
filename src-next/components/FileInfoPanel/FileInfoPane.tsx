@@ -1,0 +1,29 @@
+import React from 'react';
+import { useFileInfo } from './useFileInfo';
+import { FileInfoPanel } from './FileInfoPanel';
+
+/**
+ * Self-contained container. Owns all data-fetching for the File Info left-pane
+ * tab. Rendered only when the tab is active, so streaming updates never
+ * re-render LeftPane.
+ */
+const FileInfoPane = React.memo(function FileInfoPane() {
+  const fileInfo = useFileInfo();
+  return (
+    <FileInfoPanel
+      sourceName={fileInfo.sourceName}
+      sourceType={fileInfo.sourceType}
+      totalLines={fileInfo.totalLines}
+      fileSize={fileInfo.fileSize}
+      firstTimestamp={fileInfo.firstTimestamp}
+      lastTimestamp={fileInfo.lastTimestamp}
+      sections={fileInfo.sections}
+      dumpstateMetadata={fileInfo.dumpstateMetadata}
+      activeSectionIndex={fileInfo.activeSectionIndex}
+      sectionJumpSeq={fileInfo.sectionJumpSeq}
+      onJumpToLine={fileInfo.onJumpToLine}
+    />
+  );
+});
+
+export default FileInfoPane;

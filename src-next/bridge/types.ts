@@ -3,6 +3,8 @@
 
 export type LogLevel = 'Verbose' | 'Debug' | 'Info' | 'Warn' | 'Error' | 'Fatal';
 
+export type SourceType = 'Bugreport' | 'Logcat' | 'Kernel' | 'Unknown';
+
 export type HighlightKind =
   | { type: 'Search' }
   | { type: 'SearchActive' }

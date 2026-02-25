@@ -70,6 +70,9 @@ export interface WorkspaceLayoutState {
   preset: LayoutPreset;
   containerRef: React.RefObject<HTMLDivElement>;
   resetLayout: () => void;
+
+  // Focus tracking (mirrors SessionContext.focusedPaneId for layout-level use)
+  focusedPaneId: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -332,6 +335,9 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
   // Left pane
   const [leftPaneWidth, setLeftPaneWidth] = useState(saved.leftPaneWidth ?? DEFAULT_LEFT_WIDTH);
   const [leftPaneTab, setLeftPaneTabRaw] = useState<LeftPaneTab>(saved.leftPaneTab ?? 'info');
+
+  // Focus tracking — synced from session:focused bus event
+  const [focusedPaneId, setFocusedPaneId] = useState<string | null>(null);
 
   // Center tree
   const [centerTree, setCenterTree] = useState<SplitNode>(() => saved.centerTree ?? defaultTree());
@@ -747,11 +753,43 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
   // ---------------------------------------------------------------------------
 
   useEffect(() => {
-    const onSessionLoaded = (e: { sourceName: string }) => {
+    const onSessionFocused = (e: { paneId: string | null }) => {
+      setFocusedPaneId(e.paneId);
+    };
+
+    const onSessionLoaded = (e: { sourceName: string; paneId: string }) => {
       setCenterTree((prev) => {
+        // Look for an existing logviewer tab in the target pane first.
+        const targetLeaf = findLeafByPaneId(prev, e.paneId);
+        if (targetLeaf) {
+          const existingInPane = targetLeaf.pane.tabs.find((t) => t.type === 'logviewer');
+          if (existingInPane) {
+            // Rename the existing tab in this pane
+            const next = updateLeaf(prev, e.paneId, (pane) => ({
+              ...pane,
+              tabs: pane.tabs.map((t) =>
+                t.id === existingInPane.id ? { ...t, label: e.sourceName } : t,
+              ),
+              activeTabId: existingInPane.id,
+            }));
+            treeRef.current = next;
+            return next;
+          }
+          // Target pane exists but has no logviewer tab — add one
+          const tab = makeTab('logviewer', e.sourceName);
+          const next = updateLeaf(prev, e.paneId, (pane) => ({
+            ...pane,
+            tabs: [...pane.tabs, tab],
+            activeTabId: tab.id,
+          }));
+          treeRef.current = next;
+          return next;
+        }
+
+        // paneId not found in tree — fall back to first pane.
+        // This handles startup restore where paneId is 'primary' (not yet in tree).
         const existing = findTabByType(prev, 'logviewer');
         if (existing) {
-          // Rename the existing logviewer tab to the source name
           const next = updateLeaf(prev, existing.pane.id, (pane) => ({
             ...pane,
             tabs: pane.tabs.map((t) =>
@@ -761,8 +799,6 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
           treeRef.current = next;
           return next;
         }
-
-        // No logviewer tab exists — create one in the first pane
         const target = firstLeaf(prev);
         const tab = makeTab('logviewer', e.sourceName);
         const next = updateLeaf(prev, target.pane.id, (pane) => ({
@@ -780,7 +816,6 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
         setCenterTree((prev) => {
           const existing = findTabByType(prev, 'dashboard');
           if (existing) {
-            // Activate it
             if (existing.pane.activeTabId === existing.tab.id) return prev;
             const next = updateLeaf(prev, existing.pane.id, (pane) => ({
               ...pane,
@@ -789,7 +824,6 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
             treeRef.current = next;
             return next;
           }
-          // Create dashboard tab in first pane
           const target = firstLeaf(prev);
           const tab = makeTab('dashboard');
           const next = updateLeaf(prev, target.pane.id, (pane) => ({
@@ -809,9 +843,11 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
       }
     };
 
+    bus.on('session:focused', onSessionFocused);
     bus.on('session:loaded', onSessionLoaded);
     bus.on('pipeline:completed', onPipelineCompleted);
     return () => {
+      bus.off('session:focused', onSessionFocused);
       bus.off('session:loaded', onSessionLoaded);
       bus.off('pipeline:completed', onPipelineCompleted);
     };
@@ -861,5 +897,8 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
     preset,
     containerRef,
     resetLayout,
+
+    // Focus tracking
+    focusedPaneId,
   };
 }

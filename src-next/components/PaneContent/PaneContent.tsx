@@ -1,9 +1,9 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { FileText } from 'lucide-react';
 import { LogViewer } from '../LogViewer';
 import { ProcessorDashboard } from '../ProcessorDashboard';
 import { ScratchPad } from '../ScratchPad';
-import { useSession, useIsStreaming, useIsLoading } from '../../context';
+import { useSessionForPane, useIsLoadingForPane, useViewerActions } from '../../context';
 import { useLogViewerActions } from './useLogViewerActions';
 import styles from './PaneContent.module.css';
 
@@ -42,24 +42,37 @@ function EmptyDropZone() {
 }
 
 const PaneContent = React.memo(function PaneContent({ pane }: Props) {
-  const session = useSession();
-  useIsStreaming();
-  const isLoading = useIsLoading();
-  const { fetchLines } = useLogViewerActions();
+  // Use the pane's own session, not the global focused session.
+  const session = useSessionForPane(pane.id);
+  const isLoading = useIsLoadingForPane(pane.id);
+  const { setFocusedPane } = useViewerActions();
+  const { fetchLines } = useLogViewerActions(pane.id);
+
+  const handlePaneFocus = useCallback(() => {
+    setFocusedPane(pane.id);
+  }, [pane.id, setFocusedPane]);
 
   const activeTab = pane.tabs.find((t) => t.id === pane.activeTabId);
 
   if (!activeTab) {
-    return <EmptyDropZone />;
+    return (
+      <div onClick={handlePaneFocus} onFocus={handlePaneFocus} style={{ height: '100%' }}>
+        <EmptyDropZone />
+      </div>
+    );
   }
 
   switch (activeTab.type) {
     case 'logviewer':
       if (!session && !isLoading) {
-        return <EmptyDropZone />;
+        return (
+          <div onClick={handlePaneFocus} onFocus={handlePaneFocus} style={{ height: '100%' }}>
+            <EmptyDropZone />
+          </div>
+        );
       }
       return (
-        <div className={styles.logviewerPane}>
+        <div className={styles.logviewerPane} onClick={handlePaneFocus} onFocus={handlePaneFocus}>
           <LogViewer
             paneId={pane.id}
             fetchLines={fetchLines}
@@ -69,9 +82,13 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
 
     case 'dashboard':
       return session ? (
-        <ProcessorDashboard />
+        <div onClick={handlePaneFocus} onFocus={handlePaneFocus} style={{ height: '100%' }}>
+          <ProcessorDashboard />
+        </div>
       ) : (
-        <div className={styles.placeholder}>Open a log file to see the dashboard.</div>
+        <div className={styles.placeholder} onClick={handlePaneFocus} onFocus={handlePaneFocus}>
+          Open a log file to see the dashboard.
+        </div>
       );
 
     case 'scratch':
