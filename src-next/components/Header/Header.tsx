@@ -13,7 +13,14 @@ export const Header = React.memo(function Header() {
   return (
     <header className={styles.header}>
       <div className={styles.brand}>
-        <span className={styles.title}>LogTapper</span>
+        <span className={styles.title}>
+          <span className={styles.titleAndroid}>Android</span>
+          {' '}Log<span className={styles.titleAccent}>Tapper</span>
+        </span>
+      </div>
+
+      <div className={styles.searchArea}>
+        <SearchBar disabled={!session} />
       </div>
 
       <div className={styles.actions}>
@@ -30,13 +37,9 @@ export const Header = React.memo(function Header() {
           onClick={() => startStream()}
           title="Start ADB stream"
         >
-          <Radio size={14} />
+          {isStreaming ? <span className={styles.streamDot} /> : <Radio size={14} />}
           <span>Stream</span>
         </button>
-      </div>
-
-      <div className={styles.searchArea}>
-        <SearchBar disabled={!session} />
       </div>
     </header>
   );

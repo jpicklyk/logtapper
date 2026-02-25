@@ -40,6 +40,7 @@
 
 .selected {
   background: rgba(255, 200, 50, 0.12);
+  border-left-color: rgba(255, 200, 50, 0.75);
 }
 
 .selected:hover {

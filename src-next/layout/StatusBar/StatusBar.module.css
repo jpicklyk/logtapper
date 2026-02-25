@@ -5,9 +5,9 @@
   justify-content: space-between;
   padding: 0 10px;
   background: var(--bg-base);
-  border-top: 1px solid var(--border);
+  border-top: 1px solid rgba(88, 166, 255, 0.12);
   font-size: 11px;
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   color: var(--text-muted);
   user-select: none;
   flex-shrink: 0;

@@ -8,6 +8,8 @@
   scrollbar-width: none;
   user-select: none;
   flex-shrink: 0;
+  padding: 0 4px;
+  gap: 2px;
 }
 
 .bar::-webkit-scrollbar {
@@ -15,29 +17,96 @@
 }
 
 .tab {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 12px;
+  /* left padding reserves space for the drag handle */
+  padding: 0 10px 0 20px;
   background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
   color: var(--text-muted);
   font-size: 12px;
-  font-family: var(--font-mono);
-  cursor: grab;
+  font-family: var(--font-ui);
+  /* Normal pointer — grab only on the handle zone */
+  cursor: pointer;
   white-space: nowrap;
-  transition: background var(--transition-fast), color var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast),
+    border-color var(--transition-fast);
   flex-shrink: 0;
   touch-action: none;
+  margin-top: 3px;
 }
 
-.tab:active {
+/* ── Drag handle ─────────────────────────────────────────────────────────── */
+/* A real DOM element so dnd-kit listeners can attach here only.
+   Shows a dot-grid "grip" texture tinted with the tab's type color. */
+.dragHandle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  touch-action: none;
+  border-radius: 5px 0 0 0;
+  /* Subtle background tint on the handle zone on hover */
+  transition: background var(--transition-fast);
+}
+
+.dragHandle:active {
   cursor: grabbing;
 }
 
+/* The dot grid — 3 col × 5 row of 1.5px dots */
+.dragHandle::after {
+  content: '';
+  display: block;
+  width: 10px;
+  height: 18px;
+  background-image: radial-gradient(
+    circle,
+    var(--drag-dot-color) 1.5px,
+    transparent 1.5px
+  );
+  background-size: 4px 4px;
+  background-position: 0.5px 0.5px;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+}
+
+/* Rest state — subtle background, bright dots */
+.tab .dragHandle {
+  --drag-dot-color: color-mix(in srgb, var(--android) 70%, transparent);
+  background: color-mix(in srgb, var(--tab-strip-color, var(--accent)) 6%, transparent);
+}
+
+/* Hover state — background steps up slightly, dots full orange */
+.tab:hover .dragHandle {
+  --drag-dot-color: var(--android);
+  background: color-mix(in srgb, var(--tab-strip-color, var(--accent)) 12%, transparent);
+}
+
+/* Active tab */
+.tab.active .dragHandle {
+  --drag-dot-color: var(--android);
+  background: color-mix(in srgb, var(--tab-strip-color, var(--accent)) 16%, transparent);
+}
+
+.tab.active:hover .dragHandle {
+  --drag-dot-color: var(--android);
+  background: color-mix(in srgb, var(--tab-strip-color, var(--accent)) 20%, transparent);
+}
+
+/* ── Tab states ──────────────────────────────────────────────────────────── */
+
 .md .tab {
-  height: 32px;
+  height: 29px;
 }
 
 .md {
@@ -45,9 +114,10 @@
 }
 
 .sm .tab {
-  height: 26px;
-  padding: 0 8px;
+  height: 23px;
+  padding: 0 8px 0 13px;
   font-size: 11px;
+  margin-top: 2px;
 }
 
 .sm {
@@ -56,18 +126,21 @@
 
 .tab:hover {
   background: var(--bg-overlay);
+  border-color: var(--border);
   color: var(--text);
 }
 
 .tab.active {
   background: var(--bg-raised);
+  border-color: var(--border);
   color: var(--text);
-  border-bottom-color: var(--accent);
 }
 
 .tab.dragging {
   cursor: grabbing;
 }
+
+/* ── Label & close ───────────────────────────────────────────────────────── */
 
 .label {
   overflow: hidden;
@@ -96,6 +169,8 @@
   background: var(--bg-overlay);
   color: var(--text);
 }
+
+/* ── Add tab button ──────────────────────────────────────────────────────── */
 
 .addTab {
   display: flex;

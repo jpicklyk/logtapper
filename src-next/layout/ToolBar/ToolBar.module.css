@@ -41,7 +41,7 @@
   background: transparent;
   border: none;
   border-radius: var(--radius-sm);
-  color: var(--text-muted);
+  color: var(--text-subtle);
   cursor: pointer;
   padding: 0;
   transition: background var(--transition-fast), color var(--transition-fast);
@@ -63,6 +63,14 @@
   color: var(--accent);
   background: var(--bg-overlay);
   box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.separator {
+  width: 20px;
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+  flex-shrink: 0;
 }
 
 .badge {

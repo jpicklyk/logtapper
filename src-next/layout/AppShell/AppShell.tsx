@@ -181,7 +181,10 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   }, [workspace.rightPaneVisible, workspace.rightPaneTab]);
 
   return (
-    <div className={styles.shell}>
+    <div
+      className={styles.shell}
+      style={{ '--left-pane-width': `${workspace.leftPaneWidth}px` } as React.CSSProperties}
+    >
       {/* Header */}
       <div className={styles.header}>
         <Header />

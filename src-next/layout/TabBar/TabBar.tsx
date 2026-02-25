@@ -9,7 +9,15 @@ interface TabBarTab {
   id: string;
   label: string;
   closable?: boolean;
+  type?: string;
 }
+
+const TAB_COLORS: Record<string, string> = {
+  logviewer:  '#58a6ff',   // blue  — log viewer
+  dashboard:  '#3fb950',   // green — processor dashboard
+  scratch:    '#f0a500',   // amber — scratch pad
+  editor:     '#f0a500',   // amber — editor
+};
 
 interface TabBarProps {
   tabs: TabBarTab[];
@@ -39,6 +47,7 @@ export const TabBar = React.memo(function TabBar({
           tab={tab}
           active={tab.id === activeTabId}
           paneId={paneId}
+          tabColor={TAB_COLORS[tab.type ?? ''] ?? TAB_COLORS.logviewer}
           onActivate={onActivate}
           onClose={onClose}
         />
@@ -56,6 +65,7 @@ interface SortableTabButtonProps {
   tab: TabBarTab;
   active: boolean;
   paneId: string;
+  tabColor: string;
   onActivate: (tabId: string) => void;
   onClose?: (tabId: string) => void;
 }
@@ -64,6 +74,7 @@ const SortableTabButton = React.memo(function SortableTabButton({
   tab,
   active,
   paneId,
+  tabColor,
   onActivate,
   onClose,
 }: SortableTabButtonProps) {
@@ -79,12 +90,13 @@ const SortableTabButton = React.memo(function SortableTabButton({
     data: { type: 'tab', tabId: tab.id, paneId, label: tab.label },
   });
 
-  const style: React.CSSProperties = {
+  const style = {
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.35 : undefined,
     zIndex: isDragging ? 1 : undefined,
-  };
+    '--tab-strip-color': tabColor,
+  } as React.CSSProperties;
 
   const handleClick = useCallback(() => {
     if (!isDragging) onActivate(tab.id);
@@ -106,8 +118,9 @@ const SortableTabButton = React.memo(function SortableTabButton({
       onClick={handleClick}
       title={tab.label}
       {...attributes}
-      {...listeners}
     >
+      {/* Drag handle — only this zone initiates drag and shows grab cursor */}
+      <span className={styles.dragHandle} {...listeners} />
       <span className={styles.label}>{tab.label}</span>
       {tab.closable && (
         <span

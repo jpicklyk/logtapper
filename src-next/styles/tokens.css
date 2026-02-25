@@ -2,14 +2,14 @@
 
 :root {
   /* Backgrounds */
-  --bg-base:    #0d1117;
-  --bg-input:   #0f1117;
-  --bg-raised:  #161b22;
-  --bg-overlay: #1c2128;
+  --bg-base:    #0c1014;
+  --bg-input:   #0e1318;
+  --bg-raised:  #141b21;
+  --bg-overlay: #1b2530;
 
   /* Borders */
-  --border:        #21262d;
-  --border-subtle: #30363d;
+  --border:        #243040;
+  --border-subtle: #2d3d4e;
 
   /* Text */
   --text-dimmed:  #484f58;
@@ -35,4 +35,8 @@
   --radius-md: 6px;
   --transition-fast: 80ms ease;
   --font-mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+  --font-ui: 'Geist', system-ui, -apple-system, sans-serif;
+
+  /* Brand */
+  --android: #FF6128;
 }
