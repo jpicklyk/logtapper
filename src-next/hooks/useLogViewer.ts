@@ -364,6 +364,9 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
       if (previousSessionId) {
         try { await closeSessionCmd(previousSessionId); } catch { /* ignore */ }
         terminateSession(previousSessionId);
+        // Free all cache handles for the replaced session so their budget
+        // is returned to the pool before the new session allocates its handle.
+        cacheManager.releaseSessionViews(previousSessionId);
         // Remove the stale tab→session mapping for the evicted session so
         // tabSessionMapRef doesn't accumulate orphaned entries over time.
         for (const [tid, sid] of tabSessionMapRef.current.entries()) {
@@ -816,6 +819,10 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
       setIndexingProgressCtx(sessionId, null);
       terminateSession(sessionId);
     }
+    // Release all cache handles for this session. This is safe to call even if
+    // resetSessionState() already called clearSession() — releaseView() is a no-op
+    // for handles that don't exist in the manager.
+    cacheManager.releaseSessionViews(sessionId);
 
     bus.emit('session:closed', { sessionId, paneId: targetPaneId, sourceType, tabId });
   }, [focusedPaneId, resetSessionState, stopStream,

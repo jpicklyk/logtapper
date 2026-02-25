@@ -23,6 +23,12 @@ export interface WritableViewCache extends ViewCache {
 export interface CacheController {
   broadcastToSession(sessionId: string, lines: ViewLine[]): void;
   clearSession(sessionId: string): void;
+  /**
+   * Release (clear + remove from budget tracking) all view handles for a session.
+   * Call when a session is permanently closed — tab close, file replacement, stream stop.
+   * This frees the budget those handles were consuming so other views can grow.
+   */
+  releaseSessionViews(sessionId: string): void;
   getSessionEntries(sessionId: string): IterableIterator<[number, ViewLine]>;
   setTotalBudget(budget: number): void;
 }
@@ -306,6 +312,23 @@ export class CacheManager implements CacheController {
       if (entry.sessionId === sessionId) {
         entry.handle.clear();
       }
+    }
+  }
+
+  /**
+   * Release (clear + remove from budget tracking) all view handles for a session.
+   * Call when a session is permanently closed — tab close, file replacement, stream stop.
+   * This frees the budget those handles were consuming so other views can grow.
+   */
+  releaseSessionViews(sessionId: string): void {
+    const idsToRelease: string[] = [];
+    for (const [viewId, entry] of this._views) {
+      if (entry.sessionId === sessionId) {
+        idsToRelease.push(viewId);
+      }
+    }
+    for (const viewId of idsToRelease) {
+      this.releaseView(viewId);
     }
   }
 

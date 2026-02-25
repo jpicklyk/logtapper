@@ -78,7 +78,9 @@ export function useDataSourceRegistry(): DataSourceRegistrar {
 /**
  * Get or create a ViewCacheHandle for a specific view ID.
  * The handle is allocated on first call and reused on subsequent renders.
- * When viewId changes, the old handle is released and a new one is allocated.
+ * When viewId changes (tab switch), the OLD handle is intentionally kept in
+ * the manager so the inactive tab retains its cached lines. The old handle will
+ * be explicitly released via releaseSessionViews() when that session is closed.
  * @param sessionId  Optional session ID — enables session-level broadcast via CacheManager.
  */
 export function useViewCache(viewId: string | null, sessionId?: string | null): WritableViewCache | null {
@@ -88,23 +90,22 @@ export function useViewCache(viewId: string | null, sessionId?: string | null): 
   const handleRef = useRef<WritableViewCache | null>(null);
 
   if (!mgr || !viewId) {
-    // Release any existing handle
-    if (prevIdRef.current && mgr) {
-      mgr.releaseView(prevIdRef.current);
-    }
-    prevIdRef.current = null;
+    // Manager unavailable or viewId cleared — null out local ref.
+    // Do NOT release the old handle; it stays in the manager until
+    // releaseSessionViews() is called when the session is actually closed.
     handleRef.current = null;
   } else if (prevIdRef.current !== viewId) {
-    // Allocate on first call or when viewId changes
-    if (prevIdRef.current) {
-      mgr.releaseView(prevIdRef.current);
-    }
+    // Allocate on first call or when viewId changes (tab switch).
+    // Do NOT release the previous handle — the inactive tab should keep its
+    // cached lines so switching back doesn't trigger a reload from disk.
     handleRef.current = mgr.allocateView(viewId, sessionId ?? undefined);
     prevIdRef.current = viewId;
   }
 
-  // Release handle on unmount to prevent ghost handles consuming budget.
-  // Must always be called (Rules of Hooks) — guard body with refs.
+  // Release the current (latest) handle on unmount to free ghost handles.
+  // Intentionally omit viewId from deps — we only want unmount cleanup, NOT
+  // cleanup on tab switch (that would release the newly-allocated handle due to
+  // the render-before-effect ordering, which mutates prevIdRef before cleanup runs).
   useEffect(() => {
     return () => {
       if (prevIdRef.current && mgr) {
@@ -113,7 +114,7 @@ export function useViewCache(viewId: string | null, sessionId?: string | null): 
         handleRef.current = null;
       }
     };
-  }, [mgr, viewId]);
+  }, [mgr]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return handleRef.current;
 }
