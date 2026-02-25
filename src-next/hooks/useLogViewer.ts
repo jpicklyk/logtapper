@@ -842,6 +842,17 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     const handleTabActivated = ({ tabId, paneId }: { tabId: string; paneId: string }) => {
       const sessionId = tabSessionMapRef.current.get(tabId);
       if (!sessionId) return;
+      // Clear session-scoped viewer state so the incoming session starts clean.
+      // processorId, search, and filters are global in ViewerContext but conceptually
+      // belong to the active session — leaving them set causes the new session's
+      // LogViewer to fetch in the wrong mode (e.g. Processor) or show stale highlights.
+      setProcessorId(null);
+      setSearch(null);
+      setSearchSummary(null);
+      setCurrentMatchIndex(0);
+      setStreamFilterCtx('');
+      setTimeFilterStartCtx('');
+      setTimeFilterEndCtx('');
       activateSessionForPane(paneId, sessionId);
       // Best-effort prefetch: if the session has indexed lines but no cached lines yet
       // (common when a second tab loaded and became active before the first session's
