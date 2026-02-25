@@ -456,6 +456,7 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
   // ---------------------------------------------------------------------------
 
   const splitHorizontal = useCallback((tabId: string, paneId: string) => {
+    const newPaneId = crypto.randomUUID();
     updateTree((tree) => {
       const leaf = findLeafByPaneId(tree, paneId);
       if (!leaf) return tree;
@@ -474,7 +475,7 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
 
       // New pane with the moved tab
       const newPane: CenterPane = {
-        id: crypto.randomUUID(),
+        id: newPaneId,
         tabs: [tab],
         activeTabId: tab.id,
       };
@@ -492,9 +493,11 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
 
       return replaceNode(tree, leaf.id, splitNode);
     });
+    bus.emit('layout:logviewer-tab-activated', { tabId, paneId: newPaneId });
   }, [updateTree]);
 
   const splitVertical = useCallback((tabId: string, paneId: string) => {
+    const newPaneId = crypto.randomUUID();
     updateTree((tree) => {
       const leaf = findLeafByPaneId(tree, paneId);
       if (!leaf) return tree;
@@ -511,7 +514,7 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
       };
 
       const newPane: CenterPane = {
-        id: crypto.randomUUID(),
+        id: newPaneId,
         tabs: [tab],
         activeTabId: tab.id,
       };
@@ -529,6 +532,7 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
 
       return replaceNode(tree, leaf.id, splitNode);
     });
+    bus.emit('layout:logviewer-tab-activated', { tabId, paneId: newPaneId });
   }, [updateTree]);
 
   const moveTab = useCallback((tabId: string, fromPaneId: string, toPaneId: string) => {
@@ -565,6 +569,7 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
 
       return updated;
     });
+    bus.emit('layout:logviewer-tab-activated', { tabId, paneId: toPaneId });
   }, [updateTree]);
 
   const reorderTab = useCallback((paneId: string, fromIndex: number, toIndex: number) => {
@@ -581,21 +586,23 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
   }, [updateTree]);
 
   const closeTab = useCallback((tabId: string, paneId: string) => {
+    const leaf = findLeafByPaneId(treeRef.current, paneId);
+    const closingTab = leaf?.pane.tabs.find((t) => t.id === tabId);
+    const isActiveTab = leaf?.pane.activeTabId === tabId;
+
     // Notify session layer before mutating the tree, so it can close the backend
     // session and clear the file restore key (LS_LAST_FILE).
-    const closingTab = findLeafByPaneId(treeRef.current, paneId)
-      ?.pane.tabs.find((t) => t.id === tabId);
     if (closingTab?.type === 'logviewer') {
-      bus.emit('layout:logviewer-tab-closed', { paneId });
+      bus.emit('layout:logviewer-tab-closed', { tabId, paneId });
     }
 
     updateTree((tree) => {
-      const leaf = findLeafByPaneId(tree, paneId);
-      if (!leaf) return tree;
-      const tab = leaf.pane.tabs.find((t) => t.id === tabId);
+      const treeLeaf = findLeafByPaneId(tree, paneId);
+      if (!treeLeaf) return tree;
+      const tab = treeLeaf.pane.tabs.find((t) => t.id === tabId);
       if (!tab) return tree;
 
-      const remainingTabs = leaf.pane.tabs.filter((t) => t.id !== tabId);
+      const remainingTabs = treeLeaf.pane.tabs.filter((t) => t.id !== tabId);
 
       if (remainingTabs.length === 0) {
         // Last tab — try to collapse this leaf (return sibling)
@@ -603,7 +610,7 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
         if (collapsed) return collapsed;
         // Root leaf — keep it but empty
         return updateLeaf(tree, paneId, () => ({
-          id: leaf.pane.id,
+          id: treeLeaf.pane.id,
           tabs: [],
           activeTabId: '',
         }));
@@ -615,14 +622,33 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
         activeTabId: pane.activeTabId === tabId ? remainingTabs[0].id : pane.activeTabId,
       }));
     });
+
+    // If the closed tab was active and the next active tab is a logviewer, activate its session.
+    if (closingTab?.type === 'logviewer' && isActiveTab && leaf) {
+      const remainingTabs = leaf.pane.tabs.filter((t) => t.id !== tabId);
+      const nextTab = remainingTabs[0];
+      if (nextTab?.type === 'logviewer') {
+        bus.emit('layout:logviewer-tab-activated', { tabId: nextTab.id, paneId });
+      }
+    }
   }, [updateTree]);
 
   const setActiveTab = useCallback((tabId: string, paneId: string) => {
+    // Check current state before mutating so we can emit the right event.
+    const leaf = findLeafByPaneId(treeRef.current, paneId);
+    const tab = leaf?.pane.tabs.find((t) => t.id === tabId);
+    const alreadyActive = leaf?.pane.activeTabId === tabId;
+
     updateTree((tree) =>
       updateLeaf(tree, paneId, (pane) =>
         pane.activeTabId === tabId ? pane : { ...pane, activeTabId: tabId },
       ),
     );
+
+    // Notify session layer so it can swap paneSessionMap to the newly active session.
+    if (tab?.type === 'logviewer' && !alreadyActive) {
+      bus.emit('layout:logviewer-tab-activated', { tabId, paneId });
+    }
   }, [updateTree]);
 
   const addCenterTab = useCallback((paneId: string, type: CenterTabType, label?: string) => {
@@ -790,29 +816,50 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
       setFocusedPaneId(e.paneId);
     };
 
-    const onSessionLoaded = (e: { sourceName: string; paneId: string; sourceType: string }) => {
+    const onSessionLoaded = (e: { sourceName: string; paneId: string; sourceType: string; sessionId: string;
+                                   tabId: string; isNewTab?: boolean; previousSessionId?: string }) => {
       if (e.sourceType === 'Bugreport') {
         setLeftPaneTabRaw('info');
       }
       setCenterTree((prev) => {
-        // Look for an existing logviewer tab in the target pane first.
         const targetLeaf = findLeafByPaneId(prev, e.paneId);
         if (targetLeaf) {
-          const existingInPane = targetLeaf.pane.tabs.find((t) => t.type === 'logviewer');
-          if (existingInPane) {
-            // Rename the existing tab in this pane
+          const existingLogviewerTab = targetLeaf.pane.tabs.find((t) => t.type === 'logviewer');
+
+          if (e.isNewTab && existingLogviewerTab && e.previousSessionId) {
+            // A second file is opening alongside an existing one. Retroactively bind
+            // the pre-existing logviewer tab to its session so the user can switch back.
+            bus.emit('layout:tab-session-bind', {
+              tabId: existingLogviewerTab.id,
+              sessionId: e.previousSessionId,
+              paneId: e.paneId,
+            });
+            // Add the new logviewer tab to the same pane and make it active.
+            const newTab: Tab = { id: e.tabId, type: 'logviewer', label: e.sourceName, closable: true };
             const next = updateLeaf(prev, e.paneId, (pane) => ({
               ...pane,
-              tabs: pane.tabs.map((t) =>
-                t.id === existingInPane.id ? { ...t, label: e.sourceName } : t,
-              ),
-              activeTabId: existingInPane.id,
+              tabs: [...pane.tabs, newTab],
+              activeTabId: e.tabId,
             }));
             treeRef.current = next;
             return next;
           }
-          // Target pane exists but has no logviewer tab — add one
-          const tab = makeTab('logviewer', e.sourceName);
+
+          if (existingLogviewerTab) {
+            // Replacing (or renaming) the single logviewer tab — update label and ID.
+            const next = updateLeaf(prev, e.paneId, (pane) => ({
+              ...pane,
+              tabs: pane.tabs.map((t) =>
+                t.id === existingLogviewerTab.id ? { ...t, id: e.tabId, label: e.sourceName } : t,
+              ),
+              activeTabId: e.tabId,
+            }));
+            treeRef.current = next;
+            return next;
+          }
+
+          // Pane exists but has no logviewer tab yet — add one.
+          const tab: Tab = { id: e.tabId, type: 'logviewer', label: e.sourceName, closable: true };
           const next = updateLeaf(prev, e.paneId, (pane) => ({
             ...pane,
             tabs: [...pane.tabs, tab],
@@ -823,20 +870,32 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
         }
 
         // paneId not found in tree — fall back to first pane.
-        // This handles startup restore where paneId is 'primary' (not yet in tree).
+        // This handles startup restore where paneId is 'primary' (not yet in tree),
+        // or first-run where localStorage hasn't been written yet.
         const existing = findTabByType(prev, 'logviewer');
         if (existing) {
+          if (existing.pane.id !== e.paneId) {
+            bus.emit('layout:pane-session-remap', {
+              originalPaneId: e.paneId, actualPaneId: existing.pane.id, sessionId: e.sessionId,
+            });
+          }
           const next = updateLeaf(prev, existing.pane.id, (pane) => ({
             ...pane,
             tabs: pane.tabs.map((t) =>
-              t.id === existing.tab.id ? { ...t, label: e.sourceName } : t,
+              t.id === existing.tab.id ? { ...t, id: e.tabId, label: e.sourceName } : t,
             ),
+            activeTabId: e.tabId,
           }));
           treeRef.current = next;
           return next;
         }
         const target = firstLeaf(prev);
-        const tab = makeTab('logviewer', e.sourceName);
+        if (target.pane.id !== e.paneId) {
+          bus.emit('layout:pane-session-remap', {
+            originalPaneId: e.paneId, actualPaneId: target.pane.id, sessionId: e.sessionId,
+          });
+        }
+        const tab: Tab = { id: e.tabId, type: 'logviewer', label: e.sourceName, closable: true };
         const next = updateLeaf(prev, target.pane.id, (pane) => ({
           ...pane,
           tabs: [...pane.tabs, tab],
