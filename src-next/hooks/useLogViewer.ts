@@ -334,7 +334,7 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     if (loadingGuardRef.current) return;
     loadingGuardRef.current = true;
 
-    const targetPaneId = paneId ?? focusedPaneId ?? DEFAULT_PANE_ID;
+    const targetPaneId = paneId ?? focusedPaneId ?? getStoredFirstPaneId() ?? DEFAULT_PANE_ID;
 
     bus.emit('session:pre-load', undefined);
 
