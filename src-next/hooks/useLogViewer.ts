@@ -388,6 +388,13 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
       registerSession(targetPaneId, result);
       tabSessionMapRef.current.set(tabId, result.sessionId);
 
+      // For non-new-tab loads (replacing the pane's session), immediately activate the
+      // new session. For new-tab loads, paneSessionMap stays on the previous active tab —
+      // activation happens via layout:logviewer-tab-activated when the user switches tabs.
+      if (!isNewTab) {
+        activateSessionForPane(targetPaneId, result.sessionId);
+      }
+
       // If result is still indexing, set a sentinel so useFileInfo waits for completion.
       if (result.isIndexing) {
         setIndexingProgressCtx(result.sessionId, { linesIndexed: 0, totalLines: 0, done: false });
@@ -431,7 +438,7 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
       loadingGuardRef.current = false;
     }
   }, [
-    focusedPaneId, registerSession, setLoadingPane, setErrorPane,
+    focusedPaneId, registerSession, activateSessionForPane, setLoadingPane, setErrorPane,
     setIndexingProgressCtx, setStreamingSession, resetSessionState,
   ]);
 
@@ -566,6 +573,7 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
       const result = await startAdbStream(deviceId, packageFilter, activeProcessorIds, maxRawLines);
 
       registerSession(targetPaneId, result);
+      activateSessionForPane(targetPaneId, result.sessionId);
       setStreamingSession(result.sessionId, true);
       isStreamingRef.current = true;
       streamingPaneIdRef.current = targetPaneId;
@@ -610,7 +618,7 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
       setLoadingPane(targetPaneId, false);
     }
   }, [
-    focusedPaneId, registerSession, setLoadingPane, setErrorPane,
+    focusedPaneId, registerSession, activateSessionForPane, setLoadingPane, setErrorPane,
     setStreamingSession, handleAdbBatch, resetSessionState,
   ]);
 

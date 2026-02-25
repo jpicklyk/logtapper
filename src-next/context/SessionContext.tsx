@@ -36,8 +36,10 @@ type SessionAction =
   | { type: 'session:registered'; paneId: string; result: LoadResult }
   | { type: 'session:unregistered'; paneId: string }
   | { type: 'session:updated'; sessionId: string; updater: (prev: LoadResult) => LoadResult }
+  | { type: 'session:terminated'; sessionId: string }
   | { type: 'pane:loading'; paneId: string; loading: boolean }
   | { type: 'pane:error'; paneId: string; error: string | null }
+  | { type: 'pane:session-activated'; paneId: string; sessionId: string }
   | { type: 'indexing:progress'; sessionId: string; progress: IndexingProgress | null }
   | { type: 'streaming:changed'; sessionId: string; streaming: boolean }
   | { type: 'pane:focused'; paneId: string | null };
@@ -48,8 +50,9 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
   switch (action.type) {
     case 'session:registered': {
       const sessions = new Map(state.sessions).set(action.result.sessionId, action.result);
-      const paneSessionMap = new Map(state.paneSessionMap).set(action.paneId, action.result.sessionId);
-      return { ...state, sessions, paneSessionMap };
+      // paneSessionMap is NOT updated here — call activateSessionForPane separately.
+      // This prevents new-tab loads from overwriting the pane's currently active session.
+      return { ...state, sessions };
     }
 
     case 'session:unregistered': {
@@ -90,6 +93,25 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       const updated = action.updater(existing);
       if (updated === existing) return state;
       return { ...state, sessions: new Map(state.sessions).set(action.sessionId, updated) };
+    }
+
+    case 'session:terminated': {
+      if (!state.sessions.has(action.sessionId)) return state;
+      const sessions = new Map(state.sessions);
+      sessions.delete(action.sessionId);
+      const indexingProgressBySession = new Map(state.indexingProgressBySession);
+      indexingProgressBySession.delete(action.sessionId);
+      const streamingSessionIds = state.streamingSessionIds.has(action.sessionId)
+        ? new Set([...state.streamingSessionIds].filter(id => id !== action.sessionId))
+        : state.streamingSessionIds;
+      return { ...state, sessions, indexingProgressBySession, streamingSessionIds };
+    }
+
+    case 'pane:session-activated': {
+      if (state.paneSessionMap.get(action.paneId) === action.sessionId) return state;
+      if (!state.sessions.has(action.sessionId)) return state;
+      const paneSessionMap = new Map(state.paneSessionMap).set(action.paneId, action.sessionId);
+      return { ...state, paneSessionMap };
     }
 
     case 'pane:loading': {
@@ -147,8 +169,12 @@ export interface SessionContextValue {
   registerSession: (paneId: string, result: LoadResult) => void;
   unregisterSession: (paneId: string) => void;
   updateSession: (sessionId: string, updater: (prev: LoadResult) => LoadResult) => void;
+  /** Remove session data for a specific session (by ID). Use when closing a non-active logviewer tab. */
+  terminateSession: (sessionId: string) => void;
   setLoadingPane: (paneId: string, loading: boolean) => void;
   setErrorPane: (paneId: string, error: string | null) => void;
+  /** Swap the active session for a pane (for logviewer tab switching). Does not register new session data. */
+  activateSessionForPane: (paneId: string, sessionId: string) => void;
   setIndexingProgress: (sessionId: string, progress: IndexingProgress | null) => void;
   setStreamingSession: (sessionId: string, streaming: boolean) => void;
 }
@@ -201,6 +227,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     (sessionId: string, streaming: boolean) => dispatch({ type: 'streaming:changed', sessionId, streaming }),
     [],
   );
+  const terminateSession = useCallback(
+    (sessionId: string) => dispatch({ type: 'session:terminated', sessionId }),
+    [],
+  );
+  const activateSessionForPane = useCallback(
+    (paneId: string, sessionId: string) => dispatch({ type: 'pane:session-activated', paneId, sessionId }),
+    [],
+  );
 
   const value = useMemo<SessionContextValue>(
     () => ({
@@ -208,8 +242,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       registerSession,
       unregisterSession,
       updateSession,
+      terminateSession,
       setLoadingPane,
       setErrorPane,
+      activateSessionForPane,
       setIndexingProgress,
       setStreamingSession,
     }),
