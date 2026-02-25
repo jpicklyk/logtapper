@@ -24,9 +24,10 @@ export function useStateTracker(): StateTrackerActions {
     setTransitionsByLine,
   } = useTrackerContext();
 
-  // Track the focused session so pipeline:completed only refreshes transitions
-  // for the session the user is looking at.
+  // Track the focused pane and session so event handlers are correctly scoped.
   const { focusedPaneId, paneSessionMap } = useSessionContext();
+  const focusedPaneIdRef = useRef(focusedPaneId);
+  focusedPaneIdRef.current = focusedPaneId;
   const focusedSessionIdRef = useRef<string | undefined>();
   focusedSessionIdRef.current = focusedPaneId ? paneSessionMap.get(focusedPaneId) : undefined;
 
@@ -86,8 +87,11 @@ export function useStateTracker(): StateTrackerActions {
 
   // Subscribe to bus events: clear on session pre-load, refresh on pipeline completed
   useEffect(() => {
-    const handlePreLoad = () => {
-      clearTransitions();
+    const handlePreLoad = (e: { paneId: string }) => {
+      // Only clear transitions when the load targets the focused pane.
+      if (e.paneId === focusedPaneIdRef.current) {
+        clearTransitions();
+      }
     };
     const handlePipelineCompleted = (data: { sessionId: string; hasTrackers: boolean }) => {
       // Only refresh transitions if the pipeline ran for the focused session.

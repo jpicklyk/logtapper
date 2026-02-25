@@ -369,7 +369,7 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
         }
       }
 
-      bus.emit('session:pre-load', undefined);
+      bus.emit('session:pre-load', { paneId: targetPaneId });
 
       // Clean up any active stream on this pane
       if (streamingPaneIdRef.current === targetPaneId) {
@@ -586,9 +586,8 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     adbStoppedUnlistenRef.current?.();
     adbStoppedUnlistenRef.current = null;
 
-    bus.emit('session:pre-load', undefined);
-
     const targetPaneId = focusedPaneId ?? DEFAULT_PANE_ID;
+    bus.emit('session:pre-load', { paneId: targetPaneId });
     setLoadingPane(targetPaneId, true);
     setErrorPane(targetPaneId, null);
     resetSessionState();

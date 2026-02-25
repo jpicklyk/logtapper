@@ -1,6 +1,7 @@
 import { useCallback, useRef, useEffect } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { PipelineProgress, AdbProcessorUpdate } from '../bridge/types';
+import { useSessionContext } from '../context/SessionContext';
 import {
   listProcessors,
   loadProcessorYaml,
@@ -44,6 +45,12 @@ export interface PipelineActions {
 
 export function usePipeline(): PipelineActions {
   const { processors, pipelineChain, runCount, dispatch } = usePipelineContext();
+
+  // Track the focused pane so session:pre-load only clears results when the
+  // load targets the pane the user is currently viewing.
+  const { focusedPaneId } = useSessionContext();
+  const focusedPaneIdRef = useRef(focusedPaneId);
+  focusedPaneIdRef.current = focusedPaneId;
 
   // Refs for stable access in callbacks without stale closures
   const processorsRef = useRef(processors);
@@ -123,9 +130,15 @@ export function usePipeline(): PipelineActions {
     };
   }, [dispatch]);
 
-  // Subscribe to session:pre-load to auto-clear results
+  // Subscribe to session:pre-load to auto-clear results.
+  // Only clear when the load targets the focused pane — background-pane loads
+  // must not wipe the results the user is currently viewing.
   useEffect(() => {
-    const handlePreLoad = () => { dispatch({ type: 'pre-load:cleared' }); };
+    const handlePreLoad = (e: { paneId: string }) => {
+      if (e.paneId === focusedPaneIdRef.current) {
+        dispatch({ type: 'pre-load:cleared' });
+      }
+    };
     bus.on('session:pre-load', handlePreLoad);
     return () => { bus.off('session:pre-load', handlePreLoad); };
   }, [dispatch]);

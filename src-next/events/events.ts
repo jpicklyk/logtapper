@@ -3,7 +3,13 @@ import type { SourceType } from '../bridge/types';
 /** Typed event map for the internal application event bus. */
 export type AppEvents = {
   // ── Generic lifecycle (all source types) ───────────────────────────────────
-  'session:pre-load':       undefined;
+  /**
+   * Fired just before a file load or ADB stream starts for a given pane.
+   * Consumers use `paneId` to determine whether to clear their state — only
+   * the focused pane's results should be reset; background-pane loads must not
+   * disrupt what the user is currently viewing.
+   */
+  'session:pre-load':       { paneId: string };
   /**
    * `tabId` is the pre-assigned tab ID for the logviewer tab that will be
    * created (or updated) for this session. Use this ID to look up the tab's
