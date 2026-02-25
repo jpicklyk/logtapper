@@ -27,9 +27,9 @@ import { parseFilter, matchesFilter, extractPackageNames, type FilterNode, Filte
 import { useSessionContext } from '../context/SessionContext';
 import { useViewerContext } from '../context/ViewerContext';
 import { bus } from '../events/bus';
+import { getStoredFirstPaneId } from './useWorkspaceLayout';
 
 const LS_LAST_FILE = 'logtapper_last_file';
-/** Synthetic pane ID used for startup restore when no pane is focused yet. */
 const DEFAULT_PANE_ID = 'primary';
 
 export interface LogViewerActions {
@@ -431,7 +431,7 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     if (hasRestoredRef.current) return;
     hasRestoredRef.current = true;
     const saved = localStorage.getItem(LS_LAST_FILE);
-    if (saved) loadFile(saved);
+    if (saved) loadFile(saved, getStoredFirstPaneId() ?? DEFAULT_PANE_ID);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Subscribe to progressive file-indexing events (StrictMode-safe)
@@ -729,9 +729,23 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     setIndexingProgressCtx(sessionId, null);
     unregisterSession(targetPaneId);
 
-    bus.emit('session:closed', { sessionId, paneId: targetPaneId });
+    const sourceType = (sessions.get(sessionId)?.sourceType ?? 'Unknown') as SourceType;
+    bus.emit('session:closed', { sessionId, paneId: targetPaneId, sourceType });
   }, [focusedPaneId, paneSessionMap, resetSessionState, stopStream,
       setIndexingProgressCtx, unregisterSession]);
+
+  // Close the backend session when the user closes a logviewer tab via the UI.
+  // Uses a ref so the handler always sees the current closeSession without
+  // re-subscribing on every render.
+  const closeSessionRef = useRef(closeSession);
+  useEffect(() => { closeSessionRef.current = closeSession; }, [closeSession]);
+  useEffect(() => {
+    const handler = ({ paneId }: { paneId: string }) => {
+      closeSessionRef.current(paneId);
+    };
+    bus.on('layout:logviewer-tab-closed', handler);
+    return () => { bus.off('layout:logviewer-tab-closed', handler); };
+  }, []);
 
   // Subscribe to pipeline:chain-changed to update stream processors/trackers/transformers
   useEffect(() => {

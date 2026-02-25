@@ -111,6 +111,28 @@ const TAB_LABELS: Record<CenterTabType, string> = {
 // Tree helpers (pure functions)
 // ---------------------------------------------------------------------------
 
+/**
+ * Reads the persisted workspace tree and returns the first center pane ID.
+ * Used by useLogViewer's startup restore so the session is registered under
+ * the real pane ID, not the 'primary' fallback.
+ */
+export function getStoredFirstPaneId(): string | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { centerTree?: SplitNode };
+    const tree = parsed?.centerTree;
+    if (!tree) return null;
+    function firstPaneId(node: SplitNode): string | null {
+      if (node.type === 'leaf') return node.pane.id;
+      return firstPaneId(node.children[0]);
+    }
+    return firstPaneId(tree);
+  } catch {
+    return null;
+  }
+}
+
 function makeTab(type: CenterTabType, label?: string): Tab {
   return {
     id: crypto.randomUUID(),
@@ -556,6 +578,14 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
   }, [updateTree]);
 
   const closeTab = useCallback((tabId: string, paneId: string) => {
+    // Notify session layer before mutating the tree, so it can close the backend
+    // session and clear the file restore key (LS_LAST_FILE).
+    const closingTab = findLeafByPaneId(treeRef.current, paneId)
+      ?.pane.tabs.find((t) => t.id === tabId);
+    if (closingTab?.type === 'logviewer') {
+      bus.emit('layout:logviewer-tab-closed', { paneId });
+    }
+
     updateTree((tree) => {
       const leaf = findLeafByPaneId(tree, paneId);
       if (!leaf) return tree;
@@ -757,7 +787,10 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
       setFocusedPaneId(e.paneId);
     };
 
-    const onSessionLoaded = (e: { sourceName: string; paneId: string }) => {
+    const onSessionLoaded = (e: { sourceName: string; paneId: string; sourceType: string }) => {
+      if (e.sourceType === 'Bugreport') {
+        setLeftPaneTabRaw('info');
+      }
       setCenterTree((prev) => {
         // Look for an existing logviewer tab in the target pane first.
         const targetLeaf = findLeafByPaneId(prev, e.paneId);
@@ -843,12 +876,36 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
       }
     };
 
+    const onSessionClosed = (e: { sourceType: string; paneId: string }) => {
+      if (e.sourceType === 'Bugreport') {
+        setLeftPaneTabRaw('state');
+      }
+      // Reset the logviewer tab label in the closed pane so the stale filename
+      // doesn't persist in localStorage and reappear after a refresh.
+      setCenterTree((prev) => {
+        const leaf = findLeafByPaneId(prev, e.paneId);
+        if (!leaf) return prev;
+        const logviewerTab = leaf.pane.tabs.find((t) => t.type === 'logviewer');
+        if (!logviewerTab || logviewerTab.label === TAB_LABELS.logviewer) return prev;
+        const next = updateLeaf(prev, e.paneId, (pane) => ({
+          ...pane,
+          tabs: pane.tabs.map((t) =>
+            t.id === logviewerTab.id ? { ...t, label: TAB_LABELS.logviewer } : t,
+          ),
+        }));
+        treeRef.current = next;
+        return next;
+      });
+    };
+
     bus.on('session:focused', onSessionFocused);
     bus.on('session:loaded', onSessionLoaded);
+    bus.on('session:closed', onSessionClosed);
     bus.on('pipeline:completed', onPipelineCompleted);
     return () => {
       bus.off('session:focused', onSessionFocused);
       bus.off('session:loaded', onSessionLoaded);
+      bus.off('session:closed', onSessionClosed);
       bus.off('pipeline:completed', onPipelineCompleted);
     };
   }, []);

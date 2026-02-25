@@ -5,7 +5,7 @@ export type AppEvents = {
   // ── Generic lifecycle (all source types) ───────────────────────────────────
   'session:pre-load':       undefined;
   'session:loaded':         { sessionId: string; paneId: string; sourceName: string; sourceType: SourceType };
-  'session:closed':         { sessionId: string; paneId: string };
+  'session:closed':         { sessionId: string; paneId: string; sourceType: SourceType };
   'session:focused':        { sessionId: string | null; paneId: string | null };
   'session:indexing-complete': { sessionId: string; totalLines: number };
 
@@ -28,5 +28,7 @@ export type AppEvents = {
 
   // ── Layout / navigation ───────────────────────────────────────────────────
   'layout:open-tab':        { type: string };
+  /** Fired when a logviewer tab is explicitly closed via the UI tab bar. */
+  'layout:logviewer-tab-closed': { paneId: string };
   'navigate:jump':          { lineNum: number };
 };
