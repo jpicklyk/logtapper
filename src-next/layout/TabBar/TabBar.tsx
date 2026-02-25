@@ -23,6 +23,7 @@ interface TabBarProps {
   tabs: TabBarTab[];
   activeTabId: string;
   paneId: string;
+  paneIsFocused?: boolean;
   onActivate: (tabId: string) => void;
   onClose?: (tabId: string) => void;
   onAdd?: () => void;
@@ -34,6 +35,7 @@ export const TabBar = React.memo(function TabBar({
   tabs,
   activeTabId,
   paneId,
+  paneIsFocused = false,
   onActivate,
   onClose,
   onAdd,
@@ -46,6 +48,7 @@ export const TabBar = React.memo(function TabBar({
           key={tab.id}
           tab={tab}
           active={tab.id === activeTabId}
+          focused={paneIsFocused && tab.id === activeTabId}
           paneId={paneId}
           tabColor={TAB_COLORS[tab.type ?? ''] ?? TAB_COLORS.logviewer}
           onActivate={onActivate}
@@ -64,6 +67,7 @@ export const TabBar = React.memo(function TabBar({
 interface SortableTabButtonProps {
   tab: TabBarTab;
   active: boolean;
+  focused: boolean;
   paneId: string;
   tabColor: string;
   onActivate: (tabId: string) => void;
@@ -73,6 +77,7 @@ interface SortableTabButtonProps {
 const SortableTabButton = React.memo(function SortableTabButton({
   tab,
   active,
+  focused,
   paneId,
   tabColor,
   onActivate,
@@ -114,7 +119,7 @@ const SortableTabButton = React.memo(function SortableTabButton({
     <button
       ref={setNodeRef}
       style={style}
-      className={clsx(styles.tab, active && styles.active, isDragging && styles.dragging)}
+      className={clsx(styles.tab, active && styles.active, focused && styles.focused, isDragging && styles.dragging)}
       onClick={handleClick}
       title={tab.label}
       {...attributes}

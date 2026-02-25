@@ -29,6 +29,7 @@ import type {
   AnalysisArtifact,
   AnalysisSection,
   WatchInfo,
+  SectionInfo,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -185,6 +186,10 @@ export function getTimelineData(
 
 export function getDumpstateMetadata(sessionId: string): Promise<DumpstateMetadata> {
   return invoke('get_dumpstate_metadata', { sessionId });
+}
+
+export function getSections(sessionId: string): Promise<SectionInfo[]> {
+  return invoke('get_sections', { sessionId });
 }
 
 

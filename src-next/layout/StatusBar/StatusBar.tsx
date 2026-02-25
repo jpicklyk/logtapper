@@ -1,22 +1,15 @@
 import React from 'react';
 import clsx from 'clsx';
+import { useFocusedSession, useIsStreaming } from '../../context';
 import styles from './StatusBar.module.css';
 
-interface StatusBarProps {
-  sessionName?: string;
-  lineCount?: number;
-  isStreaming?: boolean;
-  mcpConnected?: boolean;
-  selectedLine?: number | null;
-}
+export const StatusBar = React.memo(function StatusBar() {
+  const session = useFocusedSession();
+  const isStreaming = useIsStreaming();
 
-export const StatusBar = React.memo(function StatusBar({
-  sessionName,
-  lineCount,
-  isStreaming,
-  mcpConnected,
-  selectedLine,
-}: StatusBarProps) {
+  const filePath = session?.filePath ?? null;
+  const lineCount = session?.totalLines ?? null;
+
   return (
     <div className={styles.bar}>
       <div className={styles.left}>
@@ -26,8 +19,10 @@ export const StatusBar = React.memo(function StatusBar({
             LIVE
           </span>
         )}
-        {sessionName && (
-          <span className={styles.item}>{sessionName}</span>
+        {filePath && (
+          <span className={clsx(styles.item, styles.filePath)} title={filePath}>
+            {filePath}
+          </span>
         )}
         {lineCount != null && (
           <span className={styles.item}>
@@ -36,14 +31,6 @@ export const StatusBar = React.memo(function StatusBar({
         )}
       </div>
       <div className={styles.right}>
-        {mcpConnected != null && (
-          <span className={clsx(styles.item, mcpConnected ? styles.connected : styles.disconnected)}>
-            MCP {mcpConnected ? 'Connected' : 'Disconnected'}
-          </span>
-        )}
-        {selectedLine != null && (
-          <span className={styles.item}>Ln {selectedLine}</span>
-        )}
       </div>
     </div>
   );

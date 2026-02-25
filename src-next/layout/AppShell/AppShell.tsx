@@ -22,6 +22,7 @@ import { BottomPane } from '../../components/BottomPane';
 import { PaneContent } from '../../components/PaneContent';
 import { SettingsPanel } from '../../components/SettingsPanel';
 import { useSettings, useAnonymizerConfig } from '../../hooks';
+import { useViewerActions } from '../../context';
 import { useCacheManager } from '../../cache';
 import type {
   WorkspaceLayoutState,
@@ -64,6 +65,7 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   const settingsHook = useSettings();
   const anonymizerConfig = useAnonymizerConfig();
   const cacheManager = useCacheManager();
+  const { setFocusedPane } = useViewerActions();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Sync fileCacheBudget setting → CacheManager whenever it changes
@@ -124,8 +126,9 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   const handleTabActivate = useCallback(
     (tabId: string, paneId: string) => {
       workspace.setActiveTab(tabId, paneId);
+      setFocusedPane(paneId);
     },
-    [workspace.setActiveTab],
+    [workspace.setActiveTab, setFocusedPane],
   );
 
   const handleTabClose = useCallback(
@@ -219,6 +222,7 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
       <div className={styles.center}>
         <CenterArea
           tree={workspace.centerTree}
+          focusedPaneId={workspace.focusedPaneId}
           renderContent={renderCenterContent}
           onTabActivate={handleTabActivate}
           onTabClose={handleTabClose}

@@ -87,6 +87,8 @@ export interface LoadResult {
   sessionId: string;
   sourceId: string;
   sourceName: string;
+  /** Full filesystem path for file-backed sessions; null for ADB streams. */
+  filePath: string | null;
   totalLines: number;
   fileSize: number;
   firstTimestamp: number | null;
@@ -175,16 +177,6 @@ export interface DumpstateMetadata {
   sdkVersion: string | null;
   deviceModel: string | null;
   manufacturer: string | null;
-}
-
-// ---------------------------------------------------------------------------
-// Section index (Bugreport/Dumpstate files)
-// ---------------------------------------------------------------------------
-
-export interface SectionInfo {
-  name: string;
-  startLine: number;
-  endLine: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -449,6 +441,12 @@ export interface FilteredLinesResult {
   totalMatches: number;
   lines: ViewLine[];
   status: 'scanning' | 'complete' | 'cancelled';
+}
+
+export interface SectionInfo {
+  name: string;
+  startLine: number;
+  endLine: number;
 }
 
 export interface FilterInfo {

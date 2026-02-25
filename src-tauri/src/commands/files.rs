@@ -43,6 +43,8 @@ pub struct LoadResult {
     pub session_id: String,
     pub source_id: String,
     pub source_name: String,
+    /// Full filesystem path for file-backed sessions; None for ADB streams.
+    pub file_path: Option<String>,
     pub total_lines: usize,
     pub file_size: u64,
     pub first_timestamp: Option<i64>,
@@ -124,6 +126,7 @@ pub async fn load_log_file(
         session_id: session_id.clone(),
         source_id,
         source_name,
+        file_path: Some(path.clone()),
         total_lines,
         file_size,
         first_timestamp: first_ts,

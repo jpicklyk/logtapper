@@ -136,6 +136,18 @@
   color: var(--text);
 }
 
+/* Blue underline on the active tab of the currently focused pane */
+.tab.active.focused::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #58a6ff;
+  border-radius: 1px 1px 0 0;
+}
+
 .tab.dragging {
   cursor: grabbing;
 }

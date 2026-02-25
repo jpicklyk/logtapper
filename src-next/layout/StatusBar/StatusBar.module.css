@@ -24,6 +24,15 @@
   white-space: nowrap;
 }
 
+.filePath {
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  color: var(--text);
+  max-width: 600px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .streaming {
   display: flex;
   align-items: center;

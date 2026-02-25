@@ -261,6 +261,7 @@ pub async fn start_adb_stream(
         session_id,
         source_id,
         source_name: device_label,
+        file_path: None,
         total_lines: 0,
         file_size: 0,
         first_timestamp: None,

@@ -4,13 +4,10 @@ import type { GutterColumnDef, LineDecoratorDef, Selection, CacheDataSource } fr
 import { ReadOnlyViewer, createCacheDataSource } from '../../viewport';
 import { useViewCache, useCacheFocus, useDataSourceRegistry } from '../../cache';
 import {
-  useSession,
-  useIsStreaming,
+  useSessionForPane,
   useScrollTarget,
   useTrackerTransitions,
-
   useProcessorId,
-  useTotalLines,
 } from '../../context';
 import styles from './LogViewer.module.css';
 
@@ -25,13 +22,15 @@ const LogViewer = React.memo(function LogViewer({
   fetchLines,
   lineNumbers,
 }: Props) {
-  const session = useSession();
-  const isStreaming = useIsStreaming();
+  // Scope to this pane's session — NOT the globally focused session.
+  // Using useFocusedSession() here would release the cache handle whenever
+  // focus moves to a pane without a session (e.g. Scratch), wiping all lines.
+  const session = useSessionForPane(paneId);
+  const isStreaming = session?.isStreaming ?? false;
+  const totalLines = session?.totalLines ?? 0;
   const { lineNum: scrollToLine, seq: jumpSeq } = useScrollTarget();
   const { allLineNums: transitionLineNums, byLine: transitionsByLine } = useTrackerTransitions();
-
   const processorId = useProcessorId();
-  const totalLines = useTotalLines();
 
   // Selection state (local to this viewer)
   const [selection, setSelection] = useState<Selection>({

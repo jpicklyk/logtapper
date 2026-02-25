@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useFocusedSession, useScrollTarget, useViewerActions, useIndexingProgress } from '../../context';
-import { useViewCache, useDataSourceRegistry } from '../../cache';
-import { createCacheDataSource, type CacheDataSource } from '../../viewport';
-import { getDumpstateMetadata, getLines } from '../../bridge/commands';
+import { getDumpstateMetadata, getSections } from '../../bridge/commands';
 import { onAdbBatch } from '../../bridge/events';
 import type { DumpstateMetadata } from '../../bridge/types';
 import type { SectionEntry } from './FileInfoPanel';
@@ -20,8 +18,6 @@ export interface FileInfoData {
   sectionJumpSeq: number;
   onJumpToLine: (line: number) => void;
 }
-
-const SCAN_BATCH = 2_000;
 
 export function useFileInfo(): FileInfoData {
   // Use the focused session, not the global (unchanged) useSession() — this is now the same
@@ -47,12 +43,6 @@ export function useFileInfo(): FileInfoData {
 
   const sessionIdRef = useRef<string | null>(null);
   sessionIdRef.current = sessionId;
-
-  const viewCache = useViewCache(
-    sessionId ? `file-info-${sessionId}` : null,
-    sessionId,
-  );
-  const registry = useDataSourceRegistry();
 
   // Reset base metadata and fetch device info whenever the session changes.
   useEffect(() => {
@@ -82,89 +72,22 @@ export function useFileInfo(): FileInfoData {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
-  // Background section scan — Bugreport files only.
+  // Fetch sections from backend — Bugreport files only.
   //
-  // Gated on `indexingProgress === null`:
-  //   - App restart with pre-indexed file: progress is null on mount → scan starts immediately.
-  //   - Fresh large file: progress starts non-null (sentinel set in loadFile); when indexing
-  //     completes the sentinel is cleared to null and this effect re-runs with final totalLines.
-  //   - Logcat / stream sessions: bail at sourceType check; no work done.
+  // Gated on `indexingProgress === null` — the backend only populates sections after full
+  // indexing completes, so there is no point calling earlier.
   useEffect(() => {
-    if (!viewCache || !sessionId || !session || session.sourceType !== 'Bugreport') return;
+    if (!sessionId || !session || session.sourceType !== 'Bugreport') return;
     if (indexingProgress !== null) return;  // Still indexing — wait for null
 
-    const fileTotalLines = session.totalLines;
-    console.debug('[FileInfoPanel] scan start', { sessionId, fileTotalLines });
-
     let cancelled = false;
-    let ds: CacheDataSource | null = null;
+    getSections(sessionId)
+      .then((secs) => { if (!cancelled) setSections(secs as SectionEntry[]); })
+      .catch(() => { /* leave sections empty on error */ });
 
-    ds = createCacheDataSource({
-      sessionId,
-      viewCache,
-      fetchLines: (offset, count) =>
-        getLines({ sessionId, mode: { mode: 'Full' }, offset, count, context: 0 }),
-      registry,
-    });
-
-    let offset = 0;
-    const pending = new Map<string, number>();
-    const found: SectionEntry[] = [];
-
-    const scan = async () => {
-      if (cancelled) {
-        ds?.dispose();
-        ds = null;
-        return;
-      }
-      if (offset >= fileTotalLines) {
-        console.debug('[FileInfoPanel] scan complete', {
-          totalFound: found.length,
-          unpairedHeaders: [...pending.keys()],
-        });
-        setSections([...found]);
-        ds?.dispose();
-        ds = null;
-        return;
-      }
-
-      const count = Math.min(SCAN_BATCH, fileTotalLines - offset);
-      const lines = await ds!.getLines(offset, count);
-
-      console.debug('[FileInfoPanel] batch', {
-        offset,
-        linesInBatch: lines.length,
-        sectionBoundariesFound: found.length,
-      });
-
-      for (const line of lines) {
-        if (!line.raw.startsWith('------')) continue;
-        if (line.level === 'Info' && line.tag) {
-          pending.set(line.tag, line.lineNum);
-        } else if (line.level === 'Verbose' && line.tag) {
-          const startLine = pending.get(line.tag);
-          if (startLine !== undefined) {
-            found.push({ name: line.tag, startLine, endLine: line.lineNum });
-            pending.delete(line.tag);
-          }
-        }
-      }
-
-      offset += count;
-      setTimeout(scan, 0);
-    };
-
-    scan();
-
-    return () => {
-      cancelled = true;
-      ds?.dispose();
-      ds = null;
-    };
-    // indexingProgress is the reactive gate — when it becomes null the scan starts.
-    // session?.sourceType and fileTotalLines come from session which depends on sessionId.
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, session?.sourceType, indexingProgress, viewCache, registry]);
+  }, [sessionId, session?.sourceType, indexingProgress]);
 
   // Subscribe to ADB batch events for real-time size/timestamp updates.
   useEffect(() => {
@@ -192,9 +115,11 @@ export function useFileInfo(): FileInfoData {
     };
   }, []);
 
-  // Update totalLines when indexing progresses (so the panel shows live line count)
+  // Update totalLines whenever session.totalLines changes during or after indexing.
+  // indexingProgress is kept in deps so the effect also fires when indexing completes
+  // (transitioning from non-null to null) and session.totalLines holds the final count.
   useEffect(() => {
-    if (session && indexingProgress) {
+    if (session) {
       setTotalLines(session.totalLines);
     }
   }, [session?.totalLines, indexingProgress]);

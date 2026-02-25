@@ -25,6 +25,7 @@ function findPane(tree: SplitNode, paneId: string): CenterPane | null {
 
 interface CenterAreaProps {
   tree: SplitNode;
+  focusedPaneId?: string | null;
   renderContent: (pane: CenterPane) => React.ReactNode;
   onTabActivate: (tabId: string, paneId: string) => void;
   onTabClose: (tabId: string, paneId: string) => void;
@@ -101,7 +102,7 @@ export const CenterArea = React.memo(function CenterArea(props: CenterAreaProps)
       onDragCancel={handleDragCancel}
     >
       <div className={styles.root}>
-        <SplitNodeRenderer {...props} node={props.tree} />
+        <SplitNodeRenderer {...props} node={props.tree} focusedPaneId={props.focusedPaneId} />
       </div>
       <DragOverlay dropAnimation={null}>
         {draggingTab ? <div className={styles.tabGhost}>{draggingTab.label}</div> : null}
@@ -112,6 +113,7 @@ export const CenterArea = React.memo(function CenterArea(props: CenterAreaProps)
 
 interface SplitNodeRendererProps {
   node: SplitNode;
+  focusedPaneId?: string | null;
   renderContent: (pane: CenterPane) => React.ReactNode;
   onTabActivate: (tabId: string, paneId: string) => void;
   onTabClose: (tabId: string, paneId: string) => void;
@@ -123,6 +125,7 @@ interface SplitNodeRendererProps {
 
 const SplitNodeRenderer = React.memo(function SplitNodeRenderer({
   node,
+  focusedPaneId,
   renderContent,
   onTabActivate,
   onTabClose,
@@ -135,6 +138,7 @@ const SplitNodeRenderer = React.memo(function SplitNodeRenderer({
     return (
       <LeafPane
         pane={node.pane}
+        paneIsFocused={node.pane.id === focusedPaneId}
         renderContent={renderContent}
         onTabActivate={onTabActivate}
         onTabClose={onTabClose}
@@ -159,6 +163,7 @@ const SplitNodeRenderer = React.memo(function SplitNodeRenderer({
       ratio={ratio}
       first={children[0]}
       second={children[1]}
+      focusedPaneId={focusedPaneId}
       renderContent={renderContent}
       onTabActivate={onTabActivate}
       onTabClose={onTabClose}
@@ -178,6 +183,7 @@ interface SplitContainerProps {
   ratio: number;
   first: SplitNode;
   second: SplitNode;
+  focusedPaneId?: string | null;
   renderContent: (pane: CenterPane) => React.ReactNode;
   onTabActivate: (tabId: string, paneId: string) => void;
   onTabClose: (tabId: string, paneId: string) => void;
@@ -195,6 +201,7 @@ const SplitContainer = React.memo(function SplitContainer({
   ratio,
   first,
   second,
+  focusedPaneId,
   renderContent,
   onTabActivate,
   onTabClose,
@@ -230,6 +237,7 @@ const SplitContainer = React.memo(function SplitContainer({
       <div style={{ flexBasis: firstPercent }} className={styles.splitChild}>
         <SplitNodeRenderer
           node={first}
+          focusedPaneId={focusedPaneId}
           renderContent={renderContent}
           onTabActivate={onTabActivate}
           onTabClose={onTabClose}
@@ -243,6 +251,7 @@ const SplitContainer = React.memo(function SplitContainer({
       <div style={{ flexBasis: secondPercent }} className={styles.splitChild}>
         <SplitNodeRenderer
           node={second}
+          focusedPaneId={focusedPaneId}
           renderContent={renderContent}
           onTabActivate={onTabActivate}
           onTabClose={onTabClose}
@@ -258,6 +267,7 @@ const SplitContainer = React.memo(function SplitContainer({
 
 interface LeafPaneProps {
   pane: CenterPane;
+  paneIsFocused?: boolean;
   renderContent: (pane: CenterPane) => React.ReactNode;
   onTabActivate: (tabId: string, paneId: string) => void;
   onTabClose: (tabId: string, paneId: string) => void;
@@ -268,6 +278,7 @@ interface LeafPaneProps {
 
 const LeafPane = React.memo(function LeafPane({
   pane,
+  paneIsFocused = false,
   renderContent,
   onTabActivate,
   onTabClose,
@@ -301,6 +312,7 @@ const LeafPane = React.memo(function LeafPane({
           tabs={pane.tabs}
           activeTabId={pane.activeTabId}
           paneId={pane.id}
+          paneIsFocused={paneIsFocused}
           onActivate={handleActivate}
           onClose={handleClose}
           onAdd={onTabAdd ? handleAdd : undefined}
