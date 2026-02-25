@@ -2,6 +2,7 @@ import React, { memo, useEffect, useRef } from 'react';
 import clsx from 'clsx';
 import type { DumpstateMetadata } from '../../bridge/types';
 import styles from './FileInfoPanel.module.css';
+import { getSectionDescription } from './sectionDescriptions';
 
 export interface SectionEntry {
   name: string;
@@ -75,12 +76,17 @@ const SectionItem = memo<SectionItemProps>(function SectionItem({
     el.style.animation = '';
   }, [isActive, jumpSeq]);
 
+  const description = getSectionDescription(section.name);
+  const tooltip = description
+    ? `${description}\nLines ${section.startLine + 1}–${section.endLine + 1}`
+    : `Lines ${section.startLine + 1}–${section.endLine + 1}`;
+
   return (
     <button
       ref={btnRef}
       className={clsx(styles.sectionItem, isActive && styles.sectionItemActive)}
       onClick={onClick}
-      title={`Line ${section.startLine + 1}: ${section.name}`}
+      title={tooltip}
     >
       <span className={styles.sectionName}>{section.name}</span>
       <span className={styles.sectionLine}>{section.startLine + 1}</span>
