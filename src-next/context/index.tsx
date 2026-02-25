@@ -1,4 +1,4 @@
-import { useMemo, useCallback, type ReactNode } from 'react';
+import { useMemo, useCallback, useRef, type ReactNode } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { SessionProvider } from './SessionContext';
 import { useSessionContext } from './SessionContext';
@@ -21,6 +21,12 @@ function HookWiring({ children }: { children: ReactNode }) {
   const { paneSessionMap } = useSessionContext();
   const logViewer = useLogViewer(cacheManager, registry);
 
+  // Keep a ref so setFocusedPane can read the current map without being
+  // recreated every time paneSessionMap changes (which would invalidate
+  // the entire ActionsContext useMemo on every session load/close).
+  const paneSessionMapRef = useRef(paneSessionMap);
+  paneSessionMapRef.current = paneSessionMap;
+
   const openFileDialog = useCallback(async () => {
     const selected = await open({
       multiple: false,
@@ -37,10 +43,12 @@ function HookWiring({ children }: { children: ReactNode }) {
 
   // All focus changes go through the bus so SessionContext and WorkspaceLayout
   // both update from a single emission point.
+  // Empty dep array — reads paneSessionMap via ref so the callback never needs
+  // to be recreated, keeping ActionsContext stable across session changes.
   const setFocusedPane = useCallback((paneId: string) => {
-    const sessionId = paneSessionMap.get(paneId) ?? null;
+    const sessionId = paneSessionMapRef.current.get(paneId) ?? null;
     bus.emit('session:focused', { sessionId, paneId });
-  }, [paneSessionMap]);
+  }, []);
 
   const actions = useMemo<Partial<ActionsContextValue>>(() => ({
     loadFile: logViewer.loadFile,
@@ -55,7 +63,7 @@ function HookWiring({ children }: { children: ReactNode }) {
     setFocusedPane,
   }), [logViewer.loadFile, openFileDialog, logViewer.startStream, logViewer.stopStream,
        logViewer.closeSession, logViewer.jumpToLine, logViewer.jumpToMatch,
-       logViewer.handleSearch, setFocusedPane]);
+       logViewer.handleSearch]);
 
   return (
     <ActionsProvider actions={actions}>

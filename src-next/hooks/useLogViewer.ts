@@ -359,6 +359,14 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
       if (previousSessionId) {
         try { await closeSessionCmd(previousSessionId); } catch { /* ignore */ }
         terminateSession(previousSessionId);
+        // Remove the stale tab→session mapping for the evicted session so
+        // tabSessionMapRef doesn't accumulate orphaned entries over time.
+        for (const [tid, sid] of tabSessionMapRef.current.entries()) {
+          if (sid === previousSessionId) {
+            tabSessionMapRef.current.delete(tid);
+            break;
+          }
+        }
       }
 
       bus.emit('session:pre-load', undefined);
@@ -378,7 +386,12 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
       }
 
       setIndexingProgressLocal(null);
-      resetSessionState();
+      // Only wipe the shared ViewerContext state (search, filter, processorId, etc.)
+      // when loading into the focused pane. If the user is loading a file into a
+      // background pane, clearing global viewer state would disrupt the focused pane.
+      if (targetPaneId === focusedPaneId || !focusedPaneId) {
+        resetSessionState();
+      }
     }
 
     setLoadingPane(targetPaneId, true);

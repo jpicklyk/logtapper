@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { bus } from '../events/bus';
 import { useTogglePane } from './useTogglePane';
+import { useSessionContext } from '../context/SessionContext';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -360,6 +361,16 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
 
   // Focus tracking — synced from session:focused bus event
   const [focusedPaneId, setFocusedPaneId] = useState<string | null>(null);
+  // Ref kept in sync with focusedPaneId so callbacks in the bus effect (empty deps)
+  // always read the current value without re-subscribing.
+  const focusedPaneIdRef = useRef(focusedPaneId);
+  focusedPaneIdRef.current = focusedPaneId;
+
+  // paneSessionMap from SessionContext — used to place tabs in the correct pane
+  // after pipeline completion and to guard the startup fallback path.
+  const { paneSessionMap } = useSessionContext();
+  const paneSessionMapRef = useRef(paneSessionMap);
+  paneSessionMapRef.current = paneSessionMap;
 
   // Center tree
   const [centerTree, setCenterTree] = useState<SplitNode>(() => saved.centerTree ?? defaultTree());
@@ -582,8 +593,9 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
         }));
       }
 
-      // 2. Add to the first leaf pane (focused pane)
-      const target = firstLeaf(tree);
+      // 2. Add to the focused pane (or first leaf as fallback)
+      const focPaneId = focusedPaneIdRef.current;
+      const target = (focPaneId ? findLeafByPaneId(tree, focPaneId) : null) ?? firstLeaf(tree);
       const tab = makeTab(type, label);
       return updateLeaf(tree, target.pane.id, (pane) => ({
         ...pane,
@@ -763,8 +775,10 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
         // paneId not found in tree — fall back to first pane.
         // This handles startup restore where paneId is 'primary' (not yet in tree),
         // or first-run where localStorage hasn't been written yet.
+        // Only reuse an existing logviewer pane if it is NOT already occupied by
+        // another session — otherwise we'd clobber a live session's tab label.
         const existing = findTabByType(prev, 'logviewer');
-        if (existing) {
+        if (existing && !paneSessionMapRef.current.has(existing.pane.id)) {
           if (existing.pane.id !== e.paneId) {
             bus.emit('layout:pane-session-remap', {
               originalPaneId: e.paneId, actualPaneId: existing.pane.id, sessionId: e.sessionId,
@@ -797,7 +811,7 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
       });
     };
 
-    const onPipelineCompleted = (e: { hasReporters: boolean; hasTrackers: boolean; hasCorrelators: boolean }) => {
+    const onPipelineCompleted = (e: { sessionId: string; hasReporters: boolean; hasTrackers: boolean; hasCorrelators: boolean }) => {
       if (e.hasReporters) {
         setCenterTree((prev) => {
           const existing = findTabByType(prev, 'dashboard');
@@ -810,7 +824,12 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
             treeRef.current = next;
             return next;
           }
-          const target = firstLeaf(prev);
+          // Place the dashboard tab in the pane that owns the completed session,
+          // falling back to the first leaf if the pane can't be found.
+          const sessionPane = allPanes(prev).find(
+            (p) => paneSessionMapRef.current.get(p.id) === e.sessionId,
+          );
+          const target = (sessionPane && findLeafByPaneId(prev, sessionPane.id)) ?? firstLeaf(prev);
           const tab = makeTab('dashboard');
           const next = updateLeaf(prev, target.pane.id, (pane) => ({
             ...pane,

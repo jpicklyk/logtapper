@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { AdbTrackerUpdate, StateSnapshot, StateTransition } from '../bridge/types';
 import { getAllTransitionLines, getStateAtLine, getStateTransitions } from '../bridge/commands';
 import { useTrackerContext } from '../context/TrackerContext';
+import { useSessionContext } from '../context/SessionContext';
 import { bus } from '../events/bus';
 
 export interface StateTrackerActions {
@@ -22,6 +23,12 @@ export function useStateTracker(): StateTrackerActions {
     setAllTransitionLineNums,
     setTransitionsByLine,
   } = useTrackerContext();
+
+  // Track the focused session so pipeline:completed only refreshes transitions
+  // for the session the user is looking at.
+  const { focusedPaneId, paneSessionMap } = useSessionContext();
+  const focusedSessionIdRef = useRef<string | undefined>();
+  focusedSessionIdRef.current = focusedPaneId ? paneSessionMap.get(focusedPaneId) : undefined;
 
   const unlistenRef = useRef<UnlistenFn | null>(null);
 
@@ -83,7 +90,10 @@ export function useStateTracker(): StateTrackerActions {
       clearTransitions();
     };
     const handlePipelineCompleted = (data: { sessionId: string; hasTrackers: boolean }) => {
-      if (data.hasTrackers) {
+      // Only refresh transitions if the pipeline ran for the focused session.
+      // Refreshing for a background pane's session would overwrite the focused
+      // pane's TrackerContext state (TrackerContext is single-instance).
+      if (data.hasTrackers && data.sessionId === focusedSessionIdRef.current) {
         refreshTransitionLines(data.sessionId);
       }
     };
