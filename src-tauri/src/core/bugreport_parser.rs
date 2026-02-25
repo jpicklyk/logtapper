@@ -25,8 +25,20 @@
 //! The tag field in `LineMeta` carries the section name for `------` header and
 //! footer lines so they are discoverable by search.  Plain content lines get an
 //! empty tag and are shown as raw text.
+//!
+//! ## Year inference for logcat lines
+//!
+//! Logcat lines embedded in a bugreport have no year (`MM-DD HH:MM:SS.mmm`).
+//! The parser is stateful: when it encounters the `== dumpstate: YYYY-MM-DD`
+//! header it records the capture year, then corrects all subsequent logcat
+//! timestamps to that year.
+//!
+//! Year-rollover: if a logcat line's date (with the dumpstate year applied)
+//! would be *after* the dumpstate capture time, the line is from the previous
+//! year (e.g. a Dec 30 log line in a Jan 5 bugreport → year − 1).
 
 use regex::Regex;
+use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use crate::core::line::{LineContext, ParsedLineMeta, LogLevel};
@@ -74,27 +86,30 @@ fn extract_section_name(raw: &str) -> String {
     }
 }
 
-/// Convert a full dumpstate datetime to nanoseconds since 2000-01-01 00:00:00 UTC.
+/// Nanosecond offset from BASE_NS (2000-01-01 00:00:00 UTC) to the start of
+/// `year`.  Accounts for leap years between 2000 and `year` (exclusive).
 ///
-/// This uses the same epoch base as the logcat parser so timestamps are
-/// comparable across sources within a single session.
-fn parse_dumpstate_timestamp(year: i64, month: i64, day: i64, hour: i64, min: i64, sec: i64) -> i64 {
-    const BASE_NS: i64 = 946_684_800_000_000_000; // 2000-01-01 00:00:00 UTC
+/// Returns 0 for year 2000, positive for later years, negative for earlier.
+fn year_start_ns_from_2000(year: i64) -> i64 {
+    let y = year - 2000;
+    let leap_days = y / 4 - y / 100 + y / 400;
+    (y * 365 + leap_days) * 86_400_000_000_000
+}
 
-    let years_since_2000 = year - 2000;
-    // Approximate leap-day count from year 2000 up to (but not including) `year`.
-    let leap_days = years_since_2000 / 4 - years_since_2000 / 100 + years_since_2000 / 400;
-    let year_days = years_since_2000 * 365 + leap_days;
+/// Convert a full dumpstate datetime to nanoseconds (Unix-compatible: BASE_NS
+/// is the Unix nanosecond value of 2000-01-01 00:00:00 UTC).
+fn parse_dumpstate_timestamp(year: i64, month: i64, day: i64, hour: i64, min: i64, sec: i64) -> i64 {
+    const BASE_NS: i64 = 946_684_800_000_000_000; // 2000-01-01 00:00:00 UTC as Unix nanos
 
     const MONTH_DAYS: [i64; 12] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
     let is_leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
     let month_days = MONTH_DAYS[(month as usize).saturating_sub(1)];
     let leap_add: i64 = if is_leap && month > 2 { 1 } else { 0 };
-
-    let total_days = year_days + month_days + leap_add + (day - 1);
+    let yday = month_days + leap_add + (day - 1);
 
     BASE_NS
-        + total_days * 86_400_000_000_000
+        + year_start_ns_from_2000(year)
+        + yday * 86_400_000_000_000
         + hour * 3_600_000_000_000
         + min * 60_000_000_000
         + sec * 1_000_000_000
@@ -104,9 +119,63 @@ fn parse_dumpstate_timestamp(year: i64, month: i64, day: i64, hour: i64, min: i6
 // Parser
 // ---------------------------------------------------------------------------
 
-pub struct BugreportParser;
+/// Stateful bugreport parser.  Must be constructed with [`BugreportParser::new()`].
+///
+/// State is updated as lines are parsed top-to-bottom:
+/// - `dumpstate_year` / `dumpstate_ts_ns` are populated on the first
+///   `== dumpstate:` header line.
+/// - All subsequent logcat timestamps are corrected to that year (with
+///   year-rollover handling).
+///
+/// `AtomicI32`/`AtomicI64` with `Relaxed` ordering are used so that the
+/// parser satisfies `Send + Sync` (required by `LogParser`) while remaining
+/// allocation-free.  The parse is always single-threaded and sequential so
+/// there is no concurrent access to reason about.
+pub struct BugreportParser {
+    /// Capture year from the `== dumpstate:` header, or 0 if not yet seen.
+    dumpstate_year: AtomicI32,
+    /// Full capture timestamp (Unix nanos) from the `== dumpstate:` header.
+    dumpstate_ts_ns: AtomicI64,
+}
 
 impl BugreportParser {
+    pub fn new() -> Self {
+        Self {
+            dumpstate_year: AtomicI32::new(0),
+            dumpstate_ts_ns: AtomicI64::new(0),
+        }
+    }
+
+    /// Shift a logcat timestamp (stored with year-2000 base) to the dumpstate
+    /// capture year, applying year-rollover correction.
+    ///
+    /// If the year-shifted timestamp would be *after* the dumpstate capture
+    /// time, the log line is from the previous year (e.g. a Dec 30 entry in a
+    /// Jan 5 bugreport).
+    ///
+    /// Returns the original timestamp unchanged if the dumpstate year has not
+    /// yet been recorded.
+    fn correct_logcat_year(&self, ts_2000: i64) -> i64 {
+        let year = self.dumpstate_year.load(Ordering::Relaxed) as i64;
+        if year == 0 {
+            return ts_2000; // Dumpstate header not yet encountered
+        }
+
+        // ts_2000 = BASE_NS + time_offset_within_year
+        // Shift to dumpstate year by adding the year-start offset delta.
+        let offset = year_start_ns_from_2000(year);
+        let ts_with_year = ts_2000 + offset;
+
+        let dumpstate_ts = self.dumpstate_ts_ns.load(Ordering::Relaxed);
+        if ts_with_year > dumpstate_ts {
+            // This date is later in the year than the capture time — it belongs
+            // to the previous year (Dec 30 in a Jan 5 bugreport, for example).
+            ts_2000 + year_start_ns_from_2000(year - 1)
+        } else {
+            ts_with_year
+        }
+    }
+
     /// Shared logic: classify one raw line and return its metadata fields.
     /// Called by both `parse_meta` and `parse_line` to avoid duplication.
     fn classify(&self, raw: &str, byte_offset: usize) -> ParsedLineMeta {
@@ -123,6 +192,7 @@ impl BugreportParser {
         }
 
         // `== dumpstate: YYYY-MM-DD HH:MM:SS` — file-level timestamp.
+        // Store the capture year and timestamp for use in logcat year correction.
         if let Some(caps) = dumpstate_ts_re().captures(raw) {
             let y: i64 = caps.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(2000);
             let mo: i64 = caps.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(1);
@@ -130,10 +200,13 @@ impl BugreportParser {
             let h: i64 = caps.get(4).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
             let mi: i64 = caps.get(5).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
             let s: i64 = caps.get(6).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+            let ts = parse_dumpstate_timestamp(y, mo, d, h, mi, s);
+            self.dumpstate_year.store(y as i32, Ordering::Relaxed);
+            self.dumpstate_ts_ns.store(ts, Ordering::Relaxed);
             return ParsedLineMeta {
                 level: LogLevel::Info,
                 tag: "dumpstate".to_string(),
-                timestamp: parse_dumpstate_timestamp(y, mo, d, h, mi, s),
+                timestamp: ts,
                 byte_offset,
                 byte_len: raw.len(),
                 is_section_boundary: false,
@@ -167,6 +240,9 @@ impl BugreportParser {
         // Try logcat format (handles both standard ADB and bugreport UID-prefixed formats).
         // LogcatParser already recognises MM-DD HH:MM:SS.mmm [UID] PID TID LEVEL TAG: msg.
         if let Some(mut meta) = LogcatParser.parse_meta(raw, byte_offset) {
+            if meta.timestamp > 0 {
+                meta.timestamp = self.correct_logcat_year(meta.timestamp);
+            }
             meta.byte_len = raw.len();
             return meta;
         }
@@ -183,6 +259,12 @@ impl BugreportParser {
     }
 }
 
+impl Default for BugreportParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LogParser for BugreportParser {
     fn parse_meta(&self, raw: &str, byte_offset: usize) -> Option<ParsedLineMeta> {
         let raw = raw.trim_end_matches(['\r', '\n']);
@@ -192,8 +274,14 @@ impl LogParser for BugreportParser {
     fn parse_line(&self, raw: &str, source_id: &str, line_num: usize) -> Option<LineContext> {
         let raw = raw.trim_end_matches(['\r', '\n']);
 
-        // Delegate logcat lines to LogcatParser for full pid/tid/message parsing.
+        // Delegate logcat lines to LogcatParser for full pid/tid/message parsing,
+        // then correct the year using the stored dumpstate capture year.
+        // Note: non-logcat lines (including the dumpstate header) fall through to
+        // classify() below, which updates dumpstate_year as a side-effect.
         if let Some(mut ctx) = LogcatParser.parse_line(raw, source_id, line_num) {
+            if ctx.timestamp > 0 {
+                ctx.timestamp = self.correct_logcat_year(ctx.timestamp);
+            }
             ctx.source_line_num = line_num;
             return Some(ctx);
         }
@@ -227,7 +315,7 @@ mod tests {
 
     #[test]
     fn parses_section_header() {
-        let p = BugreportParser;
+        let p = BugreportParser::new();
         let m = p.parse_meta("------ MEMORY INFO (/proc/meminfo) ------", 0).unwrap();
         assert_eq!(m.tag, "MEMORY INFO");
         assert_eq!(m.level, LogLevel::Info);
@@ -235,14 +323,14 @@ mod tests {
 
     #[test]
     fn parses_section_header_no_source() {
-        let p = BugreportParser;
+        let p = BugreportParser::new();
         let m = p.parse_meta("------ CPU INFO ------", 0).unwrap();
         assert_eq!(m.tag, "CPU INFO");
     }
 
     #[test]
     fn parses_duration_footer() {
-        let p = BugreportParser;
+        let p = BugreportParser::new();
         let m = p
             .parse_meta("------ 0.011s was the duration of 'MEMORY INFO' ------", 0)
             .unwrap();
@@ -252,17 +340,19 @@ mod tests {
 
     #[test]
     fn parses_dumpstate_timestamp() {
-        let p = BugreportParser;
+        let p = BugreportParser::new();
         let m = p
             .parse_meta("== dumpstate: 2026-02-16 17:27:35", 0)
             .unwrap();
         assert_eq!(m.tag, "dumpstate");
         assert!(m.timestamp > 0, "timestamp should be positive");
+        // Year should now be stored
+        assert_eq!(p.dumpstate_year.load(Ordering::Relaxed), 2026);
     }
 
     #[test]
     fn indexes_plain_content_lines() {
-        let p = BugreportParser;
+        let p = BugreportParser::new();
         let m = p.parse_meta("MemTotal:        5843088 kB", 0).unwrap();
         assert_eq!(m.level, LogLevel::Info);
         assert_eq!(m.tag, "");
@@ -270,7 +360,7 @@ mod tests {
 
     #[test]
     fn parses_embedded_logcat_line_standard() {
-        let p = BugreportParser;
+        let p = BugreportParser::new();
         // Standard ADB logcat format: MM-DD HH:MM:SS.mmm PID TID L TAG: msg
         let m = p
             .parse_meta("02-16 17:24:00.058  1587  1587 E Watchdog: !@Sync timeout", 0)
@@ -282,7 +372,7 @@ mod tests {
 
     #[test]
     fn parses_embedded_logcat_line_with_uid() {
-        let p = BugreportParser;
+        let p = BugreportParser::new();
         // Bugreport SYSTEM LOG format: MM-DD HH:MM:SS.mmm UID PID TID L TAG: msg
         let m = p
             .parse_meta("02-16 17:28:19.497  1000  1149  3609 D RestrictionPolicy: some message", 0)
@@ -294,11 +384,56 @@ mod tests {
 
     #[test]
     fn skips_decorative_separator() {
-        let p = BugreportParser;
+        let p = BugreportParser::new();
         let m = p
             .parse_meta("========================================================", 0)
             .unwrap();
         assert_eq!(m.level, LogLevel::Verbose);
         assert_eq!(m.tag, "");
+    }
+
+    /// Logcat lines parsed after the dumpstate header should have the capture
+    /// year applied rather than the year-2000 base used by LogcatParser alone.
+    #[test]
+    fn logcat_year_corrected_after_dumpstate_header() {
+        let p = BugreportParser::new();
+        p.parse_meta("== dumpstate: 2026-02-16 17:27:35", 0).unwrap();
+
+        // A line from the same day, earlier in the day — should be year 2026.
+        let m = p
+            .parse_meta("02-16 17:24:00.058  1587  1587 E Watchdog: !@Sync timeout", 0)
+            .unwrap();
+        // The corrected timestamp should be in 2026, not 2000.
+        // Year 2026 offset from BASE_NS is year_start_ns_from_2000(2026).
+        let year_2026_offset = year_start_ns_from_2000(2026);
+        let year_2000_ts = {
+            // Compute what LogcatParser alone would produce for 02-16 17:24:00.058
+            const BASE_NS: i64 = 946_684_800_000_000_000;
+            const MONTH_DAYS: [i64; 12] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+            let yday = MONTH_DAYS[1] + 15; // Feb (index 1) + day 16 - 1 = 15
+            BASE_NS + yday * 86_400_000_000_000 + 17 * 3_600_000_000_000 + 24 * 60_000_000_000 + 58_000_000
+        };
+        assert_eq!(m.timestamp, year_2000_ts + year_2026_offset);
+    }
+
+    /// A Dec 30 log line in a Jan 5 bugreport should be attributed to year − 1.
+    #[test]
+    fn logcat_year_rollover_dec_in_jan_bugreport() {
+        let p = BugreportParser::new();
+        p.parse_meta("== dumpstate: 2026-01-05 10:00:00", 0).unwrap();
+
+        let m = p
+            .parse_meta("12-30 23:55:00.000  1000  1000 I Tag: rollover test", 0)
+            .unwrap();
+
+        // Dec 30 with year 2026 would be after Jan 5, 2026 → must roll to 2025.
+        let year_2025_offset = year_start_ns_from_2000(2025);
+        let year_2000_ts = {
+            const BASE_NS: i64 = 946_684_800_000_000_000;
+            const MONTH_DAYS: [i64; 12] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+            let yday = MONTH_DAYS[11] + 29; // Dec (index 11) + day 30 - 1 = 29
+            BASE_NS + yday * 86_400_000_000_000 + 23 * 3_600_000_000_000 + 55 * 60_000_000_000
+        };
+        assert_eq!(m.timestamp, year_2000_ts + year_2025_offset);
     }
 }

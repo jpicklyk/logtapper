@@ -26,10 +26,6 @@ Tagged enums cross the boundary as discriminated unions:
 | `HighlightKind::ExtractedField { name }` | `{ type: 'ExtractedField', name: string }` |
 | `HighlightKind::PiiReplaced` | `{ type: 'PiiReplaced' }` |
 
-## Timestamp precision
-
-`ViewLine.timestamp` and `LoadResult.firstTimestamp` / `lastTimestamp` are `i64` nanoseconds since **2000-01-01 UTC** (not Unix epoch). JavaScript `number` (IEEE 754 double) can only represent integers exactly up to 2^53. **Treat timestamps as opaque values for ordering only; do not perform arithmetic on them in TypeScript.**
-
 ## Command wrapper conventions (`commands.ts`)
 
 All wrappers are thin: `invoke(commandName, args)` → typed Promise. The argument object keys must match the Rust command parameter names exactly (snake_case on the Rust side, but Tauri's auto-rename converts camelCase JS keys to snake_case — **pass camelCase from TypeScript**).

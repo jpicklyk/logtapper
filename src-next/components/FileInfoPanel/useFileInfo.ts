@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSessionForPane, useScrollTarget, useViewerActions, useIndexingProgress } from '../../context';
-import { getDumpstateMetadata, getSections } from '../../bridge/commands';
+import { getDumpstateMetadata, getSections, getSessionMetadata } from '../../bridge/commands';
 import { onAdbBatch } from '../../bridge/events';
 import type { DumpstateMetadata } from '../../bridge/types';
 import type { SectionEntry } from './FileInfoPanel';
@@ -86,6 +86,23 @@ export function useFileInfo(paneId: string | null): FileInfoData {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, session?.sourceType, indexingProgress]);
+
+  // Refresh timestamps after indexing completes. The initial LoadResult is built
+  // from the first 1 MB chunk, so for large files first_timestamp/last_timestamp
+  // may both resolve to the same line (e.g. bugreports where only the dumpstate
+  // header line has a non-zero timestamp in the opening chunk).
+  useEffect(() => {
+    if (!sessionId || indexingProgress !== null) return;
+    let cancelled = false;
+    getSessionMetadata(sessionId)
+      .then((meta) => {
+        if (cancelled) return;
+        setFirstTimestamp(meta.firstTimestamp);
+        setLastTimestamp(meta.lastTimestamp);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [sessionId, indexingProgress]);
 
   // Subscribe to ADB batch events for real-time size/timestamp updates.
   useEffect(() => {

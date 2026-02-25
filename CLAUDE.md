@@ -200,7 +200,6 @@ See `src-next/hooks/CLAUDE.md` for the hook ownership table, domain hook pattern
 
 - `app.emit()` requires `use tauri::Emitter` — trait method, not inherent on `AppHandle`.
 - Rust `regex` crate does **not** support look-ahead (`(?!...)`). `get_or_compile()` returns `Option<&Regex>` (None on invalid) — callers skip, resulting in 0 matches.
-- Timestamps are **nanoseconds since 2000-01-01 UTC** (not Unix epoch). JS `number` loses precision beyond 2^53 — treat as opaque ordering values on the frontend.
 - `LineContext` string fields (`raw`, `tag`, `message`, `source_id`) are `Arc<str>`, not `String`. Use `Arc::from(s)` to construct, `&*field` or `.as_ref()` for `&str` access, `.to_string()` for owned `String`.
 - **Pre-filter and transformers:** `collect_tag_filters()` must exclude transformers. Including an unfiltered transformer disables the entire pre-filter.
 - Clippy: `impl Default for Foo` where the body only calls field defaults → replace with `#[derive(Default)]`.

@@ -28,10 +28,6 @@ Returning `None` from `parse_meta()` **silently drops the line from the index**.
 
 `parser_for(&source_type)` in `session.rs` selects the correct parser based on detected source type. Used by `pipeline.rs`, `files.rs`, and `filter.rs`.
 
-## Timestamp convention
-
-All timestamps are **nanoseconds since 2000-01-01 00:00:00 UTC** (not Unix epoch). Year 2000 was chosen because logcat strips the year — using 2000 as base keeps relative ordering correct within a session. Lines without a parseable timestamp get `timestamp: 0` (sorted to the front).
-
 ## LogSource trait (`log_source.rs`)
 
 `LogSource` is a trait providing polymorphic access to log data. Two implementations:

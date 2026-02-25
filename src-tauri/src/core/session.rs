@@ -599,7 +599,7 @@ pub(crate) fn parser_for(source_type: &SourceType) -> Box<dyn LogParser> {
     match source_type {
         SourceType::Logcat | SourceType::Radio | SourceType::Events => Box::new(LogcatParser),
         SourceType::Kernel => Box::new(KernelParser),
-        SourceType::Bugreport => Box::new(BugreportParser),
+        SourceType::Bugreport => Box::new(BugreportParser::new()),
         _ => Box::new(LogcatParser),
     }
 }

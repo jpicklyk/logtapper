@@ -23,12 +23,12 @@ interface FileInfoPanelProps {
   sectionJumpSeq?: number;
 }
 
-// Offset from 2000-01-01 UTC to Unix epoch in milliseconds.
-const YEAR2000_MS = 946_684_800_000;
-
 function formatTimestamp(ns: number | null | undefined): string {
   if (ns === null || ns === undefined || ns === 0) return '\u2014';
-  const ms = Math.floor(ns / 1_000_000) + YEAR2000_MS;
+  // Timestamps are nanoseconds since Unix epoch (1970-01-01 UTC).
+  // BASE_NS in the Rust parsers is the Unix nanosecond value of 2000-01-01,
+  // so the stored value is already Unix-compatible — just divide to get ms.
+  const ms = Math.floor(ns / 1_000_000);
   return new Date(ms).toLocaleString(undefined, { timeZone: 'UTC' });
 }
 

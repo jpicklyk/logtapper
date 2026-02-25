@@ -74,6 +74,7 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
       return (
         <div className={styles.logviewerPane} onClick={handlePaneFocus} onFocus={handlePaneFocus}>
           <LogViewer
+            key={session?.sessionId ?? pane.id}
             paneId={pane.id}
             fetchLines={fetchLines}
           />
