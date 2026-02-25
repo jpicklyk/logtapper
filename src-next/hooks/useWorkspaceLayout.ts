@@ -617,6 +617,19 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
     const newPaneId = crypto.randomUUID();
     let landingPaneId = zone === 'center' ? toPaneId : newPaneId;
 
+    // Capture source pane state BEFORE updateTree so we can emit the correct
+    // re-activation event for the remaining tab in the source pane.
+    // When the active tab is dragged out, paneSessionMap still points to that
+    // departed session — we must activate the now-visible remaining tab.
+    const preFromLeaf = findLeafByPaneId(treeRef.current, fromPaneId);
+    const movedTabWasActive = preFromLeaf?.pane.activeTabId === tabId;
+    const remainingFromTabs = (preFromLeaf?.pane.tabs ?? []).filter((t) => t.id !== tabId);
+    const isSamePaneNoOp = fromPaneId === toPaneId && zone === 'center';
+    const newActiveFromTab =
+      !isSamePaneNoOp && movedTabWasActive && remainingFromTabs.length > 0
+        ? remainingFromTabs[0]
+        : null;
+
     updateTree((tree) => {
       const fromLeaf = findLeafByPaneId(tree, fromPaneId);
       if (!fromLeaf) return tree;
@@ -679,6 +692,13 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
       return replaceNode(updated, toLeaf.id, splitNode);
     });
     bus.emit('layout:logviewer-tab-activated', { tabId, paneId: landingPaneId });
+
+    // If the moved tab was the active tab in the source pane, the pane's remaining
+    // tab is now displayed but paneSessionMap still points to the departed session.
+    // Emit an activation event so useLogViewer can swap to the correct session.
+    if (newActiveFromTab?.type === 'logviewer') {
+      bus.emit('layout:logviewer-tab-activated', { tabId: newActiveFromTab.id, paneId: fromPaneId });
+    }
   }, [updateTree]);
 
   // ---------------------------------------------------------------------------
@@ -718,7 +738,7 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
 
     const onSessionLoaded = (e: { sourceName: string; paneId: string; sourceType: string; sessionId: string;
                                    tabId: string; isNewTab?: boolean; previousSessionId?: string }) => {
-      if (e.sourceType === 'Bugreport') {
+      if (e.sourceType === 'Bugreport' && e.paneId === focusedPaneIdRef.current) {
         setLeftPaneTabRaw('info');
       }
       setCenterTree((prev) => {
@@ -849,7 +869,7 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
     };
 
     const onSessionClosed = (e: { sourceType: string; paneId: string; tabId?: string }) => {
-      if (e.sourceType === 'Bugreport') {
+      if (e.sourceType === 'Bugreport' && e.paneId === focusedPaneIdRef.current) {
         setLeftPaneTabRaw('state');
       }
       // Reset the closed tab's label so the stale filename doesn't persist in

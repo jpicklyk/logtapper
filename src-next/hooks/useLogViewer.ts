@@ -158,8 +158,13 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     setTimeFilterStartCtx('');
     setTimeFilterEndCtx('');
     setTimeFilterLineNums(null);
+    // Scroll the viewer back to line 0 so the new file starts at the top.
+    // Without this, the viewport would stay at whatever scroll position the
+    // previous file left behind (LogViewer is no longer remounted on session change).
+    setScrollToLine(0);
+    setJumpSeq((s) => s + 1);
   }, [cacheManager, setSearch, setSearchSummary, setCurrentMatchIndex, setProcessorId,
-      setStreamFilterCtx, setTimeFilterStartCtx, setTimeFilterEndCtx]);
+      setStreamFilterCtx, setTimeFilterStartCtx, setTimeFilterEndCtx, setScrollToLine, setJumpSeq]);
 
   const handleAdbBatch = useCallback((payload: AdbBatchPayload) => {
     // Only handle batches for the active stream's session
