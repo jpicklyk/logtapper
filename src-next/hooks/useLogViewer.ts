@@ -839,7 +839,24 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     };
     const handleTabActivated = ({ tabId, paneId }: { tabId: string; paneId: string }) => {
       const sessionId = tabSessionMapRef.current.get(tabId);
-      if (sessionId) activateSessionForPane(paneId, sessionId);
+      if (!sessionId) return;
+      activateSessionForPane(paneId, sessionId);
+      // Best-effort prefetch: if the session has indexed lines but no cached lines yet
+      // (common when a second tab loaded and became active before the first session's
+      // totalLines was non-zero), warm the cache now so the viewer can render from
+      // cache instead of showing loading skeletons when this tab becomes visible.
+      const sess = sessionsRef.current.get(sessionId);
+      if (sess && sess.totalLines > 0) {
+        let hasCachedLines = false;
+        for (const _ of cacheManager.getSessionEntries(sessionId)) { hasCachedLines = true; break; }
+        if (!hasCachedLines) {
+          getLines({ sessionId, mode: { mode: 'Full' }, offset: 0, count: 100, context: 3 })
+            .then((win) => {
+              if (win.lines.length > 0) cacheManager.broadcastToSession(sessionId, win.lines);
+            })
+            .catch(() => {});
+        }
+      }
     };
     const handleTabBind = ({ tabId, sessionId }: { tabId: string; sessionId: string; paneId: string }) => {
       tabSessionMapRef.current.set(tabId, sessionId);
