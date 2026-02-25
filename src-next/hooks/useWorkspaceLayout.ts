@@ -39,9 +39,6 @@ export interface WorkspaceLayoutState {
 
   // Center area
   centerTree: SplitNode;
-  splitHorizontal: (tabId: string, paneId: string) => void;
-  splitVertical: (tabId: string, paneId: string) => void;
-  moveTab: (tabId: string, fromPaneId: string, toPaneId: string) => void;
   reorderTab: (paneId: string, fromIndex: number, toIndex: number) => void;
   closeTab: (tabId: string, paneId: string) => void;
   setActiveTab: (tabId: string, paneId: string) => void;
@@ -455,123 +452,6 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
   // Center tree operations
   // ---------------------------------------------------------------------------
 
-  const splitHorizontal = useCallback((tabId: string, paneId: string) => {
-    const newPaneId = crypto.randomUUID();
-    updateTree((tree) => {
-      const leaf = findLeafByPaneId(tree, paneId);
-      if (!leaf) return tree;
-      const tab = leaf.pane.tabs.find((t) => t.id === tabId);
-      if (!tab) return tree;
-
-      // Remove tab from existing pane
-      const remainingTabs = leaf.pane.tabs.filter((t) => t.id !== tabId);
-      const updatedPane: CenterPane = {
-        ...leaf.pane,
-        tabs: remainingTabs,
-        activeTabId: remainingTabs.length > 0
-          ? (leaf.pane.activeTabId === tabId ? remainingTabs[0].id : leaf.pane.activeTabId)
-          : '',
-      };
-
-      // New pane with the moved tab
-      const newPane: CenterPane = {
-        id: newPaneId,
-        tabs: [tab],
-        activeTabId: tab.id,
-      };
-
-      const leftLeaf: SplitNode = { type: 'leaf', id: leaf.id, pane: updatedPane };
-      const rightLeaf: SplitNode = { type: 'leaf', id: crypto.randomUUID(), pane: newPane };
-
-      const splitNode: SplitNode = {
-        type: 'split',
-        id: crypto.randomUUID(),
-        direction: 'horizontal',
-        children: [leftLeaf, rightLeaf],
-        ratio: 0.5,
-      };
-
-      return replaceNode(tree, leaf.id, splitNode);
-    });
-    bus.emit('layout:logviewer-tab-activated', { tabId, paneId: newPaneId });
-  }, [updateTree]);
-
-  const splitVertical = useCallback((tabId: string, paneId: string) => {
-    const newPaneId = crypto.randomUUID();
-    updateTree((tree) => {
-      const leaf = findLeafByPaneId(tree, paneId);
-      if (!leaf) return tree;
-      const tab = leaf.pane.tabs.find((t) => t.id === tabId);
-      if (!tab) return tree;
-
-      const remainingTabs = leaf.pane.tabs.filter((t) => t.id !== tabId);
-      const updatedPane: CenterPane = {
-        ...leaf.pane,
-        tabs: remainingTabs,
-        activeTabId: remainingTabs.length > 0
-          ? (leaf.pane.activeTabId === tabId ? remainingTabs[0].id : leaf.pane.activeTabId)
-          : '',
-      };
-
-      const newPane: CenterPane = {
-        id: newPaneId,
-        tabs: [tab],
-        activeTabId: tab.id,
-      };
-
-      const topLeaf: SplitNode = { type: 'leaf', id: leaf.id, pane: updatedPane };
-      const bottomLeaf: SplitNode = { type: 'leaf', id: crypto.randomUUID(), pane: newPane };
-
-      const splitNode: SplitNode = {
-        type: 'split',
-        id: crypto.randomUUID(),
-        direction: 'vertical',
-        children: [topLeaf, bottomLeaf],
-        ratio: 0.5,
-      };
-
-      return replaceNode(tree, leaf.id, splitNode);
-    });
-    bus.emit('layout:logviewer-tab-activated', { tabId, paneId: newPaneId });
-  }, [updateTree]);
-
-  const moveTab = useCallback((tabId: string, fromPaneId: string, toPaneId: string) => {
-    if (fromPaneId === toPaneId) return;
-    updateTree((tree) => {
-      const fromLeaf = findLeafByPaneId(tree, fromPaneId);
-      const toLeaf = findLeafByPaneId(tree, toPaneId);
-      if (!fromLeaf || !toLeaf) return tree;
-      const tab = fromLeaf.pane.tabs.find((t) => t.id === tabId);
-      if (!tab) return tree;
-
-      // Remove from source
-      const remainingTabs = fromLeaf.pane.tabs.filter((t) => t.id !== tabId);
-      let updated = updateLeaf(tree, fromPaneId, (pane) => ({
-        ...pane,
-        tabs: remainingTabs,
-        activeTabId: remainingTabs.length > 0
-          ? (pane.activeTabId === tabId ? remainingTabs[0].id : pane.activeTabId)
-          : '',
-      }));
-
-      // Add to target
-      updated = updateLeaf(updated, toPaneId, (pane) => ({
-        ...pane,
-        tabs: [...pane.tabs, tab],
-        activeTabId: tab.id,
-      }));
-
-      // Collapse empty source leaf
-      if (remainingTabs.length === 0) {
-        const collapsed = removeLeaf(updated, fromPaneId);
-        if (collapsed) return collapsed;
-      }
-
-      return updated;
-    });
-    bus.emit('layout:logviewer-tab-activated', { tabId, paneId: toPaneId });
-  }, [updateTree]);
-
   const reorderTab = useCallback((paneId: string, fromIndex: number, toIndex: number) => {
     if (fromIndex === toIndex) return;
     updateTree((tree) =>
@@ -719,6 +599,12 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
     toPaneId: string,
     zone: DropZone,
   ) => {
+    // Determine the destination pane ID up front so we can emit after updateTree.
+    // For split zones (left/right/top/bottom) a new pane is created; for 'center'
+    // the tab moves into the existing toPaneId.
+    const newPaneId = crypto.randomUUID();
+    let landingPaneId = zone === 'center' ? toPaneId : newPaneId;
+
     updateTree((tree) => {
       const fromLeaf = findLeafByPaneId(tree, fromPaneId);
       if (!fromLeaf) return tree;
@@ -756,6 +642,7 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
       const toLeaf = findLeafByPaneId(updated, toPaneId);
       if (!toLeaf) {
         const target = firstLeaf(updated);
+        landingPaneId = target.pane.id;
         return updateLeaf(updated, target.pane.id, (pane) => ({
           ...pane,
           tabs: [...pane.tabs, tab],
@@ -763,7 +650,7 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
         }));
       }
 
-      const newPane: CenterPane = { id: crypto.randomUUID(), tabs: [tab], activeTabId: tab.id };
+      const newPane: CenterPane = { id: newPaneId, tabs: [tab], activeTabId: tab.id };
       const direction = zone === 'left' || zone === 'right' ? 'horizontal' : 'vertical';
       const newFirst = zone === 'left' || zone === 'top';
       const newLeafNode: SplitNode = { type: 'leaf', id: crypto.randomUUID(), pane: newPane };
@@ -779,6 +666,7 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
 
       return replaceNode(updated, toLeaf.id, splitNode);
     });
+    bus.emit('layout:logviewer-tab-activated', { tabId, paneId: landingPaneId });
   }, [updateTree]);
 
   // ---------------------------------------------------------------------------
@@ -985,9 +873,6 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
 
     // Center area
     centerTree,
-    splitHorizontal,
-    splitVertical,
-    moveTab,
     reorderTab,
     closeTab,
     setActiveTab,
