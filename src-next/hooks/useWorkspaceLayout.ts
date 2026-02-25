@@ -730,6 +730,9 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
               activeTabId: e.tabId,
             }));
             treeRef.current = next;
+            // Activate the new tab's session in paneSessionMap so the pane renders
+            // the correct content immediately (without waiting for a user tab click).
+            bus.emit('layout:logviewer-tab-activated', { tabId: e.tabId, paneId: e.paneId });
             return next;
           }
 
