@@ -336,13 +336,15 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     });
   }, []);
 
-  const loadingGuardRef = useRef(false);
+  /** Per-pane load generation. Increment on each new load; stale results are discarded. */
+  const loadGenRef = useRef<Map<string, number>>(new Map());
 
   const loadFile = useCallback(async (path: string, paneId?: string) => {
-    if (loadingGuardRef.current) return;
-    loadingGuardRef.current = true;
-
     const targetPaneId = paneId ?? focusedPaneId ?? getStoredFirstPaneId() ?? DEFAULT_PANE_ID;
+
+    // Claim this pane. Any in-flight load for the same pane becomes stale.
+    const gen = (loadGenRef.current.get(targetPaneId) ?? 0) + 1;
+    loadGenRef.current.set(targetPaneId, gen);
 
     // Pre-assign a tab ID. Workspace layout will create the logviewer tab with this
     // exact ID so we can look up its session when the user switches between tabs.
@@ -385,6 +387,12 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     try {
       const result = await loadLogFile(path);
 
+      // Stale check: a newer load claimed this pane while we were awaiting.
+      if (loadGenRef.current.get(targetPaneId) !== gen) {
+        try { await closeSessionCmd(result.sessionId); } catch { /* ignore */ }
+        return;
+      }
+
       registerSession(targetPaneId, result);
       tabSessionMapRef.current.set(tabId, result.sessionId);
 
@@ -399,8 +407,6 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
       if (result.isIndexing) {
         setIndexingProgressCtx(result.sessionId, { linesIndexed: 0, totalLines: 0, done: false });
       }
-
-      setLoadingPane(targetPaneId, false);
 
       try { localStorage.setItem(LS_LAST_FILE, path); } catch { /* storage full */ }
 
@@ -431,11 +437,18 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
         });
       }
     } catch (e) {
-      try { localStorage.removeItem(LS_LAST_FILE); } catch { /* ignore */ }
-      setErrorPane(targetPaneId, String(e));
-      setLoadingPane(targetPaneId, false);
+      // Only apply the error if this load is still the current one for the pane.
+      if (loadGenRef.current.get(targetPaneId) === gen) {
+        try { localStorage.removeItem(LS_LAST_FILE); } catch { /* ignore */ }
+        setErrorPane(targetPaneId, String(e));
+      }
     } finally {
-      loadingGuardRef.current = false;
+      // Only clear loading state if this load is still current; the winning load
+      // will clear it otherwise.
+      if (loadGenRef.current.get(targetPaneId) === gen) {
+        loadGenRef.current.delete(targetPaneId);
+        setLoadingPane(targetPaneId, false);
+      }
     }
   }, [
     focusedPaneId, registerSession, activateSessionForPane, setLoadingPane, setErrorPane,
