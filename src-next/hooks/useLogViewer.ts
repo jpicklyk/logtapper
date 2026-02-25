@@ -765,7 +765,7 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
       sessionId = tabSessionMapRef.current.get(tabId);
       tabSessionMapRef.current.delete(tabId);
     } else {
-      sessionId = paneSessionMap.get(targetPaneId);
+      sessionId = paneSessionMapRef.current.get(targetPaneId);
     }
 
     if (!sessionId) return;
@@ -785,8 +785,10 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
 
     const sourceType = (sessionsRef.current.get(sessionId)?.sourceType ?? 'Unknown') as SourceType;
 
-    // Only reset the pane's UI state if we're closing the currently active session.
-    const isActivePaneSession = paneSessionMap.get(targetPaneId) === sessionId;
+    // Use the ref (not the closure value) — paneSessionMap may have changed while
+    // we were awaiting closeSessionCmd, and a stale value here would cause
+    // unregisterSession to delete the wrong session from the sessions map.
+    const isActivePaneSession = paneSessionMapRef.current.get(targetPaneId) === sessionId;
     if (isActivePaneSession) {
       resetSessionState();
       setIndexingProgressLocal(null);
@@ -799,7 +801,7 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     }
 
     bus.emit('session:closed', { sessionId, paneId: targetPaneId, sourceType });
-  }, [focusedPaneId, paneSessionMap, resetSessionState, stopStream,
+  }, [focusedPaneId, resetSessionState, stopStream,
       setIndexingProgressCtx, unregisterSession, terminateSession]);
 
   // Close the backend session when the user closes a logviewer tab via the UI.
