@@ -868,10 +868,7 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
       }
     };
 
-    const onSessionClosed = (e: { sourceType: string; paneId: string; tabId?: string }) => {
-      if (e.sourceType === 'Bugreport' && e.paneId === focusedPaneIdRef.current) {
-        setLeftPaneTabRaw('state');
-      }
+    const onSessionClosed = (e: { paneId: string; tabId?: string }) => {
       // Reset the closed tab's label so the stale filename doesn't persist in
       // localStorage and reappear after a refresh.
       // When a tabId is provided, target that specific tab. If the tab was already
