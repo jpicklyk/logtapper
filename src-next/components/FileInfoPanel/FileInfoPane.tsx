@@ -7,8 +7,12 @@ import { FileInfoPanel } from './FileInfoPanel';
  * tab. Rendered only when the tab is active, so streaming updates never
  * re-render LeftPane.
  */
-const FileInfoPane = React.memo(function FileInfoPane() {
-  const fileInfo = useFileInfo();
+interface FileInfoPaneProps {
+  paneId: string | null;
+}
+
+const FileInfoPane = React.memo(function FileInfoPane({ paneId }: FileInfoPaneProps) {
+  const fileInfo = useFileInfo(paneId);
   return (
     <FileInfoPanel
       sourceName={fileInfo.sourceName}

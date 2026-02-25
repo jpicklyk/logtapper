@@ -109,7 +109,7 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
         </div>
 
         <div className={styles.body}>
-          <details open>
+          <details open className={styles.metaSection}>
             <summary className={styles.sectionHeader}>File</summary>
             <div className={styles.rows}>
               <Row label="Name" value={sourceName} />
@@ -122,7 +122,7 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
           </details>
 
           {dumpstateMetadata && (
-            <details open>
+            <details open className={styles.metaSection}>
               <summary className={styles.sectionHeader}>Device</summary>
               <div className={styles.rows}>
                 <Row label="Model" value={dumpstateMetadata.deviceModel} />
@@ -141,8 +141,8 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
           )}
 
           {sections.length > 0 && (
-            <details open>
-              <summary className={styles.sectionHeader}>Sections</summary>
+            <div className={styles.sectionsArea}>
+              <div className={styles.sectionHeader}>Sections ({sections.length})</div>
               <div className={styles.sectionList}>
                 {sections.map((s, i) => (
                   <SectionItem
@@ -154,7 +154,7 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
                   />
                 ))}
               </div>
-            </details>
+            </div>
           )}
         </div>
       </div>

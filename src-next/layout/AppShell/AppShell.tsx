@@ -22,7 +22,6 @@ import { BottomPane } from '../../components/BottomPane';
 import { PaneContent } from '../../components/PaneContent';
 import { SettingsPanel } from '../../components/SettingsPanel';
 import { useSettings, useAnonymizerConfig } from '../../hooks';
-import { useViewerActions } from '../../context';
 import { useCacheManager } from '../../cache';
 import type {
   WorkspaceLayoutState,
@@ -65,7 +64,6 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   const settingsHook = useSettings();
   const anonymizerConfig = useAnonymizerConfig();
   const cacheManager = useCacheManager();
-  const { setFocusedPane } = useViewerActions();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Sync fileCacheBudget setting → CacheManager whenever it changes
@@ -126,9 +124,9 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   const handleTabActivate = useCallback(
     (tabId: string, paneId: string) => {
       workspace.setActiveTab(tabId, paneId);
-      setFocusedPane(paneId);
+      workspace.setFocusedPaneId(paneId);
     },
-    [workspace.setActiveTab, setFocusedPane],
+    [workspace.setActiveTab, workspace.setFocusedPaneId],
   );
 
   const handleTabClose = useCallback(
@@ -214,7 +212,10 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
           size={workspace.leftPaneWidth}
           onResize={handleLeftResize}
         >
-          <LeftPane activeTab={workspace.leftPaneTab} />
+          <LeftPane
+            activeTab={workspace.leftPaneTab}
+            displayPaneId={workspace.focusedActiveTabType === 'logviewer' ? workspace.focusedPaneId : null}
+          />
         </ToolPane>
       </div>
 
@@ -281,9 +282,13 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
         </ToolPane>
       </div>
 
-      {/* Status bar */}
+      {/* Status bar: only show session info when a log-backed tab is active */}
       <div className={styles.status}>
-        <StatusBar />
+        <StatusBar
+          focusedPaneId={
+            workspace.focusedActiveTabType === 'logviewer' ? workspace.focusedPaneId : null
+          }
+        />
       </div>
     </div>
   );

@@ -88,6 +88,7 @@ export {
   useFocusedPaneId,
   useIndexingProgress,
   useIsStreaming,
+  useIsStreamingForPane,
   useIsLoading,
   useIsLoadingForPane,
   useSessionError,

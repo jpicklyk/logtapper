@@ -71,8 +71,11 @@ export interface WorkspaceLayoutState {
   containerRef: React.RefObject<HTMLDivElement>;
   resetLayout: () => void;
 
-  // Focus tracking (mirrors SessionContext.focusedPaneId for layout-level use)
+  // Focus tracking — updated directly on every tab/pane activation (no bus event)
   focusedPaneId: string | null;
+  setFocusedPaneId: (paneId: string) => void;
+  /** Active tab type in the focused pane, or null if no pane is focused. */
+  focusedActiveTabType: CenterTabType | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -957,5 +960,13 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
 
     // Focus tracking
     focusedPaneId,
+    setFocusedPaneId,
+    focusedActiveTabType: (() => {
+      if (!focusedPaneId) return null;
+      const leaf = findLeafByPaneId(centerTree, focusedPaneId);
+      if (!leaf) return null;
+      const activeTab = leaf.pane.tabs.find((t) => t.id === leaf.pane.activeTabId);
+      return activeTab?.type ?? null;
+    })(),
   };
 }

@@ -19,8 +19,9 @@ export function useFocusedSession(): LoadResult | null {
 }
 
 /** Returns the session for a specific pane (for per-pane rendering). */
-export function useSessionForPane(paneId: string): LoadResult | null {
+export function useSessionForPane(paneId: string | null): LoadResult | null {
   const { sessions, paneSessionMap } = useSessionContext();
+  if (!paneId) return null;
   const sessionId = paneSessionMap.get(paneId);
   if (!sessionId) return null;
   return sessions.get(sessionId) ?? null;
@@ -45,6 +46,14 @@ export function useIsStreaming(): boolean {
   const { streamingSessionIds, paneSessionMap, focusedPaneId } = useSessionContext();
   if (!focusedPaneId) return false;
   const sessionId = paneSessionMap.get(focusedPaneId);
+  if (!sessionId) return false;
+  return streamingSessionIds.has(sessionId);
+}
+
+export function useIsStreamingForPane(paneId: string | null): boolean {
+  const { streamingSessionIds, paneSessionMap } = useSessionContext();
+  if (!paneId) return false;
+  const sessionId = paneSessionMap.get(paneId);
   if (!sessionId) return false;
   return streamingSessionIds.has(sessionId);
 }

@@ -1,11 +1,15 @@
 import React from 'react';
 import clsx from 'clsx';
-import { useFocusedSession, useIsStreaming } from '../../context';
+import { useSessionForPane, useIsStreamingForPane } from '../../context';
 import styles from './StatusBar.module.css';
 
-export const StatusBar = React.memo(function StatusBar() {
-  const session = useFocusedSession();
-  const isStreaming = useIsStreaming();
+interface StatusBarProps {
+  focusedPaneId: string | null;
+}
+
+export const StatusBar = React.memo(function StatusBar({ focusedPaneId }: StatusBarProps) {
+  const session = useSessionForPane(focusedPaneId);
+  const isStreaming = useIsStreamingForPane(focusedPaneId);
 
   const filePath = session?.filePath ?? null;
   const lineCount = session?.totalLines ?? null;

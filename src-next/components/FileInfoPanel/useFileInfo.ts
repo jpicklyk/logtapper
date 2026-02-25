@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useFocusedSession, useScrollTarget, useViewerActions, useIndexingProgress } from '../../context';
+import { useSessionForPane, useScrollTarget, useViewerActions, useIndexingProgress } from '../../context';
 import { getDumpstateMetadata, getSections } from '../../bridge/commands';
 import { onAdbBatch } from '../../bridge/events';
 import type { DumpstateMetadata } from '../../bridge/types';
@@ -19,10 +19,8 @@ export interface FileInfoData {
   onJumpToLine: (line: number) => void;
 }
 
-export function useFileInfo(): FileInfoData {
-  // Use the focused session, not the global (unchanged) useSession() — this is now the same
-  // thing, but explicit about intent.
-  const session = useFocusedSession();
+export function useFileInfo(paneId: string | null): FileInfoData {
+  const session = useSessionForPane(paneId);
   const { jumpToLine } = useViewerActions();
   const { lineNum: scrollToLine } = useScrollTarget();
 
