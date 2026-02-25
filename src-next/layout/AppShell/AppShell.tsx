@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   FileText,
   Activity,
@@ -26,10 +27,17 @@ import { useCacheManager } from '../../cache';
 import type {
   WorkspaceLayoutState,
   CenterPane,
+  SplitNode,
   LeftPaneTab,
   BottomTabType,
   DropZone,
 } from '../../hooks';
+
+/** Collect all leaf panes from the split tree (depth-first). */
+function collectPanes(node: SplitNode): CenterPane[] {
+  if (node.type === 'leaf') return [node.pane];
+  return [...collectPanes(node.children[0]), ...collectPanes(node.children[1])];
+}
 import styles from './AppShell.module.css';
 
 interface AppShellProps {
@@ -65,6 +73,30 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   const anonymizerConfig = useAnonymizerConfig();
   const cacheManager = useCacheManager();
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // -- Portal mount points --
+  // Map pane.id → the mount div inside each LeafPane.
+  // PaneContent components are rendered here (AppShell level) and portaled in,
+  // so structural tree changes (1→2 panes, 2→1) never unmount them.
+  const contentRefsRef = useRef<Map<string, HTMLDivElement>>(new Map());
+  const [, forcePortals] = useReducer((x: number) => x + 1, 0);
+
+  const handleContentRef = useCallback((paneId: string, el: HTMLDivElement | null) => {
+    if (el) {
+      contentRefsRef.current.set(paneId, el);
+    } else {
+      contentRefsRef.current.delete(paneId);
+    }
+    // Trigger a re-render so portals are created/destroyed for the updated map.
+    // React 18 batches this with any concurrent ref callbacks from the same commit,
+    // so by the time we re-render, the map reflects the final post-commit state.
+    forcePortals();
+  }, []);
+
+  const currentPanes = useMemo(
+    () => collectPanes(workspace.centerTree),
+    [workspace.centerTree],
+  );
 
   // Sync fileCacheBudget setting → CacheManager whenever it changes
   useEffect(() => {
@@ -164,12 +196,7 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
     [workspace.reorderTab],
   );
 
-  const renderCenterContent = useCallback(
-    (pane: CenterPane) => {
-      return <PaneContent pane={pane} />;
-    },
-    [],
-  );
+  // renderCenterContent removed — pane content is now rendered as portals below.
 
   // -- Active bottom tab id for left toolbar bottom group --
   const activeBottomId = useMemo(() => {
@@ -224,7 +251,7 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
         <CenterArea
           tree={workspace.centerTree}
           focusedPaneId={workspace.focusedPaneId}
-          renderContent={renderCenterContent}
+          onContentRef={handleContentRef}
           onTabActivate={handleTabActivate}
           onTabClose={handleTabClose}
           onTabAdd={handleTabAdd}
@@ -290,6 +317,16 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
           }
         />
       </div>
+
+      {/* Pane content portals — rendered here (AppShell level) so structural
+          tree changes (1↔2 panes, split/collapse) never unmount PaneContent or
+          LogViewer. Each portal injects its content into the matching LeafPane's
+          paneContentMount div via the ref registered by handleContentRef. */}
+      {currentPanes.map((pane) => {
+        const container = contentRefsRef.current.get(pane.id);
+        if (!container) return null;
+        return createPortal(<PaneContent pane={pane} />, container, pane.id);
+      })}
     </div>
   );
 });

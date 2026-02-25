@@ -26,7 +26,9 @@ function findPane(tree: SplitNode, paneId: string): CenterPane | null {
 interface CenterAreaProps {
   tree: SplitNode;
   focusedPaneId?: string | null;
-  renderContent: (pane: CenterPane) => React.ReactNode;
+  /** Called with (paneId, element) when a leaf's content mount div is attached/detached.
+   *  Consumers use this to portal pane content into the correct leaf. */
+  onContentRef: (paneId: string, el: HTMLDivElement | null) => void;
   onTabActivate: (tabId: string, paneId: string) => void;
   onTabClose: (tabId: string, paneId: string) => void;
   onTabAdd?: (paneId: string) => void;
@@ -102,7 +104,7 @@ export const CenterArea = React.memo(function CenterArea(props: CenterAreaProps)
       onDragCancel={handleDragCancel}
     >
       <div className={styles.root}>
-        <SplitNodeRenderer {...props} node={props.tree} focusedPaneId={props.focusedPaneId} />
+        <SplitNodeRenderer {...props} node={props.tree} focusedPaneId={props.focusedPaneId} onContentRef={props.onContentRef} />
       </div>
       <DragOverlay dropAnimation={null}>
         {draggingTab ? <div className={styles.tabGhost}>{draggingTab.label}</div> : null}
@@ -114,7 +116,7 @@ export const CenterArea = React.memo(function CenterArea(props: CenterAreaProps)
 interface SplitNodeRendererProps {
   node: SplitNode;
   focusedPaneId?: string | null;
-  renderContent: (pane: CenterPane) => React.ReactNode;
+  onContentRef: (paneId: string, el: HTMLDivElement | null) => void;
   onTabActivate: (tabId: string, paneId: string) => void;
   onTabClose: (tabId: string, paneId: string) => void;
   onTabAdd?: (paneId: string) => void;
@@ -126,7 +128,7 @@ interface SplitNodeRendererProps {
 const SplitNodeRenderer = React.memo(function SplitNodeRenderer({
   node,
   focusedPaneId,
-  renderContent,
+  onContentRef,
   onTabActivate,
   onTabClose,
   onTabAdd,
@@ -139,7 +141,7 @@ const SplitNodeRenderer = React.memo(function SplitNodeRenderer({
       <LeafPane
         pane={node.pane}
         paneIsFocused={node.pane.id === focusedPaneId}
-        renderContent={renderContent}
+        onContentRef={onContentRef}
         onTabActivate={onTabActivate}
         onTabClose={onTabClose}
         onTabAdd={onTabAdd}
@@ -164,7 +166,7 @@ const SplitNodeRenderer = React.memo(function SplitNodeRenderer({
       first={children[0]}
       second={children[1]}
       focusedPaneId={focusedPaneId}
-      renderContent={renderContent}
+      onContentRef={onContentRef}
       onTabActivate={onTabActivate}
       onTabClose={onTabClose}
       onTabAdd={onTabAdd}
@@ -184,7 +186,7 @@ interface SplitContainerProps {
   first: SplitNode;
   second: SplitNode;
   focusedPaneId?: string | null;
-  renderContent: (pane: CenterPane) => React.ReactNode;
+  onContentRef: (paneId: string, el: HTMLDivElement | null) => void;
   onTabActivate: (tabId: string, paneId: string) => void;
   onTabClose: (tabId: string, paneId: string) => void;
   onTabAdd?: (paneId: string) => void;
@@ -202,7 +204,7 @@ const SplitContainer = React.memo(function SplitContainer({
   first,
   second,
   focusedPaneId,
-  renderContent,
+  onContentRef,
   onTabActivate,
   onTabClose,
   onTabAdd,
@@ -238,7 +240,7 @@ const SplitContainer = React.memo(function SplitContainer({
         <SplitNodeRenderer
           node={first}
           focusedPaneId={focusedPaneId}
-          renderContent={renderContent}
+          onContentRef={onContentRef}
           onTabActivate={onTabActivate}
           onTabClose={onTabClose}
           onTabAdd={onTabAdd}
@@ -252,7 +254,7 @@ const SplitContainer = React.memo(function SplitContainer({
         <SplitNodeRenderer
           node={second}
           focusedPaneId={focusedPaneId}
-          renderContent={renderContent}
+          onContentRef={onContentRef}
           onTabActivate={onTabActivate}
           onTabClose={onTabClose}
           onTabAdd={onTabAdd}
@@ -268,7 +270,9 @@ const SplitContainer = React.memo(function SplitContainer({
 interface LeafPaneProps {
   pane: CenterPane;
   paneIsFocused?: boolean;
-  renderContent: (pane: CenterPane) => React.ReactNode;
+  /** Called with (paneId, element) on mount/unmount of the content area.
+   *  The caller portals pane content into this element. */
+  onContentRef: (paneId: string, el: HTMLDivElement | null) => void;
   onTabActivate: (tabId: string, paneId: string) => void;
   onTabClose: (tabId: string, paneId: string) => void;
   onTabAdd?: (paneId: string) => void;
@@ -279,7 +283,7 @@ interface LeafPaneProps {
 const LeafPane = React.memo(function LeafPane({
   pane,
   paneIsFocused = false,
-  renderContent,
+  onContentRef,
   onTabActivate,
   onTabClose,
   onTabAdd,
@@ -302,6 +306,13 @@ const LeafPane = React.memo(function LeafPane({
     [onTabReorder, pane.id],
   );
 
+  // Stable ref callback — notifies the parent when the mount div is attached/detached.
+  // pane.id is stable for the lifetime of a pane, so this callback is also stable.
+  const contentMountRef = useCallback(
+    (el: HTMLDivElement | null) => { onContentRef(pane.id, el); },
+    [pane.id, onContentRef],
+  );
+
   return (
     <div className={styles.leaf}>
       <SortableContext
@@ -320,7 +331,10 @@ const LeafPane = React.memo(function LeafPane({
         />
       </SortableContext>
       <div className={styles.leafContent}>
-        {renderContent(pane)}
+        {/* Portal target: pane content is injected here by AppShell via createPortal.
+            Keeping it as a separate child div (with no React children of its own)
+            avoids React reconciliation conflicts between portal and JSX children. */}
+        <div className={styles.paneContentMount} ref={contentMountRef} />
         {isDragging && <DropZoneOverlay paneId={pane.id} />}
       </div>
     </div>

@@ -39,6 +39,16 @@
   position: relative;
 }
 
+/* Portal mount point: fills leafContent so portaled pane content inherits
+   the correct dimensions. No React children — avoids reconciliation conflicts
+   between the portal and sibling JSX (e.g. DropZoneOverlay). */
+.paneContentMount {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .tabGhost {
   padding: 0 12px;
   height: 32px;
