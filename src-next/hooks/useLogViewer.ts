@@ -66,6 +66,8 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     registerSession,
     unregisterSession,
     updateSession,
+    terminateSession,
+    activateSessionForPane,
     setLoadingPane,
     setErrorPane,
     setIndexingProgress: setIndexingProgressCtx,
@@ -117,6 +119,12 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
   const packagePidsRef = useRef<Map<string, number[]>>(new Map());
   const streamDeviceSerialRef = useRef<string | null>(null);
   const filterScanGenRef = useRef(0);
+  const paneSessionMapRef = useRef(paneSessionMap);
+  paneSessionMapRef.current = paneSessionMap;
+  /** tabId → sessionId — tracks the session for each logviewer tab in the layout. */
+  const tabSessionMapRef = useRef<Map<string, string>>(new Map());
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
 
   // ADB event unlisteners
   const adbBatchUnlistenRef = useRef<UnlistenFn | null>(null);
@@ -336,31 +344,49 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
 
     const targetPaneId = paneId ?? focusedPaneId ?? getStoredFirstPaneId() ?? DEFAULT_PANE_ID;
 
-    bus.emit('session:pre-load', undefined);
+    // Pre-assign a tab ID. Workspace layout will create the logviewer tab with this
+    // exact ID so we can look up its session when the user switches between tabs.
+    const tabId = crypto.randomUUID();
 
-    // Clean up any active stream on this pane
-    if (streamingPaneIdRef.current === targetPaneId) {
-      adbBatchUnlistenRef.current?.();
-      adbBatchUnlistenRef.current = null;
-      adbStoppedUnlistenRef.current?.();
-      adbStoppedUnlistenRef.current = null;
-      if (streamingSessionIdRef.current) {
-        setStreamingSession(streamingSessionIdRef.current, false);
+    // If the target pane already has a session, the new file opens as an additional
+    // tab alongside the existing one instead of replacing it.
+    const previousSessionId = paneSessionMapRef.current.get(targetPaneId);
+    const isNewTab = previousSessionId !== undefined;
+
+    if (!isNewTab) {
+      if (previousSessionId) {
+        try { await closeSessionCmd(previousSessionId); } catch { /* ignore */ }
+        terminateSession(previousSessionId);
       }
-      isStreamingRef.current = false;
-      streamingPaneIdRef.current = null;
-      streamingSessionIdRef.current = null;
+
+      bus.emit('session:pre-load', undefined);
+
+      // Clean up any active stream on this pane
+      if (streamingPaneIdRef.current === targetPaneId) {
+        adbBatchUnlistenRef.current?.();
+        adbBatchUnlistenRef.current = null;
+        adbStoppedUnlistenRef.current?.();
+        adbStoppedUnlistenRef.current = null;
+        if (streamingSessionIdRef.current) {
+          setStreamingSession(streamingSessionIdRef.current, false);
+        }
+        isStreamingRef.current = false;
+        streamingPaneIdRef.current = null;
+        streamingSessionIdRef.current = null;
+      }
+
+      setIndexingProgressLocal(null);
+      resetSessionState();
     }
 
     setLoadingPane(targetPaneId, true);
     setErrorPane(targetPaneId, null);
-    setIndexingProgressLocal(null);
-    resetSessionState();
 
     try {
       const result = await loadLogFile(path);
 
       registerSession(targetPaneId, result);
+      tabSessionMapRef.current.set(tabId, result.sessionId);
 
       // If result is still indexing, set a sentinel so useFileInfo waits for completion.
       if (result.isIndexing) {
@@ -378,6 +404,9 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
         sourceType: result.sourceType as SourceType,
         sessionId: result.sessionId,
         paneId: targetPaneId,
+        tabId,
+        isNewTab,
+        previousSessionId,
       });
 
       // Source-type-specific events
@@ -705,13 +734,22 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     processorIdRef.current = null;
   }, [setProcessorId]);
 
-  const closeSession = useCallback(async (paneId?: string) => {
+  const closeSession = useCallback(async (paneId?: string, tabId?: string) => {
     const targetPaneId = paneId ?? focusedPaneId ?? DEFAULT_PANE_ID;
-    const sessionId = paneSessionMap.get(targetPaneId);
+
+    // When a tabId is provided, close that specific tab's session.
+    // Otherwise close the currently active session for the pane.
+    let sessionId: string | undefined;
+    if (tabId) {
+      sessionId = tabSessionMapRef.current.get(tabId);
+      tabSessionMapRef.current.delete(tabId);
+    } else {
+      sessionId = paneSessionMap.get(targetPaneId);
+    }
 
     if (!sessionId) return;
 
-    // Stop stream if this pane is streaming
+    // Stop stream if this session is streaming
     if (streamingSessionIdRef.current === sessionId) {
       await stopStream();
     }
@@ -724,15 +762,24 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
 
     try { localStorage.removeItem(LS_LAST_FILE); } catch { /* ignore */ }
 
-    resetSessionState();
-    setIndexingProgressLocal(null);
-    setIndexingProgressCtx(sessionId, null);
-    unregisterSession(targetPaneId);
+    const sourceType = (sessionsRef.current.get(sessionId)?.sourceType ?? 'Unknown') as SourceType;
 
-    const sourceType = (sessions.get(sessionId)?.sourceType ?? 'Unknown') as SourceType;
+    // Only reset the pane's UI state if we're closing the currently active session.
+    const isActivePaneSession = paneSessionMap.get(targetPaneId) === sessionId;
+    if (isActivePaneSession) {
+      resetSessionState();
+      setIndexingProgressLocal(null);
+      setIndexingProgressCtx(sessionId, null);
+      unregisterSession(targetPaneId);
+    } else {
+      // Non-active tab: remove session data without touching the pane's active session.
+      setIndexingProgressCtx(sessionId, null);
+      terminateSession(sessionId);
+    }
+
     bus.emit('session:closed', { sessionId, paneId: targetPaneId, sourceType });
   }, [focusedPaneId, paneSessionMap, resetSessionState, stopStream,
-      setIndexingProgressCtx, unregisterSession]);
+      setIndexingProgressCtx, unregisterSession, terminateSession]);
 
   // Close the backend session when the user closes a logviewer tab via the UI.
   // Uses a ref so the handler always sees the current closeSession without
@@ -740,12 +787,36 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
   const closeSessionRef = useRef(closeSession);
   useEffect(() => { closeSessionRef.current = closeSession; }, [closeSession]);
   useEffect(() => {
-    const handler = ({ paneId }: { paneId: string }) => {
-      closeSessionRef.current(paneId);
+    const handleTabClosed = ({ tabId, paneId }: { tabId: string; paneId: string }) => {
+      closeSessionRef.current(paneId, tabId);
     };
-    bus.on('layout:logviewer-tab-closed', handler);
-    return () => { bus.off('layout:logviewer-tab-closed', handler); };
-  }, []);
+    const handleTabActivated = ({ tabId, paneId }: { tabId: string; paneId: string }) => {
+      const sessionId = tabSessionMapRef.current.get(tabId);
+      if (sessionId) activateSessionForPane(paneId, sessionId);
+    };
+    const handleTabBind = ({ tabId, sessionId }: { tabId: string; sessionId: string; paneId: string }) => {
+      tabSessionMapRef.current.set(tabId, sessionId);
+    };
+    const handlePaneRemap = ({ originalPaneId, actualPaneId, sessionId }: {
+      originalPaneId: string; actualPaneId: string; sessionId: string;
+    }) => {
+      // Session was registered under a placeholder pane ID (e.g. 'primary') but the
+      // tab landed in a different pane. Re-register under the real pane ID so
+      // PaneContent can find the session via useSessionForPane(pane.id).
+      activateSessionForPane(actualPaneId, sessionId);
+      unregisterSession(originalPaneId);
+    };
+    bus.on('layout:logviewer-tab-closed', handleTabClosed);
+    bus.on('layout:logviewer-tab-activated', handleTabActivated);
+    bus.on('layout:tab-session-bind', handleTabBind);
+    bus.on('layout:pane-session-remap', handlePaneRemap);
+    return () => {
+      bus.off('layout:logviewer-tab-closed', handleTabClosed);
+      bus.off('layout:logviewer-tab-activated', handleTabActivated);
+      bus.off('layout:tab-session-bind', handleTabBind);
+      bus.off('layout:pane-session-remap', handlePaneRemap);
+    };
+  }, [activateSessionForPane, unregisterSession]);
 
   // Subscribe to pipeline:chain-changed to update stream processors/trackers/transformers
   useEffect(() => {

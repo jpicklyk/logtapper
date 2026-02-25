@@ -167,30 +167,9 @@ pub async fn start_adb_stream(
     };
 
     // ── Create session ────────────────────────────────────────────────────────
-    let session_id = "default".to_string();
+    let session_id = uuid::Uuid::new_v4().to_string();
     let source_id = format!("adb-{}", serial.replace(':', "-"));
     let device_label = format!("ADB: {serial}");
-
-    // ── Clear stale state from a previous stream for this session ────────────
-    // These locks are acquired and released individually (no nesting) to avoid
-    // deadlock.  Order does not matter since each block is independent.
-    {
-        if let Ok(mut sp) = state.stream_processor_state.lock() {
-            sp.remove(&session_id);
-        }
-        if let Ok(mut st) = state.stream_tracker_state.lock() {
-            st.remove(&session_id);
-        }
-        if let Ok(mut st) = state.stream_transformer_state.lock() {
-            st.remove(&session_id);
-        }
-        if let Ok(mut pr) = state.pipeline_results.lock() {
-            pr.remove(&session_id);
-        }
-        if let Ok(mut str_results) = state.state_tracker_results.lock() {
-            str_results.remove(&session_id);
-        }
-    }
 
     let temp_dir = app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir());
 

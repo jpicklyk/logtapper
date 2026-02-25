@@ -89,7 +89,7 @@ pub async fn load_log_file(
         .unwrap_or(0);
 
     // Derive stable IDs from the path
-    let session_id = "default".to_string();
+    let session_id = uuid::Uuid::new_v4().to_string();
     let source_id = path_obj
         .file_stem()
         .and_then(|s| s.to_str())
