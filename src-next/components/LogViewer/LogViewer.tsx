@@ -46,7 +46,7 @@ const LogViewer = React.memo(function LogViewer({
 
   // View cache handle
   const sessionId = session?.sessionId ?? null;
-  const viewId = sessionId ? `pane-${paneId}-${sessionId}` : null;
+  const viewId = sessionId ? `view-${sessionId}` : null;
   const viewCache = useViewCache(viewId, sessionId);
   const registry = useDataSourceRegistry();
 

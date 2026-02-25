@@ -84,13 +84,16 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   const handleContentRef = useCallback((paneId: string, el: HTMLDivElement | null) => {
     if (el) {
       contentRefsRef.current.set(paneId, el);
+      // Only trigger re-render when a mount div becomes available (el !== null).
+      // Skipping forcePortals on null prevents PaneContent from unmounting during
+      // React StrictMode's cleanup→remount cycle, which caused an apparent
+      // performance regression (file reload on every initial mount).
+      // The portal stays pointed at the now-detached div until the next natural
+      // re-render (triggered by the subsequent el !== null callback) updates it.
+      forcePortals();
     } else {
       contentRefsRef.current.delete(paneId);
     }
-    // Trigger a re-render so portals are created/destroyed for the updated map.
-    // React 18 batches this with any concurrent ref callbacks from the same commit,
-    // so by the time we re-render, the map reflects the final post-commit state.
-    forcePortals();
   }, []);
 
   const currentPanes = useMemo(
