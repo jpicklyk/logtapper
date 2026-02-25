@@ -134,7 +134,7 @@ const LogViewer = React.memo(function LogViewer({
   const lineDecorators = useMemo<LineDecoratorDef[]>(
     () => [
       {
-        classNames: (line, isSelected, isJumpTarget) => {
+        classNames: (line, _isSelected, _isJumpTarget) => {
           const cls: string[] = [];
           if (line.level) {
             cls.push(`log-level-${line.level.toLowerCase()}`);
@@ -150,12 +150,6 @@ const LogViewer = React.memo(function LogViewer({
             } else if (hasSearch) {
               cls.push(styles.searchMatch);
             }
-          }
-          if (isSelected) {
-            cls.push(styles.selected);
-          }
-          if (isJumpTarget) {
-            cls.push(styles.jumpTarget);
           }
           return cls;
         },

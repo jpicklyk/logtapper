@@ -49,17 +49,17 @@
 
 .jumpTarget {
   animation: flashHighlight 1.8s ease-out forwards;
-  border-left-color: var(--warning);
+  border-left-color: rgba(88, 166, 255, 0.65);
 }
 
 @keyframes flashHighlight {
-  0%   { background-color: rgba(255, 185, 0, 0.40); }
-  40%  { background-color: rgba(255, 185, 0, 0.30); }
-  100% { background-color: rgba(255, 185, 0, 0.10); }
+  0%   { background-color: rgba(88, 166, 255, 0.35); }
+  40%  { background-color: rgba(88, 166, 255, 0.22); }
+  100% { background-color: rgba(88, 166, 255, 0.12); }
 }
 
 .jumpTarget .lineNum {
-  color: var(--warning);
+  color: var(--accent);
 }
 
 /* ── Skeleton placeholder ─────────────────────────────────────────────── */
