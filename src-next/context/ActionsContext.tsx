@@ -13,7 +13,7 @@ export interface ActionsContextValue {
   installProcessor: (yaml: string) => Promise<void>;
   removeProcessor: (id: string) => void;
   toggleProcessor: (id: string) => void;
-  jumpToLine: (lineNum: number) => void;
+  jumpToLine: (lineNum: number, paneId?: string) => void;
   jumpToMatch: (direction: 1 | -1) => void;
   setSearch: (query: SearchQuery | null) => void;
   openTab: (type: string) => void;
@@ -36,7 +36,7 @@ const DEFAULT_ACTIONS: ActionsContextValue = {
   installProcessor: (_yaml: string) => noopAsync(),
   removeProcessor: (_id: string) => noop(),
   toggleProcessor: (_id: string) => noop(),
-  jumpToLine: (_lineNum: number) => noop(),
+  jumpToLine: (_lineNum: number, _paneId?: string) => noop(),
   jumpToMatch: (_direction: 1 | -1) => noop(),
   setSearch: (_query: SearchQuery | null) => noop(),
   openTab: (_type: string) => noop(),

@@ -22,7 +22,9 @@ export interface FileInfoData {
 export function useFileInfo(paneId: string | null): FileInfoData {
   const session = useSessionForPane(paneId);
   const { jumpToLine } = useViewerActions();
-  const { lineNum: scrollToLine } = useScrollTarget();
+  const { lineNum: scrollToLine, paneId: jumpPaneId } = useScrollTarget();
+  // Only track scroll position as active section if the jump targeted this pane (or was global).
+  const effectiveScrollToLine = (jumpPaneId === null || jumpPaneId === paneId) ? scrollToLine : null;
 
   const sessionId = session?.sessionId ?? null;
 
@@ -140,15 +142,15 @@ export function useFileInfo(paneId: string | null): FileInfoData {
   }, [session?.totalLines, indexingProgress]);
 
   const activeSectionIndex = sections.findIndex(
-    (s) => scrollToLine != null && scrollToLine >= s.startLine && scrollToLine <= s.endLine,
+    (s) => effectiveScrollToLine != null && effectiveScrollToLine >= s.startLine && effectiveScrollToLine <= s.endLine,
   );
 
   const onJumpToLine = useCallback(
     (line: number) => {
       setSectionJumpSeq((s) => s + 1);
-      jumpToLine(line);
+      jumpToLine(line, paneId ?? undefined);
     },
-    [jumpToLine],
+    [jumpToLine, paneId],
   );
 
   return {

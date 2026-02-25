@@ -28,7 +28,11 @@ const LogViewer = React.memo(function LogViewer({
   const session = useSessionForPane(paneId);
   const isStreaming = session?.isStreaming ?? false;
   const totalLines = session?.totalLines ?? 0;
-  const { lineNum: scrollToLine, seq: jumpSeq } = useScrollTarget();
+  const { lineNum: scrollToLine, seq: jumpSeq, paneId: jumpPaneId } = useScrollTarget();
+  // Only honour the jump if it targets this specific pane or is unfocused/global (null).
+  const isJumpForThisPane = jumpPaneId === null || jumpPaneId === paneId;
+  const effectiveScrollToLine = isJumpForThisPane ? scrollToLine : null;
+  const effectiveJumpSeq = isJumpForThisPane ? jumpSeq : 0;
   const { allLineNums: transitionLineNums, byLine: transitionsByLine } = useTrackerTransitions();
   const processorId = useProcessorId();
 
@@ -181,8 +185,8 @@ const LogViewer = React.memo(function LogViewer({
     <ReadOnlyViewer
       dataSource={dataSource}
       totalLineCount={totalLines}
-      scrollToLine={scrollToLine ?? undefined}
-      jumpSeq={jumpSeq}
+      scrollToLine={effectiveScrollToLine ?? undefined}
+      jumpSeq={effectiveJumpSeq}
       tailMode={isStreaming}
       gutterColumns={gutterColumns}
       lineDecorators={lineDecorators}

@@ -42,7 +42,7 @@ export interface LogViewerActions {
   fetchLines: (offset: number, count: number) => Promise<LineWindow>;
   handleSearch: (query: SearchQuery | null) => void;
   jumpToMatch: (direction: 1 | -1) => void;
-  jumpToLine: (lineNum: number) => void;
+  jumpToLine: (lineNum: number, paneId?: string) => void;
   jumpToEnd: () => void;
   setProcessorView: (processorId: string) => void;
   clearProcessorView: () => void;
@@ -80,6 +80,7 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     setCurrentMatchIndex,
     setScrollToLine,
     setJumpSeq,
+    setJumpPaneId,
     setProcessorId,
     setStreamFilter: setStreamFilterCtx,
     setTimeFilterStart: setTimeFilterStartCtx,
@@ -753,10 +754,11 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     [setSearchSummary, setCurrentMatchIndex, setScrollToLine, setJumpSeq],
   );
 
-  const jumpToLine = useCallback((lineNum: number) => {
+  const jumpToLine = useCallback((lineNum: number, paneId?: string) => {
     setScrollToLine(lineNum);
+    setJumpPaneId(paneId ?? null);
     setJumpSeq((s) => s + 1);
-  }, [setScrollToLine, setJumpSeq]);
+  }, [setScrollToLine, setJumpPaneId, setJumpSeq]);
 
   const jumpToEnd = useCallback(() => {
     const total = sessionRef.current?.totalLines ?? 0;

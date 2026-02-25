@@ -85,9 +85,9 @@ export function useSearch(): { query: SearchQuery | null; summary: SearchSummary
   return { query: search, summary: searchSummary, matchIndex: currentMatchIndex };
 }
 
-export function useScrollTarget(): { lineNum: number | null; seq: number } {
-  const { scrollToLine, jumpSeq } = useViewerContext();
-  return { lineNum: scrollToLine, seq: jumpSeq };
+export function useScrollTarget(): { lineNum: number | null; seq: number; paneId: string | null } {
+  const { scrollToLine, jumpSeq, jumpPaneId } = useViewerContext();
+  return { lineNum: scrollToLine, seq: jumpSeq, paneId: jumpPaneId };
 }
 
 // ---------------------------------------------------------------------------

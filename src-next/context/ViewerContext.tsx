@@ -7,6 +7,8 @@ interface ViewerState {
   currentMatchIndex: number;
   scrollToLine: number | null;
   jumpSeq: number;
+  /** Pane ID this jump targets, or null to target the focused/all panes. */
+  jumpPaneId: string | null;
   processorId: string | null;
   streamFilter: string;
   timeFilterStart: string;
@@ -19,6 +21,7 @@ interface ViewerContextValue extends ViewerState {
   setCurrentMatchIndex: React.Dispatch<React.SetStateAction<number>>;
   setScrollToLine: React.Dispatch<React.SetStateAction<number | null>>;
   setJumpSeq: React.Dispatch<React.SetStateAction<number>>;
+  setJumpPaneId: React.Dispatch<React.SetStateAction<string | null>>;
   setProcessorId: React.Dispatch<React.SetStateAction<string | null>>;
   setStreamFilter: React.Dispatch<React.SetStateAction<string>>;
   setTimeFilterStart: React.Dispatch<React.SetStateAction<string>>;
@@ -33,6 +36,7 @@ export function ViewerProvider({ children }: { children: ReactNode }) {
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
   const [scrollToLine, setScrollToLine] = useState<number | null>(null);
   const [jumpSeq, setJumpSeq] = useState(0);
+  const [jumpPaneId, setJumpPaneId] = useState<string | null>(null);
   const [processorId, setProcessorId] = useState<string | null>(null);
   const [streamFilter, setStreamFilter] = useState('');
   const [timeFilterStart, setTimeFilterStart] = useState('');
@@ -44,6 +48,7 @@ export function ViewerProvider({ children }: { children: ReactNode }) {
     currentMatchIndex,
     scrollToLine,
     jumpSeq,
+    jumpPaneId,
     processorId,
     streamFilter,
     timeFilterStart,
@@ -53,11 +58,12 @@ export function ViewerProvider({ children }: { children: ReactNode }) {
     setCurrentMatchIndex,
     setScrollToLine,
     setJumpSeq,
+    setJumpPaneId,
     setProcessorId,
     setStreamFilter,
     setTimeFilterStart,
     setTimeFilterEnd,
-  }), [search, searchSummary, currentMatchIndex, scrollToLine, jumpSeq,
+  }), [search, searchSummary, currentMatchIndex, scrollToLine, jumpSeq, jumpPaneId,
        processorId, streamFilter, timeFilterStart, timeFilterEnd]);
 
   return (
