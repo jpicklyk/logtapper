@@ -41,9 +41,9 @@ pub trait LogSource: Send + Sync {
     fn last_timestamp(&self) -> Option<i64> {
         self.line_meta_slice()
             .iter()
-            .rev()
-            .find(|m| m.timestamp > 0)
+            .filter(|m| m.timestamp > 0)
             .map(|m| m.timestamp)
+            .max()
     }
 }
 

@@ -150,8 +150,11 @@ impl BugreportParser {
     /// capture year, applying year-rollover correction.
     ///
     /// If the year-shifted timestamp would be *after* the dumpstate capture
-    /// time, the log line is from the previous year (e.g. a Dec 30 entry in a
-    /// Jan 5 bugreport).
+    /// time by more than a grace period, the log line is from the previous year
+    /// (e.g. a Dec 30 entry in a Jan 5 bugreport).  A 5-minute grace period
+    /// prevents log lines that were written just after the dumpstate header
+    /// (but still during the same capture session) from being incorrectly
+    /// rolled back to the previous year.
     ///
     /// Returns the original timestamp unchanged if the dumpstate year has not
     /// yet been recorded.
@@ -167,9 +170,15 @@ impl BugreportParser {
         let ts_with_year = ts_2000 + offset;
 
         let dumpstate_ts = self.dumpstate_ts_ns.load(Ordering::Relaxed);
-        if ts_with_year > dumpstate_ts {
-            // This date is later in the year than the capture time — it belongs
-            // to the previous year (Dec 30 in a Jan 5 bugreport, for example).
+        // Allow up to 5 minutes past dumpstate time before treating a timestamp
+        // as a year-rollover (Dec→Jan).  Lines written during the dumpstate
+        // collection itself may legitimately post-date the header timestamp by
+        // a few seconds or minutes.
+        const GRACE_NS: i64 = 5 * 60 * 1_000_000_000;
+        if ts_with_year > dumpstate_ts + GRACE_NS {
+            // This date is substantially later in the year than the capture
+            // time — it belongs to the previous year (Dec 30 in a Jan 5
+            // bugreport, for example).
             ts_2000 + year_start_ns_from_2000(year - 1)
         } else {
             ts_with_year
@@ -193,6 +202,9 @@ impl BugreportParser {
 
         // `== dumpstate: YYYY-MM-DD HH:MM:SS` — file-level timestamp.
         // Store the capture year and timestamp for use in logcat year correction.
+        // The line's own timestamp is set to 0 so it is excluded from the
+        // session's first/last timestamp calculations — only actual log-line
+        // timestamps (from the SYSTEM LOG section etc.) should drive those.
         if let Some(caps) = dumpstate_ts_re().captures(raw) {
             let y: i64 = caps.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(2000);
             let mo: i64 = caps.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(1);
@@ -206,7 +218,7 @@ impl BugreportParser {
             return ParsedLineMeta {
                 level: LogLevel::Info,
                 tag: "dumpstate".to_string(),
-                timestamp: ts,
+                timestamp: 0,
                 byte_offset,
                 byte_len: raw.len(),
                 is_section_boundary: false,
@@ -345,9 +357,13 @@ mod tests {
             .parse_meta("== dumpstate: 2026-02-16 17:27:35", 0)
             .unwrap();
         assert_eq!(m.tag, "dumpstate");
-        assert!(m.timestamp > 0, "timestamp should be positive");
-        // Year should now be stored
+        // Dumpstate header line has timestamp=0 in line_meta so it is
+        // excluded from first/last timestamp calculations.  The capture time
+        // is stored in dumpstate_ts_ns for year correction only.
+        assert_eq!(m.timestamp, 0);
+        // Year and capture ts should now be stored for year correction
         assert_eq!(p.dumpstate_year.load(Ordering::Relaxed), 2026);
+        assert!(p.dumpstate_ts_ns.load(Ordering::Relaxed) > 0);
     }
 
     #[test]
@@ -414,6 +430,124 @@ mod tests {
             BASE_NS + yday * 86_400_000_000_000 + 17 * 3_600_000_000_000 + 24 * 60_000_000_000 + 58_000_000
         };
         assert_eq!(m.timestamp, year_2000_ts + year_2026_offset);
+    }
+
+    /// Log lines written within the 5-minute grace window after the dumpstate
+    /// capture timestamp must not be rolled back to the previous year.  This
+    /// covers lines emitted by the device during the dumpstate collection itself
+    /// (the original bug: lines 83 seconds after capture were showing year 2025).
+    #[test]
+    fn logcat_line_within_grace_period_keeps_current_year() {
+        let p = BugreportParser::new();
+        p.parse_meta("== dumpstate: 2026-02-14 21:23:17", 0).unwrap();
+
+        // 21:24:40 is 83 seconds after the capture time — within the 5-minute grace window.
+        let m = p
+            .parse_meta("02-14 21:24:40.000  1000  1234  5678 I Tag: grace test", 0)
+            .unwrap();
+
+        const BASE_NS: i64 = 946_684_800_000_000_000;
+        let start_2026 = BASE_NS + year_start_ns_from_2000(2026);
+        let start_2027 = BASE_NS + year_start_ns_from_2000(2027);
+        assert!(
+            m.timestamp >= start_2026 && m.timestamp < start_2027,
+            "timestamp should be in year 2026 (not rolled back to 2025), got {}",
+            m.timestamp
+        );
+    }
+
+    /// Dec 31 log lines in a Jan 1 bugreport must be attributed to year N−1,
+    /// while Jan 1 lines from before the capture time stay in year N.
+    /// Exercises the Dec/Jan year boundary in both directions.
+    #[test]
+    fn dec_jan_boundary_year_attribution() {
+        let p = BugreportParser::new();
+        // Bugreport captured 2026-01-01 00:01:00.
+        p.parse_meta("== dumpstate: 2026-01-01 00:01:00", 0).unwrap();
+
+        // Dec 31 23:55:00 — shifted to year 2026 would be 2026-12-31, far past
+        // the capture date → must roll back to 2025-12-31.
+        let dec31 = p
+            .parse_meta("12-31 23:55:00.000  1000  1000 I Tag: december log", 0)
+            .unwrap();
+
+        // Jan 1 00:00:30 — 30 seconds before capture, stays in 2026.
+        let jan1 = p
+            .parse_meta("01-01 00:00:30.000  1000  1000 I Tag: january log", 0)
+            .unwrap();
+
+        const BASE_NS: i64 = 946_684_800_000_000_000;
+        let start_2025 = BASE_NS + year_start_ns_from_2000(2025);
+        let start_2026 = BASE_NS + year_start_ns_from_2000(2026);
+        let start_2027 = BASE_NS + year_start_ns_from_2000(2027);
+
+        assert!(
+            dec31.timestamp >= start_2025 && dec31.timestamp < start_2026,
+            "Dec 31 should be attributed to 2025, timestamp={}",
+            dec31.timestamp
+        );
+        assert!(
+            jan1.timestamp >= start_2026 && jan1.timestamp < start_2027,
+            "Jan 1 should be attributed to 2026, timestamp={}",
+            jan1.timestamp
+        );
+    }
+
+    /// A fresh BugreportParser seeded with only the dumpstate header line
+    /// produces the same year-corrected timestamps as a parser that processed
+    /// the full file in sequence.  This is the exact pattern used by
+    /// `run_background_indexer` to fix the "year 2000" regression on the second
+    /// chunk.
+    #[test]
+    fn seeded_parser_year_corrects_identically_to_full_parse() {
+        let full = BugreportParser::new();
+        full.parse_meta("== dumpstate: 2026-02-14 21:23:17", 0).unwrap();
+        let expected = full
+            .parse_meta("02-14 09:16:57.849  1000  1234  5678 I ActivityManager: msg", 0)
+            .unwrap()
+            .timestamp;
+        assert!(expected > 0);
+
+        // Seeded fresh parser — mirrors what run_background_indexer does before
+        // processing its first chunk.
+        let seeded = BugreportParser::new();
+        seeded
+            .parse_meta("== dumpstate: 2026-02-14 21:23:17", 0)
+            .unwrap();
+        let actual = seeded
+            .parse_meta("02-14 09:16:57.849  1000  1234  5678 I ActivityManager: msg", 0)
+            .unwrap()
+            .timestamp;
+
+        assert_eq!(
+            actual, expected,
+            "seeded parser must produce the same timestamp as a parser that saw the full file"
+        );
+
+        const BASE_NS: i64 = 946_684_800_000_000_000;
+        assert!(
+            actual >= BASE_NS + year_start_ns_from_2000(2026),
+            "timestamp should be in year 2026, got {}",
+            actual
+        );
+    }
+
+    /// Without seeding, a fresh BugreportParser produces year-~2000 timestamps —
+    /// confirming that the seeding step in run_background_indexer is not redundant.
+    #[test]
+    fn unseeded_parser_produces_year_2000_timestamps() {
+        let unseeded = BugreportParser::new();
+        let m = unseeded
+            .parse_meta("02-14 09:16:57.849  1000  1234  5678 I ActivityManager: msg", 0)
+            .unwrap();
+
+        const BASE_NS: i64 = 946_684_800_000_000_000;
+        let bound_2010 = BASE_NS + year_start_ns_from_2000(2010);
+        assert!(
+            m.timestamp < bound_2010,
+            "unseeded parser should produce a year-~2000 timestamp, got {}",
+            m.timestamp
+        );
     }
 
     /// A Dec 30 log line in a Jan 5 bugreport should be attributed to year − 1.

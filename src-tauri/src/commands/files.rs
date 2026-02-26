@@ -265,6 +265,20 @@ async fn run_background_indexer(
     let parser = parser_for(&source_type);
     let data: &[u8] = mmap.as_ref();
 
+    // BugreportParser is stateful: it must see the `== dumpstate:` header to
+    // set dumpstate_year before it can year-correct logcat timestamps.  The
+    // header was in the initial chunk (already indexed), so re-feed that one
+    // line to the fresh parser before it processes the remaining chunks.
+    if matches!(source_type, crate::core::session::SourceType::Bugreport) && start_byte > 0 {
+        let initial = std::str::from_utf8(&data[..start_byte.min(data.len())]).unwrap_or("");
+        for line in initial.lines() {
+            if line.trim_start().starts_with("== dumpstate:") {
+                let _ = parser.parse_meta(line.trim(), 0);
+                break;
+            }
+        }
+    }
+
     // Start from the count already indexed in the initial partial scan, passed directly
     // to avoid a session lock that might fail or see a replaced session.
     let mut cursor = start_byte;
