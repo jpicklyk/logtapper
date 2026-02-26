@@ -394,7 +394,7 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
 
   // paneSessionMap from SessionContext — used to place tabs in the correct pane
   // after pipeline completion and to guard the startup fallback path.
-  const { paneSessionMap } = useSessionContext();
+  const { paneSessionMap, activateSessionForPane } = useSessionContext();
   const paneSessionMapRef = useRef(paneSessionMap);
   paneSessionMapRef.current = paneSessionMap;
 
@@ -733,14 +733,16 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
       bus.emit('layout:logviewer-tab-activated', { tabId, paneId: landingPaneId, sessionId, reason: 'drag' });
     }
 
-    // If the moved tab was the active tab in the source pane, the pane's remaining
-    // tab is now displayed but paneSessionMap still points to the departed session.
-    // Emit an activation event so useLogViewer can swap to the correct session.
+    // If the moved tab was the active tab in the source pane, the remaining tab
+    // becomes visible but paneSessionMap still points to the departed session.
+    // Update the pane's active session directly — no bus event, no activation
+    // side-effects (cache check, viewer reset, jump). The user moved one tab;
+    // the remaining tab just inherits its pane without any reload machinery.
     if (newActiveFromTab?.type === 'logviewer') {
       const fromSessionId = tabSessionMapRef.current.get(newActiveFromTab.id) ?? '';
-      bus.emit('layout:logviewer-tab-activated', { tabId: newActiveFromTab.id, paneId: fromPaneId, sessionId: fromSessionId, reason: 'drag' });
+      if (fromSessionId) activateSessionForPane(fromPaneId, fromSessionId);
     }
-  }, [updateTree]);
+  }, [updateTree, activateSessionForPane]);
 
   // ---------------------------------------------------------------------------
   // Right pane actions
