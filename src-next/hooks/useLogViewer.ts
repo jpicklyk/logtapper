@@ -27,9 +27,17 @@ import { parseFilter, matchesFilter, extractPackageNames, type FilterNode, Filte
 import { useSessionContext } from '../context/SessionContext';
 import { useViewerContext } from '../context/ViewerContext';
 import { bus } from '../events/bus';
-import { getStoredFirstPaneId } from './useWorkspaceLayout';
+import { getStoredFirstPaneId, getStoredLogviewerTabs } from './useWorkspaceLayout';
 
-const LS_LAST_FILE = 'logtapper_last_file';
+const LS_TAB_PATHS = 'logtapper_tab_paths';
+
+function readTabPaths(): Record<string, string> {
+  try { return JSON.parse(localStorage.getItem(LS_TAB_PATHS) ?? '{}') as Record<string, string>; }
+  catch { return {}; }
+}
+function saveTabPaths(paths: Record<string, string>): void {
+  try { localStorage.setItem(LS_TAB_PATHS, JSON.stringify(paths)); } catch { /* storage full */ }
+}
 const DEFAULT_PANE_ID = 'primary';
 
 export interface LogViewerActions {
@@ -433,7 +441,7 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
         setIndexingProgressCtx(result.sessionId, { linesIndexed: 0, totalLines: 0, done: false });
       }
 
-      try { localStorage.setItem(LS_LAST_FILE, path); } catch { /* storage full */ }
+      const tabPathsSave = readTabPaths(); tabPathsSave[tabId] = path; saveTabPaths(tabPathsSave);
 
       // Auto-focus: emitting session:focused updates both SessionContext and WorkspaceLayout.
       bus.emit('session:focused', { sessionId: result.sessionId, paneId: targetPaneId });
@@ -464,7 +472,7 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     } catch (e) {
       // Only apply the error if this load is still the current one for the pane.
       if (loadGenRef.current.get(targetPaneId) === gen) {
-        try { localStorage.removeItem(LS_LAST_FILE); } catch { /* ignore */ }
+        const tabPathsErr = readTabPaths(); delete tabPathsErr[tabId]; saveTabPaths(tabPathsErr);
         setErrorPane(targetPaneId, String(e));
       }
     } finally {
@@ -499,13 +507,27 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     };
   }, [loadFile]);
 
-  // Restore the last-opened file on app startup (StrictMode double-mount guard)
+  // Restore all open files on app startup (StrictMode double-mount guard).
+  // Each pane's active logviewer tab is looked up by tabId in LS_TAB_PATHS and reloaded.
   const hasRestoredRef = useRef(false);
   useEffect(() => {
     if (hasRestoredRef.current) return;
     hasRestoredRef.current = true;
-    const saved = localStorage.getItem(LS_LAST_FILE);
-    if (saved) loadFile(saved, getStoredFirstPaneId() ?? DEFAULT_PANE_ID);
+    const tabPaths = readTabPaths();
+    const storedTabs = getStoredLogviewerTabs();
+    // Only restore the active tab per pane. Active tab first ensures isNewTab=false
+    // (pane has no session yet), so the pane activates immediately on load.
+    const seen = new Set<string>();
+    for (const { tabId, paneId, isActive } of storedTabs) {
+      if (!isActive || seen.has(paneId)) continue;
+      const path = tabPaths[tabId];
+      if (path) { seen.add(paneId); loadFile(path, paneId); }
+    }
+    // Fallback: no persisted tabs found — try legacy single-file key
+    if (seen.size === 0) {
+      const legacy = localStorage.getItem('logtapper_last_file');
+      if (legacy) loadFile(legacy, getStoredFirstPaneId() ?? DEFAULT_PANE_ID);
+    }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Subscribe to progressive file-indexing events (StrictMode-safe)
@@ -807,7 +829,11 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
       console.error('Error closing session:', e);
     }
 
-    try { localStorage.removeItem(LS_LAST_FILE); } catch { /* ignore */ }
+    if (tabId) {
+      const tabPathsClose = readTabPaths();
+      delete tabPathsClose[tabId];
+      saveTabPaths(tabPathsClose);
+    }
 
     const sourceType = (sessionsRef.current.get(sessionId)?.sourceType ?? 'Unknown') as SourceType;
 

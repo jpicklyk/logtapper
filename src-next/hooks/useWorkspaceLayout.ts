@@ -134,6 +134,32 @@ export function getStoredFirstPaneId(): string | null {
   }
 }
 
+/**
+ * Returns all persisted logviewer tabs across all panes, with their pane ID
+ * and whether each tab is currently active. Used by useLogViewer's startup
+ * restore to reload all open files, not just the last-focused one.
+ */
+export function getStoredLogviewerTabs(): Array<{ tabId: string; paneId: string; isActive: boolean }> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as { centerTree?: SplitNode };
+    const tree = parsed?.centerTree;
+    if (!tree) return [];
+    const result: Array<{ tabId: string; paneId: string; isActive: boolean }> = [];
+    for (const pane of allPanes(tree)) {
+      for (const tab of pane.tabs) {
+        if (tab.type === 'logviewer') {
+          result.push({ tabId: tab.id, paneId: pane.id, isActive: tab.id === pane.activeTabId });
+        }
+      }
+    }
+    return result;
+  } catch {
+    return [];
+  }
+}
+
 function makeTab(type: CenterTabType, label?: string): Tab {
   return {
     id: crypto.randomUUID(),
