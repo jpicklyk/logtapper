@@ -741,20 +741,46 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
       if (e.sourceType === 'Bugreport' && e.paneId === focusedPaneIdRef.current) {
         setLeftPaneTabRaw('info');
       }
+
+      // Pre-compute which bus events to emit based on the CURRENT tree before
+      // calling setCenterTree. React StrictMode calls state updater functions twice
+      // to detect side effects — any bus.emit inside an updater would double-fire,
+      // producing duplicate tab-session-bind and logviewer-tab-activated events that
+      // cascade into double state resets, double backend fetches, and apparent reloads.
+      const preTree = treeRef.current;
+      let emitTabSessionBind: { tabId: string; sessionId: string; paneId: string } | null = null;
+      let emitTabActivated: { tabId: string; paneId: string } | null = null;
+      let emitPaneRemap: { originalPaneId: string; actualPaneId: string; sessionId: string } | null = null;
+
+      const preTargetLeaf = findLeafByPaneId(preTree, e.paneId);
+      if (preTargetLeaf) {
+        const existingLogviewerTab = preTargetLeaf.pane.tabs.find((t) => t.type === 'logviewer');
+        if (e.isNewTab && existingLogviewerTab && e.previousSessionId) {
+          emitTabSessionBind = { tabId: existingLogviewerTab.id, sessionId: e.previousSessionId, paneId: e.paneId };
+          emitTabActivated = { tabId: e.tabId, paneId: e.paneId };
+        }
+      } else {
+        const existing = findTabByType(preTree, 'logviewer');
+        if (existing && !paneSessionMapRef.current.has(existing.pane.id)) {
+          if (existing.pane.id !== e.paneId) {
+            emitPaneRemap = { originalPaneId: e.paneId, actualPaneId: existing.pane.id, sessionId: e.sessionId };
+          }
+        } else {
+          const target = firstLeaf(preTree);
+          if (target.pane.id !== e.paneId) {
+            emitPaneRemap = { originalPaneId: e.paneId, actualPaneId: target.pane.id, sessionId: e.sessionId };
+          }
+        }
+      }
+
+      // Pure tree updater — no side effects, safe for StrictMode double-invocation.
       setCenterTree((prev) => {
         const targetLeaf = findLeafByPaneId(prev, e.paneId);
         if (targetLeaf) {
           const existingLogviewerTab = targetLeaf.pane.tabs.find((t) => t.type === 'logviewer');
 
           if (e.isNewTab && existingLogviewerTab && e.previousSessionId) {
-            // A second file is opening alongside an existing one. Retroactively bind
-            // the pre-existing logviewer tab to its session so the user can switch back.
-            bus.emit('layout:tab-session-bind', {
-              tabId: existingLogviewerTab.id,
-              sessionId: e.previousSessionId,
-              paneId: e.paneId,
-            });
-            // Add the new logviewer tab to the same pane and make it active.
+            // A second file is opening alongside an existing one — add new tab.
             const newTab: Tab = { id: e.tabId, type: 'logviewer', label: e.sourceName, closable: true };
             const next = updateLeaf(prev, e.paneId, (pane) => ({
               ...pane,
@@ -762,9 +788,6 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
               activeTabId: e.tabId,
             }));
             treeRef.current = next;
-            // Activate the new tab's session in paneSessionMap so the pane renders
-            // the correct content immediately (without waiting for a user tab click).
-            bus.emit('layout:logviewer-tab-activated', { tabId: e.tabId, paneId: e.paneId });
             return next;
           }
 
@@ -799,11 +822,6 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
         // another session — otherwise we'd clobber a live session's tab label.
         const existing = findTabByType(prev, 'logviewer');
         if (existing && !paneSessionMapRef.current.has(existing.pane.id)) {
-          if (existing.pane.id !== e.paneId) {
-            bus.emit('layout:pane-session-remap', {
-              originalPaneId: e.paneId, actualPaneId: existing.pane.id, sessionId: e.sessionId,
-            });
-          }
           const next = updateLeaf(prev, existing.pane.id, (pane) => ({
             ...pane,
             tabs: pane.tabs.map((t) =>
@@ -815,11 +833,6 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
           return next;
         }
         const target = firstLeaf(prev);
-        if (target.pane.id !== e.paneId) {
-          bus.emit('layout:pane-session-remap', {
-            originalPaneId: e.paneId, actualPaneId: target.pane.id, sessionId: e.sessionId,
-          });
-        }
         const tab: Tab = { id: e.tabId, type: 'logviewer', label: e.sourceName, closable: true };
         const next = updateLeaf(prev, target.pane.id, (pane) => ({
           ...pane,
@@ -829,6 +842,12 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
         treeRef.current = next;
         return next;
       });
+
+      // Emit bus events AFTER the state update, outside the updater.
+      // This is the only correct place — updaters must be pure (no side effects).
+      if (emitTabSessionBind) bus.emit('layout:tab-session-bind', emitTabSessionBind);
+      if (emitTabActivated) bus.emit('layout:logviewer-tab-activated', emitTabActivated);
+      if (emitPaneRemap) bus.emit('layout:pane-session-remap', emitPaneRemap);
     };
 
     const onPipelineCompleted = (e: { sessionId: string; hasReporters: boolean; hasTrackers: boolean; hasCorrelators: boolean }) => {
