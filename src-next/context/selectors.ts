@@ -119,12 +119,22 @@ export function useProcessors(): ProcessorSummary[] {
 // Tracker selectors
 // ---------------------------------------------------------------------------
 
+// Module-level stable empty references avoid a new object on every render
+// when there is no data for the focused session.
+const EMPTY_TRACKER_SET = new Set<number>();
+const EMPTY_TRACKER_MAP = new Map<number, string[]>();
+
 export function useTrackerTransitions(): {
   allLineNums: Set<number>;
   byLine: Map<number, string[]>;
 } {
-  const { allTransitionLineNums, transitionsByLine } = useTrackerContext();
-  return { allLineNums: allTransitionLineNums, byLine: transitionsByLine };
+  const { dataBySession } = useTrackerContext();
+  const focused = useFocusedSession();
+  const data = focused ? dataBySession[focused.sessionId] : undefined;
+  return {
+    allLineNums: data?.allLineNums ?? EMPTY_TRACKER_SET,
+    byLine: data?.byLine ?? EMPTY_TRACKER_MAP,
+  };
 }
 
 // ---------------------------------------------------------------------------

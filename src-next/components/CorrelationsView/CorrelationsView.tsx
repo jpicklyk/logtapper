@@ -1,4 +1,4 @@
-import { memo, useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { getCorrelatorEvents } from '../../bridge/commands';
 import type { CorrelationEvent } from '../../bridge/types';
 import {
@@ -7,7 +7,7 @@ import {
   useActiveProcessorIds,
   usePipelineResults,
   useViewerActions,
-} from '../../context/selectors';
+} from '../../context';
 import css from './CorrelationsView.module.css';
 
 /* ─── CorrelationPanel (internal) ─────────────────────────────────────────── */
@@ -20,7 +20,7 @@ interface PanelProps {
   refreshKey: number;
 }
 
-const CorrelationPanel = memo(function CorrelationPanel({
+const CorrelationPanel = React.memo(function CorrelationPanel({
   sessionId,
   correlatorId,
   correlatorName,
@@ -165,7 +165,7 @@ const CorrelationPanel = memo(function CorrelationPanel({
 
 /* ─── CorrelationsView ────────────────────────────────────────────────────── */
 
-const CorrelationsView = memo(function CorrelationsView() {
+const CorrelationsView = React.memo(function CorrelationsView() {
   const session = useSession();
   const processors = useProcessors();
   const activeProcessorIds = useActiveProcessorIds();

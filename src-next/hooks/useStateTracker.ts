@@ -13,33 +13,30 @@ export interface StateTrackerActions {
   getSnapshot: (sessionId: string, trackerId: string, lineNum: number) => Promise<StateSnapshot>;
   /** Fetch all transitions for a specific tracker. */
   getTransitions: (sessionId: string, trackerId: string) => Promise<StateTransition[]>;
-  /** Clear all accumulated transition data (e.g. on new file load). */
-  clearTransitions: () => void;
 }
 
 export function useStateTracker(): StateTrackerActions {
   const {
-    setTrackerUpdateCounts,
-    setAllTransitionLineNums,
-    setTransitionsByLine,
+    setSessionUpdateCounts,
+    setSessionTransitionData,
+    clearSessionData,
   } = useTrackerContext();
 
-  // Track the focused pane and session so event handlers are correctly scoped.
-  const { focusedPaneId, paneSessionMap } = useSessionContext();
-  const focusedPaneIdRef = useRef(focusedPaneId);
-  focusedPaneIdRef.current = focusedPaneId;
-  const focusedSessionIdRef = useRef<string | undefined>();
-  focusedSessionIdRef.current = focusedPaneId ? paneSessionMap.get(focusedPaneId) : undefined;
+  const { paneSessionMap } = useSessionContext();
+
+  const paneSessionMapRef = useRef(paneSessionMap);
+  paneSessionMapRef.current = paneSessionMap;
 
   const unlistenRef = useRef<UnlistenFn | null>(null);
 
-  // Subscribe to adb-tracker-update events (StrictMode-safe)
+  // Subscribe to adb-tracker-update events (StrictMode-safe).
+  // Updates the streaming session's update counts.
   useEffect(() => {
     let cancelled = false;
     listen<AdbTrackerUpdate>('adb-tracker-update', (event) => {
       if (cancelled) return;
-      const { trackerId, transitionCount } = event.payload;
-      setTrackerUpdateCounts((prev) => ({
+      const { trackerId, transitionCount, sessionId } = event.payload;
+      setSessionUpdateCounts(sessionId, (prev) => ({
         ...prev,
         [trackerId]: transitionCount,
       }));
@@ -51,13 +48,7 @@ export function useStateTracker(): StateTrackerActions {
       cancelled = true;
       unlistenRef.current?.();
     };
-  }, [setTrackerUpdateCounts]);
-
-  const clearTransitions = useCallback(() => {
-    setTrackerUpdateCounts({});
-    setAllTransitionLineNums(new Set());
-    setTransitionsByLine(new Map());
-  }, [setTrackerUpdateCounts, setAllTransitionLineNums, setTransitionsByLine]);
+  }, [setSessionUpdateCounts]);
 
   const refreshTransitionLines = useCallback(async (sessionId: string) => {
     try {
@@ -78,38 +69,44 @@ export function useStateTracker(): StateTrackerActions {
         }
       }
 
-      setAllTransitionLineNums(lineNums);
-      setTransitionsByLine(byLine);
+      setSessionTransitionData(sessionId, lineNums, byLine);
     } catch {
       // No tracker results yet -- silently ignore
     }
-  }, [setAllTransitionLineNums, setTransitionsByLine]);
+  }, [setSessionTransitionData]);
 
-  // Subscribe to bus events: clear on session pre-load, refresh on pipeline completed
+  // Subscribe to bus events
   useEffect(() => {
     const handlePreLoad = (e: { paneId: string }) => {
-      // Only clear transitions when the load targets the focused pane.
-      if (e.paneId === focusedPaneIdRef.current) {
-        clearTransitions();
+      // Clear the session being replaced. Use paneSessionMapRef to find the outgoing
+      // sessionId — at pre-load time the map still holds the outgoing session.
+      const outgoingSessionId = paneSessionMapRef.current.get(e.paneId);
+      if (outgoingSessionId) {
+        clearSessionData(outgoingSessionId);
       }
     };
+
     const handlePipelineCompleted = (data: { sessionId: string; hasTrackers: boolean }) => {
-      // Only refresh transitions if the pipeline ran for the focused session.
-      // Refreshing for a background pane's session would overwrite the focused
-      // pane's TrackerContext state (TrackerContext is single-instance).
-      if (data.hasTrackers && data.sessionId === focusedSessionIdRef.current) {
+      // Store data for any sessionId (background pane results persist correctly).
+      if (data.hasTrackers) {
         refreshTransitionLines(data.sessionId);
       }
     };
 
+    const handleSessionClosed = (e: { sessionId: string }) => {
+      clearSessionData(e.sessionId);
+    };
+
     bus.on('session:pre-load', handlePreLoad);
     bus.on('pipeline:completed', handlePipelineCompleted);
+    bus.on('session:closed', handleSessionClosed);
 
     return () => {
       bus.off('session:pre-load', handlePreLoad);
       bus.off('pipeline:completed', handlePipelineCompleted);
+      bus.off('session:closed', handleSessionClosed);
     };
-  }, [clearTransitions, refreshTransitionLines]);
+  }, [clearSessionData, refreshTransitionLines]);
 
   const getSnapshot = useCallback(
     (sessionId: string, trackerId: string, lineNum: number) =>
@@ -127,6 +124,5 @@ export function useStateTracker(): StateTrackerActions {
     refreshTransitionLines,
     getSnapshot,
     getTransitions,
-    clearTransitions,
   };
 }

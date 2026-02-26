@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import clsx from 'clsx';
 import { Search, X, ChevronUp, ChevronDown } from 'lucide-react';
-import { useSearch, useViewerActions } from '../../context/selectors';
+import { useSearch, useViewerActions } from '../../context';
 import styles from './SearchBar.module.css';
 
 interface SearchBarProps {
