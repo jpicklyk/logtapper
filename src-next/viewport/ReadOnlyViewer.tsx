@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect, useState, useMemo } from 'react';
+import React, { useRef, useCallback, useEffect, useState, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { DataSource } from './DataSource';
 import type { GutterColumnDef } from './GutterColumn';
@@ -32,6 +32,12 @@ interface ReadOnlyViewerProps {
   onSelectionChange?: (selection: Selection) => void;
   selection?: Selection;
   className?: string;
+  /** Starting virtual-base line when a known data source is restored (e.g.
+   *  switching back to a previously-viewed session). Avoids resetting to 0. */
+  initialVirtualBase?: number;
+  /** Written with the current virtualBase on every render so the parent can
+   *  capture scroll position before a session switch. */
+  virtualBaseOutRef?: React.MutableRefObject<number>;
 }
 
 export default function ReadOnlyViewer({
@@ -46,6 +52,8 @@ export default function ReadOnlyViewer({
   onSelectionChange,
   selection,
   className,
+  initialVirtualBase,
+  virtualBaseOutRef,
 }: ReadOnlyViewerProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -76,10 +84,22 @@ export default function ReadOnlyViewer({
   const virtualBaseRef = useRef(0);
   const pendingScrollTarget = useRef<number | null>(null);
 
+  // Sync the current position out so LogViewer can capture it during render
+  // (before effects fire) when a session switch is about to happen.
+  if (virtualBaseOutRef) virtualBaseOutRef.current = virtualBase;
+
+  // Stable ref for the restore target — updated synchronously each render so
+  // the sourceId reset effect always reads the up-to-date prop value.
+  const initialVirtualBaseRef = useRef(initialVirtualBase ?? 0);
+  initialVirtualBaseRef.current = initialVirtualBase ?? 0;
+
   // Reset the virtual window whenever a new data source is loaded.
+  // Uses initialVirtualBase to restore a previously-saved scroll position
+  // instead of always jumping to line 0.
   useEffect(() => {
-    virtualBaseRef.current = 0;
-    setVirtualBase(0);
+    const base = initialVirtualBaseRef.current;
+    virtualBaseRef.current = base;
+    setVirtualBase(base);
     pendingScrollTarget.current = null;
   }, [dataSource.sourceId]);
 

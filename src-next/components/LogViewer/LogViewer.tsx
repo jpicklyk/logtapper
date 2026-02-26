@@ -57,6 +57,24 @@ const LogViewer = React.memo(function LogViewer({
   // Focus management: give this pane 60% of cache budget when active
   useCacheFocus(viewId);
 
+  // ── Per-session scroll position preservation ───────────────────────────
+  // Capture the current virtualBase (written by ReadOnlyViewer synchronously
+  // during its render) whenever the session changes, so it can be restored
+  // the next time that session becomes active in this pane.
+  // All reads/writes are to refs — safe to perform during render.
+  const sessionScrollMapRef = useRef<Map<string, number>>(new Map());
+  const prevSessionIdRef = useRef<string | null>(null);
+  const virtualBaseOutRef = useRef<number>(0);
+
+  if (prevSessionIdRef.current !== sessionId) {
+    if (prevSessionIdRef.current !== null) {
+      sessionScrollMapRef.current.set(prevSessionIdRef.current, virtualBaseOutRef.current);
+    }
+    prevSessionIdRef.current = sessionId;
+  }
+
+  const initialVirtualBase = sessionScrollMapRef.current.get(sessionId ?? '') ?? 0;
+
   // Create CacheDataSource
   const dataSourceRef = useRef<CacheDataSource | null>(null);
 
@@ -194,6 +212,8 @@ const LogViewer = React.memo(function LogViewer({
       onSelectionChange={handleSelectionChange}
       selection={selection}
       className={styles.viewer}
+      initialVirtualBase={initialVirtualBase}
+      virtualBaseOutRef={virtualBaseOutRef}
     />
   );
 });
