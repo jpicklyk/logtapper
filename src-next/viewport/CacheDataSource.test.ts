@@ -188,12 +188,13 @@ describe('CacheDataSource', () => {
     expect(ds.totalLines).toBe(1000);
   });
 
-  it('getLines fetches even when partial cache hit (first miss triggers fetch)', async () => {
+  it('getLines fetches only the missing suffix on partial cache hit', async () => {
     const cache = new ViewCacheHandle(5000);
     // Cache lines 0-2, but request 0-4 (lines 3,4 missing)
     cache.put(makeLines(0, 3));
 
-    const fetchLines = vi.fn().mockResolvedValue(makeWindow(0, 5, 100));
+    // Mock returns 2 lines for the suffix fetch (offset=3, count=2)
+    const fetchLines = vi.fn().mockResolvedValue(makeWindow(3, 2, 100));
     const ds = createCacheDataSource({
       sessionId: 'sess1',
       viewCache: cache,
@@ -201,8 +202,10 @@ describe('CacheDataSource', () => {
     });
 
     const result = await ds.getLines(0, 5);
-    expect(fetchLines).toHaveBeenCalledWith(0, 5);
-    expect(result).toHaveLength(5);
+    // Only the missing suffix [3, 4] is fetched
+    expect(fetchLines).toHaveBeenCalledWith(3, 2);
+    // Returns window.lines directly (the 2 fetched lines)
+    expect(result).toHaveLength(2);
   });
 
   // -----------------------------------------------------------------------
@@ -531,25 +534,24 @@ describe('CacheDataSource', () => {
   // Edge cases
   // -----------------------------------------------------------------------
 
-  it('getLines with 0 count falls through to fetch', async () => {
+  it('getLines with 0 count returns empty without fetching', async () => {
     const cache = new ViewCacheHandle(5000);
-    const fetchLines = vi.fn().mockResolvedValue({ totalLines: 0, lines: [] });
+    const fetchLines = vi.fn();
     const ds = createCacheDataSource({
       sessionId: 'sess1',
       viewCache: cache,
       fetchLines,
     });
 
-    // count=0 → loop body never runs → allCached=true but result.length=0
-    // Falls through to fetch because allCached && result.length > 0 is false
+    // count=0 → loop never runs → firstMiss stays -1 → return prefixLines (empty)
     const result = await ds.getLines(0, 0);
-    expect(fetchLines).toHaveBeenCalledWith(0, 0);
+    expect(fetchLines).not.toHaveBeenCalled();
     expect(result).toHaveLength(0);
   });
 
-  it('getLines beyond lineNumbers array falls through to fetch', async () => {
+  it('getLines beyond lineNumbers array returns empty without fetching', async () => {
     const cache = new ViewCacheHandle(5000);
-    const fetchLines = vi.fn().mockResolvedValue({ totalLines: 0, lines: [] });
+    const fetchLines = vi.fn();
 
     const ds = createCacheDataSource({
       sessionId: 'sess1',
@@ -558,12 +560,11 @@ describe('CacheDataSource', () => {
       lineNumbers: [10, 20],
     });
 
-    // offset=5 is beyond lineNumbers[1], so loop breaks immediately:
-    // actualLine = lineNumbers[5] = undefined → break → allCached=true, result.length=0
-    // Falls through to fetch path (allCached && result.length > 0 is false)
+    // offset=5 is beyond lineNumbers[1], so loop hits undefined → breaks immediately
+    // firstMiss stays -1 → return prefixLines (empty)
     const result = await ds.getLines(5, 3);
-    expect(fetchLines).toHaveBeenCalledWith(5, 3);
-    expect(result).toEqual([]); // fetch returned empty
+    expect(fetchLines).not.toHaveBeenCalled();
+    expect(result).toEqual([]);
   });
 
   it('fetch returning empty lines does not corrupt state', async () => {

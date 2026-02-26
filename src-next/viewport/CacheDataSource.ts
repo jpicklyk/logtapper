@@ -60,33 +60,42 @@ export function createCacheDataSource(options: CacheDataSourceOptions): CacheDat
     },
 
     getLines(offset: number, count: number): Promise<ViewLine[]> {
-      // Try to serve entirely from cache
-      const result: ViewLine[] = [];
-      let allCached = true;
+      // Scan prefix: collect cached lines until first miss or boundary
+      const prefixLines: ViewLine[] = [];
+      let firstMiss = -1;
       for (let i = 0; i < count; i++) {
         const idx = offset + i;
         const actualLine = lineNumbers ? lineNumbers[idx] : idx;
-        if (actualLine === undefined) break;
-        const cached = viewCache.get(actualLine);
-        if (cached) {
-          result.push(cached);
+        if (actualLine === undefined) break; // processor mode boundary
+        const line = viewCache.get(actualLine);
+        if (line) {
+          prefixLines.push(line);
         } else {
-          allCached = false;
+          firstMiss = i;
           break;
         }
       }
-      if (allCached && result.length > 0) {
-        return Promise.resolve(result);
+
+      if (firstMiss === -1) {
+        // All lines cached (or count=0 / offset beyond lineNumbers boundary)
+        console.debug('[CacheDataSource] getLines: all cached', { sessionId, offset, count, cached: prefixLines.length });
+        return Promise.resolve(prefixLines);
       }
 
-      // Cache miss — fetch from backend, store in ViewCacheHandle (bounded LRU)
-      // Capture current gen (only invalidate() and dispose() bump it)
+      // Fetch from firstMiss to end of requested range (skip cached prefix)
+      const fetchOffset = offset + firstMiss;
+      const fetchCount = count - firstMiss;
+      console.debug('[CacheDataSource] getLines: partial miss → fetching', { sessionId, offset, count, fetchOffset, fetchCount, cacheSize: viewCache.size, allocation: viewCache.allocation, disposed: _disposed });
       const gen = _fetchGen;
-      return fetchLines(offset, count).then((window: LineWindow) => {
-        if (gen !== _fetchGen || _disposed) return [];
+      return fetchLines(fetchOffset, fetchCount).then((window: LineWindow) => {
+        if (gen !== _fetchGen || _disposed) {
+          console.debug('[CacheDataSource] getLines: fetch stale/disposed, discarding', { sessionId, fetchOffset, gen, currentGen: _fetchGen, disposed: _disposed });
+          return [];
+        }
         if (window.totalLines > _totalLines && !lineNumbers) {
           _totalLines = window.totalLines;
         }
+        console.debug('[CacheDataSource] getLines: put', { sessionId, fetchOffset, lines: window.lines.length, cacheSize: viewCache.size });
         viewCache.put(window.lines);
         return window.lines;
       });
