@@ -5,6 +5,7 @@ import { updateStreamProcessors, updateStreamTrackers, updateStreamTransformers 
 import { useSessionContext } from '../../context/SessionContext';
 import { useViewerContext } from '../../context/ViewerContext';
 import { bus } from '../../events/bus';
+import { sessionScrollPositions } from '../../viewport';
 import type { CacheController } from '../../cache';
 import type { SharedLogViewerRefs } from './types';
 
@@ -102,6 +103,7 @@ export function useSessionTabManager(
       terminateSession(resolvedSessionId);
     }
     cacheManager.releaseSessionViews(resolvedSessionId);
+    sessionScrollPositions.delete(resolvedSessionId);
 
     bus.emit('session:closed', { sessionId: resolvedSessionId, paneId: targetPaneId, sourceType, tabId });
   }, [

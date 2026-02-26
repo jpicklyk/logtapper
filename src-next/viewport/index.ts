@@ -15,3 +15,6 @@ export { default as TextLine, TextLineSkeleton } from './TextLine';
 export { createCacheDataSource } from './CacheDataSource';
 export type { CacheDataSource } from './CacheDataSource';
 export type { StreamPusher, DataSourceRegistrar } from './DataSourceRegistry';
+
+// Scroll position registry
+export { sessionScrollPositions } from './sessionScrollPositions';

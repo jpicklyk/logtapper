@@ -1,7 +1,7 @@
 import React, { useMemo, useCallback, useEffect, useState, useRef } from 'react';
 import type { ViewLine } from '../../bridge/types';
 import type { GutterColumnDef, LineDecoratorDef, Selection, CacheDataSource } from '../../viewport';
-import { ReadOnlyViewer, createCacheDataSource } from '../../viewport';
+import { ReadOnlyViewer, createCacheDataSource, sessionScrollPositions } from '../../viewport';
 import { useViewCache, useCacheFocus, useDataSourceRegistry } from '../../cache';
 import {
   useSessionForPane,
@@ -59,21 +59,20 @@ const LogViewer = React.memo(function LogViewer({
 
   // ── Per-session scroll position preservation ───────────────────────────
   // Capture the current virtualBase (written by ReadOnlyViewer synchronously
-  // during its render) whenever the session changes, so it can be restored
-  // the next time that session becomes active in this pane.
-  // All reads/writes are to refs — safe to perform during render.
-  const sessionScrollMapRef = useRef<Map<string, number>>(new Map());
+  // during its render) whenever the session changes, then persist it to the
+  // global sessionScrollPositions singleton so any pane — including a fresh
+  // mount after a drag — can restore the correct position.
   const prevSessionIdRef = useRef<string | null>(null);
   const virtualBaseOutRef = useRef<number>(0);
 
   if (prevSessionIdRef.current !== sessionId) {
     if (prevSessionIdRef.current !== null) {
-      sessionScrollMapRef.current.set(prevSessionIdRef.current, virtualBaseOutRef.current);
+      sessionScrollPositions.set(prevSessionIdRef.current, virtualBaseOutRef.current);
     }
     prevSessionIdRef.current = sessionId;
   }
 
-  const initialVirtualBase = sessionScrollMapRef.current.get(sessionId ?? '') ?? 0;
+  const initialVirtualBase = sessionScrollPositions.get(sessionId ?? '');
 
   // Create CacheDataSource
   const dataSourceRef = useRef<CacheDataSource | null>(null);
