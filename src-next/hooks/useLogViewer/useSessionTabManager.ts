@@ -119,9 +119,12 @@ export function useSessionTabManager(
     const handleTabClosed = ({ tabId, paneId, sessionId }: { tabId: string; paneId: string; sessionId: string }) => {
       closeSessionRef.current(paneId, tabId, sessionId);
     };
-    const handleTabActivated = ({ paneId, sessionId }: { tabId: string; paneId: string; sessionId: string }) => {
+    const handleTabActivated = ({ paneId, sessionId, reason }: { tabId: string; paneId: string; sessionId: string; reason?: 'drag' }) => {
       if (!sessionId) return;
-      resetViewerState();
+      // Skip viewer state reset for drag rearrangements — the user is moving a
+      // tab to a new position, not switching sessions, so search/filter should
+      // be preserved.
+      if (reason !== 'drag') resetViewerState();
       activateSessionForPane(paneId, sessionId);
       const sess = refs.sessionsRef.current.get(sessionId);
       if (sess && sess.totalLines > 0) {

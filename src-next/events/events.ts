@@ -46,8 +46,11 @@ export type AppEvents = {
   'layout:open-tab':        { type: string };
   /** Fired when a logviewer tab is explicitly closed via the UI tab bar. */
   'layout:logviewer-tab-closed': { tabId: string; paneId: string; sessionId: string };
-  /** Fired when the user switches to a logviewer tab that has its own session. */
-  'layout:logviewer-tab-activated': { tabId: string; paneId: string; sessionId: string };
+  /** Fired when the user switches to a logviewer tab that has its own session.
+   *  `reason: 'drag'` is set when the activation is caused by a tab drag/drop
+   *  rearrangement rather than an explicit tab click — consumers should skip
+   *  viewer state resets (search, filter) in that case. */
+  'layout:logviewer-tab-activated': { tabId: string; paneId: string; sessionId: string; reason?: 'drag' };
   /** Fired by workspace fallback path when a session was registered under a placeholder
    *  pane ID (e.g. 'primary') but the tab was actually placed in a different pane. */
   'layout:pane-session-remap': { originalPaneId: string; actualPaneId: string; sessionId: string };

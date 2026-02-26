@@ -179,6 +179,11 @@ export function useStreamSession(
     const sessionId = refs.streamingSessionIdRef.current;
     const paneId = refs.streamingPaneIdRef.current;
     if (!sessionId) return;
+    // Unlisten the Tauri stopped-event handler BEFORE issuing the stop command.
+    // stopAdbStream triggers the backend to emit adb-stream-stopped, and if the
+    // listener is still active at that point both paths emit 'stream:stopped'.
+    refs.adbStoppedUnlistenRef.current?.();
+    refs.adbStoppedUnlistenRef.current = null;
     try {
       await stopAdbStream(sessionId);
     } catch (e) {
@@ -186,8 +191,6 @@ export function useStreamSession(
     }
     refs.adbBatchUnlistenRef.current?.();
     refs.adbBatchUnlistenRef.current = null;
-    refs.adbStoppedUnlistenRef.current?.();
-    refs.adbStoppedUnlistenRef.current = null;
     setStreamingSession(sessionId, false);
     refs.isStreamingRef.current = false;
     const stoppedPaneId = paneId ?? (refs.focusedPaneIdRef.current ?? DEFAULT_PANE_ID);

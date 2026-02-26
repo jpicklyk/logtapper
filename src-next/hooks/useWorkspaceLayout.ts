@@ -730,7 +730,7 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
     const movedTab = preFromLeaf?.pane.tabs.find((t) => t.id === tabId);
     if (movedTab?.type === 'logviewer') {
       const sessionId = tabSessionMapRef.current.get(tabId) ?? '';
-      bus.emit('layout:logviewer-tab-activated', { tabId, paneId: landingPaneId, sessionId });
+      bus.emit('layout:logviewer-tab-activated', { tabId, paneId: landingPaneId, sessionId, reason: 'drag' });
     }
 
     // If the moved tab was the active tab in the source pane, the pane's remaining
@@ -738,7 +738,7 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
     // Emit an activation event so useLogViewer can swap to the correct session.
     if (newActiveFromTab?.type === 'logviewer') {
       const fromSessionId = tabSessionMapRef.current.get(newActiveFromTab.id) ?? '';
-      bus.emit('layout:logviewer-tab-activated', { tabId: newActiveFromTab.id, paneId: fromPaneId, sessionId: fromSessionId });
+      bus.emit('layout:logviewer-tab-activated', { tabId: newActiveFromTab.id, paneId: fromPaneId, sessionId: fromSessionId, reason: 'drag' });
     }
   }, [updateTree]);
 
