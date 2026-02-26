@@ -96,20 +96,26 @@ pub async fn load_log_file(
         .unwrap_or("source")
         .to_string();
 
-    // Cancel any in-progress indexing task for a previous session.
-    {
-        let mut tasks = state
-            .indexing_tasks
+    // Close any existing session for the same file path (e.g. stale session from a
+    // frontend reload). Scan first under a short-lived lock, then close without holding it.
+    let stale_id = {
+        let sessions = state
+            .sessions
             .lock()
             .map_err(|_| "State lock poisoned".to_string())?;
-        if let Some(cancel) = tasks.remove(&session_id) {
-            let _ = cancel.send(());
-        }
+        sessions
+            .values()
+            .find(|s| s.file_path.as_deref() == Some(&path))
+            .map(|s| s.id.clone())
+    };
+    if let Some(stale_id) = stale_id {
+        close_session_inner(&state, &stale_id)?;
     }
 
     const INITIAL_BYTES: usize = 1_000_000; // 1 MB initial chunk
 
     let mut session = AnalysisSession::new(session_id.clone());
+    session.file_path = Some(path.clone());
     let (mmap_arc, total_bytes, bytes_consumed) =
         session.add_source_partial(path_obj, source_id.clone(), INITIAL_BYTES)?;
 
@@ -176,63 +182,68 @@ pub async fn load_log_file(
 }
 
 #[tauri::command]
-pub async fn close_session(
-    state: State<'_, AppState>,
-    session_id: String,
-) -> Result<(), String> {
+fn close_session_inner(state: &AppState, session_id: &str) -> Result<(), String> {
     // 1. Cancel active ADB stream (if any)
     if let Some(cancel_tx) = state.stream_tasks.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id) {
+        .map_err(|_| "lock poisoned".to_string())?.remove(session_id) {
         let _ = cancel_tx.send(());
     }
 
     // 2. Cancel active background indexing (if any)
     if let Some(cancel_tx) = state.indexing_tasks.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id) {
+        .map_err(|_| "lock poisoned".to_string())?.remove(session_id) {
         let _ = cancel_tx.send(());
     }
 
     // 3. Remove session (drops mmap / stream data)
     state.sessions.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id);
+        .map_err(|_| "lock poisoned".to_string())?.remove(session_id);
 
     // 4. Remove pipeline results
     state.pipeline_results.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id);
+        .map_err(|_| "lock poisoned".to_string())?.remove(session_id);
 
     // 5. Remove state tracker results
     state.state_tracker_results.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id);
+        .map_err(|_| "lock poisoned".to_string())?.remove(session_id);
 
     // 6. Remove correlator results
     state.correlator_results.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id);
+        .map_err(|_| "lock poisoned".to_string())?.remove(session_id);
 
     // 7. Remove streaming processor state
     state.stream_processor_state.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id);
+        .map_err(|_| "lock poisoned".to_string())?.remove(session_id);
 
     // 8. Remove streaming tracker state
     state.stream_tracker_state.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id);
+        .map_err(|_| "lock poisoned".to_string())?.remove(session_id);
 
     // 9. Remove streaming transformer state
     state.stream_transformer_state.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id);
+        .map_err(|_| "lock poisoned".to_string())?.remove(session_id);
 
     // 10. Remove PII mappings
     state.pii_mappings.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id);
+        .map_err(|_| "lock poisoned".to_string())?.remove(session_id);
 
     // 11. Remove stream anonymizer
     state.stream_anonymizers.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id);
+        .map_err(|_| "lock poisoned".to_string())?.remove(session_id);
 
     // 12. Remove MCP anonymizer
     state.mcp_anonymizers.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(&session_id);
+        .map_err(|_| "lock poisoned".to_string())?.remove(session_id);
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn close_session(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    close_session_inner(&state, &session_id)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1051,4 +1062,138 @@ pub fn compute_search_highlights(raw: &str, query: &SearchQuery) -> Vec<Highligh
     }
 
     spans
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::AppState;
+    use crate::core::session::AnalysisSession;
+    use std::collections::HashMap;
+
+    fn make_state() -> AppState {
+        AppState::new()
+    }
+
+    fn insert_session(state: &AppState, id: &str, file_path: Option<&str>) {
+        let mut session = AnalysisSession::new(id.to_string());
+        session.file_path = file_path.map(str::to_string);
+        state.sessions.lock().unwrap().insert(id.to_string(), session);
+    }
+
+    // -------------------------------------------------------------------------
+    // close_session_inner
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn close_session_inner_removes_session_from_map() {
+        let state = make_state();
+        insert_session(&state, "sess-1", None);
+        assert!(state.sessions.lock().unwrap().contains_key("sess-1"));
+
+        close_session_inner(&state, "sess-1").unwrap();
+
+        assert!(!state.sessions.lock().unwrap().contains_key("sess-1"),
+            "session must be removed after close");
+    }
+
+    #[test]
+    fn close_session_inner_sends_indexing_cancellation() {
+        let state = make_state();
+        insert_session(&state, "sess-2", None);
+        let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
+        state.indexing_tasks.lock().unwrap().insert("sess-2".to_string(), cancel_tx);
+
+        close_session_inner(&state, "sess-2").unwrap();
+
+        // The sender was consumed and the cancellation signal delivered
+        assert!(cancel_rx.try_recv().is_ok(),
+            "indexing task must receive cancellation on close");
+    }
+
+    #[test]
+    fn close_session_inner_removes_pipeline_results() {
+        let state = make_state();
+        insert_session(&state, "sess-3", None);
+        state.pipeline_results.lock().unwrap()
+            .insert("sess-3".to_string(), HashMap::new());
+
+        close_session_inner(&state, "sess-3").unwrap();
+
+        assert!(!state.pipeline_results.lock().unwrap().contains_key("sess-3"),
+            "pipeline results must be cleared on close");
+    }
+
+    #[test]
+    fn close_session_inner_is_noop_on_unknown_id() {
+        let state = make_state();
+        // Must not panic or error when the session doesn't exist
+        assert!(close_session_inner(&state, "nonexistent").is_ok());
+    }
+
+    // -------------------------------------------------------------------------
+    // Stale-session dedup (same logic as load_log_file's path-scan block)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn stale_session_with_matching_path_is_found_and_closed() {
+        let state = make_state();
+        insert_session(&state, "stale-id", Some("/logs/device.log"));
+        let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
+        state.indexing_tasks.lock().unwrap()
+            .insert("stale-id".to_string(), cancel_tx);
+
+        // Replicate the exact scan + close block from load_log_file
+        let path = "/logs/device.log";
+        let stale_id = {
+            let sessions = state.sessions.lock().unwrap();
+            sessions.values()
+                .find(|s| s.file_path.as_deref() == Some(path))
+                .map(|s| s.id.clone())
+        };
+        assert_eq!(stale_id.as_deref(), Some("stale-id"),
+            "must find the stale session by file path");
+
+        close_session_inner(&state, stale_id.unwrap().as_str()).unwrap();
+
+        assert!(!state.sessions.lock().unwrap().contains_key("stale-id"),
+            "stale session must be removed");
+        assert!(cancel_rx.try_recv().is_ok(),
+            "stale session's indexing task must be cancelled");
+    }
+
+    #[test]
+    fn stale_session_scan_returns_none_for_different_path() {
+        let state = make_state();
+        insert_session(&state, "sess-a", Some("/logs/other.log"));
+
+        let stale_id = {
+            let sessions = state.sessions.lock().unwrap();
+            sessions.values()
+                .find(|s| s.file_path.as_deref() == Some("/logs/device.log"))
+                .map(|s| s.id.clone())
+        };
+
+        assert!(stale_id.is_none(),
+            "must not find a session when paths don't match");
+        // Original session is untouched
+        assert!(state.sessions.lock().unwrap().contains_key("sess-a"));
+    }
+
+    #[test]
+    fn stale_session_scan_ignores_stream_sessions_with_no_path() {
+        let state = make_state();
+        // A live ADB session has file_path = None — must not match any file path
+        insert_session(&state, "adb-session", None);
+
+        let stale_id = {
+            let sessions = state.sessions.lock().unwrap();
+            sessions.values()
+                .find(|s| s.file_path.as_deref() == Some("/logs/device.log"))
+                .map(|s| s.id.clone())
+        };
+
+        assert!(stale_id.is_none(),
+            "stream sessions with no file_path must not be matched");
+    }
 }
