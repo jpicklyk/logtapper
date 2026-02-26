@@ -76,12 +76,6 @@ export function useFileSession(
         // Inline terminateSession — deps object doesn't include it, get it from ref
         terminateSessionRef.current(previousSessionId);
         cacheManager.releaseSessionViews(previousSessionId);
-        for (const [tid, sid] of refs.tabSessionMapRef.current.entries()) {
-          if (sid === previousSessionId) {
-            refs.tabSessionMapRef.current.delete(tid);
-            break;
-          }
-        }
       }
 
       bus.emit('session:pre-load', { paneId: targetPaneId });
@@ -107,7 +101,6 @@ export function useFileSession(
       }
 
       registerSession(targetPaneId, result);
-      refs.tabSessionMapRef.current.set(tabId, result.sessionId);
 
       if (!isNewTab) {
         activateSessionForPane(targetPaneId, result.sessionId);
@@ -155,7 +148,7 @@ export function useFileSession(
       }
     }
   }, [
-    refs.focusedPaneIdRef, refs.paneSessionMapRef, refs.tabSessionMapRef,
+    refs.focusedPaneIdRef, refs.paneSessionMapRef,
     refs.streamingPaneIdRef,
     cacheManager, registerSession, activateSessionForPane, setLoadingPane, setErrorPane,
     setIndexingProgressCtx,

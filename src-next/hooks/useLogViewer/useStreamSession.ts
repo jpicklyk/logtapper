@@ -115,9 +115,6 @@ export function useStreamSession(
       refs.streamingPaneIdRef.current = targetPaneId;
       refs.streamingSessionIdRef.current = result.sessionId;
 
-      // Track the tab so closeSession/tabManager can find the session by tabId.
-      refs.tabSessionMapRef.current.set(tabId, result.sessionId);
-
       const unlistenBatch = await onAdbBatch(handleAdbBatch);
       refs.adbBatchUnlistenRef.current = unlistenBatch;
 
@@ -169,7 +166,7 @@ export function useStreamSession(
       setLoadingPane(targetPaneId, false);
     }
   }, [
-    refs.focusedPaneIdRef, refs.paneSessionMapRef, refs.tabSessionMapRef,
+    refs.focusedPaneIdRef, refs.paneSessionMapRef,
     refs.streamDeviceSerialRef, refs.isStreamingRef,
     refs.streamingPaneIdRef, refs.streamingSessionIdRef,
     refs.adbBatchUnlistenRef, refs.adbStoppedUnlistenRef,

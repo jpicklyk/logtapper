@@ -12,13 +12,12 @@ export type AppEvents = {
   'session:pre-load':       { paneId: string };
   /**
    * `tabId` is the pre-assigned tab ID for the logviewer tab that will be
-   * created (or updated) for this session. Use this ID to look up the tab's
-   * session in tabSessionMap when switching between logviewer tabs.
+   * created (or updated) for this session.
    *
    * When `isNewTab` is true, a second file is being opened alongside an
    * existing one in the same pane. `previousSessionId` is the session that
-   * was active before — workspace layout uses it to retroactively bind the
-   * pre-existing logviewer tab's session.
+   * was active before — workspace layout uses it to keep the pre-existing
+   * logviewer tab's mapping intact.
    */
   'session:loaded':         { sessionId: string; paneId: string; sourceName: string; sourceType: SourceType;
                               tabId: string; isNewTab?: boolean; previousSessionId?: string };
@@ -46,11 +45,9 @@ export type AppEvents = {
   // ── Layout / navigation ───────────────────────────────────────────────────
   'layout:open-tab':        { type: string };
   /** Fired when a logviewer tab is explicitly closed via the UI tab bar. */
-  'layout:logviewer-tab-closed': { tabId: string; paneId: string };
+  'layout:logviewer-tab-closed': { tabId: string; paneId: string; sessionId: string };
   /** Fired when the user switches to a logviewer tab that has its own session. */
-  'layout:logviewer-tab-activated': { tabId: string; paneId: string };
-  /** Fired by workspace layout to tell useLogViewer to bind a tab ID to a session ID. */
-  'layout:tab-session-bind': { tabId: string; sessionId: string; paneId: string };
+  'layout:logviewer-tab-activated': { tabId: string; paneId: string; sessionId: string };
   /** Fired by workspace fallback path when a session was registered under a placeholder
    *  pane ID (e.g. 'primary') but the tab was actually placed in a different pane. */
   'layout:pane-session-remap': { originalPaneId: string; actualPaneId: string; sessionId: string };

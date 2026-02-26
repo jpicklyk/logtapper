@@ -398,6 +398,12 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
   const paneSessionMapRef = useRef(paneSessionMap);
   paneSessionMapRef.current = paneSessionMap;
 
+  // Authoritative tab→session map. The workspace is the sole owner of tab
+  // identity (creates/destroys tabs), so it is the right place to track this.
+  // All activation and close events carry sessionId directly — no secondary
+  // lookup needed in useLogViewer and no risk of the two maps diverging.
+  const tabSessionMapRef = useRef<Map<string, string>>(new Map());
+
   // Center tree
   const [centerTree, setCenterTree] = useState<SplitNode>(() => saved.centerTree ?? defaultTree());
   const treeRef = useRef<SplitNode>(centerTree);
@@ -510,7 +516,9 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
     // Notify session layer before mutating the tree, so it can close the backend
     // session and clear the file restore key (LS_LAST_FILE).
     if (closingTab?.type === 'logviewer') {
-      bus.emit('layout:logviewer-tab-closed', { tabId, paneId });
+      const sessionId = tabSessionMapRef.current.get(tabId) ?? '';
+      tabSessionMapRef.current.delete(tabId);
+      bus.emit('layout:logviewer-tab-closed', { tabId, paneId, sessionId });
     }
 
     updateTree((tree) => {
@@ -545,7 +553,8 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
       const remainingTabs = leaf.pane.tabs.filter((t) => t.id !== tabId);
       const nextTab = remainingTabs[0];
       if (nextTab?.type === 'logviewer') {
-        bus.emit('layout:logviewer-tab-activated', { tabId: nextTab.id, paneId });
+        const nextSessionId = tabSessionMapRef.current.get(nextTab.id) ?? '';
+        bus.emit('layout:logviewer-tab-activated', { tabId: nextTab.id, paneId, sessionId: nextSessionId });
       }
     }
   }, [updateTree]);
@@ -564,7 +573,8 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
 
     // Notify session layer so it can swap paneSessionMap to the newly active session.
     if (tab?.type === 'logviewer' && !alreadyActive) {
-      bus.emit('layout:logviewer-tab-activated', { tabId, paneId });
+      const sessionId = tabSessionMapRef.current.get(tabId) ?? '';
+      bus.emit('layout:logviewer-tab-activated', { tabId, paneId, sessionId });
     }
   }, [updateTree]);
 
@@ -717,24 +727,18 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
 
       return replaceNode(updated, toLeaf.id, splitNode);
     });
-    // When the moved tab was the active session in its source pane, bind it to the
-    // landing pane before firing logviewer-tab-activated. This guarantees
-    // tabSessionMapRef has the mapping even if the tab was never previously
-    // activated from the useLogViewer side (e.g. stream tabs, restored tabs).
     const movedTab = preFromLeaf?.pane.tabs.find((t) => t.id === tabId);
-    if (movedTab?.type === 'logviewer' && movedTabWasActive) {
-      const sessionId = paneSessionMapRef.current.get(fromPaneId);
-      if (sessionId) {
-        bus.emit('layout:tab-session-bind', { tabId, sessionId, paneId: landingPaneId });
-      }
+    if (movedTab?.type === 'logviewer') {
+      const sessionId = tabSessionMapRef.current.get(tabId) ?? '';
+      bus.emit('layout:logviewer-tab-activated', { tabId, paneId: landingPaneId, sessionId });
     }
-    bus.emit('layout:logviewer-tab-activated', { tabId, paneId: landingPaneId });
 
     // If the moved tab was the active tab in the source pane, the pane's remaining
     // tab is now displayed but paneSessionMap still points to the departed session.
     // Emit an activation event so useLogViewer can swap to the correct session.
     if (newActiveFromTab?.type === 'logviewer') {
-      bus.emit('layout:logviewer-tab-activated', { tabId: newActiveFromTab.id, paneId: fromPaneId });
+      const fromSessionId = tabSessionMapRef.current.get(newActiveFromTab.id) ?? '';
+      bus.emit('layout:logviewer-tab-activated', { tabId: newActiveFromTab.id, paneId: fromPaneId, sessionId: fromSessionId });
     }
   }, [updateTree]);
 
@@ -782,26 +786,33 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
       // Pre-compute which bus events to emit based on the CURRENT tree before
       // calling setCenterTree. React StrictMode calls state updater functions twice
       // to detect side effects — any bus.emit inside an updater would double-fire,
-      // producing duplicate tab-session-bind and logviewer-tab-activated events that
+      // producing duplicate logviewer-tab-activated events that
       // cascade into double state resets, double backend fetches, and apparent reloads.
       const preTree = treeRef.current;
-      let emitTabSessionBind: { tabId: string; sessionId: string; paneId: string } | null = null;
-      let emitTabActivated: { tabId: string; paneId: string } | null = null;
+      let tabIdToDelete: string | null = null;
+      let emitTabActivated: { tabId: string; paneId: string; sessionId: string } | null = null;
       let emitPaneRemap: { originalPaneId: string; actualPaneId: string; sessionId: string } | null = null;
 
       const preTargetLeaf = findLeafByPaneId(preTree, e.paneId);
       if (preTargetLeaf) {
         const existingLogviewerTab = preTargetLeaf.pane.tabs.find((t) => t.type === 'logviewer');
         if (e.isNewTab && existingLogviewerTab && e.previousSessionId) {
-          emitTabSessionBind = { tabId: existingLogviewerTab.id, sessionId: e.previousSessionId, paneId: e.paneId };
-          emitTabActivated = { tabId: e.tabId, paneId: e.paneId };
+          // Adding a second tab alongside an existing one. The existing tab keeps
+          // its ID and mapping; only the new tab needs to be activated.
+          emitTabActivated = { tabId: e.tabId, paneId: e.paneId, sessionId: e.sessionId };
+        } else if (existingLogviewerTab) {
+          // Replacing (or renaming) the existing logviewer tab — clean up old mapping.
+          tabIdToDelete = existingLogviewerTab.id;
         }
+        // else: no existing logviewer tab — just insert, no old mapping to delete.
       } else {
         const existing = findTabByType(preTree, 'logviewer');
         if (existing && !paneSessionMapRef.current.has(existing.pane.id)) {
           if (existing.pane.id !== e.paneId) {
             emitPaneRemap = { originalPaneId: e.paneId, actualPaneId: existing.pane.id, sessionId: e.sessionId };
           }
+          // Reusing an unoccupied logviewer tab — its old mapping is stale.
+          tabIdToDelete = existing.tab.id;
         } else {
           const target = firstLeaf(preTree);
           if (target.pane.id !== e.paneId) {
@@ -880,9 +891,13 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
         return next;
       });
 
+      // Maintain the workspace-owned tab→session map. Always set the new mapping;
+      // delete the old tab ID if we replaced an existing logviewer tab.
+      tabSessionMapRef.current.set(e.tabId, e.sessionId);
+      if (tabIdToDelete) tabSessionMapRef.current.delete(tabIdToDelete);
+
       // Emit bus events AFTER the state update, outside the updater.
       // This is the only correct place — updaters must be pure (no side effects).
-      if (emitTabSessionBind) bus.emit('layout:tab-session-bind', emitTabSessionBind);
       if (emitTabActivated) bus.emit('layout:logviewer-tab-activated', emitTabActivated);
       if (emitPaneRemap) bus.emit('layout:pane-session-remap', emitPaneRemap);
     };

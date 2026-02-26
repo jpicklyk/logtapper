@@ -27,9 +27,6 @@ export interface SharedLogViewerRefs {
   filterAstRef: MutableRefObject<FilterNode | null>;
   packagePidsRef: MutableRefObject<Map<string, number[]>>;
 
-  // Tab mapping (useFileSession writes; useSessionTabManager reads)
-  tabSessionMapRef: MutableRefObject<Map<string, string>>;
-
   // Incremental filter bridge: useFilterScan writes a stable callback here;
   // useStreamSession calls it from handleAdbBatch without a setState dep.
   appendFilterMatchesRef: MutableRefObject<((lineNums: number[]) => void) | null>;

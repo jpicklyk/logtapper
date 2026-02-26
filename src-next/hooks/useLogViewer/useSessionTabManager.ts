@@ -26,7 +26,7 @@ interface TabManagerDeps {
 }
 
 export interface SessionTabManagerResult {
-  closeSession: (paneId?: string, tabId?: string) => Promise<void>;
+  closeSession: (paneId?: string, tabId?: string, sessionId?: string) => Promise<void>;
 }
 
 export function useSessionTabManager(
@@ -64,25 +64,21 @@ export function useSessionTabManager(
   }, [setProcessorId, setSearch, setSearchSummary, setCurrentMatchIndex,
       setStreamFilterCtx, setTimeFilterStartCtx, setTimeFilterEndCtx]);
 
-  const closeSession = useCallback(async (paneId?: string, tabId?: string) => {
+  const closeSession = useCallback(async (paneId?: string, tabId?: string, sessionId?: string) => {
     const targetPaneId = paneId ?? focusedPaneId ?? DEFAULT_PANE_ID;
 
-    let sessionId: string | undefined;
-    if (tabId) {
-      sessionId = refs.tabSessionMapRef.current.get(tabId);
-      refs.tabSessionMapRef.current.delete(tabId);
-    } else {
-      sessionId = refs.paneSessionMapRef.current.get(targetPaneId);
-    }
+    // Prefer the caller-supplied sessionId (workspace already knows it).
+    // Fall back to pane map for calls that don't supply it (e.g. toolbar close button).
+    const resolvedSessionId = sessionId ?? refs.paneSessionMapRef.current.get(targetPaneId);
 
-    if (!sessionId) return;
+    if (!resolvedSessionId) return;
 
-    if (refs.streamingSessionIdRef.current === sessionId) {
+    if (refs.streamingSessionIdRef.current === resolvedSessionId) {
       await deps.stopStream();
     }
 
     try {
-      await closeSessionCmd(sessionId);
+      await closeSessionCmd(resolvedSessionId);
     } catch (e) {
       console.error('Error closing session:', e);
     }
@@ -93,24 +89,24 @@ export function useSessionTabManager(
       saveTabPaths(tabPathsClose);
     }
 
-    const sourceType = (refs.sessionsRef.current.get(sessionId)?.sourceType ?? 'Unknown') as SourceType;
-    const isActivePaneSession = refs.paneSessionMapRef.current.get(targetPaneId) === sessionId;
+    const sourceType = (refs.sessionsRef.current.get(resolvedSessionId)?.sourceType ?? 'Unknown') as SourceType;
+    const isActivePaneSession = refs.paneSessionMapRef.current.get(targetPaneId) === resolvedSessionId;
 
     if (isActivePaneSession) {
       deps.resetSessionState();
       deps.setIndexingProgressLocal(null);
-      setIndexingProgressCtx(sessionId, null);
+      setIndexingProgressCtx(resolvedSessionId, null);
       unregisterSession(targetPaneId);
     } else {
-      setIndexingProgressCtx(sessionId, null);
-      terminateSession(sessionId);
+      setIndexingProgressCtx(resolvedSessionId, null);
+      terminateSession(resolvedSessionId);
     }
-    cacheManager.releaseSessionViews(sessionId);
+    cacheManager.releaseSessionViews(resolvedSessionId);
 
-    bus.emit('session:closed', { sessionId, paneId: targetPaneId, sourceType, tabId });
+    bus.emit('session:closed', { sessionId: resolvedSessionId, paneId: targetPaneId, sourceType, tabId });
   }, [
     focusedPaneId,
-    refs.tabSessionMapRef, refs.paneSessionMapRef, refs.streamingSessionIdRef, refs.sessionsRef,
+    refs.paneSessionMapRef, refs.streamingSessionIdRef, refs.sessionsRef,
     deps.stopStream, deps.resetSessionState, deps.setIndexingProgressLocal,
     setIndexingProgressCtx, unregisterSession, terminateSession, cacheManager,
   ]);
@@ -120,11 +116,10 @@ export function useSessionTabManager(
   useEffect(() => { closeSessionRef.current = closeSession; }, [closeSession]);
 
   useEffect(() => {
-    const handleTabClosed = ({ tabId, paneId }: { tabId: string; paneId: string }) => {
-      closeSessionRef.current(paneId, tabId);
+    const handleTabClosed = ({ tabId, paneId, sessionId }: { tabId: string; paneId: string; sessionId: string }) => {
+      closeSessionRef.current(paneId, tabId, sessionId);
     };
-    const handleTabActivated = ({ tabId, paneId }: { tabId: string; paneId: string }) => {
-      const sessionId = refs.tabSessionMapRef.current.get(tabId);
+    const handleTabActivated = ({ paneId, sessionId }: { tabId: string; paneId: string; sessionId: string }) => {
       if (!sessionId) return;
       resetViewerState();
       activateSessionForPane(paneId, sessionId);
@@ -141,9 +136,6 @@ export function useSessionTabManager(
         }
       }
     };
-    const handleTabBind = ({ tabId, sessionId }: { tabId: string; sessionId: string }) => {
-      refs.tabSessionMapRef.current.set(tabId, sessionId);
-    };
     const handlePaneRemap = ({ originalPaneId, actualPaneId, sessionId }: {
       originalPaneId: string; actualPaneId: string; sessionId: string;
     }) => {
@@ -153,15 +145,13 @@ export function useSessionTabManager(
 
     bus.on('layout:logviewer-tab-closed', handleTabClosed);
     bus.on('layout:logviewer-tab-activated', handleTabActivated);
-    bus.on('layout:tab-session-bind', handleTabBind);
     bus.on('layout:pane-session-remap', handlePaneRemap);
     return () => {
       bus.off('layout:logviewer-tab-closed', handleTabClosed);
       bus.off('layout:logviewer-tab-activated', handleTabActivated);
-      bus.off('layout:tab-session-bind', handleTabBind);
       bus.off('layout:pane-session-remap', handlePaneRemap);
     };
-  }, [refs.tabSessionMapRef, refs.sessionsRef, activateSessionForPane, unregisterSession,
+  }, [refs.sessionsRef, activateSessionForPane, unregisterSession,
       resetViewerState, cacheManager]);
 
   // Subscribe to pipeline:chain-changed to update stream processors/trackers/transformers
