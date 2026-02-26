@@ -51,6 +51,9 @@ export function useSessionTabManager(
     setStreamFilter: setStreamFilterCtx,
     setTimeFilterStart: setTimeFilterStartCtx,
     setTimeFilterEnd: setTimeFilterEndCtx,
+    setScrollToLine,
+    setJumpPaneId,
+    setJumpSeq,
   } = useViewerContext();
 
   // Clear session-scoped viewer state when switching tabs (does not reset filter scan state).
@@ -139,6 +142,17 @@ export function useSessionTabManager(
             })
             .catch(() => {});
         }
+
+        // For stream sessions (Logcat) dragged to a pane, virtualBase is always
+        // 0 (tail mode keeps it there), so our position map captures 0 and would
+        // restore the viewer to line 0 — the beginning — instead of the tail.
+        // Issue an explicit pane-scoped jump to the last line so the user lands
+        // at the content they were watching.
+        if (reason === 'drag' && sess.sourceType === 'Logcat' && !sess.isStreaming) {
+          setScrollToLine(sess.totalLines - 1);
+          setJumpPaneId(paneId);
+          setJumpSeq((s) => s + 1);
+        }
       }
     };
     const handlePaneRemap = ({ originalPaneId, actualPaneId, sessionId }: {
@@ -157,7 +171,7 @@ export function useSessionTabManager(
       bus.off('layout:pane-session-remap', handlePaneRemap);
     };
   }, [refs.sessionsRef, activateSessionForPane, unregisterSession,
-      resetViewerState, cacheManager]);
+      resetViewerState, cacheManager, setScrollToLine, setJumpPaneId, setJumpSeq]);
 
   // Subscribe to pipeline:chain-changed to update stream processors/trackers/transformers
   useEffect(() => {
