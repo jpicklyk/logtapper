@@ -122,6 +122,8 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
   const filterScanGenRef = useRef(0);
   const paneSessionMapRef = useRef(paneSessionMap);
   paneSessionMapRef.current = paneSessionMap;
+  const focusedPaneIdRef = useRef(focusedPaneId);
+  focusedPaneIdRef.current = focusedPaneId;
   /** tabId → sessionId — tracks the session for each logviewer tab in the layout. */
   const tabSessionMapRef = useRef<Map<string, string>>(new Map());
   const sessionsRef = useRef(sessions);
@@ -395,12 +397,13 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
       }
 
       setIndexingProgressLocal(null);
-      // Only wipe the shared ViewerContext state (search, filter, processorId, etc.)
-      // when loading into the focused pane. If the user is loading a file into a
-      // background pane, clearing global viewer state would disrupt the focused pane.
-      if (targetPaneId === focusedPaneId || !focusedPaneId) {
-        resetSessionState();
-      }
+      // Reset shared ViewerContext state (search, filter, processorId, etc.).
+      // session:focused is always emitted after load, so targetPaneId always becomes
+      // the focused pane — resetting here is always correct. The previous guard
+      // (targetPaneId === focusedPaneId) was too narrow: it skipped the reset when
+      // loading into a background pane, leaving stale state that would bleed into the
+      // new session once focus shifted.
+      resetSessionState();
     }
 
     setLoadingPane(targetPaneId, true);
@@ -745,13 +748,14 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
           const len = summary.matchLineNums.length;
           const next = (idx + direction + len) % len;
           setScrollToLine(summary.matchLineNums[next]);
+          setJumpPaneId(focusedPaneIdRef.current ?? null);
           setJumpSeq((s) => s + 1);
           return next;
         });
         return summary;
       });
     },
-    [setSearchSummary, setCurrentMatchIndex, setScrollToLine, setJumpSeq],
+    [setSearchSummary, setCurrentMatchIndex, setScrollToLine, setJumpPaneId, setJumpSeq],
   );
 
   const jumpToLine = useCallback((lineNum: number, paneId?: string) => {
