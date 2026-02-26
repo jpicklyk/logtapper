@@ -72,6 +72,7 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
       packagePidsRef:          { current: new Map() },
       tabSessionMapRef:        { current: new Map() },
       appendFilterMatchesRef:  { current: null },
+      resetSessionStateRef:    { current: () => {} },
     };
   }
   const refs = refsContainer.current;
@@ -128,6 +129,10 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     setStreamFilterCtx, setTimeFilterStartCtx, setTimeFilterEndCtx,
     setScrollToLine, setJumpSeq,
   ]);
+
+  // Wire resetSessionState into refs so useStreamSession can call it
+  // when starting a stream into an empty pane (not a new-tab scenario).
+  refs.resetSessionStateRef.current = resetSessionState;
 
   const streamSession = useStreamSession(cacheManager, registry, refs);
 

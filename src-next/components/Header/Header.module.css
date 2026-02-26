@@ -89,14 +89,21 @@
   background: color-mix(in srgb, var(--accent) 6%, var(--bg-base));
 }
 
-.actionBtnActive {
+.actionBtnStreaming {
   color: var(--success);
   border-color: var(--success-dark);
   background: color-mix(in srgb, var(--success) 8%, var(--bg-base));
 }
 
-.actionBtnActive:hover {
-  border-color: var(--success-dark-hover);
+.actionBtnStreaming:hover {
+  color: var(--danger, #f85149);
+  border-color: var(--danger, #f85149);
+  background: color-mix(in srgb, var(--danger, #f85149) 8%, var(--bg-base));
+}
+
+.actionBtnLoading {
+  opacity: 0.65;
+  cursor: default;
 }
 
 /* Live pulse dot shown inside Stream button when streaming */
@@ -112,4 +119,78 @@
 @keyframes streamPulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.45; transform: scale(0.65); }
+}
+
+/* ── Device picker (inside Modal) ───────────────────────────────────────── */
+.deviceList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.deviceItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-base);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.deviceItem:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-base));
+}
+
+.deviceIcon {
+  color: var(--android);
+  flex-shrink: 0;
+}
+
+.deviceModel {
+  flex: 1;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deviceSerial {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+
+.deviceState {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.deviceStateOnline {
+  background: color-mix(in srgb, var(--success) 15%, var(--bg-base));
+  color: var(--success);
+}
+
+.deviceError {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+  padding: 8px 0;
 }

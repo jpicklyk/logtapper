@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import type { AdbBatchPayload } from '../../bridge/types';
+import type { AdbBatchPayload, SourceType } from '../../bridge/types';
 import { matchesFilter } from '../../../src/filter';
 import { startAdbStream, stopAdbStream } from '../../bridge/commands';
 import { onAdbBatch, onAdbStreamStopped } from '../../bridge/events';
@@ -88,7 +88,18 @@ export function useStreamSession(
     refs.adbStoppedUnlistenRef.current = null;
 
     const targetPaneId = refs.focusedPaneIdRef.current ?? DEFAULT_PANE_ID;
-    bus.emit('session:pre-load', { paneId: targetPaneId });
+    const tabId = crypto.randomUUID();
+
+    // If the pane already has a session, open the stream as a new tab alongside it.
+    // If the pane is empty, replace (isNewTab: false) and reset viewer state.
+    const previousSessionId = refs.paneSessionMapRef.current.get(targetPaneId);
+    const isNewTab = previousSessionId !== undefined;
+
+    if (!isNewTab) {
+      bus.emit('session:pre-load', { paneId: targetPaneId });
+      refs.resetSessionStateRef.current();
+    }
+
     setLoadingPane(targetPaneId, true);
     setErrorPane(targetPaneId, null);
 
@@ -103,6 +114,9 @@ export function useStreamSession(
       refs.isStreamingRef.current = true;
       refs.streamingPaneIdRef.current = targetPaneId;
       refs.streamingSessionIdRef.current = result.sessionId;
+
+      // Track the tab so closeSession/tabManager can find the session by tabId.
+      refs.tabSessionMapRef.current.set(tabId, result.sessionId);
 
       const unlistenBatch = await onAdbBatch(handleAdbBatch);
       refs.adbBatchUnlistenRef.current = unlistenBatch;
@@ -123,6 +137,19 @@ export function useStreamSession(
       setLoadingPane(targetPaneId, false);
 
       bus.emit('session:focused', { sessionId: result.sessionId, paneId: targetPaneId });
+
+      // Emit session:loaded so the workspace layout creates a dedicated tab with
+      // the device name. This is the same event file sessions emit for tab management.
+      bus.emit('session:loaded', {
+        sourceName: result.sourceName,
+        sourceType: result.sourceType as SourceType,
+        sessionId: result.sessionId,
+        paneId: targetPaneId,
+        tabId,
+        isNewTab,
+        previousSessionId,
+      });
+
       bus.emit('stream:started', {
         sessionId: result.sessionId,
         paneId: targetPaneId,
@@ -142,9 +169,11 @@ export function useStreamSession(
       setLoadingPane(targetPaneId, false);
     }
   }, [
-    refs.focusedPaneIdRef, refs.streamDeviceSerialRef, refs.isStreamingRef,
+    refs.focusedPaneIdRef, refs.paneSessionMapRef, refs.tabSessionMapRef,
+    refs.streamDeviceSerialRef, refs.isStreamingRef,
     refs.streamingPaneIdRef, refs.streamingSessionIdRef,
     refs.adbBatchUnlistenRef, refs.adbStoppedUnlistenRef,
+    refs.resetSessionStateRef,
     registerSession, activateSessionForPane, setLoadingPane, setErrorPane,
     setStreamingSession, handleAdbBatch,
   ]);

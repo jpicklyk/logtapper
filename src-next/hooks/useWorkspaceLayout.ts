@@ -717,6 +717,17 @@ export function useWorkspaceLayout(): WorkspaceLayoutState {
 
       return replaceNode(updated, toLeaf.id, splitNode);
     });
+    // When the moved tab was the active session in its source pane, bind it to the
+    // landing pane before firing logviewer-tab-activated. This guarantees
+    // tabSessionMapRef has the mapping even if the tab was never previously
+    // activated from the useLogViewer side (e.g. stream tabs, restored tabs).
+    const movedTab = preFromLeaf?.pane.tabs.find((t) => t.id === tabId);
+    if (movedTab?.type === 'logviewer' && movedTabWasActive) {
+      const sessionId = paneSessionMapRef.current.get(fromPaneId);
+      if (sessionId) {
+        bus.emit('layout:tab-session-bind', { tabId, sessionId, paneId: landingPaneId });
+      }
+    }
     bus.emit('layout:logviewer-tab-activated', { tabId, paneId: landingPaneId });
 
     // If the moved tab was the active tab in the source pane, the pane's remaining

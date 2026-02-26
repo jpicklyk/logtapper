@@ -33,4 +33,8 @@ export interface SharedLogViewerRefs {
   // Incremental filter bridge: useFilterScan writes a stable callback here;
   // useStreamSession calls it from handleAdbBatch without a setState dep.
   appendFilterMatchesRef: MutableRefObject<((lineNums: number[]) => void) | null>;
+
+  // Orchestrator writes this after defining resetSessionState so useStreamSession
+  // can call it from startStream without being in the hook signature.
+  resetSessionStateRef: MutableRefObject<() => void>;
 }
