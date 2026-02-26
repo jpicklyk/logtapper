@@ -100,6 +100,12 @@ export function useViewCache(viewId: string | null, sessionId?: string | null): 
     // cached lines so switching back doesn't trigger a reload from disk.
     handleRef.current = mgr.allocateView(viewId, sessionId ?? undefined);
     prevIdRef.current = viewId;
+  } else if (handleRef.current === null) {
+    // viewId matches prevId but the local ref was cleared during a brief null
+    // interlude (e.g. pane move before paneSessionMap updates: viewId goes
+    // "view-abc" → null → "view-abc"). Re-acquire — allocateView returns the
+    // existing handle if it's still in the manager, so cached lines survive.
+    handleRef.current = mgr.allocateView(viewId, sessionId ?? undefined);
   }
 
   // Release the current (latest) handle on unmount to free ghost handles.
