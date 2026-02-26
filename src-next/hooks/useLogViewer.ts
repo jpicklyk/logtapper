@@ -513,6 +513,9 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
   useEffect(() => {
     if (hasRestoredRef.current) return;
     hasRestoredRef.current = true;
+    // Migrate: remove the old single-file key so it never resurrects closed sessions.
+    try { localStorage.removeItem('logtapper_last_file'); } catch { /* ignore */ }
+
     const tabPaths = readTabPaths();
     const storedTabs = getStoredLogviewerTabs();
     // Only restore the active tab per pane. Active tab first ensures isNewTab=false
@@ -522,11 +525,6 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
       if (!isActive || seen.has(paneId)) continue;
       const path = tabPaths[tabId];
       if (path) { seen.add(paneId); loadFile(path, paneId); }
-    }
-    // Fallback: no persisted tabs found — try legacy single-file key
-    if (seen.size === 0) {
-      const legacy = localStorage.getItem('logtapper_last_file');
-      if (legacy) loadFile(legacy, getStoredFirstPaneId() ?? DEFAULT_PANE_ID);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
