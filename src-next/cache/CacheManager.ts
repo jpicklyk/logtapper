@@ -229,9 +229,11 @@ export class CacheManager implements CacheController {
    *  @param sessionId  Optional session ID — enables broadcastToSession(). */
   allocateView(viewId: string, sessionId?: string): ViewCacheHandle {
     if (this._views.has(viewId)) {
+      console.debug('[CacheManager] allocateView: returning existing handle', { viewId, sessionId });
       return this._views.get(viewId)!.handle;
     }
     const priority: ViewPriority = this._focusedId === null ? 'focused' : 'visible';
+    console.debug('[CacheManager] allocateView: creating new handle', { viewId, sessionId, priority, focusedId: this._focusedId, viewCount: this._views.size });
     const handle = new ViewCacheHandle(MIN_FLOOR);
     this._views.set(viewId, { handle, priority, sessionId: sessionId ?? null });
     if (this._focusedId === null) {
@@ -244,7 +246,11 @@ export class CacheManager implements CacheController {
   /** Release a view and reclaim its budget. */
   releaseView(viewId: string): void {
     const entry = this._views.get(viewId);
-    if (!entry) return;
+    if (!entry) {
+      console.debug('[CacheManager] releaseView: viewId not found (already released?)', { viewId });
+      return;
+    }
+    console.debug('[CacheManager] releaseView', { viewId, cacheSize: entry.handle.size, sessionId: entry.sessionId });
     entry.handle.clear();
     this._views.delete(viewId);
     if (this._focusedId === viewId) {
@@ -284,10 +290,15 @@ export class CacheManager implements CacheController {
 
   /** Write lines into ALL handles that belong to the given session. */
   broadcastToSession(sessionId: string, lines: ViewLine[]): void {
-    for (const [, entry] of this._views) {
+    let handleCount = 0;
+    for (const [viewId, entry] of this._views) {
       if (entry.sessionId === sessionId) {
         entry.handle.put(lines);
+        handleCount++;
       }
+    }
+    if (handleCount === 0) {
+      console.warn('[CacheManager] broadcastToSession: NO handles found for session', { sessionId, viewCount: this._views.size });
     }
   }
 

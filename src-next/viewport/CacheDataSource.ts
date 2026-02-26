@@ -77,8 +77,6 @@ export function createCacheDataSource(options: CacheDataSourceOptions): CacheDat
       }
 
       if (firstMiss === -1) {
-        // All lines cached (or count=0 / offset beyond lineNumbers boundary)
-        console.debug('[CacheDataSource] getLines: all cached', { sessionId, offset, count, cached: prefixLines.length });
         return Promise.resolve(prefixLines);
       }
 
