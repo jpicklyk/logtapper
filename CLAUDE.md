@@ -244,3 +244,5 @@ useEffect(() => {
 This applies to ALL Tauri async listener APIs: `listen()`, `once()`, `onDragDropEvent()`, etc.
 
 **StrictMode also breaks `requestAnimationFrame` cleanup.** Double-mount means: effect → cleanup → effect. If the cleanup calls `cancelAnimationFrame`, the first rAF is cancelled before it fires. **Never return `cancelAnimationFrame` from a useEffect cleanup.** Either omit cleanup (let stale rAFs fire harmlessly with a ref guard) or avoid rAF entirely — prefer a `programmaticScrollRef` flag pattern for distinguishing programmatic from user-initiated scrolls (see LogViewer.tsx).
+
+**StrictMode doubles `setState` updater functions — never emit bus events inside them.** StrictMode calls updaters twice to detect impurities, so any `bus.emit` inside a `setState(fn)` callback fires twice. Pre-compute payloads from a ref before calling `setState`, then emit after.
