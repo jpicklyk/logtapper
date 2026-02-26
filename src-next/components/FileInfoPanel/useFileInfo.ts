@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSessionForPane, useScrollTarget, useViewerActions, useIndexingProgress } from '../../context';
+import type { IndexingProgress } from '../../context';
 import { getDumpstateMetadata, getSections, getSessionMetadata } from '../../bridge/commands';
 import { onAdbBatch } from '../../bridge/events';
 import type { DumpstateMetadata } from '../../bridge/types';
@@ -16,6 +17,7 @@ export interface FileInfoData {
   dumpstateMetadata: DumpstateMetadata | null;
   activeSectionIndex: number;
   sectionJumpSeq: number;
+  indexingProgress: IndexingProgress | null;
   onJumpToLine: (line: number) => void;
 }
 
@@ -164,6 +166,7 @@ export function useFileInfo(paneId: string | null): FileInfoData {
     dumpstateMetadata,
     activeSectionIndex,
     sectionJumpSeq,
+    indexingProgress,
     onJumpToLine,
   };
 }

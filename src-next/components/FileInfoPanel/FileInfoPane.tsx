@@ -25,6 +25,7 @@ const FileInfoPane = React.memo(function FileInfoPane({ paneId }: FileInfoPanePr
       dumpstateMetadata={fileInfo.dumpstateMetadata}
       activeSectionIndex={fileInfo.activeSectionIndex}
       sectionJumpSeq={fileInfo.sectionJumpSeq}
+      indexingProgress={fileInfo.indexingProgress}
       onJumpToLine={fileInfo.onJumpToLine}
     />
   );

@@ -438,7 +438,7 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
 
       // If result is still indexing, set a sentinel so useFileInfo waits for completion.
       if (result.isIndexing) {
-        setIndexingProgressCtx(result.sessionId, { linesIndexed: 0, totalLines: 0, done: false });
+        setIndexingProgressCtx(result.sessionId, { linesIndexed: 0, totalLines: 0, percent: 0, done: false });
       }
 
       const tabPathsSave = readTabPaths(); tabPathsSave[tabId] = path; saveTabPaths(tabPathsSave);
@@ -547,7 +547,8 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
       // Update context progress for useFileInfo reactive dep
       setIndexingProgressCtx(payload.sessionId, {
         linesIndexed: payload.indexedLines,
-        totalLines: payload.totalBytes > 0 ? payload.totalBytes : 0,
+        totalLines: payload.indexedLines,
+        percent,
         done: false,
       });
       // Update local UI progress only for the focused session

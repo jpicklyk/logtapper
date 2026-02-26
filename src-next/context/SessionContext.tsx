@@ -5,6 +5,7 @@ import { bus } from '../events/bus';
 export interface IndexingProgress {
   linesIndexed: number;
   totalLines: number;
+  percent: number;
   done: boolean;
 }
 
