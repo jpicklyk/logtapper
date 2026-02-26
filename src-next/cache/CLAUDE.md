@@ -38,11 +38,11 @@ A ViewLine is ~500-1000 bytes (raw text, tag, message, sourceId — all strings)
 ## Architecture
 
 ```
-CacheManager (singleton, 100K line budget)
+CacheManager (singleton, configurable line budget)
   │
-  ├─ ViewCacheHandle "pane-A-session1" (60% budget = 60K lines, LRU eviction)
-  ├─ ViewCacheHandle "pane-B-session1" (30% budget = 30K lines, LRU eviction)
-  └─ ViewCacheHandle "pane-C-session1" (10% budget = 10K lines, LRU eviction)
+  ├─ ViewCacheHandle "pane-A-session1" (focused priority share, LRU eviction)
+  ├─ ViewCacheHandle "pane-B-session1" (visible priority share, LRU eviction)
+  └─ ViewCacheHandle "pane-C-session1" (background priority share, LRU eviction)
 
 CacheDataSource (per-viewer, stateless facade over ViewCacheHandle)
   │
@@ -53,62 +53,15 @@ CacheDataSource (per-viewer, stateless facade over ViewCacheHandle)
 
 ## Data Flow
 
-### File mode (fetch-on-demand)
+**File mode (fetch-on-demand):** User scrolls → FetchScheduler (inside ReadOnlyViewer) fires viewport + prefetch ranges → CacheDataSource fetches misses from backend → `viewCache.put()` → viewer re-renders via `cacheVersion` bump → `dataSource.getLine(n)` reads from ViewCacheHandle. FetchScheduler handles velocity-aware debouncing and two-phase fetch (viewport first, then directional prefetch). CacheDataSource is a pure lookup/fetch facade.
 
-```
-User scrolls → ReadOnlyViewer reports visible range to FetchScheduler
-  → FetchScheduler fires (viewport + prefetch ranges)
-    → CacheDataSource.getLines() checks ViewCacheHandle for misses
-      → On miss: fetch from Rust backend via IPC → viewCache.put(lines)
-        → ReadOnlyViewer bumps cacheVersion state → re-render
-          → dataSource.getLine(n) → viewCache.get(n) → render TextLine
-```
+**Streaming mode (push from ADB events):** `adb-batch` event → `cacheManager.broadcastToSession()` stores lines in ALL ViewCacheHandles for that session → `registry.pushToSession()` fires `onAppend` listeners (updates totalLines counter only, does NOT store lines) → viewer re-renders and reads from ViewCacheHandle.
 
-The FetchScheduler lives in ReadOnlyViewer (not CacheDataSource). It handles velocity-aware debouncing and two-phase fetch (viewport first, then directional prefetch). CacheDataSource is a pure lookup/fetch facade.
-
-### Streaming mode (push from ADB events)
-
-```
-adb-batch Tauri event → useLogViewer handler:
-  1. cacheManager.broadcastToSession(sessionId, lines)
-       → viewCache.put(lines) on ALL ViewCacheHandles for this session
-  2. registry.pushToSession(sessionId, lines, totalLines)
-       → CacheDataSource.pushStreamingLines() on ALL registered sources
-         → fires onAppend listeners (updates totalLines counter, NOT line storage)
-           → ReadOnlyViewer bumps cacheVersion + streamTotal → re-render
-             → dataSource.getLine(n) → viewCache.get(n) → render TextLine
-```
-
-Key: `broadcastToSession` stores lines in ViewCacheHandle. `pushStreamingLines` only notifies — it does NOT store lines itself. The separation exists because storage (bounded LRU in ViewCacheHandle) and notification (unbounded event fan-out to listeners) are different concerns.
-
-## Components and Their Roles
-
-| Component | Role | Stores ViewLine? |
-|---|---|---|
-| `CacheManager` | Budget distribution, view lifecycle, session broadcast | NO (delegates to ViewCacheHandle) |
-| `ViewCacheHandle` | Bounded LRU (doubly-linked list + Map) keyed by line number. All ops O(1). | **YES — the only store** |
-| `CacheDataSource` | Stateless facade: lookup, fetch-on-miss, streaming notification | NO |
-| `DataSourceRegistry` | Routes streaming push to all CacheDataSources for a session | NO |
-| `FetchScheduler` | Velocity-aware debounce, computes viewport + prefetch ranges | NO |
-| `ReadOnlyViewer` | Virtualizer, calls `dataSource.getLine()` per visible row | NO |
-| `LogViewer` | Creates CacheDataSource, wires focus management | NO |
-| `useLogViewer` | Handles ADB events, calls broadcastToSession + pushToSession | NO |
+Key separation: `broadcastToSession` handles bounded storage (LRU); `pushStreamingLines` handles unbounded notification fan-out. These are different concerns and must stay separate.
 
 ## Budget Allocation
 
-`CacheManager` distributes the total budget (default 100K lines) across views by priority:
-
-| Priority | Share | When |
-|---|---|---|
-| `focused` | 60% | The active/visible pane (set via `useCacheFocus`) |
-| `visible` | 30% (shared) | Other open panes |
-| `background` | 10% (shared) | Minimized/hidden panes |
-
-Single-view optimization: if only one view exists, it gets 100% of the budget.
-
-Minimum floor: every view is guaranteed at least 2,000 lines (`MIN_FLOOR`) regardless of budget math. When many non-focused views get clamped up to the floor, the overshoot is absorbed by reducing the focused view's allocation (down to its own `MIN_FLOOR`). This prevents the sum of actual allocations from exceeding the total budget.
-
-`CacheProvider` accepts a `budget` prop that is reactive — changing it calls `setTotalBudget()` and redistributes immediately.
+`CacheManager` distributes the total budget across views by priority: focused > visible > background. Single-view: 100% of budget. Every view is guaranteed a minimum floor regardless of budget math. `CacheProvider` accepts a `budget` prop that is reactive.
 
 ## Common Mistakes to Avoid
 
@@ -136,12 +89,4 @@ When adding a new component that displays log lines:
 
 ## StreamPusher interface
 
-External code that needs to push streaming lines does not import `DataSourceRegistry` directly. Instead, it uses the `StreamPusher` interface (exported from viewport barrel):
-
-```typescript
-interface StreamPusher {
-  pushToSession(sessionId: string, lines: ViewLine[], totalLines: number): void;
-}
-```
-
-`useDataSourceRegistry()` returns `DataSourceRegistrar` (extends `StreamPusher` with `register`/`unregister`), not the full `DataSourceRegistry` class. Hooks that only push lines (like `useLogViewer`) accept the narrower `StreamPusher` type. Only `CacheContext.tsx` imports the class directly for construction — this is intentional (cache module owns the lifecycle).
+External code that pushes streaming lines uses the `StreamPusher` interface (exported from viewport barrel), not `DataSourceRegistry` directly. Hooks that only push lines (like `useLogViewer`) accept `StreamPusher`. Only `CacheContext.tsx` imports `DataSourceRegistry` for construction — the cache module owns the lifecycle.

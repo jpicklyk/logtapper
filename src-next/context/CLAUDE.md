@@ -4,40 +4,21 @@
 
 Five contexts split by change frequency (principle #1):
 
-| Context | Change frequency | Contains |
-|---|---|---|
-| `SessionContext` | Low (session load/close) | session, isStreaming, loading, error, indexingProgress |
-| `ViewerContext` | Medium (search, navigation) | search, searchSummary, currentMatchIndex, scrollToLine, jumpSeq, streamFilter, timeFilter, processorId |
-| `PipelineContext` | Mixed (processors stable, results fast) | processors, pipelineChain, activeProcessorIds, running, progress, lastResults, runCount, error |
-| `TrackerContext` | Fast (~50ms during streaming) | allTransitionLineNums, transitionsByLine |
-| `ActionsContext` | Never (stable callbacks) | loadFile, startStream, stopStream, runPipeline, jumpToLine, setSearch, openTab, ... |
+| Context | Change frequency |
+|---|---|
+| `SessionContext` | Low (session load/close) |
+| `ViewerContext` | Medium (search, navigation) |
+| `PipelineContext` | Mixed (processors stable, results fast) |
+| `TrackerContext` | Fast (~50ms during streaming) |
+| `ActionsContext` | Never (stable callbacks) |
 
 ## Public API (exported from barrel `index.tsx`)
 
-### Selector hooks (for components — principle #4)
-- `useSession()`, `useIsStreaming()`, `useIsLoading()`, `useSessionError()`
-- `useSearch()`, `useScrollTarget()`
-- `usePipelineChain()`, `useActiveProcessorIds()`, `usePipelineRunning()`, `usePipelineResults()`, `useProcessors()`
-- `useTrackerTransitions()`
-- `useViewerActions()`, `usePipelineActions()`, `useTrackerActions()`
+The barrel exports selector hooks (e.g. `useSession()`, `useIsStreaming()`, `usePipelineResults()`, `useTrackerTransitions()`) and `AppProviders`. See `index.tsx` for the full list.
 
-### Provider
-- `AppProviders` — nested provider tree, wraps entire app below CacheProvider
+**Internal (NOT in barrel):** raw context hooks like `useSessionContext()`, `useViewerContext()`, etc. are internal — only domain hooks that write context state import these directly from context files.
 
-### Types
-- `IndexingProgress`
-
-## Internal (NOT in barrel)
-
-| Export | Why internal |
-|---|---|
-| `useSessionContext()` | Raw context — only for domain hooks that write to context setters |
-| `useViewerContext()` | Same — useLogViewer needs write access |
-| `usePipelineContext()` | Same — usePipeline needs write access |
-| `useTrackerContext()` | Same — useStateTracker needs write access |
-| `useActionsContext()` | Same — HookWiring injects actions |
-
-Domain hooks (`useLogViewer`, `usePipeline`, `useStateTracker`) import these directly from context files — they are co-owners of context state and need setter access.
+Domain hooks (`useLogViewer`, `usePipeline`, `useStateTracker`) are co-owners of context state and need setter access.
 
 ## Adding a new selector
 

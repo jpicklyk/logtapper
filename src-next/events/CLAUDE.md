@@ -11,21 +11,6 @@
 | `bus` | `bus.ts` | Singleton mitt instance — `bus.emit()`, `bus.on()`, `bus.off()` |
 | `AppEvents` | `events.ts` | Type map defining all event names and payloads |
 
-## Event catalog
-
-| Event | Payload | Emitted by | Consumed by |
-|---|---|---|---|
-| `session:pre-load` | `undefined` | useLogViewer | usePipeline (clear results) |
-| `session:loaded` | `{ sourceName, sourceType, sessionId }` | useLogViewer | — |
-| `session:closed` | `undefined` | useLogViewer | — |
-| `stream:started` | `{ sessionId, deviceSerial }` | useLogViewer | — |
-| `stream:stopped` | `{ sessionId }` | useLogViewer | — |
-| `pipeline:completed` | `{ sessionId, runCount, hasTrackers, hasReporters, hasCorrelators }` | usePipeline | useStateTracker |
-| `pipeline:cleared` | `undefined` | usePipeline | — |
-| `pipeline:chain-changed` | `{ chain: string[] }` | usePipeline | useLogViewer |
-| `layout:open-tab` | `{ type: string }` | HookWiring (actions) | useWorkspaceLayout |
-| `navigate:jump` | `{ lineNum: number }` | components | useLogViewer |
-
 ## Adding a new event
 
 1. Add the event name + payload type to `AppEvents` in `events.ts`

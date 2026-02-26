@@ -30,8 +30,7 @@ Action callbacks (`onViewProcessor`, `onCloseSession`, `onOpenLibrary`) must be 
 ### 8. Barrel exports control public API — never import internal modules directly
 Every module directory (`cache/`, `viewport/`, `hooks/`) must have an `index.ts` barrel that defines its public API. Components and hooks outside a module must import from the barrel only, never from internal files. The barrel exports narrow interfaces and hooks — not implementation classes. Internal files import from each other directly within the same module. Test files may import internals for white-box testing.
 
-### Current violations (migration backlog)
-The legacy `src/` codebase has a single `AppContext` bundling all state, no `React.memo` usage, unmemoized context value, and cross-hook effects in `App.tsx`. The `src-next/` rewrite follows all principles: 5 split contexts, selector hooks, event bus coordination, React.memo boundaries, and barrel exports. New code must target `src-next/`.
+New code must target `src-next/`.
 
 ## Implementation Plans
 
@@ -62,20 +61,14 @@ Tauri 2.x desktop app: React 18/TypeScript frontend + Rust backend. All IPC goes
 ### Backend layout
 
 ```
-src-tauri/src/commands/         ← #[tauri::command] handlers; AppState defined in mod.rs
-src-tauri/src/core/             ← LogSource trait, parsers, AnalysisSession, LineContext, filter, watch, bookmark, analysis
-src-tauri/src/processors/       ← unified AnyProcessor registry; sub-modules per type
-src-tauri/src/processors/reporter/     ← ReporterDef, engine (ProcessorRun), vars, Rhai interpreter
-src-tauri/src/processors/transformer/  ← TransformerDef, engine, builtin PII transformer
-src-tauri/src/processors/state_tracker/ ← StateTrackerDef, engine, types (StateSnapshot, transitions)
-src-tauri/src/processors/correlator/   ← CorrelatorDef, engine (CorrelatorRun), CorrelationEvent
-src-tauri/src/processors/annotator/    ← AnnotatorDef (schema stub — no engine)
-src-tauri/src/processors/builtin/      ← embedded YAML files loaded at startup
-src-tauri/src/scripting/        ← Rhai sandbox, scope builder, emit() bridge
-src-tauri/src/anonymizer/       ← PII detection + token mapping (AnonymizerConfig, detectors)
-src-tauri/src/charts/           ← chart data building from emissions/vars
-src-tauri/src/claude/           ← Claude API client (SSE streaming), processor generator
-src-tauri/src/mcp_bridge.rs     ← Axum HTTP server (127.0.0.1:40404) exposing sessions to MCP clients
+src-tauri/src/commands/   ← #[tauri::command] handlers; AppState defined in mod.rs
+src-tauri/src/core/       ← LogSource trait, parsers, AnalysisSession, LineContext
+src-tauri/src/processors/ ← AnyProcessor registry; reporter, transformer, state_tracker, correlator, annotator sub-modules
+src-tauri/src/scripting/  ← Rhai sandbox, scope builder, emit() bridge
+src-tauri/src/anonymizer/ ← PII detection + token mapping
+src-tauri/src/charts/     ← chart data building from emissions/vars
+src-tauri/src/claude/     ← Claude API client (SSE streaming), processor generator
+src-tauri/src/mcp_bridge.rs ← Axum HTTP server (127.0.0.1:40404)
 ```
 
 ### Frontend modules
@@ -132,7 +125,7 @@ Produced by `run_pipeline` (file mode) or `flush_batch` (ADB streaming) after la
 
 ### Frontend display cache (never exposed externally)
 
-Unified `CacheManager` (priority-based LRU, `src/cache/CacheManager.ts`). Budget is in **line count** (default 100,000 lines via `fileCacheBudget` setting). Priority tiers: focused 60%, visible 30%, background 10%. MCP bridge reads `AppState` directly — the frontend cache is **not** a pathway for external access.
+Unified `CacheManager` (priority-based LRU, `src-next/cache/`). Budget is in **line count** (configurable via `fileCacheBudget` setting). Priority tiers: focused > visible > background. MCP bridge reads `AppState` directly — the frontend cache is **not** a pathway for external access.
 
 ### MCP bridge
 
@@ -186,13 +179,7 @@ Raw lines ─► Pre-filter (tag union, Aho-Corasick, RegexSet) ─► skip unne
 
 ### Frontend hook ownership, cache, and streaming patterns
 
-See `src-next/hooks/CLAUDE.md` for the hook ownership table, domain hook patterns, and high-frequency streaming stabilization techniques. See `src-next/cache/CLAUDE.md` for CacheManager architecture, budget allocation, and common mistakes.
-
-### Known bugs
-
-1. **Processor view cache mismatch** (`useLogViewer.ts` + `commands/files.rs`): In Processor mode, `get_lines` returns `ViewLine.lineNum` = actual file line number. The virtualizer expects sequential 0-based indices. Result: processor view shows all `…` loading placeholders.
-
-2. **KernelParser drops non-kernel lines** (`core/kernel_parser.rs`): `parse_meta()` returns `None` for lines without a kernel timestamp — silently excluded from the index.
+See `src-next/hooks/CLAUDE.md` for domain hook patterns and high-frequency streaming stabilization techniques. See `src-next/cache/CLAUDE.md` for CacheManager architecture and common mistakes.
 
 ## Gotchas
 

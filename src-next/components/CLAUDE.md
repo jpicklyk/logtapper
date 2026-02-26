@@ -19,16 +19,3 @@ Each component has its own subdirectory with:
 
 5. **Local state stays local** (principle #5) — `useBookmarks`, `useAnalysis`, `useWatches`, `useFilter` are colocated with their consumer components, not hoisted to context.
 
-## Component catalog
-
-| Component | Purpose |
-|---|---|
-| `LogViewer` | Virtualized log line display, cache-backed |
-| `PaneContent` | Routes tab types (logviewer, dashboard, scratch, editor) |
-| `ProcessorPanel` | Pipeline chain management (drag-reorder, run, progress) |
-| `ProcessorDashboard` | Pipeline results visualization (vars, emissions, matched lines) |
-| `ProcessorLibrary` | Modal for installing/discovering/creating processors |
-| `StatePanel` | State tracker snapshot cards |
-| `StateTimeline` | Timeline visualization (transitions + sparklines) |
-| `SettingsPanel` | App settings + PII anonymization config |
-| `ScratchPad` | Free-form text editing |
