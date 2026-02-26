@@ -13,6 +13,9 @@ interface ViewerState {
   streamFilter: string;
   timeFilterStart: string;
   timeFilterEnd: string;
+  filterScanning: boolean;
+  filteredLineNums: number[] | null;
+  filterParseError: string | null;
 }
 
 interface ViewerContextValue extends ViewerState {
@@ -26,6 +29,9 @@ interface ViewerContextValue extends ViewerState {
   setStreamFilter: React.Dispatch<React.SetStateAction<string>>;
   setTimeFilterStart: React.Dispatch<React.SetStateAction<string>>;
   setTimeFilterEnd: React.Dispatch<React.SetStateAction<string>>;
+  setFilterScanning: React.Dispatch<React.SetStateAction<boolean>>;
+  setFilteredLineNums: React.Dispatch<React.SetStateAction<number[] | null>>;
+  setFilterParseError: React.Dispatch<React.SetStateAction<string | null>>;
 }
 
 const ViewerContext = createContext<ViewerContextValue | null>(null);
@@ -41,6 +47,9 @@ export function ViewerProvider({ children }: { children: ReactNode }) {
   const [streamFilter, setStreamFilter] = useState('');
   const [timeFilterStart, setTimeFilterStart] = useState('');
   const [timeFilterEnd, setTimeFilterEnd] = useState('');
+  const [filterScanning, setFilterScanning] = useState(false);
+  const [filteredLineNums, setFilteredLineNums] = useState<number[] | null>(null);
+  const [filterParseError, setFilterParseError] = useState<string | null>(null);
 
   const value = useMemo<ViewerContextValue>(() => ({
     search,
@@ -53,6 +62,9 @@ export function ViewerProvider({ children }: { children: ReactNode }) {
     streamFilter,
     timeFilterStart,
     timeFilterEnd,
+    filterScanning,
+    filteredLineNums,
+    filterParseError,
     setSearch,
     setSearchSummary,
     setCurrentMatchIndex,
@@ -63,8 +75,12 @@ export function ViewerProvider({ children }: { children: ReactNode }) {
     setStreamFilter,
     setTimeFilterStart,
     setTimeFilterEnd,
+    setFilterScanning,
+    setFilteredLineNums,
+    setFilterParseError,
   }), [search, searchSummary, currentMatchIndex, scrollToLine, jumpSeq, jumpPaneId,
-       processorId, streamFilter, timeFilterStart, timeFilterEnd]);
+       processorId, streamFilter, timeFilterStart, timeFilterEnd,
+       filterScanning, filteredLineNums, filterParseError]);
 
   return (
     <ViewerContext.Provider value={value}>

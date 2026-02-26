@@ -2,12 +2,13 @@ import React, { useMemo, useCallback, useEffect, useState, useRef } from 'react'
 import type { ViewLine } from '../../bridge/types';
 import type { GutterColumnDef, LineDecoratorDef, Selection, CacheDataSource } from '../../viewport';
 import { ReadOnlyViewer, createCacheDataSource, sessionScrollPositions } from '../../viewport';
-import { useViewCache, useCacheFocus, useDataSourceRegistry } from '../../cache';
+import { useViewCache, useCacheFocus, useDataSourceRegistry, useCacheManager } from '../../cache';
 import {
   useSessionForPane,
   useScrollTarget,
   useTrackerTransitions,
   useProcessorId,
+  useSearchQuery,
 } from '../../context';
 import styles from './LogViewer.module.css';
 
@@ -28,6 +29,8 @@ const LogViewer = React.memo(function LogViewer({
   const session = useSessionForPane(paneId);
   const isStreaming = session?.isStreaming ?? false;
   const totalLines = session?.totalLines ?? 0;
+  const search = useSearchQuery();
+  const cacheManager = useCacheManager();
   const { lineNum: scrollToLine, seq: jumpSeq, paneId: jumpPaneId } = useScrollTarget();
   // Only honour the jump if it targets this specific pane or is unfocused/global (null).
   const isJumpForThisPane = jumpPaneId === null || jumpPaneId === paneId;
@@ -74,6 +77,12 @@ const LogViewer = React.memo(function LogViewer({
 
   const initialVirtualBase = sessionScrollPositions.get(sessionId ?? '');
 
+  // Keep lineNumbers in a ref so the CacheDataSource getter always reads the
+  // current value without the dataSource being recreated on every filter update.
+  // lineNumbersRef is synced synchronously on every render (before useMemo).
+  const lineNumbersRef = useRef<number[] | undefined>(lineNumbers);
+  lineNumbersRef.current = lineNumbers;
+
   // Create CacheDataSource
   const dataSourceRef = useRef<CacheDataSource | null>(null);
 
@@ -82,15 +91,21 @@ const LogViewer = React.memo(function LogViewer({
     dataSourceRef.current?.dispose?.();
 
     if (!sessionId || !viewCache) {
+      console.debug('[LogViewer] dataSource → null', { sessionId, hasViewCache: !!viewCache, paneId });
       dataSourceRef.current = null;
       return null;
     }
 
+    console.debug('[LogViewer] dataSource → created', { sessionId, paneId, totalLines });
     const ds = createCacheDataSource({
       sessionId,
       viewCache,
       fetchLines,
-      lineNumbers,
+      // Pass a getter so lineNumbers changes don't recreate the data source.
+      // The ref is synced synchronously before this memo runs, so the getter
+      // always returns the current value (including during the render that
+      // triggered this memo).
+      getLineNumbers: () => lineNumbersRef.current,
       registry,
     });
 
@@ -99,9 +114,9 @@ const LogViewer = React.memo(function LogViewer({
 
     dataSourceRef.current = ds;
     return ds;
-  // totalLines excluded — updated imperatively below to avoid recreating the data source
+  // totalLines and lineNumbers excluded — updated imperatively / via ref
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, viewCache, fetchLines, lineNumbers, registry]);
+  }, [sessionId, viewCache, fetchLines, registry]);
 
   // Update total lines imperatively without recreating the data source
   useEffect(() => {
@@ -110,12 +125,17 @@ const LogViewer = React.memo(function LogViewer({
     }
   }, [totalLines]);
 
-  // Cleanup on unmount
+  // When the search query changes, evict stale cached lines so the viewport
+  // re-fetches them with the new query (and receives correct highlight spans).
+  // Skipped on mount (sessionId null means no session yet).
   useEffect(() => {
-    return () => {
-      dataSourceRef.current?.dispose?.();
-    };
-  }, []);
+    if (!sessionId) return;
+    cacheManager.clearSession(sessionId);
+    dataSourceRef.current?.invalidate();
+  // search identity changes on every new query object even if text is same,
+  // but that's fine — a spurious clear is cheap compared to stale highlights.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
 
   // Gutter columns: line number + transition dot
   const gutterColumns = useMemo<GutterColumnDef[]>(() => {
@@ -198,10 +218,14 @@ const LogViewer = React.memo(function LogViewer({
     );
   }
 
+  // When filtering, the virtual list must be sized to the number of matched
+  // lines, not the total session line count.
+  const effectiveTotalLines = lineNumbers ? lineNumbers.length : totalLines;
+
   return (
     <ReadOnlyViewer
       dataSource={dataSource}
-      totalLineCount={totalLines}
+      totalLineCount={effectiveTotalLines}
       scrollToLine={effectiveScrollToLine ?? undefined}
       jumpSeq={effectiveJumpSeq}
       tailMode={isStreaming}

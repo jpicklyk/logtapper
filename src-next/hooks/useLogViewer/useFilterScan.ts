@@ -18,11 +18,18 @@ export interface FilterScanResult {
 }
 
 export function useFilterScan(cacheManager: CacheController, refs: SharedLogViewerRefs): FilterScanResult {
-  const { setStreamFilter: setStreamFilterCtx, setTimeFilterStart: setTimeFilterStartCtx, setTimeFilterEnd: setTimeFilterEndCtx } = useViewerContext();
+  const {
+    setStreamFilter: setStreamFilterCtx,
+    setTimeFilterStart: setTimeFilterStartCtx,
+    setTimeFilterEnd: setTimeFilterEndCtx,
+    filterScanning,
+    filteredLineNums,
+    filterParseError,
+    setFilterScanning,
+    setFilteredLineNums,
+    setFilterParseError,
+  } = useViewerContext();
 
-  const [filterScanning, setFilterScanning] = useState(false);
-  const [filteredLineNums, setFilteredLineNums] = useState<number[] | null>(null);
-  const [filterParseError, setFilterParseError] = useState<string | null>(null);
   const [timeFilterLineNums, setTimeFilterLineNums] = useState<number[] | null>(null);
 
   const filterScanGenRef = useRef(0);

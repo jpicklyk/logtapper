@@ -307,6 +307,7 @@ export default function ReadOnlyViewer({
           break;
         }
       }
+      console.debug('[FetchScheduler] onFetch', { viewport, prefetch, hasMiss, sourceId: dataSource.sourceId });
 
       if (!hasMiss) {
         // Viewport cached. Try prefetch.

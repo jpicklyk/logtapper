@@ -93,11 +93,15 @@ export function useViewCache(viewId: string | null, sessionId?: string | null): 
     // Manager unavailable or viewId cleared — null out local ref.
     // Do NOT release the old handle; it stays in the manager until
     // releaseSessionViews() is called when the session is actually closed.
+    if (handleRef.current !== null) {
+      console.debug('[useViewCache] nulling handle (no mgr or no viewId)', { viewId, prevId: prevIdRef.current });
+    }
     handleRef.current = null;
   } else if (prevIdRef.current !== viewId) {
     // Allocate on first call or when viewId changes (tab switch).
     // Do NOT release the previous handle — the inactive tab should keep its
     // cached lines so switching back doesn't trigger a reload from disk.
+    console.debug('[useViewCache] allocating handle (viewId changed)', { viewId, prevId: prevIdRef.current });
     handleRef.current = mgr.allocateView(viewId, sessionId ?? undefined);
     prevIdRef.current = viewId;
   } else if (handleRef.current === null) {
@@ -105,22 +109,17 @@ export function useViewCache(viewId: string | null, sessionId?: string | null): 
     // interlude (e.g. pane move before paneSessionMap updates: viewId goes
     // "view-abc" → null → "view-abc"). Re-acquire — allocateView returns the
     // existing handle if it's still in the manager, so cached lines survive.
+    console.debug('[useViewCache] re-acquiring handle after null interlude', { viewId });
     handleRef.current = mgr.allocateView(viewId, sessionId ?? undefined);
   }
 
-  // Release the current (latest) handle on unmount to free ghost handles.
-  // Intentionally omit viewId from deps — we only want unmount cleanup, NOT
-  // cleanup on tab switch (that would release the newly-allocated handle due to
-  // the render-before-effect ordering, which mutates prevIdRef before cleanup runs).
-  useEffect(() => {
-    return () => {
-      if (prevIdRef.current && mgr) {
-        mgr.releaseView(prevIdRef.current);
-        prevIdRef.current = null;
-        handleRef.current = null;
-      }
-    };
-  }, [mgr]); // eslint-disable-line react-hooks/exhaustive-deps
+  // NOTE: No unmount cleanup here — handles are released by releaseSessionViews()
+  // when a session is explicitly closed. Since viewId = 'view-${sessionId}' is
+  // session-scoped, at most one handle exists per session and ghost handles cannot
+  // accumulate. The old unmount-cleanup approach caused a race: when a pane with the
+  // LAST tab is removed (collapsed after a drag), pane-A unmounts and its cleanup
+  // cleared the shared handle object that pane-C had already acquired during the
+  // same render cycle, leaving pane-C with an empty, deregistered ghost handle.
 
   return handleRef.current;
 }

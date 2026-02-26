@@ -16,6 +16,7 @@ export interface ActionsContextValue {
   jumpToLine: (lineNum: number, paneId?: string) => void;
   jumpToMatch: (direction: 1 | -1) => void;
   setSearch: (query: SearchQuery | null) => void;
+  setStreamFilter: (expr: string) => Promise<void>;
   openTab: (type: string) => void;
   /** Focus a specific pane, updating SessionContext and emitting session:focused. */
   setFocusedPane: (paneId: string) => void;
@@ -39,6 +40,7 @@ const DEFAULT_ACTIONS: ActionsContextValue = {
   jumpToLine: (_lineNum: number, _paneId?: string) => noop(),
   jumpToMatch: (_direction: 1 | -1) => noop(),
   setSearch: (_query: SearchQuery | null) => noop(),
+  setStreamFilter: (_expr: string) => noopAsync(),
   openTab: (_type: string) => noop(),
   setFocusedPane: (_paneId: string) => noop(),
 };

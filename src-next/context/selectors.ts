@@ -143,9 +143,9 @@ export function useTrackerTransitions(): {
 
 export function useViewerActions() {
   const { loadFile, openFileDialog, startStream, stopStream, closeSession,
-          jumpToLine, jumpToMatch, setSearch, openTab, setFocusedPane } = useActionsContext();
+          jumpToLine, jumpToMatch, setSearch, setStreamFilter, openTab, setFocusedPane } = useActionsContext();
   return { loadFile, openFileDialog, startStream, stopStream, closeSession,
-           jumpToLine, jumpToMatch, setSearch, openTab, setFocusedPane };
+           jumpToLine, jumpToMatch, setSearch, setStreamFilter, openTab, setFocusedPane };
 }
 
 export function usePipelineActions() {
@@ -166,6 +166,16 @@ export function useTrackerActions() {
 
 export function useProcessorId(): string | null {
   return useViewerContext().processorId;
+}
+
+export function useStreamFilter(): {
+  value: string;
+  scanning: boolean;
+  filteredLineNums: number[] | null;
+  parseError: string | null;
+} {
+  const { streamFilter, filterScanning, filteredLineNums, filterParseError } = useViewerContext();
+  return { value: streamFilter, scanning: filterScanning, filteredLineNums, parseError: filterParseError };
 }
 
 export function useSearchQuery(): SearchQuery | null {

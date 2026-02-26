@@ -59,7 +59,7 @@ describe('CacheDataSource', () => {
       sessionId: 'sess1',
       viewCache: cache,
       fetchLines: vi.fn(),
-      lineNumbers: [100, 200, 300],
+      getLineNumbers: () => [100, 200, 300],
     });
 
     // Virtual index 0 → actual line 100
@@ -75,7 +75,7 @@ describe('CacheDataSource', () => {
       sessionId: 'sess1',
       viewCache: cache,
       fetchLines: vi.fn(),
-      lineNumbers: [10, 20, 30],
+      getLineNumbers: () => [10, 20, 30],
     });
     expect(ds.totalLines).toBe(3);
   });
@@ -104,9 +104,9 @@ describe('CacheDataSource', () => {
       sessionId: 'sess1',
       viewCache: cache,
       fetchLines: vi.fn(),
-      lineNumbers: [1, 2, 3],
+      getLineNumbers: () => [1, 2, 3],
     });
-    expect(dsProc.sourceId).toBe('sess1:processor');
+    expect(dsProc.sourceId).toBe('sess1:filtered');
   });
 
   // -----------------------------------------------------------------------
@@ -453,10 +453,10 @@ describe('CacheDataSource', () => {
       sessionId: 'sess1',
       viewCache: cache,
       fetchLines,
-      lineNumbers,
+      getLineNumbers: () => lineNumbers,
     });
 
-    // In processor mode, totalLines = lineNumbers.length, not from fetch
+    // In filtered mode, totalLines = lineNumbers.length, not from fetch
     await ds.getLines(0, 3);
     expect(ds.totalLines).toBe(3); // not 99999
   });
@@ -557,10 +557,10 @@ describe('CacheDataSource', () => {
       sessionId: 'sess1',
       viewCache: cache,
       fetchLines,
-      lineNumbers: [10, 20],
+      getLineNumbers: () => [10, 20],
     });
 
-    // offset=5 is beyond lineNumbers[1], so loop hits undefined → breaks immediately
+    // offset=5 is beyond getLineNumbers()[1], so loop hits undefined → breaks immediately
     // firstMiss stays -1 → return prefixLines (empty)
     const result = await ds.getLines(5, 3);
     expect(fetchLines).not.toHaveBeenCalled();

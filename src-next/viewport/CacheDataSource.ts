@@ -7,8 +7,10 @@ interface CacheDataSourceOptions {
   sessionId: string;
   viewCache: WritableViewCache;
   fetchLines: (offset: number, count: number) => Promise<LineWindow>;
-  /** For processor view -- maps virtual index to actual file line number */
-  lineNumbers?: number[];
+  /** For processor/filter view -- returns current line number mapping (called on every access).
+   *  Using a getter instead of a static array lets LogViewer update the mapping via a ref
+   *  without recreating the data source on every filter change. */
+  getLineNumbers?: () => number[] | undefined;
   /** Registry for streaming push — auto-registers on create, auto-unregisters on dispose */
   registry?: DataSourceRegistrar;
 }
@@ -30,11 +32,11 @@ export function createCacheDataSource(options: CacheDataSourceOptions): CacheDat
     sessionId,
     viewCache,
     fetchLines,
-    lineNumbers,
+    getLineNumbers,
     registry,
   } = options;
 
-  let _totalLines = lineNumbers ? lineNumbers.length : 0;
+  let _totalLines = 0;
   let _disposed = false;
   let _fetchGen = 0;
 
@@ -43,16 +45,18 @@ export function createCacheDataSource(options: CacheDataSourceOptions): CacheDat
 
   const source: CacheDataSource = {
     get totalLines(): number {
-      return lineNumbers ? lineNumbers.length : _totalLines;
+      const ln = getLineNumbers?.();
+      return ln ? ln.length : _totalLines;
     },
 
     get sourceId(): string {
-      return `${sessionId}:${lineNumbers ? 'processor' : 'full'}`;
+      return `${sessionId}:${getLineNumbers?.() ? 'filtered' : 'full'}`;
     },
 
     getLine(lineNum: number): ViewLine | undefined {
-      if (lineNumbers) {
-        const actualLine = lineNumbers[lineNum];
+      const ln = getLineNumbers?.();
+      if (ln) {
+        const actualLine = ln[lineNum];
         if (actualLine === undefined) return undefined;
         return viewCache.get(actualLine);
       }
@@ -60,13 +64,14 @@ export function createCacheDataSource(options: CacheDataSourceOptions): CacheDat
     },
 
     getLines(offset: number, count: number): Promise<ViewLine[]> {
+      const ln = getLineNumbers?.();
       // Scan prefix: collect cached lines until first miss or boundary
       const prefixLines: ViewLine[] = [];
       let firstMiss = -1;
       for (let i = 0; i < count; i++) {
         const idx = offset + i;
-        const actualLine = lineNumbers ? lineNumbers[idx] : idx;
-        if (actualLine === undefined) break; // processor mode boundary
+        const actualLine = ln ? ln[idx] : idx;
+        if (actualLine === undefined) break; // filtered/processor mode boundary
         const line = viewCache.get(actualLine);
         if (line) {
           prefixLines.push(line);
@@ -90,7 +95,7 @@ export function createCacheDataSource(options: CacheDataSourceOptions): CacheDat
           console.debug('[CacheDataSource] getLines: fetch stale/disposed, discarding', { sessionId, fetchOffset, gen, currentGen: _fetchGen, disposed: _disposed });
           return [];
         }
-        if (window.totalLines > _totalLines && !lineNumbers) {
+        if (window.totalLines > _totalLines && !getLineNumbers?.()) {
           _totalLines = window.totalLines;
         }
         console.debug('[CacheDataSource] getLines: put', { sessionId, fetchOffset, lines: window.lines.length, cacheSize: viewCache.size });

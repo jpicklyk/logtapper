@@ -22,11 +22,15 @@ export function useLogViewerActions(paneId: string) {
   const fetchLines = useCallback(
     (offset: number, count: number): Promise<LineWindow> => {
       const sess = sessionRef.current;
-      if (!sess) return Promise.resolve({ totalLines: 0, lines: [] });
+      if (!sess) {
+        console.warn('[fetchLines] called with no session — paneId:', paneId, 'offset:', offset);
+        return Promise.resolve({ totalLines: 0, lines: [] });
+      }
 
       const pid = processorIdRef.current;
       const mode = pid ? { mode: 'Processor' as const } : { mode: 'Full' as const };
 
+      console.debug('[fetchLines] → backend', { paneId, sessionId: sess.sessionId, offset, count, mode: mode.mode });
       return getLines({
         sessionId: sess.sessionId,
         mode,
@@ -35,9 +39,12 @@ export function useLogViewerActions(paneId: string) {
         context: 3,
         processorId: pid ?? undefined,
         search: searchRef.current ?? undefined,
+      }).then((win) => {
+        console.debug('[fetchLines] ← backend', { paneId, sessionId: sess.sessionId, offset, returned: win.lines.length, totalLines: win.totalLines });
+        return win;
       });
     },
-    [],
+    [paneId],
   );
 
   return { fetchLines };

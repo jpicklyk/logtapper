@@ -3,7 +3,8 @@ import { FileText } from 'lucide-react';
 import { LogViewer } from '../LogViewer';
 import { ProcessorDashboard } from '../ProcessorDashboard';
 import { ScratchPad } from '../ScratchPad';
-import { useSessionForPane, useIsLoadingForPane, useViewerActions } from '../../context';
+import { StreamFilterBar } from '../StreamFilterBar';
+import { useSessionForPane, useIsLoadingForPane, useViewerActions, useStreamFilter } from '../../context';
 import { useLogViewerActions } from './useLogViewerActions';
 import styles from './PaneContent.module.css';
 
@@ -45,8 +46,9 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
   // Use the pane's own session, not the global focused session.
   const session = useSessionForPane(pane.id);
   const isLoading = useIsLoadingForPane(pane.id);
-  const { setFocusedPane } = useViewerActions();
+  const { setFocusedPane, setStreamFilter } = useViewerActions();
   const { fetchLines } = useLogViewerActions(pane.id);
+  const { value: filterValue, scanning: filterScanning, filteredLineNums, parseError: filterParseError } = useStreamFilter();
 
   const handlePaneFocus = useCallback(() => {
     setFocusedPane(pane.id);
@@ -73,9 +75,20 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
       }
       return (
         <div className={styles.logviewerPane} onClick={handlePaneFocus} onFocus={handlePaneFocus}>
+          {session && (
+            <StreamFilterBar
+              value={filterValue}
+              onChange={setStreamFilter}
+              matchCount={filteredLineNums?.length ?? null}
+              totalLines={session.totalLines}
+              parseError={filterParseError}
+              scanning={filterScanning}
+            />
+          )}
           <LogViewer
             paneId={pane.id}
             fetchLines={fetchLines}
+            lineNumbers={filteredLineNums ?? undefined}
           />
         </div>
       );
