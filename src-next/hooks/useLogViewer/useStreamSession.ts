@@ -1,13 +1,20 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useEffect } from 'react';
 import type { AdbBatchPayload, AdbStreamEvent, SourceType } from '../../bridge/types';
 import { matchesFilter } from '../../../src/filter';
 import { startAdbStream, stopAdbStream } from '../../bridge/commands';
 import { onAdbStreamStopped } from '../../bridge/events';
 import { useSessionContext } from '../../context/SessionContext';
+import { loadSettings } from '../../hooks';
 import { bus } from '../../events/bus';
 import type { CacheController } from '../../cache';
 import type { StreamPusher } from '../../viewport';
 import type { SharedLogViewerRefs } from './types';
+
+// A stream that ran for less than this duration before EOF is counted as a
+// "quick" failure. Five consecutive quick failures abort auto-reconnect.
+const QUICK_FAILURE_MS = 5_000;
+const MAX_CONSECUTIVE_QUICK_FAILURES = 5;
+const RECONNECT_DELAY_MS = 2_000;
 
 const DEFAULT_PANE_ID = 'primary';
 
@@ -36,6 +43,20 @@ export function useStreamSession(
   // Channel messages are ignored. This replaces the need for an unlisten() call
   // since Channel<T> has no cancellation API.
   const channelActiveRef = useRef(false);
+
+  // Auto-reconnect state
+  const reconnectTimerRef      = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectCountRef      = useRef(0);
+  const streamStartedAtRef     = useRef<number | null>(null);
+  // Params of the most-recent startStream call, for use by the reconnect timer.
+  interface StreamParams { deviceId?: string; packageFilter?: string; activeProcessorIds: string[]; maxRawLines?: number; }
+  const lastStreamParamsRef    = useRef<StreamParams | null>(null);
+  // Stable ref to startStream so the reconnect timer (defined in useEffect)
+  // always calls the latest version without a stale closure.
+  const startStreamRef         = useRef<(deviceId?: string, packageFilter?: string, activeProcessorIds?: string[], maxRawLines?: number) => Promise<void>>();
+  // Stable ref to scheduleReconnect so it can be set once in useEffect([])
+  // and called from the channel/fallback handlers without re-creating them.
+  const scheduleReconnectRef   = useRef<((params: StreamParams) => void) | null>(null);
 
   const handleAdbBatch = useCallback((payload: AdbBatchPayload) => {
     if (payload.sessionId !== refs.streamingSessionIdRef.current) return;
@@ -66,7 +87,39 @@ export function useStreamSession(
       refs.streamingSessionIdRef, refs.filterAstRef, refs.packagePidsRef,
       refs.appendFilterMatchesRef]);
 
+  // Wire scheduleReconnectRef once. The effect has empty deps; it reads dynamic
+  // values (settings, startStream) through refs so no re-creation is needed.
+  useEffect(() => {
+    scheduleReconnectRef.current = (params: StreamParams) => {
+      if (!loadSettings().autoReconnectStream) return;
+      if (reconnectCountRef.current >= MAX_CONSECUTIVE_QUICK_FAILURES) {
+        console.warn('[useStreamSession] auto-reconnect: too many consecutive quick failures, giving up');
+        reconnectCountRef.current = 0;
+        return;
+      }
+      console.debug('[useStreamSession] auto-reconnect scheduled', {
+        attempt: reconnectCountRef.current + 1,
+        delayMs: RECONNECT_DELAY_MS,
+      });
+      reconnectTimerRef.current = setTimeout(() => {
+        reconnectTimerRef.current = null;
+        startStreamRef.current?.(
+          params.deviceId,
+          params.packageFilter,
+          params.activeProcessorIds,
+          params.maxRawLines,
+        );
+      }, RECONNECT_DELAY_MS);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const detachStream = useCallback((_paneId: string) => {
+    // Cancel any pending reconnect when the stream is detached (replaced by file load).
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    reconnectCountRef.current = 0;
     channelActiveRef.current = false;
     refs.adbStoppedUnlistenRef.current?.();
     refs.adbStoppedUnlistenRef.current = null;
@@ -85,6 +138,15 @@ export function useStreamSession(
     activeProcessorIds: string[] = [],
     maxRawLines?: number,
   ) => {
+    // Cancel any pending reconnect timer before starting a new stream.
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    // Record params for potential reconnect and mark start time.
+    lastStreamParamsRef.current = { deviceId, packageFilter, activeProcessorIds, maxRawLines };
+    streamStartedAtRef.current = Date.now();
+
     channelActiveRef.current = false;
     refs.adbStoppedUnlistenRef.current?.();
     refs.adbStoppedUnlistenRef.current = null;
@@ -128,6 +190,16 @@ export function useStreamSession(
         refs.streamingPaneIdRef.current = null;
         refs.streamingSessionIdRef.current = null;
         bus.emit('stream:stopped', { sessionId: payload.sessionId, paneId: stoppedPaneId });
+        // Auto-reconnect on EOF (e.g. screen unlock USB reset).
+        if (payload.reason === 'eof' && lastStreamParamsRef.current) {
+          const elapsed = streamStartedAtRef.current ? Date.now() - streamStartedAtRef.current : 0;
+          if (elapsed < QUICK_FAILURE_MS) {
+            reconnectCountRef.current += 1;
+          } else {
+            reconnectCountRef.current = 0;
+          }
+          scheduleReconnectRef.current?.(lastStreamParamsRef.current);
+        }
       }
       // TODO: processorUpdate must drive PipelineContext (adb:results-update +
       // throttled adb:run-count-bump) so ProcessorDashboard, CorrelationsView,
@@ -215,6 +287,12 @@ export function useStreamSession(
     const sessionId = refs.streamingSessionIdRef.current;
     const paneId = refs.streamingPaneIdRef.current;
     if (!sessionId) return;
+    // Cancel any pending reconnect — user explicitly stopped the stream.
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    reconnectCountRef.current = 0;
     // Deactivate channel and unlisten the fallback emit handler BEFORE issuing
     // the stop command so neither path double-fires 'stream:stopped'.
     channelActiveRef.current = false;
@@ -236,6 +314,11 @@ export function useStreamSession(
     refs.adbStoppedUnlistenRef, refs.isStreamingRef,
     setStreamingSession,
   ]);
+
+  // Keep startStreamRef pointing to the latest startStream so the reconnect
+  // timer (set up once in the empty-dep useEffect above) always calls the
+  // current version without a stale closure.
+  useEffect(() => { startStreamRef.current = startStream; }, [startStream]);
 
   return { startStream, stopStream, detachStream };
 }

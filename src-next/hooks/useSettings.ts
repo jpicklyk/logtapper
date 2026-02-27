@@ -5,6 +5,8 @@ export interface AppSettings {
   streamBackendLineMax: number;
   /** Total line budget for the CacheManager (distributed across views). Covers both file and streaming modes. */
   fileCacheBudget: number;
+  /** Automatically reconnect the ADB stream when it stops due to EOF (e.g. screen unlock USB reset). */
+  autoReconnectStream: boolean;
 }
 
 const STORAGE_KEY = 'logtapper_settings';
@@ -12,9 +14,10 @@ const STORAGE_KEY = 'logtapper_settings';
 export const SETTING_DEFAULTS: AppSettings = {
   streamBackendLineMax: 500_000,
   fileCacheBudget: 100_000,
+  autoReconnectStream: true,
 };
 
-function loadSettings(): AppSettings {
+export function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { ...SETTING_DEFAULTS };

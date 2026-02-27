@@ -22,7 +22,7 @@ export type {
   WorkspaceLayoutState,
   DropZone,
 } from './useWorkspaceLayout';
-export { useSettings, SETTING_DEFAULTS } from './useSettings';
+export { useSettings, SETTING_DEFAULTS, loadSettings } from './useSettings';
 export type { AppSettings, UseSettingsResult } from './useSettings';
 export { useAnonymizerConfig } from './useAnonymizerConfig';
 export type { UseAnonymizerConfigResult } from './useAnonymizerConfig';

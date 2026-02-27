@@ -222,6 +222,22 @@ const SettingsPanel = memo(function SettingsPanel({
                     <span className={css.unit}>lines</span>
                   </div>
                 </div>
+                <div className={css.row}>
+                  <div className={css.label}>
+                    <span className={css.labelText}>Auto-reconnect on disconnect</span>
+                    <span className={css.labelHint}>
+                      Automatically restart the stream after an unexpected EOF (e.g. screen unlock
+                      USB reset). Stops retrying after 5 consecutive quick failures.
+                    </span>
+                  </div>
+                  <div className={css.control}>
+                    <input
+                      type="checkbox"
+                      checked={settings.autoReconnectStream}
+                      onChange={(e) => onUpdate('autoReconnectStream', e.target.checked)}
+                    />
+                  </div>
+                </div>
               </div>
             </>
           )}

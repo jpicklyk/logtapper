@@ -8,6 +8,7 @@ import { TrackerProvider } from './TrackerContext';
 import { ActionsProvider, type ActionsContextValue } from './ActionsContext';
 import { useCacheManager, useDataSourceRegistry } from '../cache';
 import { useLogViewer } from '../hooks/useLogViewer';
+import { useSettings } from '../hooks/useSettings';
 import { bus } from '../events/bus';
 
 /**
@@ -20,6 +21,9 @@ function HookWiring({ children }: { children: ReactNode }) {
   const registry = useDataSourceRegistry();
   const { paneSessionMap } = useSessionContext();
   const logViewer = useLogViewer(cacheManager, registry);
+  const { settings } = useSettings();
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
 
   // Keep a ref so setFocusedPane can read the current map without being
   // recreated every time paneSessionMap changes (which would invalidate
@@ -53,7 +57,9 @@ function HookWiring({ children }: { children: ReactNode }) {
   const actions = useMemo<Partial<ActionsContextValue>>(() => ({
     loadFile: logViewer.loadFile,
     openFileDialog,
-    startStream: (deviceId?: string) => logViewer.startStream(deviceId),
+    startStream: (deviceId?: string) => logViewer.startStream(
+      deviceId, undefined, undefined, settingsRef.current.streamBackendLineMax,
+    ),
     stopStream: logViewer.stopStream,
     closeSession: logViewer.closeSession,
     jumpToLine: logViewer.jumpToLine,
