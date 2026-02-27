@@ -128,15 +128,25 @@ const LogViewer = React.memo(function LogViewer({
 
   // When the search query changes, evict stale cached lines so the viewport
   // re-fetches them with the new query (and receives correct highlight spans).
-  // Skipped on mount (sessionId null means no session yet).
+  //
+  // Two guards prevent spurious clears:
+  // 1. isStreaming — streaming lines never carry search highlights (they come
+  //    from flush_batch, not getLines), so clearing is pointless and would
+  //    destroy cached history that tailMode can never re-fetch.
+  // 2. prevSearchRef identity — skips the clear when isStreaming→false fires
+  //    the effect without an actual search change, and on fresh mounts where
+  //    prevSearch === search (both null) and we haven't opened a new query.
+  const prevSearchRef = useRef<typeof search>(null);
   useEffect(() => {
+    const prevSearch = prevSearchRef.current;
+    prevSearchRef.current = search;
+    if (isStreaming) return;
+    if (prevSearch === search) return;
     if (!sessionId) return;
     cacheManager.clearSession(sessionId);
     dataSourceRef.current?.invalidate();
-  // search identity changes on every new query object even if text is same,
-  // but that's fine — a spurious clear is cheap compared to stale highlights.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search]);
+  }, [search, isStreaming]);
 
   // Gutter columns: line number + transition dot
   const gutterColumns = useMemo<GutterColumnDef[]>(() => {
