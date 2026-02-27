@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSessionForPane, useScrollTarget, useViewerActions, useIndexingProgress } from '../../context';
 import type { IndexingProgress } from '../../context';
 import { getDumpstateMetadata, getSections, getSessionMetadata } from '../../bridge/commands';
-import { onAdbBatch } from '../../bridge/events';
 import type { DumpstateMetadata } from '../../bridge/types';
 import type { SectionEntry } from './FileInfoPanel';
 
@@ -108,31 +107,23 @@ export function useFileInfo(paneId: string | null): FileInfoData {
     return () => { cancelled = true; };
   }, [sessionId, indexingProgress]);
 
-  // Subscribe to ADB batch events for real-time size/timestamp updates.
+  // For streaming sessions, keep size/timestamp local state in sync with the
+  // session context. SessionContext is updated on every batch by useStreamSession
+  // via updateSession — no separate event listener needed now that adb-batch is
+  // delivered via Channel<T>, not as a global broadcast event.
   useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | null = null;
-
-    onAdbBatch((payload) => {
-      if (cancelled || payload.sessionId !== sessionIdRef.current) return;
-      setTotalLines(payload.totalLines);
-      setFileSize(payload.byteCount);
-      if (payload.firstTimestamp != null) {
-        setFirstTimestamp((prev) => prev ?? payload.firstTimestamp);
-      }
-      if (payload.lastTimestamp != null) {
-        setLastTimestamp(payload.lastTimestamp);
-      }
-    }).then((fn) => {
-      if (cancelled) fn();
-      else unlisten = fn;
-    });
-
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
+    if (!session?.isStreaming) return;
+    setTotalLines(session.totalLines);
+    setFileSize(session.fileSize);
+    if (session.firstTimestamp != null) {
+      setFirstTimestamp((prev) => prev ?? session.firstTimestamp!);
+    }
+    if (session.lastTimestamp != null) {
+      setLastTimestamp(session.lastTimestamp);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.isStreaming, session?.totalLines, session?.fileSize,
+      session?.firstTimestamp, session?.lastTimestamp]);
 
   // Update totalLines whenever session.totalLines changes during or after indexing.
   // indexingProgress is kept in deps so the effect also fires when indexing completes

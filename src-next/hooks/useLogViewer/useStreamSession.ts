@@ -1,8 +1,8 @@
-import { useCallback } from 'react';
-import type { AdbBatchPayload, SourceType } from '../../bridge/types';
+import { useCallback, useRef } from 'react';
+import type { AdbBatchPayload, AdbStreamEvent, SourceType } from '../../bridge/types';
 import { matchesFilter } from '../../../src/filter';
 import { startAdbStream, stopAdbStream } from '../../bridge/commands';
-import { onAdbBatch, onAdbStreamStopped } from '../../bridge/events';
+import { onAdbStreamStopped } from '../../bridge/events';
 import { useSessionContext } from '../../context/SessionContext';
 import { bus } from '../../events/bus';
 import type { CacheController } from '../../cache';
@@ -16,7 +16,6 @@ export interface StreamSessionResult {
   stopStream: () => Promise<void>;
   /** Disconnect listeners + clear refs without a backend call. Used by loadFile when replacing a stream. */
   detachStream: (paneId: string) => void;
-  handleAdbBatch: (payload: AdbBatchPayload) => void;
 }
 
 export function useStreamSession(
@@ -32,6 +31,11 @@ export function useStreamSession(
     setStreamingSession,
     updateSession,
   } = useSessionContext();
+
+  // Guard flag: set false when the stream is stopped/detached so late-arriving
+  // Channel messages are ignored. This replaces the need for an unlisten() call
+  // since Channel<T> has no cancellation API.
+  const channelActiveRef = useRef(false);
 
   const handleAdbBatch = useCallback((payload: AdbBatchPayload) => {
     if (payload.sessionId !== refs.streamingSessionIdRef.current) return;
@@ -63,8 +67,7 @@ export function useStreamSession(
       refs.appendFilterMatchesRef]);
 
   const detachStream = useCallback((_paneId: string) => {
-    refs.adbBatchUnlistenRef.current?.();
-    refs.adbBatchUnlistenRef.current = null;
+    channelActiveRef.current = false;
     refs.adbStoppedUnlistenRef.current?.();
     refs.adbStoppedUnlistenRef.current = null;
     if (refs.streamingSessionIdRef.current) {
@@ -73,7 +76,7 @@ export function useStreamSession(
     refs.isStreamingRef.current = false;
     refs.streamingPaneIdRef.current = null;
     refs.streamingSessionIdRef.current = null;
-  }, [refs.adbBatchUnlistenRef, refs.adbStoppedUnlistenRef, refs.streamingSessionIdRef,
+  }, [refs.adbStoppedUnlistenRef, refs.streamingSessionIdRef,
       refs.isStreamingRef, refs.streamingPaneIdRef, setStreamingSession]);
 
   const startStream = useCallback(async (
@@ -82,8 +85,7 @@ export function useStreamSession(
     activeProcessorIds: string[] = [],
     maxRawLines?: number,
   ) => {
-    refs.adbBatchUnlistenRef.current?.();
-    refs.adbBatchUnlistenRef.current = null;
+    channelActiveRef.current = false;
     refs.adbStoppedUnlistenRef.current?.();
     refs.adbStoppedUnlistenRef.current = null;
 
@@ -105,9 +107,38 @@ export function useStreamSession(
 
     refs.streamDeviceSerialRef.current = deviceId ?? null;
 
-    try {
-      const result = await startAdbStream(deviceId, packageFilter, activeProcessorIds, maxRawLines);
+    // Channel event handler — receives Batch, ProcessorUpdate, StreamStopped.
+    // The channelActiveRef guard prevents late-arriving messages from being
+    // processed after the stream is stopped or detached.
+    const handleChannelEvent = (msg: AdbStreamEvent) => {
+      if (!channelActiveRef.current) return;
+      if (msg.event === 'batch') {
+        handleAdbBatch(msg.data);
+      } else if (msg.event === 'streamStopped') {
+        const payload = msg.data;
+        if (payload.sessionId !== refs.streamingSessionIdRef.current) return;
+        channelActiveRef.current = false;
+        setStreamingSession(payload.sessionId, false);
+        refs.isStreamingRef.current = false;
+        const stoppedPaneId = refs.streamingPaneIdRef.current ?? targetPaneId;
+        refs.streamingPaneIdRef.current = null;
+        refs.streamingSessionIdRef.current = null;
+        bus.emit('stream:stopped', { sessionId: payload.sessionId, paneId: stoppedPaneId });
+      }
+      // TODO: processorUpdate must drive PipelineContext (adb:results-update +
+      // throttled adb:run-count-bump) so ProcessorDashboard, CorrelationsView,
+      // StatePanel, and StateTimeline refresh during streaming. The old path was
+      // listen('adb-processor-update') in usePipeline.ts — that broadcast is
+      // now dead. Fix: emit a bus event here (e.g. pipeline:adb-processor-update)
+      // and consume it in usePipeline.
+    };
 
+    try {
+      const result = await startAdbStream(
+        deviceId, packageFilter, activeProcessorIds, maxRawLines, handleChannelEvent,
+      );
+
+      channelActiveRef.current = true;
       registerSession(targetPaneId, result);
       activateSessionForPane(targetPaneId, result.sessionId);
       setStreamingSession(result.sessionId, true);
@@ -115,18 +146,17 @@ export function useStreamSession(
       refs.streamingPaneIdRef.current = targetPaneId;
       refs.streamingSessionIdRef.current = result.sessionId;
 
-      const unlistenBatch = await onAdbBatch(handleAdbBatch);
-      refs.adbBatchUnlistenRef.current = unlistenBatch;
-
+      // Keep the adb-stream-stopped emit listener as a fallback for the case
+      // where stop_adb_stream emits it directly (e.g. the streaming task had
+      // already exited before the stop command arrived).
       const unlistenStopped = await onAdbStreamStopped((payload) => {
         if (payload.sessionId !== refs.streamingSessionIdRef.current) return;
+        channelActiveRef.current = false;
         setStreamingSession(payload.sessionId, false);
         refs.isStreamingRef.current = false;
         const stoppedPaneId = refs.streamingPaneIdRef.current ?? targetPaneId;
         refs.streamingPaneIdRef.current = null;
         refs.streamingSessionIdRef.current = null;
-        refs.adbBatchUnlistenRef.current?.();
-        refs.adbBatchUnlistenRef.current = null;
         bus.emit('stream:stopped', { sessionId: payload.sessionId, paneId: stoppedPaneId });
       });
       refs.adbStoppedUnlistenRef.current = unlistenStopped;
@@ -158,6 +188,7 @@ export function useStreamSession(
         sourceName: result.sourceName,
       });
     } catch (e) {
+      channelActiveRef.current = false;
       setErrorPane(targetPaneId, String(e));
       setStreamingSession('', false);
       refs.isStreamingRef.current = false;
@@ -169,7 +200,7 @@ export function useStreamSession(
     refs.focusedPaneIdRef, refs.paneSessionMapRef,
     refs.streamDeviceSerialRef, refs.isStreamingRef,
     refs.streamingPaneIdRef, refs.streamingSessionIdRef,
-    refs.adbBatchUnlistenRef, refs.adbStoppedUnlistenRef,
+    refs.adbStoppedUnlistenRef,
     refs.resetSessionStateRef,
     registerSession, activateSessionForPane, setLoadingPane, setErrorPane,
     setStreamingSession, handleAdbBatch,
@@ -179,9 +210,9 @@ export function useStreamSession(
     const sessionId = refs.streamingSessionIdRef.current;
     const paneId = refs.streamingPaneIdRef.current;
     if (!sessionId) return;
-    // Unlisten the Tauri stopped-event handler BEFORE issuing the stop command.
-    // stopAdbStream triggers the backend to emit adb-stream-stopped, and if the
-    // listener is still active at that point both paths emit 'stream:stopped'.
+    // Deactivate channel and unlisten the fallback emit handler BEFORE issuing
+    // the stop command so neither path double-fires 'stream:stopped'.
+    channelActiveRef.current = false;
     refs.adbStoppedUnlistenRef.current?.();
     refs.adbStoppedUnlistenRef.current = null;
     try {
@@ -189,8 +220,6 @@ export function useStreamSession(
     } catch (e) {
       console.error('Error stopping ADB stream:', e);
     }
-    refs.adbBatchUnlistenRef.current?.();
-    refs.adbBatchUnlistenRef.current = null;
     setStreamingSession(sessionId, false);
     refs.isStreamingRef.current = false;
     const stoppedPaneId = paneId ?? (refs.focusedPaneIdRef.current ?? DEFAULT_PANE_ID);
@@ -199,9 +228,9 @@ export function useStreamSession(
     bus.emit('stream:stopped', { sessionId, paneId: stoppedPaneId });
   }, [
     refs.streamingSessionIdRef, refs.streamingPaneIdRef, refs.focusedPaneIdRef,
-    refs.adbBatchUnlistenRef, refs.adbStoppedUnlistenRef, refs.isStreamingRef,
+    refs.adbStoppedUnlistenRef, refs.isStreamingRef,
     setStreamingSession,
   ]);
 
-  return { startStream, stopStream, detachStream, handleAdbBatch };
+  return { startStream, stopStream, detachStream };
 }

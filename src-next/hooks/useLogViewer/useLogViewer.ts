@@ -64,7 +64,6 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
       streamingSessionIdRef:   { current: null },
       isStreamingRef:          { current: false },
       streamDeviceSerialRef:   { current: null },
-      adbBatchUnlistenRef:     { current: null },
       adbStoppedUnlistenRef:   { current: null },
       filterAstRef:            { current: null },
       packagePidsRef:          { current: new Map() },
@@ -82,10 +81,9 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
   refs.paneSessionMapRef.current = paneSessionMap;
   refs.sessionsRef.current       = sessions;
 
-  // Cleanup remaining ADB listeners on unmount
+  // Cleanup remaining ADB listener on unmount
   useEffect(() => {
     return () => {
-      refs.adbBatchUnlistenRef.current?.();
       refs.adbStoppedUnlistenRef.current?.();
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps

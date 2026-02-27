@@ -20,7 +20,6 @@ export interface SharedLogViewerRefs {
   streamingSessionIdRef: MutableRefObject<string | null>;
   isStreamingRef: MutableRefObject<boolean>;
   streamDeviceSerialRef: MutableRefObject<string | null>;
-  adbBatchUnlistenRef: MutableRefObject<UnlistenFn | null>;
   adbStoppedUnlistenRef: MutableRefObject<UnlistenFn | null>;
 
   // Filter AST (useFilterScan writes; useStreamSession reads in handleAdbBatch)

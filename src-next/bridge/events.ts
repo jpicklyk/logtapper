@@ -1,21 +1,13 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { AdbBatchPayload, AdbProcessorUpdate, AdbStreamStopped, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress, BookmarkUpdateEvent, AnalysisUpdateEvent, WatchMatchEvent } from './types';
+import type { AdbStreamStopped, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress, BookmarkUpdateEvent, AnalysisUpdateEvent, WatchMatchEvent } from './types';
 
 // ---------------------------------------------------------------------------
 // ADB streaming events
 // ---------------------------------------------------------------------------
 
-export function onAdbBatch(
-  cb: (payload: AdbBatchPayload) => void,
-): Promise<UnlistenFn> {
-  return listen<AdbBatchPayload>('adb-batch', (e) => cb(e.payload));
-}
-
-export function onAdbProcessorUpdate(
-  cb: (payload: AdbProcessorUpdate) => void,
-): Promise<UnlistenFn> {
-  return listen<AdbProcessorUpdate>('adb-processor-update', (e) => cb(e.payload));
-}
+// NOTE: adb-batch and adb-processor-update are no longer emitted as Tauri
+// broadcast events — they arrive via the Channel<AdbStreamEvent> passed to
+// start_adb_stream. See commands.ts startAdbStream and useStreamSession.
 
 export function onAdbStreamStopped(
   cb: (payload: AdbStreamStopped) => void,
