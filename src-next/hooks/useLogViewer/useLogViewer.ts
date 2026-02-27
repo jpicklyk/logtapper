@@ -113,8 +113,11 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     setSearch(null);
     setSearchSummary(null);
     setCurrentMatchIndex(0);
-    setScrollToLine(0);
-    setJumpSeq((s) => s + 1);
+    // Use null rather than 0: setting scrollToLine=0 triggers the scroll effect
+    // which sets autoScroll=false, defeating tailMode auto-scroll for streaming
+    // sessions. The viewer resets virtualBase to 0 on its own when the data
+    // source changes (dataSource.sourceId effect in ReadOnlyViewer).
+    setScrollToLine(null);
   }, [
     cacheManager, refs.sessionRef,
     setSearch, setSearchSummary, setCurrentMatchIndex,

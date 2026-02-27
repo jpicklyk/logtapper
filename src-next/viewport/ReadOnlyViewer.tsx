@@ -71,11 +71,17 @@ export default function ReadOnlyViewer({
   // FetchScheduler on the first meaningful reportScroll.
   const initialFetchDoneRef = useRef(false);
 
+  // ── Pending jump (scroll target beyond currently indexed range) ─────────
+  // Stored when scrollToLine targets a line not yet in the virtualizer's
+  // count (file still indexing). Retried by the effectiveCount effect below.
+  const pendingJumpRef = useRef<{ line: number; seq: number } | null>(null);
+
   // Reset when data source changes.
   useEffect(() => {
     fetchGenRef.current++;
     fetchInFlightRef.current = false;
     initialFetchDoneRef.current = false;
+    pendingJumpRef.current = null;
     bumpCacheVersion();
   }, [dataSource.sourceId]);
 
@@ -402,9 +408,17 @@ export default function ReadOnlyViewer({
 
     const relIndex = scrollToLine - virtualBaseRef.current;
     if (relIndex >= 0 && relIndex < MAX_VIRTUAL_LINES) {
+      // If the target is beyond the virtualizer's current count (file still
+      // indexing), defer until effectiveCount grows to include it.
+      if (relIndex >= effectiveCount) {
+        pendingJumpRef.current = { line: scrollToLine, seq: jumpSeq ?? 0 };
+        return;
+      }
+      pendingJumpRef.current = null;
       virtualizer.scrollToIndex(relIndex, { align: 'center' });
       schedulerRef.current?.forceFetch();
     } else {
+      pendingJumpRef.current = null;
       const half = Math.floor(MAX_VIRTUAL_LINES / 2);
       const newBase = Math.max(0, Math.min(scrollToLine - half, Math.max(0, liveTotalLines - MAX_VIRTUAL_LINES)));
       pendingScrollTarget.current = scrollToLine;
@@ -413,6 +427,21 @@ export default function ReadOnlyViewer({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scrollToLine, jumpSeq]);
+
+  // Retry a pending jump when effectiveCount grows to include the target.
+  // Handles the case where the user navigated to a section before that line
+  // was indexed (effectiveCount was too small to honour scrollToIndex).
+  useEffect(() => {
+    const pending = pendingJumpRef.current;
+    if (!pending) return;
+    const relIndex = pending.line - virtualBaseRef.current;
+    if (relIndex >= 0 && relIndex < effectiveCount) {
+      pendingJumpRef.current = null;
+      virtualizer.scrollToIndex(relIndex, { align: 'center' });
+      schedulerRef.current?.forceFetch();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveCount]);
 
   // Deferred scroll after virtualBase change
   useEffect(() => {

@@ -157,6 +157,16 @@ export function useSessionTabManager(
     }) => {
       activateSessionForPane(actualPaneId, sessionId);
       unregisterSession(originalPaneId);
+      // Keep the streaming pane ref in sync so stream:stopped fires with the
+      // correct pane ID after a remap.
+      if (refs.streamingPaneIdRef.current === originalPaneId) {
+        refs.streamingPaneIdRef.current = actualPaneId;
+      }
+      // Re-focus the actual pane so useIsStreaming() and tailMode stay correct.
+      // After unregisterSession removes originalPaneId from paneSessionMap,
+      // focusedPaneId would still point to originalPaneId, making the streaming
+      // session invisible to focus-based selectors.
+      bus.emit('session:focused', { paneId: actualPaneId, sessionId });
     };
 
     bus.on('layout:logviewer-tab-closed', handleTabClosed);

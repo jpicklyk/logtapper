@@ -117,7 +117,11 @@ export function useStreamSession(
       } else if (msg.event === 'streamStopped') {
         const payload = msg.data;
         if (payload.sessionId !== refs.streamingSessionIdRef.current) return;
+        console.debug('[useStreamSession] streamStopped via channel', { sessionId: payload.sessionId, reason: payload.reason });
         channelActiveRef.current = false;
+        // Clean up the fallback broadcast listener — it's no longer needed.
+        refs.adbStoppedUnlistenRef.current?.();
+        refs.adbStoppedUnlistenRef.current = null;
         setStreamingSession(payload.sessionId, false);
         refs.isStreamingRef.current = false;
         const stoppedPaneId = refs.streamingPaneIdRef.current ?? targetPaneId;
@@ -151,6 +155,7 @@ export function useStreamSession(
       // already exited before the stop command arrived).
       const unlistenStopped = await onAdbStreamStopped((payload) => {
         if (payload.sessionId !== refs.streamingSessionIdRef.current) return;
+        console.debug('[useStreamSession] streamStopped via broadcast fallback', { sessionId: payload.sessionId, reason: payload.reason });
         channelActiveRef.current = false;
         setStreamingSession(payload.sessionId, false);
         refs.isStreamingRef.current = false;
