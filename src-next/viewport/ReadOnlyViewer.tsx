@@ -350,7 +350,10 @@ export default function ReadOnlyViewer({
           onClick={() => setVirtualBase(0)}
           title="Jump to beginning of file"
         >
-          Line 1
+          <span className={styles.navArrow}>↑</span>
+          <span className={styles.navMeta}>Line 1</span>
+          <span className={styles.navLabel}>start of file</span>
+          <span className={styles.navSpacer} />
         </button>
       )}
       {tailMode && !autoScroll && newLinesCount > 0 && (
@@ -359,22 +362,6 @@ export default function ReadOnlyViewer({
           onClick={resetAutoScroll}
         >
           {newLinesCount > 999 ? '999+' : newLinesCount} new line{newLinesCount !== 1 ? 's' : ''} below
-        </button>
-      )}
-      {hasMoreBelow && (
-        <button
-          className={`${styles.navButton} ${styles.navBottom}`}
-          onClick={() => {
-            const newBase = Math.min(
-              virtualBase + MAX_VIRTUAL_LINES,
-              Math.max(0, liveTotalLines - MAX_VIRTUAL_LINES),
-            );
-            pendingScrollTarget.current = newBase;
-            setVirtualBase(newBase);
-          }}
-          title="Continue to next section of file"
-        >
-          Line {(virtualBase + MAX_VIRTUAL_LINES + 1).toLocaleString()}
         </button>
       )}
       <div
@@ -454,6 +441,25 @@ export default function ReadOnlyViewer({
           )}
         </div>
       </div>
+      {hasMoreBelow && (
+        <button
+          className={`${styles.navButton} ${styles.navBottom}`}
+          onClick={() => {
+            const newBase = Math.min(
+              virtualBase + MAX_VIRTUAL_LINES,
+              Math.max(0, liveTotalLines - MAX_VIRTUAL_LINES),
+            );
+            pendingScrollTarget.current = newBase;
+            setVirtualBase(newBase);
+          }}
+          title="Continue to next section of file"
+        >
+          <span className={styles.navSpacer} />
+          <span className={styles.navLabel}>continue below</span>
+          <span className={styles.navMeta}>Line {(virtualBase + MAX_VIRTUAL_LINES + 1).toLocaleString()}</span>
+          <span className={styles.navArrow}>↓</span>
+        </button>
+      )}
     </div>
   );
 }

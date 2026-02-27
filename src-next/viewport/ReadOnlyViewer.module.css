@@ -32,36 +32,75 @@
   z-index: 1;
 }
 
-/* ── Large-file navigation buttons ────────────────────────────────────── */
+/* ── Large-file navigation bands ──────────────────────────────────────── */
+/* Full-width strips that mark the boundaries of the current virtual window.
+   They live in the flex column above/below the .viewer — no overlap.       */
 
 .navButton {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 10;
-  padding: 2px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 28px;
+  padding: 0 14px;
   font-size: 11px;
   font-family: var(--font-mono);
-  color: var(--text-muted);
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
   cursor: pointer;
-  opacity: 0.85;
-  transition: opacity var(--transition-fast), background var(--transition-fast);
-}
-
-.navButton:hover {
-  opacity: 1;
-  background: var(--bg-overlay);
+  border: none;
+  color: rgba(88, 166, 255, 0.6);
+  letter-spacing: 0.025em;
+  flex-shrink: 0;
+  transition: background 120ms ease, color 100ms ease;
 }
 
 .navTop {
-  top: 4px;
+  background: linear-gradient(180deg, rgba(88, 166, 255, 0.09) 0%, rgba(88, 166, 255, 0.02) 100%);
+  border-bottom: 1px solid rgba(88, 166, 255, 0.16);
+  animation: navFadeIn 0.2s ease-out;
 }
 
 .navBottom {
-  bottom: 4px;
+  background: linear-gradient(0deg, rgba(88, 166, 255, 0.09) 0%, rgba(88, 166, 255, 0.02) 100%);
+  border-top: 1px solid rgba(88, 166, 255, 0.16);
+  animation: navFadeIn 0.2s ease-out;
+}
+
+.navButton:hover {
+  background: rgba(88, 166, 255, 0.13);
+  color: var(--accent);
+}
+
+.navButton:active {
+  background: rgba(88, 166, 255, 0.20);
+}
+
+.navArrow {
+  font-size: 10px;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.navLabel {
+  color: var(--text-dimmed);
+  font-size: 10px;
+  flex-shrink: 0;
+  letter-spacing: 0.03em;
+  text-transform: lowercase;
+}
+
+.navSpacer {
+  flex: 1;
+}
+
+.navMeta {
+  font-weight: 600;
+  color: inherit;
+  flex-shrink: 0;
+}
+
+@keyframes navFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 /* ── "N new lines below" badge ────────────────────────────────────────── */
