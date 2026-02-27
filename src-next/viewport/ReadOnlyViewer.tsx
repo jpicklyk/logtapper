@@ -445,10 +445,7 @@ export default function ReadOnlyViewer({
         <button
           className={`${styles.navButton} ${styles.navBottom}`}
           onClick={() => {
-            const newBase = Math.min(
-              virtualBase + MAX_VIRTUAL_LINES,
-              Math.max(0, liveTotalLines - MAX_VIRTUAL_LINES),
-            );
+            const newBase = virtualBase + MAX_VIRTUAL_LINES;
             pendingScrollTarget.current = newBase;
             setVirtualBase(newBase);
           }}
