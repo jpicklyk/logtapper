@@ -371,7 +371,7 @@ export function useFilterScan(cacheManager: CacheController, refs: SharedLogView
             unlisten?.();
             filterUnlistenRef.current = null;
             if (filterScanGenRef.current === gen) {
-              setFilteredLineNums(matches.length > 0 ? [...matches] : null);
+              setFilteredLineNums([...matches]);
               setFilterScanning(false);
             }
           }
@@ -433,7 +433,7 @@ export function useFilterScan(cacheManager: CacheController, refs: SharedLogView
           }
         }
         if (filterScanGenRef.current === gen) {
-          setFilteredLineNums(matches.length > 0 ? matches : null);
+          setFilteredLineNums([...matches]);
           setFilterScanning(false);
         }
       }
