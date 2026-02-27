@@ -118,7 +118,7 @@ function buildBackendFilter(node: FilterNode): BackendFilter | null {
       // (false negatives). Partial OR extraction is not safe.
       const childResults = n.children.map(fromNode);
       if (childResults.some(r => r === null)) return null;
-      const merged: FilterCriteria = { combine: 'Or' };
+      const merged: FilterCriteria = { combine: 'or' };
       let needsJs = false;
       for (const r of childResults as BackendFilter[]) {
         merge(merged, r.criteria);
@@ -141,10 +141,10 @@ function buildBackendFilter(node: FilterNode): BackendFilter | null {
           needsJs = true; // this child needs JS evaluation
         } else {
           // A heterogeneous OR child (e.g. `level:E | tag:Activity`) has
-          // combine='Or' with multiple field types. Merging it into the AND
+          // combine='or' with multiple field types. Merging it into the AND
           // criteria would silently convert it to AND semantics, producing
           // false negatives. Skip it and let the JS pass handle it.
-          const isHeterogeneousOr = r.criteria.combine === 'Or' &&
+          const isHeterogeneousOr = r.criteria.combine === 'or' &&
             [r.criteria.logLevels, r.criteria.pids, r.criteria.tags, r.criteria.textSearch].filter(Boolean).length > 1;
           if (isHeterogeneousOr) {
             needsJs = true;
@@ -158,7 +158,7 @@ function buildBackendFilter(node: FilterNode): BackendFilter | null {
       if (!anyExtracted) return null;
       // Multiple different field types → AND semantics between them.
       const fieldCount = [merged.logLevels, merged.pids, merged.tags, merged.textSearch].filter(Boolean).length;
-      if (fieldCount > 1) merged.combine = 'And';
+      if (fieldCount > 1) merged.combine = 'and';
       return { criteria: merged, needsJsPass: needsJs };
     }
 

@@ -409,7 +409,7 @@ export interface CorrelatorResult {
 // Filter types (Phase 1)
 // ---------------------------------------------------------------------------
 
-export type CombineMode = 'And' | 'Or';
+export type CombineMode = 'and' | 'or';
 
 export interface FilterCriteria {
   textSearch?: string;
