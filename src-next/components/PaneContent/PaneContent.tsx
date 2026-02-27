@@ -46,7 +46,7 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
   // Use the pane's own session, not the global focused session.
   const session = useSessionForPane(pane.id);
   const isLoading = useIsLoadingForPane(pane.id);
-  const { setFocusedPane, setStreamFilter } = useViewerActions();
+  const { setFocusedPane, setStreamFilter, cancelStreamFilter } = useViewerActions();
   const { fetchLines } = useLogViewerActions(pane.id);
   const { value: filterValue, scanning: filterScanning, filteredLineNums, parseError: filterParseError } = useStreamFilter();
 
@@ -78,7 +78,8 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
           {session && (
             <StreamFilterBar
               value={filterValue}
-              onChange={setStreamFilter}
+              onCommit={setStreamFilter}
+              onCancel={cancelStreamFilter}
               matchCount={filteredLineNums?.length ?? null}
               totalLines={session.totalLines}
               parseError={filterParseError}

@@ -143,9 +143,11 @@ export function useTrackerTransitions(): {
 
 export function useViewerActions() {
   const { loadFile, openFileDialog, startStream, stopStream, closeSession,
-          jumpToLine, jumpToMatch, setSearch, setStreamFilter, openTab, setFocusedPane } = useActionsContext();
+          jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
+          openTab, setFocusedPane } = useActionsContext();
   return { loadFile, openFileDialog, startStream, stopStream, closeSession,
-           jumpToLine, jumpToMatch, setSearch, setStreamFilter, openTab, setFocusedPane };
+           jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
+           openTab, setFocusedPane };
 }
 
 export function usePipelineActions() {

@@ -60,11 +60,12 @@ function HookWiring({ children }: { children: ReactNode }) {
     jumpToMatch: logViewer.jumpToMatch,
     setSearch: logViewer.handleSearch,
     setStreamFilter: logViewer.setStreamFilter,
+    cancelStreamFilter: logViewer.cancelStreamFilter,
     openTab: (type: string) => { bus.emit('layout:open-tab', { type }); },
     setFocusedPane,
   }), [logViewer.loadFile, openFileDialog, logViewer.startStream, logViewer.stopStream,
        logViewer.closeSession, logViewer.jumpToLine, logViewer.jumpToMatch,
-       logViewer.handleSearch, logViewer.setStreamFilter]);
+       logViewer.handleSearch, logViewer.setStreamFilter, logViewer.cancelStreamFilter]);
 
   return (
     <ActionsProvider actions={actions}>

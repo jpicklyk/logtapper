@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import clsx from 'clsx';
 import { Search, X, AlertTriangle } from 'lucide-react';
 import styles from './StreamFilterBar.module.css';
@@ -11,8 +11,12 @@ const CHIPS: { label: string; hint: string }[] = [
 ];
 
 interface StreamFilterBarProps {
+  /** The last committed (applied) filter expression. */
   value: string;
-  onChange: (value: string) => void;
+  /** Called when the user presses Enter or clicks a chip — triggers a scan. */
+  onCommit: (value: string) => void;
+  /** Called when the user edits the input — cancels any active scan. */
+  onCancel: () => void;
   matchCount?: number | null;
   totalLines?: number;
   parseError?: string | null;
@@ -23,7 +27,8 @@ interface StreamFilterBarProps {
 export const StreamFilterBar = React.memo<StreamFilterBarProps>(
   function StreamFilterBar({
     value,
-    onChange,
+    onCommit,
+    onCancel,
     matchCount,
     totalLines = 0,
     parseError = null,
@@ -31,13 +36,46 @@ export const StreamFilterBar = React.memo<StreamFilterBarProps>(
     onCopyAll,
   }) {
     const inputRef = useRef<HTMLInputElement>(null);
+    // Local draft — tracks what the user is currently typing before committing.
+    const [draft, setDraft] = useState(value);
+
+    // Sync draft when the committed value changes from outside (session switch,
+    // external clear, etc.) but only when the input isn't focused.
+    useEffect(() => {
+      if (document.activeElement !== inputRef.current) {
+        setDraft(value);
+      }
+    }, [value]);
+
+    const handleChange = (newDraft: string) => {
+      setDraft(newDraft);
+      onCancel();
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        onCommit(draft);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setDraft('');
+        onCommit('');
+        inputRef.current?.blur();
+      }
+    };
+
+    const handleClear = () => {
+      setDraft('');
+      onCommit('');
+    };
 
     const insertChip = (text: string) => {
       const input = inputRef.current;
-      const start = input?.selectionStart ?? value.length;
-      const prefix = start > 0 && value[start - 1] !== ' ' ? ' ' : '';
-      const newVal = value.slice(0, start) + prefix + text + value.slice(start);
-      onChange(newVal.trimStart());
+      const start = input?.selectionStart ?? draft.length;
+      const prefix = start > 0 && draft[start - 1] !== ' ' ? ' ' : '';
+      const newDraft = draft.slice(0, start) + prefix + text + draft.slice(start);
+      setDraft(newDraft.trimStart());
+      onCancel();
       requestAnimationFrame(() => {
         if (!input) return;
         input.focus();
@@ -46,7 +84,9 @@ export const StreamFilterBar = React.memo<StreamFilterBarProps>(
       });
     };
 
-    const isFiltering = value.trim().length > 0;
+    // Show filter status based on the committed value, not the draft.
+    const isCommitted = value.trim().length > 0;
+    const isDirty = draft !== value;
     const hasError = parseError !== null;
 
     return (
@@ -63,10 +103,13 @@ export const StreamFilterBar = React.memo<StreamFilterBarProps>(
               {chip.label}
             </button>
           ))}
-          {isFiltering && !hasError && scanning && (
+          {isDirty && draft.trim().length > 0 && (
+            <span className={clsx(styles.count, styles.countScanning)}>Press Enter to apply</span>
+          )}
+          {!isDirty && isCommitted && !hasError && scanning && (
             <span className={clsx(styles.count, styles.countScanning)}>Scanning...</span>
           )}
-          {isFiltering && !hasError && !scanning && matchCount != null && (
+          {!isDirty && isCommitted && !hasError && !scanning && matchCount != null && (
             <span className={styles.count}>
               {matchCount.toLocaleString()} / {totalLines.toLocaleString()} lines
               {onCopyAll && (
@@ -76,7 +119,7 @@ export const StreamFilterBar = React.memo<StreamFilterBarProps>(
               )}
             </span>
           )}
-          {isFiltering && !hasError && !scanning && matchCount == null && (
+          {!isDirty && isCommitted && !hasError && !scanning && matchCount == null && (
             <span className={styles.count}>{totalLines.toLocaleString()} lines</span>
           )}
         </div>
@@ -87,17 +130,18 @@ export const StreamFilterBar = React.memo<StreamFilterBarProps>(
             ref={inputRef}
             type="text"
             className={styles.input}
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
+            value={draft}
+            onChange={(e) => handleChange(e.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder="package:com.example  tag:MyTag  level:E | message:crash"
             spellCheck={false}
             autoCorrect="off"
             autoCapitalize="off"
           />
-          {isFiltering && (
+          {(draft.trim().length > 0) && (
             <button
               className={styles.clearBtn}
-              onClick={() => onChange('')}
+              onClick={handleClear}
               title="Clear filter"
               tabIndex={-1}
             >

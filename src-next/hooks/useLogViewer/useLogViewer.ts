@@ -16,6 +16,7 @@ export interface LogViewerActions {
   startStream: (deviceId?: string, packageFilter?: string, activeProcessorIds?: string[], maxRawLines?: number) => Promise<void>;
   stopStream: () => Promise<void>;
   setStreamFilter: (expr: string) => Promise<void>;
+  cancelStreamFilter: () => void;
   setTimeFilter: (start: string, end: string) => Promise<void>;
   /** Fetch lines from backend for file mode. Returns a LineWindow. */
   fetchLines: (offset: number, count: number) => Promise<LineWindow>;
@@ -152,6 +153,7 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     startStream:        streamSession.startStream,
     stopStream:         streamSession.stopStream,
     setStreamFilter:    filterScan.setStreamFilter,
+    cancelStreamFilter: filterScan.cancelStreamFilter,
     setTimeFilter:      filterScan.setTimeFilter,
     filterScanning:     filterScan.filterScanning,
     filteredLineNums:   filterScan.filteredLineNums,

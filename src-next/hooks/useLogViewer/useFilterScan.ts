@@ -21,6 +21,8 @@ export interface FilterScanResult {
   filterParseError: string | null;
   timeFilterLineNums: number[] | null;
   setStreamFilter: (expr: string) => Promise<void>;
+  /** Cancel any active scan and clear results without changing the stored expression. */
+  cancelStreamFilter: () => void;
   setTimeFilter: (start: string, end: string) => Promise<void>;
   /** Append newly matched line numbers from an ADB batch. Called via ref by useStreamSession. */
   appendMatches: (lineNums: number[]) => void;
@@ -468,12 +470,21 @@ export function useFilterScan(cacheManager: CacheController, refs: SharedLogView
     }
   }, [setTimeFilterStartCtx, setTimeFilterEndCtx, refs.sessionRef]);
 
+  const cancelStreamFilter = useCallback(() => {
+    cancelActiveBackendFilter();
+    setFilterScanning(false);
+    setFilteredLineNums(null);
+    setFilterParseError(null);
+    refs.filterAstRef.current = null;
+  }, [cancelActiveBackendFilter, refs.filterAstRef]);
+
   return {
     filterScanning,
     filteredLineNums,
     filterParseError,
     timeFilterLineNums,
     setStreamFilter,
+    cancelStreamFilter,
     setTimeFilter,
     appendMatches,
     reset,
