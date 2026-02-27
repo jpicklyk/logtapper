@@ -85,8 +85,12 @@ export function createCacheDataSource(options: CacheDataSourceOptions): CacheDat
         return Promise.resolve(prefixLines);
       }
 
-      // Fetch from firstMiss to end of requested range (skip cached prefix)
-      const fetchOffset = offset + firstMiss;
+      // Fetch from firstMiss to end of requested range (skip cached prefix).
+      // In filtered mode, translate virtual index to actual file line number so
+      // the backend returns the correct lines (not a range at virtual position 0).
+      const virtualMissIdx = offset + firstMiss;
+      const fetchOffset = ln ? (ln[virtualMissIdx] ?? -1) : virtualMissIdx;
+      if (ln && fetchOffset === -1) return Promise.resolve(prefixLines);
       const fetchCount = count - firstMiss;
       console.debug('[CacheDataSource] getLines: partial miss → fetching', { sessionId, offset, count, fetchOffset, fetchCount, cacheSize: viewCache.size, allocation: viewCache.allocation, disposed: _disposed });
       const gen = _fetchGen;
