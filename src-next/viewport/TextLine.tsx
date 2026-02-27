@@ -14,6 +14,10 @@ interface TextLineProps {
   isJumpTarget?: boolean;
   jumpSeq?: number;
   onClick?: (lineNum: number, e: React.MouseEvent) => void;
+  /** Override the line number emitted to onClick. Used by ReadOnlyViewer to pass
+   *  the virtual-window position (virtualBase + index) instead of line.lineNum,
+   *  so selection state is consistent in filtered mode. */
+  lineNumOverride?: number;
 }
 
 const LEVEL_CLASS: Record<string, string> = {
@@ -34,6 +38,7 @@ const TextLine = memo(function TextLine({
   isJumpTarget,
   jumpSeq,
   onClick,
+  lineNumOverride,
 }: TextLineProps) {
   const lineRef = useRef<HTMLDivElement>(null);
 
@@ -83,7 +88,7 @@ const TextLine = memo(function TextLine({
       ref={lineRef}
       className={className}
       style={combinedStyle}
-      onClick={(e) => onClick?.(line.lineNum, e)}
+      onClick={(e) => onClick?.(lineNumOverride ?? line.lineNum, e)}
     >
       {gutterColumns?.map((col) => (
         <span

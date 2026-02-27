@@ -38,6 +38,16 @@
   justify-content: center;
 }
 
+/* ── Level classes ────────────────────────────────────────────────────── */
+/* Declared before .selected so selection background always takes precedence */
+
+.levelV { color: #6e7681; }
+.levelD { color: #9ca3af; }
+.levelI { color: var(--text); }
+.levelW { color: #d29922; background: rgba(26, 19, 0, 0.03); }
+.levelE { color: #f47067; background: #2d1117; }
+.levelF { color: #ff6e6e; background: #3d1118; font-weight: 600; }
+
 .selected {
   background: rgba(255, 200, 50, 0.12);
   border-left-color: rgba(255, 200, 50, 0.75);
@@ -81,12 +91,3 @@
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.8s ease-in-out infinite;
 }
-
-/* ── Level classes ────────────────────────────────────────────────────── */
-
-.levelV { color: #6e7681; }
-.levelD { color: #9ca3af; }
-.levelI { color: var(--text); }
-.levelW { color: #d29922; background: rgba(26, 19, 0, 0.03); }
-.levelE { color: #f47067; background: #2d1117; }
-.levelF { color: #ff6e6e; background: #3d1118; font-weight: 600; }

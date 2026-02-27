@@ -423,6 +423,7 @@ export default function ReadOnlyViewer({
                     isJumpTarget={isTarget}
                     jumpSeq={isTarget ? jumpSeq : undefined}
                     onClick={handleLineClick}
+                    lineNumOverride={actualLineNum}
                   />
                 ) : (
                   <TextLineSkeleton lineNum={actualLineNum} lineHeight={LINE_HEIGHT} />
