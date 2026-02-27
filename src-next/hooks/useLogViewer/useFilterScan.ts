@@ -92,7 +92,10 @@ function buildBackendFilter(node: FilterNode): BackendFilter | null {
     if (source.logLevels) target.logLevels = [...(target.logLevels ?? []), ...source.logLevels];
     if (source.pids)      target.pids      = [...(target.pids      ?? []), ...source.pids];
     if (source.tags)      target.tags      = [...(target.tags      ?? []), ...source.tags];
-    if (source.textSearch && !target.textSearch) target.textSearch = source.textSearch;
+    // Keep the longer (more specific) textSearch — a longer needle produces
+    // fewer false positives from the backend pre-filter.
+    if (source.textSearch && (!target.textSearch || source.textSearch.length > target.textSearch.length))
+      target.textSearch = source.textSearch;
   }
 
   function fromNode(n: FilterNode): BackendFilter | null {

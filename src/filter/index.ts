@@ -104,6 +104,12 @@ function tokenize(input: string): Tok[] {
     }
     if (!word) continue;
 
+    // Keyword operators (case-insensitive)
+    const wordLower = word.toLowerCase();
+    if (wordLower === 'and') { tokens.push({ t: 'and' }); continue; }
+    if (wordLower === 'or')  { tokens.push({ t: 'or' });  continue; }
+    if (wordLower === 'not') { tokens.push({ t: 'not' }); continue; }
+
     const colonIdx = word.indexOf(':');
     if (colonIdx > 0) {
       const field = word.slice(0, colonIdx);
