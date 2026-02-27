@@ -6,6 +6,9 @@ export type { Selection } from './SelectionManager';
 
 // Hooks
 export { useSelectionManager } from './SelectionManager';
+export { useVirtualBase } from './useVirtualBase';
+export { useScrollControls } from './useScrollControls';
+export { useFetchScheduler } from './useFetchScheduler';
 
 // Components
 export { default as ReadOnlyViewer } from './ReadOnlyViewer';

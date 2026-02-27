@@ -1,6 +1,6 @@
-import React, { useMemo, useCallback, useEffect, useState, useRef } from 'react';
+import React, { useMemo, useCallback, useEffect, useRef } from 'react';
 import type { ViewLine } from '../../bridge/types';
-import type { GutterColumnDef, LineDecoratorDef, Selection, CacheDataSource } from '../../viewport';
+import type { GutterColumnDef, LineDecoratorDef, CacheDataSource } from '../../viewport';
 import { ReadOnlyViewer, createCacheDataSource, sessionScrollPositions } from '../../viewport';
 import { useViewCache, useCacheFocus, useDataSourceRegistry, useCacheManager } from '../../cache';
 import {
@@ -8,7 +8,6 @@ import {
   useIsStreamingForPane,
   useScrollTarget,
   useTrackerTransitions,
-  useProcessorId,
   useSearchQuery,
 } from '../../context';
 import styles from './LogViewer.module.css';
@@ -38,19 +37,6 @@ const LogViewer = React.memo(function LogViewer({
   const effectiveScrollToLine = isJumpForThisPane ? scrollToLine : null;
   const effectiveJumpSeq = isJumpForThisPane ? jumpSeq : 0;
   const { allLineNums: transitionLineNums, byLine: transitionsByLine } = useTrackerTransitions();
-  const processorId = useProcessorId();
-
-  // Selection state (local to this viewer)
-  const [selection, setSelection] = useState<Selection>({
-    anchor: null,
-    selected: new Set(),
-    mode: 'line',
-  });
-
-  // Clear selection on session/mode changes
-  useEffect(() => {
-    setSelection({ anchor: null, selected: new Set(), mode: 'line' });
-  }, [session?.sessionId, processorId]);
 
   // View cache handle
   const sessionId = session?.sessionId ?? null;
@@ -212,14 +198,10 @@ const LogViewer = React.memo(function LogViewer({
 
   const handleLineClick = useCallback(
     (_lineNum: number) => {
-      // Selection is handled via onSelectionChange — no scroll jump needed.
+      // Selection is handled inside ReadOnlyViewer — no scroll jump needed.
     },
     [],
   );
-
-  const handleSelectionChange = useCallback((sel: Selection) => {
-    setSelection(sel);
-  }, []);
 
   if (!dataSource) {
     return (
@@ -243,8 +225,6 @@ const LogViewer = React.memo(function LogViewer({
       gutterColumns={gutterColumns}
       lineDecorators={lineDecorators}
       onLineClick={handleLineClick}
-      onSelectionChange={handleSelectionChange}
-      selection={selection}
       className={styles.viewer}
       initialVirtualBase={initialVirtualBase}
       virtualBaseOutRef={virtualBaseOutRef}

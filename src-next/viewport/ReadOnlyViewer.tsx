@@ -4,14 +4,15 @@ import type { DataSource } from './DataSource';
 import type { GutterColumnDef } from './GutterColumn';
 import type { LineDecoratorDef } from './LineDecorator';
 import type { Selection } from './SelectionManager';
-import { FetchScheduler } from '../cache';
-import type { FetchRange } from '../cache';
+import { useSelectionManager } from './SelectionManager';
+import { useVirtualBase } from './useVirtualBase';
+import { useScrollControls } from './useScrollControls';
+import { useFetchScheduler } from './useFetchScheduler';
 import TextLine, { TextLineSkeleton } from './TextLine';
 import styles from './ReadOnlyViewer.module.css';
 
 const LINE_HEIGHT = 22;
 const OVERSCAN = 10;
-const AT_BOTTOM_THRESHOLD = 60;
 
 // Chrome/Edge cap their DOM scrollHeight at 2^25 px. Beyond this the native
 // scrollbar stops working. We keep the virtualizer's total height inside this
@@ -29,8 +30,9 @@ interface ReadOnlyViewerProps {
   gutterColumns?: GutterColumnDef[];
   lineDecorators?: LineDecoratorDef[];
   onLineClick?: (lineNum: number) => void;
+  /** Read-only notification called after selection changes. Parent must not
+   *  use this to control selection — selection state lives inside the viewer. */
   onSelectionChange?: (selection: Selection) => void;
-  selection?: Selection;
   className?: string;
   /** Starting virtual-base line when a known data source is restored (e.g.
    *  switching back to a previously-viewed session). Avoids resetting to 0. */
@@ -50,89 +52,32 @@ export default function ReadOnlyViewer({
   lineDecorators,
   onLineClick,
   onSelectionChange,
-  selection,
   className,
   initialVirtualBase,
   virtualBaseOutRef,
 }: ReadOnlyViewerProps) {
   const parentRef = useRef<HTMLDivElement>(null);
-  const [autoScroll, setAutoScroll] = useState(true);
-  const [newLinesCount, setNewLinesCount] = useState(0);
+  const charWidthRef = useRef(7.2);
+  const gutterWidthRef = useRef(0);
 
-  // ── Cache version counter ───────────────────────────────────────────────
+  // ── Cache version counter ────────────────────────────────────────────────
   // Bumped after every fetch completion or streaming append to trigger
   // a re-render so the virtualizer re-evaluates dataSource.getLine().
   const [, setCacheVersion] = useState(0);
-  const bumpCacheVersion = () => setCacheVersion((v) => v + 1);
-  const fetchGenRef = useRef(0);
+  const bumpCacheVersion = useCallback(() => setCacheVersion((v) => v + 1), []);
 
-  // Tracks whether the initial viewport fetch has been triggered for the
-  // current data source. Reset on sourceId change. Used to force the
-  // FetchScheduler on the first meaningful reportScroll.
-  const initialFetchDoneRef = useRef(false);
-
-  // ── Pending jump (scroll target beyond currently indexed range) ─────────
-  // Stored when scrollToLine targets a line not yet in the virtualizer's
-  // count (file still indexing). Retried by the effectiveCount effect below.
+  // ── Pending jump ─────────────────────────────────────────────────────────
+  // Stored when scrollToLine targets a line not yet in the virtualizer's count
+  // (file still indexing). Retried by the effectiveCount effect.
   const pendingJumpRef = useRef<{ line: number; seq: number } | null>(null);
 
-  // Reset when data source changes.
   useEffect(() => {
-    fetchGenRef.current++;
-    fetchInFlightRef.current = false;
-    initialFetchDoneRef.current = false;
     pendingJumpRef.current = null;
-    bumpCacheVersion();
   }, [dataSource.sourceId]);
 
-  // ── Large-file virtual base ────────────────────────────────────────────
-  const [virtualBase, setVirtualBase] = useState(0);
-  const virtualBaseRef = useRef(0);
-  const pendingScrollTarget = useRef<number | null>(null);
-
-  // Sync the current position out so LogViewer can capture it during render
-  // (before effects fire) when a session switch is about to happen.
-  if (virtualBaseOutRef) virtualBaseOutRef.current = virtualBase;
-
-  // Stable ref for the restore target — updated synchronously each render so
-  // the sourceId reset effect always reads the up-to-date prop value.
-  const initialVirtualBaseRef = useRef(initialVirtualBase ?? 0);
-  initialVirtualBaseRef.current = initialVirtualBase ?? 0;
-
-  // Reset the virtual window whenever a new data source is loaded.
-  // Uses initialVirtualBase to restore a previously-saved scroll position
-  // instead of always jumping to line 0.
-  useEffect(() => {
-    const base = initialVirtualBaseRef.current;
-    virtualBaseRef.current = base;
-    setVirtualBase(base);
-    pendingScrollTarget.current = null;
-  }, [dataSource.sourceId]);
-
-  const autoScrollRef = useRef(true);
-  const userScrollingDownRef = useRef(false);
-  const lastSetScrollTopRef = useRef(-1);
-
-  // ── Box selection state ─────────────────────────────────────────────────
-  const charWidthRef = useRef(7.2);
-  const gutterWidthRef = useRef(0);
-  const boxDragging = useRef(false);
-  const boxAnchor = useRef<{ line: number; col: number } | null>(null);
-  const [boxSel, setBoxSel] = useState<{
-    startLine: number; endLine: number; startCol: number; endCol: number;
-  } | null>(null);
-
-  // Re-enable auto-scroll when entering tail mode.
-  useEffect(() => {
-    if (tailMode) {
-      autoScrollRef.current = true;
-      setAutoScroll(true);
-      setNewLinesCount(0);
-      userScrollingDownRef.current = false;
-      virtualBaseRef.current = 0;
-      setVirtualBase(0);
-    }
-  }, [tailMode]);
+  // ── Virtual base management ──────────────────────────────────────────────
+  const { virtualBase, virtualBaseRef, setVirtualBase, pendingScrollTarget } =
+    useVirtualBase(dataSource.sourceId, initialVirtualBase, tailMode, virtualBaseOutRef);
 
   const totalLines = totalLineCount ?? dataSource.totalLines;
 
@@ -142,8 +87,21 @@ export default function ReadOnlyViewer({
   );
   useEffect(() => { gutterWidthRef.current = gutterWidth; }, [gutterWidth]);
 
-  const effectiveCount = Math.min(Math.max(0, totalLines - virtualBase), MAX_VIRTUAL_LINES);
+  // ── Scroll controls ──────────────────────────────────────────────────────
+  const {
+    autoScroll,
+    autoScrollRef,
+    newLinesCount,
+    liveTotalLines,
+    lastSetScrollTopRef,
+    resetAutoScroll,
+    disableAutoScroll,
+  } = useScrollControls(parentRef, tailMode, totalLines, dataSource, bumpCacheVersion);
 
+  const effectiveCount = Math.min(Math.max(0, totalLines - virtualBase), MAX_VIRTUAL_LINES);
+  const liveEffectiveCount = Math.min(Math.max(0, liveTotalLines - virtualBase), MAX_VIRTUAL_LINES);
+
+  // ── Virtualizer ──────────────────────────────────────────────────────────
   const virtualizer = useVirtualizer({
     count: effectiveCount,
     getScrollElement: () => parentRef.current,
@@ -153,7 +111,32 @@ export default function ReadOnlyViewer({
 
   const items = virtualizer.getVirtualItems();
 
-  // ── Char width measurement (once at mount) ─────────────────────────────
+  // ── Fetch scheduler ──────────────────────────────────────────────────────
+  const { schedulerRef } = useFetchScheduler(
+    dataSource, virtualBase, items, liveTotalLines, bumpCacheVersion,
+  );
+
+  // ── Selection manager ────────────────────────────────────────────────────
+  const {
+    selection,
+    handleLineClick: selHandleLineClick,
+    handlePointerDown,
+    handlePointerMove,
+    handlePointerUp,
+    clear: clearSelection,
+  } = useSelectionManager((n) => dataSource.getLine(n)?.raw);
+
+  // Clear selection when the data source changes (new session).
+  useEffect(() => {
+    clearSelection();
+  }, [dataSource.sourceId, clearSelection]);
+
+  // Notify parent of selection changes (read-only).
+  useEffect(() => {
+    onSelectionChange?.(selection);
+  }, [selection, onSelectionChange]);
+
+  // ── Char width measurement (once at mount) ────────────────────────────
   useEffect(() => {
     const span = document.createElement('span');
     Object.assign(span.style, {
@@ -169,7 +152,7 @@ export default function ReadOnlyViewer({
     if (w > 0) charWidthRef.current = w / 100;
   }, []);
 
-  // ── Alt key → crosshair cursor (no React state, no re-renders) ─────────
+  // ── Alt key → crosshair cursor (no React state, no re-renders) ──────────
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Alt') parentRef.current?.classList.add(styles.altMode);
@@ -185,95 +168,20 @@ export default function ReadOnlyViewer({
     };
   }, []);
 
-  // ── Scroll / interaction listeners ──────────────────────────────────────
-  useEffect(() => {
-    const el = parentRef.current;
-    if (!el) return;
-
-    const onWheel = (e: WheelEvent) => {
-      if (e.deltaY < 0) {
-        userScrollingDownRef.current = false;
-        autoScrollRef.current = false;
-        setAutoScroll(false);
-      } else if (e.deltaY > 0) {
-        userScrollingDownRef.current = true;
-      }
-    };
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (['ArrowUp', 'PageUp', 'Home'].includes(e.key)) {
-        userScrollingDownRef.current = false;
-        autoScrollRef.current = false;
-        setAutoScroll(false);
-      } else if (['ArrowDown', 'PageDown', 'End'].includes(e.key)) {
-        userScrollingDownRef.current = true;
-      }
-    };
-
-    const onScroll = () => {
-      const nearBottom =
-        el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_THRESHOLD;
-
-      if (nearBottom && !autoScrollRef.current && userScrollingDownRef.current) {
-        userScrollingDownRef.current = false;
-        autoScrollRef.current = true;
-        setAutoScroll(true);
-        setNewLinesCount(0);
-      }
-    };
-
-    el.addEventListener('wheel', onWheel, { passive: true });
-    el.addEventListener('keydown', onKeyDown);
-    el.addEventListener('scroll', onScroll, { passive: true });
-    return () => {
-      el.removeEventListener('wheel', onWheel);
-      el.removeEventListener('keydown', onKeyDown);
-      el.removeEventListener('scroll', onScroll);
-    };
-  }, []);
-
-  // ── Streaming: subscribe to appends ────────────────────────────────────
-  const [streamTotal, setStreamTotal] = useState(dataSource.totalLines);
-
-  useEffect(() => {
-    setStreamTotal(dataSource.totalLines);
-    if (!dataSource.onAppend) return;
-    const unsubscribe = dataSource.onAppend((_newLines, total) => {
-      // Lines are already in ViewCacheHandle via broadcastToSession().
-      // Just update total and trigger re-render.
-      setStreamTotal(total);
-      bumpCacheVersion();
-    });
-    return unsubscribe;
-  }, [dataSource]);
-
-  // tailMode: use streamTotal (updated by onAppend, faster than context propagation)
-  // file mode: use totalLines from prop (authoritative count from session context)
-  const liveTotalLines = tailMode ? streamTotal : totalLines;
-
-  // ── Auto-scroll to bottom when new streaming lines arrive ──────────────
-  const prevTotalRef = useRef(liveTotalLines);
-  useEffect(() => {
-    if (tailMode && !autoScrollRef.current) {
-      const delta = liveTotalLines - prevTotalRef.current;
-      if (delta > 0) setNewLinesCount((n) => n + delta);
-    }
-    prevTotalRef.current = liveTotalLines;
-  }, [liveTotalLines, tailMode]);
-
-  const liveEffectiveCount = Math.min(Math.max(0, liveTotalLines - virtualBase), MAX_VIRTUAL_LINES);
-
+  // ── Auto-scroll to bottom when new streaming lines arrive ────────────────
+  // Kept here (not in useScrollControls) because liveEffectiveCount depends
+  // on virtualBase which comes from useVirtualBase.
   useEffect(() => {
     if (!tailMode || !autoScrollRef.current || liveEffectiveCount === 0) return;
     const el = parentRef.current;
     if (!el) return;
 
-    // Drift detection
+    // Drift detection: if the element scrolled away from where we put it,
+    // the user is manually scrolling — disable auto-scroll.
     if (lastSetScrollTopRef.current >= 0) {
       const drift = Math.abs(el.scrollTop - lastSetScrollTopRef.current);
       if (drift > 2) {
-        autoScrollRef.current = false;
-        setAutoScroll(false);
+        disableAutoScroll();
         lastSetScrollTopRef.current = -1;
         return;
       }
@@ -284,275 +192,11 @@ export default function ReadOnlyViewer({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveEffectiveCount]);
 
-  // ── FetchScheduler-driven two-phase fetch (file and streaming) ─────────
-  const schedulerRef = useRef<FetchScheduler | null>(null);
-  const fetchInFlightRef = useRef(false);
-
+  // ── Ctrl+C copy handler for line and box selection ───────────────────────
   useEffect(() => {
-    schedulerRef.current = new FetchScheduler();
-    return () => {
-      schedulerRef.current?.dispose();
-      schedulerRef.current = null;
-    };
-  }, []);
-
-  useEffect(() => {
-    const scheduler = schedulerRef.current;
-    if (!scheduler) return;
-    // Reset on every rebind — ensures HMR / data source swap never leaves it stuck
-    fetchInFlightRef.current = false;
-
-    scheduler.onFetch((viewport: FetchRange, prefetch: FetchRange) => {
-      if (fetchInFlightRef.current) return;
-
-      // Check viewport for cache misses via dataSource.getLine() → ViewCacheHandle
-      let hasMiss = false;
-      for (let line = viewport.offset; line < viewport.offset + viewport.count; line++) {
-        if (!dataSource.getLine(line)) {
-          hasMiss = true;
-          break;
-        }
-      }
-      console.debug('[FetchScheduler] onFetch', { viewport, prefetch, hasMiss, sourceId: dataSource.sourceId });
-
-      if (!hasMiss) {
-        // Viewport cached. Try prefetch.
-        let hasPrefetchMiss = false;
-        for (let line = prefetch.offset; line < prefetch.offset + prefetch.count; line++) {
-          if (!dataSource.getLine(line)) {
-            hasPrefetchMiss = true;
-            break;
-          }
-        }
-        if (hasPrefetchMiss) {
-          fetchInFlightRef.current = true;
-          const gen = fetchGenRef.current;
-          Promise.resolve(dataSource.getLines(prefetch.offset, prefetch.count))
-            .then(() => {
-              if (gen !== fetchGenRef.current) return;
-              // Lines are now in ViewCacheHandle via dataSource.getLines().
-              bumpCacheVersion();
-            })
-            .catch(console.error)
-            .finally(() => { fetchInFlightRef.current = false; });
-        }
-        return;
-      }
-
-      // Phase 1: viewport fill
-      fetchInFlightRef.current = true;
-      const gen = fetchGenRef.current;
-      Promise.resolve(dataSource.getLines(viewport.offset, viewport.count))
-        .then(() => {
-          if (gen !== fetchGenRef.current) { fetchInFlightRef.current = false; return; }
-          bumpCacheVersion();
-
-          // Phase 2: directional prefetch
-          const pfGen = fetchGenRef.current;
-          Promise.resolve(dataSource.getLines(prefetch.offset, prefetch.count))
-            .then(() => {
-              if (pfGen !== fetchGenRef.current) return;
-              bumpCacheVersion();
-            })
-            .catch(console.error)
-            .finally(() => {
-              fetchInFlightRef.current = false;
-              // Re-check viewport after every completed fetch. If the viewport
-              // moved while the fetch was in-flight (e.g. programmatic scroll),
-              // the reportScroll call that fired during the in-flight window set
-              // dedup but was ignored by the fetchInFlightRef guard. forceFetch
-              // clears dedup so the current viewport position is re-evaluated.
-              schedulerRef.current?.forceFetch();
-            });
-        })
-        .catch((err) => {
-          console.error(err);
-          fetchInFlightRef.current = false;
-          schedulerRef.current?.forceFetch();
-        });
-    });
-
-    // Safety net: flush any pending ranges that reportScroll may have queued
-    // before this callback was bound (race between ResizeObserver timing and
-    // effect execution order). The setTimeout(0) defers to after the current
-    // React render + effects cycle so reportScroll has had a chance to fire.
-    const timer = setTimeout(() => { scheduler.forceFetch(); }, 0);
-
-    return () => { clearTimeout(timer); };
-  }, [dataSource]);
-
-  // Report scroll position to the scheduler whenever visible items change.
-  useEffect(() => {
-    if (items.length === 0) return;
-    const scheduler = schedulerRef.current;
-    if (!scheduler) return;
-
-    const first = items[0].index;
-    const last = items[items.length - 1].index;
-    const firstActual = virtualBase + first;
-    const lastActual = virtualBase + last;
-
-    scheduler.reportScroll(firstActual, lastActual, liveTotalLines);
-
-    // On the first reportScroll for a new data source, force the scheduler
-    // to bypass dedup. This handles edge cases where the initial fetch was
-    // silently skipped due to timing between ResizeObserver and effect order.
-    if (!initialFetchDoneRef.current) {
-      initialFetchDoneRef.current = true;
-      scheduler.forceFetch();
-    }
-  }, [items, dataSource, virtualBase, liveTotalLines]);
-
-  // Scroll to a specific line when requested.
-  useEffect(() => {
-    if (scrollToLine == null || scrollToLine < 0) return;
-    autoScrollRef.current = false;
-    setAutoScroll(false);
-    userScrollingDownRef.current = false;
-
-    const relIndex = scrollToLine - virtualBaseRef.current;
-    if (relIndex >= 0 && relIndex < MAX_VIRTUAL_LINES) {
-      // If the target is beyond the virtualizer's current count (file still
-      // indexing), defer until effectiveCount grows to include it.
-      if (relIndex >= effectiveCount) {
-        pendingJumpRef.current = { line: scrollToLine, seq: jumpSeq ?? 0 };
-        return;
-      }
-      pendingJumpRef.current = null;
-      virtualizer.scrollToIndex(relIndex, { align: 'center' });
-      schedulerRef.current?.forceFetch();
-    } else {
-      // scrollToLine is beyond MAX_VIRTUAL_LINES from current base — rebase
-      // the virtual window and defer the scroll.
-      // Do NOT clamp newBase by liveTotalLines: during progressive indexing
-      // liveTotalLines is tiny, which forces newBase=0. If virtualBase is
-      // already 0 that's a no-op and pendingScrollTarget is never consumed.
-      // Instead, use pendingJumpRef (retried by [effectiveCount]) so the
-      // scroll fires as soon as indexing reaches the target line.
-      const half = Math.floor(MAX_VIRTUAL_LINES / 2);
-      const newBase = Math.max(0, scrollToLine - half);
-      pendingScrollTarget.current = null;
-      virtualBaseRef.current = newBase;
-      setVirtualBase(newBase);
-      pendingJumpRef.current = { line: scrollToLine, seq: jumpSeq ?? 0 };
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scrollToLine, jumpSeq]);
-
-  // Retry a pending jump when effectiveCount grows to include the target.
-  // Handles the case where the user navigated to a section before that line
-  // was indexed (effectiveCount was too small to honour scrollToIndex).
-  useEffect(() => {
-    const pending = pendingJumpRef.current;
-    if (!pending) return;
-    const relIndex = pending.line - virtualBaseRef.current;
-    if (relIndex >= 0 && relIndex < effectiveCount) {
-      pendingJumpRef.current = null;
-      virtualizer.scrollToIndex(relIndex, { align: 'center' });
-      schedulerRef.current?.forceFetch();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveCount]);
-
-  // Deferred scroll after virtualBase change
-  useEffect(() => {
-    const target = pendingScrollTarget.current;
-    if (target == null) return;
-    const relIndex = target - virtualBaseRef.current;
-    if (relIndex >= 0 && relIndex < MAX_VIRTUAL_LINES) {
-      pendingScrollTarget.current = null;
-      virtualizer.scrollToIndex(relIndex, { align: 'center' });
-      schedulerRef.current?.forceFetch();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [virtualBase]);
-
-  const handleLineClick = useCallback(
-    (lineNum: number, e: React.MouseEvent) => {
-      if (e.altKey) return;
-
-      // Plain click after a drag-select: the user selected text within a line.
-      // Don't activate line selection — let the browser own the copy.
-      const hasTextSel = !!window.getSelection()?.toString();
-      if (hasTextSel && !e.shiftKey && !e.ctrlKey && !e.metaKey) return;
-
-      setBoxSel(null);
-      // Clear any browser text selection so Ctrl+C unambiguously hits our handler.
-      window.getSelection()?.removeAllRanges();
-
-      // Notify selection change if handler provided
-      if (onSelectionChange) {
-        const sel = selection;
-        if (e.shiftKey && sel?.anchor != null) {
-          const lo = Math.min(sel.anchor, lineNum);
-          const hi = Math.max(sel.anchor, lineNum);
-          const newSelected = new Set<number>();
-          for (let i = lo; i <= hi; i++) newSelected.add(i);
-          onSelectionChange({ anchor: sel.anchor, selected: newSelected, mode: 'line' });
-        } else if (e.ctrlKey || e.metaKey) {
-          const newSelected = new Set(sel?.selected);
-          if (newSelected.has(lineNum)) newSelected.delete(lineNum);
-          else newSelected.add(lineNum);
-          onSelectionChange({ anchor: lineNum, selected: newSelected, mode: 'line' });
-        } else {
-          onSelectionChange({ anchor: lineNum, selected: new Set([lineNum]), mode: 'line' });
-        }
-      }
-      onLineClick?.(lineNum);
-    },
-    [onLineClick, onSelectionChange, selection],
-  );
-
-  // ── Box selection pointer handlers ──────────────────────────────────────
-  const getLineColFromPointer = useCallback((clientX: number, clientY: number) => {
-    const el = parentRef.current!;
-    const rect = el.getBoundingClientRect();
-    const y = clientY - rect.top + el.scrollTop;
-    const x = clientX - rect.left;
-    const lineNum = virtualBaseRef.current + Math.max(0, Math.floor(y / LINE_HEIGHT));
-    const col = Math.max(0, Math.floor((x - gutterWidthRef.current) / charWidthRef.current));
-    return { lineNum, col };
-  }, []);
-
-  const handleViewerPointerDown = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!e.altKey) return;
-      e.preventDefault();
-      const { lineNum, col } = getLineColFromPointer(e.clientX, e.clientY);
-      boxDragging.current = true;
-      boxAnchor.current = { line: lineNum, col };
-      e.currentTarget.setPointerCapture(e.pointerId);
-      e.currentTarget.classList.add(styles.dragging);
-      onSelectionChange?.({ anchor: null, selected: new Set(), mode: 'line' });
-      setBoxSel({ startLine: lineNum, endLine: lineNum, startCol: col, endCol: col });
-    },
-    [getLineColFromPointer, onSelectionChange],
-  );
-
-  const handleViewerPointerMove = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!boxDragging.current || !boxAnchor.current) return;
-      const anchor = boxAnchor.current;
-      const { lineNum, col } = getLineColFromPointer(e.clientX, e.clientY);
-      setBoxSel({
-        startLine: Math.min(anchor.line, lineNum),
-        endLine: Math.max(anchor.line, lineNum),
-        startCol: Math.min(anchor.col, col),
-        endCol: Math.max(anchor.col, col),
-      });
-    },
-    [getLineColFromPointer],
-  );
-
-  const handleViewerPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    boxDragging.current = false;
-    boxAnchor.current = null;
-    e.currentTarget.classList.remove(styles.dragging);
-  }, []);
-
-  // ── Ctrl+C copy handler for line and box selection ─────────────────────
-  useEffect(() => {
-    const hasSelection = boxSel != null || (selection?.selected.size ?? 0) > 0;
+    const hasSelection = selection.mode === 'box'
+      ? selection.box != null
+      : selection.selected.size > 0;
     if (!hasSelection) return;
 
     // Robust clipboard write: async Clipboard API with synchronous execCommand fallback.
@@ -582,25 +226,110 @@ export default function ReadOnlyViewer({
       // let the browser handle the copy — don't intercept.
       if (window.getSelection()?.toString()) return;
       e.preventDefault();
-      if (boxSel) {
+      if (selection.mode === 'box' && selection.box) {
+        const { startLine, endLine, startCol, endCol } = selection.box;
         const rows: string[] = [];
-        for (let i = boxSel.startLine; i <= boxSel.endLine; i++) {
-          rows.push((dataSource.getLine(i)?.raw ?? '').slice(boxSel.startCol, boxSel.endCol));
+        for (let i = startLine; i <= endLine; i++) {
+          rows.push((dataSource.getLine(i)?.raw ?? '').slice(startCol, endCol));
         }
         writeClipboard(rows.join('\n'));
-      } else if (selection?.selected.size) {
+      } else if (selection.selected.size > 0) {
         const sorted = Array.from(selection.selected).sort((a, b) => a - b);
         const text = sorted
           .map((n) => dataSource.getLine(n)?.raw)
           .filter(Boolean)
           .join('\n');
-        writeClipboard(text);
+        writeClipboard(text as string);
       }
     };
+
     window.addEventListener('keydown', handleCopy);
     return () => window.removeEventListener('keydown', handleCopy);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selection, boxSel, dataSource]);
+  }, [selection, dataSource]);
+
+  // ── Scroll to a specific line when requested ─────────────────────────────
+  useEffect(() => {
+    if (scrollToLine == null || scrollToLine < 0) return;
+    autoScrollRef.current = false;
+    disableAutoScroll();
+
+    const relIndex = scrollToLine - virtualBaseRef.current;
+    if (relIndex >= 0 && relIndex < MAX_VIRTUAL_LINES) {
+      // If the target is beyond the virtualizer's current count (file still
+      // indexing), defer until effectiveCount grows to include it.
+      if (relIndex >= effectiveCount) {
+        pendingJumpRef.current = { line: scrollToLine, seq: jumpSeq ?? 0 };
+        return;
+      }
+      pendingJumpRef.current = null;
+      virtualizer.scrollToIndex(relIndex, { align: 'center' });
+      schedulerRef.current?.forceFetch();
+    } else {
+      // scrollToLine is beyond MAX_VIRTUAL_LINES from current base — rebase
+      // the virtual window and defer the scroll.
+      const half = Math.floor(MAX_VIRTUAL_LINES / 2);
+      const newBase = Math.max(0, scrollToLine - half);
+      pendingScrollTarget.current = null;
+      setVirtualBase(newBase);
+      pendingJumpRef.current = { line: scrollToLine, seq: jumpSeq ?? 0 };
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollToLine, jumpSeq]);
+
+  // Retry a pending jump when effectiveCount grows to include the target.
+  useEffect(() => {
+    const pending = pendingJumpRef.current;
+    if (!pending) return;
+    const relIndex = pending.line - virtualBaseRef.current;
+    if (relIndex >= 0 && relIndex < effectiveCount) {
+      pendingJumpRef.current = null;
+      virtualizer.scrollToIndex(relIndex, { align: 'center' });
+      schedulerRef.current?.forceFetch();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveCount]);
+
+  // Deferred scroll after virtualBase change.
+  useEffect(() => {
+    const target = pendingScrollTarget.current;
+    if (target == null) return;
+    const relIndex = target - virtualBaseRef.current;
+    if (relIndex >= 0 && relIndex < MAX_VIRTUAL_LINES) {
+      pendingScrollTarget.current = null;
+      virtualizer.scrollToIndex(relIndex, { align: 'center' });
+      schedulerRef.current?.forceFetch();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [virtualBase]);
+
+  // ── Coordinate conversion for pointer events ─────────────────────────────
+  const getLineColFromPointer = useCallback((clientX: number, clientY: number) => {
+    const el = parentRef.current!;
+    const rect = el.getBoundingClientRect();
+    const y = clientY - rect.top + el.scrollTop;
+    const x = clientX - rect.left;
+    const lineNum = virtualBaseRef.current + Math.max(0, Math.floor(y / LINE_HEIGHT));
+    const col = Math.max(0, Math.floor((x - gutterWidthRef.current) / charWidthRef.current));
+    return { lineNum, col };
+  }, []);
+
+  // ── Line click wrapper ────────────────────────────────────────────────────
+  const handleLineClick = useCallback(
+    (lineNum: number, e: React.MouseEvent) => {
+      if (e.altKey) return;
+
+      // Plain click after a drag-select: user selected text within a line.
+      // Don't activate line selection — let the browser own the copy.
+      const hasTextSel = !!window.getSelection()?.toString();
+      if (hasTextSel && !e.shiftKey && !e.ctrlKey && !e.metaKey) return;
+
+      window.getSelection()?.removeAllRanges();
+      selHandleLineClick(lineNum, e);
+      onLineClick?.(lineNum);
+    },
+    [selHandleLineClick, onLineClick],
+  );
 
   if (liveTotalLines === 0) {
     return (
@@ -618,10 +347,7 @@ export default function ReadOnlyViewer({
       {hasMoreAbove && (
         <button
           className={`${styles.navButton} ${styles.navTop}`}
-          onClick={() => {
-            virtualBaseRef.current = 0;
-            setVirtualBase(0);
-          }}
+          onClick={() => setVirtualBase(0)}
           title="Jump to beginning of file"
         >
           Line 1
@@ -630,16 +356,7 @@ export default function ReadOnlyViewer({
       {tailMode && !autoScroll && newLinesCount > 0 && (
         <button
           className={styles.newLinesBadge}
-          onClick={() => {
-            autoScrollRef.current = true;
-            setAutoScroll(true);
-            setNewLinesCount(0);
-            const el = parentRef.current;
-            if (el) {
-              el.scrollTop = el.scrollHeight;
-              lastSetScrollTopRef.current = el.scrollTop;
-            }
-          }}
+          onClick={resetAutoScroll}
         >
           {newLinesCount > 999 ? '999+' : newLinesCount} new line{newLinesCount !== 1 ? 's' : ''} below
         </button>
@@ -653,7 +370,6 @@ export default function ReadOnlyViewer({
               Math.max(0, liveTotalLines - MAX_VIRTUAL_LINES),
             );
             pendingScrollTarget.current = newBase;
-            virtualBaseRef.current = newBase;
             setVirtualBase(newBase);
           }}
           title="Continue to next section of file"
@@ -664,10 +380,23 @@ export default function ReadOnlyViewer({
       <div
         ref={parentRef}
         className={styles.viewer}
-        onPointerDown={handleViewerPointerDown}
-        onPointerMove={handleViewerPointerMove}
-        onPointerUp={handleViewerPointerUp}
-        onPointerCancel={handleViewerPointerUp}
+        onPointerDown={(e) => {
+          const { lineNum, col } = getLineColFromPointer(e.clientX, e.clientY);
+          handlePointerDown(lineNum, col, e);
+          if (e.altKey) e.currentTarget.classList.add(styles.dragging);
+        }}
+        onPointerMove={(e) => {
+          const { lineNum, col } = getLineColFromPointer(e.clientX, e.clientY);
+          handlePointerMove(lineNum, col, e);
+        }}
+        onPointerUp={(e) => {
+          handlePointerUp();
+          e.currentTarget.classList.remove(styles.dragging);
+        }}
+        onPointerCancel={(e) => {
+          handlePointerUp();
+          e.currentTarget.classList.remove(styles.dragging);
+        }}
       >
         <div
           style={{
@@ -680,7 +409,8 @@ export default function ReadOnlyViewer({
             const actualLineNum = virtualBase + virtualItem.index;
             const line = dataSource.getLine(actualLineNum);
             const isTarget = scrollToLine != null && actualLineNum === scrollToLine;
-            const isLineSelected = boxSel == null && (selection?.selected.has(actualLineNum) ?? false);
+            const isLineSelected =
+              selection.mode !== 'box' && selection.selected.has(actualLineNum);
             return (
               <div
                 key={virtualItem.key}
@@ -710,15 +440,15 @@ export default function ReadOnlyViewer({
               </div>
             );
           })}
-          {boxSel && boxSel.endCol > boxSel.startCol && (
+          {selection.mode === 'box' && selection.box && selection.box.endCol > selection.box.startCol && (
             <div
               className={styles.boxOverlay}
               style={{
                 position: 'absolute',
-                top: (boxSel.startLine - virtualBase) * LINE_HEIGHT,
-                height: (boxSel.endLine - boxSel.startLine + 1) * LINE_HEIGHT,
-                left: gutterWidthRef.current + boxSel.startCol * charWidthRef.current,
-                width: (boxSel.endCol - boxSel.startCol) * charWidthRef.current,
+                top: (selection.box.startLine - virtualBase) * LINE_HEIGHT,
+                height: (selection.box.endLine - selection.box.startLine + 1) * LINE_HEIGHT,
+                left: gutterWidthRef.current + selection.box.startCol * charWidthRef.current,
+                width: (selection.box.endCol - selection.box.startCol) * charWidthRef.current,
               }}
             />
           )}
