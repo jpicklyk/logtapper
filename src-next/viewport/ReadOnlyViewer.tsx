@@ -347,7 +347,10 @@ export default function ReadOnlyViewer({
       {hasMoreAbove && (
         <button
           className={`${styles.navButton} ${styles.navTop}`}
-          onClick={() => setVirtualBase(0)}
+          onClick={() => {
+            pendingScrollTarget.current = 0;
+            setVirtualBase(0);
+          }}
           title="Jump to beginning of file"
         >
           <span className={styles.navArrow}>↑</span>
