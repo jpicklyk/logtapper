@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, Channel } from '@tauri-apps/api/core';
 import type {
   LineRequest,
   LineWindow,
@@ -12,6 +12,7 @@ import type {
   RegistryEntry,
   DumpstateMetadata,
   AdbDevice,
+  AdbStreamEvent,
   AnonymizerConfig,
   AnonymizerTestResult,
   StateSnapshot,
@@ -45,12 +46,18 @@ export function startAdbStream(
   packageFilter?: string,
   activeProcessorIds: string[] = [],
   maxRawLines?: number,
+  onEvent?: (event: AdbStreamEvent) => void,
 ): Promise<LoadResult> {
+  const channel = new Channel<AdbStreamEvent>();
+  if (onEvent) {
+    channel.onmessage = onEvent;
+  }
   return invoke('start_adb_stream', {
     deviceId: deviceId ?? null,
     packageFilter: packageFilter ?? null,
     activeProcessorIds,
     maxRawLines: maxRawLines ?? null,
+    onEvent: channel,
   });
 }
 

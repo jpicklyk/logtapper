@@ -48,9 +48,6 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     setCurrentMatchIndex,
     setScrollToLine,
     setJumpSeq,
-    setStreamFilter: setStreamFilterCtx,
-    setTimeFilterStart: setTimeFilterStartCtx,
-    setTimeFilterEnd: setTimeFilterEndCtx,
   } = useViewerContext();
 
   // ---------------------------------------------------------------------------
@@ -118,15 +115,11 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     setSearch(null);
     setSearchSummary(null);
     setCurrentMatchIndex(0);
-    setStreamFilterCtx('');
-    setTimeFilterStartCtx('');
-    setTimeFilterEndCtx('');
     setScrollToLine(0);
     setJumpSeq((s) => s + 1);
   }, [
     cacheManager, refs.sessionRef,
     setSearch, setSearchSummary, setCurrentMatchIndex,
-    setStreamFilterCtx, setTimeFilterStartCtx, setTimeFilterEndCtx,
     setScrollToLine, setJumpSeq,
   ]);
 

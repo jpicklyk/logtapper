@@ -48,7 +48,7 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
   const isLoading = useIsLoadingForPane(pane.id);
   const { setFocusedPane, setStreamFilter, cancelStreamFilter } = useViewerActions();
   const { fetchLines } = useLogViewerActions(pane.id);
-  const { value: filterValue, scanning: filterScanning, filteredLineNums, parseError: filterParseError } = useStreamFilter();
+  const { value: filterValue, scanning: filterScanning, filteredLineNums, parseError: filterParseError } = useStreamFilter(pane.id);
 
   const handlePaneFocus = useCallback(() => {
     setFocusedPane(pane.id);

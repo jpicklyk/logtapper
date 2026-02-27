@@ -122,4 +122,4 @@ export {
 } from './selectors';
 
 // Re-export types
-export type { IndexingProgress } from './SessionContext';
+export type { IndexingProgress, FilterState } from './SessionContext';

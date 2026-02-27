@@ -170,14 +170,21 @@ export function useProcessorId(): string | null {
   return useViewerContext().processorId;
 }
 
-export function useStreamFilter(): {
+export function useStreamFilter(paneId: string): {
   value: string;
   scanning: boolean;
   filteredLineNums: number[] | null;
   parseError: string | null;
 } {
-  const { streamFilter, filterScanning, filteredLineNums, filterParseError } = useViewerContext();
-  return { value: streamFilter, scanning: filterScanning, filteredLineNums, parseError: filterParseError };
+  const { filterStateBySession, paneSessionMap } = useSessionContext();
+  const sessionId = paneSessionMap.get(paneId);
+  const state = sessionId ? filterStateBySession.get(sessionId) : undefined;
+  return {
+    value: state?.streamFilter ?? '',
+    scanning: state?.filterScanning ?? false,
+    filteredLineNums: state?.filteredLineNums ?? null,
+    parseError: state?.filterParseError ?? null,
+  };
 }
 
 export function useSearchQuery(): SearchQuery | null {

@@ -48,25 +48,19 @@ export function useSessionTabManager(
     setSearch,
     setSearchSummary,
     setCurrentMatchIndex,
-    setStreamFilter: setStreamFilterCtx,
-    setTimeFilterStart: setTimeFilterStartCtx,
-    setTimeFilterEnd: setTimeFilterEndCtx,
     setScrollToLine,
     setJumpPaneId,
     setJumpSeq,
   } = useViewerContext();
 
-  // Clear session-scoped viewer state when switching tabs (does not reset filter scan state).
+  // Clear session-scoped viewer state when switching tabs.
+  // Filter state is per-session in SessionContext — no reset needed here.
   const resetViewerState = useCallback(() => {
     setProcessorId(null);
     setSearch(null);
     setSearchSummary(null);
     setCurrentMatchIndex(0);
-    setStreamFilterCtx('');
-    setTimeFilterStartCtx('');
-    setTimeFilterEndCtx('');
-  }, [setProcessorId, setSearch, setSearchSummary, setCurrentMatchIndex,
-      setStreamFilterCtx, setTimeFilterStartCtx, setTimeFilterEndCtx]);
+  }, [setProcessorId, setSearch, setSearchSummary, setCurrentMatchIndex]);
 
   const closeSession = useCallback(async (paneId?: string, tabId?: string, sessionId?: string) => {
     const targetPaneId = paneId ?? focusedPaneId ?? DEFAULT_PANE_ID;

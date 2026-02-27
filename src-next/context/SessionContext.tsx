@@ -9,6 +9,24 @@ export interface IndexingProgress {
   done: boolean;
 }
 
+export interface FilterState {
+  streamFilter: string;
+  timeFilterStart: string;
+  timeFilterEnd: string;
+  filterScanning: boolean;
+  filteredLineNums: number[] | null;
+  filterParseError: string | null;
+}
+
+const DEFAULT_FILTER_STATE: FilterState = {
+  streamFilter: '',
+  timeFilterStart: '',
+  timeFilterEnd: '',
+  filterScanning: false,
+  filteredLineNums: null,
+  filterParseError: null,
+};
+
 // ── State ─────────────────────────────────────────────────────────────────────
 
 interface SessionState {
@@ -17,6 +35,7 @@ interface SessionState {
   loadingPaneIds: Set<string>;
   errorByPane: Map<string, string | null>;
   indexingProgressBySession: Map<string, IndexingProgress | null>;
+  filterStateBySession: Map<string, FilterState>;
   streamingSessionIds: Set<string>;
   focusedPaneId: string | null;
 }
@@ -27,6 +46,7 @@ const initialState: SessionState = {
   loadingPaneIds: new Set(),
   errorByPane: new Map(),
   indexingProgressBySession: new Map(),
+  filterStateBySession: new Map(),
   streamingSessionIds: new Set(),
   focusedPaneId: null,
 };
@@ -43,7 +63,10 @@ type SessionAction =
   | { type: 'pane:session-activated'; paneId: string; sessionId: string }
   | { type: 'indexing:progress'; sessionId: string; progress: IndexingProgress | null }
   | { type: 'streaming:changed'; sessionId: string; streaming: boolean }
-  | { type: 'pane:focused'; paneId: string | null };
+  | { type: 'pane:focused'; paneId: string | null }
+  | { type: 'filter:updated'; sessionId: string; patch: Partial<FilterState> }
+  | { type: 'filter:reset'; sessionId: string }
+  | { type: 'filter:append-matches'; sessionId: string; lineNums: number[] };
 
 // ── Reducer ───────────────────────────────────────────────────────────────────
 
@@ -62,12 +85,14 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       paneSessionMap.delete(action.paneId);
 
       // Session-level cleanup — only when no other pane references the session
-      let { sessions, indexingProgressBySession, streamingSessionIds } = state;
+      let { sessions, indexingProgressBySession, filterStateBySession, streamingSessionIds } = state;
       if (sessionId && ![...paneSessionMap.values()].includes(sessionId)) {
         sessions = new Map(sessions);
         sessions.delete(sessionId);
         indexingProgressBySession = new Map(indexingProgressBySession);
         indexingProgressBySession.delete(sessionId);
+        filterStateBySession = new Map(filterStateBySession);
+        filterStateBySession.delete(sessionId);
         if (streamingSessionIds.has(sessionId)) {
           streamingSessionIds = new Set(streamingSessionIds);
           streamingSessionIds.delete(sessionId);
@@ -85,7 +110,7 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
         errorByPane.delete(action.paneId);
       }
 
-      return { ...state, sessions, paneSessionMap, indexingProgressBySession, streamingSessionIds, loadingPaneIds, errorByPane };
+      return { ...state, sessions, paneSessionMap, indexingProgressBySession, filterStateBySession, streamingSessionIds, loadingPaneIds, errorByPane };
     }
 
     case 'session:updated': {
@@ -102,10 +127,12 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       sessions.delete(action.sessionId);
       const indexingProgressBySession = new Map(state.indexingProgressBySession);
       indexingProgressBySession.delete(action.sessionId);
+      const filterStateBySession = new Map(state.filterStateBySession);
+      filterStateBySession.delete(action.sessionId);
       const streamingSessionIds = state.streamingSessionIds.has(action.sessionId)
         ? new Set([...state.streamingSessionIds].filter(id => id !== action.sessionId))
         : state.streamingSessionIds;
-      return { ...state, sessions, indexingProgressBySession, streamingSessionIds };
+      return { ...state, sessions, indexingProgressBySession, filterStateBySession, streamingSessionIds };
     }
 
     case 'pane:session-activated': {
@@ -149,6 +176,32 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       if (state.focusedPaneId === action.paneId) return state;
       return { ...state, focusedPaneId: action.paneId };
 
+    case 'filter:updated': {
+      const current = state.filterStateBySession.get(action.sessionId) ?? DEFAULT_FILTER_STATE;
+      const updated = { ...current, ...action.patch };
+      return { ...state, filterStateBySession: new Map(state.filterStateBySession).set(action.sessionId, updated) };
+    }
+
+    case 'filter:reset': {
+      if (!state.filterStateBySession.has(action.sessionId)) return state;
+      const filterStateBySession = new Map(state.filterStateBySession);
+      filterStateBySession.delete(action.sessionId);
+      return { ...state, filterStateBySession };
+    }
+
+    case 'filter:append-matches': {
+      if (!action.lineNums.length) return state;
+      const current = state.filterStateBySession.get(action.sessionId) ?? DEFAULT_FILTER_STATE;
+      const prev = current.filteredLineNums ?? [];
+      return {
+        ...state,
+        filterStateBySession: new Map(state.filterStateBySession).set(action.sessionId, {
+          ...current,
+          filteredLineNums: [...prev, ...action.lineNums],
+        }),
+      };
+    }
+
     default:
       return state;
   }
@@ -163,6 +216,7 @@ export interface SessionContextValue {
   loadingPaneIds: Set<string>;
   errorByPane: Map<string, string | null>;
   indexingProgressBySession: Map<string, IndexingProgress | null>;
+  filterStateBySession: Map<string, FilterState>;
   streamingSessionIds: Set<string>;
   focusedPaneId: string | null;
 
@@ -178,6 +232,9 @@ export interface SessionContextValue {
   activateSessionForPane: (paneId: string, sessionId: string) => void;
   setIndexingProgress: (sessionId: string, progress: IndexingProgress | null) => void;
   setStreamingSession: (sessionId: string, streaming: boolean) => void;
+  setSessionFilter: (sessionId: string, patch: Partial<FilterState>) => void;
+  resetSessionFilter: (sessionId: string) => void;
+  appendSessionFilterMatches: (sessionId: string, lineNums: number[]) => void;
 }
 
 // ── Provider ──────────────────────────────────────────────────────────────────
@@ -236,6 +293,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     (paneId: string, sessionId: string) => dispatch({ type: 'pane:session-activated', paneId, sessionId }),
     [],
   );
+  const setSessionFilter = useCallback(
+    (sessionId: string, patch: Partial<FilterState>) => dispatch({ type: 'filter:updated', sessionId, patch }),
+    [],
+  );
+  const resetSessionFilter = useCallback(
+    (sessionId: string) => dispatch({ type: 'filter:reset', sessionId }),
+    [],
+  );
+  const appendSessionFilterMatches = useCallback(
+    (sessionId: string, lineNums: number[]) => dispatch({ type: 'filter:append-matches', sessionId, lineNums }),
+    [],
+  );
 
   const value = useMemo<SessionContextValue>(
     () => ({
@@ -249,6 +318,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       activateSessionForPane,
       setIndexingProgress,
       setStreamingSession,
+      setSessionFilter,
+      resetSessionFilter,
+      appendSessionFilterMatches,
     }),
     // Named methods are stable; the only thing that triggers a new context value is state changing.
     // eslint-disable-next-line react-hooks/exhaustive-deps

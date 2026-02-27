@@ -1,8 +1,11 @@
 use serde::Serialize;
 use std::collections::HashMap;
+use std::time::Duration;
+use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use tokio_stream::{wrappers::ReceiverStream, StreamExt as _};
 
 use crate::anonymizer::LogAnonymizer;
 use crate::commands::AppState;
@@ -63,6 +66,16 @@ pub struct AdbTrackerUpdate {
     pub session_id: String,
     pub tracker_id: String,
     pub transition_count: usize,
+}
+
+/// Typed channel event for ADB streaming — replaces high-frequency `app.emit()` calls.
+/// Serializes as a tagged union: `{ "event": "batch", "data": {...} }`.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase", tag = "event", content = "data")]
+pub enum AdbStreamEvent {
+    Batch(AdbBatch),
+    ProcessorUpdate(AdbProcessorUpdate),
+    StreamStopped(AdbStreamStopped),
 }
 
 // ---------------------------------------------------------------------------
@@ -139,7 +152,7 @@ fn parse_adb_devices(output: &str) -> Result<Vec<AdbDevice>, String> {
 /// Start streaming logcat from a connected ADB device.
 /// Creates a new session and spawns a background task that feeds lines into it.
 /// Returns immediately with an empty-session `LoadResult`; lines arrive via
-/// `adb-batch` events.
+/// the `on_event` channel.
 #[tauri::command]
 pub async fn start_adb_stream(
     state: State<'_, AppState>,
@@ -150,6 +163,7 @@ pub async fn start_adb_stream(
     // Maximum raw log lines to keep in the backend buffer; oldest evicted above this.
     // None defaults to 500,000.
     max_raw_lines: Option<u32>,
+    on_event: Channel<AdbStreamEvent>,
 ) -> Result<LoadResult, String> {
     // ── Resolve device ────────────────────────────────────────────────────────
     let serial = match device_id {
@@ -232,6 +246,7 @@ pub async fn start_adb_stream(
             package_filter,
             app_clone,
             max_lines,
+            on_event,
         )
         .await;
     });
@@ -548,6 +563,7 @@ pub async fn get_package_pids(
 // Background streaming task
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 async fn run_streaming_task(
     mut cancel: tokio::sync::oneshot::Receiver<()>,
     session_id: String,
@@ -556,6 +572,7 @@ async fn run_streaming_task(
     package_filter: Option<String>,
     app: AppHandle,
     max_raw_lines: usize,
+    on_event: Channel<AdbStreamEvent>,
 ) {
     // Build adb command.  -T 1 = replay the last 1 buffered entry then
     // stream new lines only, avoiding a full ring-buffer dump on connect.
@@ -580,13 +597,10 @@ async fn run_streaming_task(
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
-            let _ = app.emit(
-                "adb-stream-stopped",
-                AdbStreamStopped {
-                    session_id: session_id.clone(),
-                    reason: format!("Failed to spawn adb: {e}"),
-                },
-            );
+            let _ = on_event.send(AdbStreamEvent::StreamStopped(AdbStreamStopped {
+                session_id: session_id.clone(),
+                reason: format!("Failed to spawn adb: {e}"),
+            }));
             return;
         }
     };
@@ -594,13 +608,10 @@ async fn run_streaming_task(
     let stdout = match child.stdout.take() {
         Some(s) => s,
         None => {
-            let _ = app.emit(
-                "adb-stream-stopped",
-                AdbStreamStopped {
-                    session_id: session_id.clone(),
-                    reason: "Failed to capture adb stdout".to_string(),
-                },
-            );
+            let _ = on_event.send(AdbStreamEvent::StreamStopped(AdbStreamStopped {
+                session_id: session_id.clone(),
+                reason: "Failed to capture adb stdout".to_string(),
+            }));
             return;
         }
     };
@@ -617,7 +628,7 @@ async fn run_streaming_task(
 
     // Spawn a dedicated reader task to avoid cancellation-safety issues with
     // next_line() inside tokio::select!. Channel recv() IS cancellation-safe.
-    let (line_tx, mut line_rx) = tokio::sync::mpsc::channel::<String>(1024);
+    let (line_tx, line_rx) = tokio::sync::mpsc::channel::<String>(1024);
     tokio::spawn(async move {
         let mut reader = BufReader::new(stdout).lines();
         while let Ok(Some(line)) = reader.next_line().await {
@@ -625,57 +636,42 @@ async fn run_streaming_task(
                 break; // Main task dropped the receiver (cancelled)
             }
         }
-        // Sender drops here → main task sees None from line_rx.recv()
+        // Sender drops here → chunks_timeout flushes partial batch then yields None
     });
 
-    let mut buffer: Vec<String> = Vec::new();
-    let mut ticker = tokio::time::interval(tokio::time::Duration::from_millis(50));
-    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // chunks_timeout handles both the 100-line count trigger and the 50ms time
+    // trigger — no manual ticker or Vec buffer required.
+    // tokio::pin! is required because ChunksTimeout is not Unpin and select! needs
+    // to poll the future across loop iterations.
+    let batched = ReceiverStream::new(line_rx)
+        .chunks_timeout(100, Duration::from_millis(50));
+    tokio::pin!(batched);
 
     loop {
         tokio::select! {
-            msg = line_rx.recv() => {
-                match msg {
-                    Some(line) => {
-                        buffer.push(line);
-                        if buffer.len() >= 100 {
-                            flush_batch(&mut buffer, &session_id, &source_id, &app, max_raw_lines);
-                        }
+            batch = batched.next() => {
+                match batch {
+                    Some(lines) => {
+                        flush_batch(lines, &session_id, &source_id, &app, max_raw_lines, &on_event);
                     }
                     None => {
-                        // Reader task ended (EOF or device disconnect)
-                        if !buffer.is_empty() {
-                            flush_batch(&mut buffer, &session_id, &source_id, &app, max_raw_lines);
-                        }
-                        let _ = app.emit(
-                            "adb-stream-stopped",
-                            AdbStreamStopped {
-                                session_id: session_id.clone(),
-                                reason: "eof".to_string(),
-                            },
-                        );
+                        // Reader task ended (EOF or device disconnect); chunks_timeout
+                        // flushed any partial batch before yielding None.
+                        let _ = on_event.send(AdbStreamEvent::StreamStopped(AdbStreamStopped {
+                            session_id: session_id.clone(),
+                            reason: "eof".to_string(),
+                        }));
                         break;
                     }
                 }
             }
             _ = &mut cancel => {
-                if !buffer.is_empty() {
-                    flush_batch(&mut buffer, &session_id, &source_id, &app, max_raw_lines);
-                }
                 child.kill().await.ok();
-                let _ = app.emit(
-                    "adb-stream-stopped",
-                    AdbStreamStopped {
-                        session_id: session_id.clone(),
-                        reason: "user".to_string(),
-                    },
-                );
+                let _ = on_event.send(AdbStreamEvent::StreamStopped(AdbStreamStopped {
+                    session_id: session_id.clone(),
+                    reason: "user".to_string(),
+                }));
                 break;
-            }
-            _ = ticker.tick() => {
-                if !buffer.is_empty() {
-                    flush_batch(&mut buffer, &session_id, &source_id, &app, max_raw_lines);
-                }
             }
         }
     }
@@ -686,13 +682,14 @@ async fn run_streaming_task(
 // ---------------------------------------------------------------------------
 
 fn flush_batch(
-    buffer: &mut Vec<String>,
+    lines: Vec<String>,
     session_id: &str,
     source_id: &str,
     app: &AppHandle,
     max_raw_lines: usize,
+    on_event: &Channel<AdbStreamEvent>,
 ) {
-    if buffer.is_empty() {
+    if lines.is_empty() {
         return;
     }
 
@@ -716,9 +713,9 @@ fn flush_batch(
             .unwrap_or(0)
     };
 
-    // ── Step 2: Parse buffer lines with correct absolute line numbers ──────────
+    // ── Step 2: Parse batch lines with correct absolute line numbers ──────────
     let mut parsed: Vec<(String, ParsedLineMeta, ViewLine)> = Vec::new();
-    for (i, raw) in buffer.drain(..).enumerate() {
+    for (i, raw) in lines.into_iter().enumerate() {
         let line_num = first_new_line + i;
         let pmeta = parser
             .parse_meta(&raw, 0)
@@ -1008,21 +1005,21 @@ fn flush_batch(
             match state.stream_processor_state.lock() {
                 Ok(g) => g,
                 Err(_) => {
-                    emit_batch(app, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
+                    send_batch(on_event, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
                     return;
                 }
             };
         match sp_state.get(session_id) {
             Some(m) => m.keys().cloned().collect(),
             None => {
-                emit_batch(app, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
+                send_batch(on_event, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
                 return;
             }
         }
     };
 
     if proc_ids.is_empty() {
-        emit_batch(app, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
+        send_batch(on_event, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
         return;
     }
 
@@ -1031,7 +1028,7 @@ fn flush_batch(
         let procs = match state.processors.lock() {
             Ok(g) => g,
             Err(_) => {
-                emit_batch(app, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
+                send_batch(on_event, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
                 return;
             }
         };
@@ -1129,16 +1126,16 @@ fn flush_batch(
         }
     }
 
-    // ── Step 5: Emit events ────────────────────────────────────────────────────
-    emit_batch(app, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
+    // ── Step 5: Send events via Channel ───────────────────────────────────────
+    send_batch(on_event, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
 
     for update in proc_updates {
-        let _ = app.emit("adb-processor-update", update);
+        let _ = on_event.send(AdbStreamEvent::ProcessorUpdate(update));
     }
 }
 
-fn emit_batch(
-    app: &AppHandle,
+fn send_batch(
+    on_event: &Channel<AdbStreamEvent>,
     session_id: &str,
     lines: Vec<ViewLine>,
     total_lines: usize,
@@ -1146,17 +1143,14 @@ fn emit_batch(
     first_timestamp: Option<i64>,
     last_timestamp: Option<i64>,
 ) {
-    let _ = app.emit(
-        "adb-batch",
-        AdbBatch {
-            session_id: session_id.to_string(),
-            lines,
-            total_lines,
-            byte_count,
-            first_timestamp,
-            last_timestamp,
-        },
-    );
+    let _ = on_event.send(AdbStreamEvent::Batch(AdbBatch {
+        session_id: session_id.to_string(),
+        lines,
+        total_lines,
+        byte_count,
+        first_timestamp,
+        last_timestamp,
+    }));
 }
 
 // ---------------------------------------------------------------------------
@@ -1208,4 +1202,61 @@ pub fn save_live_capture(
     writer.flush().map_err(|e| format!("Flush error: {e}"))?;
 
     Ok(count)
+}
+
+// ---------------------------------------------------------------------------
+// Tests — chunks_timeout stream behaviour
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify that chunks_timeout yields a full batch when the count threshold
+    /// is reached before the time limit expires.
+    #[tokio::test]
+    async fn chunks_by_count() {
+        let (tx, rx) = tokio::sync::mpsc::channel::<String>(1024);
+        let stream = ReceiverStream::new(rx).chunks_timeout(3, Duration::from_millis(200));
+        tokio::pin!(stream);
+
+        for i in 0..3 {
+            tx.send(format!("line {i}")).await.unwrap();
+        }
+        let batch = stream.next().await.unwrap();
+        assert_eq!(batch.len(), 3);
+    }
+
+    /// Verify that chunks_timeout yields a partial batch when the time limit
+    /// fires before the count threshold is reached.
+    #[tokio::test]
+    async fn chunks_by_timeout() {
+        let (tx, rx) = tokio::sync::mpsc::channel::<String>(1024);
+        let stream = ReceiverStream::new(rx).chunks_timeout(100, Duration::from_millis(50));
+        tokio::pin!(stream);
+
+        tx.send("only one".to_string()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let batch = stream.next().await.unwrap();
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0], "only one");
+    }
+
+    /// Verify that when the sender drops mid-batch, the partial batch is
+    /// flushed before the stream yields None.
+    #[tokio::test]
+    async fn partial_batch_on_sender_drop() {
+        let (tx, rx) = tokio::sync::mpsc::channel::<String>(1024);
+        let stream = ReceiverStream::new(rx).chunks_timeout(100, Duration::from_millis(500));
+        tokio::pin!(stream);
+
+        tx.send("a".to_string()).await.unwrap();
+        tx.send("b".to_string()).await.unwrap();
+        drop(tx); // simulate EOF
+
+        let batch = stream.next().await.unwrap();
+        assert_eq!(batch, vec!["a", "b"]);
+        assert!(stream.next().await.is_none());
+    }
 }

@@ -161,6 +161,12 @@ export interface AdbStreamStopped {
   reason: string;
 }
 
+/** Discriminated union received via Channel<AdbStreamEvent>. */
+export type AdbStreamEvent =
+  | { event: 'batch';           data: AdbBatchPayload }
+  | { event: 'processorUpdate'; data: AdbProcessorUpdate }
+  | { event: 'streamStopped';   data: AdbStreamStopped };
+
 // ---------------------------------------------------------------------------
 // Dumpstate metadata (extracted from bugreport/dumpstate files)
 // ---------------------------------------------------------------------------

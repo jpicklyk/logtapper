@@ -10,12 +10,6 @@ interface ViewerState {
   /** Pane ID this jump targets, or null to target the focused/all panes. */
   jumpPaneId: string | null;
   processorId: string | null;
-  streamFilter: string;
-  timeFilterStart: string;
-  timeFilterEnd: string;
-  filterScanning: boolean;
-  filteredLineNums: number[] | null;
-  filterParseError: string | null;
 }
 
 interface ViewerContextValue extends ViewerState {
@@ -26,12 +20,6 @@ interface ViewerContextValue extends ViewerState {
   setJumpSeq: React.Dispatch<React.SetStateAction<number>>;
   setJumpPaneId: React.Dispatch<React.SetStateAction<string | null>>;
   setProcessorId: React.Dispatch<React.SetStateAction<string | null>>;
-  setStreamFilter: React.Dispatch<React.SetStateAction<string>>;
-  setTimeFilterStart: React.Dispatch<React.SetStateAction<string>>;
-  setTimeFilterEnd: React.Dispatch<React.SetStateAction<string>>;
-  setFilterScanning: React.Dispatch<React.SetStateAction<boolean>>;
-  setFilteredLineNums: React.Dispatch<React.SetStateAction<number[] | null>>;
-  setFilterParseError: React.Dispatch<React.SetStateAction<string | null>>;
 }
 
 const ViewerContext = createContext<ViewerContextValue | null>(null);
@@ -44,12 +32,6 @@ export function ViewerProvider({ children }: { children: ReactNode }) {
   const [jumpSeq, setJumpSeq] = useState(0);
   const [jumpPaneId, setJumpPaneId] = useState<string | null>(null);
   const [processorId, setProcessorId] = useState<string | null>(null);
-  const [streamFilter, setStreamFilter] = useState('');
-  const [timeFilterStart, setTimeFilterStart] = useState('');
-  const [timeFilterEnd, setTimeFilterEnd] = useState('');
-  const [filterScanning, setFilterScanning] = useState(false);
-  const [filteredLineNums, setFilteredLineNums] = useState<number[] | null>(null);
-  const [filterParseError, setFilterParseError] = useState<string | null>(null);
 
   const value = useMemo<ViewerContextValue>(() => ({
     search,
@@ -59,12 +41,6 @@ export function ViewerProvider({ children }: { children: ReactNode }) {
     jumpSeq,
     jumpPaneId,
     processorId,
-    streamFilter,
-    timeFilterStart,
-    timeFilterEnd,
-    filterScanning,
-    filteredLineNums,
-    filterParseError,
     setSearch,
     setSearchSummary,
     setCurrentMatchIndex,
@@ -72,15 +48,7 @@ export function ViewerProvider({ children }: { children: ReactNode }) {
     setJumpSeq,
     setJumpPaneId,
     setProcessorId,
-    setStreamFilter,
-    setTimeFilterStart,
-    setTimeFilterEnd,
-    setFilterScanning,
-    setFilteredLineNums,
-    setFilterParseError,
-  }), [search, searchSummary, currentMatchIndex, scrollToLine, jumpSeq, jumpPaneId,
-       processorId, streamFilter, timeFilterStart, timeFilterEnd,
-       filterScanning, filteredLineNums, filterParseError]);
+  }), [search, searchSummary, currentMatchIndex, scrollToLine, jumpSeq, jumpPaneId, processorId]);
 
   return (
     <ViewerContext.Provider value={value}>
