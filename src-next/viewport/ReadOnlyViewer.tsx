@@ -237,7 +237,7 @@ export default function ReadOnlyViewer({
 
   useEffect(() => {
     setStreamTotal(dataSource.totalLines);
-    if (!tailMode || !dataSource.onAppend) return;
+    if (!dataSource.onAppend) return;
     const unsubscribe = dataSource.onAppend((_newLines, total) => {
       // Lines are already in ViewCacheHandle via broadcastToSession().
       // Just update total and trigger re-render.
@@ -245,9 +245,10 @@ export default function ReadOnlyViewer({
       bumpCacheVersion();
     });
     return unsubscribe;
-  }, [dataSource, tailMode]);
+  }, [dataSource]);
 
-  // Use streamTotal for streaming, dataSource.totalLines for file mode
+  // tailMode: use streamTotal (updated by onAppend, faster than context propagation)
+  // file mode: use totalLines from prop (authoritative count from session context)
   const liveTotalLines = tailMode ? streamTotal : totalLines;
 
   // ── Auto-scroll to bottom when new streaming lines arrive ──────────────
@@ -283,7 +284,7 @@ export default function ReadOnlyViewer({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveEffectiveCount]);
 
-  // ── File-mode: FetchScheduler-driven two-phase fetch ───────────────────
+  // ── FetchScheduler-driven two-phase fetch (file and streaming) ─────────
   const schedulerRef = useRef<FetchScheduler | null>(null);
   const fetchInFlightRef = useRef(false);
 
@@ -302,7 +303,6 @@ export default function ReadOnlyViewer({
     fetchInFlightRef.current = false;
 
     scheduler.onFetch((viewport: FetchRange, prefetch: FetchRange) => {
-      if (tailMode) return; // streaming mode, skip file-fetch
       if (fetchInFlightRef.current) return;
 
       // Check viewport for cache misses via dataSource.getLine() → ViewCacheHandle
@@ -355,11 +355,20 @@ export default function ReadOnlyViewer({
               bumpCacheVersion();
             })
             .catch(console.error)
-            .finally(() => { fetchInFlightRef.current = false; });
+            .finally(() => {
+              fetchInFlightRef.current = false;
+              // Re-check viewport after every completed fetch. If the viewport
+              // moved while the fetch was in-flight (e.g. programmatic scroll),
+              // the reportScroll call that fired during the in-flight window set
+              // dedup but was ignored by the fetchInFlightRef guard. forceFetch
+              // clears dedup so the current viewport position is re-evaluated.
+              schedulerRef.current?.forceFetch();
+            });
         })
         .catch((err) => {
           console.error(err);
           fetchInFlightRef.current = false;
+          schedulerRef.current?.forceFetch();
         });
     });
 
@@ -367,19 +376,14 @@ export default function ReadOnlyViewer({
     // before this callback was bound (race between ResizeObserver timing and
     // effect execution order). The setTimeout(0) defers to after the current
     // React render + effects cycle so reportScroll has had a chance to fire.
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    if (!tailMode) {
-      timer = setTimeout(() => { scheduler.forceFetch(); }, 0);
-    }
+    const timer = setTimeout(() => { scheduler.forceFetch(); }, 0);
 
-    return () => {
-      if (timer !== null) clearTimeout(timer);
-    };
-  }, [dataSource, tailMode]);
+    return () => { clearTimeout(timer); };
+  }, [dataSource]);
 
   // Report scroll position to the scheduler whenever visible items change.
   useEffect(() => {
-    if (items.length === 0 || tailMode) return;
+    if (items.length === 0) return;
     const scheduler = schedulerRef.current;
     if (!scheduler) return;
 
@@ -418,12 +422,19 @@ export default function ReadOnlyViewer({
       virtualizer.scrollToIndex(relIndex, { align: 'center' });
       schedulerRef.current?.forceFetch();
     } else {
-      pendingJumpRef.current = null;
+      // scrollToLine is beyond MAX_VIRTUAL_LINES from current base — rebase
+      // the virtual window and defer the scroll.
+      // Do NOT clamp newBase by liveTotalLines: during progressive indexing
+      // liveTotalLines is tiny, which forces newBase=0. If virtualBase is
+      // already 0 that's a no-op and pendingScrollTarget is never consumed.
+      // Instead, use pendingJumpRef (retried by [effectiveCount]) so the
+      // scroll fires as soon as indexing reaches the target line.
       const half = Math.floor(MAX_VIRTUAL_LINES / 2);
-      const newBase = Math.max(0, Math.min(scrollToLine - half, Math.max(0, liveTotalLines - MAX_VIRTUAL_LINES)));
-      pendingScrollTarget.current = scrollToLine;
+      const newBase = Math.max(0, scrollToLine - half);
+      pendingScrollTarget.current = null;
       virtualBaseRef.current = newBase;
       setVirtualBase(newBase);
+      pendingJumpRef.current = { line: scrollToLine, seq: jumpSeq ?? 0 };
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scrollToLine, jumpSeq]);
