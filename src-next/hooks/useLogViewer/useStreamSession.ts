@@ -1,7 +1,7 @@
 import { useCallback, useRef, useEffect } from 'react';
 import type { AdbBatchPayload, AdbStreamEvent, SourceType } from '../../bridge/types';
 import { matchesFilter } from '../../../src/filter';
-import { startAdbStream, stopAdbStream } from '../../bridge/commands';
+import { startAdbStream, stopAdbStream, closeSession as closeSessionCmd } from '../../bridge/commands';
 import { onAdbStreamStopped } from '../../bridge/events';
 import { useSessionContext } from '../../context/SessionContext';
 import { loadSettings } from '../../hooks';
@@ -53,7 +53,7 @@ export function useStreamSession(
   const lastStreamParamsRef    = useRef<StreamParams | null>(null);
   // Stable ref to startStream so the reconnect timer (defined in useEffect)
   // always calls the latest version without a stale closure.
-  const startStreamRef         = useRef<(deviceId?: string, packageFilter?: string, activeProcessorIds?: string[], maxRawLines?: number) => Promise<void>>();
+  const startStreamRef         = useRef<(deviceId?: string, packageFilter?: string, activeProcessorIds?: string[], maxRawLines?: number, isReconnect?: boolean) => Promise<void>>();
   // Stable ref to scheduleReconnect so it can be set once in useEffect([])
   // and called from the channel/fallback handlers without re-creating them.
   const scheduleReconnectRef   = useRef<((params: StreamParams) => void) | null>(null);
@@ -108,6 +108,7 @@ export function useStreamSession(
           params.packageFilter,
           params.activeProcessorIds,
           params.maxRawLines,
+          true, // isReconnect — replace current tab in-place
         );
       }, RECONNECT_DELAY_MS);
     };
@@ -137,6 +138,9 @@ export function useStreamSession(
     packageFilter?: string,
     activeProcessorIds: string[] = [],
     maxRawLines?: number,
+    // Internal flag: when true (auto-reconnect), replace the current tab
+    // in-place instead of opening a new one alongside it.
+    isReconnect = false,
   ) => {
     // Cancel any pending reconnect timer before starting a new stream.
     if (reconnectTimerRef.current) {
@@ -154,10 +158,15 @@ export function useStreamSession(
     const targetPaneId = refs.focusedPaneIdRef.current ?? DEFAULT_PANE_ID;
     const tabId = crypto.randomUUID();
 
-    // If the pane already has a session, open the stream as a new tab alongside it.
-    // If the pane is empty, replace (isNewTab: false) and reset viewer state.
+    // For auto-reconnect: force replace (isNewTab=false) so the existing tab is
+    // reused rather than a duplicate tab being opened. Close the stopped session
+    // at the backend to avoid a resource leak.
     const previousSessionId = refs.paneSessionMapRef.current.get(targetPaneId);
-    const isNewTab = previousSessionId !== undefined;
+    const isNewTab = !isReconnect && previousSessionId !== undefined;
+
+    if (isReconnect && previousSessionId) {
+      closeSessionCmd(previousSessionId).catch(() => {});
+    }
 
     if (!isNewTab) {
       bus.emit('session:pre-load', { paneId: targetPaneId });
