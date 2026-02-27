@@ -5,6 +5,7 @@ import { ReadOnlyViewer, createCacheDataSource, sessionScrollPositions } from '.
 import { useViewCache, useCacheFocus, useDataSourceRegistry, useCacheManager } from '../../cache';
 import {
   useSessionForPane,
+  useIsStreamingForPane,
   useScrollTarget,
   useTrackerTransitions,
   useProcessorId,
@@ -27,7 +28,7 @@ const LogViewer = React.memo(function LogViewer({
   // Using useFocusedSession() here would release the cache handle whenever
   // focus moves to a pane without a session (e.g. Scratch), wiping all lines.
   const session = useSessionForPane(paneId);
-  const isStreaming = session?.isStreaming ?? false;
+  const isStreaming = useIsStreamingForPane(paneId);
   const totalLines = session?.totalLines ?? 0;
   const search = useSearchQuery();
   const cacheManager = useCacheManager();
