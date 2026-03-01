@@ -23,6 +23,7 @@ use crate::processors::transformer::engine::TransformerRun;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PipelineProgress {
+    pub session_id: String,
     pub processor_id: String,
     pub lines_processed: usize,
     pub total_lines: usize,
@@ -827,6 +828,7 @@ pub fn execute_pipeline(
             let _ = app.emit(
                 "pipeline-progress",
                 PipelineProgress {
+                    session_id: session_id.to_string(),
                     processor_id: proc_id.clone(),
                     lines_processed,
                     total_lines,

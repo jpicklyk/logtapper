@@ -385,6 +385,7 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
     const map: Record<string, PipelineProgress> = {};
     for (const id of pipelineChain) {
       map[id] = {
+        sessionId: sessionId ?? '',
         processorId: id,
         linesProcessed: progress.current,
         totalLines: progress.total,
@@ -520,8 +521,8 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
               </>
             )}
           </button>
-          {running && (
-            <button className={styles.stopBtn} onClick={pipeline.stop}>
+          {running && sessionId && (
+            <button className={styles.stopBtn} onClick={() => pipeline.stop(sessionId)}>
               Stop
             </button>
           )}

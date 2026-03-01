@@ -4,7 +4,7 @@ import { LogViewer } from '../LogViewer';
 import { ProcessorDashboard } from '../ProcessorDashboard';
 import { ScratchPad } from '../ScratchPad';
 import { StreamFilterBar } from '../StreamFilterBar';
-import { useSessionForPane, useIsLoadingForPane, useViewerActions, useStreamFilter } from '../../context';
+import { useSessionForPane, useIsLoadingForPane, useViewerActions, useStreamFilter, useFocusedSession } from '../../context';
 import { useLogViewerActions } from './useLogViewerActions';
 import styles from './PaneContent.module.css';
 
@@ -45,6 +45,7 @@ function EmptyDropZone() {
 const PaneContent = React.memo(function PaneContent({ pane }: Props) {
   // Use the pane's own session, not the global focused session.
   const session = useSessionForPane(pane.id);
+  const focusedSession = useFocusedSession();
   const isLoading = useIsLoadingForPane(pane.id);
   const { setFocusedPane, setStreamFilter, cancelStreamFilter } = useViewerActions();
   const { fetchLines } = useLogViewerActions(pane.id);
@@ -95,7 +96,7 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
       );
 
     case 'dashboard':
-      return session ? (
+      return focusedSession ? (
         <div onClick={handlePaneFocus} onFocus={handlePaneFocus} style={{ height: '100%' }}>
           <ProcessorDashboard />
         </div>

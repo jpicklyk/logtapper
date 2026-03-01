@@ -283,6 +283,7 @@ export interface MatchedLine {
 }
 
 export interface PipelineProgress {
+  sessionId: string;
   processorId: string;
   linesProcessed: number;
   totalLines: number;

@@ -1,7 +1,8 @@
+import { useMemo } from 'react';
 import type { LoadResult, SearchQuery, SearchSummary, ProcessorSummary, PipelineRunSummary } from '../bridge/types';
 import { useSessionContext, type IndexingProgress } from './SessionContext';
 import { useViewerContext } from './ViewerContext';
-import { usePipelineContext } from './PipelineContext';
+import { usePipelineContext, type SessionPipelineState } from './PipelineContext';
 import { useTrackerContext } from './TrackerContext';
 import { useActionsContext } from './ActionsContext';
 
@@ -102,17 +103,56 @@ export function useActiveProcessorIds(): string[] {
   return usePipelineContext().activeProcessorIds;
 }
 
+export function useProcessors(): ProcessorSummary[] {
+  return usePipelineContext().processors;
+}
+
+// ── Per-session pipeline selectors ──────────────────────────────────────────
+
+const EMPTY_SESSION_PIPELINE: SessionPipelineState = {
+  results: [], runCount: 0, running: false, progress: null, error: null,
+};
+
+function sessionPipelineState(map: Map<string, SessionPipelineState>, sessionId: string | null): SessionPipelineState {
+  if (!sessionId) return EMPTY_SESSION_PIPELINE;
+  return map.get(sessionId) ?? EMPTY_SESSION_PIPELINE;
+}
+
+/** Per-session results with referential stability. */
+export function usePipelineResultsForSession(sessionId: string | null): { results: PipelineRunSummary[]; runCount: number } {
+  const { resultsBySession } = usePipelineContext();
+  const sessionState = sessionPipelineState(resultsBySession, sessionId);
+  return useMemo(
+    () => ({ results: sessionState.results, runCount: sessionState.runCount }),
+    [sessionState.results, sessionState.runCount],
+  );
+}
+
+export function usePipelineRunningForSession(sessionId: string | null): boolean {
+  const { resultsBySession } = usePipelineContext();
+  return sessionPipelineState(resultsBySession, sessionId).running;
+}
+
+export function usePipelineProgressForSession(sessionId: string | null): { current: number; total: number } | null {
+  const { resultsBySession } = usePipelineContext();
+  return sessionPipelineState(resultsBySession, sessionId).progress;
+}
+
+export function usePipelineErrorForSession(sessionId: string | null): string | null {
+  const { resultsBySession } = usePipelineContext();
+  return sessionPipelineState(resultsBySession, sessionId).error;
+}
+
+// ── Backward-compat selectors (auto-resolve focused session) ────────────────
+
 export function usePipelineRunning(): boolean {
-  return usePipelineContext().running;
+  const session = useFocusedSession();
+  return usePipelineRunningForSession(session?.sessionId ?? null);
 }
 
 export function usePipelineResults(): { results: PipelineRunSummary[]; runCount: number } {
-  const { lastResults, runCount } = usePipelineContext();
-  return { results: lastResults, runCount };
-}
-
-export function useProcessors(): ProcessorSummary[] {
-  return usePipelineContext().processors;
+  const session = useFocusedSession();
+  return usePipelineResultsForSession(session?.sessionId ?? null);
 }
 
 // ---------------------------------------------------------------------------
@@ -192,11 +232,16 @@ export function useSearchQuery(): SearchQuery | null {
 }
 
 export function usePipelineProgress(): { current: number; total: number } | null {
-  return usePipelineContext().progress;
+  const session = useFocusedSession();
+  return usePipelineProgressForSession(session?.sessionId ?? null);
 }
 
 export function usePipelineError(): string | null {
-  return usePipelineContext().error;
+  const session = useFocusedSession();
+  const { resultsBySession, error: globalError } = usePipelineContext();
+  const sessionError = sessionPipelineState(resultsBySession, session?.sessionId ?? null).error;
+  // Per-session run errors take priority over global processor install/remove errors
+  return sessionError ?? globalError;
 }
 
 export function useTotalLines(): number {

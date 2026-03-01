@@ -38,19 +38,20 @@ export interface PipelineActions {
   /** @deprecated Use addToChain / removeFromChain instead */
   toggleProcessor: (id: string) => void;
   run: (sessionId: string, anonymize?: boolean) => Promise<void>;
-  stop: () => Promise<void>;
+  stop: (sessionId: string) => Promise<void>;
   getVars: (sessionId: string, processorId: string) => Promise<Record<string, unknown>>;
-  clearResults: () => void;
+  clearResults: (sessionId: string) => void;
 }
 
 export function usePipeline(): PipelineActions {
-  const { processors, pipelineChain, runCount, dispatch } = usePipelineContext();
+  const { processors, pipelineChain, resultsBySession, dispatch } = usePipelineContext();
 
-  // Track the focused pane so session:pre-load only clears results when the
-  // load targets the pane the user is currently viewing.
-  const { focusedPaneId } = useSessionContext();
+  // Track the focused pane so session:pre-load can resolve the outgoing sessionId.
+  const { focusedPaneId, paneSessionMap } = useSessionContext();
   const focusedPaneIdRef = useRef(focusedPaneId);
   focusedPaneIdRef.current = focusedPaneId;
+  const paneSessionMapRef = useRef(paneSessionMap);
+  paneSessionMapRef.current = paneSessionMap;
 
   // Refs for stable access in callbacks without stale closures
   const processorsRef = useRef(processors);
@@ -59,8 +60,8 @@ export function usePipeline(): PipelineActions {
   const pipelineChainRef = useRef(pipelineChain);
   useEffect(() => { pipelineChainRef.current = pipelineChain; }, [pipelineChain]);
 
-  const runCountRef = useRef(runCount);
-  useEffect(() => { runCountRef.current = runCount; }, [runCount]);
+  const resultsBySessionRef = useRef(resultsBySession);
+  resultsBySessionRef.current = resultsBySession;
 
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const adbProcUnlistenRef = useRef<UnlistenFn | null>(null);
@@ -83,7 +84,8 @@ export function usePipeline(): PipelineActions {
     let cancelled = false;
     listen<PipelineProgress>('pipeline-progress', (event) => {
       if (cancelled) return;
-      dispatch({ type: 'run:progress', current: event.payload.linesProcessed, total: event.payload.totalLines });
+      const { sessionId } = event.payload;
+      dispatch({ type: 'run:progress', sessionId, current: event.payload.linesProcessed, total: event.payload.totalLines });
     }).then((fn) => {
       if (cancelled) fn();
       else unlistenRef.current = fn;
@@ -97,22 +99,23 @@ export function usePipeline(): PipelineActions {
   // Subscribe to adb-processor-update events.
   // Results are updated immediately; runCount is throttled to at most once per 2s.
   const streamRunCountTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingRunCountBumpRef = useRef(false);
+  const pendingRunCountBumpRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     listen<AdbProcessorUpdate>('adb-processor-update', (event) => {
       if (cancelled) return;
-      const { processorId, matchedLines, emissionCount } = event.payload;
-      dispatch({ type: 'adb:results-update', processorId, matchedLines, emissionCount });
+      const { sessionId, processorId, matchedLines, emissionCount } = event.payload;
+      dispatch({ type: 'adb:results-update', sessionId, processorId, matchedLines, emissionCount });
       // Throttle runCount bump to at most once per 2s
-      pendingRunCountBumpRef.current = true;
+      pendingRunCountBumpRef.current = sessionId;
       if (!streamRunCountTimerRef.current) {
         streamRunCountTimerRef.current = setTimeout(() => {
           streamRunCountTimerRef.current = null;
-          if (pendingRunCountBumpRef.current) {
-            pendingRunCountBumpRef.current = false;
-            dispatch({ type: 'adb:run-count-bump' });
+          const pendingSessionId = pendingRunCountBumpRef.current;
+          if (pendingSessionId) {
+            pendingRunCountBumpRef.current = null;
+            dispatch({ type: 'adb:run-count-bump', sessionId: pendingSessionId });
           }
         }, 2000);
       }
@@ -130,17 +133,27 @@ export function usePipeline(): PipelineActions {
     };
   }, [dispatch]);
 
-  // Subscribe to session:pre-load to auto-clear results.
-  // Only clear when the load targets the focused pane — background-pane loads
-  // must not wipe the results the user is currently viewing.
+  // Subscribe to session:pre-load to auto-clear results for the outgoing session.
   useEffect(() => {
     const handlePreLoad = (e: { paneId: string }) => {
       if (e.paneId === focusedPaneIdRef.current) {
-        dispatch({ type: 'pre-load:cleared' });
+        const sessionId = paneSessionMapRef.current.get(e.paneId);
+        if (sessionId) {
+          dispatch({ type: 'pre-load:cleared', sessionId });
+        }
       }
     };
     bus.on('session:pre-load', handlePreLoad);
     return () => { bus.off('session:pre-load', handlePreLoad); };
+  }, [dispatch]);
+
+  // Subscribe to session:closed to clean up Map entry
+  useEffect(() => {
+    const handleSessionClosed = (e: { sessionId: string }) => {
+      dispatch({ type: 'session:removed', sessionId: e.sessionId });
+    };
+    bus.on('session:closed', handleSessionClosed);
+    return () => { bus.off('session:closed', handleSessionClosed); };
   }, [dispatch]);
 
   const loadProcessors = useCallback(async () => {
@@ -202,12 +215,13 @@ export function usePipeline(): PipelineActions {
     async (sessionId: string, anonymize = false) => {
       const chain = pipelineChainRef.current;
       if (chain.length === 0) return;
-      dispatch({ type: 'run:started' });
+      dispatch({ type: 'run:started', sessionId });
       try {
         const results = await runPipeline(sessionId, chain, anonymize);
         // Compute newRunCount before dispatching — the reducer will set runCount to this value.
-        const newRunCount = runCountRef.current + 1;
-        dispatch({ type: 'run:complete', results, newRunCount });
+        const prevState = resultsBySessionRef.current.get(sessionId);
+        const newRunCount = (prevState?.runCount ?? 0) + 1;
+        dispatch({ type: 'run:complete', sessionId, results, newRunCount });
 
         // Determine which processor types are active in this run
         const chainSet = new Set(chain);
@@ -220,22 +234,25 @@ export function usePipeline(): PipelineActions {
           hasCorrelators: activeProcessors.some((p) => p.processorType === 'correlator'),
         });
       } catch (e) {
-        dispatch({ type: 'run:failed', error: String(e) });
+        dispatch({ type: 'run:failed', sessionId, error: String(e) });
       }
     },
     [dispatch],
   );
 
-  const clearResults = useCallback(() => {
-    dispatch({ type: 'results:cleared' });
+  const clearResults = useCallback((sessionId: string) => {
+    dispatch({ type: 'results:cleared', sessionId });
     bus.emit('pipeline:cleared', undefined);
   }, [dispatch]);
 
-  const stop = useCallback(async () => {
+  // Note: the backend `stopPipeline()` sets a single global cancellation flag —
+  // it does not support per-session cancellation. The sessionId here only scopes
+  // the frontend state transition. True per-session stop requires backend changes.
+  const stop = useCallback(async (sessionId: string) => {
     try {
       await stopPipeline();
     } finally {
-      dispatch({ type: 'run:stopped' });
+      dispatch({ type: 'run:stopped', sessionId });
     }
   }, [dispatch]);
 

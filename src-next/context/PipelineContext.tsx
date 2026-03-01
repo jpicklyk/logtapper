@@ -5,6 +5,41 @@ import type { ProcessorSummary, PipelineRunSummary } from '../bridge/types';
 /** Processor IDs that must always remain at the tail of the chain. */
 const PINNED_TAIL_IDS = new Set(['__pii_anonymizer']);
 
+// ── Per-session pipeline state ──────────────────────────────────────────────
+
+export interface SessionPipelineState {
+  results: PipelineRunSummary[];
+  runCount: number;
+  running: boolean;
+  progress: { current: number; total: number } | null;
+  error: string | null;
+}
+
+const DEFAULT_SESSION_STATE: SessionPipelineState = {
+  results: [],
+  runCount: 0,
+  running: false,
+  progress: null,
+  error: null,
+};
+
+/** Returns the session's pipeline state or the stable default if absent. */
+function getOrDefault(map: Map<string, SessionPipelineState>, sessionId: string | null): SessionPipelineState {
+  if (!sessionId) return DEFAULT_SESSION_STATE;
+  return map.get(sessionId) ?? DEFAULT_SESSION_STATE;
+}
+
+/** Returns a new Map with the session entry updated. */
+function withSessionState(
+  map: Map<string, SessionPipelineState>,
+  sessionId: string,
+  updater: (prev: SessionPipelineState) => SessionPipelineState,
+): Map<string, SessionPipelineState> {
+  const next = new Map(map);
+  next.set(sessionId, updater(getOrDefault(map, sessionId)));
+  return next;
+}
+
 // ── State ─────────────────────────────────────────────────────────────────────
 
 interface PipelineState {
@@ -12,10 +47,9 @@ interface PipelineState {
   pipelineChain: string[];
   /** Always mirrors pipelineChain — kept as a separate field for selector stability. */
   activeProcessorIds: string[];
-  running: boolean;
-  progress: { current: number; total: number } | null;
-  lastResults: PipelineRunSummary[];
-  runCount: number;
+  /** Per-session pipeline results, keyed by sessionId. */
+  resultsBySession: Map<string, SessionPipelineState>;
+  /** Global error (processor install/remove failures — not per-session). */
   error: string | null;
 }
 
@@ -23,14 +57,16 @@ interface PipelineState {
 
 export type PipelineAction =
   // Run lifecycle — each action encodes a valid transition
-  | { type: 'run:started' }
-  | { type: 'run:progress'; current: number; total: number }
-  | { type: 'run:complete'; results: PipelineRunSummary[]; newRunCount: number }
-  | { type: 'run:failed'; error: string }
-  | { type: 'run:stopped' }
+  | { type: 'run:started'; sessionId: string }
+  | { type: 'run:progress'; sessionId: string; current: number; total: number }
+  | { type: 'run:complete'; sessionId: string; results: PipelineRunSummary[]; newRunCount: number }
+  | { type: 'run:failed'; sessionId: string; error: string }
+  | { type: 'run:stopped'; sessionId: string }
   // Results management
-  | { type: 'results:cleared' }
-  | { type: 'pre-load:cleared' }
+  | { type: 'results:cleared'; sessionId: string }
+  | { type: 'pre-load:cleared'; sessionId: string }
+  // Session cleanup
+  | { type: 'session:removed'; sessionId: string }
   // Processor library
   | { type: 'processors:loaded'; processors: ProcessorSummary[]; initialChain?: string[] }
   | { type: 'processor:installed'; processor: ProcessorSummary }
@@ -40,8 +76,8 @@ export type PipelineAction =
   | { type: 'chain:remove'; id: string }
   | { type: 'chain:reorder'; fromIndex: number; toIndex: number }
   // ADB streaming incremental updates
-  | { type: 'adb:results-update'; processorId: string; matchedLines: number; emissionCount: number }
-  | { type: 'adb:run-count-bump' }
+  | { type: 'adb:results-update'; sessionId: string; processorId: string; matchedLines: number; emissionCount: number }
+  | { type: 'adb:run-count-bump'; sessionId: string }
   // Error management
   | { type: 'error:set'; error: string }
   | { type: 'error:clear' };
@@ -52,10 +88,7 @@ const initialState: PipelineState = {
   processors: [],
   pipelineChain: [],
   activeProcessorIds: [],
-  running: false,
-  progress: null,
-  lastResults: [],
-  runCount: 0,
+  resultsBySession: new Map(),
   error: null,
 };
 
@@ -68,26 +101,69 @@ function pipelineReducer(state: PipelineState, action: PipelineAction): Pipeline
   switch (action.type) {
     // ── Run lifecycle ────────────────────────────────────────────────────────
     case 'run:started':
-      return { ...state, running: true, progress: null, error: null };
+      return {
+        ...state,
+        resultsBySession: withSessionState(state.resultsBySession, action.sessionId, (s) => ({
+          ...s, running: true, progress: null, error: null,
+        })),
+      };
 
     case 'run:progress':
-      return { ...state, progress: { current: action.current, total: action.total } };
+      return {
+        ...state,
+        resultsBySession: withSessionState(state.resultsBySession, action.sessionId, (s) => ({
+          ...s, progress: { current: action.current, total: action.total },
+        })),
+      };
 
     case 'run:complete':
-      return { ...state, running: false, progress: null, lastResults: action.results, runCount: action.newRunCount };
+      return {
+        ...state,
+        resultsBySession: withSessionState(state.resultsBySession, action.sessionId, (s) => ({
+          ...s, running: false, progress: null, results: action.results, runCount: action.newRunCount,
+        })),
+      };
 
     case 'run:failed':
-      return { ...state, running: false, error: action.error };
+      return {
+        ...state,
+        resultsBySession: withSessionState(state.resultsBySession, action.sessionId, (s) => ({
+          ...s, running: false, error: action.error,
+        })),
+      };
 
     case 'run:stopped':
-      return { ...state, running: false };
+      return {
+        ...state,
+        resultsBySession: withSessionState(state.resultsBySession, action.sessionId, (s) => ({
+          ...s, running: false,
+        })),
+      };
 
     // ── Results ──────────────────────────────────────────────────────────────
     case 'results:cleared':
-      return { ...state, lastResults: [], progress: null };
+      return {
+        ...state,
+        resultsBySession: withSessionState(state.resultsBySession, action.sessionId, (s) => ({
+          ...s, results: [], progress: null,
+        })),
+      };
 
     case 'pre-load:cleared':
-      return { ...state, lastResults: [], progress: null, error: null };
+      return {
+        ...state,
+        resultsBySession: withSessionState(state.resultsBySession, action.sessionId, (s) => ({
+          ...s, results: [], progress: null, error: null,
+        })),
+      };
+
+    // ── Session cleanup ───────────────────────────────────────────────────────
+    case 'session:removed': {
+      if (!state.resultsBySession.has(action.sessionId)) return state;
+      const next = new Map(state.resultsBySession);
+      next.delete(action.sessionId);
+      return { ...state, resultsBySession: next };
+    }
 
     // ── Processor library ────────────────────────────────────────────────────
     case 'processors:loaded': {
@@ -134,24 +210,32 @@ function pipelineReducer(state: PipelineState, action: PipelineAction): Pipeline
 
     // ── ADB streaming ────────────────────────────────────────────────────────
     case 'adb:results-update': {
-      const { processorId, matchedLines, emissionCount } = action;
-      const existing = state.lastResults.find((r) => r.processorId === processorId);
-      const without = state.lastResults.filter((r) => r.processorId !== processorId);
+      const { sessionId, processorId, matchedLines, emissionCount } = action;
       return {
         ...state,
-        lastResults: [
-          ...without,
-          {
+        resultsBySession: withSessionState(state.resultsBySession, sessionId, (s) => {
+          const idx = s.results.findIndex((r) => r.processorId === processorId);
+          const updated = {
             processorId,
-            matchedLines: (existing?.matchedLines ?? 0) + matchedLines,
-            emissionCount: (existing?.emissionCount ?? 0) + emissionCount,
-          },
-        ],
+            matchedLines: (idx >= 0 ? s.results[idx].matchedLines : 0) + matchedLines,
+            emissionCount: (idx >= 0 ? s.results[idx].emissionCount : 0) + emissionCount,
+          };
+          // Preserve array ordering: update in-place if exists, else append
+          const results = idx >= 0
+            ? s.results.map((r, i) => i === idx ? updated : r)
+            : [...s.results, updated];
+          return { ...s, results };
+        }),
       };
     }
 
     case 'adb:run-count-bump':
-      return { ...state, runCount: state.runCount + 1 };
+      return {
+        ...state,
+        resultsBySession: withSessionState(state.resultsBySession, action.sessionId, (s) => ({
+          ...s, runCount: s.runCount + 1,
+        })),
+      };
 
     // ── Error ────────────────────────────────────────────────────────────────
     case 'error:set':
@@ -197,3 +281,4 @@ export function usePipelineContext(): PipelineContextValue {
   }
   return ctx;
 }
+
