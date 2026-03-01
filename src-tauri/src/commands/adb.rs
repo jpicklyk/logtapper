@@ -10,7 +10,7 @@ use tokio_stream::{wrappers::ReceiverStream, StreamExt as _};
 use crate::anonymizer::LogAnonymizer;
 use crate::commands::AppState;
 use crate::commands::files::LoadResult;
-use crate::core::line::{LineMeta, LogLevel, ParsedLineMeta, ViewLine};
+use crate::core::line::{LineContext, LineMeta, LogLevel, ParsedLineMeta, ViewLine};
 use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;
 use crate::core::log_source::LogSource;
@@ -713,23 +713,30 @@ fn flush_batch(
             .unwrap_or(0)
     };
 
-    // ── Step 2: Parse batch lines with correct absolute line numbers ──────────
-    let mut parsed: Vec<(String, ParsedLineMeta, ViewLine)> = Vec::new();
+    // ── Step 2: Parse once — derive ParsedLineMeta, ViewLine, and LineContext
+    //    from a single parse_line call (eliminates redundant parse_meta) ────────
+    struct ParsedLine {
+        raw: String,
+        meta: ParsedLineMeta,
+        view_line: ViewLine,
+        ctx: Option<LineContext>, // cached for downstream reuse (trackers, reporters)
+    }
+
+    let mut parsed: Vec<ParsedLine> = Vec::with_capacity(lines.len());
     for (i, raw) in lines.into_iter().enumerate() {
         let line_num = first_new_line + i;
-        let pmeta = parser
-            .parse_meta(&raw, 0)
-            .unwrap_or_else(|| ParsedLineMeta {
-                level: LogLevel::Info,
-                tag: String::new(),
-                timestamp: 0,
+
+        if let Some(ctx) = parser.parse_line(&raw, source_id, line_num) {
+            // Derive ParsedLineMeta from LineContext (no separate parse_meta call)
+            let meta = ParsedLineMeta {
+                level: ctx.level,
+                tag: ctx.tag.to_string(),
+                timestamp: ctx.timestamp,
                 byte_offset: 0,
                 byte_len: raw.len(),
                 is_section_boundary: false,
-            });
-
-        let view_line = if let Some(ctx) = parser.parse_line(&raw, source_id, line_num) {
-            ViewLine {
+            };
+            let view_line = ViewLine {
                 line_num,
                 virtual_index: line_num,
                 raw: ctx.raw.to_string(),
@@ -743,26 +750,35 @@ fn flush_batch(
                 highlights: vec![],
                 matched_by: vec![],
                 is_context: false,
-            }
+            };
+            parsed.push(ParsedLine { raw, meta, view_line, ctx: Some(ctx) });
         } else {
-            ViewLine {
+            // Unparseable line — fallback metadata
+            let meta = ParsedLineMeta {
+                level: LogLevel::Info,
+                tag: String::new(),
+                timestamp: 0,
+                byte_offset: 0,
+                byte_len: raw.len(),
+                is_section_boundary: false,
+            };
+            let view_line = ViewLine {
                 line_num,
                 virtual_index: line_num,
                 raw: raw.clone(),
-                level: pmeta.level,
-                tag: pmeta.tag.clone(),
+                level: LogLevel::Info,
+                tag: String::new(),
                 message: raw.clone(),
-                timestamp: pmeta.timestamp,
+                timestamp: 0,
                 pid: 0,
                 tid: 0,
                 source_id: source_id.to_string(),
                 highlights: vec![],
                 matched_by: vec![],
                 is_context: false,
-            }
-        };
-
-        parsed.push((raw, pmeta, view_line));
+            };
+            parsed.push(ParsedLine { raw, meta, view_line, ctx: None });
+        }
     }
 
     if parsed.is_empty() {
@@ -783,17 +799,21 @@ fn flush_batch(
         }
     };
 
+    let mut pii_modified = false;
     if let Some(ref a) = anon {
-        for (_, _, vl) in &mut parsed {
-            let (anon_msg, _) = a.anonymize(&vl.message);
-            // Reconstruct raw: keep the logcat header prefix, replace message.
-            let prefix_len = vl.raw.len().saturating_sub(vl.message.len());
-            vl.raw = format!("{}{}", &vl.raw[..prefix_len], &anon_msg);
-            vl.message = anon_msg;
+        for pl in &mut parsed {
+            let (anon_msg, _) = a.anonymize(&pl.view_line.message);
+            if anon_msg != pl.view_line.message {
+                // Reconstruct raw: keep the logcat header prefix, replace message.
+                let prefix_len = pl.view_line.raw.len().saturating_sub(pl.view_line.message.len());
+                pl.view_line.raw = format!("{}{}", &pl.view_line.raw[..prefix_len], &anon_msg);
+                pl.view_line.message = anon_msg;
+                pii_modified = true;
+            }
         }
     }
 
-    // ── Step 2c: Apply user-defined transformers (if any active) ─────────────
+    // ── Step 2c: Apply built-in transformers / PII pipeline (if active) ──────
     {
         let transformer_ids: Vec<String> = {
             match state.stream_transformer_state.lock() {
@@ -812,59 +832,76 @@ fn flush_batch(
                         .collect(),
                     Err(e) => {
                         eprintln!("[adb flush_batch] processors lock poisoned (transformers): {e}");
-                        Vec::new() // skip transformers, don't abort the whole batch
+                        Vec::new()
                     }
                 }
             };
 
             if !transformer_defs.is_empty() {
-                // Build transformer runs seeded with continuous state
-                let mut transformer_runs: Vec<(String, crate::processors::transformer::engine::TransformerRun)> = Vec::new();
-                for (t_id, def) in &transformer_defs {
-                    let cont = {
-                        let mut st = match state.stream_transformer_state.lock() {
-                            Ok(g) => g,
-                            Err(_) => continue,
-                        };
-                        st.get_mut(session_id)
-                            .and_then(|m| m.remove(t_id.as_str()))
-                            .unwrap_or_default()
-                    };
-                    let run = crate::processors::transformer::engine::TransformerRun::new_seeded(def, cont);
-                    transformer_runs.push((t_id.clone(), run));
-                }
-
-                // Apply transformers to each line's parsed LineContext, then update ViewLine
-                for (i, (_, _, vl)) in parsed.iter_mut().enumerate() {
-                    if let Some(mut ctx) = parser.parse_line(&vl.raw, source_id, first_new_line + i) {
-                        let mut keep = true;
-                        for (_, run) in transformer_runs.iter_mut() {
-                            if !run.process_line(&mut ctx) {
-                                keep = false;
-                                break;
+                // Extract ALL transformer states in one lock (consolidated pattern)
+                let mut transformer_states: HashMap<String, crate::processors::transformer::types::ContinuousTransformerState> = {
+                    match state.stream_transformer_state.lock() {
+                        Ok(mut st) => {
+                            if let Some(inner) = st.get_mut(session_id) {
+                                transformer_ids.iter()
+                                    .filter_map(|id| inner.remove(id).map(|s| (id.clone(), s)))
+                                    .collect()
+                            } else {
+                                HashMap::new()
                             }
                         }
-                        if keep {
-                            // Apply transformed message back to ViewLine
-                            if *ctx.message != vl.message {
-                                let prefix_len = vl.raw.len().saturating_sub(vl.message.len());
-                                vl.raw = format!("{}{}", &vl.raw[..prefix_len], &ctx.message);
-                                vl.message = ctx.message.to_string();
-                            }
-                            vl.tag = ctx.tag.to_string();
-                        }
-                        // Note: we don't drop lines in streaming mode — transformers
-                        // only modify content, dropping would break the view stream.
+                        Err(_) => HashMap::new(),
                     }
+                };
+
+                // Build transformer runs seeded with extracted state
+                let mut transformer_runs: Vec<(String, crate::processors::transformer::engine::TransformerRun)> =
+                    transformer_defs.iter().map(|(t_id, def)| {
+                        let cont = transformer_states.remove(t_id).unwrap_or_default();
+                        let run = crate::processors::transformer::engine::TransformerRun::new_seeded(def, cont);
+                        (t_id.clone(), run)
+                    }).collect();
+
+                // Apply transformers using cached LineContext (no re-parse needed).
+                for pl in parsed.iter_mut() {
+                    let mut ctx = match pl.ctx {
+                        Some(ref c) if pii_modified => {
+                            // PII modified the message — patch the clone
+                            let mut tc = c.clone();
+                            tc.message = std::sync::Arc::from(pl.view_line.message.as_str());
+                            tc.raw = std::sync::Arc::from(pl.view_line.raw.as_str());
+                            tc
+                        }
+                        Some(ref c) => c.clone(),
+                        None => continue, // unparseable line — skip
+                    };
+
+                    let mut keep = true;
+                    for (_, run) in transformer_runs.iter_mut() {
+                        if !run.process_line(&mut ctx) {
+                            keep = false;
+                            break;
+                        }
+                    }
+                    if keep {
+                        if *ctx.message != pl.view_line.message {
+                            let prefix_len = pl.view_line.raw.len().saturating_sub(pl.view_line.message.len());
+                            pl.view_line.raw = format!("{}{}", &pl.view_line.raw[..prefix_len], &ctx.message);
+                            pl.view_line.message = ctx.message.to_string();
+                            pii_modified = true; // mark so reporters see the transformed version
+                        }
+                        pl.view_line.tag = ctx.tag.to_string();
+                    }
+                    // Note: we don't drop lines in streaming mode — transformers
+                    // only modify content, dropping would break the view stream.
                 }
 
-                // Re-insert continuous state
-                for (t_id, run) in transformer_runs {
-                    let new_cont = run.into_continuous_state(first_new_line + parsed.len());
-                    if let Ok(mut st) = state.stream_transformer_state.lock() {
-                        st.entry(session_id.to_string())
-                            .or_default()
-                            .insert(t_id, new_cont);
+                // Re-insert ALL transformer states in one lock
+                if let Ok(mut st) = state.stream_transformer_state.lock() {
+                    let inner = st.entry(session_id.to_string()).or_default();
+                    for (t_id, run) in transformer_runs {
+                        let new_cont = run.into_continuous_state(first_new_line + parsed.len());
+                        inner.insert(t_id, new_cont);
                     }
                 }
             }
@@ -886,15 +923,15 @@ fn flush_batch(
         };
 
         // Intern tags first (needs &mut session for tag_interner).
-        let metas: Vec<LineMeta> = parsed.iter().map(|(_, pmeta, _)| {
-            let tag_id = session.intern_tag(&pmeta.tag);
+        let metas: Vec<LineMeta> = parsed.iter().map(|pl| {
+            let tag_id = session.intern_tag(&pl.meta.tag);
             LineMeta {
-                level: pmeta.level,
+                level: pl.meta.level,
                 tag_id,
-                timestamp: pmeta.timestamp,
-                byte_offset: pmeta.byte_offset,
-                byte_len: pmeta.byte_len,
-                is_section_boundary: pmeta.is_section_boundary,
+                timestamp: pl.meta.timestamp,
+                byte_offset: pl.meta.byte_offset,
+                byte_len: pl.meta.byte_len,
+                is_section_boundary: pl.meta.is_section_boundary,
             }
         }).collect();
 
@@ -904,10 +941,10 @@ fn flush_batch(
             None => return,
         };
 
-        for ((raw, pmeta, _), meta) in parsed.iter().zip(metas.into_iter()) {
-            stream.add_bytes((raw.len() + 1) as u64);
-            stream.push_raw_line(raw.clone());
-            stream.maybe_set_first_ts(pmeta.timestamp);
+        for (pl, meta) in parsed.iter().zip(metas.into_iter()) {
+            stream.add_bytes((pl.raw.len() + 1) as u64);
+            stream.push_raw_line(pl.raw.clone());
+            stream.maybe_set_first_ts(pl.meta.timestamp);
             stream.push_meta(meta);
         }
 
@@ -931,9 +968,11 @@ fn flush_batch(
     };
 
     // Collect ViewLines for the batch event
-    let view_lines: Vec<ViewLine> = parsed.iter().map(|(_, _, vl)| vl.clone()).collect();
+    let view_lines: Vec<ViewLine> = parsed.iter().map(|pl| pl.view_line.clone()).collect();
 
-    // ── Step 3.5: StateTracker layer ──────────────────────────────────────────
+    // ── Step 3.5: StateTracker layer (consolidated lock pattern) ────────────
+    // Trackers see original (pre-PII) messages for capture regexes — use
+    // the cached ctx from the initial parse directly (no re-parse needed).
     {
         let tracker_ids: Vec<String> = {
             match state.stream_tracker_state.lock() {
@@ -950,56 +989,80 @@ fn flush_batch(
                         .collect(),
                     Err(e) => {
                         eprintln!("[adb flush_batch] processors lock poisoned (trackers): {e}");
-                        HashMap::new() // skip trackers, don't abort the whole batch
+                        HashMap::new()
                     }
                 }
             };
 
+            // Extract ALL tracker continuous states in one lock (2N → 2 lock acquisitions)
+            let mut tracker_states: HashMap<String, crate::processors::state_tracker::types::ContinuousTrackerState> = {
+                match state.stream_tracker_state.lock() {
+                    Ok(mut st) => {
+                        if let Some(inner) = st.get_mut(session_id) {
+                            tracker_ids.iter()
+                                .filter_map(|id| inner.remove(id).map(|s| (id.clone(), s)))
+                                .collect()
+                        } else {
+                            HashMap::new()
+                        }
+                    }
+                    Err(_) => HashMap::new(),
+                }
+            };
+
+            // Process all trackers (no locks held)
+            let mut tracker_updates: Vec<(String, crate::processors::state_tracker::types::ContinuousTrackerState, usize)> = Vec::new();
             for t_id in &tracker_ids {
                 let def = match tracker_defs.get(t_id) {
                     Some(d) => d,
                     None => continue,
                 };
 
-                // Extract continuous state (extract-use-reinsert)
-                let cont_state = {
-                    let mut st = match state.stream_tracker_state.lock() {
-                        Ok(g) => g,
-                        Err(_) => continue,
-                    };
-                    st.get_mut(session_id).and_then(|m| m.remove(t_id.as_str())).unwrap_or_default()
-                };
-
+                let cont_state = tracker_states.remove(t_id).unwrap_or_default();
                 let mut run = crate::processors::state_tracker::engine::StateTrackerRun::new_seeded(
                     t_id, def, cont_state,
                 );
 
-                for (i, (raw, _, _)) in parsed.iter().enumerate() {
-                    if let Some(ctx) = parser.parse_line(raw, source_id, first_new_line + i) {
-                        run.process_line(&ctx);
+                // Reuse cached LineContext — no re-parse needed
+                for pl in &parsed {
+                    if let Some(ref ctx) = pl.ctx {
+                        run.process_line(ctx);
                     }
                 }
 
                 let new_cont = run.into_continuous_state(first_new_line + parsed.len());
                 let transition_count = new_cont.transitions.len();
+                tracker_updates.push((t_id.clone(), new_cont, transition_count));
+            }
 
-                // Re-insert updated state
+            // Re-insert ALL tracker states in one lock, emit events after
+            if !tracker_updates.is_empty() {
+                // Collect event data before consuming the vec
+                let event_data: Vec<(String, usize)> = tracker_updates.iter()
+                    .map(|(t_id, _, tc)| (t_id.clone(), *tc))
+                    .collect();
+
                 if let Ok(mut st) = state.stream_tracker_state.lock() {
-                    st.entry(session_id.to_string())
-                        .or_default()
-                        .insert(t_id.clone(), new_cont);
+                    let inner = st.entry(session_id.to_string()).or_default();
+                    for (t_id, new_cont, _) in tracker_updates {
+                        inner.insert(t_id, new_cont); // moved, no clone
+                    }
                 }
 
-                let _ = app.emit("adb-tracker-update", AdbTrackerUpdate {
-                    session_id: session_id.to_string(),
-                    tracker_id: t_id.clone(),
-                    transition_count,
-                });
+                for (t_id, transition_count) in event_data {
+                    let _ = app.emit("adb-tracker-update", AdbTrackerUpdate {
+                        session_id: session_id.to_string(),
+                        tracker_id: t_id,
+                        transition_count,
+                    });
+                }
             }
         }
     }
 
-    // ── Step 4: Run active processors on new lines ────────────────────────────
+    // ── Step 4: Run active reporters on new lines (consolidated lock pattern)
+    // Reporters see post-PII/transform messages. Reuse cached LineContext,
+    // patching message/raw only if PII or transformers modified them.
     let proc_ids: Vec<String> = {
         let sp_state: std::sync::MutexGuard<'_, HashMap<String, HashMap<String, ContinuousRunState>>> =
             match state.stream_processor_state.lock() {
@@ -1038,33 +1101,60 @@ fn flush_batch(
             .collect()
     };
 
+    // Build reporter-ready contexts: if PII/transformer modified messages,
+    // patch the cached ctx (cheap Arc clone, no regex re-parse).
+    let reporter_ctxs: Option<Vec<Option<LineContext>>> = if pii_modified {
+        Some(parsed.iter().map(|pl| {
+            pl.ctx.as_ref().map(|c| {
+                let mut rc = c.clone();
+                rc.message = std::sync::Arc::from(pl.view_line.message.as_str());
+                rc.raw = std::sync::Arc::from(pl.view_line.raw.as_str());
+                rc
+            })
+        }).collect())
+    } else {
+        None
+    };
+
+    // Extract ALL reporter continuous states in one lock (2N → 2 lock acquisitions)
+    let mut proc_states: HashMap<String, ContinuousRunState> = {
+        match state.stream_processor_state.lock() {
+            Ok(mut sp) => {
+                if let Some(inner) = sp.get_mut(session_id) {
+                    defs.keys()
+                        .filter_map(|id| inner.remove(id).map(|s| (id.clone(), s)))
+                        .collect()
+                } else {
+                    HashMap::new()
+                }
+            }
+            Err(_) => {
+                send_batch(on_event, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
+                return;
+            }
+        }
+    };
+
+    // Process all reporters (no locks held)
     let mut proc_updates: Vec<AdbProcessorUpdate> = Vec::new();
+    let mut new_states: Vec<(String, ContinuousRunState)> = Vec::new();
 
     for (proc_id, def) in &defs {
-        // Extract existing continuous state (remove then re-insert)
-        let cont_state: ContinuousRunState = {
-            let mut sp_state: std::sync::MutexGuard<'_, HashMap<String, HashMap<String, ContinuousRunState>>> =
-                match state.stream_processor_state.lock() {
-                    Ok(g) => g,
-                    Err(_) => continue,
-                };
-            let inner: &mut HashMap<String, ContinuousRunState> =
-                match sp_state.get_mut(session_id) {
-                    Some(m) => m,
-                    None => continue,
-                };
-            match inner.remove(proc_id.as_str()) {
-                Some(s) => s,
-                None => continue,
-            }
+        let cont_state = match proc_states.remove(proc_id) {
+            Some(s) => s,
+            None => continue,
         };
 
-        // Create seeded run and process new lines
         let mut run = ProcessorRun::new_seeded(def, cont_state);
 
-        for (i, (_, _, vl)) in parsed.iter().enumerate() {
-            if let Some(ctx) = parser.parse_line(&vl.raw, source_id, first_new_line + i) {
-                run.process_line(&ctx);
+        // Reuse cached LineContext — no re-parse needed
+        for (i, pl) in parsed.iter().enumerate() {
+            let ctx_ref = match &reporter_ctxs {
+                Some(patched) => patched[i].as_ref(),
+                None => pl.ctx.as_ref(),
+            };
+            if let Some(ctx) = ctx_ref {
+                run.process_line(ctx);
             }
         }
 
@@ -1073,21 +1163,15 @@ fn flush_batch(
         let matched_lines = result.matched_line_nums.len();
         let emission_count = result.emissions.len();
 
-        // Store results in pipeline_results (best effort — streaming results accumulate)
+        // Store results in pipeline_results (best effort)
         if let Ok(mut pr) = state.pipeline_results.lock() {
             pr.entry(session_id.to_string())
                 .or_default()
                 .insert(proc_id.clone(), result);
         }
 
-        // Save updated continuous state (always — this drives the next batch)
         let new_state = run.into_continuous_state(total_lines, true);
-        if let Ok(mut sp_state) = state.stream_processor_state.lock() {
-            sp_state
-                .entry(session_id.to_string())
-                .or_default()
-                .insert(proc_id.clone(), new_state);
-        }
+        new_states.push((proc_id.clone(), new_state));
 
         proc_updates.push(AdbProcessorUpdate {
             session_id: session_id.to_string(),
@@ -1095,6 +1179,14 @@ fn flush_batch(
             matched_lines,
             emission_count,
         });
+    }
+
+    // Re-insert ALL reporter states in one lock
+    if let Ok(mut sp_state) = state.stream_processor_state.lock() {
+        let inner = sp_state.entry(session_id.to_string()).or_default();
+        for (id, new_state) in new_states {
+            inner.insert(id, new_state);
+        }
     }
 
     // ── Step 4b: Re-insert anonymizer and persist PII mappings ───────────────
@@ -1113,7 +1205,16 @@ fn flush_batch(
     }
 
     // ── Step 4c: Evaluate active watches on new lines ──────────────────────────
-    let watch_results = crate::commands::watch::evaluate_watches(state, session_id, &parsed);
+    let watch_refs: Vec<crate::commands::watch::WatchLineRef<'_>> = parsed.iter()
+        .map(|pl| crate::commands::watch::WatchLineRef {
+            raw: &pl.view_line.raw,
+            tag: &pl.view_line.tag,
+            level: pl.meta.level,
+            timestamp: pl.meta.timestamp,
+            pid: pl.view_line.pid,
+        })
+        .collect();
+    let watch_results = crate::commands::watch::evaluate_watches(state, session_id, &watch_refs);
     if !watch_results.is_empty() {
         use crate::core::watch::WatchMatchEvent;
         for (watch_id, new_matches, total_matches) in &watch_results {

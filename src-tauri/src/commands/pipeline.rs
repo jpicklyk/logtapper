@@ -585,7 +585,7 @@ pub fn execute_pipeline(
         .map_err(|_| "Anonymizer config lock poisoned")?
         .clone();
 
-    // ── Initialize transformer runs ──────────────────────────────────────────
+    // ── PII pre-processing step (built-in transformer) ──────────────────────
     let mut transformer_runs: Vec<TransformerRun> = transformer_defs.iter()
         .map(|(_, def)| TransformerRun::new_with_anonymizer_config(def, &anonymizer_config))
         .collect();
@@ -725,6 +725,8 @@ pub fn execute_pipeline(
             .collect();
 
         // ── Save pre-transform messages for state tracker processing ─────────
+        // When PII anonymization is active, state trackers need the original
+        // (pre-anonymized) messages for their capture regexes.
         let pre_transform_msgs: HashMap<usize, Arc<str>> =
             if !transformer_defs.is_empty() && !tracker_defs.is_empty() {
                 parsed_chunk
@@ -735,7 +737,7 @@ pub fn execute_pipeline(
                 HashMap::new()
             };
 
-        // ── Layer 1: Transformers ────────────────────────────────────────────
+        // ── PII pre-processing (built-in transformer) ───────────────────────
         if !transformer_defs.is_empty() {
             for line_opt in parsed_chunk.iter_mut() {
                 if let Some(line) = line_opt.as_mut() {
@@ -757,9 +759,9 @@ pub fn execute_pipeline(
         let enriched_chunk: Vec<crate::core::line::LineContext> =
             parsed_chunk.into_iter().flatten().collect();
 
-        // ── Prepare pre-transform messages for state trackers ──────────────
-        // State trackers need raw (pre-transform) messages for capture regexes,
-        // while reporters need post-transform messages. Build both views upfront.
+        // ── Prepare pre-anonymization messages for state trackers ────────────
+        // State trackers need raw (pre-PII) messages for capture regexes,
+        // while reporters need post-anonymization messages. Build both views upfront.
         let tracker_chunk: Vec<crate::core::line::LineContext> =
             if !tracker_defs.is_empty() && !pre_transform_msgs.is_empty() {
                 enriched_chunk.iter().map(|line| {
@@ -834,7 +836,7 @@ pub fn execute_pipeline(
         }
     }
 
-    // ── Collect PII forward mappings from transformer runs ───────────────────
+    // ── Collect PII forward mappings from PII pre-processing ────────────────
     if !transformer_defs.is_empty() {
         forward_pii = transformer_runs.iter()
             .flat_map(|r| r.get_pii_mappings())

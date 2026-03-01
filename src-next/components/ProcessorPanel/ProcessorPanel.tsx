@@ -110,12 +110,15 @@ const McpStatusWidget = React.memo(function McpStatusWidget() {
 // ── Type metadata ────────────────────────────────────────────────────────────
 
 const PROC_TYPE_META: Record<string, [string, string]> = {
-  transformer: ['Transformer', styles.typeTransformer],
   reporter: ['Reporter', styles.typeReporter],
   state_tracker: ['StateTracker', styles.typeTracker],
   correlator: ['Correlator', styles.typeCorrelator],
   annotator: ['Annotator', styles.typeAnnotator],
 };
+
+// PII anonymizer is the only transformer — show a dedicated badge instead
+// of the generic "Transformer" label.
+const PII_TYPE_META: [string, string] = ['PII', styles.typeTransformer];
 
 const PROC_TYPE_ACCENT: Record<string, string> = {
   transformer: '#2dd4bf',
@@ -168,7 +171,7 @@ function StatLine({
     return <div className={styles.nodeStat}>{result.matchedLines.toLocaleString()} transitions</div>;
   }
   if (processorType === 'transformer') {
-    return <div className={styles.nodeStat}>{result.matchedLines.toLocaleString()} lines passed</div>;
+    return <div className={styles.nodeStat}>PII anonymization active</div>;
   }
   return (
     <div className={styles.nodeStat}>
@@ -210,7 +213,8 @@ function ChainNode({
     '--proc-accent': PROC_TYPE_ACCENT[processorType] ?? '#58a6ff',
   } as React.CSSProperties;
 
-  const [typeLabel, typeBadgeClass] = PROC_TYPE_META[processorType] ?? ['Unknown', ''];
+  const [typeLabel, typeBadgeClass] = (PINNED_TAIL_IDS.has(id) ? PII_TYPE_META : null)
+    ?? PROC_TYPE_META[processorType] ?? ['Unknown', ''];
 
   return (
     <div
@@ -262,7 +266,8 @@ function PinnedChainNode({
     '--proc-accent': PROC_TYPE_ACCENT[processorType] ?? '#58a6ff',
   } as React.CSSProperties;
 
-  const [typeLabel, typeBadgeClass] = PROC_TYPE_META[processorType] ?? ['Unknown', ''];
+  const [typeLabel, typeBadgeClass] = (PINNED_TAIL_IDS.has(id) ? PII_TYPE_META : null)
+    ?? PROC_TYPE_META[processorType] ?? ['Unknown', ''];
 
   return (
     <>

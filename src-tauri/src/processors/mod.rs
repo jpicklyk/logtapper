@@ -180,6 +180,13 @@ impl AnyProcessor {
                 ProcessorKind::Reporter(def)
             }
             "transformer" => {
+                // Only built-in transformers (id prefix `__`) are allowed.
+                // User-created transformers add complexity for no real-world value;
+                // the only transformer is the built-in PII anonymizer.
+                if !meta.id.starts_with("__") {
+                    return Err("Transformer processors cannot be created by users. \
+                                Use reporter or state_tracker instead.".into());
+                }
                 let mut def: TransformerDef = serde_yaml::from_str(yaml)
                     .map_err(|e| format!("Transformer YAML parse error: {e}"))?;
                 def.prepare_tag_sets();

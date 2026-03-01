@@ -93,10 +93,19 @@ pub fn list_watches(
 /// Evaluate all active watches for a session against a batch of new lines.
 /// Called from flush_batch. Returns a list of (watch_id, new_match_count, total_matches)
 /// for watches that found new matches.
+/// Lightweight view into a parsed line for watch evaluation (avoids cloning).
+pub struct WatchLineRef<'a> {
+    pub raw: &'a str,
+    pub tag: &'a str,
+    pub level: crate::core::line::LogLevel,
+    pub timestamp: i64,
+    pub pid: i32,
+}
+
 pub fn evaluate_watches(
     state: &AppState,
     session_id: &str,
-    lines: &[(String, crate::core::line::ParsedLineMeta, crate::core::line::ViewLine)],
+    lines: &[WatchLineRef<'_>],
 ) -> Vec<(String, u32, u32)> {
     use crate::core::filter::line_matches_criteria;
 
@@ -117,14 +126,14 @@ pub fn evaluate_watches(
         }
 
         let mut new_matches = 0u32;
-        for (_, pmeta, vl) in lines {
+        for wl in lines {
             if line_matches_criteria(
                 &watch.criteria,
-                &vl.raw,
-                pmeta.level,
-                &vl.tag,
-                pmeta.timestamp,
-                vl.pid,
+                wl.raw,
+                wl.level,
+                wl.tag,
+                wl.timestamp,
+                wl.pid,
                 watch.compiled_regex.as_ref(),
             ) {
                 new_matches += 1;

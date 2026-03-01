@@ -227,6 +227,7 @@ export interface ProcessorSummary {
   description: string;
   tags: string[];
   builtin: boolean;  // true for built-in processors (id starts with __)
+  // 'transformer' is reserved for built-in processors only (e.g. __pii_anonymizer)
   processorType: 'transformer' | 'reporter' | 'state_tracker' | 'correlator' | 'annotator';
   group: string | null;
   /** Var declarations from the YAML (reporters only; empty for other types). */

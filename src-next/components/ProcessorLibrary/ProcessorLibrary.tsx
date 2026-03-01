@@ -12,19 +12,19 @@ type GroupBy = 'tag' | 'type';
 type InstallStatus = 'idle' | 'installing' | 'installed' | 'error';
 
 const PROC_TYPE_LABELS: Record<string, string> = {
-  transformer: 'Transformer',
   reporter: 'Reporter',
   state_tracker: 'StateTracker',
   correlator: 'Correlator',
   annotator: 'Annotator',
+  transformer: 'PII', // reserved for built-in PII anonymizer only
 };
 
 const PROC_TYPE_BADGE_CLASS: Record<string, string> = {
-  transformer: css.typeTransformer,
   reporter: css.typeReporter,
   state_tracker: css.typeTracker,
   correlator: css.typeCorrelator,
   annotator: css.typeCorrelator,
+  transformer: css.typeTransformer, // reserved for built-in PII anonymizer only
 };
 
 function groupByKey<T>(items: T[], keyFn: (item: T) => string): Map<string, T[]> {
