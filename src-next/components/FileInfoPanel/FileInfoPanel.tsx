@@ -1,6 +1,9 @@
-import React, { memo, useEffect, useRef } from 'react';
+import React, { memo, useCallback, useEffect, useRef } from 'react';
 import clsx from 'clsx';
-import type { DumpstateMetadata } from '../../bridge/types';
+import {
+  FileText, Smartphone, Clock, HardDrive, Layers, Hash,
+} from 'lucide-react';
+import type { DumpstateMetadata, SourceType } from '../../bridge/types';
 import type { IndexingProgress } from '../../context';
 import styles from './FileInfoPanel.module.css';
 import { getSectionDescription } from './sectionDescriptions';
@@ -26,13 +29,41 @@ interface FileInfoPanelProps {
   indexingProgress?: IndexingProgress | null;
 }
 
+// ── Formatters ───────────────────────────────────────────────────────────────
+
 function formatTimestamp(ns: number | null | undefined): string {
   if (ns === null || ns === undefined || ns === 0) return '\u2014';
-  // Timestamps are nanoseconds since Unix epoch (1970-01-01 UTC).
-  // BASE_NS in the Rust parsers is the Unix nanosecond value of 2000-01-01,
-  // so the stored value is already Unix-compatible — just divide to get ms.
   const ms = Math.floor(ns / 1_000_000);
-  return new Date(ms).toLocaleString(undefined, { timeZone: 'UTC' });
+  return new Date(ms).toLocaleString(undefined, {
+    timeZone: 'UTC',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
+function formatDuration(startNs: number | null | undefined, endNs: number | null | undefined): string | null {
+  if (!startNs || !endNs || startNs === 0 || endNs === 0) return null;
+  const diffMs = Math.floor((endNs - startNs) / 1_000_000);
+  if (diffMs < 0) return null;
+  if (diffMs < 1000) return `${diffMs}ms`;
+  if (diffMs < 60_000) return `${(diffMs / 1000).toFixed(1)}s`;
+  if (diffMs < 3_600_000) {
+    const m = Math.floor(diffMs / 60_000);
+    const s = Math.floor((diffMs % 60_000) / 1000);
+    return `${m}m ${s}s`;
+  }
+  if (diffMs < 86_400_000) {
+    const h = Math.floor(diffMs / 3_600_000);
+    const m = Math.floor((diffMs % 3_600_000) / 60_000);
+    return `${h}h ${m}m`;
+  }
+  const d = Math.floor(diffMs / 86_400_000);
+  const h = Math.floor((diffMs % 86_400_000) / 3_600_000);
+  return `${d}d ${h}h`;
 }
 
 function formatFileSize(bytes: number): string {
@@ -42,20 +73,51 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-const Row = memo<{ label: string; value: string | null | undefined }>(
-  function Row({ label, value }) {
+function sourceTypeColor(type: SourceType | undefined): string {
+  switch (type) {
+    case 'Bugreport':  return 'var(--warning)';
+    case 'Logcat':     return 'var(--success)';
+    case 'Kernel':     return 'var(--android)';
+    default:           return 'var(--text-dimmed)';
+  }
+}
+
+// ── Stat cell ────────────────────────────────────────────────────────────────
+
+function StatCell({ icon, label, value, sub }: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  sub?: string | null;
+}) {
+  return (
+    <div className={styles.statCell}>
+      <div className={styles.statIcon}>{icon}</div>
+      <div className={styles.statContent}>
+        <span className={styles.statLabel}>{label}</span>
+        <span className={styles.statValue}>{value}</span>
+        {sub && <span className={styles.statSub}>{sub}</span>}
+      </div>
+    </div>
+  );
+}
+
+// ── Device field ─────────────────────────────────────────────────────────────
+
+const DeviceField = memo<{ label: string; value: string | null | undefined }>(
+  function DeviceField({ label, value }) {
     if (!value) return null;
     return (
-      <div className={styles.row}>
-        <span className={styles.label}>{label}</span>
-        <span className={styles.value} title={value}>{value}</span>
+      <div className={styles.deviceField}>
+        <span className={styles.deviceFieldLabel}>{label}</span>
+        <span className={styles.deviceFieldValue} title={value}>{value}</span>
       </div>
     );
   },
 );
 
-// Tape-reader data: each entry is [width%, opacity] representing a log line's visual weight.
-// The pattern mimics realistic log density — most lines are short+dim, occasional lines are full.
+// ── Tape reader (scanning animation) ─────────────────────────────────────────
+
 const TAPE_LINES: Array<[string, number]> = [
   ['92%', 0.40], ['65%', 0.15], ['100%', 0.55], ['48%', 0.20], ['88%', 0.38],
   ['30%', 0.10], ['76%', 0.45], ['55%', 0.25], ['100%', 0.60], ['40%', 0.12],
@@ -66,7 +128,6 @@ const TAPE_LINES: Array<[string, number]> = [
   ['70%', 0.36], ['56%', 0.20], ['100%', 0.62], ['38%', 0.11], ['85%', 0.44],
   ['64%', 0.26], ['93%', 0.52], ['47%', 0.16], ['79%', 0.40], ['33%', 0.10],
 ];
-// Duplicate for seamless loop
 const TAPE_DOUBLED = [...TAPE_LINES, ...TAPE_LINES];
 
 const SectionsScanning = memo(function SectionsScanning({
@@ -75,7 +136,6 @@ const SectionsScanning = memo(function SectionsScanning({
   progress: IndexingProgress | null;
 }) {
   const pct = progress != null ? progress.percent : null;
-
   return (
     <div className={styles.scanning}>
       <span className={styles.scanTitle}>Scanning sections</span>
@@ -91,7 +151,7 @@ const SectionsScanning = memo(function SectionsScanning({
       </div>
       <div className={styles.scanInfo}>
         <span className={styles.scanCounter}>
-          {progress ? progress.linesIndexed.toLocaleString() : '—'}
+          {progress ? progress.linesIndexed.toLocaleString() : '\u2014'}
         </span>
         <span className={styles.scanSuffix}> lines</span>
       </div>
@@ -104,47 +164,55 @@ const SectionsScanning = memo(function SectionsScanning({
   );
 });
 
+// ── Section item ─────────────────────────────────────────────────────────────
+
 interface SectionItemProps {
   section: SectionEntry;
   isActive: boolean;
   jumpSeq: number;
-  onClick: () => void;
+  startLine: number;
+  onJump: ((line: number) => void) | undefined;
 }
 
 const SectionItem = memo<SectionItemProps>(function SectionItem({
   section,
   isActive,
   jumpSeq,
-  onClick,
+  startLine,
+  onJump,
 }) {
   const btnRef = useRef<HTMLButtonElement>(null);
+  const handleClick = useCallback(() => onJump?.(startLine), [onJump, startLine]);
 
   useEffect(() => {
     if (!isActive || !btnRef.current) return;
     const el = btnRef.current;
     el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     el.style.animation = 'none';
-    void el.offsetHeight; // force reflow to restart keyframe
+    void el.offsetHeight;
     el.style.animation = '';
   }, [isActive, jumpSeq]);
 
+  const lineCount = section.endLine - section.startLine + 1;
   const description = getSectionDescription(section.name);
   const tooltip = description
-    ? `${description}\nLines ${section.startLine + 1}–${section.endLine + 1}`
-    : `Lines ${section.startLine + 1}–${section.endLine + 1}`;
+    ? `${description}\nLines ${section.startLine + 1}\u2013${section.endLine + 1} (${lineCount.toLocaleString()} lines)`
+    : `Lines ${section.startLine + 1}\u2013${section.endLine + 1} (${lineCount.toLocaleString()} lines)`;
 
   return (
     <button
       ref={btnRef}
       className={clsx(styles.sectionItem, isActive && styles.sectionItemActive)}
-      onClick={onClick}
+      onClick={handleClick}
       title={tooltip}
     >
       <span className={styles.sectionName}>{section.name}</span>
-      <span className={styles.sectionLine}>{section.startLine + 1}</span>
+      <span className={styles.sectionLine}>{lineCount.toLocaleString()}</span>
     </button>
   );
 });
+
+// ── Main panel ───────────────────────────────────────────────────────────────
 
 export const FileInfoPanel = React.memo<FileInfoPanelProps>(
   function FileInfoPanel({
@@ -162,49 +230,120 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
     indexingProgress = null,
   }) {
     const isScanning = sourceType === 'Bugreport' && indexingProgress !== null;
+    const duration = formatDuration(firstTimestamp, lastTimestamp);
+    const meta = dumpstateMetadata;
+    const typeColor = sourceTypeColor(sourceType as SourceType | undefined);
+
     return (
       <div className={styles.panel}>
-        <div className={styles.header}>
-          <span className={styles.title}>File Info</span>
+        {/* ── File identity ─────────────────────────────────────── */}
+        <div className={styles.fileIdentity}>
+          <div className={styles.fileNameRow}>
+            <FileText size={14} className={styles.fileIcon} />
+            <span className={styles.fileName} title={sourceName}>
+              {sourceName ?? 'No file'}
+            </span>
+          </div>
+          {sourceType && (
+            <span
+              className={styles.typeBadge}
+              style={{ color: typeColor, borderColor: typeColor }}
+            >
+              {sourceType}
+            </span>
+          )}
         </div>
 
         <div className={styles.body}>
-          <details open className={styles.metaSection}>
-            <summary className={styles.sectionHeader}>File</summary>
-            <div className={styles.rows}>
-              <Row label="Name" value={sourceName} />
-              <Row label="Type" value={sourceType} />
-              <Row label="Lines" value={totalLines?.toLocaleString()} />
-              <Row label="Size" value={fileSize != null ? formatFileSize(fileSize) : undefined} />
-              <Row label="From" value={formatTimestamp(firstTimestamp)} />
-              <Row label="To" value={formatTimestamp(lastTimestamp)} />
-            </div>
-          </details>
+          {/* ── Stats grid ────────────────────────────────────────── */}
+          <div className={styles.statsGrid}>
+            <StatCell
+              icon={<Hash size={12} />}
+              label="Lines"
+              value={totalLines?.toLocaleString() ?? '\u2014'}
+            />
+            <StatCell
+              icon={<HardDrive size={12} />}
+              label="Size"
+              value={fileSize != null ? formatFileSize(fileSize) : '\u2014'}
+            />
+          </div>
 
-          {dumpstateMetadata && (
-            <details open className={styles.metaSection}>
-              <summary className={styles.sectionHeader}>Device</summary>
-              <div className={styles.rows}>
-                <Row label="Model" value={dumpstateMetadata.deviceModel} />
-                <Row label="Maker" value={dumpstateMetadata.manufacturer} />
-                <Row label="Android" value={dumpstateMetadata.osVersion} />
-                <Row label="SDK" value={dumpstateMetadata.sdkVersion} />
-                <Row label="Type" value={dumpstateMetadata.buildType} />
-                <Row label="Build" value={dumpstateMetadata.buildString} />
-                <Row label="Serial" value={dumpstateMetadata.serial} />
-                <Row label="Bootloader" value={dumpstateMetadata.bootloader} />
-                <Row label="Kernel" value={dumpstateMetadata.kernelVersion} />
-                <Row label="Uptime" value={dumpstateMetadata.uptime} />
-                <Row label="Fingerprint" value={dumpstateMetadata.buildFingerprint} />
+          {/* ── Time range ────────────────────────────────────────── */}
+          {(firstTimestamp || lastTimestamp) && (
+            <div className={styles.timeRange}>
+              <div className={styles.timeRangeHeader}>
+                <Clock size={11} className={styles.timeIcon} />
+                <span className={styles.timeLabel}>Time Range</span>
+                {duration && (
+                  <span className={styles.timeDuration}>{duration}</span>
+                )}
+              </div>
+              <div className={styles.timeStamps}>
+                <div className={styles.timeStamp}>
+                  <span className={styles.timeEndpoint}>From</span>
+                  <span className={styles.timeValue}>{formatTimestamp(firstTimestamp)}</span>
+                </div>
+                <div className={styles.timeStamp}>
+                  <span className={styles.timeEndpoint}>To</span>
+                  <span className={styles.timeValue}>{formatTimestamp(lastTimestamp)}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Device card ───────────────────────────────────────── */}
+          {meta && (
+            <details open className={styles.deviceCard}>
+              <summary className={styles.groupHeader}>
+                <Smartphone size={11} />
+                <span>Device</span>
+              </summary>
+              <div className={styles.deviceIdentity}>
+                {(meta.manufacturer || meta.deviceModel) && (
+                  <div className={styles.deviceModelRow}>
+                    {meta.manufacturer && (
+                      <span className={styles.deviceMaker}>{meta.manufacturer}</span>
+                    )}
+                    {meta.deviceModel && (
+                      <span className={styles.deviceModel}>{meta.deviceModel}</span>
+                    )}
+                  </div>
+                )}
+                {(meta.osVersion || meta.sdkVersion) && (
+                  <div className={styles.deviceOsRow}>
+                    {meta.osVersion && (
+                      <span className={styles.osVersion}>Android {meta.osVersion}</span>
+                    )}
+                    {meta.sdkVersion && (
+                      <span className={styles.sdkBadge}>SDK {meta.sdkVersion}</span>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className={styles.deviceFields}>
+                <DeviceField label="Build" value={meta.buildType} />
+                <DeviceField label="Serial" value={meta.serial} />
+                <DeviceField label="Bootloader" value={meta.bootloader} />
+                <DeviceField label="Kernel" value={meta.kernelVersion} />
+                <DeviceField label="Uptime" value={meta.uptime} />
+                <DeviceField label="Fingerprint" value={meta.buildFingerprint} />
+                <DeviceField label="Build ID" value={meta.buildString} />
               </div>
             </details>
           )}
 
+          {/* ── Sections scanning ─────────────────────────────────── */}
           {isScanning && <SectionsScanning progress={indexingProgress} />}
 
+          {/* ── Sections list ─────────────────────────────────────── */}
           {!isScanning && sections.length > 0 && (
             <div className={styles.sectionsArea}>
-              <div className={styles.sectionHeader}>Sections ({sections.length})</div>
+              <div className={styles.groupHeader}>
+                <Layers size={11} />
+                <span>Sections</span>
+                <span className={styles.groupCount}>{sections.length}</span>
+              </div>
               <div className={styles.sectionList}>
                 {sections.map((s, i) => (
                   <SectionItem
@@ -212,7 +351,8 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
                     section={s}
                     isActive={i === activeSectionIndex}
                     jumpSeq={sectionJumpSeq}
-                    onClick={() => onJumpToLine?.(s.startLine)}
+                    startLine={s.startLine}
+                    onJump={onJumpToLine}
                   />
                 ))}
               </div>

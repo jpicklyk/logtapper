@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo } from 'react';
 import { Trash2, ExternalLink, MapPin } from 'lucide-react';
 import type { AnalysisArtifact, AnalysisSection, AnalysisSeverity } from '../../bridge/types';
+import { severityColor } from '../../bridge/types';
 import { useSession, useViewerActions } from '../../context';
 import { useAnalysis } from '../../hooks';
 import { bus } from '../../events/bus';
@@ -9,16 +10,6 @@ import styles from './AnalysisList.module.css';
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const SEVERITY_ORDER: AnalysisSeverity[] = ['Critical', 'Error', 'Warning', 'Info'];
-
-function severityColor(severity: AnalysisSeverity | null): string {
-  switch (severity) {
-    case 'Critical': return 'var(--danger)';
-    case 'Error':    return 'var(--danger)';
-    case 'Warning':  return 'var(--warning)';
-    case 'Info':     return 'var(--accent)';
-    default:         return 'var(--text-dimmed)';
-  }
-}
 
 function highestSeverity(artifact: AnalysisArtifact): AnalysisSeverity | null {
   for (const level of SEVERITY_ORDER) {
@@ -103,7 +94,7 @@ interface ItemProps {
 const AnalysisItem = React.memo(function AnalysisItem({ artifact, onOpen, onDelete }: ItemProps) {
   const severity = highestSeverity(artifact);
   const sevCounts = useMemo(() => severityCounts(artifact.sections), [artifact.sections]);
-  const refCount = useMemo(() => totalRefs(artifact), [artifact]);
+  const refCount = useMemo(() => totalRefs(artifact), [artifact.sections]);
   const excerpt = useMemo(() => {
     // Use the first section's body as the summary excerpt
     if (artifact.sections.length === 0) return '';

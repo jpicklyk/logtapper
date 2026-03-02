@@ -519,6 +519,16 @@ export type HighlightTypeAnnotation = 'Annotation' | 'Anchor';
 
 export type AnalysisSeverity = 'Info' | 'Warning' | 'Error' | 'Critical';
 
+export function severityColor(severity: AnalysisSeverity | null): string {
+  switch (severity) {
+    case 'Critical': return 'var(--danger)';
+    case 'Error':    return 'var(--danger)';
+    case 'Warning':  return 'var(--warning)';
+    case 'Info':     return 'var(--accent)';
+    default:         return 'var(--text-dimmed)';
+  }
+}
+
 export interface SourceReference {
   lineNumber: number;
   endLine: number | null;

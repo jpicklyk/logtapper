@@ -2,15 +2,9 @@ import React from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { AnalysisSection } from '../../bridge/types';
+import { severityColor } from '../../bridge/types';
 import LineReference from './LineReference';
 import styles from './AnalysisReader.module.css';
-
-const SEVERITY_COLORS: Record<string, string> = {
-  Critical: 'var(--danger)',
-  Error:    'var(--danger)',
-  Warning:  'var(--warning)',
-  Info:     'var(--accent)',
-};
 
 interface Props {
   section: AnalysisSection;
@@ -19,7 +13,7 @@ interface Props {
 
 const MarkdownSection = React.memo(function MarkdownSection({ section, onJumpToLine }: Props) {
   const borderColor = section.severity
-    ? SEVERITY_COLORS[section.severity] ?? 'var(--border-subtle)'
+    ? severityColor(section.severity)
     : 'var(--border-subtle)';
 
   return (
