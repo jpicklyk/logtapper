@@ -1,10 +1,14 @@
-import React, { useCallback } from 'react';
-import { Trash2 } from 'lucide-react';
-import type { AnalysisArtifact, AnalysisSeverity } from '../../bridge/types';
+import React, { useCallback, useMemo } from 'react';
+import { Trash2, ExternalLink, MapPin } from 'lucide-react';
+import type { AnalysisArtifact, AnalysisSection, AnalysisSeverity } from '../../bridge/types';
 import { useSession, useViewerActions } from '../../context';
 import { useAnalysis } from '../../hooks';
 import { bus } from '../../events/bus';
 import styles from './AnalysisList.module.css';
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+const SEVERITY_ORDER: AnalysisSeverity[] = ['Critical', 'Error', 'Warning', 'Info'];
 
 function severityColor(severity: AnalysisSeverity | null): string {
   switch (severity) {
@@ -17,11 +21,44 @@ function severityColor(severity: AnalysisSeverity | null): string {
 }
 
 function highestSeverity(artifact: AnalysisArtifact): AnalysisSeverity | null {
-  const order: AnalysisSeverity[] = ['Critical', 'Error', 'Warning', 'Info'];
-  for (const level of order) {
+  for (const level of SEVERITY_ORDER) {
     if (artifact.sections.some((s) => s.severity === level)) return level;
   }
   return null;
+}
+
+function severityCounts(sections: AnalysisSection[]): { severity: AnalysisSeverity; count: number }[] {
+  const map = new Map<AnalysisSeverity, number>();
+  for (const s of sections) {
+    if (s.severity) map.set(s.severity, (map.get(s.severity) ?? 0) + 1);
+  }
+  return SEVERITY_ORDER
+    .filter((sev) => map.has(sev))
+    .map((sev) => ({ severity: sev, count: map.get(sev)! }));
+}
+
+function totalRefs(artifact: AnalysisArtifact): number {
+  let n = 0;
+  for (const s of artifact.sections) n += s.references.length;
+  return n;
+}
+
+function extractExcerpt(body: string, maxLen = 120): string {
+  // Strip markdown formatting to get plain-ish text
+  const plain = body
+    .replace(/```[\s\S]*?```/g, '')       // code blocks
+    .replace(/\|[^\n]+\|/g, '')           // table rows
+    .replace(/[|─┌┐└┘├┤┬┴┼]+/g, '')      // box-drawing
+    .replace(/#+\s+/g, '')                // headings
+    .replace(/\*\*([^*]+)\*\*/g, '$1')    // bold
+    .replace(/`([^`]+)`/g, '$1')          // inline code
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links
+    .replace(/\n{2,}/g, ' ')             // paragraph breaks → space
+    .replace(/\n/g, ' ')                 // line breaks → space
+    .replace(/\s{2,}/g, ' ')             // collapse whitespace
+    .trim();
+  if (plain.length <= maxLen) return plain;
+  return plain.slice(0, maxLen).replace(/\s+\S*$/, '') + '\u2026';
 }
 
 function relativeTime(epochMs: number): string {
@@ -32,6 +69,31 @@ function relativeTime(epochMs: number): string {
   return `${Math.floor(diff / 86_400_000)}d ago`;
 }
 
+// ── Section row ──────────────────────────────────────────────────────────────
+
+const SectionRow = React.memo(function SectionRow({
+  section,
+  index,
+}: {
+  section: AnalysisSection;
+  index: number;
+}) {
+  const color = severityColor(section.severity);
+  return (
+    <div className={styles.sectionRow}>
+      <span className={styles.sectionIndicator} style={{ background: color }} />
+      <span className={styles.sectionHeading}>{section.heading}</span>
+      {section.references.length > 0 && (
+        <span className={styles.sectionRefCount} title={`${section.references.length} line reference${section.references.length !== 1 ? 's' : ''}`}>
+          {section.references.length}
+        </span>
+      )}
+    </div>
+  );
+});
+
+// ── Analysis card ────────────────────────────────────────────────────────────
+
 interface ItemProps {
   artifact: AnalysisArtifact;
   onOpen: (id: string) => void;
@@ -40,6 +102,14 @@ interface ItemProps {
 
 const AnalysisItem = React.memo(function AnalysisItem({ artifact, onOpen, onDelete }: ItemProps) {
   const severity = highestSeverity(artifact);
+  const sevCounts = useMemo(() => severityCounts(artifact.sections), [artifact.sections]);
+  const refCount = useMemo(() => totalRefs(artifact), [artifact]);
+  const excerpt = useMemo(() => {
+    // Use the first section's body as the summary excerpt
+    if (artifact.sections.length === 0) return '';
+    return extractExcerpt(artifact.sections[0].body);
+  }, [artifact.sections]);
+
   const handleClick = useCallback(() => onOpen(artifact.id), [artifact.id, onOpen]);
   const handleDelete = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -47,30 +117,82 @@ const AnalysisItem = React.memo(function AnalysisItem({ artifact, onOpen, onDele
   }, [artifact.id, onDelete]);
 
   return (
-    <button className={styles.item} onClick={handleClick} type="button">
-      <span
-        className={styles.severityDot}
+    <div className={styles.card} onClick={handleClick} role="button" tabIndex={0}>
+      {/* Top severity bar */}
+      <div
+        className={styles.cardSeverityBar}
         style={{ background: severityColor(severity) }}
       />
-      <div className={styles.itemContent}>
-        <span className={styles.itemTitle}>{artifact.title}</span>
-        <span className={styles.itemMeta}>
-          {artifact.sections.length} section{artifact.sections.length !== 1 ? 's' : ''}
-          {' \u00b7 '}
-          {relativeTime(artifact.createdAt)}
-        </span>
+
+      {/* Header row: title + actions */}
+      <div className={styles.cardHeader}>
+        <h3 className={styles.cardTitle}>{artifact.title}</h3>
+        <button
+          className={styles.deleteBtn}
+          onClick={handleDelete}
+          type="button"
+          title="Delete analysis"
+        >
+          <Trash2 size={12} />
+        </button>
       </div>
-      <button
-        className={styles.deleteBtn}
-        onClick={handleDelete}
-        type="button"
-        title="Delete analysis"
-      >
-        <Trash2 size={13} />
-      </button>
-    </button>
+
+      {/* Meta row: time + stats */}
+      <div className={styles.cardMeta}>
+        <span>{relativeTime(artifact.createdAt)}</span>
+        <span className={styles.metaDivider}>{'\u00b7'}</span>
+        <span>{artifact.sections.length} section{artifact.sections.length !== 1 ? 's' : ''}</span>
+        {refCount > 0 && (
+          <>
+            <span className={styles.metaDivider}>{'\u00b7'}</span>
+            <MapPin size={10} className={styles.metaIcon} />
+            <span>{refCount} ref{refCount !== 1 ? 's' : ''}</span>
+          </>
+        )}
+      </div>
+
+      {/* Severity breakdown pills */}
+      {sevCounts.length > 0 && (
+        <div className={styles.severityRow}>
+          {sevCounts.map(({ severity: sev, count }) => (
+            <span
+              key={sev}
+              className={styles.severityPill}
+              style={{
+                color: severityColor(sev),
+                borderColor: severityColor(sev),
+              }}
+            >
+              {count} {sev}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Excerpt */}
+      {excerpt && (
+        <p className={styles.excerpt}>{excerpt}</p>
+      )}
+
+      {/* Section headings list */}
+      {artifact.sections.length > 0 && (
+        <div className={styles.sectionList}>
+          {artifact.sections.map((s, i) => (
+            <SectionRow key={i} section={s} index={i} />
+          ))}
+        </div>
+      )}
+
+      {/* Open action */}
+      <div className={styles.openAction}>
+        <ExternalLink size={11} />
+        <span>Open full analysis</span>
+      </div>
+    </div>
   );
 });
+
+// ── List container ───────────────────────────────────────────────────────────
 
 const AnalysisList = React.memo(function AnalysisList() {
   const session = useSession();
@@ -104,7 +226,7 @@ const AnalysisList = React.memo(function AnalysisList() {
         )}
       </div>
       {analysisLoading && artifacts.length === 0 && (
-        <div className={styles.empty}>Loading\u2026</div>
+        <div className={styles.empty}>Loading{'\u2026'}</div>
       )}
       {!analysisLoading && artifacts.length === 0 && (
         <div className={styles.empty}>
