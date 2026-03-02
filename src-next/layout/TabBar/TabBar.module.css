@@ -136,8 +136,10 @@
   color: var(--text);
 }
 
-/* Blue underline on the active tab of the currently focused pane */
-.tab.active.focused::after {
+/* Blue underline on the logviewer tab that owns the focused session.
+   Uses .focused only (not .active) so the marker persists when the user
+   switches to a utility tab (dashboard, scratch) in the same pane. */
+.tab.focused::after {
   content: '';
   position: absolute;
   bottom: -1px;

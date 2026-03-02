@@ -24,20 +24,13 @@ import { PaneContent } from '../../components/PaneContent';
 import { SettingsPanel } from '../../components/SettingsPanel';
 import { useSettings, useAnonymizerConfig } from '../../hooks';
 import { useCacheManager } from '../../cache';
+import { findTabAcrossTree, allPanes } from '../../hooks/workspace/splitTreeHelpers';
 import type {
   WorkspaceLayoutState,
-  CenterPane,
-  SplitNode,
   LeftPaneTab,
   BottomTabType,
   DropZone,
 } from '../../hooks';
-
-/** Collect all leaf panes from the split tree (depth-first). */
-function collectPanes(node: SplitNode): CenterPane[] {
-  if (node.type === 'leaf') return [node.pane];
-  return [...collectPanes(node.children[0]), ...collectPanes(node.children[1])];
-}
 import styles from './AppShell.module.css';
 
 interface AppShellProps {
@@ -74,6 +67,9 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   const cacheManager = useCacheManager();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
+  const centerTreeRef = useRef(workspace.centerTree);
+  centerTreeRef.current = workspace.centerTree;
+
   // -- Portal mount points --
   // Map pane.id → the mount div inside each LeafPane.
   // PaneContent components are rendered here (AppShell level) and portaled in,
@@ -97,7 +93,7 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   }, []);
 
   const currentPanes = useMemo(
-    () => collectPanes(workspace.centerTree),
+    () => allPanes(workspace.centerTree),
     [workspace.centerTree],
   );
 
@@ -159,9 +155,15 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   const handleTabActivate = useCallback(
     (tabId: string, paneId: string) => {
       workspace.setActiveTab(tabId, paneId);
-      workspace.setFocusedPaneId(paneId);
+      // Only move focus when activating a logviewer tab — utility tabs
+      // (dashboard, scratch) display data for the already-focused session
+      // and should not steal the focus marker from the logviewer tab.
+      const found = findTabAcrossTree(centerTreeRef.current, tabId);
+      if (found?.tab.type === 'logviewer') {
+        workspace.focusLogviewerTab(tabId, paneId);
+      }
     },
-    [workspace.setActiveTab, workspace.setFocusedPaneId],
+    [workspace.setActiveTab, workspace.focusLogviewerTab],
   );
 
   const handleTabClose = useCallback(
@@ -253,7 +255,7 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
       <div className={styles.center}>
         <CenterArea
           tree={workspace.centerTree}
-          focusedPaneId={workspace.focusedPaneId}
+          focusedLogviewerTabId={workspace.focusedLogviewerTabId}
           onContentRef={handleContentRef}
           onTabActivate={handleTabActivate}
           onTabClose={handleTabClose}

@@ -96,12 +96,14 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
       );
 
     case 'dashboard':
+      // Dashboard displays results for the focused session — clicking it should
+      // NOT move the focus marker away from the logviewer tab that owns the session.
       return focusedSession ? (
-        <div onClick={handlePaneFocus} onFocus={handlePaneFocus} style={{ height: '100%' }}>
+        <div style={{ height: '100%' }}>
           <ProcessorDashboard />
         </div>
       ) : (
-        <div className={styles.placeholder} onClick={handlePaneFocus} onFocus={handlePaneFocus}>
+        <div className={styles.placeholder}>
           Open a log file to see the dashboard.
         </div>
       );

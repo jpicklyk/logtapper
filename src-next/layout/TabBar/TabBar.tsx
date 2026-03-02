@@ -23,7 +23,9 @@ interface TabBarProps {
   tabs: TabBarTab[];
   activeTabId: string;
   paneId: string;
-  paneIsFocused?: boolean;
+  /** The specific logviewer tab that owns the focused session — only this tab
+   *  shows the blue underline focus marker across the entire application. */
+  focusedLogviewerTabId?: string | null;
   onActivate: (tabId: string) => void;
   onClose?: (tabId: string) => void;
   onAdd?: () => void;
@@ -35,7 +37,7 @@ export const TabBar = React.memo(function TabBar({
   tabs,
   activeTabId,
   paneId,
-  paneIsFocused = false,
+  focusedLogviewerTabId,
   onActivate,
   onClose,
   onAdd,
@@ -48,7 +50,7 @@ export const TabBar = React.memo(function TabBar({
           key={tab.id}
           tab={tab}
           active={tab.id === activeTabId}
-          focused={paneIsFocused && tab.id === activeTabId}
+          focused={tab.id === focusedLogviewerTabId}
           paneId={paneId}
           tabColor={TAB_COLORS[tab.type ?? ''] ?? TAB_COLORS.logviewer}
           onActivate={onActivate}

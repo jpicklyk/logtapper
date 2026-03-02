@@ -55,6 +55,15 @@ export function useWorkspaceLayout() {
   const focusedPaneIdRef = useRef<string | null>(focusedPaneId);
   focusedPaneIdRef.current = focusedPaneId;
 
+  // The specific logviewer tab showing the focus marker (blue underline).
+  // Updated when a logviewer tab is activated or when focus moves to a new pane.
+  const [focusedLogviewerTabId, setFocusedLogviewerTabId] = useState<string | null>(null);
+
+  const focusLogviewerTab = useCallback((tabId: string, paneId: string) => {
+    setFocusedPaneId(paneId);
+    setFocusedLogviewerTabId(tabId);
+  }, []);
+
   // paneSessionMap from SessionContext
   const { paneSessionMap, activateSessionForPane } = useSessionContext();
   const paneSessionMapRef = useRef(paneSessionMap);
@@ -151,9 +160,26 @@ export function useWorkspaceLayout() {
   // Event bus subscriptions (cross-cutting — not owned by any sub-hook)
   // ---------------------------------------------------------------------------
 
+  const centerTreeRef = useRef(centerTree.centerTree);
+  centerTreeRef.current = centerTree.centerTree;
+
   useEffect(() => {
     const onSessionFocused = (e: { paneId: string | null }) => {
       setFocusedPaneId(e.paneId);
+      // When focus moves to a pane, mark its active logviewer tab as focused.
+      // Prefer the active tab; fall back to the first logviewer tab in the pane.
+      if (e.paneId) {
+        const leaf = findLeafByPaneId(centerTreeRef.current, e.paneId);
+        if (leaf) {
+          const active = leaf.pane.tabs.find((t) => t.id === leaf.pane.activeTabId);
+          if (active?.type === 'logviewer') {
+            setFocusedLogviewerTabId(active.id);
+          } else {
+            const firstLogviewer = leaf.pane.tabs.find((t) => t.type === 'logviewer');
+            setFocusedLogviewerTabId(firstLogviewer?.id ?? null);
+          }
+        }
+      }
     };
 
     // Left-pane side-effect of session:loaded — set info tab for Bugreport sources.
@@ -229,6 +255,8 @@ export function useWorkspaceLayout() {
     // Focus tracking
     focusedPaneId,
     setFocusedPaneId,
+    focusLogviewerTab,
     focusedActiveTabType: activeTab?.type ?? null,
+    focusedLogviewerTabId,
   } satisfies WorkspaceLayoutState;
 }
