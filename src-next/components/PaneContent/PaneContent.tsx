@@ -2,6 +2,7 @@ import React, { useCallback } from 'react';
 import { FileText } from 'lucide-react';
 import { LogViewer } from '../LogViewer';
 import { ProcessorDashboard } from '../ProcessorDashboard';
+import { AnalysisReader } from '../AnalysisReader';
 import { ScratchPad } from '../ScratchPad';
 import { StreamFilterBar } from '../StreamFilterBar';
 import { useSessionForPane, useIsLoadingForPane, useViewerActions, useStreamFilter, useFocusedSession } from '../../context';
@@ -10,7 +11,7 @@ import styles from './PaneContent.module.css';
 
 export interface PaneTab {
   id: string;
-  type: 'logviewer' | 'dashboard' | 'scratch' | 'editor';
+  type: 'logviewer' | 'dashboard' | 'scratch' | 'editor' | 'analysis';
 }
 
 export interface Pane {
@@ -105,6 +106,13 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
       ) : (
         <div className={styles.placeholder}>
           Open a log file to see the dashboard.
+        </div>
+      );
+
+    case 'analysis':
+      return (
+        <div style={{ height: '100%' }}>
+          <AnalysisReader />
         </div>
       );
 

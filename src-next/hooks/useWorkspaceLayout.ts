@@ -16,6 +16,7 @@ import {
   STORAGE_KEY,
   findLeafByPaneId,
 } from './workspace';
+import type { CenterTabType } from './workspace';
 
 // ---------------------------------------------------------------------------
 // Re-exports — public API surface (call sites import from here or hooks/index)
@@ -163,6 +164,9 @@ export function useWorkspaceLayout() {
   const centerTreeRef = useRef(centerTree.centerTree);
   centerTreeRef.current = centerTree.centerTree;
 
+  const openCenterTabRef = useRef(centerTree.openCenterTab);
+  openCenterTabRef.current = centerTree.openCenterTab;
+
   useEffect(() => {
     const onSessionFocused = (e: { paneId: string | null }) => {
       setFocusedPaneId(e.paneId);
@@ -190,11 +194,17 @@ export function useWorkspaceLayout() {
       }
     };
 
+    const onOpenTab = (e: { type: string }) => {
+      openCenterTabRef.current(e.type as CenterTabType);
+    };
+
     bus.on('session:focused', onSessionFocused);
     bus.on('session:loaded', onSessionLoaded);
+    bus.on('layout:open-tab', onOpenTab);
     return () => {
       bus.off('session:focused', onSessionFocused);
       bus.off('session:loaded', onSessionLoaded);
+      bus.off('layout:open-tab', onOpenTab);
     };
   }, []);
 

@@ -55,4 +55,8 @@ export type AppEvents = {
    *  pane ID (e.g. 'primary') but the tab was actually placed in a different pane. */
   'layout:pane-session-remap': { originalPaneId: string; actualPaneId: string; sessionId: string };
   'navigate:jump':          { lineNum: number };
+
+  // ── Analysis ──────────────────────────────────────────────────────────────
+  /** Fired when the user selects an analysis artifact to view in the center tab. */
+  'analysis:open':          { artifactId: string };
 };
