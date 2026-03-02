@@ -20,6 +20,17 @@ export interface FileInfoData {
   onJumpToLine: (line: number) => void;
 }
 
+/** Cached metadata for a session so tab switches restore data instantly. */
+interface SessionCache {
+  dumpstateMetadata: DumpstateMetadata | null;
+  sections: SectionEntry[];
+  firstTimestamp: number | null | undefined;
+  lastTimestamp: number | null | undefined;
+}
+
+// Module-level cache — survives component re-mounts (tab switch away and back).
+const metadataCache = new Map<string, SessionCache>();
+
 export function useFileInfo(paneId: string | null): FileInfoData {
   const session = useSessionForPane(paneId);
   const { jumpToLine } = useViewerActions();
@@ -34,16 +45,30 @@ export function useFileInfo(paneId: string | null): FileInfoData {
   // onFileIndexComplete Tauri event listener approach that had a startup race condition.
   const indexingProgress = useIndexingProgress(sessionId);
 
+  // Restore from cache on session switch, or start fresh.
+  const cached = sessionId ? metadataCache.get(sessionId) : undefined;
+
   const [totalLines, setTotalLines] = useState<number | undefined>(undefined);
   const [fileSize, setFileSize] = useState<number | undefined>(undefined);
-  const [firstTimestamp, setFirstTimestamp] = useState<number | null | undefined>(undefined);
-  const [lastTimestamp, setLastTimestamp] = useState<number | null | undefined>(undefined);
-  const [sections, setSections] = useState<SectionEntry[]>([]);
-  const [dumpstateMetadata, setDumpstateMetadata] = useState<DumpstateMetadata | null>(null);
+  const [firstTimestamp, setFirstTimestamp] = useState<number | null | undefined>(cached?.firstTimestamp);
+  const [lastTimestamp, setLastTimestamp] = useState<number | null | undefined>(cached?.lastTimestamp);
+  const [sections, setSections] = useState<SectionEntry[]>(cached?.sections ?? []);
+  const [dumpstateMetadata, setDumpstateMetadata] = useState<DumpstateMetadata | null>(cached?.dumpstateMetadata ?? null);
   const [sectionJumpSeq, setSectionJumpSeq] = useState(0);
 
   const sessionIdRef = useRef<string | null>(null);
   sessionIdRef.current = sessionId;
+
+  // Persist to cache whenever fetched data changes.
+  useEffect(() => {
+    if (!sessionId) return;
+    metadataCache.set(sessionId, {
+      dumpstateMetadata,
+      sections,
+      firstTimestamp,
+      lastTimestamp,
+    });
+  }, [sessionId, dumpstateMetadata, sections, firstTimestamp, lastTimestamp]);
 
   // Reset base metadata and fetch device info whenever the session changes.
   useEffect(() => {
@@ -57,17 +82,21 @@ export function useFileInfo(paneId: string | null): FileInfoData {
       return;
     }
 
+    // Restore from cache if available, otherwise reset and fetch.
+    const c = metadataCache.get(sessionId);
+
     setTotalLines(session.totalLines);
     setFileSize(session.fileSize);
-    setFirstTimestamp(session.firstTimestamp ?? null);
-    setLastTimestamp(session.lastTimestamp ?? null);
-    setSections([]);
-    setDumpstateMetadata(null);
+    setFirstTimestamp(c?.firstTimestamp ?? session.firstTimestamp ?? null);
+    setLastTimestamp(c?.lastTimestamp ?? session.lastTimestamp ?? null);
+    setSections(c?.sections ?? []);
+    setDumpstateMetadata(c?.dumpstateMetadata ?? null);
 
+    // Always fetch fresh metadata (updates cache on completion).
     let cancelled = false;
     getDumpstateMetadata(sessionId)
       .then((meta) => { if (!cancelled) setDumpstateMetadata(meta); })
-      .catch(() => { if (!cancelled) setDumpstateMetadata(null); });
+      .catch(() => { if (!cancelled && !c?.dumpstateMetadata) setDumpstateMetadata(null); });
 
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -80,6 +109,13 @@ export function useFileInfo(paneId: string | null): FileInfoData {
   useEffect(() => {
     if (!sessionId || !session || session.sourceType !== 'Bugreport') return;
     if (indexingProgress !== null) return;  // Still indexing — wait for null
+
+    // Skip fetch if cache already has sections for this session.
+    const c = metadataCache.get(sessionId);
+    if (c && c.sections.length > 0) {
+      setSections(c.sections);
+      return;
+    }
 
     let cancelled = false;
     getSections(sessionId)
@@ -96,6 +132,15 @@ export function useFileInfo(paneId: string | null): FileInfoData {
   // header line has a non-zero timestamp in the opening chunk).
   useEffect(() => {
     if (!sessionId || indexingProgress !== null) return;
+
+    // Skip if cache already has timestamps.
+    const c = metadataCache.get(sessionId);
+    if (c?.firstTimestamp != null && c?.lastTimestamp != null) {
+      setFirstTimestamp(c.firstTimestamp);
+      setLastTimestamp(c.lastTimestamp);
+      return;
+    }
+
     let cancelled = false;
     getSessionMetadata(sessionId)
       .then((meta) => {

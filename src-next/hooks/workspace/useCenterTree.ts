@@ -372,6 +372,20 @@ export function useCenterTree(
       setCenterTree((prev) => {
         const targetLeaf = findLeafByPaneId(prev, e.paneId);
         if (targetLeaf) {
+          // If a tab with this exact ID already exists (e.g. startup restore of a
+          // persisted non-active tab), just update its label — don't add a duplicate.
+          const existingTabById = targetLeaf.pane.tabs.find((t) => t.id === e.tabId);
+          if (existingTabById) {
+            const next = updateLeaf(prev, e.paneId, (pane) => ({
+              ...pane,
+              tabs: pane.tabs.map((t) =>
+                t.id === e.tabId ? { ...t, label: e.sourceName } : t,
+              ),
+            }));
+            treeRef.current = next;
+            return next;
+          }
+
           const existingLogviewerTab = targetLeaf.pane.tabs.find((t) => t.type === 'logviewer');
 
           if (e.isNewTab && existingLogviewerTab && e.previousSessionId) {

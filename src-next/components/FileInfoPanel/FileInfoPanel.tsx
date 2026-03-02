@@ -1,7 +1,7 @@
-import React, { memo, useCallback, useEffect, useRef } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import {
-  FileText, Smartphone, Clock, HardDrive, Layers, Hash,
+  FileText, Smartphone, Clock, HardDrive, Layers, Hash, ChevronRight,
 } from 'lucide-react';
 import type { DumpstateMetadata, SourceType } from '../../bridge/types';
 import type { IndexingProgress } from '../../context';
@@ -212,6 +212,159 @@ const SectionItem = memo<SectionItemProps>(function SectionItem({
   );
 });
 
+// ── Section grouping ─────────────────────────────────────────────────────────
+
+/** A single section or a collapsed group of sections sharing a prefix. */
+type SectionRow =
+  | { kind: 'single'; section: SectionEntry; index: number }
+  | { kind: 'group'; prefix: string; sections: SectionEntry[];
+      firstIndex: number; lastIndex: number; totalLines: number };
+
+const GROUP_THRESHOLD = 5;
+
+/**
+ * Detect runs of consecutive sections whose names share a common prefix and
+ * collapse them into a single expandable group row. Only groups with
+ * GROUP_THRESHOLD+ members are collapsed; smaller runs stay individual.
+ * Precomputes totalLines per group to avoid redundant work in child components.
+ */
+function groupSections(sections: SectionEntry[]): SectionRow[] {
+  if (sections.length === 0) return [];
+
+  const rows: SectionRow[] = [];
+  let i = 0;
+
+  while (i < sections.length) {
+    const prefix = extractGroupPrefix(sections[i].name);
+    if (prefix) {
+      let j = i + 1;
+      while (j < sections.length && sections[j].name.startsWith(prefix)) j++;
+      const runLen = j - i;
+      if (runLen >= GROUP_THRESHOLD) {
+        const groupSecs = sections.slice(i, j);
+        let lines = 0;
+        for (const s of groupSecs) lines += s.endLine - s.startLine + 1;
+        rows.push({
+          kind: 'group', prefix, sections: groupSecs,
+          firstIndex: i, lastIndex: j - 1, totalLines: lines,
+        });
+        i = j;
+        continue;
+      }
+    }
+    rows.push({ kind: 'single', section: sections[i], index: i });
+    i++;
+  }
+  return rows;
+}
+
+/**
+ * Extract a groupable prefix from a section name. Returns the prefix string
+ * (including trailing space) if the name looks like "PREFIX detail...", e.g.
+ * "SHOW MAP 1690: ..." → "SHOW MAP", "ROUTE TABLE IPv4" → "ROUTE TABLE".
+ * Returns null if no groupable prefix is found.
+ */
+function extractGroupPrefix(name: string): string | null {
+  // Match patterns like "WORD WORD number/detail" — the prefix is the
+  // uppercase words before the varying suffix.
+  const m = name.match(/^([A-Z][A-Z0-9_]+(?: [A-Z][A-Z0-9_]+)*) /);
+  if (!m) return null;
+  return m[1] + ' ';
+}
+
+// ── Collapsed section group ──────────────────────────────────────────────────
+
+const EXPAND_PAGE_SIZE = 50;
+
+interface SectionGroupProps {
+  prefix: string;
+  sections: SectionEntry[];
+  firstIndex: number;
+  lastIndex: number;
+  totalLines: number;
+  activeSectionIndex: number;
+  jumpSeq: number;
+  onJump: ((line: number) => void) | undefined;
+}
+
+const SectionGroup = memo<SectionGroupProps>(function SectionGroup({
+  prefix,
+  sections,
+  firstIndex,
+  lastIndex,
+  totalLines,
+  activeSectionIndex,
+  jumpSeq,
+  onJump,
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(EXPAND_PAGE_SIZE);
+
+  // O(1) range check instead of O(n) array.includes
+  const hasActive = activeSectionIndex >= firstIndex && activeSectionIndex <= lastIndex;
+
+  // Auto-expand when the active section is inside this group
+  useEffect(() => {
+    if (hasActive) setExpanded(true);
+  }, [hasActive]);
+
+  const toggle = useCallback(() => {
+    setExpanded((v) => !v);
+    setVisibleCount(EXPAND_PAGE_SIZE);
+  }, []);
+
+  const showMore = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setVisibleCount((v) => v + EXPAND_PAGE_SIZE);
+  }, []);
+
+  const visibleSections = expanded
+    ? (visibleCount >= sections.length ? sections : sections.slice(0, visibleCount))
+    : [];
+  const hasMore = expanded && visibleCount < sections.length;
+
+  return (
+    <div className={styles.sectionGroup}>
+      <button
+        className={clsx(styles.sectionGroupHeader, hasActive && styles.sectionGroupActive)}
+        onClick={toggle}
+        type="button"
+      >
+        <ChevronRight
+          size={12}
+          className={clsx(styles.sectionGroupChevron, expanded && styles.sectionGroupChevronOpen)}
+        />
+        <span className={styles.sectionGroupPrefix}>{prefix.trim()}</span>
+        <span className={styles.sectionGroupBadge}>{sections.length}</span>
+        <span className={styles.sectionLine}>{totalLines.toLocaleString()}</span>
+      </button>
+      {expanded && (
+        <div className={styles.sectionGroupItems}>
+          {visibleSections.map((s, j) => (
+            <SectionItem
+              key={s.startLine}
+              section={s}
+              isActive={(firstIndex + j) === activeSectionIndex}
+              jumpSeq={jumpSeq}
+              startLine={s.startLine}
+              onJump={onJump}
+            />
+          ))}
+          {hasMore && (
+            <button
+              className={styles.showMoreBtn}
+              onClick={showMore}
+              type="button"
+            >
+              Show more ({sections.length - visibleCount} remaining)
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+});
+
 // ── Main panel ───────────────────────────────────────────────────────────────
 
 export const FileInfoPanel = React.memo<FileInfoPanelProps>(
@@ -233,6 +386,7 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
     const duration = formatDuration(firstTimestamp, lastTimestamp);
     const meta = dumpstateMetadata;
     const typeColor = sourceTypeColor(sourceType as SourceType | undefined);
+    const groupedSections = useMemo(() => groupSections(sections), [sections]);
 
     return (
       <div className={styles.panel}>
@@ -345,16 +499,30 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
                 <span className={styles.groupCount}>{sections.length}</span>
               </div>
               <div className={styles.sectionList}>
-                {sections.map((s, i) => (
-                  <SectionItem
-                    key={s.startLine}
-                    section={s}
-                    isActive={i === activeSectionIndex}
-                    jumpSeq={sectionJumpSeq}
-                    startLine={s.startLine}
-                    onJump={onJumpToLine}
-                  />
-                ))}
+                {groupedSections.map((row) =>
+                  row.kind === 'single' ? (
+                    <SectionItem
+                      key={row.section.startLine}
+                      section={row.section}
+                      isActive={row.index === activeSectionIndex}
+                      jumpSeq={sectionJumpSeq}
+                      startLine={row.section.startLine}
+                      onJump={onJumpToLine}
+                    />
+                  ) : (
+                    <SectionGroup
+                      key={`group-${row.sections[0].startLine}`}
+                      prefix={row.prefix}
+                      sections={row.sections}
+                      firstIndex={row.firstIndex}
+                      lastIndex={row.lastIndex}
+                      totalLines={row.totalLines}
+                      activeSectionIndex={activeSectionIndex}
+                      jumpSeq={sectionJumpSeq}
+                      onJump={onJumpToLine}
+                    />
+                  ),
+                )}
               </div>
             </div>
           )}

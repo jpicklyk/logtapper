@@ -59,13 +59,13 @@ export function useFileSession(
   const loadGenRef = useRef<Map<string, number>>(new Map());
   const hasRestoredRef = useRef(false);
 
-  const loadFile = useCallback(async (path: string, paneId?: string) => {
+  const loadFile = useCallback(async (path: string, paneId?: string, existingTabId?: string) => {
     const targetPaneId = paneId ?? refs.focusedPaneIdRef.current ?? getStoredFirstPaneId() ?? DEFAULT_PANE_ID;
 
     const gen = (loadGenRef.current.get(targetPaneId) ?? 0) + 1;
     loadGenRef.current.set(targetPaneId, gen);
 
-    const tabId = crypto.randomUUID();
+    const tabId = existingTabId ?? crypto.randomUUID();
 
     const previousSessionId = refs.paneSessionMapRef.current.get(targetPaneId);
     const isNewTab = previousSessionId !== undefined;
@@ -175,6 +175,9 @@ export function useFileSession(
   }, [loadFile]);
 
   // Restore all open files on app startup (StrictMode double-mount guard).
+  // Active tabs are loaded first (they replace the existing logviewer tab in the
+  // pane), then non-active tabs are loaded with their persisted tabId so the
+  // session:loaded handler matches them to the already-existing tab in the tree.
   useEffect(() => {
     if (hasRestoredRef.current) return;
     hasRestoredRef.current = true;
@@ -182,11 +185,23 @@ export function useFileSession(
 
     const tabPaths = readTabPaths();
     const storedTabs = getStoredLogviewerTabs();
-    const seen = new Set<string>();
-    for (const { tabId, paneId, isActive } of storedTabs) {
-      if (!isActive || seen.has(paneId)) continue;
+
+    // Sort: active tabs first so they establish the pane's initial session,
+    // then non-active tabs load into existing persisted tab slots.
+    const sorted = [...storedTabs].sort((a, b) => (b.isActive ? 1 : 0) - (a.isActive ? 1 : 0));
+    const loadedPanes = new Set<string>();
+    for (const { tabId, paneId, isActive } of sorted) {
       const path = tabPaths[tabId];
-      if (path) { seen.add(paneId); loadFile(path, paneId); }
+      if (!path) continue;
+      if (isActive && !loadedPanes.has(paneId)) {
+        // First load for this pane — replaces the existing logviewer tab.
+        loadedPanes.add(paneId);
+        loadFile(path, paneId);
+      } else {
+        // Non-active tab — load with the persisted tabId so the session:loaded
+        // handler finds the existing tab in the tree instead of creating a new one.
+        loadFile(path, paneId, tabId);
+      }
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

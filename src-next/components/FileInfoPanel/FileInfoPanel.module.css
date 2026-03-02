@@ -367,14 +367,14 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 8px;
+  padding: 6px 8px;
   border: none;
   border-bottom: 1px solid var(--border);
   background: transparent;
   color: var(--text);
   font-family: var(--font-ui);
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 1.5;
   cursor: pointer;
   text-align: left;
   transition: background var(--transition-fast);
@@ -410,6 +410,98 @@
   font-size: 10px;
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
+}
+
+/* ── Collapsed section group ──────────────────────────────────────────────── */
+
+.sectionGroup {
+  border-bottom: 1px solid var(--border);
+}
+
+.sectionGroup:last-child {
+  border-bottom: none;
+}
+
+.sectionGroupHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  background: var(--bg-raised);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.sectionGroupHeader:hover {
+  background: var(--bg-overlay);
+}
+
+.sectionGroupActive {
+  color: var(--accent);
+}
+
+.sectionGroupChevron {
+  flex-shrink: 0;
+  color: var(--text-dimmed);
+  transition: transform 150ms ease;
+}
+
+.sectionGroupChevronOpen {
+  transform: rotate(90deg);
+}
+
+.sectionGroupPrefix {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.sectionGroupBadge {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 600;
+  min-width: 18px;
+  height: 16px;
+  line-height: 16px;
+  text-align: center;
+  border-radius: 8px;
+  background: var(--bg-overlay);
+  color: var(--text-muted);
+}
+
+.sectionGroupItems {
+  padding-left: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.showMoreBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-top: 1px solid var(--border);
+  background: none;
+  color: var(--accent);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.showMoreBtn:hover {
+  background: var(--bg-overlay);
 }
 
 @keyframes section-flash {
