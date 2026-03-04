@@ -8,6 +8,8 @@ import {
   useTrackerTransitions,
 } from '../../context';
 import { useStateTracker } from '../../hooks';
+import { bus } from '../../events';
+import type { AppEvents } from '../../events';
 import styles from './StatePanel.module.css';
 
 interface TrackerState {
@@ -16,10 +18,6 @@ interface TrackerState {
   snapshot: StateSnapshot | null;
   loading: boolean;
 }
-
-// selectedLineNum is local to the viewer pane. We use null (latest) for now
-// since the new architecture doesn't hoist selectedLineNum to context.
-// TODO: wire selectedLineNum via a dedicated selector once available.
 
 const FieldValue = React.memo(function FieldValue({
   value,
@@ -62,6 +60,21 @@ const StatePanel = React.memo(function StatePanel() {
   const [trackerStates, setTrackerStates] = useState<TrackerState[]>([]);
   const hasDataRef = useRef(false);
 
+  // Track selected line from event bus
+  const [selectedLine, setSelectedLine] = useState<number | null>(null);
+
+  useEffect(() => {
+    const handler = (ev: AppEvents['selection:changed']) => {
+      if (ev.sessionId === session?.sessionId) {
+        setSelectedLine(ev.anchor);
+      } else {
+        setSelectedLine(null);
+      }
+    };
+    bus.on('selection:changed', handler);
+    return () => { bus.off('selection:changed', handler); };
+  }, [session?.sessionId]);
+
   const activeTrackers = useMemo<ProcessorSummary[]>(() => {
     return pipelineChain
       .map((id) => processors.find((p) => p.id === id))
@@ -79,7 +92,7 @@ const StatePanel = React.memo(function StatePanel() {
     }
 
     const sessionId = session.sessionId;
-    const lineNum = Number.MAX_SAFE_INTEGER; // Show latest state
+    const lineNum = selectedLine ?? Number.MAX_SAFE_INTEGER;
 
     if (!hasDataRef.current) {
       setTrackerStates(
@@ -128,7 +141,7 @@ const StatePanel = React.memo(function StatePanel() {
       });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, runCount, activeTrackers.length]);
+  }, [session, runCount, activeTrackers.length, selectedLine]);
 
   if (activeTrackers.length === 0) {
     return (
