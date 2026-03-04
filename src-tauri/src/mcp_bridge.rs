@@ -70,6 +70,8 @@ pub async fn start(handle: Handle) {
         // Phase 2 — Analysis artifacts
         .route("/mcp/sessions/{session_id}/analyses", get(h_list_analyses).post(h_publish_analysis))
         .route("/mcp/sessions/{session_id}/analyses/{artifact_id}", get(h_get_analysis).put(h_update_analysis).delete(h_delete_analysis))
+        // Phase 3 — Insights
+        .route("/mcp/sessions/{session_id}/insights", get(h_insights))
         // Pipeline run trigger (MCP)
         .route("/mcp/sessions/{session_id}/run_pipeline", post(h_run_pipeline))
         // Phase 4 — Watches
@@ -2122,6 +2124,208 @@ async fn h_run_pipeline(
         Ok(Err(e)) => Json(json!({ "error": e })),
         Err(e) => Json(json!({ "error": format!("Pipeline task panicked: {e}") })),
     }
+}
+
+// ---------------------------------------------------------------------------
+// GET /mcp/sessions/{session_id}/insights
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct InsightsParams {
+    /// Max total signal events to return across all processors (default 20).
+    max_signals: Option<usize>,
+    /// Comma-separated list of processor IDs to include. If absent, all are included.
+    processor_ids: Option<String>,
+}
+
+async fn h_insights(
+    State(handle): State<Handle>,
+    Path(session_id): Path<String>,
+    Query(params): Query<InsightsParams>,
+) -> Json<Value> {
+    use crate::processors::signals::{eval_condition, render_template};
+
+    let state = handle.state::<AppState>();
+    let max_signals = params.max_signals.unwrap_or(20);
+
+    let filter_ids: Option<std::collections::HashSet<String>> = params.processor_ids.map(|s| {
+        s.split(',').map(|id| id.trim().to_string()).filter(|s| !s.is_empty()).collect()
+    });
+
+    struct EmissionSnap {
+        line_num: usize,
+        fields: HashMap<String, Value>,
+    }
+
+    struct ResultSnap {
+        total_emissions: usize,
+        vars: HashMap<String, Value>,
+        emissions: Vec<EmissionSnap>,
+    }
+
+    struct ProcSnap {
+        id: String,
+        name: String,
+        schema_mcp: Option<crate::processors::marketplace::McpSchema>,
+        result: Option<ResultSnap>,
+    }
+
+    let proc_snaps: Vec<ProcSnap> = {
+        let proc_meta: Vec<(String, String, Option<crate::processors::marketplace::McpSchema>)> = {
+            let procs = state.processors.lock().unwrap();
+            procs.values()
+                .filter(|p| {
+                    if let Some(ref ids) = filter_ids {
+                        ids.contains(&p.meta.id)
+                    } else {
+                        true
+                    }
+                })
+                .map(|p| (
+                    p.meta.id.clone(),
+                    p.meta.name.clone(),
+                    p.schema.as_ref().and_then(|s| s.mcp.clone()),
+                ))
+                .collect()
+        };
+
+        let mut result_snaps: HashMap<String, ResultSnap> = HashMap::new();
+        {
+            let all_results = state.pipeline_results.lock().unwrap();
+            if let Some(session_map) = all_results.get(&session_id) {
+                for (id, _, _) in &proc_meta {
+                    if let Some(rr) = session_map.get(id) {
+                        result_snaps.insert(id.clone(), ResultSnap {
+                            total_emissions: rr.emissions.len(),
+                            vars: rr.vars.clone(),
+                            emissions: rr.emissions.iter().map(|e| EmissionSnap {
+                                line_num: e.line_num,
+                                fields: e.fields.iter().cloned().collect(),
+                            }).collect(),
+                        });
+                    }
+                }
+            }
+        }
+
+        proc_meta.into_iter().map(|(id, name, schema_mcp)| {
+            ProcSnap { result: result_snaps.remove(&id), id, name, schema_mcp }
+        }).collect()
+    };
+
+    fn severity_rank(s: &str) -> u8 {
+        match s {
+            "critical" => 0,
+            "warning"  => 1,
+            _          => 2,
+        }
+    }
+
+    let mut processors_out: Vec<Value> = Vec::new();
+
+    for snap in proc_snaps {
+        let total_emissions = snap.result.as_ref().map(|r| r.total_emissions).unwrap_or(0);
+
+        let Some(ref mcp) = snap.schema_mcp else {
+            processors_out.push(json!({
+                "processor_id": snap.id,
+                "processor_name": snap.name,
+                "summary": null,
+                "signals": [],
+                "signal_counts": {},
+                "total_emissions": total_emissions,
+                "truncated": false,
+            }));
+            continue;
+        };
+
+        let summary = if let (Some(ref mcp_summary), Some(ref rr)) = (&mcp.summary, &snap.result) {
+            let vars_map: HashMap<String, Value> = if mcp_summary.include_vars.is_empty() {
+                rr.vars.clone()
+            } else {
+                mcp_summary.include_vars.iter()
+                    .filter_map(|k| rr.vars.get(k).map(|v| (k.clone(), v.clone())))
+                    .collect()
+            };
+            Some(render_template(&mcp_summary.template, &vars_map))
+        } else {
+            None
+        };
+
+        let mut all_signals: Vec<Value> = Vec::new();
+        let mut signal_counts: HashMap<String, usize> = HashMap::new();
+
+        if let Some(ref rr) = snap.result {
+            for sig_def in &mcp.signals {
+                let count_entry = signal_counts.entry(sig_def.name.clone()).or_insert(0);
+
+                if sig_def.signal_type == "aggregate" {
+                    if eval_condition(sig_def.condition.as_deref(), &rr.vars) {
+                        *count_entry += 1;
+                        let first_line = rr.emissions.first().map(|e| e.line_num);
+                        let last_line = rr.emissions.last().map(|e| e.line_num);
+                        let requested_fields: HashMap<String, Value> = sig_def.fields.iter()
+                            .filter_map(|f| rr.vars.get(f).map(|v| (f.clone(), v.clone())))
+                            .collect();
+                        let message = sig_def.format.as_deref()
+                            .map(|fmt| render_template(fmt, &rr.vars));
+                        all_signals.push(json!({
+                            "name": sig_def.name,
+                            "severity": sig_def.severity,
+                            "line": first_line,
+                            "last_line": last_line,
+                            "timestamp": null,
+                            "message": message,
+                            "fields": requested_fields,
+                        }));
+                    }
+                } else {
+                    for emission in &rr.emissions {
+                        if eval_condition(sig_def.condition.as_deref(), &emission.fields) {
+                            *count_entry += 1;
+                            let requested_fields: HashMap<String, Value> = sig_def.fields.iter()
+                                .filter_map(|f| emission.fields.get(f).map(|v| (f.clone(), v.clone())))
+                                .collect();
+                            let message = sig_def.format.as_deref()
+                                .map(|fmt| render_template(fmt, &emission.fields));
+                            all_signals.push(json!({
+                                "name": sig_def.name,
+                                "severity": sig_def.severity,
+                                "line": emission.line_num,
+                                "timestamp": null,
+                                "message": message,
+                                "fields": requested_fields,
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+
+        all_signals.sort_by(|a, b| {
+            let sa = a.get("severity").and_then(|v| v.as_str()).unwrap_or("info");
+            let sb = b.get("severity").and_then(|v| v.as_str()).unwrap_or("info");
+            severity_rank(sa).cmp(&severity_rank(sb))
+        });
+
+        let truncated = all_signals.len() > max_signals;
+        all_signals.truncate(max_signals);
+
+        processors_out.push(json!({
+            "processor_id": snap.id,
+            "processor_name": snap.name,
+            "summary": summary,
+            "signals": all_signals,
+            "signal_counts": signal_counts,
+            "total_emissions": total_emissions,
+            "truncated": truncated,
+        }));
+    }
+
+    Json(json!({
+        "session_id": session_id,
+        "processors": processors_out,
+    }))
 }
 
 // ---------------------------------------------------------------------------

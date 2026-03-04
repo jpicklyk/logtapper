@@ -3,6 +3,7 @@ pub mod correlator;
 pub mod marketplace;
 pub mod registry;
 pub mod reporter;
+pub mod signals;
 pub mod state_tracker;
 pub mod transformer;
 

@@ -868,6 +868,50 @@ server.tool(
   }
 );
 
+// ── 17. logtapper_get_insights ───────────────────────────────────────────
+
+server.tool(
+  "logtapper_get_insights",
+  "Get MCP signal insights from pipeline results. For each processor that has " +
+    "a schema with MCP exposure configured, returns a rendered summary and a " +
+    "list of fired signals (classified as critical/warning/info) with line " +
+    "numbers and formatted messages. Processors without MCP schema return " +
+    "basic emission counts only. Run logtapper_run_pipeline first to populate " +
+    "pipeline results before calling this tool.",
+  {
+    session_id: z.string().describe("Session ID"),
+    max_signals: z
+      .number()
+      .int()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe("Max total signal events to return across all processors (default 20)"),
+    processor_ids: z
+      .array(z.string())
+      .optional()
+      .describe("Filter to specific processor IDs. If omitted, all processors are included."),
+  },
+  async ({ session_id, max_signals, processor_ids }) => {
+    try {
+      const query: Record<string, string | number | boolean | undefined> = {
+        max_signals,
+      };
+      if (processor_ids && processor_ids.length > 0) {
+        query.processor_ids = processor_ids.join(",");
+      }
+      return ok(
+        await bridgeGet(
+          `/mcp/sessions/${encodeURIComponent(session_id)}/insights`,
+          query
+        )
+      );
+    } catch (err) {
+      return ok({ error: String(err) });
+    }
+  }
+);
+
 // ---------------------------------------------------------------------------
 // Connect and run
 // ---------------------------------------------------------------------------
