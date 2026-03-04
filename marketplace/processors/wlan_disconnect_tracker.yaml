@@ -171,3 +171,12 @@ transitions:
 output:
   timeline: true
   annotate: true
+
+schema:
+  source_types: ["logcat"]
+  emissions: []
+  mcp:
+    summary:
+      template: "WLAN disconnect tracker: monitors WiFi connection state with IEEE 802.11 reason codes and locally-generated flags from wpa_supplicant and state machine logs."
+      include_vars: []
+    signals: []

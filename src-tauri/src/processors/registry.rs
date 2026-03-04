@@ -86,8 +86,9 @@ pub async fn fetch_marketplace(
             fetch_marketplace_from_url(client, &url).await
         }
         SourceType::Local { path } => {
-            let json = std::fs::read_to_string(path)
-                .map_err(|e| format!("Failed to read local marketplace at '{path}': {e}"))?;
+            let index_path = std::path::Path::new(path).join("marketplace.json");
+            let json = std::fs::read_to_string(&index_path)
+                .map_err(|e| format!("Failed to read local marketplace at '{}': {e}", index_path.display()))?;
             parse_marketplace_json(&json, &source.name)
         }
     }

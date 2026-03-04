@@ -156,6 +156,17 @@ export function usePipeline(): PipelineActions {
     return () => { bus.off('session:closed', handleSessionClosed); };
   }, [dispatch]);
 
+  // Refresh processor list when a marketplace processor is installed or updated
+  useEffect(() => {
+    const refresh = () => { listProcessors().then((list) => dispatch({ type: 'processors:loaded', processors: list })).catch(() => {}); };
+    bus.on('marketplace:processor-installed', refresh);
+    bus.on('marketplace:processor-updated', refresh);
+    return () => {
+      bus.off('marketplace:processor-installed', refresh);
+      bus.off('marketplace:processor-updated', refresh);
+    };
+  }, [dispatch]);
+
   const loadProcessors = useCallback(async () => {
     try {
       const list = await listProcessors();

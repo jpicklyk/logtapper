@@ -1,11 +1,11 @@
 type: state_tracker
-id: __battery_state
+id: battery-state
 name: Battery State
 version: 3.0.0
 author: LogTapper
 description: "Tracks battery level, charging status, and plug source from BatteryService. Each transition captures all fields at once so level + status + plugged are set atomically. Supports Samsung (level:N, status:N, ac:true/false) and AOSP (level=N, status=N, plugged=N) formats."
 tags: [battery, power, android]
-builtin: true
+builtin: false
 
 group: System
 
@@ -142,3 +142,12 @@ transitions:
 output:
   timeline: true
   annotate: true
+
+schema:
+  source_types: ["logcat"]
+  emissions: []
+  mcp:
+    summary:
+      template: "Battery state tracker: monitors level, charging status, and plug source from BatteryService across Samsung and AOSP formats."
+      include_vars: []
+    signals: []

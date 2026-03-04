@@ -1,10 +1,16 @@
-import { memo, useState, useCallback, useRef, useMemo } from 'react';
+import { memo, useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import ReactDOM from 'react-dom';
 import { open } from '@tauri-apps/plugin-dialog';
-import type { ProcessorSummary, RegistryEntry } from '../../bridge/types';
-import { fetchRegistry, installFromRegistry, loadProcessorFromFile } from '../../bridge/commands';
+import type { ProcessorSummary, Source, MarketplaceEntry } from '../../bridge/types';
+import {
+  listSources,
+  fetchMarketplace,
+  installFromMarketplace,
+  loadProcessorFromFile,
+} from '../../bridge/commands';
 import { usePipeline } from '../../hooks';
 import { useProcessors, usePipelineChain } from '../../context';
+import { bus } from '../../events/bus';
 import css from './ProcessorLibrary.module.css';
 
 type Tab = 'installed' | 'discover' | 'yaml';
@@ -52,8 +58,10 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
   const [groupBy, setGroupBy] = useState<GroupBy>('tag');
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  // Discover tab state
-  const [registryEntries, setRegistryEntries] = useState<RegistryEntry[]>([]);
+  // Discover tab state (marketplace multi-source)
+  const [sources, setSources] = useState<Source[]>([]);
+  const [selectedSource, setSelectedSource] = useState<string>('');
+  const [marketplaceEntries, setMarketplaceEntries] = useState<MarketplaceEntry[]>([]);
   const [discoverLoading, setDiscoverLoading] = useState(false);
   const [discoverError, setDiscoverError] = useState<string | null>(null);
   const [installStatus, setInstallStatus] = useState<Record<string, InstallStatus>>({});
@@ -130,23 +138,49 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
     }
   }, [selectableFiltered, selected]);
 
-  // ── Discover tab ───────────────────────────────────────────────────────────
+  // ── Discover tab (marketplace multi-source) ────────────────────────────────
 
-  const handleFetchRegistry = useCallback(async () => {
+  // Load sources on first switch to Discover
+  const sourcesLoadedRef = useRef(false);
+  useEffect(() => {
+    if (tab === 'discover' && !sourcesLoadedRef.current) {
+      sourcesLoadedRef.current = true;
+      listSources().then((srcs) => {
+        setSources(srcs);
+        const enabled = srcs.filter((s) => s.enabled);
+        if (enabled.length > 0 && !selectedSource) {
+          setSelectedSource(enabled[0].name);
+          handleFetchMarketplace(enabled[0].name);
+        }
+      }).catch(() => {});
+    }
+  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleFetchMarketplace = useCallback(async (sourceName?: string) => {
+    const src = sourceName || selectedSource;
+    if (!src) return;
     setDiscoverLoading(true);
     setDiscoverError(null);
     try {
-      const results = await fetchRegistry();
-      setRegistryEntries(results);
+      const results = await fetchMarketplace(src);
+      setMarketplaceEntries(results);
     } catch (e) {
       setDiscoverError(String(e));
     } finally {
       setDiscoverLoading(false);
     }
-  }, []);
+  }, [selectedSource]);
 
-  const handleInstallRegistry = useCallback(
-    async (entry: RegistryEntry) => {
+  const handleSourceChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+    const name = e.target.value;
+    setSelectedSource(name);
+    setDiscoverFilter('');
+    handleFetchMarketplace(name);
+  }, [handleFetchMarketplace]);
+
+  const handleInstallFromMarketplace = useCallback(
+    async (entry: MarketplaceEntry) => {
+      if (!selectedSource) return;
       setInstallStatus((s) => ({ ...s, [entry.id]: 'installing' }));
       setInstallError((e) => {
         const next = { ...e };
@@ -154,21 +188,22 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
         return next;
       });
       try {
-        await installFromRegistry(entry);
+        const summary = await installFromMarketplace(selectedSource, entry.id);
         await pipeline.loadProcessors();
         setInstallStatus((s) => ({ ...s, [entry.id]: 'installed' }));
-        pipeline.addToChain(entry.id);
+        pipeline.addToChain(summary.id);
+        bus.emit('marketplace:processor-installed', { processorId: summary.id, sourceName: selectedSource });
       } catch (e) {
         setInstallStatus((s) => ({ ...s, [entry.id]: 'error' }));
         setInstallError((err) => ({ ...err, [entry.id]: String(e) }));
       }
     },
-    [pipeline],
+    [pipeline, selectedSource],
   );
 
   const discoverFiltered = useMemo(
     () =>
-      registryEntries.filter((e) => {
+      marketplaceEntries.filter((e) => {
         if (!discoverFilter) return true;
         const dq = discoverFilter.toLowerCase();
         return (
@@ -177,13 +212,15 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
           e.tags.some((t) => t.toLowerCase().includes(dq))
         );
       }),
-    [registryEntries, discoverFilter],
+    [marketplaceEntries, discoverFilter],
   );
 
-  const installedRegistryIds = useMemo(
+  const installedIds = useMemo(
     () => new Set(processors.map((p) => p.id)),
     [processors],
   );
+
+  const enabledSources = useMemo(() => sources.filter((s) => s.enabled), [sources]);
 
   // ── YAML tab ───────────────────────────────────────────────────────────────
 
@@ -416,10 +453,21 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
             </>
           )}
 
-          {/* Discover */}
+          {/* Discover (Marketplace) */}
           {tab === 'discover' && (
             <>
               <div className={css.toolbar}>
+                {enabledSources.length > 1 && (
+                  <select
+                    className={css.groupBy}
+                    value={selectedSource}
+                    onChange={handleSourceChange}
+                  >
+                    {enabledSources.map((s) => (
+                      <option key={s.name} value={s.name}>{s.name}</option>
+                    ))}
+                  </select>
+                )}
                 <div className={css.searchWrap}>
                   <svg
                     width="12"
@@ -437,22 +485,22 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                     placeholder="Filter..."
                     value={discoverFilter}
                     onChange={(e) => setDiscoverFilter(e.target.value)}
-                    disabled={registryEntries.length === 0}
+                    disabled={marketplaceEntries.length === 0}
                   />
                 </div>
                 <button
                   className={`${css.fetchBtn}${discoverLoading ? ` ${css.fetchBtnLoading}` : ''}`}
-                  onClick={handleFetchRegistry}
-                  disabled={discoverLoading}
+                  onClick={() => handleFetchMarketplace()}
+                  disabled={discoverLoading || !selectedSource}
                 >
                   {discoverLoading ? (
                     <>
                       <span className={css.spinner} /> Fetching...
                     </>
-                  ) : registryEntries.length > 0 ? (
+                  ) : marketplaceEntries.length > 0 ? (
                     'Refresh'
                   ) : (
-                    'Fetch from GitHub'
+                    'Fetch'
                   )}
                 </button>
               </div>
@@ -460,21 +508,29 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
               {discoverError && <div className={css.errorBar}>{discoverError}</div>}
 
               <div className={css.scroll}>
-                {registryEntries.length === 0 && !discoverLoading && !discoverError && (
+                {marketplaceEntries.length === 0 && !discoverLoading && !discoverError && (
                   <div className={css.empty}>
-                    Click <strong>Fetch from GitHub</strong> to browse the processor registry.
+                    {enabledSources.length === 0
+                      ? 'No sources configured. Open the Marketplace panel to add sources.'
+                      : <>Select a source and click <strong>Fetch</strong> to browse available processors.</>}
                   </div>
                 )}
                 {discoverFiltered.map((entry) => {
                   const status = installStatus[entry.id] ?? 'idle';
-                  const alreadyInstalled = installedRegistryIds.has(entry.id);
-                  const inChain = chainSet.has(entry.id);
+                  const qualifiedId = selectedSource ? `${entry.id}@${selectedSource}` : entry.id;
+                  const alreadyInstalled = installedIds.has(entry.id) || installedIds.has(qualifiedId);
+                  const inChain = chainSet.has(entry.id) || chainSet.has(qualifiedId);
                   return (
                     <div key={entry.id} className={css.discoverItem}>
                       <div className={css.itemInfo} style={{ flex: 1 }}>
                         <span className={css.itemName}>{entry.name}</span>
                         <span className={css.itemSub}>
                           <span className={css.itemVersion}>v{entry.version}</span>
+                          {entry.processorType && (
+                            <span className={`${css.typeBadge} ${PROC_TYPE_BADGE_CLASS[entry.processorType] ?? ''}`}>
+                              {PROC_TYPE_LABELS[entry.processorType] ?? entry.processorType}
+                            </span>
+                          )}
                           {entry.description && (
                             <span className={css.itemDesc}>{entry.description}</span>
                           )}
@@ -502,7 +558,7 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                             <button
                               className={css.actionBtn}
                               onClick={() => {
-                                pipeline.addToChain(entry.id);
+                                pipeline.addToChain(qualifiedId);
                                 onClose();
                               }}
                             >
@@ -512,7 +568,7 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                         ) : (
                           <button
                             className={css.actionBtn}
-                            onClick={() => handleInstallRegistry(entry)}
+                            onClick={() => handleInstallFromMarketplace(entry)}
                             disabled={status === 'installing'}
                           >
                             {status === 'installing' ? (

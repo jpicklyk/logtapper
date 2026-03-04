@@ -4,12 +4,3 @@
   height: 100%;
   overflow: hidden;
 }
-
-.placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  color: var(--text-dimmed);
-  font-size: 12px;
-}

@@ -1,11 +1,11 @@
 type: state_tracker
-id: __network_connectivity
+id: network-connectivity
 name: Network Connectivity
 version: 3.0.0
 author: LogTapper
 description: "Tracks network connectivity state: connected/disconnected, network type (WIFI, MOBILE, etc.), and validation status. Supports Android 13+ (validation/capabilities), Android 6-12 (EVENT_NETWORK_INFO_CHANGED), and legacy (pre-6) formats."
 tags: [network, connectivity, android]
-builtin: true
+builtin: false
 
 group: Network
 
@@ -119,3 +119,12 @@ transitions:
 output:
   timeline: true
   annotate: true
+
+schema:
+  source_types: ["logcat"]
+  emissions: []
+  mcp:
+    summary:
+      template: "Network connectivity tracker: monitors connected/disconnected state, network type, and validation status across Android versions."
+      include_vars: []
+    signals: []

@@ -94,3 +94,30 @@ pipeline:
         source: emissions
         x: { field: timestamp, label: "Time" }
         y: { field: pid, label: "Count", aggregation: count }
+
+schema:
+  source_types: ["logcat"]
+  emissions:
+    - name: pid
+      type: int
+      description: "Process ID that encountered the EBADF error"
+    - name: operation
+      type: string
+      description: "System call that failed with EBADF (e.g. read, write, close, ioctl)"
+  mcp:
+    summary:
+      template: "{{ebadf_count}} EBADF errors detected across processes."
+      include_vars: [ebadf_count]
+    signals:
+      - name: ebadf_storm
+        severity: warning
+        condition: "ebadf_count > 50"
+        fields: [ebadf_count]
+        format: "{{ebadf_count}} EBADF errors detected — possible FD recycling issue"
+        type: aggregate
+      - name: high_ebadf_rate
+        severity: critical
+        condition: "ebadf_count > 200"
+        fields: [ebadf_count]
+        format: "{{ebadf_count}} EBADF errors — high rate indicates severe FD leak"
+        type: aggregate

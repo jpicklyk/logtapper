@@ -56,3 +56,27 @@ pipeline:
         source: emissions
         columns: ["burst_key", "count_in_window", "window_ms"]
         sort: "count_in_window"
+
+schema:
+  source_types: ["logcat"]
+  emissions:
+    - name: burst_key
+      type: string
+      description: "Identifier for the exception burst (exception class or service name)"
+    - name: count_in_window
+      type: int
+      description: "Number of matching errors within the burst window"
+    - name: window_ms
+      type: int
+      description: "Time window in milliseconds over which the burst was detected"
+  mcp:
+    summary:
+      template: "{{total_errors_seen}} errors scanned for storm patterns."
+      include_vars: [total_errors_seen]
+    signals:
+      - name: exception_storm
+        severity: critical
+        condition: "count_in_window >= 20"
+        fields: [burst_key, count_in_window, window_ms]
+        format: "Exception storm: {{count_in_window}} {{burst_key}} errors in {{window_ms}}ms"
+        type: emission

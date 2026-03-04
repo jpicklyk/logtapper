@@ -148,3 +148,12 @@ transitions:
 output:
   timeline: true
   annotate: true
+
+schema:
+  source_types: ["logcat"]
+  emissions: []
+  mcp:
+    summary:
+      template: "Connectivity check state tracker: monitors NetworkMonitor validation lifecycle including DNS/HTTP/HTTPS probe outcomes and captive portal detection."
+      include_vars: []
+    signals: []

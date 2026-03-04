@@ -182,3 +182,42 @@ pipeline:
         source: emissions
         x: { field: timestamp, label: "Time" }
         y: { field: event_type, label: "Events", aggregation: count }
+
+schema:
+  source_types: ["logcat"]
+  emissions:
+    - name: event_type
+      type: string
+      description: "Classified event type (disconnect, deauth, state_change, connect_attempt, disconnecting)"
+    - name: reason
+      type: string
+      description: "IEEE 802.11 reason code or numeric code label"
+    - name: lg
+      type: int
+      description: "Locally-generated flag (1=local, 0=remote, -1=unknown)"
+    - name: bssid
+      type: string
+      description: "BSSID of the access point"
+    - name: ssid
+      type: string
+      description: "SSID of the WiFi network"
+    - name: tag
+      type: string
+      description: "Log tag from the source line"
+  mcp:
+    summary:
+      template: "{{total_disconnects}} disconnect events. Locally generated: {{locally_generated}}. Remote deauth: {{remote_deauth}}."
+      include_vars: [total_disconnects, locally_generated, remote_deauth]
+    signals:
+      - name: frequent_disconnects
+        severity: warning
+        condition: "total_disconnects > 20"
+        fields: [total_disconnects, locally_generated, remote_deauth]
+        format: "{{total_disconnects}} WiFi disconnect events detected — possible connectivity instability"
+        type: aggregate
+      - name: remote_deauth_detected
+        severity: warning
+        condition: "remote_deauth > 0"
+        fields: [remote_deauth]
+        format: "{{remote_deauth}} remote deauthentication(s) detected — AP is actively disconnecting client"
+        type: aggregate

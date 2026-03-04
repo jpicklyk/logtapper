@@ -131,3 +131,39 @@ pipeline:
         source: emissions
         x: { field: pressure_state, label: "Pressure State" }
         y: { field: pressure_state, label: "Count", aggregation: count }
+
+schema:
+  source_types: ["logcat"]
+  emissions:
+    - name: heap_used
+      type: int
+      description: "Heap memory used in MB at time of GC"
+    - name: heap_max
+      type: int
+      description: "Maximum heap size in MB"
+    - name: heap_pct
+      type: int
+      description: "Heap usage as percentage (0-100)"
+    - name: pressure_state
+      type: string
+      description: "Classified pressure state (normal, stressed, critical, explicit_gc)"
+    - name: is_explicit
+      type: bool
+      description: "Whether the GC was explicitly triggered by the system"
+  mcp:
+    summary:
+      template: "{{gc_count}} GC events. Peak heap: {{peak_heap_pct}}%. Critical (>85%): {{critical_count}}. Explicit GCs: {{explicit_gc_count}}."
+      include_vars: [gc_count, peak_heap_pct, critical_count, explicit_gc_count]
+    signals:
+      - name: critical_gc_pressure
+        severity: critical
+        condition: "heap_pct >= 85"
+        fields: [heap_used, heap_max, heap_pct, pressure_state]
+        format: "Critical GC pressure: heap at {{heap_pct}}% ({{heap_used}}MB/{{heap_max}}MB)"
+        type: emission
+      - name: stressed_gc_pressure
+        severity: warning
+        condition: "heap_pct >= 70"
+        fields: [heap_used, heap_max, heap_pct, pressure_state]
+        format: "Stressed GC pressure: heap at {{heap_pct}}% ({{heap_used}}MB/{{heap_max}}MB)"
+        type: emission

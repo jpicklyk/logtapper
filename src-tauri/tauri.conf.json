@@ -27,6 +27,25 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "../marketplace/marketplace.json": "marketplace/marketplace.json",
+      "../marketplace/processors/wifi_state.yaml": "marketplace/processors/wifi_state.yaml",
+      "../marketplace/processors/battery_state.yaml": "marketplace/processors/battery_state.yaml",
+      "../marketplace/processors/app_lifecycle.yaml": "marketplace/processors/app_lifecycle.yaml",
+      "../marketplace/processors/network_connectivity.yaml": "marketplace/processors/network_connectivity.yaml",
+      "../marketplace/processors/samsung_auto_blocker.yaml": "marketplace/processors/samsung_auto_blocker.yaml",
+      "../marketplace/processors/connectivity_check_probes.yaml": "marketplace/processors/connectivity_check_probes.yaml",
+      "../marketplace/processors/connectivity_check_state.yaml": "marketplace/processors/connectivity_check_state.yaml",
+      "../marketplace/processors/ebadf_error_tracker.yaml": "marketplace/processors/ebadf_error_tracker.yaml",
+      "../marketplace/processors/exception_storm_detector.yaml": "marketplace/processors/exception_storm_detector.yaml",
+      "../marketplace/processors/fd_ebadf_correlator.yaml": "marketplace/processors/fd_ebadf_correlator.yaml",
+      "../marketplace/processors/gc_pressure_monitor.yaml": "marketplace/processors/gc_pressure_monitor.yaml",
+      "../marketplace/processors/process_kill_storm.yaml": "marketplace/processors/process_kill_storm.yaml",
+      "../marketplace/processors/system_server_fd_monitor.yaml": "marketplace/processors/system_server_fd_monitor.yaml",
+      "../marketplace/processors/system_server_heap.yaml": "marketplace/processors/system_server_heap.yaml",
+      "../marketplace/processors/wlan_disconnect_events.yaml": "marketplace/processors/wlan_disconnect_events.yaml",
+      "../marketplace/processors/wlan_disconnect_tracker.yaml": "marketplace/processors/wlan_disconnect_tracker.yaml"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

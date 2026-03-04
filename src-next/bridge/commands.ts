@@ -453,6 +453,13 @@ export function saveSourcesToDisk(): Promise<void> {
   return invoke('save_sources_to_disk');
 }
 
+export function installFromMarketplace(
+  sourceName: string,
+  entryId: string,
+): Promise<ProcessorSummary> {
+  return invoke('install_from_marketplace', { sourceName, entryId });
+}
+
 // ---------------------------------------------------------------------------
 // Capture save (Phase 4)
 // ---------------------------------------------------------------------------

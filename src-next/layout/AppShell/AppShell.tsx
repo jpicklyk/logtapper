@@ -25,6 +25,8 @@ import { SettingsPanel } from '../../components/SettingsPanel';
 import { useSettings, useAnonymizerConfig } from '../../hooks';
 import { useCacheManager } from '../../cache';
 import { findTabAcrossTree, allPanes } from '../../hooks/workspace/splitTreeHelpers';
+import { getPendingUpdates, checkUpdates } from '../../bridge/commands';
+import { bus } from '../../events/bus';
 import type {
   WorkspaceLayoutState,
   LeftPaneTab,
@@ -52,20 +54,51 @@ const LEFT_BOTTOM_ITEMS = [
   { id: 'watches', icon: Eye, label: 'Watches' },
 ];
 
-const RIGHT_TOP_ITEMS = [
-  { id: 'processors', icon: Cpu, label: 'Processors' },
-  { id: 'marketplace', icon: Store, label: 'Marketplace' },
-];
-
 const RIGHT_BOTTOM_ITEMS = [
   { id: 'settings', icon: Settings, label: 'Settings' },
 ];
+
+/** Small hook that tracks pending marketplace update count for the toolbar badge. */
+function useUpdateBadge(): number {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    // Check on mount
+    getPendingUpdates().then((updates) => setCount(updates.length)).catch(() => {});
+
+    // Re-check when sources change
+    const handleSourcesChanged = () => {
+      checkUpdates().then((result) => setCount(result.updates.length)).catch(() => {});
+    };
+    const handleUpdated = () => {
+      setCount((prev) => Math.max(0, prev - 1));
+    };
+
+    bus.on('marketplace:sources-changed', handleSourcesChanged);
+    bus.on('marketplace:processor-updated', handleUpdated);
+    return () => {
+      bus.off('marketplace:sources-changed', handleSourcesChanged);
+      bus.off('marketplace:processor-updated', handleUpdated);
+    };
+  }, []);
+
+  return count;
+}
 
 export const AppShell = React.memo(function AppShell({ workspace }: AppShellProps) {
   const settingsHook = useSettings();
   const anonymizerConfig = useAnonymizerConfig();
   const cacheManager = useCacheManager();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const updateBadgeCount = useUpdateBadge();
+
+  const rightTopItems = useMemo(
+    () => [
+      { id: 'processors', icon: Cpu, label: 'Processors' },
+      { id: 'marketplace', icon: Store, label: 'Marketplace', badge: updateBadgeCount > 0 ? updateBadgeCount : undefined },
+    ],
+    [updateBadgeCount],
+  );
 
   const centerTreeRef = useRef(workspace.centerTree);
   centerTreeRef.current = workspace.centerTree;
@@ -281,7 +314,7 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
       {/* Right toolbar */}
       <div className={styles.rtoolbar}>
         <ToolBar
-          topItems={RIGHT_TOP_ITEMS}
+          topItems={rightTopItems}
           bottomItems={RIGHT_BOTTOM_ITEMS}
           activeTopId={activeRightId}
           activeBottomId={null}

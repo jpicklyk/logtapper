@@ -55,3 +55,12 @@ correlate:
 
 output:
   annotate: true
+
+schema:
+  source_types: ["logcat"]
+  emissions: []
+  mcp:
+    summary:
+      template: "FD-EBADF correlator: detects when system_server FD spikes (>900 FDs) precede EBADF errors, indicating FD recycling as root cause."
+      include_vars: []
+    signals: []

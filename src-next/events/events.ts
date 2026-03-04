@@ -68,4 +68,9 @@ export type AppEvents = {
   // ── Analysis ──────────────────────────────────────────────────────────────
   /** Fired when the user selects an analysis artifact to view in the center tab. */
   'analysis:open':          { artifactId: string };
+
+  // ── Marketplace ─────────────────────────────────────────────────────────
+  'marketplace:processor-installed': { processorId: string; sourceName: string };
+  'marketplace:processor-updated':   { processorId: string; oldVersion: string; newVersion: string };
+  'marketplace:sources-changed':     undefined;
 };

@@ -143,3 +143,36 @@ pipeline:
         source: emissions
         x: { field: fd_state, label: "FD State" }
         y: { field: fd_state, label: "Count", aggregation: count }
+
+schema:
+  source_types: ["logcat"]
+  emissions:
+    - name: fd_count
+      type: int
+      description: "File descriptor count at time of Watchdog sync"
+    - name: fd_state
+      type: string
+      description: "Classified FD state (normal, elevated, critical)"
+    - name: heap_pct
+      type: int
+      description: "Heap usage percentage derived from Watchdog heap telemetry"
+    - name: sync_num
+      type: int
+      description: "Watchdog sync number (1=first sync after boot, 2=second, etc.)"
+  mcp:
+    summary:
+      template: "Peak FD: {{peak_fd_count}}. Critical events (>1000): {{critical_count}}. Boot spike: {{boot_fd_spike}} FDs. Baseline: {{baseline_fd_count}}."
+      include_vars: [peak_fd_count, critical_count, boot_fd_spike, baseline_fd_count]
+    signals:
+      - name: fd_critical
+        severity: critical
+        condition: "fd_count > 1000"
+        fields: [fd_count, fd_state, sync_num]
+        format: "Critical FD count: {{fd_count}} file descriptors in system_server"
+        type: emission
+      - name: fd_elevated
+        severity: warning
+        condition: "fd_count >= 500"
+        fields: [fd_count, fd_state, sync_num]
+        format: "Elevated FD count: {{fd_count}} file descriptors in system_server"
+        type: emission

@@ -344,3 +344,60 @@ pipeline:
         y: { field: duration_ms, label: "Latency (ms)" }
         color: { field: probe_type }
         interactive: true
+
+schema:
+  source_types: ["logcat"]
+  emissions:
+    - name: probe_type
+      type: string
+      description: "Type of connectivity probe (DNS, HTTP, HTTPS, FALLBACK, VERDICT)"
+    - name: host
+      type: string
+      description: "DNS hostname being probed"
+    - name: url
+      type: string
+      description: "URL being probed for HTTP/HTTPS/FALLBACK probes"
+    - name: duration_ms
+      type: int
+      description: "Probe latency in milliseconds"
+    - name: result
+      type: string
+      description: "Probe outcome (OK, FAIL, validated, portal, partial, failed)"
+    - name: failure_reason
+      type: string
+      description: "Classification of failure (e.g. DNS Timeout, DNS NXDOMAIN, SocketTimeoutException)"
+    - name: net_id
+      type: string
+      description: "Android network ID extracted from NetworkMonitor tag"
+    - name: resolved_ips
+      type: string
+      description: "Resolved IP addresses from successful DNS probes"
+    - name: ret_code
+      type: int
+      description: "HTTP return code from successful HTTP/HTTPS/FALLBACK probes"
+    - name: detail
+      type: string
+      description: "Detailed failure message or exception text"
+  mcp:
+    summary:
+      template: "{{total_probes}} probes: DNS {{dns_ok}}/{{dns_fail}} ok/fail, HTTP {{http_ok}}/{{http_fail}}, HTTPS {{https_ok}}/{{https_fail}}. Validations: {{validation_pass}} passed, {{validation_fail}} failed, {{portal_detected}} portals."
+      include_vars: [total_probes, dns_ok, dns_fail, http_ok, http_fail, https_ok, https_fail, validation_pass, validation_fail, validation_partial, portal_detected]
+    signals:
+      - name: dns_failure
+        severity: warning
+        condition: "result == 'FAIL' && probe_type == 'DNS'"
+        fields: [probe_type, host, failure_reason, detail]
+        format: "DNS probe failed for {{host}}: {{failure_reason}}"
+        type: emission
+      - name: validation_failed
+        severity: warning
+        condition: "result == 'failed' && probe_type == 'VERDICT'"
+        fields: [probe_type, result, net_id]
+        format: "Connectivity validation failed on network {{net_id}}"
+        type: emission
+      - name: portal_detected
+        severity: warning
+        condition: "portal_detected > 0"
+        fields: [portal_detected]
+        format: "{{portal_detected}} captive portal(s) detected"
+        type: aggregate

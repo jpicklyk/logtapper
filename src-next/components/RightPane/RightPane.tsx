@@ -1,5 +1,6 @@
 import React from 'react';
 import { ProcessorPanel } from '../ProcessorPanel';
+import { MarketplacePanel } from '../MarketplacePanel';
 import styles from './RightPane.module.css';
 
 export type RightPaneTab = 'processors' | 'marketplace';
@@ -12,9 +13,7 @@ const RightPane = React.memo(function RightPane({ activeTab }: Props) {
   return (
     <div className={styles.root}>
       {activeTab === 'processors' && <ProcessorPanel />}
-      {activeTab === 'marketplace' && (
-        <div className={styles.placeholder}>Processor marketplace</div>
-      )}
+      {activeTab === 'marketplace' && <MarketplacePanel />}
     </div>
   );
 });

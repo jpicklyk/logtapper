@@ -1,11 +1,11 @@
 type: state_tracker
-id: __app_lifecycle
+id: app-lifecycle
 name: App Lifecycle
 version: 1.0.0
 author: LogTapper
 description: Tracks foreground app changes, activity launches, and crashes via ActivityManager.
 tags: [app, lifecycle, android]
-builtin: true
+builtin: false
 
 group: App
 
@@ -57,3 +57,12 @@ transitions:
 output:
   timeline: true
   annotate: true
+
+schema:
+  source_types: ["logcat"]
+  emissions: []
+  mcp:
+    summary:
+      template: "App lifecycle tracker: monitors foreground app changes, activity launches, and crashes via ActivityManager."
+      include_vars: []
+    signals: []

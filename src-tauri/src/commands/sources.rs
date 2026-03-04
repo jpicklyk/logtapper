@@ -4,7 +4,7 @@ use tauri::{AppHandle, Manager, State};
 use crate::commands::AppState;
 use crate::processors::marketplace::{self, MarketplaceEntry, Source};
 use crate::processors::registry;
-use crate::processors::AnyProcessor;
+use crate::processors::{AnyProcessor, ProcessorSummary};
 
 // ---------------------------------------------------------------------------
 // Source persistence helpers
@@ -485,6 +485,66 @@ pub async fn get_pending_updates(
     let result = pending.clone();
     pending.clear();
     Ok(result)
+}
+
+/// Install a processor from a named marketplace source.
+/// Downloads the YAML, verifies SHA256, appends provenance, parses, persists, and inserts.
+#[tauri::command]
+pub async fn install_from_marketplace(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    source_name: String,
+    entry_id: String,
+) -> Result<ProcessorSummary, String> {
+    // Look up the source.
+    let source = {
+        let srcs = state.sources.lock().map_err(|_| "Sources lock poisoned")?;
+        srcs.iter()
+            .find(|s| s.name == source_name)
+            .cloned()
+            .ok_or_else(|| format!("Source '{}' not found", source_name))?
+    };
+
+    // Fetch marketplace index and find the entry.
+    let index = registry::fetch_marketplace(&state.http_client, &source).await?;
+    let entry = index
+        .processors
+        .iter()
+        .find(|e| e.id == entry_id)
+        .ok_or_else(|| format!("Entry '{}' not found in source '{}'", entry_id, source_name))?;
+
+    // Download and verify.
+    let yaml = registry::download_processor_from_source(&state.http_client, &source, entry).await?;
+
+    // Append provenance metadata.
+    let now = chrono_now_iso();
+    let provenance_yaml = format!(
+        "\n_source: {}\n_installed_version: {}\n_installed_at: {}\n_sha256: {}\n",
+        source_name, entry.version, now, entry.sha256
+    );
+    let final_yaml = format!("{}{}", yaml, provenance_yaml);
+
+    // Parse into AnyProcessor.
+    let mut def = AnyProcessor::from_yaml(&final_yaml)
+        .map_err(|e| format!("Failed to parse processor YAML: {e}"))?;
+    def.source = Some(source_name.clone());
+
+    let qualified_id = marketplace::qualified_id(&def.meta.id, &source_name);
+
+    // Persist to disk.
+    persist_processor_yaml(&app, &qualified_id, &final_yaml)?;
+
+    // Build summary with the qualified ID (From impl uses bare id).
+    let mut summary = ProcessorSummary::from(&def);
+    summary.id = qualified_id.clone();
+
+    // Insert into state.
+    {
+        let mut procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
+        procs.insert(qualified_id, def);
+    }
+
+    Ok(summary)
 }
 
 /// Simple ISO 8601 timestamp (no chrono dependency — use std).

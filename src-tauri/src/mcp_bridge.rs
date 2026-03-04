@@ -2171,18 +2171,20 @@ async fn h_insights(
     }
 
     let proc_snaps: Vec<ProcSnap> = {
+        // Collect (qualified_id, display_name, schema) — qualified_id is the HashMap key
+        // (e.g. "wifi-state@official") which matches pipeline_results keys.
         let proc_meta: Vec<(String, String, Option<crate::processors::marketplace::McpSchema>)> = {
             let procs = state.processors.lock().unwrap();
-            procs.values()
-                .filter(|p| {
+            procs.iter()
+                .filter(|(qid, p)| {
                     if let Some(ref ids) = filter_ids {
-                        ids.contains(&p.meta.id)
+                        ids.contains(qid.as_str()) || ids.contains(&p.meta.id)
                     } else {
                         true
                     }
                 })
-                .map(|p| (
-                    p.meta.id.clone(),
+                .map(|(qid, p)| (
+                    qid.clone(),
                     p.meta.name.clone(),
                     p.schema.as_ref().and_then(|s| s.mcp.clone()),
                 ))

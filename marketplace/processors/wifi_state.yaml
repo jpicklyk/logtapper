@@ -1,11 +1,11 @@
 type: state_tracker
-id: __wifi_state
+id: wifi-state
 name: WiFi State
 version: 1.3.0
 author: LogTapper
 description: "Tracks WiFi connection state throughout the log: enabled/disabled, SSID, signal strength, and IP address. Supports AOSP (WifiStateMachine) and Samsung (SemWifiApAdvancedAutohotspotService) devices."
 tags: [network, wifi, android]
-builtin: true
+builtin: false
 
 group: Network
 
@@ -134,3 +134,12 @@ transitions:
 output:
   timeline: true
   annotate: true
+
+schema:
+  source_types: ["logcat"]
+  emissions: []
+  mcp:
+    summary:
+      template: "WiFi state tracker: monitors enabled/disabled, SSID, signal strength, and IP address across AOSP and Samsung devices."
+      include_vars: []
+    signals: []

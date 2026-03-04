@@ -163,3 +163,39 @@ pipeline:
         source: emissions
         x: { field: timestamp, label: "Time" }
         y: { field: fd_count, label: "FD Count" }
+
+schema:
+  source_types: ["logcat"]
+  emissions:
+    - name: heap_used
+      type: int
+      description: "Heap memory used in MB"
+    - name: heap_max
+      type: int
+      description: "Maximum heap size in MB"
+    - name: heap_pct
+      type: int
+      description: "Heap usage as percentage (0-100)"
+    - name: fd_count
+      type: int
+      description: "File descriptor count from the same Watchdog message"
+    - name: pressure_level
+      type: string
+      description: "Classified pressure level (normal_<60, moderate_60-80, elevated_80-90, high_90-95, critical_95+)"
+  mcp:
+    summary:
+      template: "{{sample_count}} heap samples. Peak: {{peak_heap_used}} MB ({{peak_heap_pct}}%). High pressure (>80%): {{high_pressure_count}}. Critical (>90%): {{critical_pressure_count}}."
+      include_vars: [sample_count, peak_heap_used, peak_heap_pct, high_pressure_count, critical_pressure_count]
+    signals:
+      - name: heap_critical
+        severity: critical
+        condition: "heap_pct >= 90"
+        fields: [heap_used, heap_max, heap_pct, pressure_level]
+        format: "Critical heap pressure: {{heap_pct}}% ({{heap_used}}MB/{{heap_max}}MB)"
+        type: emission
+      - name: heap_high
+        severity: warning
+        condition: "heap_pct >= 80"
+        fields: [heap_used, heap_max, heap_pct, pressure_level]
+        format: "High heap pressure: {{heap_pct}}% ({{heap_used}}MB/{{heap_max}}MB)"
+        type: emission

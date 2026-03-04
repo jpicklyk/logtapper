@@ -47,19 +47,30 @@ fn load_persisted_processors(state: &AppState, proc_dir: &std::path::Path) {
     }
 }
 
-/// Bundled builtin YAML content indexed by path suffix (matches marketplace_snapshot.json `path`).
+/// Bundled marketplace YAML content indexed by path suffix (matches marketplace.json `path`).
 const BUILTIN_YAMLS: &[(&str, &str)] = &[
-    ("builtin/wifi_state.yaml",           include_str!("processors/builtin/wifi_state.yaml")),
-    ("builtin/battery_state.yaml",        include_str!("processors/builtin/battery_state.yaml")),
-    ("builtin/app_lifecycle.yaml",        include_str!("processors/builtin/app_lifecycle.yaml")),
-    ("builtin/network_connectivity.yaml", include_str!("processors/builtin/network_connectivity.yaml")),
-    ("builtin/samsung_auto_blocker.yaml", include_str!("processors/builtin/samsung_auto_blocker.yaml")),
+    ("processors/wifi_state.yaml",              include_str!("../../marketplace/processors/wifi_state.yaml")),
+    ("processors/battery_state.yaml",           include_str!("../../marketplace/processors/battery_state.yaml")),
+    ("processors/app_lifecycle.yaml",           include_str!("../../marketplace/processors/app_lifecycle.yaml")),
+    ("processors/network_connectivity.yaml",    include_str!("../../marketplace/processors/network_connectivity.yaml")),
+    ("processors/samsung_auto_blocker.yaml",    include_str!("../../marketplace/processors/samsung_auto_blocker.yaml")),
+    ("processors/connectivity_check_probes.yaml", include_str!("../../marketplace/processors/connectivity_check_probes.yaml")),
+    ("processors/connectivity_check_state.yaml",  include_str!("../../marketplace/processors/connectivity_check_state.yaml")),
+    ("processors/ebadf_error_tracker.yaml",     include_str!("../../marketplace/processors/ebadf_error_tracker.yaml")),
+    ("processors/exception_storm_detector.yaml", include_str!("../../marketplace/processors/exception_storm_detector.yaml")),
+    ("processors/fd_ebadf_correlator.yaml",     include_str!("../../marketplace/processors/fd_ebadf_correlator.yaml")),
+    ("processors/gc_pressure_monitor.yaml",     include_str!("../../marketplace/processors/gc_pressure_monitor.yaml")),
+    ("processors/process_kill_storm.yaml",      include_str!("../../marketplace/processors/process_kill_storm.yaml")),
+    ("processors/system_server_fd_monitor.yaml", include_str!("../../marketplace/processors/system_server_fd_monitor.yaml")),
+    ("processors/system_server_heap.yaml",      include_str!("../../marketplace/processors/system_server_heap.yaml")),
+    ("processors/wlan_disconnect_events.yaml",  include_str!("../../marketplace/processors/wlan_disconnect_events.yaml")),
+    ("processors/wlan_disconnect_tracker.yaml", include_str!("../../marketplace/processors/wlan_disconnect_tracker.yaml")),
 ];
 
 /// Install the 5 state-tracker processors from the bundled snapshot as marketplace processors
 /// under the "official" source. Each gets a qualified ID (`id@official`) and provenance metadata.
 fn install_snapshot_processors(state: &AppState, app: &tauri::AppHandle) {
-    let snapshot_json = include_str!("processors/builtin/marketplace_snapshot.json");
+    let snapshot_json = include_str!("../../marketplace/marketplace.json");
     let index: processors::marketplace::MarketplaceIndex = match serde_json::from_str(snapshot_json) {
         Ok(idx) => idx,
         Err(e) => {
@@ -82,17 +93,13 @@ fn install_snapshot_processors(state: &AppState, app: &tauri::AppHandle) {
             continue;
         };
 
-        // Rewrite the `id:` field to the bare marketplace ID (strip __ prefix from builtin ID)
-        // and set builtin: false since this is now a marketplace processor.
-        let rewritten = rewrite_yaml_for_marketplace(raw_yaml, &entry.id);
-
         // Attach provenance metadata (use a static placeholder; exact timestamp not critical)
         let now = "2000-01-01T00:00:00Z";
         let provenance_suffix = format!(
             "\n_source: official\n_installed_version: {}\n_installed_at: {}\n_sha256: \"\"\n",
             entry.version, now
         );
-        let final_yaml = format!("{}{}", rewritten, provenance_suffix);
+        let final_yaml = format!("{}{}", raw_yaml, provenance_suffix);
 
         match AnyProcessor::from_yaml(&final_yaml) {
             Ok(mut def) => {
@@ -111,29 +118,6 @@ fn install_snapshot_processors(state: &AppState, app: &tauri::AppHandle) {
             Err(e) => eprintln!("Failed to parse snapshot processor '{}': {e}", entry.id),
         }
     }
-}
-
-/// Rewrite the `id:` and `builtin:` fields in a YAML string for marketplace use.
-fn rewrite_yaml_for_marketplace(yaml: &str, new_id: &str) -> String {
-    let mut lines: Vec<String> = yaml.lines().map(|l| l.to_string()).collect();
-    let mut found_id = false;
-    let mut found_builtin = false;
-
-    for line in &mut lines {
-        if !found_id && line.trim_start().starts_with("id:") {
-            *line = format!("id: {}", new_id);
-            found_id = true;
-        } else if !found_builtin && line.trim_start().starts_with("builtin:") {
-            *line = "builtin: false".to_string();
-            found_builtin = true;
-        }
-    }
-
-    if !found_builtin {
-        lines.push("builtin: false".to_string());
-    }
-
-    lines.join("\n")
 }
 
 /// Background startup update check.
@@ -276,6 +260,14 @@ pub fn run() {
                 }
             }
 
+            // Resolve the marketplace directory path.
+            // In dev mode, resource_dir() points to src-tauri/ so ../marketplace
+            // reaches the project root's marketplace/. In production builds,
+            // Tauri bundles marketplace/ into the resource directory.
+            let marketplace_path = app.path().resource_dir()
+                .map(|d| d.join("marketplace"))
+                .unwrap_or_else(|_| std::path::PathBuf::from("marketplace"));
+
             // Load or initialize sources
             let first_run = !sources_path.exists();
             if first_run {
@@ -283,7 +275,7 @@ pub fn run() {
                 let official = Source {
                     name: "official".to_string(),
                     source_type: SourceType::Local {
-                        path: "__bundled__".to_string(),
+                        path: marketplace_path.to_string_lossy().to_string(),
                     },
                     enabled: true,
                     auto_update: false,
@@ -302,6 +294,24 @@ pub fn run() {
                 let loaded = commands::sources::load_sources(app.handle());
                 if let Ok(mut sources) = state.sources.lock() {
                     *sources = loaded;
+                }
+
+                // Migrate legacy "__bundled__" paths to the real marketplace directory
+                if let Ok(mut sources) = state.sources.lock() {
+                    let mut migrated = false;
+                    for source in sources.iter_mut() {
+                        if let SourceType::Local { ref mut path } = source.source_type {
+                            if path == "__bundled__" {
+                                *path = marketplace_path.to_string_lossy().to_string();
+                                migrated = true;
+                            }
+                        }
+                    }
+                    if migrated {
+                        if let Ok(json) = serde_json::to_string_pretty(&*sources) {
+                            let _ = std::fs::write(&sources_path, json);
+                        }
+                    }
                 }
             }
 
@@ -416,6 +426,8 @@ pub fn run() {
             commands::sources::update_processor,
             commands::sources::update_all_from_source,
             commands::sources::save_sources_to_disk,
+            commands::sources::get_pending_updates,
+            commands::sources::install_from_marketplace,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

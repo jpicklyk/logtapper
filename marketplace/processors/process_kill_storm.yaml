@@ -113,3 +113,36 @@ pipeline:
         source: emissions
         x: { field: process_name, label: "Process" }
         y: { field: rss_kb, label: "RSS (KB)", aggregation: sum }
+
+schema:
+  source_types: ["logcat"]
+  emissions:
+    - name: process_name
+      type: string
+      description: "Name of the killed process"
+    - name: pid
+      type: int
+      description: "PID of the killed process"
+    - name: rss_kb
+      type: int
+      description: "Resident set size in KB freed by the kill"
+    - name: reason
+      type: string
+      description: "Kill reason (e.g. empty process, background ANR, excessive cpu)"
+  mcp:
+    summary:
+      template: "{{total_kills}} process kills. Total RSS freed: {{total_rss_freed_kb}} KB. Largest kill: {{largest_killed_process}} ({{largest_killed_rss_kb}} KB)."
+      include_vars: [total_kills, total_rss_freed_kb, largest_killed_process, largest_killed_rss_kb]
+    signals:
+      - name: large_kill
+        severity: warning
+        condition: "rss_kb > 100000"
+        fields: [process_name, pid, rss_kb, reason]
+        format: "Large process killed: {{process_name}} (PID {{pid}}) freed {{rss_kb}} KB"
+        type: emission
+      - name: kill_storm
+        severity: critical
+        condition: "total_kills > 50"
+        fields: [total_kills, total_rss_freed_kb]
+        format: "Kill storm: {{total_kills}} processes killed, {{total_rss_freed_kb}} KB freed"
+        type: aggregate

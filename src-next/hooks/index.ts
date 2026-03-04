@@ -35,3 +35,5 @@ export { useAnalysis } from './useAnalysis';
 export type { AnalysisState } from './useAnalysis';
 export { useWatches } from './useWatches';
 export type { UseWatchesReturn } from './useWatches';
+export { useMarketplace } from './useMarketplace';
+export type { MarketplaceState } from './useMarketplace';
