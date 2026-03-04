@@ -1,0 +1,91 @@
+/* ── TextLine ───────────────────────────────────────────────────────────── */
+
+.line {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  white-space: pre;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 22px;
+  border-left: 2px solid transparent;
+  color: var(--text);
+}
+
+.line:hover {
+  background: rgba(136, 152, 170, 0.04);
+}
+
+.lineNum {
+  color: var(--text-dimmed);
+  min-width: 60px;
+  text-align: right;
+  padding-right: 8px;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.msg {
+  flex: 1;
+}
+
+.gutter {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── Level classes ────────────────────────────────────────────────────── */
+/* Declared before .selected so selection background always takes precedence */
+
+.levelV { color: #6e7681; }
+.levelD { color: #9ca3af; }
+.levelI { color: var(--text); }
+.levelW { color: #d29922; background: rgba(26, 19, 0, 0.03); }
+.levelE { color: #f47067; background: #2d1117; }
+.levelF { color: #ff6e6e; background: #3d1118; font-weight: 600; }
+
+.selected {
+  background: rgba(255, 200, 50, 0.12);
+  border-left-color: rgba(255, 200, 50, 0.75);
+}
+
+.selected:hover {
+  background: rgba(255, 200, 50, 0.18);
+}
+
+.jumpTarget {
+  animation: flashHighlight 1.8s ease-out forwards;
+  border-left-color: rgba(88, 166, 255, 0.65);
+}
+
+@keyframes flashHighlight {
+  0%   { background-color: rgba(88, 166, 255, 0.35); }
+  40%  { background-color: rgba(88, 166, 255, 0.22); }
+  100% { background-color: rgba(88, 166, 255, 0.12); }
+}
+
+.jumpTarget .lineNum {
+  color: var(--accent);
+}
+
+/* ── Skeleton placeholder ─────────────────────────────────────────────── */
+
+.skeleton {
+  display: flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  opacity: 0.4;
+}
+
+.skeletonBar {
+  display: inline-block;
+  width: 40%;
+  height: 10px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #1c2128 25%, #2a3140 50%, #1c2128 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.8s ease-in-out infinite;
+}

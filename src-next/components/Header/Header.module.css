@@ -1,0 +1,196 @@
+.header {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 40px;
+  padding: 0;
+  background: var(--bg-raised);
+  border-bottom: 1px solid rgba(88, 166, 255, 0.18);
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+}
+
+/* ── Brand zone ─────────────────────────────────────────────────────────── */
+/* Occupies the same horizontal space as the left toolbar (40px) + left panel.
+   This pushes the search bar to start exactly where the center pane starts. */
+.brand {
+  flex: 0 0 calc(40px + var(--left-pane-width, 220px));
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  gap: 6px;
+  flex-shrink: 0;
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+}
+
+.title {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.titleAndroid {
+  color: var(--android);
+  font-weight: 700;
+}
+
+.titleAccent {
+  color: var(--accent);
+}
+
+/* ── Search area ────────────────────────────────────────────────────────── */
+/* Starts where the center pane starts; fills all remaining space */
+.searchArea {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+  -webkit-app-region: no-drag;
+}
+
+/* ── Action buttons ─────────────────────────────────────────────────────── */
+/* Anchored to the far right; separated with a left border */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+  padding: 0 10px;
+  border-left: 1px solid var(--border);
+}
+
+.actionBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-base);
+  color: var(--text-subtle);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast),
+    background var(--transition-fast);
+  -webkit-app-region: no-drag;
+}
+
+.actionBtn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-base));
+}
+
+.actionBtnStreaming {
+  color: var(--success);
+  border-color: var(--success-dark);
+  background: color-mix(in srgb, var(--success) 8%, var(--bg-base));
+}
+
+.actionBtnStreaming:hover {
+  color: var(--danger, #f85149);
+  border-color: var(--danger, #f85149);
+  background: color-mix(in srgb, var(--danger, #f85149) 8%, var(--bg-base));
+}
+
+.actionBtnLoading {
+  opacity: 0.65;
+  cursor: default;
+}
+
+/* Live pulse dot shown inside Stream button when streaming */
+.streamDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  flex-shrink: 0;
+  animation: streamPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes streamPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.65); }
+}
+
+/* ── Device picker (inside Modal) ───────────────────────────────────────── */
+.deviceList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.deviceItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-base);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.deviceItem:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-base));
+}
+
+.deviceIcon {
+  color: var(--android);
+  flex-shrink: 0;
+}
+
+.deviceModel {
+  flex: 1;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deviceSerial {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+
+.deviceState {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.deviceStateOnline {
+  background: color-mix(in srgb, var(--success) 15%, var(--bg-base));
+  color: var(--success);
+}
+
+.deviceError {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+  padding: 8px 0;
+}

@@ -1,0 +1,42 @@
+/* ── Design tokens ───────────────────────────────────────────────────────── */
+
+:root {
+  /* Backgrounds */
+  --bg-base:    #0c1014;
+  --bg-input:   #0e1318;
+  --bg-raised:  #141b21;
+  --bg-overlay: #1b2530;
+
+  /* Borders */
+  --border:        #243040;
+  --border-subtle: #2d3d4e;
+
+  /* Text */
+  --text-dimmed:  #484f58;
+  --text-muted:   #8b949e;
+  --text-subtle:  #9faab4;
+  --text:         #b8c4ce;
+
+  /* Accent (blue) */
+  --accent:      #58a6ff;
+  --accent-base: #1f6feb;
+
+  /* Semantic */
+  --success:       #3fb950;
+  --success-dark:  #238636;
+  --success-dark-hover: #2ea043;
+  --danger:        #f85149;
+  --warning:       #f0a500;
+  --warning-muted: #c9a227;
+
+  /* New tokens */
+  --focus-ring: rgba(88, 166, 255, 0.4);
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --transition-fast: 80ms ease;
+  --font-mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+  --font-ui: 'Geist', system-ui, -apple-system, sans-serif;
+
+  /* Brand */
+  --android: #FF6128;
+}

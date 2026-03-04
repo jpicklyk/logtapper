@@ -2,6 +2,36 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Frontend Isolation Principles (MANDATORY)
+
+These rules govern ALL frontend work. Every new component, hook, or context change must follow them. Violating these principles is how "fixing one thing breaks another."
+
+### 1. Split context by change frequency — never use a single monolithic context
+Group context values by how often they change. High-frequency state (streaming batches at ~50ms) must not share a context with low-frequency state (session metadata, stable callbacks). A change in one context must not re-render consumers of another.
+
+### 2. Memoize all context values
+Every context provider value must be wrapped in `useMemo` with correct dependencies. A bare object literal `{ foo, bar }` in a provider creates a new reference on every render, defeating React's bailout.
+
+### 3. Use `React.memo` on component boundaries
+Any component that receives props from a context-consuming parent must be wrapped in `React.memo`. This prevents parent re-renders from cascading into children whose props haven't changed. Especially critical for leaf components like `LogViewer`, `ProcessorDashboard`, `SearchBar`.
+
+### 4. Selector hooks over raw context access
+Components must not call a broad context hook and destructure. Instead, provide small focused hooks (`useSelectedLine()`, `useIsStreaming()`) that read from the appropriate narrow context. This makes dependencies explicit and greppable.
+
+### 5. Colocate state with consumers
+State that only one component subtree needs must stay local to that subtree — do not hoist to a global context. `useBookmarks`, `useAnalysis`, `useWatches`, `useFilter` are good examples of this. Only promote to context when multiple unrelated subtrees need the same state.
+
+### 6. No cross-hook orchestration in render components
+Hooks must not depend on each other's internal state through effects in `App.tsx`. Use a typed event bus or explicit orchestration layer so hooks react to events independently (e.g., `pipeline:run-complete` → tracker refreshes itself) rather than App.tsx watching one hook and calling another.
+
+### 7. Stable callback references
+Action callbacks (`onViewProcessor`, `onCloseSession`, `onOpenLibrary`) must be `useCallback` with stable deps and placed in a dedicated context that never changes. Consumers of these callbacks should never re-render due to unrelated state changes.
+
+### 8. Barrel exports control public API — never import internal modules directly
+Every module directory (`cache/`, `viewport/`, `hooks/`) must have an `index.ts` barrel that defines its public API. Components and hooks outside a module must import from the barrel only, never from internal files. The barrel exports narrow interfaces and hooks — not implementation classes. Internal files import from each other directly within the same module. Test files may import internals for white-box testing.
+
+New code must target `src-next/`.
+
 ## Implementation Plans
 
 All feature and performance implementation plans live in `plans/` at the project root. The directory is `.gitignore`d (local working docs only). Name files descriptively: `plans/<feature-name>-<tier-or-phase>.md` (e.g. `plans/perf-tier1-quick-wins.md`). When asked to plan a feature or create an implementation plan, write it there.
@@ -31,29 +61,30 @@ Tauri 2.x desktop app: React 18/TypeScript frontend + Rust backend. All IPC goes
 ### Backend layout
 
 ```
-src-tauri/src/commands/         ← #[tauri::command] handlers; AppState defined in mod.rs
-src-tauri/src/core/             ← LogSource trait, parsers, AnalysisSession, LineContext, filter, watch, bookmark, analysis
-src-tauri/src/processors/       ← unified AnyProcessor registry; sub-modules per type
-src-tauri/src/processors/reporter/     ← ReporterDef, engine (ProcessorRun), vars, Rhai interpreter
-src-tauri/src/processors/transformer/  ← TransformerDef, engine, builtin PII transformer
-src-tauri/src/processors/state_tracker/ ← StateTrackerDef, engine, types (StateSnapshot, transitions)
-src-tauri/src/processors/correlator/   ← CorrelatorDef, engine (CorrelatorRun), CorrelationEvent
-src-tauri/src/processors/annotator/    ← AnnotatorDef (schema stub — no engine)
-src-tauri/src/processors/builtin/      ← embedded YAML files loaded at startup
-src-tauri/src/scripting/        ← Rhai sandbox, scope builder, emit() bridge
-src-tauri/src/anonymizer/       ← PII detection + token mapping (AnonymizerConfig, detectors)
-src-tauri/src/charts/           ← chart data building from emissions/vars
-src-tauri/src/claude/           ← Claude API client (SSE streaming), processor generator
-src-tauri/src/mcp_bridge.rs     ← Axum HTTP server (127.0.0.1:40404) exposing sessions to MCP clients
+src-tauri/src/commands/   ← #[tauri::command] handlers; AppState defined in mod.rs
+src-tauri/src/core/       ← LogSource trait, parsers, AnalysisSession, LineContext
+src-tauri/src/processors/ ← AnyProcessor registry; reporter, transformer, state_tracker, correlator, annotator sub-modules
+src-tauri/src/scripting/  ← Rhai sandbox, scope builder, emit() bridge
+src-tauri/src/anonymizer/ ← PII detection + token mapping
+src-tauri/src/charts/     ← chart data building from emissions/vars
+src-tauri/src/claude/     ← Claude API client (SSE streaming), processor generator
+src-tauri/src/mcp_bridge.rs ← Axum HTTP server (127.0.0.1:40404)
 ```
 
-### Frontend layout
+### Frontend modules
+
+Each module directory under `src-next/` has its own `CLAUDE.md` with architecture, public API, and gotchas. See those for module-specific details.
 
 ```
-src/bridge/       ← invoke() wrappers (commands.ts) + event listeners (events.ts) + shared types (types.ts)
-src/hooks/        ← stateful logic: useLogViewer, usePipeline, useClaude, useStateTracker, useChartData, usePaneLayout, useFilter, useBookmarks, useAnalysis, useWatches
-src/cache/        ← CacheManager (priority-based LRU) + ViewCacheHandle + CacheContext provider
-src/components/   ← React components, consume hooks only via useAppContext()
+src-next/bridge/      ← invoke() wrappers, event listeners, shared types
+src-next/context/     ← 5 split contexts + selector hooks
+src-next/hooks/       ← domain hooks (useLogViewer, usePipeline, useStateTracker) + utility hooks
+src-next/cache/       ← CacheManager (priority-based LRU) + ViewCacheHandle + CacheContext
+src-next/viewport/    ← ReadOnlyViewer, DataSource, CacheDataSource, FetchScheduler
+src-next/events/      ← typed event bus (mitt-based)
+src-next/components/  ← application components (consume state via selector hooks)
+src-next/layout/      ← structural shell (AppShell, CenterArea, ToolBar, etc.)
+src-next/ui/          ← primitive UI components (Button, Modal, Tooltip, etc.)
 ```
 
 ### Core data model
@@ -94,7 +125,7 @@ Produced by `run_pipeline` (file mode) or `flush_batch` (ADB streaming) after la
 
 ### Frontend display cache (never exposed externally)
 
-Unified `CacheManager` (priority-based LRU, `src/cache/CacheManager.ts`). Budget is in **line count** (default 100,000 lines via `fileCacheBudget` setting). Priority tiers: focused 60%, visible 30%, background 10%. MCP bridge reads `AppState` directly — the frontend cache is **not** a pathway for external access.
+Unified `CacheManager` (priority-based LRU, `src-next/cache/`). Budget is in **line count** (configurable via `fileCacheBudget` setting). Priority tiers: focused > visible > background. MCP bridge reads `AppState` directly — the frontend cache is **not** a pathway for external access.
 
 ### MCP bridge
 
@@ -146,39 +177,9 @@ Raw lines ─► Pre-filter (tag union, Aho-Corasick, RegexSet) ─► skip unne
 
 **Always use `source.meta_at(n)` and `source.raw_line(n)` instead of direct indexing** — these adjust for eviction offset transparently.
 
-### Frontend hook ownership
+### Frontend hook ownership, cache, and streaming patterns
 
-Hooks live in `App.tsx` and are shared via `AppContext`. Access via `useAppContext()`.
-
-| Hook | Owns |
-|---|---|
-| `useLogViewer` | File loading, ADB streaming, search, stream filter, processor view mode, `selectedLineNum` |
-| `usePipeline` | Processor CRUD, pipeline runs, progress tracking, results, `adb-processor-update` subscription |
-| `useFilter` | Persistent filter sessions (create/paginate/cancel), `filter-progress` subscription |
-| `useClaude` | Chat history, streaming, API key sync (localStorage + backend) |
-| `useStateTracker` | Transition line sets, `getSnapshot`, `getTransitions`, `adb-tracker-update` subscription |
-| `useChartData` | On-demand chart fetching (keyed by `sessionId:processorId`) |
-| `usePaneLayout` | Multi-pane layout, sidebar/panel sizing |
-| `useBookmarks` | Bookmark CRUD, `bookmark-update` subscription |
-| `useAnalysis` | Analysis artifact CRUD, `analysis-update` subscription |
-| `useWatches` | Watch lifecycle, `watch-match` subscription |
-
-**CacheManager:** Each `PaneContent` allocates a `ViewCacheHandle` via `useViewCache(viewId, sessionId)`. During streaming, `handleAdbBatch` calls `cacheManager.broadcastToSession()` to write lines into ALL handles for the session (multi-consumer). During file mode, `LogViewer` fetches on demand. The `fileCacheBudget` setting controls the global budget. **Session ID is always `"default"`** — both file and stream use the same ID. Stale data across transitions is handled by `clearSession()` in `resetSessionState` + `isStreaming` dep in LogViewer's `visibleLinesRef` reset. Do NOT put a generation counter in the `viewId` — it causes a race where early stream batches go to the old handle before PaneContent re-renders.
-
-### High-frequency streaming UI patterns
-
-Components that update on every ADB batch (~50ms) require explicit stabilization:
-
-- **`useRef` for imperative guards** — timestamps, scroll positions, "has-fetched" flags belong in refs, not state.
-- **Functional setState with referential bail-out** — return `prev` reference when data is unchanged to skip re-renders.
-- **`hasDataRef` for skeleton suppression** — show skeletons only on first fetch; subsequent fetches are silent.
-- **Programmatic scroll flag** — `programmaticScrollRef` is set `true` before every `el.scrollTop = el.scrollHeight` assignment. `onScroll` checks and clears it so it can distinguish our scrolls from user scrollbar drags. Do NOT use `requestAnimationFrame` for scroll deferral — WebView2 does not guarantee scroll events fire before rAF callbacks.
-
-### Known bugs
-
-1. **Processor view cache mismatch** (`useLogViewer.ts` + `commands/files.rs`): In Processor mode, `get_lines` returns `ViewLine.lineNum` = actual file line number. The virtualizer expects sequential 0-based indices. Result: processor view shows all `…` loading placeholders.
-
-2. **KernelParser drops non-kernel lines** (`core/kernel_parser.rs`): `parse_meta()` returns `None` for lines without a kernel timestamp — silently excluded from the index.
+See `src-next/hooks/CLAUDE.md` for domain hook patterns and high-frequency streaming stabilization techniques. See `src-next/cache/CLAUDE.md` for CacheManager architecture and common mistakes.
 
 ## Gotchas
 
@@ -186,7 +187,6 @@ Components that update on every ADB batch (~50ms) require explicit stabilization
 
 - `app.emit()` requires `use tauri::Emitter` — trait method, not inherent on `AppHandle`.
 - Rust `regex` crate does **not** support look-ahead (`(?!...)`). `get_or_compile()` returns `Option<&Regex>` (None on invalid) — callers skip, resulting in 0 matches.
-- Timestamps are **nanoseconds since 2000-01-01 UTC** (not Unix epoch). JS `number` loses precision beyond 2^53 — treat as opaque ordering values on the frontend.
 - `LineContext` string fields (`raw`, `tag`, `message`, `source_id`) are `Arc<str>`, not `String`. Use `Arc::from(s)` to construct, `&*field` or `.as_ref()` for `&str` access, `.to_string()` for owned `String`.
 - **Pre-filter and transformers:** `collect_tag_filters()` must exclude transformers. Including an unfiltered transformer disables the entire pre-filter.
 - Clippy: `impl Default for Foo` where the body only calls field defaults → replace with `#[derive(Default)]`.
@@ -231,3 +231,5 @@ useEffect(() => {
 This applies to ALL Tauri async listener APIs: `listen()`, `once()`, `onDragDropEvent()`, etc.
 
 **StrictMode also breaks `requestAnimationFrame` cleanup.** Double-mount means: effect → cleanup → effect. If the cleanup calls `cancelAnimationFrame`, the first rAF is cancelled before it fires. **Never return `cancelAnimationFrame` from a useEffect cleanup.** Either omit cleanup (let stale rAFs fire harmlessly with a ref guard) or avoid rAF entirely — prefer a `programmaticScrollRef` flag pattern for distinguishing programmatic from user-initiated scrolls (see LogViewer.tsx).
+
+**StrictMode doubles `setState` updater functions — never emit bus events inside them.** StrictMode calls updaters twice to detect impurities, so any `bus.emit` inside a `setState(fn)` callback fires twice. Pre-compute payloads from a ref before calling `setState`, then emit after.

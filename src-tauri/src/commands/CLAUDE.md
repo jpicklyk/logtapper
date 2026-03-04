@@ -1,8 +1,6 @@
 # commands/ — Tauri IPC Surface
 
-Every public function in this directory is a `#[tauri::command]` registered in `src-tauri/src/lib.rs`. The frontend calls these via `invoke()` in `src/bridge/commands.ts`. **Adding a command here without registering it in `lib.rs` silently fails at runtime.**
-
-Commands are organized by file: `files.rs`, `pipeline.rs`, `processors.rs`, `charts.rs`, `claude.rs`, `anonymizer.rs`, `adb.rs`, `state_tracker.rs`, `correlator.rs`, `filter.rs`, `bookmark.rs`, `analysis.rs`, `watch.rs`, `session.rs`. See `lib.rs` for the full registration list.
+Every public function in this directory is a `#[tauri::command]` registered in `src-tauri/src/lib.rs`. The frontend calls these via `invoke()` in `src-next/bridge/commands.ts`. **Adding a command here without registering it in `lib.rs` silently fails at runtime.** See `lib.rs` for the full registration list.
 
 ## AppState locking rules
 
@@ -16,6 +14,16 @@ Commands are organized by file: `files.rs`, `pipeline.rs`, `processors.rs`, `cha
 
 `run_pipeline` snapshots the session source data (mmap + line index via `SourceSnapshot`) once before the processing loop. No locks are held during pipeline execution. Processing happens in 50,000-line chunks with a three-level pre-filter (tag union, Aho-Corasick, RegexSet) to skip irrelevant lines before parsing. Layer 2 processors run in parallel via `rayon::scope` (one task per processor). Pipeline cancellation is supported via `Arc<AtomicBool>` checked between chunks.
 
-## `files.rs` ViewMode coupling
+## Filter commands — source type universality
 
-`get_lines` in Processor mode fetches matched line numbers from `AppState::pipeline_results`, then adds context lines and paginates. The returned `ViewLine.lineNum` is the **actual file line number**, not a sequential index. This mismatches the frontend virtualizer's sequential index — a known bug. See root CLAUDE.md.
+`create_filter`, `get_filtered_lines`, `cancel_filter`, and `close_filter` (in `filter.rs`) work for **all source types** — both `FileLogSource` and `StreamLogSource`. They dispatch through the `LogSource` trait; no source-type guards exist in `filter.rs`.
+
+Key points:
+
+- **`raw_line(n)` and `meta_at(n)` are transparent to eviction.** `StreamLogSource` automatically reads from `SpillFile` for evicted lines and from the in-memory vec for retained lines. `total_lines()` includes evicted lines in the count.
+- **Never reimplement filter logic in the frontend.** Always call `create_filter` for the initial historical scan regardless of source type. Any frontend JS scan that iterates `CacheManager` or `getLines` directly will silently miss evicted lines in a long-running stream.
+- **Snapshot model:** `total_lines` is captured at `create_filter` call time. Lines arriving after that snapshot (new ADB batches) are **not** covered by the filter scan. The frontend must handle them incrementally — see `appendMatches` in `useFilterScan`.
+- **Universal vs source-specific commands:**
+  - Universal (file + streaming): `get_lines`, `create_filter` / `get_filtered_lines` / `cancel_filter` / `close_filter`, all pipeline commands (`run_pipeline`, `get_pipeline_results`, etc.)
+  - Streaming only: `save_live_capture`, `start_adb_stream`, `stop_adb_stream`, `flush_batch`
+

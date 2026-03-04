@@ -20,13 +20,15 @@ static BRIEF_RE: OnceLock<Regex> = OnceLock::new();
 
 fn threadtime_re() -> &'static Regex {
     THREADTIME_RE.get_or_init(|| {
-        // Handles both 2-field and 3-field numeric prefixes:
+        // Handles 2-field, 3-field numeric, and named-UID prefixes:
         //   MM-DD HH:MM:SS.mmm  PID  TID LEVEL TAG: message          (standard adb)
         //   MM-DD HH:MM:SS.mmm  UID  PID  TID LEVEL TAG: message     (bugreport SYSTEM LOG)
-        // The optional third numeric group (UID) is captured in group 3; when present
-        // groups 4/5 are PID/TID, otherwise groups 3/4 are PID/TID and group 5 is LEVEL.
+        //   MM-DD HH:MM:SS.mmm  uid_name  PID  TID LEVEL TAG: message (Android 12+ named UID)
+        // Group 3 is \S+ to accept both numeric UIDs and named UIDs (e.g. "wifi", "system").
+        // When group 5 is present (3-field format), groups 4/5 are PID/TID.
+        // When absent (2-field format), groups 3/4 are PID/TID.
         Regex::new(
-            r"^(\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}\.\d{3})\s+(\d+)\s+(\d+)\s+(?:(\d+)\s+)?([VDIWEFSvdiwefs])\s+(.*?):\s*(.*?)$",
+            r"^(\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}\.\d{3})\s+(\S+)\s+(\d+)\s+(?:(\d+)\s+)?([VDIWEFSvdiwefs])\s+(.*?):\s*(.*?)$",
         )
         .expect("threadtime regex is valid")
     })
@@ -368,6 +370,32 @@ mod tests {
         assert_eq!(meta.timestamp, 0);
         assert_eq!(meta.byte_offset, 200);
         assert_eq!(meta.byte_len, line.len());
+    }
+
+    /// Android 12+ uses named UIDs (e.g. "wifi", "system") instead of numeric.
+    #[test]
+    fn parses_threadtime_named_uid() {
+        let line = r#"02-18 11:26:24.282  wifi  1627  1627 I [binder][0x749dbefaf][16:26:24.271824] qca6750: [1627:I:OSIF] osif_cm_disconnect_sync: vdevid-1: Received Disconnect reason:65528"#;
+        let parser = LogcatParser;
+        let ctx = parser.parse_line(line, "test", 0).unwrap();
+        assert_eq!(ctx.level, LogLevel::Info);
+        assert_eq!(ctx.pid, 1627);
+        assert_eq!(ctx.tid, 1627);
+        assert!(ctx.timestamp > 0, "timestamp must be parsed even with named UID");
+        // Tag is split at the first colon in the tag+message capture
+        assert!(!ctx.tag.is_empty());
+        // Message contains the disconnect reason the tracker needs to match
+        assert!(ctx.message.contains("Disconnect reason:65528"));
+    }
+
+    #[test]
+    fn parse_meta_named_uid_has_timestamp() {
+        let line = "02-18 11:26:24.282  wifi  1627  1627 I SomeTag: hello world";
+        let parser = LogcatParser;
+        let meta = parser.parse_meta(line, 0).unwrap();
+        assert!(meta.timestamp > 0, "named UID lines must have timestamp");
+        assert_eq!(meta.level, LogLevel::Info);
+        assert_eq!(meta.tag, "SomeTag");
     }
 
     #[test]

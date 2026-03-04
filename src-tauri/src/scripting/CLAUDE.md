@@ -26,18 +26,7 @@ After `engine.run_ast_with_scope()` returns, `bridge.rs:drain_emissions()` extra
 
 ## Safety limits
 
-Set in `engine.rs:ScriptEngine::new()`:
-
-| Limit | Value |
-|---|---|
-| Max operations | 1,000,000 |
-| Max string size | 50,000 chars |
-| Max array size | 100,000 elements |
-| Max map size | 10,000 entries |
-| Max call levels | 32 |
-| Optimization | `Simple` |
-
-These are enforced at **runtime**. A script exceeding a limit returns an error string that propagates through `ProcessorRun::process_line()` as a silent skip (the error is currently discarded).
+Limits are set in `engine.rs:ScriptEngine::new()` and enforced at **runtime**. A script exceeding any limit returns an error that propagates through `ProcessorRun::process_line()` as a silent skip.
 
 ## AST cache
 
@@ -45,7 +34,7 @@ These are enforced at **runtime**. A script exceeding a limit returns an error s
 
 ## Script validation at install time
 
-`scripting/sandbox.rs:validate_for_install()` compiles the script and checks complexity (≤ 5,000 nodes). This runs when loading YAML via `load_processor_yaml` or `install_from_registry`. It does **not** re-run on every pipeline execution.
+`scripting/sandbox.rs:validate_for_install()` compiles the script and checks complexity. This runs when loading YAML via `load_processor_yaml` or `install_from_registry`. It does **not** re-run on every pipeline execution.
 
 ## Coupling to `processors/vars.rs`
 

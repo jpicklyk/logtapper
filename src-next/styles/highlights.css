@@ -1,0 +1,16 @@
+/* ── Highlight classes (used by HighlightedText) ────────────────────────── */
+
+/* Reset browser defaults on <mark> — padding and line-height differences
+   cause lines to exceed the fixed 22px row height in the virtualizer. */
+mark {
+  padding: 0;
+  line-height: inherit;
+  color: inherit;
+  background: transparent;
+}
+
+.hl-search { background: #bb800066; border-radius: 2px; }
+.hl-search-active { background: #d29922cc; border-radius: 2px; }
+.hl-processor { border-bottom: 2px solid currentColor; }
+.hl-field { text-decoration: underline; text-underline-offset: 2px; }
+.hl-pii { background: #5a1e1e88; border-radius: 2px; }

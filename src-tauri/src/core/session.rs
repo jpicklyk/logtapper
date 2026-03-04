@@ -115,6 +115,8 @@ pub struct AnalysisSession {
     pub timeline: Timeline,
     pub index: CrossSourceIndex,
     pub tag_interner: TagInterner,
+    /// Absolute path of the loaded file, if this is a file-backed session.
+    pub file_path: Option<String>,
 }
 
 impl AnalysisSession {
@@ -125,6 +127,7 @@ impl AnalysisSession {
             timeline: Timeline::new(),
             index: CrossSourceIndex::build(&[]),
             tag_interner: TagInterner::new(),
+            file_path: None,
         }
     }
 
@@ -599,7 +602,7 @@ pub(crate) fn parser_for(source_type: &SourceType) -> Box<dyn LogParser> {
     match source_type {
         SourceType::Logcat | SourceType::Radio | SourceType::Events => Box::new(LogcatParser),
         SourceType::Kernel => Box::new(KernelParser),
-        SourceType::Bugreport => Box::new(BugreportParser),
+        SourceType::Bugreport => Box::new(BugreportParser::new()),
         _ => Box::new(LogcatParser),
     }
 }
@@ -825,6 +828,19 @@ mod tests {
     }
 
     // --- AnalysisSession accessor helpers ---
+
+    #[test]
+    fn session_new_has_no_file_path() {
+        let session = AnalysisSession::new("s".into());
+        assert!(session.file_path.is_none(), "new sessions must start with no file_path");
+    }
+
+    #[test]
+    fn session_file_path_field_is_settable() {
+        let mut session = AnalysisSession::new("s".into());
+        session.file_path = Some("/logs/device.log".to_string());
+        assert_eq!(session.file_path.as_deref(), Some("/logs/device.log"));
+    }
 
     #[test]
     fn session_primary_source_none_when_empty() {

@@ -1,0 +1,346 @@
+meta:
+  id: connectivity-check-probes
+  name: Connectivity Check Probes
+  version: 1.0.0
+  author: LogTapper
+  description: >
+    Captures every Android NetworkMonitor probe (DNS, HTTP, HTTPS, FALLBACK)
+    with timing, result, and failure details. Highlights DNS resolution failures
+    as a root cause of connectivity check failures. Aggregates probe outcomes
+    by type and result, and charts probe latency over time.
+  tags: [network, connectivity, dns, android]
+
+vars:
+  - name: total_probes
+    type: int
+    default: 0
+    display: true
+    label: "Total Probes"
+
+  - name: dns_ok
+    type: int
+    default: 0
+    display: true
+    label: "DNS OK"
+
+  - name: dns_fail
+    type: int
+    default: 0
+    display: true
+    label: "DNS Failed"
+
+  - name: http_ok
+    type: int
+    default: 0
+    display: true
+    label: "HTTP OK"
+
+  - name: http_fail
+    type: int
+    default: 0
+    display: true
+    label: "HTTP Failed"
+
+  - name: https_ok
+    type: int
+    default: 0
+    display: true
+    label: "HTTPS OK"
+
+  - name: https_fail
+    type: int
+    default: 0
+    display: true
+    label: "HTTPS Failed"
+
+  - name: validation_pass
+    type: int
+    default: 0
+    display: true
+    label: "Validations Passed"
+
+  - name: validation_fail
+    type: int
+    default: 0
+    display: true
+    label: "Validations Failed"
+
+  - name: validation_partial
+    type: int
+    default: 0
+    display: true
+    label: "Partial Connectivity"
+
+  - name: portal_detected
+    type: int
+    default: 0
+    display: true
+    label: "Portals Detected"
+
+  - name: failures_by_host
+    type: map
+    display: true
+    display_as: table
+    label: "Failures by Host"
+    columns: [host, count]
+
+  - name: failures_by_type
+    type: map
+    display: true
+    display_as: table
+    label: "Failures by Exception"
+    columns: [exception, count]
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: tag_match
+        tags: ["NetworkMonitor"]
+      - type: message_contains_any
+        values: ["PROBE_DNS", "PROBE_HTTP", "PROBE_HTTPS", "PROBE_FALLBACK", "isCaptivePortal"]
+
+  - stage: extract
+    fields:
+      # Network ID is in line.tag (NetworkMonitor/<id>), not the message.
+      # Extract it in the Rhai script via line.tag instead.
+
+      # Probe type: DNS, HTTP, HTTPS, FALLBACK
+      - name: probe_type
+        pattern: '(PROBE_DNS|PROBE_HTTPS|PROBE_HTTP|PROBE_FALLBACK|isCaptivePortal)'
+        cast: string
+
+      # DNS probe: host, duration, result, resolved IPs
+      - name: dns_host
+        pattern: 'PROBE_DNS (\S+) '
+        cast: string
+      - name: dns_duration_ms
+        pattern: 'PROBE_DNS \S+ (\d+)ms'
+        cast: int
+      - name: dns_result
+        pattern: 'PROBE_DNS \S+ \d+ms (OK|FAIL)'
+        cast: string
+      - name: dns_ips
+        pattern: 'PROBE_DNS \S+ \d+ms OK (.+)'
+        cast: string
+      - name: dns_fail_detail
+        pattern: 'PROBE_DNS \S+ \d+ms FAIL(?:\s+in type \S+\s+)?(.*)'
+        cast: string
+
+      # HTTP/HTTPS/FALLBACK success: url, time, ret code
+      - name: http_url
+        pattern: 'PROBE_(?:HTTPS?|FALLBACK) (\S+) time='
+        cast: string
+      - name: http_duration_ms
+        pattern: 'time=(\d+)ms'
+        cast: int
+      - name: http_ret
+        pattern: 'ret=(\d+)'
+        cast: int
+
+      # HTTP/HTTPS/FALLBACK failure: url, exception type, detail
+      - name: fail_url
+        pattern: 'PROBE_(?:HTTPS?|FALLBACK) (\S+) Probe failed'
+        cast: string
+      - name: exception_type
+        pattern: 'exception (java\.net\.\w+):'
+        cast: string
+      - name: exception_detail
+        pattern: 'exception java\.net\.\w+: (.+)'
+        cast: string
+
+      # isCaptivePortal summary
+      - name: is_successful
+        pattern: 'isSuccessful\(\)=(true|false)'
+        cast: string
+      - name: is_portal
+        pattern: 'isPortal\(\)=(true|false)'
+        cast: string
+      - name: is_partial
+        pattern: 'isPartialConnectivity\(\)=(true|false)'
+        cast: string
+      - name: validation_time_ms
+        pattern: 'Time=(\d+)ms'
+        cast: int
+
+  - stage: script
+    runtime: rhai
+    src: |
+      // Extract network ID from the tag (e.g. "NetworkMonitor/102" → "102")
+      let net_id = "?";
+      let tag = line.tag;
+      if tag.contains("/") {
+        let parts = tag.split("/");
+        if parts.len() > 1 { net_id = parts[1]; }
+      }
+
+      if "probe_type" in fields {
+        vars.total_probes += 1;
+      }
+
+      // ── DNS probes ──
+      if "dns_result" in fields {
+        if fields.dns_result == "OK" {
+          vars.dns_ok += 1;
+          _emits.push(#{
+            probe_type: "DNS",
+            host: fields.dns_host,
+            duration_ms: fields.dns_duration_ms,
+            result: "OK",
+            resolved_ips: fields.dns_ips,
+            net_id: net_id
+          });
+        } else {
+          vars.dns_fail += 1;
+          let host = if "dns_host" in fields { fields.dns_host } else { "unknown" };
+          let detail = if "dns_fail_detail" in fields { fields.dns_fail_detail } else { "" };
+
+          // Track failures by host
+          let m = vars.failures_by_host;
+          if host in m { m[host] += 1; } else { m[host] = 1; }
+          vars.failures_by_host = m;
+
+          // Classify DNS failure type
+          let fail_type = "DNS Timeout";
+          if detail.contains("UnknownHost") { fail_type = "DNS NXDOMAIN"; }
+          if detail.contains("ErrnoException") { fail_type = "DNS Resolver Error"; }
+
+          let ft = vars.failures_by_type;
+          if fail_type in ft { ft[fail_type] += 1; } else { ft[fail_type] = 1; }
+          vars.failures_by_type = ft;
+
+          _emits.push(#{
+            probe_type: "DNS",
+            host: host,
+            duration_ms: fields.dns_duration_ms,
+            result: "FAIL",
+            failure_reason: fail_type,
+            detail: detail,
+            net_id: net_id
+          });
+        }
+        return;
+      }
+
+      // ── HTTP/HTTPS/FALLBACK success ──
+      if "http_ret" in fields {
+        let ptype = fields.probe_type;
+        // Normalize PROBE_HTTP → HTTP, PROBE_HTTPS → HTTPS, PROBE_FALLBACK → FALLBACK
+        let short_type = ptype.replace("PROBE_", "");
+
+        if short_type == "HTTP" || short_type == "FALLBACK" {
+          vars.http_ok += 1;
+        }
+        if short_type == "HTTPS" {
+          vars.https_ok += 1;
+        }
+
+        _emits.push(#{
+          probe_type: short_type,
+          url: fields.http_url,
+          duration_ms: fields.http_duration_ms,
+          result: "OK",
+          ret_code: fields.http_ret,
+          net_id: net_id
+        });
+        return;
+      }
+
+      // ── HTTP/HTTPS/FALLBACK failure ──
+      if "exception_type" in fields {
+        let ptype = if "probe_type" in fields { fields.probe_type } else { "PROBE_HTTP" };
+        let short_type = ptype.replace("PROBE_", "");
+
+        if short_type == "HTTP" || short_type == "FALLBACK" {
+          vars.http_fail += 1;
+        }
+        if short_type == "HTTPS" {
+          vars.https_fail += 1;
+        }
+
+        let url = if "fail_url" in fields { fields.fail_url } else { "unknown" };
+
+        // Classify exception
+        let fail_type = fields.exception_type;
+        let short_exception = fail_type.replace("java.net.", "");
+
+        let ft = vars.failures_by_type;
+        if short_exception in ft { ft[short_exception] += 1; } else { ft[short_exception] = 1; }
+        vars.failures_by_type = ft;
+
+        // Track host failures (extract host from URL)
+        let host = url;
+        if url.contains("://") {
+          // rough extract: strip protocol and path
+          let after = url.split("://");
+          if after.len() > 1 {
+            let h = after[1].split("/");
+            host = h[0];
+          }
+        }
+        let m = vars.failures_by_host;
+        if host in m { m[host] += 1; } else { m[host] = 1; }
+        vars.failures_by_host = m;
+
+        _emits.push(#{
+          probe_type: short_type,
+          url: url,
+          result: "FAIL",
+          failure_reason: short_exception,
+          detail: if "exception_detail" in fields { fields.exception_detail } else { "" },
+          net_id: net_id
+        });
+        return;
+      }
+
+      // ── isCaptivePortal summary ──
+      if "is_successful" in fields {
+        let verdict = "failed";
+        if fields.is_successful == "true" {
+          verdict = "validated";
+          vars.validation_pass += 1;
+        } else if "is_portal" in fields && fields.is_portal == "true" {
+          verdict = "portal";
+          vars.portal_detected += 1;
+        } else if "is_partial" in fields && fields.is_partial == "true" {
+          verdict = "partial";
+          vars.validation_partial += 1;
+        } else {
+          vars.validation_fail += 1;
+        }
+
+        _emits.push(#{
+          probe_type: "VERDICT",
+          result: verdict,
+          validation_time_ms: if "validation_time_ms" in fields { fields.validation_time_ms } else { 0 },
+          net_id: net_id
+        });
+      }
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: [probe_type, host, url, duration_ms, result, failure_reason, net_id]
+        sort: probe_type
+      - type: summary
+        source: vars
+        template: |
+          {{total_probes}} probes: DNS {{dns_ok}}/{{dns_fail}} ok/fail, HTTP {{http_ok}}/{{http_fail}}, HTTPS {{https_ok}}/{{https_fail}}.
+          Validations: {{validation_pass}} passed, {{validation_fail}} failed, {{validation_partial}} partial, {{portal_detected}} portals.
+    charts:
+      - id: probe_outcomes
+        type: bar
+        title: "Probe Results by Type"
+        source: emissions
+        x: { field: probe_type, label: "Probe Type" }
+        y: { field: probe_type, label: "Count", aggregation: count }
+        color: { field: result }
+        interactive: true
+      - id: probe_latency
+        type: time_series
+        title: "Probe Latency Over Time"
+        source: emissions
+        x: { field: _timestamp, label: "Time" }
+        y: { field: duration_ms, label: "Latency (ms)" }
+        color: { field: probe_type }
+        interactive: true

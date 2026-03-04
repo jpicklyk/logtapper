@@ -132,6 +132,9 @@ pub async fn get_matched_lines(
             }
         }
     };
+    let mut line_nums = line_nums;
+    line_nums.sort_unstable();
+
     let sessions = state.sessions.lock().map_err(|_| "Session lock poisoned")?;
     let session = sessions.get(&session_id)
         .ok_or_else(|| format!("Session '{session_id}' not found"))?;

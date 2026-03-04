@@ -1,0 +1,258 @@
+/* ── Root & header ────────────────────────────────────────────────────────── */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.headerLabel {
+  flex: 1;
+}
+
+.headerCount {
+  font-size: 10px;
+  font-weight: 500;
+  min-width: 18px;
+  height: 18px;
+  line-height: 18px;
+  text-align: center;
+  border-radius: 9px;
+  background: var(--bg-overlay);
+  color: var(--text-muted);
+}
+
+.list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  height: 100%;
+  padding: 20px;
+  color: var(--text-dimmed);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-line;
+}
+
+/* ── Card ─────────────────────────────────────────────────────────────────── */
+
+.card {
+  position: relative;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 10px 0;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+  overflow: hidden;
+}
+
+.card:hover {
+  border-color: var(--border-subtle);
+  background: var(--bg-overlay);
+}
+
+.card:hover .deleteBtn {
+  opacity: 1;
+}
+
+.card:hover .openAction {
+  color: var(--accent);
+}
+
+/* Top severity accent line */
+.cardSeverityBar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+/* ── Card header ──────────────────────────────────────────────────────────── */
+
+.cardHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.cardTitle {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text);
+  /* Allow wrapping for long titles in narrow sidebar */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.deleteBtn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-dimmed);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), color var(--transition-fast);
+}
+
+.deleteBtn:hover {
+  color: var(--danger);
+}
+
+/* ── Meta row ─────────────────────────────────────────────────────────────── */
+
+.cardMeta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--text-dimmed);
+  line-height: 1;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.metaDivider {
+  color: var(--border-subtle);
+}
+
+.metaIcon {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+/* ── Severity breakdown ───────────────────────────────────────────────────── */
+
+.severityRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.severityPill {
+  display: inline-flex;
+  align-items: center;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  line-height: 1;
+  padding: 2px 5px;
+  border: 1px solid;
+  border-radius: 3px;
+  opacity: 0.85;
+}
+
+/* ── Excerpt ──────────────────────────────────────────────────────────────── */
+
+.excerpt {
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ── Section list ─────────────────────────────────────────────────────────── */
+
+.sectionList {
+  border-top: 1px solid var(--border);
+  padding: 6px 0 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sectionRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  min-height: 18px;
+}
+
+.sectionIndicator {
+  flex-shrink: 0;
+  width: 3px;
+  height: 12px;
+  border-radius: 1px;
+}
+
+.sectionHeading {
+  flex: 1;
+  min-width: 0;
+  font-size: 10.5px;
+  color: var(--text-subtle);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sectionRefCount {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-dimmed);
+  min-width: 14px;
+  text-align: right;
+}
+
+/* ── Open action footer ───────────────────────────────────────────────────── */
+
+.openAction {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 6px 0;
+  margin: 0 -10px;
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--text-dimmed);
+  transition: color var(--transition-fast);
+}

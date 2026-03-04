@@ -36,7 +36,7 @@ impl ReporterDef {
     }
 
     /// Populate the pre-built `HashSet` in every `TagMatch` filter rule
-    /// for O(1) tag lookup at pipeline runtime.
+    /// for deduplication. At runtime, tags are prefix-matched via iteration.
     pub fn prepare_tag_sets(&mut self) {
         for stage in &mut self.pipeline {
             if let PipelineStage::Filter(fs) = stage {
@@ -217,8 +217,12 @@ pub struct FilterStage {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FilterRule {
     TagMatch {
+        /// Tag prefixes to match. Each entry matches any tag that starts with
+        /// this string. For example, `"NetworkMonitor"` matches `"NetworkMonitor"`,
+        /// `"NetworkMonitor/102"`, and `"NetworkMonitorExtra"`. Use a trailing
+        /// slash for tighter matching: `"NetworkMonitor/"` matches subtags only.
         tags: Vec<String>,
-        /// Pre-built set for O(1) lookup. Populated by `FilterRule::prepare_tag_sets`.
+        /// Pre-built set for iteration. Populated by `FilterRule::prepare_tag_sets`.
         #[serde(skip)]
         tag_set: HashSet<String>,
     },

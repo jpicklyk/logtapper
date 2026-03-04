@@ -23,6 +23,7 @@ use crate::processors::transformer::engine::TransformerRun;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PipelineProgress {
+    pub session_id: String,
     pub processor_id: String,
     pub lines_processed: usize,
     pub total_lines: usize,
@@ -179,11 +180,29 @@ fn quick_extract_message(raw: &str) -> Option<&str> {
     None
 }
 
+/// Extract the leading literal (non-metacharacter) prefix from a regex pattern.
+///
+/// Used to populate the tag pre-filter union from `tag_regex` patterns.
+/// For example, `NetworkMonitor/\d+` returns `Some("NetworkMonitor")`.
+/// Returns `None` when the pattern starts with a metacharacter (empty prefix).
+fn extract_regex_literal_prefix(pattern: &str) -> Option<String> {
+    let mut prefix = String::new();
+    for b in pattern.bytes() {
+        if matches!(b, b'.' | b'*' | b'+' | b'?' | b'(' | b')' | b'[' | b']'
+                     | b'{' | b'}' | b'^' | b'$' | b'|' | b'\\') {
+            break;
+        }
+        prefix.push(b as char);
+    }
+    let prefix = prefix.trim_end_matches('/').to_string();
+    if prefix.is_empty() { None } else { Some(prefix) }
+}
+
 /// Collect the union of all tag filters from Layer 2 processors only.
 /// Transformers are excluded (they run in Layer 1 on all lines).
 ///
 /// Returns `(tag_union, has_unfiltered)` where:
-/// - `tag_union`: set of all tags that any Layer 2 processor filters on
+/// - `tag_union`: set of tag prefixes that any Layer 2 processor filters on
 /// - `has_unfiltered`: true if any Layer 2 processor has NO tag filter
 fn collect_tag_filters(
     reporter_defs: &[(String, crate::processors::reporter::schema::ReporterDef)],
@@ -212,14 +231,24 @@ fn collect_tag_filters(
         }
     }
 
-    // State trackers: check each transition's filter.tag
+    // State trackers: check each transition's filter.tag and filter.tag_regex
     for (_, def) in tracker_defs {
         let mut has_tag_filter = true; // assume all transitions have tags
         for transition in &def.transitions {
-            if transition.filter.tag.is_none() {
+            let has_exact = transition.filter.tag.is_some();
+            let has_regex = transition.filter.tag_regex.is_some();
+
+            if !has_exact && !has_regex {
                 has_tag_filter = false;
-            } else if let Some(tag) = &transition.filter.tag {
-                tag_union.insert(tag.clone());
+            } else {
+                if let Some(tag) = &transition.filter.tag {
+                    tag_union.insert(tag.clone());
+                }
+                if let Some(pattern) = &transition.filter.tag_regex {
+                    if let Some(prefix) = extract_regex_literal_prefix(pattern) {
+                        tag_union.insert(prefix);
+                    }
+                }
             }
         }
         if !has_tag_filter || def.transitions.is_empty() {
@@ -585,7 +614,7 @@ pub fn execute_pipeline(
         .map_err(|_| "Anonymizer config lock poisoned")?
         .clone();
 
-    // ── Initialize transformer runs ──────────────────────────────────────────
+    // ── PII pre-processing step (built-in transformer) ──────────────────────
     let mut transformer_runs: Vec<TransformerRun> = transformer_defs.iter()
         .map(|(_, def)| TransformerRun::new_with_anonymizer_config(def, &anonymizer_config))
         .collect();
@@ -675,10 +704,11 @@ pub fn execute_pipeline(
                 .filter(|&n| {
                     let raw = source_snapshot.raw_line(n).unwrap_or("");
 
-                    // Level 1: tag check
+                    // Level 1: tag check (prefix match — "NetworkMonitor"
+                    // in the union matches "NetworkMonitor/102" in the line)
                     if use_tag_prefilter {
                         if let Some(tag) = quick_extract_tag(raw) {
-                            if !tag_union.contains(tag) {
+                            if !tag_union.iter().any(|t| tag.starts_with(t.as_str())) {
                                 return false;
                             }
                         }
@@ -725,6 +755,8 @@ pub fn execute_pipeline(
             .collect();
 
         // ── Save pre-transform messages for state tracker processing ─────────
+        // When PII anonymization is active, state trackers need the original
+        // (pre-anonymized) messages for their capture regexes.
         let pre_transform_msgs: HashMap<usize, Arc<str>> =
             if !transformer_defs.is_empty() && !tracker_defs.is_empty() {
                 parsed_chunk
@@ -735,7 +767,7 @@ pub fn execute_pipeline(
                 HashMap::new()
             };
 
-        // ── Layer 1: Transformers ────────────────────────────────────────────
+        // ── PII pre-processing (built-in transformer) ───────────────────────
         if !transformer_defs.is_empty() {
             for line_opt in parsed_chunk.iter_mut() {
                 if let Some(line) = line_opt.as_mut() {
@@ -757,9 +789,9 @@ pub fn execute_pipeline(
         let enriched_chunk: Vec<crate::core::line::LineContext> =
             parsed_chunk.into_iter().flatten().collect();
 
-        // ── Prepare pre-transform messages for state trackers ──────────────
-        // State trackers need raw (pre-transform) messages for capture regexes,
-        // while reporters need post-transform messages. Build both views upfront.
+        // ── Prepare pre-anonymization messages for state trackers ────────────
+        // State trackers need raw (pre-PII) messages for capture regexes,
+        // while reporters need post-anonymization messages. Build both views upfront.
         let tracker_chunk: Vec<crate::core::line::LineContext> =
             if !tracker_defs.is_empty() && !pre_transform_msgs.is_empty() {
                 enriched_chunk.iter().map(|line| {
@@ -825,6 +857,7 @@ pub fn execute_pipeline(
             let _ = app.emit(
                 "pipeline-progress",
                 PipelineProgress {
+                    session_id: session_id.to_string(),
                     processor_id: proc_id.clone(),
                     lines_processed,
                     total_lines,
@@ -834,7 +867,7 @@ pub fn execute_pipeline(
         }
     }
 
-    // ── Collect PII forward mappings from transformer runs ───────────────────
+    // ── Collect PII forward mappings from PII pre-processing ────────────────
     if !transformer_defs.is_empty() {
         forward_pii = transformer_runs.iter()
             .flat_map(|r| r.get_pii_mappings())
@@ -970,4 +1003,36 @@ pub fn execute_pipeline(
 pub async fn stop_pipeline(state: State<'_, AppState>) -> Result<(), String> {
     state.pipeline_cancel.store(true, Ordering::Relaxed);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_regex_literal_prefix;
+
+    #[test]
+    fn extract_prefix_simple_tag() {
+        assert_eq!(extract_regex_literal_prefix(r"NetworkMonitor/\d+"), Some("NetworkMonitor".into()));
+    }
+
+    #[test]
+    fn extract_prefix_with_groups() {
+        assert_eq!(extract_regex_literal_prefix(r"NetworkMonitor/(\d+)"), Some("NetworkMonitor".into()));
+    }
+
+    #[test]
+    fn extract_prefix_exact_tag() {
+        assert_eq!(extract_regex_literal_prefix("ActivityManager"), Some("ActivityManager".into()));
+    }
+
+    #[test]
+    fn extract_prefix_starts_with_metachar() {
+        assert_eq!(extract_regex_literal_prefix(r".*NetworkMonitor"), None);
+        assert_eq!(extract_regex_literal_prefix(r"(foo)"), None);
+        assert_eq!(extract_regex_literal_prefix(r"\d+"), None);
+    }
+
+    #[test]
+    fn extract_prefix_empty_pattern() {
+        assert_eq!(extract_regex_literal_prefix(""), None);
+    }
 }

@@ -29,7 +29,7 @@ pub struct FilterCriteria {
     /// Include only lines at these log levels.
     #[serde(default)]
     pub log_levels: Option<Vec<LogLevel>>,
-    /// Include only lines with these exact tags.
+    /// Include only lines whose tag contains any of these substrings (case-insensitive).
     #[serde(default)]
     pub tags: Option<Vec<String>>,
     /// Minimum timestamp (ns since 2000-01-01 UTC, inclusive).
@@ -214,7 +214,8 @@ pub fn line_matches_criteria(
     // Tag filter
     if let Some(ref tags) = criteria.tags {
         if !tags.is_empty() {
-            checks.push(tags.iter().any(|t| t == tag));
+            let tag_lower = tag.to_lowercase();
+            checks.push(tags.iter().any(|t| tag_lower.contains(&t.to_lowercase() as &str)));
         }
     }
 
@@ -309,9 +310,14 @@ mod tests {
     #[test]
     fn tag_filter() {
         let mut c = make_criteria();
-        c.tags = Some(vec!["ActivityManager".to_string(), "SystemServer".to_string()]);
+        // Substring match: "Activity" matches "ActivityManager" and "ActivityThread"
+        c.tags = Some(vec!["Activity".to_string(), "SystemServer".to_string()]);
         assert!(line_matches_criteria(&c, "x", LogLevel::Info, "ActivityManager", 0, 0, None));
+        assert!(line_matches_criteria(&c, "x", LogLevel::Info, "ActivityThread", 0, 0, None));
+        assert!(line_matches_criteria(&c, "x", LogLevel::Info, "SystemServer", 0, 0, None));
         assert!(!line_matches_criteria(&c, "x", LogLevel::Info, "Zygote", 0, 0, None));
+        // Case-insensitive
+        assert!(line_matches_criteria(&c, "x", LogLevel::Info, "activitymanager", 0, 0, None));
     }
 
     #[test]

@@ -1,0 +1,91 @@
+.toolbar {
+  width: 40px;
+  background: var(--bg-base);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 0;
+  user-select: none;
+}
+
+.left {
+  border-right: 1px solid var(--border);
+}
+
+.right {
+  border-left: 1px solid var(--border);
+}
+
+.topGroup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.bottomGroup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin-top: auto;
+}
+
+.button {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-subtle);
+  cursor: pointer;
+  padding: 0;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.button:hover {
+  color: var(--text);
+  background: var(--bg-overlay);
+}
+
+/* Active indicator — accent bar on the side closest to content */
+.left .button.active {
+  color: var(--accent);
+  background: var(--bg-overlay);
+  box-shadow: inset -2px 0 0 var(--accent);
+}
+
+.right .button.active {
+  color: var(--accent);
+  background: var(--bg-overlay);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.separator {
+  width: 20px;
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+  flex-shrink: 0;
+}
+
+.badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--accent-base);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
+  pointer-events: none;
+}

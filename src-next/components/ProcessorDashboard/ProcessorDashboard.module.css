@@ -1,0 +1,373 @@
+.layout {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 4px;
+  color: var(--text-dimmed);
+  font-size: 13px;
+}
+
+.emptySub {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+/* Processor list */
+.procList {
+  width: 220px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.procListHeader {
+  font-size: 11px;
+  color: var(--text-dimmed);
+  margin-bottom: 8px;
+}
+
+.procCard {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px;
+  margin-bottom: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.procCard:hover {
+  border-color: var(--accent);
+}
+
+.procCardActive {
+  border-color: var(--accent);
+  background: rgba(88, 166, 255, 0.06);
+}
+
+.procCardName {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.procCardStats {
+  font-size: 10px;
+  color: var(--text-dimmed);
+  margin-top: 2px;
+}
+
+.procCardStatsDim {
+  opacity: 0.5;
+}
+
+.procCardEmissions {
+  opacity: 0.7;
+}
+
+/* Detail panel */
+.detail {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+
+.detailHeader {
+  margin-bottom: 16px;
+}
+
+.detailTitle {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.detailTypeBadge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg-overlay);
+  color: var(--text-dimmed);
+}
+
+.detailMeta {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.metaChip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--bg-overlay);
+  color: var(--text-dimmed);
+}
+
+.metaChipEmit {
+  color: var(--accent);
+}
+
+.detailDesc {
+  font-size: 12px;
+  color: var(--text-dimmed);
+  margin-top: 6px;
+}
+
+.detailBody {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--text-dimmed);
+  padding: 8px 0;
+}
+
+/* Stat grid */
+.statGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.statCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  min-width: 80px;
+}
+
+.statValue {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+.statLabel {
+  font-size: 10px;
+  color: var(--text-dimmed);
+  margin-top: 2px;
+}
+
+/* Sections */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sectionLabel {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dimmed);
+}
+
+/* Ranked list */
+.rankedList {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.rankedRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.rankedKey {
+  width: 120px;
+  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.rankedBarWrap {
+  flex: 1;
+  height: 6px;
+  background: var(--bg-overlay);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.rankedBar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+}
+
+.rankedVal {
+  font-size: 10px;
+  color: var(--text-dimmed);
+  font-family: var(--font-mono);
+  min-width: 40px;
+  text-align: right;
+}
+
+/* String list */
+.stringList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stringRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.stringKey {
+  color: var(--text-dimmed);
+  min-width: 100px;
+  flex-shrink: 0;
+}
+
+.stringVal {
+  color: var(--text);
+}
+
+/* Tables */
+.tableWrap {
+  overflow-x: auto;
+}
+
+.dataTable {
+  font-size: 11px;
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.dataTable th {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dimmed);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.dataTable td {
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+
+.dataTable code {
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+/* Matches */
+.matchesToggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text);
+  padding: 0;
+}
+
+.matchesArrow {
+  font-size: 10px;
+  color: var(--text-dimmed);
+}
+
+.matchesBody {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.matchesSearchRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.matchesSearch {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-base);
+  color: var(--text);
+  font-size: 11px;
+  outline: none;
+}
+
+.matchesSearch:focus {
+  border-color: var(--accent);
+}
+
+.matchesCount {
+  font-size: 10px;
+  color: var(--text-dimmed);
+}
+
+.matchRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.matchRow:hover {
+  background: var(--bg-overlay);
+}
+
+.matchNum {
+  color: var(--text-dimmed);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  min-width: 50px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.matchRaw {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+}

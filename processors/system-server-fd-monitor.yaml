@@ -137,14 +137,6 @@ pipeline:
         y: { field: fd_count, label: "FD Count" }
         timeline: { field: fd_count, color: "#58a6ff", label: "FD Count" }
 
-      - id: heap_timeline
-        type: time_series
-        title: "System Server Heap Usage % Over Time"
-        source: emissions
-        x: { field: timestamp, label: "Time" }
-        y: { field: heap_pct, label: "Heap %" }
-        timeline: { field: heap_pct, color: "#3fb950", label: "Heap %" }
-
       - id: fd_state_bar
         type: bar
         title: "FD State Distribution"

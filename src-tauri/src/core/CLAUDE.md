@@ -11,14 +11,7 @@
 
 ## LogParser trait (`parser.rs`)
 
-```rust
-pub trait LogParser: Send + Sync {
-    fn parse_line(&self, raw: &str, source_id: &str, line_num: usize) -> Option<LineContext>;
-    fn parse_meta(&self, raw: &str, byte_offset: usize) -> Option<LineMeta>;
-}
-```
-
-Returning `None` from `parse_meta()` **silently drops the line from the index**. The line will never appear in any viewer or search result. Only `LogcatParser` has a fallback that returns `Some` for unrecognized lines; `KernelParser` does not (known bug).
+Returning `None` from `parse_meta()` **silently drops the line from the index** — it will never appear in any viewer or search result. Only `LogcatParser` has a fallback for unrecognized lines; `KernelParser` drops non-matching lines.
 
 | Parser | Used for | `parse_meta` fallback |
 |---|---|---|
@@ -27,10 +20,6 @@ Returning `None` from `parse_meta()` **silently drops the line from the index**.
 | `BugreportParser` | Bugreport | Yes — delegates to `LogcatParser`, skips `------` dividers |
 
 `parser_for(&source_type)` in `session.rs` selects the correct parser based on detected source type. Used by `pipeline.rs`, `files.rs`, and `filter.rs`.
-
-## Timestamp convention
-
-All timestamps are **nanoseconds since 2000-01-01 00:00:00 UTC** (not Unix epoch). Year 2000 was chosen because logcat strips the year — using 2000 as base keeps relative ordering correct within a session. Lines without a parseable timestamp get `timestamp: 0` (sorted to the front).
 
 ## LogSource trait (`log_source.rs`)
 
@@ -43,18 +32,4 @@ Both implement `raw_line(n)`, `meta_at(n)`, `total_lines()`, `is_live()`, and do
 
 ## AnalysisSession (`session.rs`)
 
-```rust
-pub struct AnalysisSession {
-    pub id: String,
-    pub source: Option<Box<dyn LogSource>>,  // trait object — FileLogSource or StreamLogSource
-    pub timeline: Timeline,
-    pub index: CrossSourceIndex,
-    pub tag_interner: TagInterner,
-}
-```
-
-Accessor helpers: `primary_source()`, `file_source()` / `stream_source()` (downcast to concrete types), and mutable variants.
-
-## `detect_source_type()` — known issue
-
-The heuristic `text.starts_with('[')` is too broad: any file whose first 4KB starts with `[` is classified as `Kernel`. The correct fix is to check for the kernel timestamp pattern `^\[\s*\d+\.\d+\]` in the first few non-empty lines.
+Holds `Option<Box<dyn LogSource>>` plus `Timeline`, `CrossSourceIndex`, `TagInterner`. Accessor helpers `file_source()` / `stream_source()` downcast to concrete types.

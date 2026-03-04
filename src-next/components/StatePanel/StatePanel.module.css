@@ -1,0 +1,152 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  overflow-y: auto;
+  height: 100%;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 4px;
+}
+
+.headerLabel {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dimmed);
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 100%;
+  color: var(--text-dimmed);
+  text-align: center;
+}
+
+.emptyLabel {
+  font-size: 12px;
+}
+
+.emptyHint {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  padding: 8px;
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.cardName {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.noData {
+  font-size: 11px;
+  color: var(--text-dimmed);
+  padding: 4px 0;
+}
+
+.fieldsGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fieldRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  padding: 2px 0;
+}
+
+.fieldKey {
+  color: var(--text-dimmed);
+  min-width: 80px;
+  flex-shrink: 0;
+}
+
+.unknown {
+  color: var(--text-dimmed);
+  font-style: italic;
+}
+
+.emptyVal {
+  color: var(--text-dimmed);
+  font-style: italic;
+}
+
+.boolTrue {
+  color: var(--green);
+  font-weight: 600;
+}
+
+.boolFalse {
+  color: var(--red);
+  font-weight: 600;
+}
+
+.numVal {
+  color: var(--accent);
+  font-family: var(--font-mono);
+}
+
+.strVal {
+  color: var(--text);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skelRows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.skelRow {
+  display: flex;
+  gap: 8px;
+}
+
+.skelKey,
+.skelVal {
+  height: 10px;
+  border-radius: 4px;
+  background: var(--bg-overlay);
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
