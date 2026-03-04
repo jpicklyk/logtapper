@@ -27,8 +27,8 @@ export const MarketplacePanel = React.memo(function MarketplacePanel() {
             onClick={() => switchTab(t)}
           >
             {t === 'browse' ? 'Browse' : t === 'updates' ? 'Updates' : 'Sources'}
-            {t === 'updates' && marketplace.pendingUpdateCount > 0 && (
-              <span className={css.tabCount}>{marketplace.pendingUpdateCount}</span>
+            {t === 'updates' && marketplace.pendingUpdates.length > 0 && (
+              <span className={css.tabCount}>{marketplace.pendingUpdates.length}</span>
             )}
             {t === 'sources' && marketplace.sources.length > 0 && (
               <span className={css.tabCount}>{marketplace.sources.length}</span>
@@ -38,35 +38,9 @@ export const MarketplacePanel = React.memo(function MarketplacePanel() {
       </div>
 
       <div className={css.body}>
-        {tab === 'browse' && (
-          <BrowseTab
-            sources={marketplace.sources}
-            selectedSource={marketplace.selectedSource}
-            selectSource={marketplace.selectSource}
-            entries={marketplace.entries}
-            entriesLoading={marketplace.entriesLoading}
-            entriesError={marketplace.entriesError}
-            fetchEntries={marketplace.fetchEntries}
-            installEntry={marketplace.installEntry}
-          />
-        )}
-        {tab === 'updates' && (
-          <UpdatesTab
-            pendingUpdates={marketplace.pendingUpdates}
-            updatesLoading={marketplace.updatesLoading}
-            updateResults={marketplace.updateResults}
-            checkUpdates={marketplace.checkUpdates}
-            updateOne={marketplace.updateOne}
-            updateAllFromSource={marketplace.updateAllFromSource}
-          />
-        )}
-        {tab === 'sources' && (
-          <SourcesTab
-            sources={marketplace.sources}
-            addSource={marketplace.addSource}
-            removeSource={marketplace.removeSource}
-          />
-        )}
+        {tab === 'browse' && <BrowseTab marketplace={marketplace} />}
+        {tab === 'updates' && <UpdatesTab marketplace={marketplace} />}
+        {tab === 'sources' && <SourcesTab marketplace={marketplace} />}
       </div>
     </div>
   );

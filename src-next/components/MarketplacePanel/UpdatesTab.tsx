@@ -1,26 +1,16 @@
 import React, { useMemo, useCallback } from 'react';
-import type { UpdateAvailable, UpdateResult } from '../../bridge/types';
+import type { MarketplaceState } from '../../hooks/useMarketplace';
 import css from './MarketplacePanel.module.css';
 
 interface Props {
-  pendingUpdates: UpdateAvailable[];
-  updatesLoading: boolean;
-  updateResults: Map<string, UpdateResult>;
-  checkUpdates: () => Promise<void>;
-  updateOne: (processorId: string) => Promise<void>;
-  updateAllFromSource: (sourceName: string) => Promise<void>;
+  marketplace: MarketplaceState;
 }
 
-export const UpdatesTab = React.memo(function UpdatesTab({
-  pendingUpdates,
-  updatesLoading,
-  updateResults,
-  checkUpdates,
-  updateOne,
-  updateAllFromSource,
-}: Props) {
+export const UpdatesTab = React.memo(function UpdatesTab({ marketplace }: Props) {
+  const { pendingUpdates, updatesLoading, updateResults, checkUpdates, updateOne, updateAllFromSource } = marketplace;
+
   const grouped = useMemo(() => {
-    const map = new Map<string, UpdateAvailable[]>();
+    const map = new Map<string, typeof pendingUpdates>();
     for (const u of pendingUpdates) {
       const group = map.get(u.sourceName) ?? [];
       group.push(u);

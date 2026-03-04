@@ -7,7 +7,7 @@ use crate::processors::marketplace;
 use crate::processors::registry::{self, RegistryEntry};
 use crate::processors::{AnyProcessor, ProcessorSummary};
 
-fn persist_processor(app: &AppHandle, id: &str, yaml: &str) -> Result<(), String> {
+pub(crate) fn persist_processor(app: &AppHandle, id: &str, yaml: &str) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let proc_dir = data_dir.join("processors");
     std::fs::create_dir_all(&proc_dir).map_err(|e| e.to_string())?;

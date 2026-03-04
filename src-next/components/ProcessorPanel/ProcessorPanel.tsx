@@ -29,6 +29,8 @@ import { usePipeline } from '../../hooks';
 import { ProcessorLibrary } from '../ProcessorLibrary';
 import { bus } from '../../events';
 import styles from './ProcessorPanel.module.css';
+import badgeCss from '../../ui/processorBadge.module.css';
+import { PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY } from '../../ui/processorBadgeTypes';
 
 // ── McpStatusWidget ──────────────────────────────────────────────────────────
 
@@ -111,16 +113,18 @@ const McpStatusWidget = React.memo(function McpStatusWidget() {
 
 // ── Type metadata ────────────────────────────────────────────────────────────
 
-const PROC_TYPE_META: Record<string, [string, string]> = {
-  reporter: ['Reporter', styles.typeReporter],
-  state_tracker: ['StateTracker', styles.typeTracker],
-  correlator: ['Correlator', styles.typeCorrelator],
-  annotator: ['Annotator', styles.typeAnnotator],
-};
+function getProcTypeMeta(type: string): [string, string] {
+  const label = PROC_TYPE_LABELS[type] ?? type;
+  const cls = badgeCss[PROC_TYPE_CLASS_KEY[type] as keyof typeof badgeCss] ?? '';
+  return [label, cls];
+}
 
 // PII anonymizer is the only transformer — show a dedicated badge instead
 // of the generic "Transformer" label.
-const PII_TYPE_META: [string, string] = ['PII', styles.typeTransformer];
+const PII_TYPE_META: [string, string] = [
+  'PII',
+  badgeCss[PROC_TYPE_CLASS_KEY['transformer'] as keyof typeof badgeCss] ?? '',
+];
 
 const PROC_TYPE_ACCENT: Record<string, string> = {
   transformer: '#2dd4bf',
@@ -216,7 +220,7 @@ function ChainNode({
   } as React.CSSProperties;
 
   const [typeLabel, typeBadgeClass] = (PINNED_TAIL_IDS.has(id) ? PII_TYPE_META : null)
-    ?? PROC_TYPE_META[processorType] ?? ['Unknown', ''];
+    ?? getProcTypeMeta(processorType);
 
   return (
     <div
@@ -238,7 +242,7 @@ function ChainNode({
       <div className={styles.nodeBody}>
         <div className={styles.nodeName}>{name}</div>
         <div className={styles.nodeMeta}>
-          <span className={`${styles.typeBadge} ${typeBadgeClass}`}>{typeLabel}</span>
+          <span className={`${badgeCss.typeBadge} ${typeBadgeClass}`}>{typeLabel}</span>
           {builtin && <span className={styles.builtinBadge}>built-in</span>}
         </div>
         <StatLine processorType={processorType} result={result} progress={progress} running={running} />
@@ -269,7 +273,7 @@ function PinnedChainNode({
   } as React.CSSProperties;
 
   const [typeLabel, typeBadgeClass] = (PINNED_TAIL_IDS.has(id) ? PII_TYPE_META : null)
-    ?? PROC_TYPE_META[processorType] ?? ['Unknown', ''];
+    ?? getProcTypeMeta(processorType);
 
   return (
     <>
@@ -287,7 +291,7 @@ function PinnedChainNode({
         <div className={styles.nodeBody}>
           <div className={styles.nodeName}>{name}</div>
           <div className={styles.nodeMeta}>
-            <span className={`${styles.typeBadge} ${typeBadgeClass}`}>{typeLabel}</span>
+            <span className={`${badgeCss.typeBadge} ${typeBadgeClass}`}>{typeLabel}</span>
             {builtin && <span className={styles.builtinBadge}>built-in</span>}
           </div>
           <StatLine processorType={processorType} result={result} progress={progress} running={running} />

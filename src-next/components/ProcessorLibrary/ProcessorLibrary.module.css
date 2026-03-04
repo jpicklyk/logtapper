@@ -442,26 +442,6 @@
   font-style: italic;
 }
 
-/* ── Type badges ─────────────────────────────────────────────────────────── */
-
-.typeBadge {
-  font-size: 9px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  padding: 1px 5px;
-  border-radius: 3px;
-  background: var(--bg-overlay);
-  color: var(--text-dimmed);
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-
-.typeReporter   { color: #58a6ff; }
-.typeTracker    { color: #60a5fa; }
-.typeCorrelator { color: #c084fc; }
-.typeTransformer { color: #2dd4bf; }
-
 /* ── Discover tab ────────────────────────────────────────────────────────── */
 
 .discoverItem {

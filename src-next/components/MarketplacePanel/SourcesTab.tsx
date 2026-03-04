@@ -1,18 +1,15 @@
 import React, { useState, useCallback } from 'react';
 import type { Source } from '../../bridge/types';
+import type { MarketplaceState } from '../../hooks/useMarketplace';
 import css from './MarketplacePanel.module.css';
 
 interface Props {
-  sources: Source[];
-  addSource: (source: Source) => Promise<void>;
-  removeSource: (name: string) => Promise<void>;
+  marketplace: MarketplaceState;
 }
 
-export const SourcesTab = React.memo(function SourcesTab({
-  sources,
-  addSource,
-  removeSource,
-}: Props) {
+export const SourcesTab = React.memo(function SourcesTab({ marketplace }: Props) {
+  const { sources, addSource, removeSource } = marketplace;
+
   const [showForm, setShowForm] = useState(false);
   const [formName, setFormName] = useState('');
   const [formType, setFormType] = useState<'github' | 'local'>('github');

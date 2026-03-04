@@ -128,15 +128,34 @@ pub struct McpSummary {
     pub include_vars: Vec<String>,
 }
 
+/// Severity classification for MCP signals.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Severity {
+    Critical,
+    Warning,
+    #[default]
+    Info,
+}
+
+/// Signal type: per-emission or aggregate (computed from vars).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SignalType {
+    #[default]
+    Emission,
+    Aggregate,
+}
+
 /// A signal definition for MCP agent consumption.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignalDef {
     pub name: String,
     #[serde(default)]
     pub description: Option<String>,
-    /// Severity classification: "critical", "warning", "info".
-    #[serde(default = "default_severity")]
-    pub severity: String,
+    /// Severity classification.
+    #[serde(default)]
+    pub severity: Severity,
     /// Condition expression evaluated against emission fields (e.g. "heap_pct >= 90").
     #[serde(default)]
     pub condition: Option<String>,
@@ -146,17 +165,9 @@ pub struct SignalDef {
     /// Display format with `{{field}}` placeholders.
     #[serde(default)]
     pub format: Option<String>,
-    /// "emission" (default, per-line) or "aggregate" (computed from vars).
-    #[serde(rename = "type", default = "default_signal_type")]
-    pub signal_type: String,
-}
-
-fn default_severity() -> String {
-    "info".to_string()
-}
-
-fn default_signal_type() -> String {
-    "emission".to_string()
+    /// Per-emission (default) or aggregate (computed from vars).
+    #[serde(rename = "type", default)]
+    pub signal_type: SignalType,
 }
 
 // ---------------------------------------------------------------------------
@@ -300,7 +311,7 @@ mcp:
         assert!(mcp.summary.is_some());
         assert_eq!(mcp.signals.len(), 1);
         assert_eq!(mcp.signals[0].name, "heap_critical");
-        assert_eq!(mcp.signals[0].severity, "critical");
+        assert_eq!(mcp.signals[0].severity, Severity::Critical);
     }
 
     #[test]

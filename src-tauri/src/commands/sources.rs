@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
@@ -186,25 +187,12 @@ pub struct UpdateResult {
 
 /// Compare installed version against marketplace version using SemVer.
 /// Returns true if `available` is newer than `installed`.
-fn is_newer(installed: &str, available: &str) -> bool {
+pub(crate) fn is_newer(installed: &str, available: &str) -> bool {
     match (semver::Version::parse(installed), semver::Version::parse(available)) {
         (Ok(inst), Ok(avail)) => avail > inst,
         // If either fails to parse as semver, fall back to string inequality
         _ => installed != available,
     }
-}
-
-// ---------------------------------------------------------------------------
-// Persist helper (duplicated from processors.rs to avoid coupling)
-// ---------------------------------------------------------------------------
-
-fn persist_processor_yaml(app: &AppHandle, qualified_id: &str, yaml: &str) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let proc_dir = data_dir.join("processors");
-    std::fs::create_dir_all(&proc_dir).map_err(|e| e.to_string())?;
-    let filename = marketplace::id_to_filename(qualified_id);
-    std::fs::write(proc_dir.join(format!("{}.yaml", filename)), yaml)
-        .map_err(|e| format!("Failed to persist processor: {e}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -222,13 +210,13 @@ pub async fn check_updates(
         let s = state.sources.lock().map_err(|_| "Sources lock poisoned")?;
         s.iter().filter(|s| s.enabled).cloned().collect()
     };
-    let installed: Vec<(String, String, String)> = {
-        // Collect (qualified_id, bare_id, installed_version) for processors that have a source.
+    // HashMap<qualified_id, (bare_id, installed_version)> for O(1) lookups per marketplace entry.
+    let installed: HashMap<String, (String, String)> = {
         let procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
         procs.iter()
             .filter_map(|(qid, proc)| {
                 proc.source.as_ref().map(|_src| {
-                    (qid.clone(), proc.meta.id.clone(), proc.meta.version.clone())
+                    (qid.clone(), (proc.meta.id.clone(), proc.meta.version.clone()))
                 })
             })
             .collect()
@@ -252,8 +240,8 @@ pub async fn check_updates(
         for market_entry in &index.processors {
             let qid = marketplace::qualified_id(&market_entry.id, &source.name);
 
-            // Find the matching installed processor.
-            if let Some((_, _bare_id, inst_ver)) = installed.iter().find(|(q, _, _)| *q == qid) {
+            // O(1) lookup instead of linear scan.
+            if let Some((_bare_id, inst_ver)) = installed.get(&qid) {
                 if is_newer(inst_ver, &market_entry.version) {
                     updates.push(UpdateAvailable {
                         processor_id: qid.clone(),
@@ -313,29 +301,8 @@ pub async fn update_processor(
             .unwrap_or_else(|| "unknown".to_string())
     };
 
-    // Download and verify.
-    let yaml = registry::download_processor_from_source(&state.http_client, &source, entry).await?;
-
-    // Append provenance.
-    let now = chrono_now_iso();
-    let provenance_yaml = format!(
-        "\n_source: {}\n_installed_version: {}\n_installed_at: {}\n_sha256: {}\n",
-        source_name, entry.version, now, entry.sha256
-    );
-    let final_yaml = format!("{}{}", yaml, provenance_yaml);
-
-    // Parse and install.
-    let mut def = AnyProcessor::from_yaml(&final_yaml)
-        .map_err(|e| format!("Failed to parse updated YAML: {e}"))?;
-    def.source = Some(source_name.clone());
-
-    persist_processor_yaml(&app, &processor_id, &final_yaml)?;
-
+    let def = download_and_install_processor(&state, &app, &source, entry, &processor_id).await?;
     let new_version = def.meta.version.clone();
-    {
-        let mut procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
-        procs.insert(processor_id.clone(), def);
-    }
 
     Ok(UpdateResult {
         processor_id,
@@ -393,55 +360,16 @@ pub async fn update_all_from_source(
             continue;
         }
 
-        // Download and install.
-        match registry::download_processor_from_source(&state.http_client, &source, entry).await {
-            Ok(yaml) => {
-                let now = chrono_now_iso();
-                let provenance_yaml = format!(
-                    "\n_source: {}\n_installed_version: {}\n_installed_at: {}\n_sha256: {}\n",
-                    source_name, entry.version, now, entry.sha256
-                );
-                let final_yaml = format!("{}{}", yaml, provenance_yaml);
-
-                match AnyProcessor::from_yaml(&final_yaml) {
-                    Ok(mut def) => {
-                        def.source = Some(source_name.clone());
-                        let old_version = inst_ver.clone();
-                        let new_version = def.meta.version.clone();
-
-                        if let Err(e) = persist_processor_yaml(&app, &qid, &final_yaml) {
-                            results.push(UpdateResult {
-                                processor_id: qid,
-                                old_version,
-                                new_version,
-                                success: false,
-                                error: Some(e),
-                            });
-                            continue;
-                        }
-
-                        if let Ok(mut procs) = state.processors.lock() {
-                            procs.insert(qid.clone(), def);
-                        }
-
-                        results.push(UpdateResult {
-                            processor_id: qid,
-                            old_version,
-                            new_version,
-                            success: true,
-                            error: None,
-                        });
-                    }
-                    Err(e) => {
-                        results.push(UpdateResult {
-                            processor_id: qid,
-                            old_version: inst_ver.clone(),
-                            new_version: entry.version.clone(),
-                            success: false,
-                            error: Some(e),
-                        });
-                    }
-                }
+        // Download, parse, persist, and insert.
+        match download_and_install_processor(&state, &app, &source, entry, &qid).await {
+            Ok(def) => {
+                results.push(UpdateResult {
+                    processor_id: qid,
+                    old_version: inst_ver.clone(),
+                    new_version: def.meta.version.clone(),
+                    success: true,
+                    error: None,
+                });
             }
             Err(e) => {
                 results.push(UpdateResult {
@@ -487,6 +415,47 @@ pub async fn get_pending_updates(
     Ok(result)
 }
 
+// ---------------------------------------------------------------------------
+// Shared install helper
+// ---------------------------------------------------------------------------
+
+/// Download, parse, persist, and install a single processor from a marketplace source.
+///
+/// Performs the full sequence: download YAML → append provenance → parse → set source
+/// field → persist to disk → insert into state. Returns the parsed `AnyProcessor` so
+/// callers can extract the version or build a summary without re-locking.
+async fn download_and_install_processor(
+    state: &AppState,
+    app: &AppHandle,
+    source: &Source,
+    entry: &MarketplaceEntry,
+    qualified_id: &str,
+) -> Result<AnyProcessor, String> {
+    // 1. Download and verify SHA256.
+    let yaml = registry::download_processor_from_source(&state.http_client, source, entry).await?;
+
+    // 2. Append provenance metadata.
+    let final_yaml = format!("{}{}", yaml, build_provenance_yaml(&source.name, &entry.version, &entry.sha256));
+
+    // 3. Parse.
+    let mut def = AnyProcessor::from_yaml(&final_yaml)
+        .map_err(|e| format!("Failed to parse processor YAML: {e}"))?;
+
+    // 4. Set source field.
+    def.source = Some(source.name.clone());
+
+    // 5. Persist to disk.
+    super::processors::persist_processor(app, qualified_id, &final_yaml)?;
+
+    // 6. Insert into state.
+    {
+        let mut procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
+        procs.insert(qualified_id.to_string(), def.clone());
+    }
+
+    Ok(def)
+}
+
 /// Install a processor from a named marketplace source.
 /// Downloads the YAML, verifies SHA256, appends provenance, parses, persists, and inserts.
 #[tauri::command]
@@ -513,42 +482,19 @@ pub async fn install_from_marketplace(
         .find(|e| e.id == entry_id)
         .ok_or_else(|| format!("Entry '{}' not found in source '{}'", entry_id, source_name))?;
 
-    // Download and verify.
-    let yaml = registry::download_processor_from_source(&state.http_client, &source, entry).await?;
+    let qualified_id = marketplace::qualified_id(&entry.id, &source_name);
 
-    // Append provenance metadata.
-    let now = chrono_now_iso();
-    let provenance_yaml = format!(
-        "\n_source: {}\n_installed_version: {}\n_installed_at: {}\n_sha256: {}\n",
-        source_name, entry.version, now, entry.sha256
-    );
-    let final_yaml = format!("{}{}", yaml, provenance_yaml);
-
-    // Parse into AnyProcessor.
-    let mut def = AnyProcessor::from_yaml(&final_yaml)
-        .map_err(|e| format!("Failed to parse processor YAML: {e}"))?;
-    def.source = Some(source_name.clone());
-
-    let qualified_id = marketplace::qualified_id(&def.meta.id, &source_name);
-
-    // Persist to disk.
-    persist_processor_yaml(&app, &qualified_id, &final_yaml)?;
+    let def = download_and_install_processor(&state, &app, &source, entry, &qualified_id).await?;
 
     // Build summary with the qualified ID (From impl uses bare id).
     let mut summary = ProcessorSummary::from(&def);
-    summary.id = qualified_id.clone();
-
-    // Insert into state.
-    {
-        let mut procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
-        procs.insert(qualified_id, def);
-    }
+    summary.id = qualified_id;
 
     Ok(summary)
 }
 
 /// Simple ISO 8601 timestamp (no chrono dependency — use std).
-fn chrono_now_iso() -> String {
+pub(crate) fn chrono_now_iso() -> String {
     // Use std::time — format as seconds since epoch for simplicity.
     // For a proper ISO timestamp we'd need the `chrono` crate, but this is
     // sufficient for provenance tracking.
@@ -556,4 +502,13 @@ fn chrono_now_iso() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     format!("{}Z", dur.as_secs())
+}
+
+/// Build the provenance YAML suffix appended to downloaded processor YAMLs.
+pub(crate) fn build_provenance_yaml(source_name: &str, version: &str, sha256: &str) -> String {
+    let now = chrono_now_iso();
+    format!(
+        "\n_source: {}\n_installed_version: {}\n_installed_at: {}\n_sha256: {}\n",
+        source_name, version, now, sha256
+    )
 }

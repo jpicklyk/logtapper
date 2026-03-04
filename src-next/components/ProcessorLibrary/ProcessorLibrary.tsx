@@ -2,6 +2,7 @@ import { memo, useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import ReactDOM from 'react-dom';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { ProcessorSummary, Source, MarketplaceEntry } from '../../bridge/types';
+import { makeQualifiedId, filterMarketplaceEntries } from '../../bridge/types';
 import {
   listSources,
   fetchMarketplace,
@@ -12,26 +13,23 @@ import { usePipeline } from '../../hooks';
 import { useProcessors, usePipelineChain } from '../../context';
 import { bus } from '../../events/bus';
 import css from './ProcessorLibrary.module.css';
+import badgeCss from '../../ui/processorBadge.module.css';
+import { PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY } from '../../ui/processorBadgeTypes';
 
 type Tab = 'installed' | 'discover' | 'yaml';
 type GroupBy = 'tag' | 'type';
 type InstallStatus = 'idle' | 'installing' | 'installed' | 'error';
 
-const PROC_TYPE_LABELS: Record<string, string> = {
-  reporter: 'Reporter',
-  state_tracker: 'StateTracker',
-  correlator: 'Correlator',
-  annotator: 'Annotator',
-  transformer: 'PII', // reserved for built-in PII anonymizer only
-};
+// transformer label is overridden to 'PII' here (built-in PII anonymizer only)
+const LOCAL_LABEL_OVERRIDES: Record<string, string> = { transformer: 'PII' };
 
-const PROC_TYPE_BADGE_CLASS: Record<string, string> = {
-  reporter: css.typeReporter,
-  state_tracker: css.typeTracker,
-  correlator: css.typeCorrelator,
-  annotator: css.typeCorrelator,
-  transformer: css.typeTransformer, // reserved for built-in PII anonymizer only
-};
+function getProcTypeLabel(type: string): string {
+  return LOCAL_LABEL_OVERRIDES[type] ?? PROC_TYPE_LABELS[type] ?? type;
+}
+
+function getProcTypeBadgeClass(type: string): string {
+  return badgeCss[PROC_TYPE_CLASS_KEY[type] as keyof typeof badgeCss] ?? '';
+}
 
 function groupByKey<T>(items: T[], keyFn: (item: T) => string): Map<string, T[]> {
   const map = new Map<string, T[]>();
@@ -119,7 +117,7 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
     () =>
       groupBy === 'tag'
         ? groupByKey(filtered, (p) => p.tags[0] ?? 'Uncategorized')
-        : groupByKey(filtered, (p) => PROC_TYPE_LABELS[p.processorType] ?? p.processorType),
+        : groupByKey(filtered, (p) => getProcTypeLabel(p.processorType)),
     [filtered, groupBy],
   );
 
@@ -140,22 +138,6 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
 
   // ── Discover tab (marketplace multi-source) ────────────────────────────────
 
-  // Load sources on first switch to Discover
-  const sourcesLoadedRef = useRef(false);
-  useEffect(() => {
-    if (tab === 'discover' && !sourcesLoadedRef.current) {
-      sourcesLoadedRef.current = true;
-      listSources().then((srcs) => {
-        setSources(srcs);
-        const enabled = srcs.filter((s) => s.enabled);
-        if (enabled.length > 0 && !selectedSource) {
-          setSelectedSource(enabled[0].name);
-          handleFetchMarketplace(enabled[0].name);
-        }
-      }).catch(() => {});
-    }
-  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const handleFetchMarketplace = useCallback(async (sourceName?: string) => {
     const src = sourceName || selectedSource;
     if (!src) return;
@@ -170,6 +152,22 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
       setDiscoverLoading(false);
     }
   }, [selectedSource]);
+
+  // Load sources on first switch to Discover
+  const sourcesLoadedRef = useRef(false);
+  useEffect(() => {
+    if (tab === 'discover' && !sourcesLoadedRef.current) {
+      sourcesLoadedRef.current = true;
+      listSources().then((srcs) => {
+        setSources(srcs);
+        const enabled = srcs.filter((s) => s.enabled);
+        if (enabled.length > 0 && !selectedSource) {
+          setSelectedSource(enabled[0].name);
+          handleFetchMarketplace(enabled[0].name);
+        }
+      }).catch(() => {});
+    }
+  }, [tab, handleFetchMarketplace]);
 
   const handleSourceChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
     const name = e.target.value;
@@ -202,16 +200,7 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
   );
 
   const discoverFiltered = useMemo(
-    () =>
-      marketplaceEntries.filter((e) => {
-        if (!discoverFilter) return true;
-        const dq = discoverFilter.toLowerCase();
-        return (
-          e.name.toLowerCase().includes(dq) ||
-          (e.description ?? '').toLowerCase().includes(dq) ||
-          e.tags.some((t) => t.toLowerCase().includes(dq))
-        );
-      }),
+    () => filterMarketplaceEntries(marketplaceEntries, discoverFilter),
     [marketplaceEntries, discoverFilter],
   );
 
@@ -429,9 +418,9 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                                 <span className={css.itemName}>{p.name}</span>
                                 <span className={css.itemSub}>
                                   <span
-                                    className={`${css.typeBadge} ${PROC_TYPE_BADGE_CLASS[p.processorType] ?? ''}`}
+                                    className={`${badgeCss.typeBadge} ${getProcTypeBadgeClass(p.processorType)}`}
                                   >
-                                    {PROC_TYPE_LABELS[p.processorType] ?? p.processorType}
+                                    {getProcTypeLabel(p.processorType)}
                                   </span>
                                   {p.description && (
                                     <span className={css.itemDesc}>{p.description}</span>
@@ -517,7 +506,7 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                 )}
                 {discoverFiltered.map((entry) => {
                   const status = installStatus[entry.id] ?? 'idle';
-                  const qualifiedId = selectedSource ? `${entry.id}@${selectedSource}` : entry.id;
+                  const qualifiedId = selectedSource ? makeQualifiedId(entry.id, selectedSource) : entry.id;
                   const alreadyInstalled = installedIds.has(entry.id) || installedIds.has(qualifiedId);
                   const inChain = chainSet.has(entry.id) || chainSet.has(qualifiedId);
                   return (
@@ -527,8 +516,8 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                         <span className={css.itemSub}>
                           <span className={css.itemVersion}>v{entry.version}</span>
                           {entry.processorType && (
-                            <span className={`${css.typeBadge} ${PROC_TYPE_BADGE_CLASS[entry.processorType] ?? ''}`}>
-                              {PROC_TYPE_LABELS[entry.processorType] ?? entry.processorType}
+                            <span className={`${badgeCss.typeBadge} ${getProcTypeBadgeClass(entry.processorType)}`}>
+                              {getProcTypeLabel(entry.processorType)}
                             </span>
                           )}
                           {entry.description && (

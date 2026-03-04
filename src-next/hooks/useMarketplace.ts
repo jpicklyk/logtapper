@@ -45,7 +45,6 @@ export interface MarketplaceState {
   checkUpdates(): Promise<void>;
   updateOne(processorId: string): Promise<void>;
   updateAllFromSource(sourceName: string): Promise<void>;
-  pendingUpdateCount: number;
 }
 
 export function useMarketplace(): MarketplaceState {
@@ -67,6 +66,9 @@ export function useMarketplace(): MarketplaceState {
   // Refs for stable callbacks
   const sourcesRef = useRef(sources);
   sourcesRef.current = sources;
+
+  const pendingUpdatesRef = useRef(pendingUpdates);
+  pendingUpdatesRef.current = pendingUpdates;
 
   const loadSources = useCallback(async () => {
     setSourcesLoading(true);
@@ -139,7 +141,7 @@ export function useMarketplace(): MarketplaceState {
   }, []);
 
   const updateOne = useCallback(async (processorId: string) => {
-    const update = pendingUpdates.find((u) => u.processorId === processorId);
+    const update = pendingUpdatesRef.current.find((u) => u.processorId === processorId);
     if (!update) return;
     try {
       const result = await updateProcessorCmd(processorId);
@@ -169,7 +171,7 @@ export function useMarketplace(): MarketplaceState {
         return next;
       });
     }
-  }, [pendingUpdates]);
+  }, []);
 
   const updateAllFromSource = useCallback(async (sourceName: string) => {
     try {
@@ -218,6 +220,5 @@ export function useMarketplace(): MarketplaceState {
     checkUpdates,
     updateOne,
     updateAllFromSource,
-    pendingUpdateCount: pendingUpdates.length,
   };
 }

@@ -83,21 +83,15 @@ fn install_snapshot_processors(state: &AppState, app: &tauri::AppHandle) {
     let proc_dir = data_dir.join("processors");
     let _ = std::fs::create_dir_all(&proc_dir);
 
-    let Ok(mut procs) = state.processors.lock() else { return };
-
-    for entry in &index.processors {
-        // Find the bundled YAML for this entry's path
-        let yaml_content = BUILTIN_YAMLS.iter().find(|(p, _)| *p == entry.path).map(|(_, c)| *c);
-        let Some(raw_yaml) = yaml_content else {
-            eprintln!("No bundled YAML for snapshot entry '{}' at path '{}'", entry.id, entry.path);
-            continue;
-        };
+    // Parse all processors and write to disk WITHOUT holding the lock.
+    // Collect (qualified_id, parsed_def, final_yaml) for all that succeed.
+    let parsed: Vec<(String, AnyProcessor, String)> = index.processors.iter().filter_map(|entry| {
+        let raw_yaml = BUILTIN_YAMLS.iter().find(|(p, _)| *p == entry.path).map(|(_, c)| *c)?;
 
         // Attach provenance metadata (use a static placeholder; exact timestamp not critical)
-        let now = "2000-01-01T00:00:00Z";
         let provenance_suffix = format!(
-            "\n_source: official\n_installed_version: {}\n_installed_at: {}\n_sha256: \"\"\n",
-            entry.version, now
+            "\n_source: official\n_installed_version: {}\n_installed_at: 2000-01-01T00:00:00Z\n_sha256: \"\"\n",
+            entry.version
         );
         let final_yaml = format!("{}{}", raw_yaml, provenance_suffix);
 
@@ -106,17 +100,26 @@ fn install_snapshot_processors(state: &AppState, app: &tauri::AppHandle) {
                 def.source = Some("official".to_string());
                 let qid = qualified_id(&def.meta.id, "official");
 
-                // Persist to disk
+                // Persist to disk (outside the lock).
                 let filename = processors::marketplace::id_to_filename(&qid);
                 let dest = proc_dir.join(format!("{filename}.yaml"));
                 if let Err(e) = std::fs::write(&dest, &final_yaml) {
                     eprintln!("Failed to persist '{}': {e}", qid);
                 }
 
-                procs.insert(qid, def);
+                Some((qid, def, final_yaml))
             }
-            Err(e) => eprintln!("Failed to parse snapshot processor '{}': {e}", entry.id),
+            Err(e) => {
+                eprintln!("Failed to parse snapshot processor '{}': {e}", entry.id);
+                None
+            }
         }
+    }).collect();
+
+    // Acquire the lock once to batch-insert all parsed processors.
+    let Ok(mut procs) = state.processors.lock() else { return };
+    for (qid, def, _yaml) in parsed {
+        procs.insert(qid, def);
     }
 }
 
@@ -154,26 +157,14 @@ async fn startup_update_check(handle: tauri::AppHandle) {
             let qid = marketplace::qualified_id(&entry.id, &source.name);
             let Some(inst_ver) = installed.get(&qid) else { continue };
 
-            let newer = match (semver::Version::parse(inst_ver), semver::Version::parse(&entry.version)) {
-                (Ok(i), Ok(a)) => a > i,
-                _ => inst_ver != &entry.version,
-            };
-            if !newer { continue; }
+            if !commands::sources::is_newer(inst_ver, &entry.version) { continue; }
 
             if source.auto_update {
                 // Auto-apply silently.
                 if let Ok(yaml) = registry::download_processor_from_source(
                     &state.http_client, source, entry
                 ).await {
-                    let dur = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default();
-                    let now = format!("{}Z", dur.as_secs());
-                    let prov = format!(
-                        "\n_source: {}\n_installed_version: {}\n_installed_at: {}\n_sha256: {}\n",
-                        source.name, entry.version, now, entry.sha256
-                    );
-                    let final_yaml = format!("{}{}", yaml, prov);
+                    let final_yaml = format!("{}{}", yaml, commands::sources::build_provenance_yaml(&source.name, &entry.version, &entry.sha256));
                     if let Ok(mut def) = AnyProcessor::from_yaml(&final_yaml) {
                         def.source = Some(source.name.clone());
                         // Persist to disk.
@@ -205,10 +196,7 @@ async fn startup_update_check(handle: tauri::AppHandle) {
         // Update last_checked.
         if let Ok(mut srcs) = state.sources.lock() {
             if let Some(s) = srcs.iter_mut().find(|s| s.name == source.name) {
-                let dur = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default();
-                s.last_checked = Some(format!("{}Z", dur.as_secs()));
+                s.last_checked = Some(commands::sources::chrono_now_iso());
             }
         }
     }

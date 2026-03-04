@@ -1,22 +1,8 @@
 import React from 'react';
 import type { MarketplaceEntry } from '../../bridge/types';
 import css from './MarketplacePanel.module.css';
-
-const PROC_TYPE_CLASS: Record<string, string> = {
-  reporter: css.typeReporter,
-  state_tracker: css.typeTracker,
-  correlator: css.typeCorrelator,
-  annotator: css.typeCorrelator,
-  transformer: css.typeTransformer,
-};
-
-const PROC_TYPE_LABEL: Record<string, string> = {
-  reporter: 'Reporter',
-  state_tracker: 'StateTracker',
-  correlator: 'Correlator',
-  annotator: 'Annotator',
-  transformer: 'Transformer',
-};
+import badgeCss from '../../ui/processorBadge.module.css';
+import { PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY } from '../../ui/processorBadgeTypes';
 
 interface Props {
   entry: MarketplaceEntry;
@@ -33,9 +19,11 @@ export const MarketplaceEntryRow = React.memo(function MarketplaceEntryRow({
   installError,
   onInstall,
 }: Props) {
-  const typeClass = entry.processorType ? PROC_TYPE_CLASS[entry.processorType] ?? '' : '';
+  const typeClass = entry.processorType
+    ? badgeCss[PROC_TYPE_CLASS_KEY[entry.processorType] as keyof typeof badgeCss] ?? ''
+    : '';
   const typeLabel = entry.processorType
-    ? PROC_TYPE_LABEL[entry.processorType] ?? entry.processorType
+    ? PROC_TYPE_LABELS[entry.processorType] ?? entry.processorType
     : '';
 
   return (
@@ -45,7 +33,7 @@ export const MarketplaceEntryRow = React.memo(function MarketplaceEntryRow({
           <span className={css.entryName}>{entry.name}</span>
           <span className={css.entryVersion}>v{entry.version}</span>
           {typeLabel && (
-            <span className={`${css.typeBadge} ${typeClass}`}>{typeLabel}</span>
+            <span className={`${badgeCss.typeBadge} ${typeClass}`}>{typeLabel}</span>
           )}
           {entry.deprecated && <span className={css.deprecatedBadge}>deprecated</span>}
         </div>

@@ -186,22 +186,9 @@
   margin-top: 2px;
 }
 
-.typeBadge {
-  font-size: 9px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  padding: 1px 4px;
-  border-radius: 3px;
-  background: var(--bg-overlay);
-  color: var(--text-dimmed);
-}
-
-.typeTransformer { color: #2dd4bf; }
-.typeReporter { color: #58a6ff; }
-.typeTracker { color: #60a5fa; }
-.typeCorrelator { color: #c084fc; }
-.typeAnnotator { color: #fb923c; }
+/* type badge color classes and base style come from ui/processorBadge.module.css */
+/* local padding override (compact node layout uses 1px 4px vs shared 1px 5px) */
+/* no local overrides needed — node layout has sufficient space for shared padding */
 
 .builtinBadge {
   font-size: 9px;

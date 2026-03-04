@@ -368,13 +368,14 @@ export interface RegistryEntry {
 // Marketplace source types (Phase 2 — Source Management)
 // ---------------------------------------------------------------------------
 
-export type SourceKind =
-  | { type: 'github'; repo: string; ref: string }
-  | { type: 'local'; path: string };
+/** Build a qualified processor ID matching the backend convention: `id@source` */
+export function makeQualifiedId(id: string, source: string): string {
+  return `${id}@${source}`;
+}
 
 export interface Source {
   name: string;
-  type: SourceKind['type'];
+  type: 'github' | 'local';
   repo?: string;
   ref?: string;
   path?: string;
@@ -396,6 +397,18 @@ export interface MarketplaceEntry {
   processorType?: string;
   sourceTypes?: string[];
   deprecated: boolean;
+}
+
+/** Filter marketplace entries by search query (matches name, description, tags) */
+export function filterMarketplaceEntries(entries: MarketplaceEntry[], query: string): MarketplaceEntry[] {
+  if (!query) return entries;
+  const q = query.toLowerCase();
+  return entries.filter(
+    (e) =>
+      e.name.toLowerCase().includes(q) ||
+      (e.description ?? '').toLowerCase().includes(q) ||
+      e.tags.some((t) => t.toLowerCase().includes(q)),
+  );
 }
 
 // ---------------------------------------------------------------------------

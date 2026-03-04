@@ -1,5 +1,7 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import type { Source, MarketplaceEntry, ProcessorSummary } from '../../bridge/types';
+import type { MarketplaceEntry } from '../../bridge/types';
+import { makeQualifiedId, filterMarketplaceEntries } from '../../bridge/types';
+import type { MarketplaceState } from '../../hooks/useMarketplace';
 import { usePipeline } from '../../hooks';
 import { useProcessors } from '../../context';
 import { MarketplaceEntryRow } from './MarketplaceEntryRow';
@@ -8,26 +10,21 @@ import css from './MarketplacePanel.module.css';
 type InstallStatus = 'idle' | 'installing' | 'installed' | 'error';
 
 interface Props {
-  sources: Source[];
-  selectedSource: string | null;
-  selectSource: (name: string | null) => void;
-  entries: MarketplaceEntry[];
-  entriesLoading: boolean;
-  entriesError: string | null;
-  fetchEntries: (sourceName: string) => Promise<void>;
-  installEntry: (sourceName: string, entry: MarketplaceEntry) => Promise<ProcessorSummary>;
+  marketplace: MarketplaceState;
 }
 
-export const BrowseTab = React.memo(function BrowseTab({
-  sources,
-  selectedSource,
-  selectSource,
-  entries,
-  entriesLoading,
-  entriesError,
-  fetchEntries,
-  installEntry,
-}: Props) {
+export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
+  const {
+    sources,
+    selectedSource,
+    selectSource,
+    entries,
+    entriesLoading,
+    entriesError,
+    fetchEntries,
+    installEntry,
+  } = marketplace;
+
   const pipeline = usePipeline();
   const processors = useProcessors();
   const [filter, setFilter] = useState('');
@@ -74,16 +71,7 @@ export const BrowseTab = React.memo(function BrowseTab({
     [selectedSource, installEntry, pipeline],
   );
 
-  const filtered = useMemo(() => {
-    if (!filter) return entries;
-    const q = filter.toLowerCase();
-    return entries.filter(
-      (e) =>
-        e.name.toLowerCase().includes(q) ||
-        (e.description ?? '').toLowerCase().includes(q) ||
-        e.tags.some((t) => t.toLowerCase().includes(q)),
-    );
-  }, [entries, filter]);
+  const filtered = useMemo(() => filterMarketplaceEntries(entries, filter), [entries, filter]);
 
   return (
     <>
@@ -143,7 +131,7 @@ export const BrowseTab = React.memo(function BrowseTab({
         )}
         {filtered.map((entry) => {
           // Check if any installed processor matches this entry (bare or qualified id)
-          const qualifiedId = selectedSource ? `${entry.id}@${selectedSource}` : entry.id;
+          const qualifiedId = selectedSource ? makeQualifiedId(entry.id, selectedSource) : entry.id;
           const isInstalled = installedIds.has(entry.id) || installedIds.has(qualifiedId);
           return (
             <MarketplaceEntryRow
