@@ -1,42 +1,718 @@
+/* ── Backdrop & Dialog Shell ──────────────────────────────────────────────── */
+
 .backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.55);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
+  animation: fadeIn 120ms ease-out;
 }
+
 .dialog {
-  width: 600px;
-  max-height: 80vh;
+  width: 560px;
+  max-height: 78vh;
   display: flex;
   flex-direction: column;
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.03) inset;
   overflow: hidden;
+  animation: dialogIn 160ms ease-out;
 }
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes dialogIn {
+  from { opacity: 0; transform: translateY(-8px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--border);
+  background: var(--bg-base);
 }
-.title { font-size: 14px; font-weight: 600; color: var(--text); }
+
+.headerLeft {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.headerIcon {
+  color: var(--text-dimmed);
+  flex-shrink: 0;
+}
+
+.title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.2px;
+}
+
 .closeBtn {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: none;
-  border: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
   cursor: pointer;
   color: var(--text-dimmed);
-  font-size: 16px;
-  padding: 2px 6px;
-  border-radius: 4px;
+  transition: all 80ms ease;
 }
-.closeBtn:hover { color: var(--text); background: var(--bg-overlay); }
-.body { flex: 1; overflow-y: auto; padding: 24px; }
+
+.closeBtn:hover {
+  color: var(--text);
+  background: var(--bg-overlay);
+  border-color: var(--border);
+}
+
+/* ── Tab Bar ─────────────────────────────────────────────────────────────── */
+
+.tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-base);
+  padding: 0 14px;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 12px;
+  border: none;
+  background: none;
+  color: var(--text-dimmed);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  position: relative;
+  transition: color 80ms ease;
+}
+
+.tab::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 12px;
+  right: 12px;
+  height: 2px;
+  border-radius: 1px 1px 0 0;
+  background: transparent;
+  transition: background 80ms ease;
+}
+
+.tab:hover {
+  color: var(--text-muted);
+}
+
+.tabActive {
+  color: var(--accent);
+}
+
+.tabActive::after {
+  background: var(--accent);
+}
+
+.tabCount {
+  font-size: 9px;
+  background: var(--bg-overlay);
+  color: var(--text-dimmed);
+  border-radius: 8px;
+  padding: 1px 5px;
+  font-weight: 600;
+}
+
+.tabActive .tabCount {
+  background: rgba(88, 166, 255, 0.15);
+  color: var(--accent);
+}
+
+/* ── Body ────────────────────────────────────────────────────────────────── */
+
+.body {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+/* ── Toolbar (search + group-by + select-all) ────────────────────────────── */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.searchWrap {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 8px;
+  color: var(--text-dimmed);
+  pointer-events: none;
+}
+
+.search {
+  width: 100%;
+  padding: 5px 8px 5px 26px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: 12px;
+  font-family: var(--font-ui);
+  outline: none;
+  transition: border-color 80ms ease;
+}
+
+.search::placeholder {
+  color: var(--text-dimmed);
+}
+
+.search:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.searchClear {
+  position: absolute;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: var(--text-dimmed);
+  font-size: 11px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.searchClear:hover {
+  color: var(--text);
+  background: var(--bg-overlay);
+}
+
+.groupBy {
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: var(--font-ui);
+  cursor: pointer;
+  outline: none;
+}
+
+.groupBy:focus {
+  border-color: var(--accent);
+}
+
+.selectAll {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  color: var(--text-dimmed);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 80ms ease;
+}
+
+.selectAll:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ── Scroll area ─────────────────────────────────────────────────────────── */
+
+.scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+/* ── Empty state ─────────────────────────────────────────────────────────── */
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px;
+  color: var(--text-dimmed);
+  font-size: 12px;
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* ── Processor groups (installed tab) ────────────────────────────────────── */
+
+.group {
+  margin-bottom: 2px;
+}
+
+.groupHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 14px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dimmed);
+  position: sticky;
+  top: 0;
+  background: var(--bg-raised);
+  z-index: 1;
+}
+
+.groupCount {
+  font-size: 9px;
+  background: var(--bg-overlay);
+  color: var(--text-dimmed);
+  border-radius: 8px;
+  padding: 1px 5px;
+}
+
+/* ── Processor item row ──────────────────────────────────────────────────── */
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 14px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background 60ms ease;
+}
+
+.item:hover {
+  background: var(--bg-overlay);
+}
+
+.itemSelected {
+  background: rgba(88, 166, 255, 0.06);
+}
+
+.itemSelected:hover {
+  background: rgba(88, 166, 255, 0.1);
+}
+
+.itemInChain {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.itemInChain:hover {
+  background: transparent;
+}
+
+/* ── Checkbox ────────────────────────────────────────────────────────────── */
+
+.checkbox {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-input);
+  color: transparent;
+  transition: all 80ms ease;
+}
+
+.checkboxChecked {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.checkboxChain {
+  border-color: var(--border);
+  background: var(--bg-overlay);
+  color: var(--text-dimmed);
+}
+
+/* ── Item info / name / description ──────────────────────────────────────── */
+
+.itemInfo {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.itemName {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.itemSub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.itemDesc {
+  font-size: 11px;
+  color: var(--text-dimmed);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.itemVersion {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-dimmed);
+  flex-shrink: 0;
+}
+
+.itemStatus {
+  flex-shrink: 0;
+}
+
+.inChainLabel {
+  font-size: 10px;
+  color: var(--text-dimmed);
+  font-style: italic;
+}
+
+/* ── Type badges ─────────────────────────────────────────────────────────── */
+
+.typeBadge {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-overlay);
+  color: var(--text-dimmed);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.typeReporter   { color: #58a6ff; }
+.typeTracker    { color: #60a5fa; }
+.typeCorrelator { color: #c084fc; }
+.typeTransformer { color: #2dd4bf; }
+
+/* ── Discover tab ────────────────────────────────────────────────────────── */
+
+.discoverItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.discoverItem:last-child {
+  border-bottom: none;
+}
+
+.discoverAction {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding-top: 2px;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 4px;
+}
+
+.tag {
+  font-size: 9px;
+  font-weight: 500;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-overlay);
+  color: var(--text-dimmed);
+}
+
+.fetchBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 80ms ease;
+}
+
+.fetchBtn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.fetchBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.fetchBtnLoading {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ── Shared action buttons ───────────────────────────────────────────────── */
+
+.actionBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 80ms ease;
+}
+
+.actionBtn:hover:not(:disabled) {
+  background: rgba(88, 166, 255, 0.1);
+}
+
+.actionBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.actionBtnSecondary {
+  border-color: var(--border);
+  color: var(--text-muted);
+}
+
+.actionBtnSecondary:hover:not(:disabled) {
+  border-color: var(--text-muted);
+  background: var(--bg-overlay);
+}
+
+/* ── Error bar ───────────────────────────────────────────────────────────── */
+
+.errorBar {
+  padding: 6px 10px;
+  margin: 0 14px;
+  border-radius: var(--radius-sm);
+  background: rgba(248, 81, 73, 0.1);
+  border: 1px solid rgba(248, 81, 73, 0.25);
+  color: var(--danger);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* ── Spinner ─────────────────────────────────────────────────────────────── */
+
+.spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: librarySpin 0.6s linear infinite;
+}
+
+@keyframes librarySpin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── YAML tab ────────────────────────────────────────────────────────────── */
+
+.yaml {
+  display: flex;
+  flex-direction: column;
+  padding: 12px 14px;
+  gap: 8px;
+}
+
+.yamlActions {
+  display: flex;
+  gap: 6px;
+}
+
+.yamlLabel {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dimmed);
+  margin-top: 4px;
+}
+
+.yamlInput {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+  transition: border-color 80ms ease;
+}
+
+.yamlInput::placeholder {
+  color: var(--text-dimmed);
+}
+
+.yamlInput:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.yamlFooter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.yamlHint {
+  font-size: 10px;
+  color: var(--text-dimmed);
+  margin-left: auto;
+}
+
+/* ── Footer (multi-select action bar) ────────────────────────────────────── */
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-base);
+  min-height: 40px;
+}
+
+.footerHint {
+  font-size: 11px;
+  color: var(--text-dimmed);
+}
+
+.footerActive {
+  justify-content: space-between;
+}
+
+.footerCount {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.footerNum {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.footerActions {
+  display: flex;
+  gap: 6px;
+}
+
+.addBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 80ms ease;
+}
+
+.addBtn:hover {
+  opacity: 0.85;
+}
+
+/* ── Placeholder (legacy) ────────────────────────────────────────────────── */
+
 .placeholder {
   display: flex;
   flex-direction: column;
@@ -46,4 +722,8 @@
   font-size: 13px;
   text-align: center;
 }
-.hint { font-size: 11px; color: var(--text-dimmed); }
+
+.hint {
+  font-size: 11px;
+  color: var(--text-dimmed);
+}

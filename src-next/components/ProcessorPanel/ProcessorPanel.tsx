@@ -26,6 +26,8 @@ import {
   usePipelineError,
 } from '../../context';
 import { usePipeline } from '../../hooks';
+import { ProcessorLibrary } from '../ProcessorLibrary';
+import { bus } from '../../events';
 import styles from './ProcessorPanel.module.css';
 
 // ── McpStatusWidget ──────────────────────────────────────────────────────────
@@ -340,8 +342,20 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
     await pipeline.run(sessionId);
   }, [session, pipeline]);
 
+  const [libraryOpen, setLibraryOpen] = useState(false);
+
+  useEffect(() => {
+    const handler = () => setLibraryOpen(true);
+    bus.on('pipeline:library-open', handler);
+    return () => { bus.off('pipeline:library-open', handler); };
+  }, []);
+
   const handleOpenLibrary = useCallback(() => {
-    // TODO: wire to library modal via event bus
+    setLibraryOpen(true);
+  }, []);
+
+  const handleCloseLibrary = useCallback(() => {
+    setLibraryOpen(false);
   }, []);
 
   const resultMap = useMemo(
@@ -533,6 +547,8 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
       {pipelineError && (
         <div className={styles.error}>{pipelineError}</div>
       )}
+
+      {libraryOpen && <ProcessorLibrary onClose={handleCloseLibrary} />}
     </div>
   );
 });

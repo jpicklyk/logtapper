@@ -41,6 +41,7 @@ export type AppEvents = {
                               hasTrackers: boolean; hasReporters: boolean; hasCorrelators: boolean };
   'pipeline:cleared':       undefined;
   'pipeline:chain-changed': { chain: string[] };
+  'pipeline:library-open':  undefined;
 
   // ── Layout / navigation ───────────────────────────────────────────────────
   'layout:open-tab':        { type: string };
@@ -55,6 +56,14 @@ export type AppEvents = {
    *  pane ID (e.g. 'primary') but the tab was actually placed in a different pane. */
   'layout:pane-session-remap': { originalPaneId: string; actualPaneId: string; sessionId: string };
   'navigate:jump':          { lineNum: number };
+
+  // ── Selection ───────────────────────────────────────────────────────────
+  /** Fired when the user changes line selection in a log viewer.
+   *  `anchor` is the click origin; `range` is [first, last] of the contiguous
+   *  selection (null when cleared). Includes `sessionId` because a pane can
+   *  host multiple sessions via tabs. */
+  'selection:changed':      { paneId: string; sessionId: string | null;
+                              anchor: number | null; range: [number, number] | null };
 
   // ── Analysis ──────────────────────────────────────────────────────────────
   /** Fired when the user selects an analysis artifact to view in the center tab. */
