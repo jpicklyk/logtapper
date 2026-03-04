@@ -10,7 +10,6 @@
   line-height: 22px;
   border-left: 2px solid transparent;
   color: var(--text);
-  overflow: hidden;
 }
 
 .line:hover {
@@ -28,7 +27,6 @@
 
 .msg {
   flex: 1;
-  overflow: hidden;
 }
 
 .gutter {

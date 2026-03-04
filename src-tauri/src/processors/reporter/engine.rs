@@ -248,10 +248,11 @@ impl<'a> ProcessorRun<'a> {
         use crate::core::line::LogLevel;
         match rule {
             FilterRule::TagMatch { tag_set, tags } => {
+                let line_tag: &str = &line.tag;
                 if !tag_set.is_empty() {
-                    tag_set.contains(&*line.tag)
+                    tag_set.iter().any(|t| line_tag.starts_with(t.as_str()))
                 } else {
-                    tags.iter().any(|t| t.as_str() == &*line.tag)
+                    tags.iter().any(|t| line_tag.starts_with(t.as_str()))
                 }
             }
             FilterRule::MessageContains { value } => line.message.contains(value.as_str()),
@@ -562,6 +563,47 @@ pipeline:
         let mut run = ProcessorRun::new(&d);
         run.process_line(&make_line("OtherTag", "hello", LogLevel::Info, 5));
         assert!(run.finish().matched_line_nums.is_empty());
+    }
+
+    #[test]
+    fn filter_tag_match_prefix_matches_subtag() {
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: filter
+    rules:
+      - type: tag_match
+        tags: [NetworkMonitor]
+"#);
+        let mut run = ProcessorRun::new(&d);
+        run.process_line(&make_line("NetworkMonitor/102", "PROBE_DNS ok", LogLevel::Debug, 1));
+        run.process_line(&make_line("NetworkMonitor", "direct match", LogLevel::Debug, 2));
+        run.process_line(&make_line("NetworkMonitorExtra", "also matches prefix", LogLevel::Debug, 3));
+        run.process_line(&make_line("OtherTag", "no match", LogLevel::Debug, 4));
+        let result = run.finish();
+        assert_eq!(result.matched_line_nums, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn filter_tag_match_trailing_slash_specificity() {
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: filter
+    rules:
+      - type: tag_match
+        tags: ["NetworkMonitor/"]
+"#);
+        let mut run = ProcessorRun::new(&d);
+        run.process_line(&make_line("NetworkMonitor/102", "matches", LogLevel::Debug, 1));
+        run.process_line(&make_line("NetworkMonitor", "no slash suffix", LogLevel::Debug, 2));
+        run.process_line(&make_line("NetworkMonitorExtra", "no slash", LogLevel::Debug, 3));
+        let result = run.finish();
+        assert_eq!(result.matched_line_nums, vec![1]);
     }
 
     // ── Filter: MessageContains ──────────────────────────────────────────────

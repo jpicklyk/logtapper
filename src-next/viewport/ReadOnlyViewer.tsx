@@ -391,7 +391,8 @@ export default function ReadOnlyViewer({
         <div
           style={{
             height: virtualizer.getTotalSize(),
-            width: '100%',
+            minWidth: '100%',
+            width: 'max-content',
             position: 'relative',
           }}
         >
@@ -408,9 +409,9 @@ export default function ReadOnlyViewer({
                   position: 'absolute',
                   top: virtualItem.start,
                   left: 0,
-                  width: '100%',
+                  minWidth: '100%',
+                  width: 'max-content',
                   height: virtualItem.size,
-                  overflow: 'hidden',
                 }}
               >
                 {line ? (

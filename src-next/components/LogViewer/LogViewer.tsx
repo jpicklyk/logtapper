@@ -1,6 +1,6 @@
 import React, { useMemo, useCallback, useEffect, useRef } from 'react';
 import type { ViewLine } from '../../bridge/types';
-import type { GutterColumnDef, LineDecoratorDef, CacheDataSource } from '../../viewport';
+import type { GutterColumnDef, LineDecoratorDef, CacheDataSource, Selection } from '../../viewport';
 import { ReadOnlyViewer, createCacheDataSource, sessionScrollPositions } from '../../viewport';
 import { useViewCache, useCacheFocus, useDataSourceRegistry, useCacheManager } from '../../cache';
 import {
@@ -10,6 +10,7 @@ import {
   useTrackerTransitions,
   useSearchQuery,
 } from '../../context';
+import { bus } from '../../events';
 import styles from './LogViewer.module.css';
 
 interface Props {
@@ -203,6 +204,30 @@ const LogViewer = React.memo(function LogViewer({
     [],
   );
 
+  // Broadcast selection changes via event bus so StateTimeline and FileInfoPanel
+  // can show cursors / highlight corresponding sections.
+  // sessionId read from ref to keep callback reference stable across session switches
+  // (avoids stale emission via ReadOnlyViewer's [selection, onSelectionChange] effect).
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
+
+  const handleSelectionChange = useCallback(
+    (sel: Selection) => {
+      const sid = sessionIdRef.current;
+      if (sel.selected.size === 0) {
+        bus.emit('selection:changed', { paneId, sessionId: sid, anchor: null, range: null });
+        return;
+      }
+      let min = Infinity, max = -Infinity;
+      for (const n of sel.selected) {
+        if (n < min) min = n;
+        if (n > max) max = n;
+      }
+      bus.emit('selection:changed', { paneId, sessionId: sid, anchor: sel.anchor, range: [min, max] });
+    },
+    [paneId],
+  );
+
   if (!dataSource) {
     return (
       <div className={styles.empty}>
@@ -225,6 +250,7 @@ const LogViewer = React.memo(function LogViewer({
       gutterColumns={gutterColumns}
       lineDecorators={lineDecorators}
       onLineClick={handleLineClick}
+      onSelectionChange={handleSelectionChange}
       className={styles.viewer}
       initialVirtualBase={initialVirtualBase}
       virtualBaseOutRef={virtualBaseOutRef}

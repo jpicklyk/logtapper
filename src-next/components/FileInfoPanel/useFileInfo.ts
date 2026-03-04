@@ -3,6 +3,8 @@ import { useSessionForPane, useScrollTarget, useViewerActions, useIndexingProgre
 import type { IndexingProgress } from '../../context';
 import { getDumpstateMetadata, getSections, getSessionMetadata } from '../../bridge/commands';
 import type { DumpstateMetadata } from '../../bridge/types';
+import type { AppEvents } from '../../events/events';
+import { bus } from '../../events';
 import type { SectionEntry } from './FileInfoPanel';
 
 export interface FileInfoData {
@@ -179,8 +181,31 @@ export function useFileInfo(paneId: string | null): FileInfoData {
     }
   }, [session?.totalLines, indexingProgress]);
 
+  // Track user line selection via event bus — drives section highlighting
+  // when the user clicks lines in the log viewer (not just programmatic jumps).
+  // Cleared when a programmatic jump fires so jumpToLine always wins.
+  const [selectedLine, setSelectedLine] = useState<number | null>(null);
+
+  useEffect(() => {
+    const handler = (ev: AppEvents['selection:changed']) => {
+      if (ev.paneId !== paneId) return;
+      setSelectedLine(ev.anchor);
+    };
+    bus.on('selection:changed', handler);
+    return () => { bus.off('selection:changed', handler); };
+  }, [paneId]);
+
+  // Clear selectedLine when a programmatic jump fires (search, section click)
+  // so that effectiveScrollToLine takes over for section tracking.
+  useEffect(() => {
+    if (effectiveScrollToLine != null) {
+      setSelectedLine(null);
+    }
+  }, [effectiveScrollToLine]);
+
+  const trackingLine = selectedLine ?? effectiveScrollToLine;
   const activeSectionIndex = sections.findIndex(
-    (s) => effectiveScrollToLine != null && effectiveScrollToLine >= s.startLine && effectiveScrollToLine <= s.endLine,
+    (s) => trackingLine != null && trackingLine >= s.startLine && trackingLine <= s.endLine,
   );
 
   const onJumpToLine = useCallback(

@@ -180,11 +180,29 @@ fn quick_extract_message(raw: &str) -> Option<&str> {
     None
 }
 
+/// Extract the leading literal (non-metacharacter) prefix from a regex pattern.
+///
+/// Used to populate the tag pre-filter union from `tag_regex` patterns.
+/// For example, `NetworkMonitor/\d+` returns `Some("NetworkMonitor")`.
+/// Returns `None` when the pattern starts with a metacharacter (empty prefix).
+fn extract_regex_literal_prefix(pattern: &str) -> Option<String> {
+    let mut prefix = String::new();
+    for b in pattern.bytes() {
+        if matches!(b, b'.' | b'*' | b'+' | b'?' | b'(' | b')' | b'[' | b']'
+                     | b'{' | b'}' | b'^' | b'$' | b'|' | b'\\') {
+            break;
+        }
+        prefix.push(b as char);
+    }
+    let prefix = prefix.trim_end_matches('/').to_string();
+    if prefix.is_empty() { None } else { Some(prefix) }
+}
+
 /// Collect the union of all tag filters from Layer 2 processors only.
 /// Transformers are excluded (they run in Layer 1 on all lines).
 ///
 /// Returns `(tag_union, has_unfiltered)` where:
-/// - `tag_union`: set of all tags that any Layer 2 processor filters on
+/// - `tag_union`: set of tag prefixes that any Layer 2 processor filters on
 /// - `has_unfiltered`: true if any Layer 2 processor has NO tag filter
 fn collect_tag_filters(
     reporter_defs: &[(String, crate::processors::reporter::schema::ReporterDef)],
@@ -213,14 +231,24 @@ fn collect_tag_filters(
         }
     }
 
-    // State trackers: check each transition's filter.tag
+    // State trackers: check each transition's filter.tag and filter.tag_regex
     for (_, def) in tracker_defs {
         let mut has_tag_filter = true; // assume all transitions have tags
         for transition in &def.transitions {
-            if transition.filter.tag.is_none() {
+            let has_exact = transition.filter.tag.is_some();
+            let has_regex = transition.filter.tag_regex.is_some();
+
+            if !has_exact && !has_regex {
                 has_tag_filter = false;
-            } else if let Some(tag) = &transition.filter.tag {
-                tag_union.insert(tag.clone());
+            } else {
+                if let Some(tag) = &transition.filter.tag {
+                    tag_union.insert(tag.clone());
+                }
+                if let Some(pattern) = &transition.filter.tag_regex {
+                    if let Some(prefix) = extract_regex_literal_prefix(pattern) {
+                        tag_union.insert(prefix);
+                    }
+                }
             }
         }
         if !has_tag_filter || def.transitions.is_empty() {
@@ -676,10 +704,11 @@ pub fn execute_pipeline(
                 .filter(|&n| {
                     let raw = source_snapshot.raw_line(n).unwrap_or("");
 
-                    // Level 1: tag check
+                    // Level 1: tag check (prefix match — "NetworkMonitor"
+                    // in the union matches "NetworkMonitor/102" in the line)
                     if use_tag_prefilter {
                         if let Some(tag) = quick_extract_tag(raw) {
-                            if !tag_union.contains(tag) {
+                            if !tag_union.iter().any(|t| tag.starts_with(t.as_str())) {
                                 return false;
                             }
                         }
@@ -974,4 +1003,36 @@ pub fn execute_pipeline(
 pub async fn stop_pipeline(state: State<'_, AppState>) -> Result<(), String> {
     state.pipeline_cancel.store(true, Ordering::Relaxed);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_regex_literal_prefix;
+
+    #[test]
+    fn extract_prefix_simple_tag() {
+        assert_eq!(extract_regex_literal_prefix(r"NetworkMonitor/\d+"), Some("NetworkMonitor".into()));
+    }
+
+    #[test]
+    fn extract_prefix_with_groups() {
+        assert_eq!(extract_regex_literal_prefix(r"NetworkMonitor/(\d+)"), Some("NetworkMonitor".into()));
+    }
+
+    #[test]
+    fn extract_prefix_exact_tag() {
+        assert_eq!(extract_regex_literal_prefix("ActivityManager"), Some("ActivityManager".into()));
+    }
+
+    #[test]
+    fn extract_prefix_starts_with_metachar() {
+        assert_eq!(extract_regex_literal_prefix(r".*NetworkMonitor"), None);
+        assert_eq!(extract_regex_literal_prefix(r"(foo)"), None);
+        assert_eq!(extract_regex_literal_prefix(r"\d+"), None);
+    }
+
+    #[test]
+    fn extract_prefix_empty_pattern() {
+        assert_eq!(extract_regex_literal_prefix(""), None);
+    }
 }

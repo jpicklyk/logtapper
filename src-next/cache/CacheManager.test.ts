@@ -624,7 +624,7 @@ describe('CacheManager', () => {
 
   it('releasing the only view and re-allocating works', () => {
     const mgr = new CacheManager(50_000);
-    const h1 = mgr.allocateView('only');
+    mgr.allocateView('only');
     mgr.releaseView('only');
     expect(mgr.viewCount).toBe(0);
 

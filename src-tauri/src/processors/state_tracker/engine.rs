@@ -37,22 +37,10 @@ impl StateTrackerRun {
     }
     pub fn process_line(&mut self, line: &LineContext) {
         for rule in &self.def.transitions {
-            if !matches_filter(&rule.filter, line) {
-                continue;
-            }
-
-            let captures = rule.filter.message_regex.as_deref()
-                .and_then(|pattern| {
-                    get_compiled_regex(pattern)
-                        .and_then(|re| re.captures(&line.message))
-                        .map(|caps| {
-                            caps.iter()
-                                .enumerate()
-                                .skip(1)
-                                .filter_map(|(i, m)| m.map(|m| (i, m.as_str().to_string())))
-                                .collect::<Vec<_>>()
-                        })
-                });
+            let captures = match matches_filter_with_captures(&rule.filter, line) {
+                Some(caps) => caps,
+                None => continue,
+            };
 
             let mut new_state = self.current_state.clone();
 
@@ -156,35 +144,68 @@ fn level_char(level: &LogLevel) -> &'static str {
 }
 
 
-fn matches_filter(filter: &TransitionFilter, line: &LineContext) -> bool {
+/// Check all filter conditions and extract capture groups in a single pass.
+///
+/// Returns `None` if the filter does not match. Returns `Some(captures)` on match,
+/// where captures may be `None` (no regex groups) or `Some(vec)` with `$N` pairs.
+/// Tag regex captures are numbered first ($1, $2, ...), then message regex captures
+/// continue the sequence.
+fn matches_filter_with_captures(
+    filter: &TransitionFilter,
+    line: &LineContext,
+) -> Option<Option<Vec<(usize, String)>>> {
     if let Some(tag) = &filter.tag {
         if &*line.tag != tag.as_str() {
-            return false;
+            return None;
         }
     }
-    if let Some(pattern) = &filter.tag_regex {
-        match get_compiled_regex(pattern) {
-            Some(re) if re.is_match(&line.tag) => {}
-            _ => return false,
+
+    // Tag regex: use captures() instead of is_match() to avoid double execution.
+    let tag_caps: Vec<(usize, String)> = if let Some(pattern) = &filter.tag_regex {
+        match get_compiled_regex(pattern).and_then(|re| re.captures(&line.tag)) {
+            Some(caps) => caps.iter().enumerate().skip(1)
+                .filter_map(|(i, m)| m.map(|m| (i, m.as_str().to_string())))
+                .collect(),
+            None => return None,
         }
-    }
+    } else {
+        Vec::new()
+    };
+
     if let Some(substr) = &filter.message_contains {
         if !line.message.contains(substr.as_str()) {
-            return false;
+            return None;
         }
     }
-    if let Some(pattern) = &filter.message_regex {
-        match get_compiled_regex(pattern) {
-            Some(re) if re.is_match(&line.message) => {}
-            _ => return false,
+
+    // Message regex: use captures() and offset group indices by tag capture count.
+    let msg_caps: Vec<(usize, String)> = if let Some(pattern) = &filter.message_regex {
+        match get_compiled_regex(pattern).and_then(|re| re.captures(&line.message)) {
+            Some(caps) => caps.iter().enumerate().skip(1)
+                .filter_map(|(i, m)| {
+                    m.map(|m| (i + tag_caps.len(), m.as_str().to_string()))
+                })
+                .collect(),
+            None => return None,
         }
-    }
+    } else {
+        Vec::new()
+    };
+
     if let Some(level_str) = &filter.level {
         if level_char(&line.level) != level_str.as_str() {
-            return false;
+            return None;
         }
     }
-    true
+
+    let captures = if tag_caps.is_empty() && msg_caps.is_empty() {
+        None
+    } else {
+        let mut combined = tag_caps;
+        combined.extend(msg_caps);
+        Some(combined)
+    };
+    Some(captures)
 }
 
 /// Thread-safe compiled regex cache.
@@ -485,6 +506,78 @@ mod tests {
         let result = run2.finish();
         assert_eq!(result.transitions.len(), 2);
         assert_eq!(result.final_state["enabled"], json!(false));
+    }
+
+    // ── tag_regex capture groups ─────────────────────────────────────────────
+
+    fn make_tag_capture_def() -> StateTrackerDef {
+        StateTrackerDef {
+            group: String::new(),
+            state: vec![
+                StateFieldDecl { name: "network_id".into(), field_type: StateFieldType::String, default: serde_json::Value::Null },
+                StateFieldDecl { name: "time_ms".into(), field_type: StateFieldType::String, default: serde_json::Value::Null },
+            ],
+            transitions: vec![
+                TransitionRule {
+                    name: "Validation Failed".into(),
+                    filter: TransitionFilter {
+                        tag_regex: Some(r"NetworkMonitor/(\d+)".into()),
+                        message_regex: Some(r"Time=(\d+)ms".into()),
+                        ..Default::default()
+                    },
+                    set: {
+                        let mut m = std::collections::HashMap::new();
+                        m.insert("network_id".into(), serde_yaml::Value::String("$1".into()));
+                        m.insert("time_ms".into(), serde_yaml::Value::String("$2".into()));
+                        m
+                    },
+                    clear: vec![],
+                },
+            ],
+            output: StateTrackerOutput { timeline: true, annotate: true },
+        }
+    }
+
+    #[test]
+    fn tag_regex_captures_are_dollar_1() {
+        let def = make_tag_capture_def();
+        let mut run = StateTrackerRun::new("test", &def);
+        run.process_line(&make_line(1, "NetworkMonitor/102", "Validation Time=57086ms"));
+        assert_eq!(run.transitions.len(), 1);
+        assert_eq!(run.current_state["network_id"], json!("102"));
+        assert_eq!(run.current_state["time_ms"], json!("57086"));
+    }
+
+    #[test]
+    fn tag_regex_no_groups_preserves_message_numbering() {
+        // tag_regex with no capture groups — $1 should still be message capture
+        let def = StateTrackerDef {
+            group: String::new(),
+            state: vec![
+                StateFieldDecl { name: "time_ms".into(), field_type: StateFieldType::String, default: serde_json::Value::Null },
+            ],
+            transitions: vec![
+                TransitionRule {
+                    name: "Timed".into(),
+                    filter: TransitionFilter {
+                        tag_regex: Some(r"NetworkMonitor/\d+".into()),
+                        message_regex: Some(r"Time=(\d+)ms".into()),
+                        ..Default::default()
+                    },
+                    set: {
+                        let mut m = std::collections::HashMap::new();
+                        m.insert("time_ms".into(), serde_yaml::Value::String("$1".into()));
+                        m
+                    },
+                    clear: vec![],
+                },
+            ],
+            output: StateTrackerOutput { timeline: true, annotate: true },
+        };
+        let mut run = StateTrackerRun::new("test", &def);
+        run.process_line(&make_line(1, "NetworkMonitor/102", "Validation Time=500ms"));
+        assert_eq!(run.transitions.len(), 1);
+        assert_eq!(run.current_state["time_ms"], json!("500"));
     }
 }
 

@@ -144,6 +144,7 @@ export function createCacheDataSource(options: CacheDataSourceOptions): CacheDat
 
 /** Extended DataSource with cache-specific control methods. */
 export interface CacheDataSource extends DataSource {
+  onAppend: (cb: (newLines: ViewLine[], totalLines: number) => void) => () => void;
   updateTotalLines(n: number): void;
   pushStreamingLines(lines: ViewLine[], total: number): void;
   invalidate(): void;

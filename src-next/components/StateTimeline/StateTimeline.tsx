@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { StateTransition, TimelineSeriesData, ProcessorSummary } from '../../bridge/types';
+import type { AppEvents } from '../../events/events';
 import { getTimelineData } from '../../bridge/commands';
 import {
   useSession,
@@ -9,6 +10,7 @@ import {
   useViewerActions,
 } from '../../context';
 import { useStateTracker } from '../../hooks';
+import { bus } from '../../events';
 import styles from './StateTimeline.module.css';
 
 type Viewport = readonly [number, number];
@@ -21,13 +23,17 @@ interface TrackerTimeline {
 
 // ── Utilities ────────────────────────────────────────────────────────────────
 
-function formatTs(tsNanos: number): string {
+function formatTs(tsNanos: number, includeDate = false): string {
   const d = new Date(tsNanos / 1_000_000);
-  return [
+  const time = [
     d.getUTCHours().toString().padStart(2, '0'),
     d.getUTCMinutes().toString().padStart(2, '0'),
     d.getUTCSeconds().toString().padStart(2, '0'),
   ].join(':') + '.' + d.getUTCMilliseconds().toString().padStart(3, '0');
+  if (!includeDate) return time;
+  const month = (d.getUTCMonth() + 1).toString().padStart(2, '0');
+  const day = d.getUTCDate().toString().padStart(2, '0');
+  return `${month}-${day} ${time}`;
 }
 
 function fmtDuration(nanos: number): string {
@@ -38,21 +44,40 @@ function fmtDuration(nanos: number): string {
   return `${(nanos / 3600e9).toFixed(2)}h`;
 }
 
-function niceTimeInterval(raw: number): number {
-  const steps = [
-    1, 2, 5, 10, 20, 50, 100, 200, 500,
-    1e3, 2e3, 5e3, 10e3, 20e3, 50e3, 100e3,
-    1e6, 2e6, 5e6, 10e6, 20e6, 50e6, 100e6, 200e6, 500e6,
-    1e9, 2e9, 5e9, 10e9, 30e9, 60e9, 300e9, 600e9, 3600e9,
-  ];
-  for (const s of steps) if (s >= raw) return s;
-  return steps[steps.length - 1];
+/** Convert a line number to a CSS percentage position within the viewport. */
+function linePct(lineNum: number, maxLine: number, vpS: number, vpSpan: number): string {
+  return `${((lineNum / maxLine - vpS) / vpSpan * 100).toFixed(4)}%`;
 }
 
 function niceLineStep(raw: number): number {
   const steps = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000];
   for (const s of steps) if (s >= raw) return s;
   return steps[steps.length - 1];
+}
+
+/** Selection cursor overlay — spans the full height of the interact area.
+ *  The overlay div covers the track body area (left: LABEL_W, right: 0)
+ *  so cursors inside use simple percentage positioning. */
+function SelectionCursors({
+  selectedRange,
+  maxLine,
+  vpS,
+  vpSpan,
+}: {
+  selectedRange: [number, number] | null;
+  maxLine: number;
+  vpS: number;
+  vpSpan: number;
+}) {
+  if (!selectedRange) return null;
+  return (
+    <div className={styles.cursorOverlay}>
+      <div className={styles.cursor} style={{ left: linePct(selectedRange[0], maxLine, vpS, vpSpan) }} />
+      {selectedRange[0] !== selectedRange[1] && (
+        <div className={styles.cursor} style={{ left: linePct(selectedRange[1], maxLine, vpS, vpSpan) }} />
+      )}
+    </div>
+  );
 }
 
 function doZoom([s, e]: Viewport, xFrac: number, zoomIn: boolean): Viewport {
@@ -92,8 +117,20 @@ const StateTimeline = React.memo(function StateTimeline() {
   const hasDataRef = useRef(false);
   const interactRef = useRef<HTMLDivElement>(null);
 
-  // selectedLineNum not available in context yet; use null
-  const selectedLineNum: number | null = null;
+  // Selection cursor(s) driven by the event bus
+  const [selectedRange, setSelectedRange] = useState<[number, number] | null>(null);
+
+  useEffect(() => {
+    const handler = (ev: AppEvents['selection:changed']) => {
+      if (ev.sessionId === session?.sessionId) {
+        setSelectedRange(ev.range);
+      } else {
+        setSelectedRange(null);
+      }
+    };
+    bus.on('selection:changed', handler);
+    return () => { bus.off('selection:changed', handler); };
+  }, [session?.sessionId]);
 
   const activeTrackers = useMemo<ProcessorSummary[]>(
     () =>
@@ -187,27 +224,30 @@ const StateTimeline = React.memo(function StateTimeline() {
   }, [runCount, session]);
 
   const totalLines = session?.totalLines ?? 1;
+  const maxLine = Math.max(totalLines - 1, 1);
 
-  const [minTs, tsRange, hasTimeData] = useMemo(() => {
+  const [minTs, tsRange, hasTimeData, spansMultipleDays] = useMemo(() => {
     const anchors: { lineNum: number; ts: number }[] = [];
     for (const tl of timelines) {
       for (const t of tl.transitions) {
         if (t.timestamp > 0) anchors.push({ lineNum: t.lineNum, ts: t.timestamp });
       }
     }
-    if (anchors.length === 0) return [0, 1, false] as const;
+    if (anchors.length === 0) return [0, 1, false, false] as const;
     anchors.sort((a, b) => a.lineNum - b.lineNum);
     const first = anchors[0];
     const last = anchors[anchors.length - 1];
     if (first.lineNum === last.lineNum || first.ts >= last.ts) {
-      return [first.ts - 5_000_000_000, 10_000_000_000, true] as const;
+      return [first.ts - 5_000_000_000, 10_000_000_000, true, false] as const;
     }
     const slope = (last.ts - first.ts) / (last.lineNum - first.lineNum);
     const extMin = Math.max(0, first.ts - first.lineNum * slope);
     const extMax = first.ts + (totalLines - 1 - first.lineNum) * slope;
     const extRange = extMax - extMin;
-    if (extRange <= 0) return [0, 1, false] as const;
-    return [extMin, extRange, true] as const;
+    if (extRange <= 0) return [0, 1, false, false] as const;
+    // Check if range spans more than 24 hours (in nanos)
+    const multiDay = extRange > 86_400_000_000_000;
+    return [extMin, extRange, true, multiDay] as const;
   }, [timelines, totalLines]);
 
   // Scroll-wheel zoom
@@ -231,6 +271,7 @@ const StateTimeline = React.memo(function StateTimeline() {
   const zoomBy = useCallback((zoomIn: boolean) => {
     setVp((prev) => doZoom(prev, 0.5, zoomIn));
   }, []);
+
 
   const visMinTs = minTs + vp[0] * tsRange;
   const visMaxTs = minTs + vp[1] * tsRange;
@@ -271,7 +312,7 @@ const StateTimeline = React.memo(function StateTimeline() {
           {hasTimeData && (
             <span className={styles.headerRange}>
               {isZoomed
-                ? `${formatTs(visMinTs)} -- ${formatTs(visMaxTs)} . ${fmtDuration(visMaxTs - visMinTs)}`
+                ? `${formatTs(visMinTs, spansMultipleDays)} -- ${formatTs(visMaxTs, spansMultipleDays)} . ${fmtDuration(visMaxTs - visMinTs)}`
                 : fmtDuration(tsRange)}
             </span>
           )}
@@ -301,8 +342,8 @@ const StateTimeline = React.memo(function StateTimeline() {
                 timeline={tl}
                 vp={vp}
                 totalLines={totalLines}
-                selectedLine={selectedLineNum}
                 onJump={jumpToLine}
+                showDate={spansMultipleDays}
               />
             ))}
 
@@ -312,20 +353,23 @@ const StateTimeline = React.memo(function StateTimeline() {
               series={series}
               vp={vp}
               totalLines={totalLines}
-              selectedLine={selectedLineNum}
               onJump={jumpToLine}
+              minTs={minTs}
+              tsRange={tsRange}
+              hasTimeData={hasTimeData}
+              showDate={spansMultipleDays}
             />
           ))}
         </div>
 
-        <TwoRowRuler
+        <LineRuler
           vp={vp}
           totalLines={totalLines}
-          minTs={minTs}
-          tsRange={tsRange}
-          hasTimeData={hasTimeData}
           onPan={(d) => setVp((prev) => doPan(prev, d))}
         />
+
+        {/* Selection cursors span the full height of the interact area (all tracks + ruler) */}
+        <SelectionCursors selectedRange={selectedRange} maxLine={maxLine} vpS={vp[0]} vpSpan={Math.max(vp[1] - vp[0], 1e-9)} />
       </div>
     </div>
   );
@@ -339,14 +383,14 @@ function TimelineTrack({
   timeline,
   vp,
   totalLines,
-  selectedLine,
   onJump,
+  showDate = false,
 }: {
   timeline: TrackerTimeline;
   vp: Viewport;
   totalLines: number;
-  selectedLine: number | null;
   onJump: (line: number) => void;
+  showDate?: boolean;
 }) {
   const [tooltip, setTooltip] = useState<{ cx: number; cy: number; label: string } | null>(null);
 
@@ -354,17 +398,10 @@ function TimelineTrack({
   const vpSpan = Math.max(vpE - vpS, 1e-9);
   const maxLine = Math.max(totalLines - 1, 1);
 
-  const pct = (lineNum: number) => {
-    const norm = lineNum / maxLine;
-    return `${((norm - vpS) / vpSpan * 100).toFixed(4)}%`;
-  };
-
   const visible = timeline.transitions.filter((t) => {
     const norm = t.lineNum / maxLine;
     return norm >= vpS - 0.01 && norm <= vpE + 0.01;
   });
-
-  const cursorPct = selectedLine != null ? pct(selectedLine) : null;
 
   return (
     <div className={styles.track}>
@@ -377,13 +414,13 @@ function TimelineTrack({
           <button
             key={t.lineNum}
             className={`${styles.tick}${t.timestamp === 0 ? ` ${styles.tickNoTs}` : ''}`}
-            style={{ left: pct(t.lineNum) }}
+            style={{ left: linePct(t.lineNum, maxLine, vpS, vpSpan) }}
             onMouseEnter={(e) =>
               setTooltip({
                 cx: e.clientX,
                 cy: e.clientY,
                 label: t.timestamp > 0
-                  ? `${t.transitionName} . ${formatTs(t.timestamp)} . L${(t.lineNum + 1).toLocaleString()}`
+                  ? `${t.transitionName} . ${formatTs(t.timestamp, showDate)} . L${(t.lineNum + 1).toLocaleString()}`
                   : `${t.transitionName} . L${(t.lineNum + 1).toLocaleString()} (no timestamp)`,
               })
             }
@@ -392,7 +429,6 @@ function TimelineTrack({
             onClick={() => onJump(t.lineNum)}
           />
         ))}
-        {cursorPct != null && <div className={styles.cursor} style={{ left: cursorPct }} />}
       </div>
       {tooltip && (
         <div
@@ -412,14 +448,20 @@ function SparklineTrack({
   series,
   vp,
   totalLines,
-  selectedLine,
   onJump,
+  minTs,
+  tsRange,
+  hasTimeData,
+  showDate = false,
 }: {
   series: TimelineSeriesData;
   vp: Viewport;
   totalLines: number;
-  selectedLine: number | null;
   onJump: (line: number) => void;
+  minTs: number;
+  tsRange: number;
+  hasTimeData: boolean;
+  showDate?: boolean;
 }) {
   const [tooltip, setTooltip] = useState<{ cx: number; cy: number; label: string } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -460,10 +502,6 @@ function SparklineTrack({
     return { linePath, areaPath };
   }, [series.points, vpS, vpE, vpSpan, maxLine, series.minValue, effectiveRange, drawH]);
 
-  const cursorPct = selectedLine != null
-    ? `${((selectedLine / maxLine - vpS) / vpSpan * 100).toFixed(4)}%`
-    : null;
-
   const handleMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
     const svg = svgRef.current;
     if (!svg) return;
@@ -480,13 +518,19 @@ function SparklineTrack({
       const formattedVal = Number.isInteger(nearest.value)
         ? nearest.value.toLocaleString()
         : nearest.value.toFixed(1);
+      let tsLabel = '';
+      if (hasTimeData && tsRange > 0) {
+        const norm = nearest.lineNum / maxLine;
+        const approxTs = minTs + norm * tsRange;
+        tsLabel = ` . ~${formatTs(approxTs, showDate)}`;
+      }
       setTooltip({
         cx: e.clientX,
         cy: e.clientY,
-        label: `${series.label}: ${formattedVal} . L${(nearest.lineNum + 1).toLocaleString()}`,
+        label: `${series.label}: ${formattedVal} . L${(nearest.lineNum + 1).toLocaleString()}${tsLabel}`,
       });
     }
-  }, [series.points, series.label, vpS, vpSpan, maxLine]);
+  }, [series.points, series.label, vpS, vpSpan, maxLine, hasTimeData, tsRange, minTs, showDate]);
 
   const handleClick = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
     const svg = svgRef.current;
@@ -528,7 +572,6 @@ function SparklineTrack({
         </svg>
         <span className={styles.ymax}>{maxLabel}</span>
         <span className={styles.ymin}>{minLabel}</span>
-        {cursorPct != null && <div className={styles.cursor} style={{ left: cursorPct }} />}
       </div>
       {tooltip && (
         <div className={styles.tooltip} style={{ position: 'fixed', left: tooltip.cx, top: tooltip.cy - 40, transform: 'translateX(-50%)' }}>
@@ -539,21 +582,15 @@ function SparklineTrack({
   );
 }
 
-// ── TwoRowRuler ──────────────────────────────────────────────────────────────
+// ── LineRuler ─────────────────────────────────────────────────────────────────
 
-function TwoRowRuler({
+function LineRuler({
   vp,
   totalLines,
-  minTs,
-  tsRange,
-  hasTimeData,
   onPan,
 }: {
   vp: Viewport;
   totalLines: number;
-  minTs: number;
-  tsRange: number;
-  hasTimeData: boolean;
   onPan: (deltaNorm: number) => void;
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -572,22 +609,7 @@ function TwoRowRuler({
   const vpSpan = Math.max(vpE - vpS, 1e-9);
   const maxLine = Math.max(totalLines - 1, 1);
 
-  const normPct = (norm: number) => `${((norm - vpS) / vpSpan * 100).toFixed(4)}%`;
-
-  const timeTicks = (() => {
-    if (!hasTimeData || tsRange <= 0) return [];
-    const visMinTs = minTs + vpS * tsRange;
-    const visDurTs = vpSpan * tsRange;
-    const count = Math.max(2, Math.floor(bodyW / 110));
-    const interval = niceTimeInterval(visDurTs / count);
-    const first = Math.ceil(visMinTs / interval) * interval;
-    const result: { norm: number; label: string }[] = [];
-    for (let ts = first; ts <= visMinTs + visDurTs; ts += interval) {
-      result.push({ norm: (ts - minTs) / tsRange, label: formatTs(ts) });
-      if (result.length > 200) break;
-    }
-    return result;
-  })();
+  const normPct = (norm: number) => linePct(norm * maxLine, maxLine, vpS, vpSpan);
 
   const lineTicks = (() => {
     const visMinLine = vpS * maxLine;
@@ -625,19 +647,9 @@ function TwoRowRuler({
   return (
     <div className={styles.ruler}>
       <div className={styles.rulerSpacer}>
-        <div className={styles.rulerAxisLabel}>~Time</div>
         <div className={styles.rulerAxisLabel}>Line #</div>
       </div>
       <div className={styles.rulerBody} ref={bodyRef} onMouseDown={onMouseDown}>
-        <div className={styles.rulerRow}>
-          {hasTimeData
-            ? timeTicks.map((tick, i) => (
-                <div key={i} className={styles.rulerTick} style={{ left: normPct(tick.norm) }}>
-                  <span className={styles.rulerLabel}>{tick.label}</span>
-                </div>
-              ))
-            : <span className={styles.rulerEmptyLabel}>no timestamps in session</span>}
-        </div>
         <div className={styles.rulerRow}>
           {lineTicks.map((tick, i) => (
             <div key={i} className={styles.rulerTick} style={{ left: normPct(tick.norm) }}>

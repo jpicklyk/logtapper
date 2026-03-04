@@ -291,7 +291,7 @@ export class CacheManager implements CacheController {
   /** Write lines into ALL handles that belong to the given session. */
   broadcastToSession(sessionId: string, lines: ViewLine[]): void {
     let handleCount = 0;
-    for (const [viewId, entry] of this._views) {
+    for (const [_viewId, entry] of this._views) {
       if (entry.sessionId === sessionId) {
         entry.handle.put(lines);
         handleCount++;

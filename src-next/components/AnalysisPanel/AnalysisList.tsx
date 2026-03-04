@@ -64,10 +64,8 @@ function relativeTime(epochMs: number): string {
 
 const SectionRow = React.memo(function SectionRow({
   section,
-  index,
 }: {
   section: AnalysisSection;
-  index: number;
 }) {
   const color = severityColor(section.severity);
   return (
@@ -169,7 +167,7 @@ const AnalysisItem = React.memo(function AnalysisItem({ artifact, onOpen, onDele
       {artifact.sections.length > 0 && (
         <div className={styles.sectionList}>
           {artifact.sections.map((s, i) => (
-            <SectionRow key={i} section={s} index={i} />
+            <SectionRow key={i} section={s} />
           ))}
         </div>
       )}

@@ -8,7 +8,7 @@ export const bus = mitt<AppEvents>();
 // ---------------------------------------------------------------------------
 
 /** High-frequency bus events to suppress from console output. */
-const MUTED_EVENTS = new Set<string>();
+const MUTED_EVENTS = new Set<string>(['selection:changed']);
 
 const isLoggingEnabled =
   import.meta.env.DEV || localStorage.getItem('logtapper_bus_debug') === '1';
