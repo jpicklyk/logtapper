@@ -1,9 +1,9 @@
 type: state_tracker
 id: __network_connectivity
 name: Network Connectivity
-version: 2.0.0
+version: 3.0.0
 author: LogTapper
-description: "Tracks network connectivity state: connected/disconnected and network type (WIFI, MOBILE, etc.). Uses ConnectivityService EVENT_NETWORK_INFO_CHANGED events from modern Android (6+)."
+description: "Tracks network connectivity state: connected/disconnected, network type (WIFI, MOBILE, etc.), and validation status. Supports Android 13+ (validation/capabilities), Android 6-12 (EVENT_NETWORK_INFO_CHANGED), and legacy (pre-6) formats."
 tags: [network, connectivity, android]
 builtin: true
 
@@ -14,11 +14,70 @@ state:
     type: bool
   - name: network_type
     type: string
+  - name: validated
+    type: bool
 
 transitions:
-  # Modern Android (6+) — ConnectivityService EVENT_NETWORK_INFO_CHANGED
+  # Android 13+ — ConnectivityService validation and capabilities
+  # These patterns replaced EVENT_NETWORK_INFO_CHANGED in modern AOSP/Samsung
+
+  # Format: [<netId> <TYPE>] validation passed
+  - name: Network Validated
+    filter:
+      tag: ConnectivityService
+      message_regex: '\[(\d+) (\w+)\] validation passed'
+    set:
+      connected: true
+      validated: true
+      network_type: $2
+
+  # Format: [<netId> <TYPE>] validation failed
+  - name: Network Validation Failed
+    filter:
+      tag: ConnectivityService
+      message_regex: '\[(\d+) (\w+)\] validation failed'
+    set:
+      connected: true
+      validated: false
+      network_type: $2
+
+  # Format: Update capabilities for net <id> : ...+VALIDATED...
+  - name: Network Capabilities Validated
+    filter:
+      tag: ConnectivityService
+      message_regex: 'Update capabilities for net \d+ : .*\+VALIDATED'
+    set:
+      validated: true
+
+  # Format: Update capabilities for net <id> : ...-VALIDATED...
+  - name: Network Capabilities Lost Validation
+    filter:
+      tag: ConnectivityService
+      message_regex: 'Update capabilities for net \d+ : .*-VALIDATED'
+    set:
+      validated: false
+
+  # Format: Update score for net <id> : +EXITING (network being torn down)
+  - name: Network Exiting
+    filter:
+      tag: ConnectivityService
+      message_regex: 'Update score for net \d+ : \+EXITING'
+    set:
+      connected: false
+      validated: false
+    clear:
+      - network_type
+
+  # Format: Update score for net <id> : -EXITING (network recovered from exit)
+  - name: Network Exit Cancelled
+    filter:
+      tag: ConnectivityService
+      message_regex: 'Update score for net \d+ : -EXITING'
+    set:
+      connected: true
+
+  # Android 6-12 — ConnectivityService EVENT_NETWORK_INFO_CHANGED
   # Format: [<id> <TYPE>] EVENT_NETWORK_INFO_CHANGED, going from <OLD> to <NEW>
-  # TYPE is WIFI, MOBILE, ETHERNET, etc.
 
   - name: Network Connected
     filter:
