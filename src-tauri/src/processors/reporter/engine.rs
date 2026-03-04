@@ -425,6 +425,7 @@ impl<'a> ProcessorRun<'a> {
 // RunResult
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub struct RunResult {
     /// All emitted rows from emit() calls during the run.
     pub emissions: Vec<Emission>,

@@ -6,6 +6,80 @@
 
 use serde::{Deserialize, Serialize};
 
+// ---------------------------------------------------------------------------
+// Source configuration types
+// ---------------------------------------------------------------------------
+
+fn default_git_ref() -> String {
+    "main".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Source {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub source_type: SourceType,
+    pub enabled: bool,
+    #[serde(default)]
+    pub auto_update: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_checked: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum SourceType {
+    Github {
+        repo: String,
+        #[serde(default = "default_git_ref")]
+        git_ref: String,
+    },
+    Local {
+        path: String,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Marketplace index v2 types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MarketplaceIndex {
+    pub name: String,
+    #[serde(default)]
+    pub version: u32,
+    #[serde(default)]
+    pub owner: Option<MarketplaceOwner>,
+    pub processors: Vec<MarketplaceEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MarketplaceOwner {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MarketplaceEntry {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub path: String,
+    pub tags: Vec<String>,
+    pub sha256: String,
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    pub license: Option<String>,
+    #[serde(default)]
+    pub processor_type: Option<String>,
+    #[serde(default)]
+    pub source_types: Vec<String>,
+    #[serde(default)]
+    pub deprecated: bool,
+}
+
 /// Top-level schema contract parsed from the `schema:` YAML section.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaContract {

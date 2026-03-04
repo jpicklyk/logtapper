@@ -31,6 +31,8 @@ import type {
   AnalysisSection,
   WatchInfo,
   SectionInfo,
+  Source,
+  MarketplaceEntry,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -406,6 +408,26 @@ export function cancelWatch(sessionId: string, watchId: string): Promise<void> {
 
 export function listWatches(sessionId: string): Promise<WatchInfo[]> {
   return invoke('list_watches', { sessionId });
+}
+
+// ---------------------------------------------------------------------------
+// Source management (Phase 2 Marketplace)
+// ---------------------------------------------------------------------------
+
+export function listSources(): Promise<Source[]> {
+  return invoke('list_sources');
+}
+
+export function addSource(source: Source): Promise<void> {
+  return invoke('add_source', { source });
+}
+
+export function removeSource(sourceName: string): Promise<void> {
+  return invoke('remove_source', { sourceName });
+}
+
+export function fetchMarketplace(sourceName: string): Promise<MarketplaceEntry[]> {
+  return invoke('fetch_marketplace_for_source', { sourceName });
 }
 
 // ---------------------------------------------------------------------------

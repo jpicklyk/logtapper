@@ -365,6 +365,40 @@ export interface RegistryEntry {
 }
 
 // ---------------------------------------------------------------------------
+// Marketplace source types (Phase 2 — Source Management)
+// ---------------------------------------------------------------------------
+
+export type SourceKind =
+  | { type: 'github'; repo: string; ref: string }
+  | { type: 'local'; path: string };
+
+export interface Source {
+  name: string;
+  type: SourceKind['type'];
+  repo?: string;
+  ref?: string;
+  path?: string;
+  enabled: boolean;
+  autoUpdate: boolean;
+  lastChecked?: string;
+}
+
+export interface MarketplaceEntry {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  path: string;
+  tags: string[];
+  sha256: string;
+  category?: string;
+  license?: string;
+  processorType?: string;
+  sourceTypes?: string[];
+  deprecated: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // StateTracker IPC types
 // ---------------------------------------------------------------------------
 

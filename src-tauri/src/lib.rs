@@ -1,4 +1,4 @@
-﻿pub mod anonymizer;
+pub mod anonymizer;
 pub mod charts;
 pub mod claude;
 pub mod commands;
@@ -8,6 +8,7 @@ pub mod processors;
 pub mod scripting;
 
 use commands::AppState;
+use processors::marketplace::{qualified_id, Source, SourceType};
 use processors::AnyProcessor;
 use tauri::Manager;
 
@@ -45,6 +46,95 @@ fn load_persisted_processors(state: &AppState, proc_dir: &std::path::Path) {
     }
 }
 
+/// Bundled builtin YAML content indexed by path suffix (matches marketplace_snapshot.json `path`).
+const BUILTIN_YAMLS: &[(&str, &str)] = &[
+    ("builtin/wifi_state.yaml",           include_str!("processors/builtin/wifi_state.yaml")),
+    ("builtin/battery_state.yaml",        include_str!("processors/builtin/battery_state.yaml")),
+    ("builtin/app_lifecycle.yaml",        include_str!("processors/builtin/app_lifecycle.yaml")),
+    ("builtin/network_connectivity.yaml", include_str!("processors/builtin/network_connectivity.yaml")),
+    ("builtin/samsung_auto_blocker.yaml", include_str!("processors/builtin/samsung_auto_blocker.yaml")),
+];
+
+/// Install the 5 state-tracker processors from the bundled snapshot as marketplace processors
+/// under the "official" source. Each gets a qualified ID (`id@official`) and provenance metadata.
+fn install_snapshot_processors(state: &AppState, app: &tauri::AppHandle) {
+    let snapshot_json = include_str!("processors/builtin/marketplace_snapshot.json");
+    let index: processors::marketplace::MarketplaceIndex = match serde_json::from_str(snapshot_json) {
+        Ok(idx) => idx,
+        Err(e) => {
+            eprintln!("Failed to parse builtin marketplace snapshot: {e}");
+            return;
+        }
+    };
+
+    let Ok(data_dir) = app.path().app_data_dir() else { return };
+    let proc_dir = data_dir.join("processors");
+    let _ = std::fs::create_dir_all(&proc_dir);
+
+    let Ok(mut procs) = state.processors.lock() else { return };
+
+    for entry in &index.processors {
+        // Find the bundled YAML for this entry's path
+        let yaml_content = BUILTIN_YAMLS.iter().find(|(p, _)| *p == entry.path).map(|(_, c)| *c);
+        let Some(raw_yaml) = yaml_content else {
+            eprintln!("No bundled YAML for snapshot entry '{}' at path '{}'", entry.id, entry.path);
+            continue;
+        };
+
+        // Rewrite the `id:` field to the bare marketplace ID (strip __ prefix from builtin ID)
+        // and set builtin: false since this is now a marketplace processor.
+        let rewritten = rewrite_yaml_for_marketplace(raw_yaml, &entry.id);
+
+        // Attach provenance metadata (use a static placeholder; exact timestamp not critical)
+        let now = "2000-01-01T00:00:00Z";
+        let provenance_suffix = format!(
+            "\n_source: official\n_installed_version: {}\n_installed_at: {}\n_sha256: \"\"\n",
+            entry.version, now
+        );
+        let final_yaml = format!("{}{}", rewritten, provenance_suffix);
+
+        match AnyProcessor::from_yaml(&final_yaml) {
+            Ok(mut def) => {
+                def.source = Some("official".to_string());
+                let qid = qualified_id(&def.meta.id, "official");
+
+                // Persist to disk
+                let filename = processors::marketplace::id_to_filename(&qid);
+                let dest = proc_dir.join(format!("{filename}.yaml"));
+                if let Err(e) = std::fs::write(&dest, &final_yaml) {
+                    eprintln!("Failed to persist '{}': {e}", qid);
+                }
+
+                procs.insert(qid, def);
+            }
+            Err(e) => eprintln!("Failed to parse snapshot processor '{}': {e}", entry.id),
+        }
+    }
+}
+
+/// Rewrite the `id:` and `builtin:` fields in a YAML string for marketplace use.
+fn rewrite_yaml_for_marketplace(yaml: &str, new_id: &str) -> String {
+    let mut lines: Vec<String> = yaml.lines().map(|l| l.to_string()).collect();
+    let mut found_id = false;
+    let mut found_builtin = false;
+
+    for line in &mut lines {
+        if !found_id && line.trim_start().starts_with("id:") {
+            *line = format!("id: {}", new_id);
+            found_id = true;
+        } else if !found_builtin && line.trim_start().starts_with("builtin:") {
+            *line = "builtin: false".to_string();
+            found_builtin = true;
+        }
+    }
+
+    if !found_builtin {
+        lines.push("builtin: false".to_string());
+    }
+
+    lines.join("\n")
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -60,13 +150,10 @@ pub fn run() {
                 )?;
             }
 
-            // Load persisted user processors from app data directory.
             let data_dir = app.path().app_data_dir()?;
             let proc_dir = data_dir.join("processors");
+            let sources_path = data_dir.join("sources.json");
             let state = app.state::<AppState>();
-            if proc_dir.exists() {
-                load_persisted_processors(&state, &proc_dir);
-            }
 
             // Load anonymizer config from disk
             let config_path = data_dir.join("anonymizer_config.json");
@@ -78,30 +165,59 @@ pub fn run() {
                 }
             }
 
-            // Spawn the MCP HTTP bridge on Tauri's async runtime.
-            // Must use tauri::async_runtime::spawn — tokio::spawn panics here
-            // because the setup callback runs before the raw tokio reactor is
-            // exposed to callers directly.
-            let bridge_handle = app.handle().clone();
-            tauri::async_runtime::spawn(crate::mcp_bridge::start(bridge_handle));
+            // Load or initialize sources
+            let first_run = !sources_path.exists();
+            if first_run {
+                // Create the official source on first run
+                let official = Source {
+                    name: "official".to_string(),
+                    source_type: SourceType::Local {
+                        path: "__bundled__".to_string(),
+                    },
+                    enabled: true,
+                    auto_update: false,
+                    last_checked: None,
+                };
+                if let Ok(mut sources) = state.sources.lock() {
+                    sources.push(official);
+                }
+                // Persist sources.json
+                if let Ok(sources) = state.sources.lock() {
+                    if let Ok(json) = serde_json::to_string_pretty(&*sources) {
+                        let _ = std::fs::write(&sources_path, json);
+                    }
+                }
+            } else {
+                let loaded = commands::sources::load_sources(app.handle());
+                if let Ok(mut sources) = state.sources.lock() {
+                    *sources = loaded;
+                }
+            }
 
-            // Load built-in processors compiled into the binary.
-            let builtins: &[(&str, &str)] = &[
-                ("pii_anonymizer",        include_str!("processors/builtin/pii_anonymizer.yaml")),
-                ("wifi_state",            include_str!("processors/builtin/wifi_state.yaml")),
-                ("battery_state",         include_str!("processors/builtin/battery_state.yaml")),
-                ("app_lifecycle",         include_str!("processors/builtin/app_lifecycle.yaml")),
-                ("network_connectivity",  include_str!("processors/builtin/network_connectivity.yaml")),
-                ("samsung_auto_blocker",  include_str!("processors/builtin/samsung_auto_blocker.yaml")),
-            ];
-            if let Ok(mut procs) = state.processors.lock() {
-                for (name, yaml) in builtins {
-                    match AnyProcessor::from_yaml(yaml) {
+            // Load persisted user processors from app data directory.
+            if proc_dir.exists() {
+                load_persisted_processors(&state, &proc_dir);
+            }
+
+            // On first run, install the snapshot processors (that aren't already on disk).
+            if first_run {
+                install_snapshot_processors(&state, app.handle());
+            }
+
+            // Load the true built-in: pii_anonymizer (always present, id starts with __).
+            {
+                let pii_yaml = include_str!("processors/builtin/pii_anonymizer.yaml");
+                if let Ok(mut procs) = state.processors.lock() {
+                    match AnyProcessor::from_yaml(pii_yaml) {
                         Ok(def) => { procs.insert(def.meta.id.clone(), def); }
-                        Err(e) => eprintln!("Failed to load built-in '{}': {e}", name),
+                        Err(e) => eprintln!("Failed to load built-in '__pii_anonymizer': {e}"),
                     }
                 }
             }
+
+            // Spawn the MCP HTTP bridge on Tauri's async runtime.
+            let bridge_handle = app.handle().clone();
+            tauri::async_runtime::spawn(crate::mcp_bridge::start(bridge_handle));
 
             Ok(())
         })
@@ -170,6 +286,11 @@ pub fn run() {
             commands::watch::create_watch,
             commands::watch::cancel_watch,
             commands::watch::list_watches,
+            // Phase 2 Marketplace — Source management commands
+            commands::sources::list_sources,
+            commands::sources::add_source,
+            commands::sources::remove_source,
+            commands::sources::fetch_marketplace_for_source,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

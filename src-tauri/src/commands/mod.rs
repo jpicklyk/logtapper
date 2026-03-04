@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use crate::anonymizer::config::AnonymizerConfig;
 use crate::anonymizer::LogAnonymizer;
 use crate::core::session::AnalysisSession;
+use crate::processors::marketplace::Source;
 use crate::processors::AnyProcessor;
 use crate::processors::interpreter::{ContinuousRunState, RunResult};
 use crate::processors::state_tracker::types::{StateTrackerResult, ContinuousTrackerState};
@@ -27,6 +28,7 @@ pub mod filter;
 pub mod pipeline;
 pub mod processors;
 pub mod session;
+pub mod sources;
 pub mod state_tracker;
 pub mod watch;
 
@@ -85,6 +87,8 @@ pub struct AppState {
     pub analyses: Mutex<HashMap<String, Vec<AnalysisArtifact>>>,
     /// Active watches: sessionId -> Vec<Arc<WatchSession>>.
     pub active_watches: Mutex<HashMap<String, Vec<Arc<WatchSession>>>>,
+    /// Configured marketplace sources.
+    pub sources: Mutex<Vec<Source>>,
 }
 
 impl Default for AppState {
@@ -124,6 +128,7 @@ impl AppState {
             bookmarks: Mutex::new(HashMap::new()),
             analyses: Mutex::new(HashMap::new()),
             active_watches: Mutex::new(HashMap::new()),
+            sources: Mutex::new(Vec::new()),
         }
     }
 }

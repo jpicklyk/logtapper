@@ -1,0 +1,77 @@
+{
+  "name": "official",
+  "version": 2,
+  "owner": { "name": "LogTapper" },
+  "processors": [
+    {
+      "id": "wifi-state",
+      "name": "WiFi State",
+      "version": "1.3.0",
+      "description": "Tracks WiFi connection state throughout the log: enabled/disabled, SSID, signal strength, and IP address. Supports AOSP (WifiStateMachine) and Samsung (SemWifiApAdvancedAutohotspotService) devices.",
+      "path": "builtin/wifi_state.yaml",
+      "tags": ["network", "wifi", "android"],
+      "sha256": "",
+      "category": "network",
+      "license": null,
+      "processor_type": "state_tracker",
+      "source_types": ["logcat"],
+      "deprecated": false
+    },
+    {
+      "id": "battery-state",
+      "name": "Battery State",
+      "version": "3.0.0",
+      "description": "Tracks battery level, charging status, and plug source from BatteryService. Supports Samsung and AOSP formats.",
+      "path": "builtin/battery_state.yaml",
+      "tags": ["battery", "power", "android"],
+      "sha256": "",
+      "category": "battery",
+      "license": null,
+      "processor_type": "state_tracker",
+      "source_types": ["logcat"],
+      "deprecated": false
+    },
+    {
+      "id": "app-lifecycle",
+      "name": "App Lifecycle",
+      "version": "1.0.0",
+      "description": "Tracks foreground app changes, activity launches, and crashes via ActivityManager.",
+      "path": "builtin/app_lifecycle.yaml",
+      "tags": ["app", "lifecycle", "android"],
+      "sha256": "",
+      "category": "process",
+      "license": null,
+      "processor_type": "state_tracker",
+      "source_types": ["logcat"],
+      "deprecated": false
+    },
+    {
+      "id": "network-connectivity",
+      "name": "Network Connectivity",
+      "version": "3.0.0",
+      "description": "Tracks network connectivity state: connected/disconnected, network type (WIFI, MOBILE, etc.), and validation status.",
+      "path": "builtin/network_connectivity.yaml",
+      "tags": ["network", "connectivity", "android"],
+      "sha256": "",
+      "category": "network",
+      "license": null,
+      "processor_type": "state_tracker",
+      "source_types": ["logcat"],
+      "deprecated": false
+    },
+    {
+      "id": "samsung-auto-blocker",
+      "name": "Auto Blocker",
+      "version": "1.0.0",
+      "description": "Tracks Samsung Auto Blocker state. When enabled, blocks USB debugging, ADB commands, app sideloading, and developer certificates.",
+      "path": "builtin/samsung_auto_blocker.yaml",
+      "tags": ["samsung", "security", "auto_blocker", "usb", "adb"],
+      "sha256": "",
+      "category": "security",
+      "license": null,
+      "processor_type": "state_tracker",
+      "source_types": ["logcat"],
+      "deprecated": false
+    }
+  ]
+}
