@@ -1,11 +1,14 @@
 pub mod annotator;
 pub mod correlator;
+pub mod marketplace;
 pub mod registry;
 pub mod reporter;
 pub mod state_tracker;
 pub mod transformer;
 
 use serde::{Deserialize, Serialize};
+
+pub use marketplace::SchemaContract;
 
 use reporter::schema::{ReporterDef, DisplayAs};
 use transformer::schema::TransformerDef;
@@ -36,6 +39,18 @@ pub struct ProcessorMeta {
     pub tags: Vec<String>,
     #[serde(default)]
     pub builtin: bool,
+    /// SPDX license identifier (e.g. "MIT", "Apache-2.0").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
+    /// Standardized category from the taxonomy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    /// Source repository URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
+    /// Whether this processor is deprecated and should not be newly installed.
+    #[serde(default)]
+    pub deprecated: bool,
 }
 
 fn default_version() -> String {
@@ -55,6 +70,10 @@ pub enum ProcessorKind {
 pub struct AnyProcessor {
     pub meta: ProcessorMeta,
     pub kind: ProcessorKind,
+    /// Optional schema contract declaring emissions and MCP exposure.
+    pub schema: Option<SchemaContract>,
+    /// Marketplace source name (e.g. "official"), set at install time.
+    pub source: Option<String>,
 }
 
 impl AnyProcessor {
@@ -133,7 +152,12 @@ impl AnyProcessor {
             description: String,
             tags: Vec<String>,
             builtin: bool,
+            license: Option<String>,
+            category: Option<String>,
+            repository: Option<String>,
+            deprecated: bool,
             meta: Option<MetaInner>,
+            schema: Option<SchemaContract>,
         }
         #[derive(Deserialize)]
         struct MetaInner {
@@ -144,12 +168,19 @@ impl AnyProcessor {
             #[serde(default)] description: String,
             #[serde(default)] tags: Vec<String>,
             #[serde(default)] builtin: bool,
+            #[serde(default)] license: Option<String>,
+            #[serde(default)] category: Option<String>,
+            #[serde(default)] repository: Option<String>,
+            #[serde(default)] deprecated: bool,
         }
         let ms: MetaShard = serde_yaml::from_str(yaml)
             .map_err(|e| format!("YAML meta parse error: {e}"))?;
 
         let pick = |root: String, nested: Option<String>| -> String {
             if !root.is_empty() { root } else { nested.unwrap_or_default() }
+        };
+        let pick_opt = |root: Option<String>, nested: Option<String>| -> Option<String> {
+            root.or(nested)
         };
         let id   = pick(ms.id.clone(),          ms.meta.as_ref().map(|m| m.id.clone()));
         let name = pick(ms.name.clone(),         ms.meta.as_ref().map(|m| m.name.clone()));
@@ -158,9 +189,17 @@ impl AnyProcessor {
         let desc = pick(ms.description.clone(),  ms.meta.as_ref().map(|m| m.description.clone()));
         let tags = if !ms.tags.is_empty() { ms.tags } else { ms.meta.as_ref().map(|m| m.tags.clone()).unwrap_or_default() };
         let builtin = ms.builtin || ms.meta.as_ref().map(|m| m.builtin).unwrap_or(false);
+        let license    = pick_opt(ms.license,    ms.meta.as_ref().and_then(|m| m.license.clone()));
+        let category   = pick_opt(ms.category,   ms.meta.as_ref().and_then(|m| m.category.clone()));
+        let repository = pick_opt(ms.repository, ms.meta.as_ref().and_then(|m| m.repository.clone()));
+        let deprecated = ms.deprecated || ms.meta.as_ref().map(|m| m.deprecated).unwrap_or(false);
 
         if id.is_empty()   { return Err("Processor YAML must have an 'id' field (or 'meta.id')".to_string()); }
         if name.is_empty() { return Err("Processor YAML must have a 'name' field (or 'meta.name')".to_string()); }
+
+        // Validate that bare processor IDs do not contain the namespace separator.
+        // Qualified IDs (id@source) are set externally, not parsed from YAML.
+        marketplace::validate_processor_id(&id)?;
 
         let meta = ProcessorMeta {
             id,
@@ -170,7 +209,13 @@ impl AnyProcessor {
             description: desc,
             tags,
             builtin,
+            license,
+            category,
+            repository,
+            deprecated,
         };
+
+        let schema = ms.schema;
 
         let kind = match shard.processor_type.as_deref().unwrap_or("reporter") {
             "reporter" => {
@@ -211,7 +256,7 @@ impl AnyProcessor {
             other => return Err(format!("Unknown processor type: '{other}'")),
         };
 
-        Ok(AnyProcessor { meta, kind })
+        Ok(AnyProcessor { meta, kind, schema, source: None })
     }
 }
 
@@ -242,6 +287,18 @@ pub struct ProcessorSummary {
     pub group: Option<String>,
     /// Var declarations from the YAML (reporters only; empty for other types).
     pub vars_meta: Vec<VarMeta>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
+    pub deprecated: bool,
+    /// Whether this processor has a schema contract defined.
+    pub has_schema: bool,
+    /// Marketplace source name (e.g. "official", "my-team"), if installed from a source.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 fn snake_to_title(s: &str) -> String {
@@ -283,6 +340,12 @@ impl From<&AnyProcessor> for ProcessorSummary {
             processor_type: p.processor_type().to_string(),
             group: p.group(),
             vars_meta,
+            license: p.meta.license.clone(),
+            category: p.meta.category.clone(),
+            repository: p.meta.repository.clone(),
+            deprecated: p.meta.deprecated,
+            has_schema: p.schema.is_some(),
+            source: p.source.clone(),
         }
     }
 }

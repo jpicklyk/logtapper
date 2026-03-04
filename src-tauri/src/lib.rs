@@ -26,7 +26,19 @@ fn load_persisted_processors(state: &AppState, proc_dir: &std::path::Path) {
     if let Ok(mut procs) = state.processors.lock() {
         for (path, yaml) in &yamls {
             match AnyProcessor::from_yaml(yaml) {
-                Ok(def) => { procs.insert(def.meta.id.clone(), def); }
+                Ok(mut def) => {
+                    // Check for provenance: if `_source` is present, reconstruct
+                    // the qualified ID and set the source field.
+                    if let Ok(prov) = serde_yaml::from_str::<processors::marketplace::Provenance>(yaml) {
+                        if let Some(ref source) = prov.source {
+                            def.source = Some(source.clone());
+                            let qid = processors::marketplace::qualified_id(&def.meta.id, source);
+                            procs.insert(qid, def);
+                            continue;
+                        }
+                    }
+                    procs.insert(def.meta.id.clone(), def);
+                }
                 Err(e) => eprintln!("Skipping {:?}: {e}", path.file_name()),
             }
         }

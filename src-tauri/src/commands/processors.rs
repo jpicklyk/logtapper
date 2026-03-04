@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use tauri::{AppHandle, Manager, State};
 
 use crate::commands::AppState;
+use crate::processors::marketplace;
 use crate::processors::registry::{self, RegistryEntry};
 use crate::processors::{AnyProcessor, ProcessorSummary};
 
@@ -10,14 +11,16 @@ fn persist_processor(app: &AppHandle, id: &str, yaml: &str) -> Result<(), String
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let proc_dir = data_dir.join("processors");
     std::fs::create_dir_all(&proc_dir).map_err(|e| e.to_string())?;
-    std::fs::write(proc_dir.join(format!("{}.yaml", id)), yaml)
+    let filename = marketplace::id_to_filename(id);
+    std::fs::write(proc_dir.join(format!("{}.yaml", filename)), yaml)
         .map_err(|e| format!("Failed to persist processor: {e}"))
 }
 
 fn delete_processor_file(app: &AppHandle, id: &str) {
     if let Ok(data_dir) = app.path().app_data_dir() {
+        let filename = marketplace::id_to_filename(id);
         let _ = std::fs::remove_file(
-            data_dir.join("processors").join(format!("{}.yaml", id))
+            data_dir.join("processors").join(format!("{}.yaml", filename))
         );
     }
 }

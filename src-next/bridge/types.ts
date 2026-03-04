@@ -232,6 +232,18 @@ export interface ProcessorSummary {
   group: string | null;
   /** Var declarations from the YAML (reporters only; empty for other types). */
   varsMeta: VarMeta[];
+  /** SPDX license identifier (e.g. "MIT"). */
+  license?: string;
+  /** Standardized category from taxonomy. */
+  category?: string;
+  /** Source repository URL. */
+  repository?: string;
+  /** Whether this processor is deprecated. */
+  deprecated: boolean;
+  /** Whether this processor has a schema contract defined. */
+  hasSchema: boolean;
+  /** Marketplace source name (e.g. "official"), if installed from a source. */
+  source?: string;
 }
 
 // ---------------------------------------------------------------------------
