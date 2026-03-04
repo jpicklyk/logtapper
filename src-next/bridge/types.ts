@@ -621,3 +621,34 @@ export interface WatchMatchEvent {
   newMatches: number;
   totalMatches: number;
 }
+
+// ---------------------------------------------------------------------------
+// Update engine types (Phase 4)
+// ---------------------------------------------------------------------------
+
+export interface UpdateAvailable {
+  processorId: string;
+  processorName: string;
+  sourceName: string;
+  installedVersion: string;
+  availableVersion: string;
+  entry: MarketplaceEntry;
+}
+
+export interface SourceError {
+  sourceName: string;
+  error: string;
+}
+
+export interface UpdateCheckResult {
+  updates: UpdateAvailable[];
+  errors: SourceError[];
+}
+
+export interface UpdateResult {
+  processorId: string;
+  oldVersion: string;
+  newVersion: string;
+  success: boolean;
+  error?: string;
+}

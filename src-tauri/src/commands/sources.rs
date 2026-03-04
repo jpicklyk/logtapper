@@ -2,8 +2,9 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
 use crate::commands::AppState;
-use crate::processors::marketplace::{MarketplaceEntry, Source};
+use crate::processors::marketplace::{self, MarketplaceEntry, Source};
 use crate::processors::registry;
+use crate::processors::AnyProcessor;
 
 // ---------------------------------------------------------------------------
 // Source persistence helpers
@@ -132,4 +133,367 @@ pub async fn fetch_marketplace_for_source(
         .into_iter()
         .map(MarketplaceEntryDto::from)
         .collect())
+}
+
+// ---------------------------------------------------------------------------
+// Update types
+// ---------------------------------------------------------------------------
+
+/// A processor that has a newer version available in the marketplace.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateAvailable {
+    /// Qualified processor ID (id@source).
+    pub processor_id: String,
+    pub processor_name: String,
+    pub source_name: String,
+    pub installed_version: String,
+    pub available_version: String,
+    /// Marketplace entry for performing the update.
+    pub entry: MarketplaceEntryDto,
+}
+
+/// Result of a check_updates call.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCheckResult {
+    pub updates: Vec<UpdateAvailable>,
+    /// Sources that failed to fetch (name -> error message).
+    pub errors: Vec<SourceError>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceError {
+    pub source_name: String,
+    pub error: String,
+}
+
+/// Result of applying a single update.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateResult {
+    pub processor_id: String,
+    pub old_version: String,
+    pub new_version: String,
+    pub success: bool,
+    pub error: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Version comparison helper
+// ---------------------------------------------------------------------------
+
+/// Compare installed version against marketplace version using SemVer.
+/// Returns true if `available` is newer than `installed`.
+fn is_newer(installed: &str, available: &str) -> bool {
+    match (semver::Version::parse(installed), semver::Version::parse(available)) {
+        (Ok(inst), Ok(avail)) => avail > inst,
+        // If either fails to parse as semver, fall back to string inequality
+        _ => installed != available,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Persist helper (duplicated from processors.rs to avoid coupling)
+// ---------------------------------------------------------------------------
+
+fn persist_processor_yaml(app: &AppHandle, qualified_id: &str, yaml: &str) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let proc_dir = data_dir.join("processors");
+    std::fs::create_dir_all(&proc_dir).map_err(|e| e.to_string())?;
+    let filename = marketplace::id_to_filename(qualified_id);
+    std::fs::write(proc_dir.join(format!("{}.yaml", filename)), yaml)
+        .map_err(|e| format!("Failed to persist processor: {e}"))
+}
+
+// ---------------------------------------------------------------------------
+// Update commands
+// ---------------------------------------------------------------------------
+
+/// Check all enabled sources for processor updates.
+/// Compares installed processor versions against marketplace entries.
+#[tauri::command]
+pub async fn check_updates(
+    state: State<'_, AppState>,
+) -> Result<UpdateCheckResult, String> {
+    // Snapshot sources and installed processors (release locks before network I/O).
+    let sources: Vec<Source> = {
+        let s = state.sources.lock().map_err(|_| "Sources lock poisoned")?;
+        s.iter().filter(|s| s.enabled).cloned().collect()
+    };
+    let installed: Vec<(String, String, String)> = {
+        // Collect (qualified_id, bare_id, installed_version) for processors that have a source.
+        let procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
+        procs.iter()
+            .filter_map(|(qid, proc)| {
+                proc.source.as_ref().map(|_src| {
+                    (qid.clone(), proc.meta.id.clone(), proc.meta.version.clone())
+                })
+            })
+            .collect()
+    };
+
+    let mut updates = Vec::new();
+    let mut errors = Vec::new();
+
+    for source in &sources {
+        let index = match registry::fetch_marketplace(&state.http_client, source).await {
+            Ok(idx) => idx,
+            Err(e) => {
+                errors.push(SourceError {
+                    source_name: source.name.clone(),
+                    error: e,
+                });
+                continue;
+            }
+        };
+
+        for market_entry in &index.processors {
+            let qid = marketplace::qualified_id(&market_entry.id, &source.name);
+
+            // Find the matching installed processor.
+            if let Some((_, _bare_id, inst_ver)) = installed.iter().find(|(q, _, _)| *q == qid) {
+                if is_newer(inst_ver, &market_entry.version) {
+                    updates.push(UpdateAvailable {
+                        processor_id: qid.clone(),
+                        processor_name: market_entry.name.clone(),
+                        source_name: source.name.clone(),
+                        installed_version: inst_ver.clone(),
+                        available_version: market_entry.version.clone(),
+                        entry: MarketplaceEntryDto::from(market_entry.clone()),
+                    });
+                }
+            }
+        }
+
+        // Update last_checked timestamp for this source.
+        if let Ok(mut srcs) = state.sources.lock() {
+            if let Some(s) = srcs.iter_mut().find(|s| s.name == source.name) {
+                s.last_checked = Some(chrono_now_iso());
+            }
+        }
+    }
+
+    Ok(UpdateCheckResult { updates, errors })
+}
+
+/// Update a single processor from its marketplace source.
+#[tauri::command]
+pub async fn update_processor(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    processor_id: String,
+) -> Result<UpdateResult, String> {
+    let (bare_id, source_name) = match marketplace::split_qualified_id(&processor_id) {
+        (id, Some(src)) => (id.to_string(), src.to_string()),
+        _ => return Err(format!("Processor '{}' has no source qualifier — cannot update", processor_id)),
+    };
+
+    // Find the source config.
+    let source = {
+        let srcs = state.sources.lock().map_err(|_| "Sources lock poisoned")?;
+        srcs.iter()
+            .find(|s| s.name == source_name)
+            .cloned()
+            .ok_or_else(|| format!("Source '{}' not found", source_name))?
+    };
+
+    // Fetch marketplace to find the entry.
+    let index = registry::fetch_marketplace(&state.http_client, &source).await?;
+    let entry = index.processors.iter()
+        .find(|e| e.id == bare_id)
+        .ok_or_else(|| format!("Processor '{}' not found in source '{}'", bare_id, source_name))?;
+
+    // Get current installed version.
+    let old_version = {
+        let procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
+        procs.get(&processor_id)
+            .map(|p| p.meta.version.clone())
+            .unwrap_or_else(|| "unknown".to_string())
+    };
+
+    // Download and verify.
+    let yaml = registry::download_processor_from_source(&state.http_client, &source, entry).await?;
+
+    // Append provenance.
+    let now = chrono_now_iso();
+    let provenance_yaml = format!(
+        "\n_source: {}\n_installed_version: {}\n_installed_at: {}\n_sha256: {}\n",
+        source_name, entry.version, now, entry.sha256
+    );
+    let final_yaml = format!("{}{}", yaml, provenance_yaml);
+
+    // Parse and install.
+    let mut def = AnyProcessor::from_yaml(&final_yaml)
+        .map_err(|e| format!("Failed to parse updated YAML: {e}"))?;
+    def.source = Some(source_name.clone());
+
+    persist_processor_yaml(&app, &processor_id, &final_yaml)?;
+
+    let new_version = def.meta.version.clone();
+    {
+        let mut procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
+        procs.insert(processor_id.clone(), def);
+    }
+
+    Ok(UpdateResult {
+        processor_id,
+        old_version,
+        new_version,
+        success: true,
+        error: None,
+    })
+}
+
+/// Update all processors from a given source that have newer versions.
+#[tauri::command]
+pub async fn update_all_from_source(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    source_name: String,
+) -> Result<Vec<UpdateResult>, String> {
+    // Find the source config.
+    let source = {
+        let srcs = state.sources.lock().map_err(|_| "Sources lock poisoned")?;
+        srcs.iter()
+            .find(|s| s.name == source_name)
+            .cloned()
+            .ok_or_else(|| format!("Source '{}' not found", source_name))?
+    };
+
+    // Fetch marketplace.
+    let index = registry::fetch_marketplace(&state.http_client, &source).await?;
+
+    // Snapshot installed processors from this source.
+    let installed: Vec<(String, String)> = {
+        let procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
+        procs.iter()
+            .filter_map(|(qid, p)| {
+                if p.source.as_deref() == Some(&source_name) {
+                    Some((qid.clone(), p.meta.version.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    };
+
+    let mut results = Vec::new();
+
+    for entry in &index.processors {
+        let qid = marketplace::qualified_id(&entry.id, &source_name);
+
+        // Check if installed and needs update.
+        let Some((_, inst_ver)) = installed.iter().find(|(q, _)| *q == qid) else {
+            continue;
+        };
+
+        if !is_newer(inst_ver, &entry.version) {
+            continue;
+        }
+
+        // Download and install.
+        match registry::download_processor_from_source(&state.http_client, &source, entry).await {
+            Ok(yaml) => {
+                let now = chrono_now_iso();
+                let provenance_yaml = format!(
+                    "\n_source: {}\n_installed_version: {}\n_installed_at: {}\n_sha256: {}\n",
+                    source_name, entry.version, now, entry.sha256
+                );
+                let final_yaml = format!("{}{}", yaml, provenance_yaml);
+
+                match AnyProcessor::from_yaml(&final_yaml) {
+                    Ok(mut def) => {
+                        def.source = Some(source_name.clone());
+                        let old_version = inst_ver.clone();
+                        let new_version = def.meta.version.clone();
+
+                        if let Err(e) = persist_processor_yaml(&app, &qid, &final_yaml) {
+                            results.push(UpdateResult {
+                                processor_id: qid,
+                                old_version,
+                                new_version,
+                                success: false,
+                                error: Some(e),
+                            });
+                            continue;
+                        }
+
+                        if let Ok(mut procs) = state.processors.lock() {
+                            procs.insert(qid.clone(), def);
+                        }
+
+                        results.push(UpdateResult {
+                            processor_id: qid,
+                            old_version,
+                            new_version,
+                            success: true,
+                            error: None,
+                        });
+                    }
+                    Err(e) => {
+                        results.push(UpdateResult {
+                            processor_id: qid,
+                            old_version: inst_ver.clone(),
+                            new_version: entry.version.clone(),
+                            success: false,
+                            error: Some(e),
+                        });
+                    }
+                }
+            }
+            Err(e) => {
+                results.push(UpdateResult {
+                    processor_id: qid,
+                    old_version: inst_ver.clone(),
+                    new_version: entry.version.clone(),
+                    success: false,
+                    error: Some(e),
+                });
+            }
+        }
+    }
+
+    // Update last_checked.
+    if let Ok(mut srcs) = state.sources.lock() {
+        if let Some(s) = srcs.iter_mut().find(|s| s.name == source_name) {
+            s.last_checked = Some(chrono_now_iso());
+        }
+    }
+
+    Ok(results)
+}
+
+/// Save sources to disk (called after modifying last_checked, etc.).
+#[tauri::command]
+pub async fn save_sources_to_disk(
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let sources = state.sources.lock().map_err(|_| "Sources lock poisoned")?;
+    save_sources(&app, &sources)
+}
+
+/// Get pending updates discovered by the startup check.
+/// Returns and clears the pending list (UI consumes once, then uses check_updates for refresh).
+#[tauri::command]
+pub async fn get_pending_updates(
+    state: State<'_, AppState>,
+) -> Result<Vec<UpdateAvailable>, String> {
+    let mut pending = state.pending_updates.lock().map_err(|_| "Pending updates lock poisoned")?;
+    let result = pending.clone();
+    pending.clear();
+    Ok(result)
+}
+
+/// Simple ISO 8601 timestamp (no chrono dependency — use std).
+fn chrono_now_iso() -> String {
+    // Use std::time — format as seconds since epoch for simplicity.
+    // For a proper ISO timestamp we'd need the `chrono` crate, but this is
+    // sufficient for provenance tracking.
+    let dur = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("{}Z", dur.as_secs())
 }

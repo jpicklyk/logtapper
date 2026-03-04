@@ -9,6 +9,7 @@ pub mod scripting;
 
 use commands::AppState;
 use processors::marketplace::{qualified_id, Source, SourceType};
+use processors::registry;
 use processors::AnyProcessor;
 use tauri::Manager;
 
@@ -135,6 +136,116 @@ fn rewrite_yaml_for_marketplace(yaml: &str, new_id: &str) -> String {
     lines.join("\n")
 }
 
+/// Background startup update check.
+/// Fetches marketplace indices for enabled sources, compares versions,
+/// auto-applies updates for sources with auto_update=true, and stores
+/// pending updates for the UI to show badges.
+async fn startup_update_check(handle: tauri::AppHandle) {
+    use processors::marketplace;
+
+    let state = handle.state::<AppState>();
+
+    // Snapshot sources and installed processors.
+    let sources: Vec<Source> = {
+        let Ok(s) = state.sources.lock() else { return };
+        s.iter().filter(|s| s.enabled).cloned().collect()
+    };
+    let installed: std::collections::HashMap<String, String> = {
+        let Ok(procs) = state.processors.lock() else { return };
+        procs.iter()
+            .filter_map(|(qid, p)| {
+                p.source.as_ref().map(|_| (qid.clone(), p.meta.version.clone()))
+            })
+            .collect()
+    };
+
+    let mut pending = Vec::new();
+
+    for source in &sources {
+        let Ok(index) = registry::fetch_marketplace(&state.http_client, source).await else {
+            continue;
+        };
+
+        for entry in &index.processors {
+            let qid = marketplace::qualified_id(&entry.id, &source.name);
+            let Some(inst_ver) = installed.get(&qid) else { continue };
+
+            let newer = match (semver::Version::parse(inst_ver), semver::Version::parse(&entry.version)) {
+                (Ok(i), Ok(a)) => a > i,
+                _ => inst_ver != &entry.version,
+            };
+            if !newer { continue; }
+
+            if source.auto_update {
+                // Auto-apply silently.
+                if let Ok(yaml) = registry::download_processor_from_source(
+                    &state.http_client, source, entry
+                ).await {
+                    let dur = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default();
+                    let now = format!("{}Z", dur.as_secs());
+                    let prov = format!(
+                        "\n_source: {}\n_installed_version: {}\n_installed_at: {}\n_sha256: {}\n",
+                        source.name, entry.version, now, entry.sha256
+                    );
+                    let final_yaml = format!("{}{}", yaml, prov);
+                    if let Ok(mut def) = AnyProcessor::from_yaml(&final_yaml) {
+                        def.source = Some(source.name.clone());
+                        // Persist to disk.
+                        if let Ok(data_dir) = handle.path().app_data_dir() {
+                            let proc_dir = data_dir.join("processors");
+                            let _ = std::fs::create_dir_all(&proc_dir);
+                            let filename = marketplace::id_to_filename(&qid);
+                            let _ = std::fs::write(proc_dir.join(format!("{filename}.yaml")), &final_yaml);
+                        }
+                        if let Ok(mut procs) = state.processors.lock() {
+                            procs.insert(qid.clone(), def);
+                        }
+                        eprintln!("Auto-updated {} from {} to {}", qid, inst_ver, entry.version);
+                    }
+                }
+            } else {
+                // Store as pending update for UI badge.
+                pending.push(commands::sources::UpdateAvailable {
+                    processor_id: qid,
+                    processor_name: entry.name.clone(),
+                    source_name: source.name.clone(),
+                    installed_version: inst_ver.clone(),
+                    available_version: entry.version.clone(),
+                    entry: commands::sources::MarketplaceEntryDto::from(entry.clone()),
+                });
+            }
+        }
+
+        // Update last_checked.
+        if let Ok(mut srcs) = state.sources.lock() {
+            if let Some(s) = srcs.iter_mut().find(|s| s.name == source.name) {
+                let dur = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default();
+                s.last_checked = Some(format!("{}Z", dur.as_secs()));
+            }
+        }
+    }
+
+    // Store pending updates.
+    if !pending.is_empty() {
+        if let Ok(mut pu) = state.pending_updates.lock() {
+            *pu = pending;
+        }
+    }
+
+    // Persist updated sources (last_checked timestamps).
+    if let Ok(sources) = state.sources.lock() {
+        if let Ok(json) = serde_json::to_string_pretty(&*sources) {
+            if let Ok(data_dir) = handle.path().app_data_dir() {
+                let _ = std::fs::write(data_dir.join("sources.json"), json);
+            }
+        }
+    };
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -219,6 +330,15 @@ pub fn run() {
             let bridge_handle = app.handle().clone();
             tauri::async_runtime::spawn(crate::mcp_bridge::start(bridge_handle));
 
+            // Spawn background startup update check (non-blocking).
+            // Checks enabled sources for newer processor versions.
+            // If auto_update is enabled for a source, applies updates silently.
+            // Results are stored in AppState::pending_updates for the UI to query.
+            if !first_run {
+                let update_handle = app.handle().clone();
+                tauri::async_runtime::spawn(startup_update_check(update_handle));
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -291,6 +411,11 @@ pub fn run() {
             commands::sources::add_source,
             commands::sources::remove_source,
             commands::sources::fetch_marketplace_for_source,
+            // Phase 4 — Update engine commands
+            commands::sources::check_updates,
+            commands::sources::update_processor,
+            commands::sources::update_all_from_source,
+            commands::sources::save_sources_to_disk,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

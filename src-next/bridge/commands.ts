@@ -33,6 +33,9 @@ import type {
   SectionInfo,
   Source,
   MarketplaceEntry,
+  UpdateCheckResult,
+  UpdateResult,
+  UpdateAvailable,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -428,6 +431,26 @@ export function removeSource(sourceName: string): Promise<void> {
 
 export function fetchMarketplace(sourceName: string): Promise<MarketplaceEntry[]> {
   return invoke('fetch_marketplace_for_source', { sourceName });
+}
+
+export function checkUpdates(): Promise<UpdateCheckResult> {
+  return invoke('check_updates');
+}
+
+export function updateProcessor(processorId: string): Promise<UpdateResult> {
+  return invoke('update_processor', { processorId });
+}
+
+export function updateAllFromSource(sourceName: string): Promise<UpdateResult[]> {
+  return invoke('update_all_from_source', { sourceName });
+}
+
+export function getPendingUpdates(): Promise<UpdateAvailable[]> {
+  return invoke('get_pending_updates');
+}
+
+export function saveSourcesToDisk(): Promise<void> {
+  return invoke('save_sources_to_disk');
 }
 
 // ---------------------------------------------------------------------------

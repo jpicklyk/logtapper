@@ -89,6 +89,8 @@ pub struct AppState {
     pub active_watches: Mutex<HashMap<String, Vec<Arc<WatchSession>>>>,
     /// Configured marketplace sources.
     pub sources: Mutex<Vec<Source>>,
+    /// Pending processor updates found by the startup check (for UI badges).
+    pub pending_updates: Mutex<Vec<crate::commands::sources::UpdateAvailable>>,
 }
 
 impl Default for AppState {
@@ -129,6 +131,7 @@ impl AppState {
             analyses: Mutex::new(HashMap::new()),
             active_watches: Mutex::new(HashMap::new()),
             sources: Mutex::new(Vec::new()),
+            pending_updates: Mutex::new(Vec::new()),
         }
     }
 }
