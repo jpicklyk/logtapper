@@ -63,7 +63,7 @@ impl Default for TagInterner {
 // Source type
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub enum SourceType {
     Logcat,
@@ -74,6 +74,13 @@ pub enum SourceType {
     Tombstone,
     ANRTrace,
     Custom { parser_id: String },
+}
+
+impl SourceType {
+    /// Case-insensitive match against a string (e.g. from YAML `source_type_is` filter rules).
+    pub fn matches_str(&self, s: &str) -> bool {
+        self.to_string().eq_ignore_ascii_case(s)
+    }
 }
 
 impl std::fmt::Display for SourceType {

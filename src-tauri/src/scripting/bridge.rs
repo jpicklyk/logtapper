@@ -17,6 +17,39 @@ pub struct BridgeInput<'a> {
 }
 
 // ---------------------------------------------------------------------------
+// Scope builder — shared helpers
+// ---------------------------------------------------------------------------
+
+/// Build the `line` Rhai map from a BridgeInput. Used by both `build_scope`
+/// and `update_scope` to avoid duplicating the 13-field construction.
+fn build_line_map(input: &BridgeInput<'_>) -> RhaiMap {
+    let mut m = RhaiMap::new();
+    m.insert("raw".into(), Dynamic::from(input.line.raw.to_string()));
+    m.insert("timestamp".into(), Dynamic::from(input.line.timestamp));
+    m.insert("level".into(), Dynamic::from(input.line.level.to_string()));
+    m.insert("tag".into(), Dynamic::from(input.line.tag.to_string()));
+    m.insert("pid".into(), Dynamic::from(input.line.pid as i64));
+    m.insert("tid".into(), Dynamic::from(input.line.tid as i64));
+    m.insert("message".into(), Dynamic::from(input.line.message.to_string()));
+    m.insert("source_id".into(), Dynamic::from(input.line.source_id.to_string()));
+    m.insert("source_type".into(), Dynamic::from(input.pipeline_ctx.source_type.to_string()));
+    m.insert("section".into(), Dynamic::from(section_for_line(&input.pipeline_ctx.sections, input.line.source_line_num).to_string()));
+    m.insert("line_number".into(), Dynamic::from(input.line.source_line_num as i64));
+    m.insert("is_streaming".into(), Dynamic::from(input.pipeline_ctx.is_streaming));
+    m.insert("source_name".into(), Dynamic::from(input.pipeline_ctx.source_name.to_string()));
+    m
+}
+
+/// Build the `fields` Rhai map from extracted field pairs.
+fn build_fields_map(fields: &[(String, JsonValue)]) -> RhaiMap {
+    let mut m = RhaiMap::new();
+    for (k, v) in fields.iter() {
+        m.insert(k.as_str().into(), json_to_dynamic(v));
+    }
+    m
+}
+
+// ---------------------------------------------------------------------------
 // Scope builder
 // ---------------------------------------------------------------------------
 
@@ -34,31 +67,8 @@ pub struct BridgeInput<'a> {
 pub fn build_scope<'src>(input: &BridgeInput<'_>) -> Scope<'src> {
     let mut scope = Scope::new();
 
-    // ── line ─────────────────────────────────────────────────────────────────
-    let mut line_map = RhaiMap::new();
-    line_map.insert("raw".into(), Dynamic::from(input.line.raw.to_string()));
-    line_map.insert("timestamp".into(), Dynamic::from(input.line.timestamp));
-    line_map.insert("level".into(), Dynamic::from(input.line.level.to_string()));
-    line_map.insert("tag".into(), Dynamic::from(input.line.tag.to_string()));
-    line_map.insert("pid".into(), Dynamic::from(input.line.pid as i64));
-    line_map.insert("tid".into(), Dynamic::from(input.line.tid as i64));
-    line_map.insert("message".into(), Dynamic::from(input.line.message.to_string()));
-    line_map.insert("source_id".into(), Dynamic::from(input.line.source_id.to_string()));
-    line_map.insert("source_type".into(), Dynamic::from(input.pipeline_ctx.source_type.to_string()));
-    line_map.insert("section".into(), Dynamic::from(section_for_line(&input.pipeline_ctx.sections, input.line.source_line_num).to_string()));
-    line_map.insert("line_number".into(), Dynamic::from(input.line.source_line_num as i64));
-    line_map.insert("is_streaming".into(), Dynamic::from(input.pipeline_ctx.is_streaming));
-    line_map.insert("source_name".into(), Dynamic::from(input.pipeline_ctx.source_name.to_string()));
-    scope.push("line", Dynamic::from(line_map));
-
-    // ── fields ────────────────────────────────────────────────────────────────
-    let mut fields_map = RhaiMap::new();
-    for (k, v) in input.fields.iter() {
-        fields_map.insert(k.as_str().into(), json_to_dynamic(v));
-    }
-    scope.push("fields", Dynamic::from(fields_map));
-
-    // ── vars (read/write) ─────────────────────────────────────────────────────
+    scope.push("line", Dynamic::from(build_line_map(input)));
+    scope.push("fields", Dynamic::from(build_fields_map(input.fields)));
     scope.push("vars", input.vars.to_rhai_map());
 
     // ── history — accessed lazily via history_get(i) / history_len() ─────────
@@ -85,29 +95,8 @@ pub fn build_scope<'src>(input: &BridgeInput<'_>) -> Scope<'src> {
 /// **Critical:** `_emits` MUST be reset to an empty array every invocation,
 /// otherwise emissions from line N would be re-reported for line N+1.
 pub fn update_scope(scope: &mut Scope<'_>, input: &BridgeInput<'_>) {
-    // ── line ───────────────────────────────────────────────────────────────
-    let mut line_map = RhaiMap::new();
-    line_map.insert("raw".into(), Dynamic::from(input.line.raw.to_string()));
-    line_map.insert("timestamp".into(), Dynamic::from(input.line.timestamp));
-    line_map.insert("level".into(), Dynamic::from(input.line.level.to_string()));
-    line_map.insert("tag".into(), Dynamic::from(input.line.tag.to_string()));
-    line_map.insert("pid".into(), Dynamic::from(input.line.pid as i64));
-    line_map.insert("tid".into(), Dynamic::from(input.line.tid as i64));
-    line_map.insert("message".into(), Dynamic::from(input.line.message.to_string()));
-    line_map.insert("source_id".into(), Dynamic::from(input.line.source_id.to_string()));
-    line_map.insert("source_type".into(), Dynamic::from(input.pipeline_ctx.source_type.to_string()));
-    line_map.insert("section".into(), Dynamic::from(section_for_line(&input.pipeline_ctx.sections, input.line.source_line_num).to_string()));
-    line_map.insert("line_number".into(), Dynamic::from(input.line.source_line_num as i64));
-    line_map.insert("is_streaming".into(), Dynamic::from(input.pipeline_ctx.is_streaming));
-    line_map.insert("source_name".into(), Dynamic::from(input.pipeline_ctx.source_name.to_string()));
-    scope.set_value("line", Dynamic::from(line_map));
-
-    // ── fields ─────────────────────────────────────────────────────────────
-    let mut fields_map = RhaiMap::new();
-    for (k, v) in input.fields.iter() {
-        fields_map.insert(k.as_str().into(), json_to_dynamic(v));
-    }
-    scope.set_value("fields", Dynamic::from(fields_map));
+    scope.set_value("line", Dynamic::from(build_line_map(input)));
+    scope.set_value("fields", Dynamic::from(build_fields_map(input.fields)));
 
     // ── _emits — MUST be cleared to prevent stale emission carry-over ──────
     scope.set_value("_emits", Dynamic::from(rhai::Array::new()));

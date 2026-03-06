@@ -281,7 +281,7 @@ impl<'a> ProcessorRun<'a> {
                 time_of_day >= from_ns && time_of_day <= to_ns
             }
             FilterRule::SourceTypeIs { source_type } => {
-                pipeline_ctx.source_type.eq_ignore_ascii_case(source_type)
+                pipeline_ctx.source_type.matches_str(source_type)
             }
             FilterRule::SectionIs { section } => {
                 let line_section = crate::core::line::section_for_line(&pipeline_ctx.sections, line.source_line_num);
@@ -507,15 +507,6 @@ mod tests {
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    fn test_pipeline_ctx() -> PipelineContext {
-        PipelineContext {
-            source_type: Arc::from("Logcat"),
-            source_name: Arc::from("test"),
-            is_streaming: false,
-            sections: Arc::from([]),
-        }
-    }
-
     fn make_line(tag: &str, message: &str, level: LogLevel, line_num: usize) -> LineContext {
         LineContext {
             raw: Arc::from(format!("01-01 00:00:00.000  123  456 {:?} {tag}: {message}", level).as_str()),
@@ -561,7 +552,7 @@ pipeline:
         tags: [MyTag]
 "#);
         let mut run = ProcessorRun::new(&d);
-        run.process_line(&make_line("MyTag", "hello", LogLevel::Info, 10), &test_pipeline_ctx());
+        run.process_line(&make_line("MyTag", "hello", LogLevel::Info, 10), &PipelineContext::test_default());
         let result = run.finish();
         assert_eq!(result.matched_line_nums, vec![10]);
     }
@@ -579,7 +570,7 @@ pipeline:
         tags: [MyTag]
 "#);
         let mut run = ProcessorRun::new(&d);
-        run.process_line(&make_line("OtherTag", "hello", LogLevel::Info, 5), &test_pipeline_ctx());
+        run.process_line(&make_line("OtherTag", "hello", LogLevel::Info, 5), &PipelineContext::test_default());
         assert!(run.finish().matched_line_nums.is_empty());
     }
 
@@ -596,10 +587,10 @@ pipeline:
         tags: [NetworkMonitor]
 "#);
         let mut run = ProcessorRun::new(&d);
-        run.process_line(&make_line("NetworkMonitor/102", "PROBE_DNS ok", LogLevel::Debug, 1), &test_pipeline_ctx());
-        run.process_line(&make_line("NetworkMonitor", "direct match", LogLevel::Debug, 2), &test_pipeline_ctx());
-        run.process_line(&make_line("NetworkMonitorExtra", "also matches prefix", LogLevel::Debug, 3), &test_pipeline_ctx());
-        run.process_line(&make_line("OtherTag", "no match", LogLevel::Debug, 4), &test_pipeline_ctx());
+        run.process_line(&make_line("NetworkMonitor/102", "PROBE_DNS ok", LogLevel::Debug, 1), &PipelineContext::test_default());
+        run.process_line(&make_line("NetworkMonitor", "direct match", LogLevel::Debug, 2), &PipelineContext::test_default());
+        run.process_line(&make_line("NetworkMonitorExtra", "also matches prefix", LogLevel::Debug, 3), &PipelineContext::test_default());
+        run.process_line(&make_line("OtherTag", "no match", LogLevel::Debug, 4), &PipelineContext::test_default());
         let result = run.finish();
         assert_eq!(result.matched_line_nums, vec![1, 2, 3]);
     }
@@ -617,9 +608,9 @@ pipeline:
         tags: ["NetworkMonitor/"]
 "#);
         let mut run = ProcessorRun::new(&d);
-        run.process_line(&make_line("NetworkMonitor/102", "matches", LogLevel::Debug, 1), &test_pipeline_ctx());
-        run.process_line(&make_line("NetworkMonitor", "no slash suffix", LogLevel::Debug, 2), &test_pipeline_ctx());
-        run.process_line(&make_line("NetworkMonitorExtra", "no slash", LogLevel::Debug, 3), &test_pipeline_ctx());
+        run.process_line(&make_line("NetworkMonitor/102", "matches", LogLevel::Debug, 1), &PipelineContext::test_default());
+        run.process_line(&make_line("NetworkMonitor", "no slash suffix", LogLevel::Debug, 2), &PipelineContext::test_default());
+        run.process_line(&make_line("NetworkMonitorExtra", "no slash", LogLevel::Debug, 3), &PipelineContext::test_default());
         let result = run.finish();
         assert_eq!(result.matched_line_nums, vec![1]);
     }
@@ -639,8 +630,8 @@ pipeline:
         value: "DISCONNECT"
 "#);
         let mut run = ProcessorRun::new(&d);
-        run.process_line(&make_line("T", "DISCONNECT reason=3", LogLevel::Info, 1), &test_pipeline_ctx());
-        run.process_line(&make_line("T", "CONNECT event", LogLevel::Info, 2), &test_pipeline_ctx());
+        run.process_line(&make_line("T", "DISCONNECT reason=3", LogLevel::Info, 1), &PipelineContext::test_default());
+        run.process_line(&make_line("T", "CONNECT event", LogLevel::Info, 2), &PipelineContext::test_default());
         let result = run.finish();
         assert_eq!(result.matched_line_nums, vec![1]);
     }
@@ -660,9 +651,9 @@ pipeline:
         values: [EBADF, "Bad file descriptor"]
 "#);
         let mut run = ProcessorRun::new(&d);
-        run.process_line(&make_line("T", "read: EBADF", LogLevel::Error, 1), &test_pipeline_ctx());
-        run.process_line(&make_line("T", "Bad file descriptor", LogLevel::Error, 2), &test_pipeline_ctx());
-        run.process_line(&make_line("T", "all good", LogLevel::Info, 3), &test_pipeline_ctx());
+        run.process_line(&make_line("T", "read: EBADF", LogLevel::Error, 1), &PipelineContext::test_default());
+        run.process_line(&make_line("T", "Bad file descriptor", LogLevel::Error, 2), &PipelineContext::test_default());
+        run.process_line(&make_line("T", "all good", LogLevel::Info, 3), &PipelineContext::test_default());
         let result = run.finish();
         assert_eq!(result.matched_line_nums, vec![1, 2]);
     }
@@ -682,12 +673,12 @@ pipeline:
         level: W
 "#);
         let mut run = ProcessorRun::new(&d);
-        run.process_line(&make_line("T", "v", LogLevel::Verbose, 1), &test_pipeline_ctx());
-        run.process_line(&make_line("T", "d", LogLevel::Debug,   2), &test_pipeline_ctx());
-        run.process_line(&make_line("T", "i", LogLevel::Info,    3), &test_pipeline_ctx());
-        run.process_line(&make_line("T", "w", LogLevel::Warn,    4), &test_pipeline_ctx());
-        run.process_line(&make_line("T", "e", LogLevel::Error,   5), &test_pipeline_ctx());
-        run.process_line(&make_line("T", "f", LogLevel::Fatal,   6), &test_pipeline_ctx());
+        run.process_line(&make_line("T", "v", LogLevel::Verbose, 1), &PipelineContext::test_default());
+        run.process_line(&make_line("T", "d", LogLevel::Debug,   2), &PipelineContext::test_default());
+        run.process_line(&make_line("T", "i", LogLevel::Info,    3), &PipelineContext::test_default());
+        run.process_line(&make_line("T", "w", LogLevel::Warn,    4), &PipelineContext::test_default());
+        run.process_line(&make_line("T", "e", LogLevel::Error,   5), &PipelineContext::test_default());
+        run.process_line(&make_line("T", "f", LogLevel::Fatal,   6), &PipelineContext::test_default());
         let result = run.finish();
         assert_eq!(result.matched_line_nums, vec![4, 5, 6]);
     }
@@ -707,8 +698,8 @@ pipeline:
         pattern: 'FD:\s+\d+'
 "#);
         let mut run = ProcessorRun::new(&d);
-        run.process_line(&make_line("T", "Watchdog FD: 950 heap: 512", LogLevel::Info, 7), &test_pipeline_ctx());
-        run.process_line(&make_line("T", "No match here", LogLevel::Info, 8), &test_pipeline_ctx());
+        run.process_line(&make_line("T", "Watchdog FD: 950 heap: 512", LogLevel::Info, 7), &PipelineContext::test_default());
+        run.process_line(&make_line("T", "No match here", LogLevel::Info, 8), &PipelineContext::test_default());
         let result = run.finish();
         assert_eq!(result.matched_line_nums, vec![7]);
     }
@@ -727,7 +718,7 @@ pipeline:
         pattern: '(?!invalid_lookahead)'
 "#);
         let mut run = ProcessorRun::new(&d);
-        run.process_line(&make_line("T", "anything", LogLevel::Info, 1), &test_pipeline_ctx());
+        run.process_line(&make_line("T", "anything", LogLevel::Info, 1), &PipelineContext::test_default());
         assert!(run.finish().matched_line_nums.is_empty());
     }
 
@@ -751,8 +742,8 @@ pipeline:
         let inside  = make_line_ts("T", "inside",  LogLevel::Info, 1, 3_600_000_000_000);
         // midnight (ts=0) → before 00:30 → rejected
         let outside = make_line_ts("T", "outside", LogLevel::Info, 2, 0);
-        run.process_line(&inside, &test_pipeline_ctx());
-        run.process_line(&outside, &test_pipeline_ctx());
+        run.process_line(&inside, &PipelineContext::test_default());
+        run.process_line(&outside, &PipelineContext::test_default());
         let result = run.finish();
         assert_eq!(result.matched_line_nums, vec![1]);
     }
@@ -775,11 +766,11 @@ pipeline:
 "#);
         let mut run = ProcessorRun::new(&d);
         // Both rules satisfied → accepted
-        run.process_line(&make_line("ActivityManager", "Killing PID 1234", LogLevel::Info, 1), &test_pipeline_ctx());
+        run.process_line(&make_line("ActivityManager", "Killing PID 1234", LogLevel::Info, 1), &PipelineContext::test_default());
         // Wrong tag → rejected
-        run.process_line(&make_line("System", "Killing PID 5678", LogLevel::Info, 2), &test_pipeline_ctx());
+        run.process_line(&make_line("System", "Killing PID 5678", LogLevel::Info, 2), &PipelineContext::test_default());
         // Right tag, wrong message → rejected
-        run.process_line(&make_line("ActivityManager", "Starting PID 9999", LogLevel::Info, 3), &test_pipeline_ctx());
+        run.process_line(&make_line("ActivityManager", "Starting PID 9999", LogLevel::Info, 3), &PipelineContext::test_default());
         let result = run.finish();
         assert_eq!(result.matched_line_nums, vec![1]);
     }
@@ -811,7 +802,7 @@ pipeline:
       _emits.push(#{ fd: fields.fd_count });
 "#);
         let mut run = ProcessorRun::new(&d);
-        run.process_line(&make_line("T", "FD: 950 heap: 512", LogLevel::Info, 1), &test_pipeline_ctx());
+        run.process_line(&make_line("T", "FD: 950 heap: 512", LogLevel::Info, 1), &PipelineContext::test_default());
         let result = run.finish();
         assert_eq!(result.emissions.len(), 1);
         assert_eq!(get_field(&result.emissions[0], "fd"), Some(&JsonValue::Number(950.into())));
@@ -838,7 +829,7 @@ pipeline:
       _emits.push(#{ has_fd: has_fd });
 "#);
         let mut run = ProcessorRun::new(&d);
-        run.process_line(&make_line("T", "no fd here", LogLevel::Info, 1), &test_pipeline_ctx());
+        run.process_line(&make_line("T", "no fd here", LogLevel::Info, 1), &PipelineContext::test_default());
         let result = run.finish();
         assert_eq!(get_field(&result.emissions[0], "has_fd"), Some(&JsonValue::Bool(false)));
     }
@@ -863,7 +854,7 @@ pipeline:
 "#);
         let mut run = ProcessorRun::new(&d);
         for i in 0..5usize {
-            run.process_line(&make_line("T", "msg", LogLevel::Info, i), &test_pipeline_ctx());
+            run.process_line(&make_line("T", "msg", LogLevel::Info, i), &PipelineContext::test_default());
         }
         let result = run.finish();
         assert_eq!(result.vars["count"], JsonValue::Number(5.into()));
@@ -886,7 +877,7 @@ pipeline:
 "#);
         let mut run = ProcessorRun::new(&d);
         let line = make_line_ts("T", "msg", LogLevel::Info, 1, 123_456_789_000);
-        run.process_line(&line, &test_pipeline_ctx());
+        run.process_line(&line, &PipelineContext::test_default());
         let result = run.finish();
         assert_eq!(result.emissions.len(), 1);
         assert_eq!(
@@ -911,7 +902,7 @@ pipeline:
 "#);
         let mut run = ProcessorRun::new(&d);
         let line = make_line_ts("T", "msg", LogLevel::Info, 1, 111_000);
-        run.process_line(&line, &test_pipeline_ctx());
+        run.process_line(&line, &PipelineContext::test_default());
         let result = run.finish();
         assert_eq!(
             get_field(&result.emissions[0], "timestamp"),
@@ -933,7 +924,7 @@ pipeline:
       _emits.push(#{ x: 1 });
 "#);
         let mut run = ProcessorRun::new(&d);
-        run.process_line(&make_line("T", "msg", LogLevel::Info, 42), &test_pipeline_ctx());
+        run.process_line(&make_line("T", "msg", LogLevel::Info, 42), &PipelineContext::test_default());
         let result = run.finish();
         assert_eq!(result.emissions[0].line_num, 42);
     }
@@ -949,7 +940,7 @@ meta:
 "#);
         let mut run = ProcessorRun::new(&d);
         for i in 1..=3usize {
-            run.process_line(&make_line("T", "msg", LogLevel::Info, i), &test_pipeline_ctx());
+            run.process_line(&make_line("T", "msg", LogLevel::Info, i), &PipelineContext::test_default());
         }
         let result = run.finish();
         assert_eq!(result.matched_line_nums, vec![1, 2, 3]);
@@ -985,7 +976,7 @@ pipeline:
         let base = 1_000_000_000_000i64; // arbitrary base timestamp (nanos)
         for i in 0..5usize {
             run.process_line(&make_line_ts("T", "key=mykey event", LogLevel::Error, i + 1,
-                base + (i as i64) * 10_000_000), &test_pipeline_ctx());
+                base + (i as i64) * 10_000_000), &PipelineContext::test_default());
         }
         let result = run.finish();
         assert_eq!(result.emissions.len(), 1, "exactly one burst emission on rising edge");
@@ -1002,7 +993,7 @@ pipeline:
         let base = 1_000_000_000_000i64;
         for i in 0..5usize {
             run.process_line(&make_line_ts("T", "key=k event", LogLevel::Error, i + 1,
-                base + (i as i64) * 10_000_000), &test_pipeline_ctx());
+                base + (i as i64) * 10_000_000), &PipelineContext::test_default());
         }
         let result = run.finish();
         assert!(result.emissions.is_empty(), "5 events < threshold of 10, no burst");
@@ -1016,7 +1007,7 @@ pipeline:
         // Send 10 rapid events — only the 3rd (rising edge) should emit
         for i in 0..10usize {
             run.process_line(&make_line_ts("T", "key=spam event", LogLevel::Error, i + 1,
-                base + (i as i64) * 10_000_000), &test_pipeline_ctx());
+                base + (i as i64) * 10_000_000), &PipelineContext::test_default());
         }
         let result = run.finish();
         assert_eq!(result.emissions.len(), 1, "burst emits once on rising edge only");
@@ -1034,12 +1025,12 @@ pipeline:
         // First burst: 3 events within 50ms
         for i in 0..3usize {
             run.process_line(&make_line_ts("T", "key=k event", LogLevel::Error, i + 1,
-                base + (i as i64) * 10 * ms), &test_pipeline_ctx());
+                base + (i as i64) * 10 * ms), &PipelineContext::test_default());
         }
         // Second burst: 3 events starting 1s later (> 500ms gap clears the window)
         for i in 0..3usize {
             run.process_line(&make_line_ts("T", "key=k event", LogLevel::Error, i + 10,
-                base + 1000 * ms + (i as i64) * 10 * ms), &test_pipeline_ctx());
+                base + 1000 * ms + (i as i64) * 10 * ms), &PipelineContext::test_default());
         }
         let result = run.finish();
         assert_eq!(result.emissions.len(), 2, "two separate bursts → two emissions");
@@ -1053,7 +1044,7 @@ pipeline:
         let base = 2_000_000_000_000i64;
         for i in 0..3usize {
             run.process_line(&make_line_ts("T", "key=t event", LogLevel::Error, i + 1,
-                base + (i as i64) * 10_000_000), &test_pipeline_ctx());
+                base + (i as i64) * 10_000_000), &PipelineContext::test_default());
         }
         let result = run.finish();
         assert_eq!(result.emissions.len(), 1);
@@ -1083,7 +1074,7 @@ pipeline:
         let base = 1_000_000_000_000i64;
         for i in 0..3usize {
             run.process_line(&make_line_ts("T", "msg", LogLevel::Info, i + 1,
-                base + (i as i64) * 10_000_000), &test_pipeline_ctx());
+                base + (i as i64) * 10_000_000), &PipelineContext::test_default());
         }
         let result = run.finish();
         assert_eq!(result.emissions.len(), 1);
@@ -1107,7 +1098,7 @@ pipeline:
 "#);
         let mut run = ProcessorRun::new(&d);
         for i in 0..5usize {
-            run.process_line(&make_line("T", "msg", LogLevel::Info, i), &test_pipeline_ctx());
+            run.process_line(&make_line("T", "msg", LogLevel::Info, i), &PipelineContext::test_default());
         }
         // Verify emissions and matches exist before drain
         assert_eq!(run.current_result().emissions.len(), 5);
@@ -1136,7 +1127,7 @@ pipeline:
 "#);
         let mut run = ProcessorRun::new(&d);
         for i in 0..5usize {
-            run.process_line(&make_line("T", "msg", LogLevel::Info, i), &test_pipeline_ctx());
+            run.process_line(&make_line("T", "msg", LogLevel::Info, i), &PipelineContext::test_default());
         }
 
         let state = run.into_continuous_state(5, false);
@@ -1201,13 +1192,13 @@ pipeline:
 "#);
         let mut run = ProcessorRun::new(&d);
         // Passes all three rules
-        run.process_line(&make_line("ActivityManager", "Killing PID 1234", LogLevel::Warn, 1), &test_pipeline_ctx());
+        run.process_line(&make_line("ActivityManager", "Killing PID 1234", LogLevel::Warn, 1), &PipelineContext::test_default());
         // Fails level_min (Info < Warn)
-        run.process_line(&make_line("ActivityManager", "Killing PID 5678", LogLevel::Info, 2), &test_pipeline_ctx());
+        run.process_line(&make_line("ActivityManager", "Killing PID 5678", LogLevel::Info, 2), &PipelineContext::test_default());
         // Fails tag_match
-        run.process_line(&make_line("System", "Killing PID 9999", LogLevel::Warn, 3), &test_pipeline_ctx());
+        run.process_line(&make_line("System", "Killing PID 9999", LogLevel::Warn, 3), &PipelineContext::test_default());
         // Fails message_regex
-        run.process_line(&make_line("ActivityManager", "Starting PID 0000", LogLevel::Error, 4), &test_pipeline_ctx());
+        run.process_line(&make_line("ActivityManager", "Starting PID 0000", LogLevel::Error, 4), &PipelineContext::test_default());
         let result = run.finish();
         assert_eq!(result.matched_line_nums, vec![1], "only line 1 should pass all three rules");
     }
@@ -1247,7 +1238,7 @@ pipeline:
 "#);
         let mut run = ProcessorRun::new(&d);
         for i in 0..5usize {
-            run.process_line(&make_line("T", "msg", LogLevel::Info, i), &test_pipeline_ctx());
+            run.process_line(&make_line("T", "msg", LogLevel::Info, i), &PipelineContext::test_default());
         }
         let result = run.finish();
         // After processing 5 lines, history_len() on the last call should be 4
@@ -1281,9 +1272,9 @@ pipeline:
       }
 "#);
         let mut run = ProcessorRun::new(&d);
-        run.process_line(&make_line("TagA", "alpha", LogLevel::Info, 0), &test_pipeline_ctx());
-        run.process_line(&make_line("TagB", "beta", LogLevel::Info, 1), &test_pipeline_ctx());
-        run.process_line(&make_line("TagC", "gamma", LogLevel::Info, 2), &test_pipeline_ctx());
+        run.process_line(&make_line("TagA", "alpha", LogLevel::Info, 0), &PipelineContext::test_default());
+        run.process_line(&make_line("TagB", "beta", LogLevel::Info, 1), &PipelineContext::test_default());
+        run.process_line(&make_line("TagC", "gamma", LogLevel::Info, 2), &PipelineContext::test_default());
         let result = run.finish();
         // On the third line's script execution, history = [TagA, TagB]
         assert_eq!(result.vars["first_tag"], JsonValue::String("TagA".to_string()));
@@ -1309,7 +1300,7 @@ pipeline:
       vars.is_unit = val == ();
 "#);
         let mut run = ProcessorRun::new(&d);
-        run.process_line(&make_line("T", "msg", LogLevel::Info, 0), &test_pipeline_ctx());
+        run.process_line(&make_line("T", "msg", LogLevel::Info, 0), &PipelineContext::test_default());
         let result = run.finish();
         assert_eq!(result.vars["is_unit"], JsonValue::Bool(true));
     }

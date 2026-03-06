@@ -200,12 +200,12 @@ fn extract_regex_literal_prefix(pattern: &str) -> Option<String> {
 }
 
 /// Check if a set of filter rules contains a SourceTypeIs that doesn't match the current source type.
-fn excluded_by_source_type(rules: &[crate::processors::reporter::schema::FilterRule], source_type: &str) -> bool {
+fn excluded_by_source_type(rules: &[crate::processors::reporter::schema::FilterRule], source_type: &crate::core::session::SourceType) -> bool {
     rules.iter().any(|rule| {
         matches!(
             rule,
             crate::processors::reporter::schema::FilterRule::SourceTypeIs { source_type: st }
-                if !st.eq_ignore_ascii_case(source_type)
+                if !source_type.matches_str(st)
         )
     })
 }
@@ -605,11 +605,10 @@ pub fn execute_pipeline(
     // Sessions lock released.
 
     // ── Pre-filter: exclude processors whose source_type filter doesn't match ─
-    let source_type_str = source_type.to_string();
     reporter_defs.retain(|(_, def)| {
         !def.pipeline.iter().any(|stage| {
             if let crate::processors::reporter::schema::PipelineStage::Filter(f) = stage {
-                excluded_by_source_type(&f.rules, &source_type_str)
+                excluded_by_source_type(&f.rules, &source_type)
             } else {
                 false
             }
@@ -618,12 +617,15 @@ pub fn execute_pipeline(
     tracker_defs.retain(|(_, def)| {
         !def.transitions.iter().any(|t| {
             t.filter.source_type.as_ref()
-                .is_some_and(|st| !st.eq_ignore_ascii_case(&source_type_str))
+                .is_some_and(|st| !source_type.matches_str(st))
         })
     });
+    // Correlators are cross-source: retain if ANY source matches (not excluded).
+    // A correlator with sources for both Logcat and Bugreport should not be
+    // excluded when processing either source type.
     correlator_defs.retain(|(_, def)| {
-        !def.sources.iter().any(|src| {
-            excluded_by_source_type(&src.filter, &source_type_str)
+        def.sources.iter().any(|src| {
+            !excluded_by_source_type(&src.filter, &source_type)
         })
     });
 
@@ -658,7 +660,7 @@ pub fn execute_pipeline(
         .collect();
 
     let pipeline_ctx = PipelineContext {
-        source_type: Arc::from(source_type.to_string().as_str()),
+        source_type: source_type.clone(),
         source_name: Arc::from(source_id.as_str()),
         is_streaming: matches!(source_snapshot, SourceSnapshot::Stream { .. }),
         sections: Arc::from(src_sections.as_slice()),

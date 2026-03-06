@@ -714,7 +714,7 @@ fn flush_batch(
     };
 
     let pipeline_ctx = PipelineContext {
-        source_type: std::sync::Arc::from("Logcat"),
+        source_type: crate::core::session::SourceType::Logcat,
         source_name: std::sync::Arc::from(source_id),
         is_streaming: true,
         sections: std::sync::Arc::from([]),

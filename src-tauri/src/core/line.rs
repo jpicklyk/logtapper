@@ -35,20 +35,33 @@ pub struct Annotation {
     pub color: Option<String>,
 }
 
-use crate::core::session::SectionInfo;
+use crate::core::session::{SectionInfo, SourceType};
 
 /// Pipeline-wide context passed alongside LineContext to processors.
 /// Contains metadata that the pipeline knows but parsers don't produce.
 #[derive(Debug, Clone)]
 pub struct PipelineContext {
-    /// Source type string: "Logcat", "Bugreport", "Kernel", etc.
-    pub source_type: Arc<str>,
+    /// Source type enum (Logcat, Bugreport, Kernel, etc.)
+    pub source_type: SourceType,
     /// Source name (filename or device serial)
     pub source_name: Arc<str>,
     /// True for ADB streaming, false for file analysis
     pub is_streaming: bool,
     /// Sorted section info for binary search (bugreport only; empty for other types)
     pub sections: Arc<[SectionInfo]>,
+}
+
+#[cfg(test)]
+impl PipelineContext {
+    /// Default test context: Logcat, non-streaming, no sections.
+    pub fn test_default() -> Self {
+        Self {
+            source_type: SourceType::Logcat,
+            source_name: Arc::from("test"),
+            is_streaming: false,
+            sections: Arc::from([]),
+        }
+    }
 }
 
 /// Look up which section a given line belongs to via binary search.
@@ -299,13 +312,21 @@ mod tests {
     #[test]
     fn pipeline_context_clone() {
         let ctx = PipelineContext {
-            source_type: Arc::from("Bugreport"),
+            source_type: crate::core::session::SourceType::Bugreport,
             source_name: Arc::from("test.txt"),
             is_streaming: false,
             sections: Arc::from(make_sections().as_slice()),
         };
         let cloned = ctx.clone();
-        assert_eq!(&*cloned.source_type, "Bugreport");
+        assert_eq!(cloned.source_type, crate::core::session::SourceType::Bugreport);
         assert_eq!(cloned.sections.len(), 3);
+    }
+
+    #[test]
+    fn pipeline_context_test_default() {
+        let ctx = PipelineContext::test_default();
+        assert_eq!(ctx.source_type, crate::core::session::SourceType::Logcat);
+        assert!(!ctx.is_streaming);
+        assert!(ctx.sections.is_empty());
     }
 }
