@@ -202,15 +202,15 @@
     {
       "id": "wlan-disconnect-events",
       "name": "WLAN Disconnect Events",
-      "version": "1.4.0",
-      "description": "Captures WiFi disconnection events from bugreport WifiStateMachine dumps and live logcat. Extracts IEEE 802.11 reason codes, locally-generated flags, BSSID, and SSID. Uses section filtering to avoid bugreport cross-section duplication.",
+      "version": "1.5.1",
+      "description": "Captures WiFi disconnection events from bugreport WifiStateMachine dumps and live logcat. Extracts IEEE 802.11 reason codes, locally-generated flags, BSSID, and SSID. Content-based dedup avoids bugreport cross-section duplication.",
       "path": "processors/wlan_disconnect_events.yaml",
       "tags": ["wifi", "network", "wlan", "disconnect", "android"],
       "sha256": "",
       "category": "network",
       "license": null,
       "processor_type": "reporter",
-      "source_types": ["logcat"],
+      "source_types": ["logcat", "bugreport"],
       "deprecated": false
     },
     {
