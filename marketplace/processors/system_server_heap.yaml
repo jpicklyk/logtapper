@@ -1,10 +1,12 @@
 meta:
   id: "system-server-heap"
   name: "System Server Heap Monitor"
-  version: "1.0.0"
+  version: "1.1.0"
   author: "LogTapper"
   description: "Monitors Android system_server Java heap pressure via Watchdog !@Sync messages. Tracks heap used/max and pressure level over time. Critical heap pressure often precedes system_server restart or device reboot."
   tags: ["memory", "heap", "system_server", "watchdog", "oom", "android"]
+  # Watchdog heap telemetry appears in SYSTEM LOG (live) and DUMPSYS NORMAL (bugreport dumps)
+  sections: ["SYSTEM LOG", "DUMPSYS NORMAL"]
 
 vars:
   - name: sample_count
@@ -165,7 +167,7 @@ pipeline:
         y: { field: fd_count, label: "FD Count" }
 
 schema:
-  source_types: ["logcat"]
+  source_types: ["logcat", "bugreport"]
   emissions:
     - name: heap_used
       type: int

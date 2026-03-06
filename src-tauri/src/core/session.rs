@@ -71,6 +71,8 @@ pub enum SourceType {
     Radio,
     Events,
     Bugreport,
+    /// Samsung dumpstate — superset of Bugreport with additional Samsung-specific sections.
+    Dumpstate,
     Tombstone,
     ANRTrace,
     Custom { parser_id: String },
@@ -78,8 +80,18 @@ pub enum SourceType {
 
 impl SourceType {
     /// Case-insensitive match against a string (e.g. from YAML `source_type_is` filter rules).
+    /// Dumpstate is a superset of Bugreport: `Dumpstate.matches_str("bugreport")` returns true,
+    /// but `Bugreport.matches_str("dumpstate")` returns false.
     pub fn matches_str(&self, s: &str) -> bool {
-        self.to_string().eq_ignore_ascii_case(s)
+        if self.to_string().eq_ignore_ascii_case(s) {
+            return true;
+        }
+        // Dumpstate is a superset of Bugreport — a processor requesting "bugreport"
+        // should also match dumpstate files.
+        if matches!(self, SourceType::Dumpstate) && s.eq_ignore_ascii_case("bugreport") {
+            return true;
+        }
+        false
     }
 }
 
@@ -91,6 +103,7 @@ impl std::fmt::Display for SourceType {
             SourceType::Radio => write!(f, "Radio"),
             SourceType::Events => write!(f, "Events"),
             SourceType::Bugreport => write!(f, "Bugreport"),
+            SourceType::Dumpstate => write!(f, "Dumpstate"),
             SourceType::Tombstone => write!(f, "Tombstone"),
             SourceType::ANRTrace => write!(f, "ANRTrace"),
             SourceType::Custom { parser_id } => write!(f, "Custom({})", parser_id),
@@ -345,7 +358,12 @@ fn detect_source_type(mmap: &Mmap) -> SourceType {
     let sample = &mmap[..mmap.len().min(4096)];
     let text = std::str::from_utf8(sample).unwrap_or("");
 
-    if text.contains("== dumpstate:") || text.contains("Bugreport format version:") {
+    // Samsung dumpstate files start with "== dumpstate:" and are a superset of bugreport.
+    // Standard ADB bugreports start with "Bugreport format version:".
+    if text.contains("== dumpstate:") {
+        return SourceType::Dumpstate;
+    }
+    if text.contains("Bugreport format version:") {
         return SourceType::Bugreport;
     }
     if text.contains("--------- beginning of") || is_logcat_threadtime(text) {
@@ -576,7 +594,7 @@ pub(crate) fn build_partial_line_index(
 
 /// Scan `line_meta` to extract named section boundaries for Bugreport files.
 pub(crate) fn build_section_index(line_meta: &[LineMeta], source_type: &SourceType, interner: &TagInterner) -> Vec<SectionInfo> {
-    if !matches!(source_type, SourceType::Bugreport) {
+    if !matches!(source_type, SourceType::Bugreport | SourceType::Dumpstate) {
         return Vec::new();
     }
 
@@ -609,7 +627,7 @@ pub(crate) fn parser_for(source_type: &SourceType) -> Box<dyn LogParser> {
     match source_type {
         SourceType::Logcat | SourceType::Radio | SourceType::Events => Box::new(LogcatParser),
         SourceType::Kernel => Box::new(KernelParser),
-        SourceType::Bugreport => Box::new(BugreportParser::new()),
+        SourceType::Bugreport | SourceType::Dumpstate => Box::new(BugreportParser::new()),
         _ => Box::new(LogcatParser),
     }
 }

@@ -1,7 +1,7 @@
 type: state_tracker
 id: samsung-auto-blocker
 name: Auto Blocker
-version: 1.0.0
+version: 1.1.0
 author: LogTapper
 description: >-
   Tracks Samsung Auto Blocker state. When enabled, blocks USB debugging,
@@ -48,6 +48,7 @@ transitions:
 
   - name: Auto Blocker On (dumpstate)
     filter:
+      section: "DUMPSYS NORMAL"
       message_regex: 'rampart_main_setting_alias\s*\|\s*Auto Blocker\s*\|[^|]*\|\s*1\s*\|'
     set:
       enabled: true
@@ -55,6 +56,7 @@ transitions:
 
   - name: Auto Blocker Off (dumpstate)
     filter:
+      section: "DUMPSYS NORMAL"
       message_regex: 'rampart_main_setting_alias\s*\|\s*Auto Blocker\s*\|[^|]*\|\s*0\s*\|'
     set:
       enabled: false
@@ -65,7 +67,7 @@ output:
   annotate: true
 
 schema:
-  source_types: ["logcat"]
+  source_types: ["logcat", "dumpstate"]
   emissions: []
   mcp:
     summary:

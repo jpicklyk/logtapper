@@ -1,7 +1,7 @@
 meta:
   id: connectivity-check-probes
   name: Connectivity Check Probes
-  version: 1.0.0
+  version: 1.1.0
   author: LogTapper
   description: >
     Captures every Android NetworkMonitor probe (DNS, HTTP, HTTPS, FALLBACK)
@@ -9,6 +9,8 @@ meta:
     as a root cause of connectivity check failures. Aggregates probe outcomes
     by type and result, and charts probe latency over time.
   tags: [network, connectivity, dns, android]
+  # Only matches logcat entries in the SYSTEM LOG section of bugreports
+  sections: ["SYSTEM LOG"]
 
 vars:
   - name: total_probes

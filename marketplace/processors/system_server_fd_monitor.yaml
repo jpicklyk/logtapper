@@ -1,10 +1,12 @@
 meta:
   id: "system-server-fd-monitor"
   name: "System Server FD Monitor"
-  version: "1.0.0"
+  version: "1.1.0"
   author: "LogTapper"
   description: "Extracts Samsung Watchdog FD telemetry from system_server. Tracks FD count over time, classifies into normal/elevated/critical states, and detects the boot FD spike pattern."
   tags: ["fd", "file-descriptor", "system_server", "watchdog", "leak", "android"]
+  # Watchdog FD telemetry appears in SYSTEM LOG (live) and DUMPSYS NORMAL (bugreport dumps)
+  sections: ["SYSTEM LOG", "DUMPSYS NORMAL"]
 
 vars:
   - name: peak_fd_count
@@ -145,7 +147,7 @@ pipeline:
         y: { field: fd_state, label: "Count", aggregation: count }
 
 schema:
-  source_types: ["logcat"]
+  source_types: ["logcat", "bugreport"]
   emissions:
     - name: fd_count
       type: int

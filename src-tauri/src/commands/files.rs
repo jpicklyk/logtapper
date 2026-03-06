@@ -269,7 +269,7 @@ async fn run_background_indexer(
     // set dumpstate_year before it can year-correct logcat timestamps.  The
     // header was in the initial chunk (already indexed), so re-feed that one
     // line to the fresh parser before it processes the remaining chunks.
-    if matches!(source_type, crate::core::session::SourceType::Bugreport) && start_byte > 0 {
+    if matches!(source_type, crate::core::session::SourceType::Bugreport | crate::core::session::SourceType::Dumpstate) && start_byte > 0 {
         let initial = std::str::from_utf8(&data[..start_byte.min(data.len())]).unwrap_or("");
         for line in initial.lines() {
             if line.trim_start().starts_with("== dumpstate:") {
