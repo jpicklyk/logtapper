@@ -6,7 +6,7 @@ use regex::Regex;
 use serde_json::Value as JsonValue;
 use std::collections::{HashMap, VecDeque};
 
-use crate::core::line::LineContext;
+use crate::core::line::{LineContext, PipelineContext};
 // Arc<str> fields deref to &str, so most comparisons work via deref.
 use super::schema::{CorrelatorDef, ExtractField, FilterRule, SourceDef};
 
@@ -73,7 +73,7 @@ impl<'a> CorrelatorRun<'a> {
     }
 
     /// Process one log line through all source definitions.
-    pub fn process_line(&mut self, line: &LineContext) {
+    pub fn process_line(&mut self, line: &LineContext, _pipeline_ctx: &PipelineContext) {
         let trigger_id = self.def.correlate.trigger.clone();
 
         // Snapshot which source IDs match this line (avoid borrow issues).
@@ -233,6 +233,7 @@ impl<'a> CorrelatorRun<'a> {
                 line.level >= min
             }
             FilterRule::TimeRange { .. } => true, // Not needed for correlators
+            FilterRule::SourceTypeIs { .. } | FilterRule::SectionIs { .. } => true, // Handled at pipeline level
         }
     }
 

@@ -1,7 +1,7 @@
 use rhai::{Dynamic, Map as RhaiMap, Scope};
 use serde_json::Value as JsonValue;
 
-use crate::core::line::LineContext;
+use crate::core::line::{LineContext, PipelineContext, section_for_line};
 use crate::processors::vars::{VarStore, dynamic_to_json};
 
 // ---------------------------------------------------------------------------
@@ -13,6 +13,7 @@ pub struct BridgeInput<'a> {
     pub fields: &'a [(String, JsonValue)],
     pub vars: &'a VarStore,
     pub history: &'a [LineContext],
+    pub pipeline_ctx: &'a PipelineContext,
 }
 
 // ---------------------------------------------------------------------------
@@ -43,6 +44,11 @@ pub fn build_scope<'src>(input: &BridgeInput<'_>) -> Scope<'src> {
     line_map.insert("tid".into(), Dynamic::from(input.line.tid as i64));
     line_map.insert("message".into(), Dynamic::from(input.line.message.to_string()));
     line_map.insert("source_id".into(), Dynamic::from(input.line.source_id.to_string()));
+    line_map.insert("source_type".into(), Dynamic::from(input.pipeline_ctx.source_type.to_string()));
+    line_map.insert("section".into(), Dynamic::from(section_for_line(&input.pipeline_ctx.sections, input.line.source_line_num).to_string()));
+    line_map.insert("line_number".into(), Dynamic::from(input.line.source_line_num as i64));
+    line_map.insert("is_streaming".into(), Dynamic::from(input.pipeline_ctx.is_streaming));
+    line_map.insert("source_name".into(), Dynamic::from(input.pipeline_ctx.source_name.to_string()));
     scope.push("line", Dynamic::from(line_map));
 
     // ── fields ────────────────────────────────────────────────────────────────
@@ -89,6 +95,11 @@ pub fn update_scope(scope: &mut Scope<'_>, input: &BridgeInput<'_>) {
     line_map.insert("tid".into(), Dynamic::from(input.line.tid as i64));
     line_map.insert("message".into(), Dynamic::from(input.line.message.to_string()));
     line_map.insert("source_id".into(), Dynamic::from(input.line.source_id.to_string()));
+    line_map.insert("source_type".into(), Dynamic::from(input.pipeline_ctx.source_type.to_string()));
+    line_map.insert("section".into(), Dynamic::from(section_for_line(&input.pipeline_ctx.sections, input.line.source_line_num).to_string()));
+    line_map.insert("line_number".into(), Dynamic::from(input.line.source_line_num as i64));
+    line_map.insert("is_streaming".into(), Dynamic::from(input.pipeline_ctx.is_streaming));
+    line_map.insert("source_name".into(), Dynamic::from(input.pipeline_ctx.source_name.to_string()));
     scope.set_value("line", Dynamic::from(line_map));
 
     // ── fields ─────────────────────────────────────────────────────────────

@@ -7,7 +7,7 @@ use std::sync::Arc;
 /// Inline field storage — most extract stages produce <= 4 fields per line.
 type FieldVec = SmallVec<[(String, JsonValue); 4]>;
 
-use crate::core::line::LineContext;
+use crate::core::line::{LineContext, PipelineContext};
 use super::schema::{
     AggType, CastType, ExtractField, FilterRule, FilterStage, PipelineStage, ProcessorDef,
 };
@@ -74,7 +74,7 @@ impl<'a> ProcessorRun<'a> {
     }
 
     /// Process a single line through the entire pipeline.
-    pub fn process_line(&mut self, line: &LineContext) {
+    pub fn process_line(&mut self, line: &LineContext, pipeline_ctx: &PipelineContext) {
         // Extracted fields accumulate across stages.
         let mut fields: FieldVec = SmallVec::new();
 
@@ -96,6 +96,7 @@ impl<'a> ProcessorRun<'a> {
                         fields: fields.as_slice(),
                         vars: &self.vars,
                         history: &self.history,
+                        pipeline_ctx,
                     };
                     if let Ok((new_vars, new_emissions)) = engine.run_script(&ss.src, &input) {
                         // Merge var updates
@@ -206,6 +207,7 @@ impl<'a> ProcessorRun<'a> {
                 let time_of_day = ts_nanos.rem_euclid(nanos_per_day);
                 time_of_day >= from_ns && time_of_day <= to_ns
             }
+            FilterRule::SourceTypeIs { .. } | FilterRule::SectionIs { .. } => true, // Handled at pipeline level
         }
     }
 

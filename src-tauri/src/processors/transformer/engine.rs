@@ -130,6 +130,7 @@ fn rule_matches(regex_cache: &mut HashMap<String, Regex>, rule: &FilterRule, lin
             let to_ns = parse_time_hms(to);
             time_of_day >= from_ns && time_of_day <= to_ns
         }
+        FilterRule::SourceTypeIs { .. } | FilterRule::SectionIs { .. } => true, // Handled at pipeline level
     }
 }
 

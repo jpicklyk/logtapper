@@ -1,10 +1,18 @@
 meta:
   id: "wlan-disconnect-events"
   name: "WLAN Disconnect Events"
-  version: "1.3.0"
+  version: "1.4.0"
   author: "LogTapper"
-  description: "Captures WiFi disconnection events from bugreport WifiStateMachine dumps and live logcat. Extracts IEEE 802.11 reason codes, locally-generated flags, BSSID, and SSID. Bugreport mode targets the WifiStateMachine dump format exclusively to avoid cross-section duplication."
+  description: "Captures WiFi disconnection events from bugreport WifiStateMachine dumps and live logcat. Extracts IEEE 802.11 reason codes, locally-generated flags, BSSID, and SSID. Uses section filtering to restrict bugreport processing to SYSTEM LOG, avoiding cross-section duplication."
   tags: ["wifi", "network", "wlan", "disconnect", "android"]
+
+# Restrict bugreport processing to the SYSTEM LOG section where WifiStateMachine
+# logcat entries live. Lines in other sections (WifiMetrics, DUMP OF SERVICE wifi,
+# etc.) are skipped before parsing — this prevents double-counting the same
+# NETWORK_DISCONNECTION_EVENT across multiple bugreport sections.
+# For pure logcat files (no sections), this is a no-op and all lines are processed.
+sections:
+  - "SYSTEM LOG"
 
 vars:
   - name: total_disconnects
@@ -94,13 +102,8 @@ pipeline:
     src: |
       let msg = line.message;
 
-      // Guard: NETWORK_DISCONNECTION_EVENT lines from non-WifiStateMachine sections
-      // lack reasonCode/locallyGenerated — skip them to avoid duplicates.
-      if "NETWORK_DISCONNECTION_EVENT" in msg {
-        if !("reason_num" in fields) && !("lg_bool" in fields) {
-          return;
-        }
-      }
+      // Section filtering is handled by the top-level `sections` field which
+      // restricts bugreport processing to SYSTEM LOG. No content-sniffing needed.
 
       // Classify event type based on source marker
       let event_type = "disconnect";

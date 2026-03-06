@@ -8,8 +8,9 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::AppState;
+use crate::core::line::PipelineContext;
 use crate::core::log_source::FileLogSource;
-use crate::core::session::parser_for;
+use crate::core::session::{parser_for, SectionInfo};
 use crate::processors::ProcessorKind;
 use crate::processors::correlator::engine::CorrelatorRun;
 use crate::processors::reporter::engine::ProcessorRun;
@@ -196,6 +197,17 @@ fn extract_regex_literal_prefix(pattern: &str) -> Option<String> {
     }
     let prefix = prefix.trim_end_matches('/').to_string();
     if prefix.is_empty() { None } else { Some(prefix) }
+}
+
+/// Check if a set of filter rules contains a SourceTypeIs that doesn't match the current source type.
+fn excluded_by_source_type(rules: &[crate::processors::reporter::schema::FilterRule], source_type: &str) -> bool {
+    rules.iter().any(|rule| {
+        matches!(
+            rule,
+            crate::processors::reporter::schema::FilterRule::SourceTypeIs { source_type: st }
+                if !st.eq_ignore_ascii_case(source_type)
+        )
+    })
 }
 
 /// Collect the union of all tag filters from Layer 2 processors only.
@@ -541,29 +553,29 @@ pub fn execute_pipeline(
             .collect()
     };
 
-    let reporter_defs: Vec<(String, crate::processors::reporter::schema::ReporterDef)> = {
+    let mut reporter_defs: Vec<(String, crate::processors::reporter::schema::ReporterDef)> = {
         let procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
         reporter_ids.iter()
             .filter_map(|id| procs.get(id).and_then(|p| p.as_reporter()).map(|d| (id.clone(), d.clone())))
             .collect()
     };
 
-    let tracker_defs: Vec<(String, crate::processors::state_tracker::schema::StateTrackerDef)> = {
+    let mut tracker_defs: Vec<(String, crate::processors::state_tracker::schema::StateTrackerDef)> = {
         let procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
         tracker_ids.iter()
             .filter_map(|id| procs.get(id).and_then(|p| p.as_state_tracker()).map(|d| (id.clone(), d.clone())))
             .collect()
     };
 
-    let correlator_defs: Vec<(String, crate::processors::correlator::schema::CorrelatorDef)> = {
+    let mut correlator_defs: Vec<(String, crate::processors::correlator::schema::CorrelatorDef)> = {
         let procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
         correlator_ids.iter()
             .filter_map(|id| procs.get(id).and_then(|p| p.as_correlator()).map(|d| (id.clone(), d.clone())))
             .collect()
     };
 
-    // ── Snapshot source data + section ranges ────────────────────────────────
-    let (source_snapshot, source_id, section_ranges, source_type) = {
+    // ── Snapshot source data ─────────────────────────────────────────────────
+    let (source_snapshot, source_id, source_type, src_sections) = {
         let sessions = state.sessions.lock().map_err(|_| "Session lock poisoned")?;
         let session = sessions.get(session_id)
             .ok_or_else(|| format!("Session '{session_id}' not found"))?;
@@ -586,25 +598,71 @@ pub fn execute_pipeline(
             }
         };
 
-        // Section ranges indexed parallel to reporter_defs
-        let sections = src.sections();
-        let ranges: Vec<Option<Vec<(usize, usize)>>> = reporter_defs.iter()
-            .map(|(_, def)| {
-                if def.sections.is_empty() {
-                    None
-                } else {
-                    let r: Vec<(usize, usize)> = def.sections.iter()
-                        .filter_map(|name| sections.iter().find(|s| s.name == *name))
-                        .map(|s| (s.start_line, s.end_line))
-                        .collect();
-                    if r.is_empty() { None } else { Some(r) }
-                }
-            })
-            .collect();
+        let src_sections: Vec<SectionInfo> = src.sections().to_vec();
 
-        (snapshot, sid, ranges, stype)
+        (snapshot, sid, stype, src_sections)
     };
     // Sessions lock released.
+
+    // ── Pre-filter: exclude processors whose source_type filter doesn't match ─
+    let source_type_str = source_type.to_string();
+    reporter_defs.retain(|(_, def)| {
+        !def.pipeline.iter().any(|stage| {
+            if let crate::processors::reporter::schema::PipelineStage::Filter(f) = stage {
+                excluded_by_source_type(&f.rules, &source_type_str)
+            } else {
+                false
+            }
+        })
+    });
+    tracker_defs.retain(|(_, def)| {
+        !def.transitions.iter().any(|t| {
+            t.filter.source_type.as_ref()
+                .is_some_and(|st| !st.eq_ignore_ascii_case(&source_type_str))
+        })
+    });
+    correlator_defs.retain(|(_, def)| {
+        !def.sources.iter().any(|src| {
+            excluded_by_source_type(&src.filter, &source_type_str)
+        })
+    });
+
+    // ── Section ranges indexed parallel to (filtered) reporter_defs ───────────
+    let section_ranges: Vec<Option<Vec<(usize, usize)>>> = reporter_defs.iter()
+        .map(|(_, def)| {
+            // Collect section names from both top-level sections AND SectionIs filter rules
+            let mut section_names: Vec<&str> = def.sections.iter().map(|s| s.as_str()).collect();
+
+            for stage in &def.pipeline {
+                if let crate::processors::reporter::schema::PipelineStage::Filter(f) = stage {
+                    for rule in &f.rules {
+                        if let crate::processors::reporter::schema::FilterRule::SectionIs { section } = rule {
+                            if !section_names.contains(&section.as_str()) {
+                                section_names.push(section.as_str());
+                            }
+                        }
+                    }
+                }
+            }
+
+            if section_names.is_empty() {
+                None
+            } else {
+                let r: Vec<(usize, usize)> = section_names.iter()
+                    .filter_map(|name| src_sections.iter().find(|s| s.name == *name))
+                    .map(|s| (s.start_line, s.end_line))
+                    .collect();
+                if r.is_empty() { None } else { Some(r) }
+            }
+        })
+        .collect();
+
+    let pipeline_ctx = PipelineContext {
+        source_type: Arc::from(source_type.to_string().as_str()),
+        source_name: Arc::from(source_id.as_str()),
+        is_streaming: matches!(source_snapshot, SourceSnapshot::Stream { .. }),
+        sections: Arc::from(src_sections.as_slice()),
+    };
 
     let total_lines = source_snapshot.total_lines();
     let parser = parser_for(&source_type);
@@ -811,12 +869,14 @@ pub fn execute_pipeline(
         // Each processor gets its own rayon task iterating all lines in the chunk.
         // State trackers, reporters, and correlators run in parallel with each other.
         rayon::scope(|s| {
+            let pctx = &pipeline_ctx;
+
             // Layer 2a: StateTrackers — one task per tracker
             for (_, run) in tracker_runs.iter_mut() {
                 let lines = tracker_lines;
                 s.spawn(move |_| {
                     for line in lines {
-                        run.process_line(line);
+                        run.process_line(line, pctx);
                     }
                 });
             }
@@ -833,7 +893,7 @@ pub fn execute_pipeline(
                                 continue;
                             }
                         }
-                        run.process_line(ctx);
+                        run.process_line(ctx, pctx);
                     }
                 });
             }
@@ -843,7 +903,7 @@ pub fn execute_pipeline(
                 let lines = &enriched_chunk;
                 s.spawn(move |_| {
                     for line in lines.iter() {
-                        run.process_line(line);
+                        run.process_line(line, pctx);
                     }
                 });
             }

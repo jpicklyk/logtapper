@@ -49,6 +49,10 @@ pub struct TransitionFilter {
     pub message_regex: Option<String>,
     pub message_contains: Option<String>,
     pub level: Option<String>,
+    #[serde(default)]
+    pub source_type: Option<String>,
+    #[serde(default)]
+    pub section: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

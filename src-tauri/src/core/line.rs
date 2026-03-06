@@ -35,6 +35,41 @@ pub struct Annotation {
     pub color: Option<String>,
 }
 
+use crate::core::session::SectionInfo;
+
+/// Pipeline-wide context passed alongside LineContext to processors.
+/// Contains metadata that the pipeline knows but parsers don't produce.
+#[derive(Debug, Clone)]
+pub struct PipelineContext {
+    /// Source type string: "Logcat", "Bugreport", "Kernel", etc.
+    pub source_type: Arc<str>,
+    /// Source name (filename or device serial)
+    pub source_name: Arc<str>,
+    /// True for ADB streaming, false for file analysis
+    pub is_streaming: bool,
+    /// Sorted section info for binary search (bugreport only; empty for other types)
+    pub sections: Arc<[SectionInfo]>,
+}
+
+/// Look up which section a given line belongs to via binary search.
+/// Returns the section name, or "" if the line is not in any section.
+pub fn section_for_line(sections: &[SectionInfo], line_num: usize) -> &str {
+    if sections.is_empty() {
+        return "";
+    }
+    // Find the last section whose start_line <= line_num
+    let pos = sections.partition_point(|s| s.start_line <= line_num);
+    if pos == 0 {
+        return ""; // line_num is before the first section
+    }
+    let section = &sections[pos - 1];
+    if line_num <= section.end_line {
+        &section.name
+    } else {
+        "" // line_num is between sections (gap)
+    }
+}
+
 /// Full parsed representation of a single log line — used by processors/scripts.
 #[derive(Debug, Clone, Serialize)]
 pub struct LineContext {
@@ -196,4 +231,81 @@ pub struct SearchSummary {
     pub match_line_nums: Vec<usize>,
     pub by_level: HashMap<String, usize>,
     pub by_tag: HashMap<String, usize>,
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::session::SectionInfo;
+
+    fn make_sections() -> Vec<SectionInfo> {
+        vec![
+            SectionInfo { name: "SYSTEM LOG".to_string(), start_line: 10, end_line: 50 },
+            SectionInfo { name: "DUMP OF SERVICE wifi".to_string(), start_line: 60, end_line: 100 },
+            SectionInfo { name: "DUMPSYS".to_string(), start_line: 120, end_line: 200 },
+        ]
+    }
+
+    #[test]
+    fn section_for_line_empty_sections() {
+        assert_eq!(section_for_line(&[], 42), "");
+    }
+
+    #[test]
+    fn section_for_line_before_first_section() {
+        let sections = make_sections();
+        assert_eq!(section_for_line(&sections, 5), "");
+    }
+
+    #[test]
+    fn section_for_line_at_start_boundary() {
+        let sections = make_sections();
+        assert_eq!(section_for_line(&sections, 10), "SYSTEM LOG");
+    }
+
+    #[test]
+    fn section_for_line_at_end_boundary() {
+        let sections = make_sections();
+        assert_eq!(section_for_line(&sections, 50), "SYSTEM LOG");
+    }
+
+    #[test]
+    fn section_for_line_middle_of_section() {
+        let sections = make_sections();
+        assert_eq!(section_for_line(&sections, 30), "SYSTEM LOG");
+        assert_eq!(section_for_line(&sections, 80), "DUMP OF SERVICE wifi");
+        assert_eq!(section_for_line(&sections, 150), "DUMPSYS");
+    }
+
+    #[test]
+    fn section_for_line_between_sections() {
+        let sections = make_sections();
+        // Gap between SYSTEM LOG (end 50) and wifi (start 60)
+        assert_eq!(section_for_line(&sections, 55), "");
+        // Gap between wifi (end 100) and DUMPSYS (start 120)
+        assert_eq!(section_for_line(&sections, 110), "");
+    }
+
+    #[test]
+    fn section_for_line_after_last_section() {
+        let sections = make_sections();
+        assert_eq!(section_for_line(&sections, 250), "");
+    }
+
+    #[test]
+    fn pipeline_context_clone() {
+        let ctx = PipelineContext {
+            source_type: Arc::from("Bugreport"),
+            source_name: Arc::from("test.txt"),
+            is_streaming: false,
+            sections: Arc::from(make_sections().as_slice()),
+        };
+        let cloned = ctx.clone();
+        assert_eq!(&*cloned.source_type, "Bugreport");
+        assert_eq!(cloned.sections.len(), 3);
+    }
 }

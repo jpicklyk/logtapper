@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 use regex::Regex;
 use serde_json::Value as JsonValue;
 
-use crate::core::line::{LineContext, LogLevel};
+use crate::core::line::{LineContext, LogLevel, PipelineContext};
 use crate::processors::state_tracker::schema::{StateTrackerDef, TransitionFilter};
 use crate::processors::state_tracker::types::{
     ContinuousTrackerState, FieldChange, StateSnapshot, StateTrackerResult, StateTransition,
@@ -35,9 +35,9 @@ impl StateTrackerRun {
             tracker_id: tracker_id.to_string(),
         }
     }
-    pub fn process_line(&mut self, line: &LineContext) {
+    pub fn process_line(&mut self, line: &LineContext, pipeline_ctx: &PipelineContext) {
         for rule in &self.def.transitions {
-            let captures = match matches_filter_with_captures(&rule.filter, line) {
+            let captures = match matches_filter_with_captures(&rule.filter, line, pipeline_ctx) {
                 Some(caps) => caps,
                 None => continue,
             };
@@ -153,7 +153,21 @@ fn level_char(level: &LogLevel) -> &'static str {
 fn matches_filter_with_captures(
     filter: &TransitionFilter,
     line: &LineContext,
+    pipeline_ctx: &PipelineContext,
 ) -> Option<Option<Vec<(usize, String)>>> {
+    // Check source_type and section first (cheapest comparisons)
+    if let Some(ref st) = filter.source_type {
+        if !pipeline_ctx.source_type.eq_ignore_ascii_case(st) {
+            return None;
+        }
+    }
+    if let Some(ref sec) = filter.section {
+        let line_section = crate::core::line::section_for_line(&pipeline_ctx.sections, line.source_line_num);
+        if line_section != sec {
+            return None;
+        }
+    }
+
     if let Some(tag) = &filter.tag {
         if &*line.tag != tag.as_str() {
             return None;
@@ -293,7 +307,7 @@ mod tests {
         let mut run = StateTrackerRun::new("__battery_state", &def);
         // Samsung ACTION_BATTERY_CHANGED — status:3 (discharging), all plug booleans false
         let msg = "Sending ACTION_BATTERY_CHANGED: level:99, status:3, health:2, remain:0, ac:false, usb:false, wireless:false, pogo:false, misc:0x10000";
-        run.process_line(&make_line(1, "BatteryService", msg));
+        run.process_line(&make_line(1, "BatteryService", msg), &test_pipeline_ctx());
         assert_eq!(run.transitions.len(), 1);
         assert_eq!(run.transitions[0].transition_name, "Discharging");
         assert_eq!(run.current_state["level"], json!("99"));
@@ -310,7 +324,7 @@ mod tests {
         let mut run = StateTrackerRun::new("__battery_state", &def);
         // Samsung — status:2 (charging), usb:true
         let msg = "Sending ACTION_BATTERY_CHANGED: level:85, status:2, health:2, remain:0, ac:false, usb:true, wireless:false, pogo:false";
-        run.process_line(&make_line(1, "BatteryService", msg));
+        run.process_line(&make_line(1, "BatteryService", msg), &test_pipeline_ctx());
         assert_eq!(run.transitions.len(), 1);
         assert_eq!(run.transitions[0].transition_name, "Charging via USB");
         assert_eq!(run.current_state["level"], json!("85"));
@@ -325,12 +339,21 @@ mod tests {
         let mut run = StateTrackerRun::new("__battery_state", &def);
         // AOSP — level=90, status=2, plugged=1 (AC)
         let msg = "level=90, status=2, health=2, present=true, voltage=4200, plugged=1, technology=Li-ion";
-        run.process_line(&make_line(1, "BatteryService", msg));
+        run.process_line(&make_line(1, "BatteryService", msg), &test_pipeline_ctx());
         assert_eq!(run.transitions.len(), 1);
         assert_eq!(run.transitions[0].transition_name, "AC Plugged (AOSP)");
         assert_eq!(run.current_state["level"], json!("90"));
         assert_eq!(run.current_state["charging"], json!(true));
         assert_eq!(run.current_state["plugged"], json!("ac"));
+    }
+
+    fn test_pipeline_ctx() -> PipelineContext {
+        PipelineContext {
+            source_type: Arc::from("Logcat"),
+            source_name: Arc::from("test"),
+            is_streaming: false,
+            sections: Arc::from([]),
+        }
     }
 
     fn make_line(source_line_num: usize, tag: &str, message: &str) -> LineContext {
@@ -417,7 +440,7 @@ mod tests {
         let def = make_def();
         let mut run = StateTrackerRun::new("wifi", &def);
 
-        run.process_line(&make_line(1, "WifiStateMachine", "WiFi ENABLED"));
+        run.process_line(&make_line(1, "WifiStateMachine", "WiFi ENABLED"), &test_pipeline_ctx());
         assert_eq!(run.transitions.len(), 1);
         assert_eq!(run.transitions[0].transition_name, "WiFi Enabled");
         assert_eq!(run.current_state["enabled"], json!(true));
@@ -428,7 +451,7 @@ mod tests {
         let def = make_def();
         let mut run = StateTrackerRun::new("wifi", &def);
 
-        run.process_line(&make_line(1, "SomeOtherTag", "WiFi ENABLED"));
+        run.process_line(&make_line(1, "SomeOtherTag", "WiFi ENABLED"), &test_pipeline_ctx());
         assert_eq!(run.transitions.len(), 0);
     }
 
@@ -437,7 +460,7 @@ mod tests {
         let def = make_def();
         let mut run = StateTrackerRun::new("wifi", &def);
 
-        run.process_line(&make_line(1, "WifiInfo", r#"SSID: "HomeNetwork" signal: -60"#));
+        run.process_line(&make_line(1, "WifiInfo", r#"SSID: "HomeNetwork" signal: -60"#), &test_pipeline_ctx());
         assert_eq!(run.transitions.len(), 1);
         assert_eq!(run.current_state["ssid"], json!("HomeNetwork"));
     }
@@ -447,11 +470,11 @@ mod tests {
         let def = make_def();
         let mut run = StateTrackerRun::new("wifi", &def);
 
-        run.process_line(&make_line(1, "WifiStateMachine", "WiFi ENABLED"));
-        run.process_line(&make_line(2, "WifiInfo", r#"SSID: "HomeNetwork""#));
+        run.process_line(&make_line(1, "WifiStateMachine", "WiFi ENABLED"), &test_pipeline_ctx());
+        run.process_line(&make_line(2, "WifiInfo", r#"SSID: "HomeNetwork""#), &test_pipeline_ctx());
         assert_eq!(run.current_state["ssid"], json!("HomeNetwork"));
 
-        run.process_line(&make_line(3, "WifiStateMachine", "WiFi DISABLED"));
+        run.process_line(&make_line(3, "WifiStateMachine", "WiFi DISABLED"), &test_pipeline_ctx());
         assert_eq!(run.current_state["ssid"], json!(""));
         assert_eq!(run.current_state["enabled"], json!(false));
     }
@@ -460,7 +483,7 @@ mod tests {
     fn test_get_state_at_line_before_any_transition() {
         let def = make_def();
         let mut run = StateTrackerRun::new("wifi", &def);
-        run.process_line(&make_line(10, "WifiStateMachine", "WiFi ENABLED"));
+        run.process_line(&make_line(10, "WifiStateMachine", "WiFi ENABLED"), &test_pipeline_ctx());
 
         let snap = run.get_state_at_line(5);
         assert_eq!(snap.fields["enabled"], json!(false));
@@ -470,8 +493,8 @@ mod tests {
     fn test_get_state_at_line_at_transition() {
         let def = make_def();
         let mut run = StateTrackerRun::new("wifi", &def);
-        run.process_line(&make_line(10, "WifiStateMachine", "WiFi ENABLED"));
-        run.process_line(&make_line(20, "WifiStateMachine", "WiFi DISABLED"));
+        run.process_line(&make_line(10, "WifiStateMachine", "WiFi ENABLED"), &test_pipeline_ctx());
+        run.process_line(&make_line(20, "WifiStateMachine", "WiFi DISABLED"), &test_pipeline_ctx());
 
         let snap = run.get_state_at_line(10);
         assert_eq!(snap.fields["enabled"], json!(true));
@@ -484,7 +507,7 @@ mod tests {
     fn test_get_state_at_line_past_end() {
         let def = make_def();
         let mut run = StateTrackerRun::new("wifi", &def);
-        run.process_line(&make_line(10, "WifiStateMachine", "WiFi ENABLED"));
+        run.process_line(&make_line(10, "WifiStateMachine", "WiFi ENABLED"), &test_pipeline_ctx());
 
         let snap = run.get_state_at_line(99999);
         assert_eq!(snap.fields["enabled"], json!(true));
@@ -494,14 +517,14 @@ mod tests {
     fn test_new_seeded_continuity() {
         let def = make_def();
         let mut run1 = StateTrackerRun::new("wifi", &def);
-        run1.process_line(&make_line(1, "WifiStateMachine", "WiFi ENABLED"));
+        run1.process_line(&make_line(1, "WifiStateMachine", "WiFi ENABLED"), &test_pipeline_ctx());
 
         let saved = run1.into_continuous_state(1);
         assert_eq!(saved.current_state["enabled"], json!(true));
         assert_eq!(saved.transitions.len(), 1);
 
         let mut run2 = StateTrackerRun::new_seeded("wifi", &def, saved);
-        run2.process_line(&make_line(5, "WifiStateMachine", "WiFi DISABLED"));
+        run2.process_line(&make_line(5, "WifiStateMachine", "WiFi DISABLED"), &test_pipeline_ctx());
 
         let result = run2.finish();
         assert_eq!(result.transitions.len(), 2);
@@ -542,7 +565,7 @@ mod tests {
     fn tag_regex_captures_are_dollar_1() {
         let def = make_tag_capture_def();
         let mut run = StateTrackerRun::new("test", &def);
-        run.process_line(&make_line(1, "NetworkMonitor/102", "Validation Time=57086ms"));
+        run.process_line(&make_line(1, "NetworkMonitor/102", "Validation Time=57086ms"), &test_pipeline_ctx());
         assert_eq!(run.transitions.len(), 1);
         assert_eq!(run.current_state["network_id"], json!("102"));
         assert_eq!(run.current_state["time_ms"], json!("57086"));
@@ -575,7 +598,7 @@ mod tests {
             output: StateTrackerOutput { timeline: true, annotate: true },
         };
         let mut run = StateTrackerRun::new("test", &def);
-        run.process_line(&make_line(1, "NetworkMonitor/102", "Validation Time=500ms"));
+        run.process_line(&make_line(1, "NetworkMonitor/102", "Validation Time=500ms"), &test_pipeline_ctx());
         assert_eq!(run.transitions.len(), 1);
         assert_eq!(run.current_state["time_ms"], json!("500"));
     }

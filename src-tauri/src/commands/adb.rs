@@ -10,7 +10,7 @@ use tokio_stream::{wrappers::ReceiverStream, StreamExt as _};
 use crate::anonymizer::LogAnonymizer;
 use crate::commands::AppState;
 use crate::commands::files::LoadResult;
-use crate::core::line::{LineContext, LineMeta, LogLevel, ParsedLineMeta, ViewLine};
+use crate::core::line::{LineContext, LineMeta, LogLevel, ParsedLineMeta, PipelineContext, ViewLine};
 use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;
 use crate::core::log_source::LogSource;
@@ -713,6 +713,13 @@ fn flush_batch(
             .unwrap_or(0)
     };
 
+    let pipeline_ctx = PipelineContext {
+        source_type: std::sync::Arc::from("Logcat"),
+        source_name: std::sync::Arc::from(source_id),
+        is_streaming: true,
+        sections: std::sync::Arc::from([]),
+    };
+
     // ── Step 2: Parse once — derive ParsedLineMeta, ViewLine, and LineContext
     //    from a single parse_line call (eliminates redundant parse_meta) ────────
     struct ParsedLine {
@@ -1026,7 +1033,7 @@ fn flush_batch(
                 // Reuse cached LineContext — no re-parse needed
                 for pl in &parsed {
                     if let Some(ref ctx) = pl.ctx {
-                        run.process_line(ctx);
+                        run.process_line(ctx, &pipeline_ctx);
                     }
                 }
 
@@ -1154,7 +1161,7 @@ fn flush_batch(
                 None => pl.ctx.as_ref(),
             };
             if let Some(ctx) = ctx_ref {
-                run.process_line(ctx);
+                run.process_line(ctx, &pipeline_ctx);
             }
         }
 

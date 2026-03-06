@@ -231,6 +231,8 @@ pub enum FilterRule {
     MessageRegex { pattern: String },
     LevelMin { level: String },
     TimeRange { from: String, to: String },
+    SourceTypeIs { source_type: String },
+    SectionIs { section: String },
 }
 
 // ── Extract ──────────────────────────────────────────────────────────────────
@@ -443,12 +445,14 @@ impl FilterRule {
     /// Returns a sort key: lower = cheaper = should run first.
     pub fn cost_rank(&self) -> u8 {
         match self {
-            FilterRule::LevelMin { .. } => 0,
-            FilterRule::TimeRange { .. } => 1,
-            FilterRule::TagMatch { .. } => 2,
-            FilterRule::MessageContains { .. } => 3,
-            FilterRule::MessageContainsAny { .. } => 4,
-            FilterRule::MessageRegex { .. } => 5,
+            FilterRule::SourceTypeIs { .. } => 0,
+            FilterRule::SectionIs { .. } => 1,
+            FilterRule::LevelMin { .. } => 2,
+            FilterRule::TimeRange { .. } => 3,
+            FilterRule::TagMatch { .. } => 4,
+            FilterRule::MessageContains { .. } => 5,
+            FilterRule::MessageContainsAny { .. } => 6,
+            FilterRule::MessageRegex { .. } => 7,
         }
     }
 
@@ -686,5 +690,43 @@ pipeline:
         assert_eq!(proc.meta.id, "java-crash-tracker");
         assert_eq!(proc.vars.len(), 1);
         assert_eq!(proc.pipeline.len(), 1);
+    }
+
+    #[test]
+    fn deserializes_source_type_is_filter() {
+        let yaml = r#"
+meta:
+  id: test
+  name: Test
+pipeline:
+  - stage: filter
+    rules:
+      - type: source_type_is
+        source_type: Bugreport
+      - type: section_is
+        section: "SYSTEM LOG"
+"#;
+        let proc = ReporterDef::from_yaml(yaml).unwrap();
+        assert_eq!(proc.pipeline.len(), 1);
+        if let PipelineStage::Filter(f) = &proc.pipeline[0] {
+            assert_eq!(f.rules.len(), 2);
+        } else {
+            panic!("Expected filter stage");
+        }
+    }
+
+    #[test]
+    fn cost_rank_ordering() {
+        let rules = vec![
+            FilterRule::MessageRegex { pattern: ".*".to_string() },
+            FilterRule::SourceTypeIs { source_type: "Logcat".to_string() },
+            FilterRule::TagMatch { tags: vec!["test".to_string()], tag_set: HashSet::new() },
+            FilterRule::SectionIs { section: "SYSTEM LOG".to_string() },
+        ];
+        let mut sorted = rules.clone();
+        sorted.sort_by_key(|r| r.cost_rank());
+        // SourceTypeIs (0) should be first, SectionIs (1) second
+        assert!(matches!(sorted[0], FilterRule::SourceTypeIs { .. }));
+        assert!(matches!(sorted[1], FilterRule::SectionIs { .. }));
     }
 }
