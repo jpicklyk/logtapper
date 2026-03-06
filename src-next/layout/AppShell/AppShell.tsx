@@ -25,8 +25,7 @@ import { SettingsPanel } from '../../components/SettingsPanel';
 import { useSettings, useAnonymizerConfig } from '../../hooks';
 import { useCacheManager } from '../../cache';
 import { findTabAcrossTree, allPanes } from '../../hooks/workspace/splitTreeHelpers';
-import { getPendingUpdates, checkUpdates } from '../../bridge/commands';
-import { bus } from '../../events/bus';
+import { usePendingUpdateCount } from '../../context';
 import type {
   WorkspaceLayoutState,
   LeftPaneTab,
@@ -58,39 +57,12 @@ const RIGHT_BOTTOM_ITEMS = [
   { id: 'settings', icon: Settings, label: 'Settings' },
 ];
 
-/** Small hook that tracks pending marketplace update count for the toolbar badge. */
-function useUpdateBadge(): number {
-  const [count, setCount] = useState(0);
-
-  useEffect(() => {
-    // Check on mount
-    getPendingUpdates().then((updates) => setCount(updates.length)).catch(() => {});
-
-    // Re-check when sources change
-    const handleSourcesChanged = () => {
-      checkUpdates().then((result) => setCount(result.updates.length)).catch(() => {});
-    };
-    const handleUpdated = () => {
-      setCount((prev) => Math.max(0, prev - 1));
-    };
-
-    bus.on('marketplace:sources-changed', handleSourcesChanged);
-    bus.on('marketplace:processor-updated', handleUpdated);
-    return () => {
-      bus.off('marketplace:sources-changed', handleSourcesChanged);
-      bus.off('marketplace:processor-updated', handleUpdated);
-    };
-  }, []);
-
-  return count;
-}
-
 export const AppShell = React.memo(function AppShell({ workspace }: AppShellProps) {
   const settingsHook = useSettings();
   const anonymizerConfig = useAnonymizerConfig();
   const cacheManager = useCacheManager();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const updateBadgeCount = useUpdateBadge();
+  const updateBadgeCount = usePendingUpdateCount();
 
   const rightTopItems = useMemo(
     () => [

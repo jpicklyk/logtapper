@@ -216,7 +216,10 @@ impl AnyProcessor {
             deprecated,
         };
 
-        let schema = ms.schema;
+        let mut schema = ms.schema;
+        if let Some(ref mut s) = schema {
+            s.prepare_conditions();
+        }
 
         let kind = match shard.processor_type.as_deref().unwrap_or("reporter") {
             "reporter" => {

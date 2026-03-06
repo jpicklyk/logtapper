@@ -54,6 +54,8 @@ cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 
 **Platform note (MSYS2/Windows):** `.npmrc` sets `os=win32` and `cpu=x64` so npm installs the correct `@rollup/rollup-win32-x64-msvc` native binary. `cargo build` exits with code 1 on MSYS2 even on success — check for "Finished" in output.
 
+**IMPORTANT — Do NOT prefix Bash commands with `cd`.** The working directory is already the project root. All commands work as-is without a `cd` prefix. Prepending `cd /d/Projects/LogTapper &&` breaks permission pattern matching and causes unnecessary user prompts. Never use `cd <path> &&` before any command — use absolute paths or flags like `--manifest-path` instead.
+
 ## Architecture
 
 Tauri 2.x desktop app: React 18/TypeScript frontend + Rust backend. All IPC goes through typed `invoke()` calls and Tauri events — no direct filesystem or network access from the frontend. See `design_docs/log-viewer-architecture.md` for the full design spec.

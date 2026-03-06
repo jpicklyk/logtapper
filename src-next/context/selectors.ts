@@ -1,10 +1,11 @@
 import { useMemo } from 'react';
-import type { LoadResult, SearchQuery, SearchSummary, ProcessorSummary, PipelineRunSummary } from '../bridge/types';
+import type { LoadResult, SearchQuery, SearchSummary, ProcessorSummary, PipelineRunSummary, Source, UpdateAvailable } from '../bridge/types';
 import { useSessionContext, type IndexingProgress } from './SessionContext';
 import { useViewerContext } from './ViewerContext';
 import { usePipelineContext, type SessionPipelineState } from './PipelineContext';
 import { useTrackerContext } from './TrackerContext';
 import { useActionsContext } from './ActionsContext';
+import { useMarketplaceContext } from './MarketplaceContext';
 
 // ---------------------------------------------------------------------------
 // Session selectors
@@ -200,6 +201,23 @@ export function usePipelineActions() {
 export function useTrackerActions() {
   // Tracker actions will be added when tracker orchestration is implemented.
   return {};
+}
+
+// ---------------------------------------------------------------------------
+// Marketplace selectors
+// ---------------------------------------------------------------------------
+
+export function usePendingUpdateCount(): number {
+  return useMarketplaceContext().pendingUpdates.length;
+}
+
+export function usePendingUpdates(): UpdateAvailable[] {
+  return useMarketplaceContext().pendingUpdates;
+}
+
+export function useMarketplaceSources(): { sources: Source[]; loading: boolean } {
+  const { sources, sourcesLoading } = useMarketplaceContext();
+  return useMemo(() => ({ sources, loading: sourcesLoading }), [sources, sourcesLoading]);
 }
 
 // ---------------------------------------------------------------------------

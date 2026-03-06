@@ -437,8 +437,17 @@ export function checkUpdates(): Promise<UpdateCheckResult> {
   return invoke('check_updates');
 }
 
-export function updateProcessor(processorId: string): Promise<UpdateResult> {
-  return invoke('update_processor', { processorId });
+export function updateProcessor(
+  processorId: string,
+  entry: { name: string; path: string; version: string; sha256: string },
+): Promise<UpdateResult> {
+  return invoke('update_processor', {
+    processorId,
+    entryName: entry.name,
+    entryPath: entry.path,
+    entryVersion: entry.version,
+    entrySha256: entry.sha256,
+  });
 }
 
 export function updateAllFromSource(sourceName: string): Promise<UpdateResult[]> {
@@ -455,9 +464,16 @@ export function saveSourcesToDisk(): Promise<void> {
 
 export function installFromMarketplace(
   sourceName: string,
-  entryId: string,
+  entry: { id: string; name: string; path: string; version: string; sha256: string },
 ): Promise<ProcessorSummary> {
-  return invoke('install_from_marketplace', { sourceName, entryId });
+  return invoke('install_from_marketplace', {
+    sourceName,
+    entryId: entry.id,
+    entryName: entry.name,
+    entryPath: entry.path,
+    entryVersion: entry.version,
+    entrySha256: entry.sha256,
+  });
 }
 
 // ---------------------------------------------------------------------------

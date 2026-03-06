@@ -1,7 +1,7 @@
 type: state_tracker
 id: wlan-disconnect-tracker
 name: WLAN Disconnect Tracker
-version: 1.2.0
+version: 1.3.0
 author: LogTapper
 description: "Tracks WiFi connection state with focus on disconnection events. Captures IEEE 802.11 reason codes, locally-generated flags, and BSSID from wpa_supplicant CTRL-EVENT logcat messages and WifiClientModeImpl/SemClientModeImpl state logs."
 tags: [wifi, network, wlan, disconnect, android]
@@ -109,6 +109,27 @@ transitions:
       message_regex: '(?i)disconnectedstate.enter'
     set:
       connection_state: "disconnected"
+
+  # ── Bugreport WifiStateMachine dump: NETWORK_DISCONNECTION_EVENT ──────────
+  # Most-specific first (with locallyGenerated), then generic fallback.
+
+  - name: Disconnected (network event, local)
+    filter:
+      message_regex: 'NETWORK_DISCONNECTION_EVENT.*bssid:\s*([0-9a-fA-F:]{17}).*reasonCode:\s*(\d+).*locallyGenerated:\s*true'
+    set:
+      connection_state: "disconnected"
+      bssid: $1
+      last_reason: $2
+      locally_generated: "yes"
+
+  - name: Disconnected (network event, remote)
+    filter:
+      message_regex: 'NETWORK_DISCONNECTION_EVENT.*bssid:\s*([0-9a-fA-F:]{17}).*reasonCode:\s*(\d+).*locallyGenerated:\s*false'
+    set:
+      connection_state: "disconnected"
+      bssid: $1
+      last_reason: $2
+      locally_generated: "no"
 
   - name: Disconnected (network event)
     filter:

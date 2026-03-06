@@ -6,6 +6,7 @@ import { ViewerProvider } from './ViewerContext';
 import { PipelineProvider } from './PipelineContext';
 import { TrackerProvider } from './TrackerContext';
 import { ActionsProvider, type ActionsContextValue } from './ActionsContext';
+import { MarketplaceProvider } from './MarketplaceContext';
 import { useCacheManager, useDataSourceRegistry } from '../cache';
 import { useLogViewer } from '../hooks/useLogViewer';
 import { useSettings } from '../hooks/useSettings';
@@ -82,17 +83,19 @@ function HookWiring({ children }: { children: ReactNode }) {
 
 export function AppProviders({ children }: { children: ReactNode }) {
   return (
-    <SessionProvider>
-      <ViewerProvider>
-        <PipelineProvider>
-          <TrackerProvider>
-            <HookWiring>
-              {children}
-            </HookWiring>
-          </TrackerProvider>
-        </PipelineProvider>
-      </ViewerProvider>
-    </SessionProvider>
+    <MarketplaceProvider>
+      <SessionProvider>
+        <ViewerProvider>
+          <PipelineProvider>
+            <TrackerProvider>
+              <HookWiring>
+                {children}
+              </HookWiring>
+            </TrackerProvider>
+          </PipelineProvider>
+        </ViewerProvider>
+      </SessionProvider>
+    </MarketplaceProvider>
   );
 }
 
@@ -129,6 +132,9 @@ export {
   usePipelineProgress,
   usePipelineError,
   useTotalLines,
+  usePendingUpdateCount,
+  usePendingUpdates,
+  useMarketplaceSources,
 } from './selectors';
 
 // Re-export types

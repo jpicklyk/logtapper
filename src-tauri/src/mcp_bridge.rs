@@ -2144,7 +2144,7 @@ async fn h_insights(
     Query(params): Query<InsightsParams>,
 ) -> Json<Value> {
     use crate::processors::marketplace::{McpSchema, Severity, SignalType};
-    use crate::processors::signals::{eval_condition, render_template};
+    use crate::processors::signals::{eval_parsed_condition, render_template};
 
     let state = handle.state::<AppState>();
     let max_signals = params.max_signals.unwrap_or(20);
@@ -2231,7 +2231,7 @@ async fn h_insights(
                     let count_entry = signal_counts.entry(sig_def.name.clone()).or_insert(0);
 
                     if sig_def.signal_type == SignalType::Aggregate {
-                        if eval_condition(sig_def.condition.as_deref(), &rr.vars) {
+                        if eval_parsed_condition(sig_def.parsed_condition.as_ref(), &rr.vars) {
                             *count_entry += 1;
                             let first_line = rr.emissions.first().map(|e| e.line_num);
                             let last_line = rr.emissions.last().map(|e| e.line_num);
@@ -2254,7 +2254,7 @@ async fn h_insights(
                         for emission in &rr.emissions {
                             let emission_fields: HashMap<String, Value> =
                                 emission.fields.iter().cloned().collect();
-                            if eval_condition(sig_def.condition.as_deref(), &emission_fields) {
+                            if eval_parsed_condition(sig_def.parsed_condition.as_ref(), &emission_fields) {
                                 *count_entry += 1;
                                 let requested_fields: HashMap<String, Value> = sig_def.fields.iter()
                                     .filter_map(|f| emission_fields.get(f).map(|v| (f.clone(), v.clone())))

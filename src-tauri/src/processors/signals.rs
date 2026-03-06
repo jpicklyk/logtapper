@@ -248,6 +248,15 @@ pub fn eval_condition(
     }
 }
 
+/// Evaluate a pre-parsed `Expr` against a field map.
+/// If `parsed` is `None` (no condition was defined), always returns `true`.
+pub fn eval_parsed_condition(parsed: Option<&Expr>, fields: &HashMap<String, Value>) -> bool {
+    match parsed {
+        Some(expr) => evaluate(expr, fields),
+        None => true,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Template renderer
 // ---------------------------------------------------------------------------

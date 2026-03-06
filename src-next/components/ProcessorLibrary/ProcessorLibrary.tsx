@@ -186,10 +186,10 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
         return next;
       });
       try {
-        const summary = await installFromMarketplace(selectedSource, entry.id);
+        const summary = await installFromMarketplace(selectedSource, entry);
         await pipeline.loadProcessors();
         setInstallStatus((s) => ({ ...s, [entry.id]: 'installed' }));
-        pipeline.addToChain(summary.id);
+        setSelected((prev) => new Set(prev).add(summary.id));
         bus.emit('marketplace:processor-installed', { processorId: summary.id, sourceName: selectedSource });
       } catch (e) {
         setInstallStatus((s) => ({ ...s, [entry.id]: 'error' }));
@@ -509,8 +509,37 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                   const qualifiedId = selectedSource ? makeQualifiedId(entry.id, selectedSource) : entry.id;
                   const alreadyInstalled = installedIds.has(entry.id) || installedIds.has(qualifiedId);
                   const inChain = chainSet.has(entry.id) || chainSet.has(qualifiedId);
+                  const isInstalled = alreadyInstalled || status === 'installed';
+                  const isSelected = selected.has(qualifiedId);
+                  const isSelectable = isInstalled && !inChain;
                   return (
-                    <div key={entry.id} className={css.discoverItem}>
+                    <div
+                      key={entry.id}
+                      className={`${css.discoverItem}${isSelected ? ` ${css.discoverItemSelected}` : ''}${inChain ? ` ${css.discoverItemInChain}` : ''}`}
+                      onClick={isSelectable ? () => toggleSelect(qualifiedId) : undefined}
+                      style={isSelectable ? { cursor: 'pointer' } : undefined}
+                    >
+                      <div className={css.discoverCheckboxCol}>
+                        {isInstalled ? (
+                          <span
+                            className={`${css.checkbox}${isSelected ? ` ${css.checkboxChecked}` : ''}${inChain ? ` ${css.checkboxChain}` : ''}`}
+                          >
+                            {(inChain || isSelected) && (
+                              <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
+                                <path
+                                  d="M2 5l2.5 2.5L8 3"
+                                  stroke="currentColor"
+                                  strokeWidth="1.5"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                              </svg>
+                            )}
+                          </span>
+                        ) : (
+                          <span className={css.discoverCheckboxSpacer} />
+                        )}
+                      </div>
                       <div className={css.itemInfo} style={{ flex: 1 }}>
                         <span className={css.itemName}>{entry.name}</span>
                         <span className={css.itemSub}>
@@ -539,21 +568,12 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                           </div>
                         )}
                       </div>
-                      <div className={css.discoverAction}>
-                        {alreadyInstalled || status === 'installed' ? (
+                      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
+                      <div className={css.discoverAction} onClick={(e) => e.stopPropagation()}>
+                        {isInstalled ? (
                           inChain ? (
                             <span className={css.inChainLabel}>in pipeline</span>
-                          ) : (
-                            <button
-                              className={css.actionBtn}
-                              onClick={() => {
-                                pipeline.addToChain(qualifiedId);
-                                onClose();
-                              }}
-                            >
-                              + Add
-                            </button>
-                          )
+                          ) : null
                         ) : (
                           <button
                             className={css.actionBtn}
@@ -565,7 +585,7 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                                 <span className={css.spinner} /> Installing...
                               </>
                             ) : (
-                              'Install + Add'
+                              'Install'
                             )}
                           </button>
                         )}
@@ -653,7 +673,7 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
         </div>
 
         {/* Footer (multi-select action bar) */}
-        {tab === 'installed' && (
+        {(tab === 'installed' || tab === 'discover') && (
           <div className={`${css.footer}${hasSelection ? ` ${css.footerActive}` : ''}`}>
             {hasSelection ? (
               <>

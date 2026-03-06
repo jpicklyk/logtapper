@@ -30,7 +30,12 @@ pub async fn list_processors(
     state: State<'_, AppState>,
 ) -> Result<Vec<ProcessorSummary>, String> {
     let procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
-    let mut out: Vec<ProcessorSummary> = procs.values().map(ProcessorSummary::from).collect();
+    let mut out: Vec<ProcessorSummary> = procs.iter().map(|(key, p)| {
+        let mut summary = ProcessorSummary::from(p);
+        // Use the map key (qualified ID for marketplace processors) instead of bare meta.id.
+        summary.id = key.clone();
+        summary
+    }).collect();
     out.sort_by(|a, b| b.builtin.cmp(&a.builtin).then(a.name.cmp(&b.name)));
     Ok(out)
 }

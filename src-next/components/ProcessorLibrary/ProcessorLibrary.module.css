@@ -463,6 +463,32 @@
   padding-top: 2px;
 }
 
+.discoverItemSelected {
+  background: rgba(88, 166, 255, 0.06);
+}
+
+.discoverItemSelected:hover {
+  background: rgba(88, 166, 255, 0.1);
+}
+
+.discoverItemInChain {
+  opacity: 0.5;
+}
+
+.discoverCheckboxCol {
+  flex-shrink: 0;
+  width: 24px;
+  display: flex;
+  align-items: flex-start;
+  padding-top: 3px;
+}
+
+.discoverCheckboxSpacer {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+}
+
 .tags {
   display: flex;
   flex-wrap: wrap;

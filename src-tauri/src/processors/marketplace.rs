@@ -159,6 +159,10 @@ pub struct SignalDef {
     /// Condition expression evaluated against emission fields (e.g. "heap_pct >= 90").
     #[serde(default)]
     pub condition: Option<String>,
+    /// Pre-parsed condition AST, populated by `SchemaContract::prepare_conditions()`.
+    /// Skipped during serialization — in-memory only.
+    #[serde(skip)]
+    pub parsed_condition: Option<super::signals::Expr>,
     /// Emission fields to include in signal output.
     #[serde(default)]
     pub fields: Vec<String>,
@@ -168,6 +172,23 @@ pub struct SignalDef {
     /// Per-emission (default) or aggregate (computed from vars).
     #[serde(rename = "type", default)]
     pub signal_type: SignalType,
+}
+
+impl SchemaContract {
+    /// Pre-parse signal conditions into ASTs for efficient repeated evaluation.
+    /// Called once at install/load time so `h_insights` skips parsing on every call.
+    pub fn prepare_conditions(&mut self) {
+        use super::signals::parse_condition;
+        if let Some(ref mut mcp) = self.mcp {
+            for signal in &mut mcp.signals {
+                if let Some(ref cond_str) = signal.condition {
+                    if let Ok(Some(expr)) = parse_condition(cond_str) {
+                        signal.parsed_condition = Some(expr);
+                    }
+                }
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -320,5 +341,38 @@ mcp:
         let schema: SchemaContract = serde_yaml::from_str(yaml).unwrap();
         assert!(schema.emissions.is_empty());
         assert!(schema.mcp.is_none());
+    }
+
+    #[test]
+    fn prepare_conditions_populates_parsed_ast() {
+        let yaml = r#"
+source_types: ["logcat"]
+mcp:
+  signals:
+    - name: heap_critical
+      severity: critical
+      condition: "heap_pct >= 90"
+      fields: [heap_pct]
+    - name: heap_warning
+      severity: warning
+      condition: "heap_pct >= 80 && heap_pct < 90"
+      fields: [heap_pct]
+    - name: no_condition
+      severity: info
+      fields: [heap_pct]
+"#;
+        let mut schema: SchemaContract = serde_yaml::from_str(yaml).unwrap();
+        // Before prepare: all parsed_condition should be None (serde skip)
+        let mcp = schema.mcp.as_ref().unwrap();
+        assert!(mcp.signals[0].parsed_condition.is_none());
+        assert!(mcp.signals[1].parsed_condition.is_none());
+        assert!(mcp.signals[2].parsed_condition.is_none());
+
+        schema.prepare_conditions();
+
+        let mcp = schema.mcp.as_ref().unwrap();
+        assert!(mcp.signals[0].parsed_condition.is_some(), "heap_critical should have parsed AST");
+        assert!(mcp.signals[1].parsed_condition.is_some(), "heap_warning should have parsed AST");
+        assert!(mcp.signals[2].parsed_condition.is_none(), "no_condition should remain None");
     }
 }

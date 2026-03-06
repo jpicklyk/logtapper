@@ -268,10 +268,15 @@ pub async fn check_updates(
 
 /// Update a single processor from its marketplace source.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn update_processor(
     state: State<'_, AppState>,
     app: AppHandle,
     processor_id: String,
+    entry_name: String,
+    entry_path: String,
+    entry_version: String,
+    entry_sha256: String,
 ) -> Result<UpdateResult, String> {
     let (bare_id, source_name) = match marketplace::split_qualified_id(&processor_id) {
         (id, Some(src)) => (id.to_string(), src.to_string()),
@@ -287,11 +292,21 @@ pub async fn update_processor(
             .ok_or_else(|| format!("Source '{}' not found", source_name))?
     };
 
-    // Fetch marketplace to find the entry.
-    let index = registry::fetch_marketplace(&state.http_client, &source).await?;
-    let entry = index.processors.iter()
-        .find(|e| e.id == bare_id)
-        .ok_or_else(|| format!("Processor '{}' not found in source '{}'", bare_id, source_name))?;
+    // Construct entry from frontend-supplied metadata (avoids re-fetching full index).
+    let entry = marketplace::MarketplaceEntry {
+        id: bare_id,
+        name: entry_name,
+        path: entry_path,
+        version: entry_version,
+        sha256: entry_sha256,
+        description: None,
+        tags: Vec::new(),
+        category: None,
+        license: None,
+        processor_type: None,
+        source_types: Vec::new(),
+        deprecated: false,
+    };
 
     // Get current installed version.
     let old_version = {
@@ -301,7 +316,7 @@ pub async fn update_processor(
             .unwrap_or_else(|| "unknown".to_string())
     };
 
-    let def = download_and_install_processor(&state, &app, &source, entry, &processor_id).await?;
+    let def = download_and_install_processor(&state, &app, &source, &entry, &processor_id).await?;
     let new_version = def.meta.version.clone();
 
     Ok(UpdateResult {
@@ -459,11 +474,16 @@ async fn download_and_install_processor(
 /// Install a processor from a named marketplace source.
 /// Downloads the YAML, verifies SHA256, appends provenance, parses, persists, and inserts.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn install_from_marketplace(
     state: State<'_, AppState>,
     app: AppHandle,
     source_name: String,
     entry_id: String,
+    entry_name: String,
+    entry_path: String,
+    entry_version: String,
+    entry_sha256: String,
 ) -> Result<ProcessorSummary, String> {
     // Look up the source.
     let source = {
@@ -474,17 +494,26 @@ pub async fn install_from_marketplace(
             .ok_or_else(|| format!("Source '{}' not found", source_name))?
     };
 
-    // Fetch marketplace index and find the entry.
-    let index = registry::fetch_marketplace(&state.http_client, &source).await?;
-    let entry = index
-        .processors
-        .iter()
-        .find(|e| e.id == entry_id)
-        .ok_or_else(|| format!("Entry '{}' not found in source '{}'", entry_id, source_name))?;
+    // Construct entry from frontend-supplied metadata (avoids re-fetching full index).
+    let entry = marketplace::MarketplaceEntry {
+        id: entry_id,
+        name: entry_name,
+        path: entry_path,
+        version: entry_version,
+        sha256: entry_sha256,
+        // Fields not needed for download/install — defaults are fine.
+        description: None,
+        tags: Vec::new(),
+        category: None,
+        license: None,
+        processor_type: None,
+        source_types: Vec::new(),
+        deprecated: false,
+    };
 
     let qualified_id = marketplace::qualified_id(&entry.id, &source_name);
 
-    let def = download_and_install_processor(&state, &app, &source, entry, &qualified_id).await?;
+    let def = download_and_install_processor(&state, &app, &source, &entry, &qualified_id).await?;
 
     // Build summary with the qualified ID (From impl uses bare id).
     let mut summary = ProcessorSummary::from(&def);
