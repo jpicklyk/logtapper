@@ -252,6 +252,22 @@ pub fn split_qualified_id(qid: &str) -> (&str, Option<&str>) {
     }
 }
 
+/// Resolve a processor ID that may be bare (e.g. `"wifi-state"`) or already
+/// qualified (e.g. `"wifi-state@official"`).  Tries exact key match first,
+/// then scans for `{bare_id}@*`.
+pub fn resolve_processor_id<V>(store: &std::collections::HashMap<String, V>, id: &str) -> Option<String> {
+    if store.contains_key(id) {
+        return Some(id.to_string());
+    }
+    for key in store.keys() {
+        let (bare, _) = split_qualified_id(key);
+        if bare == id {
+            return Some(key.clone());
+        }
+    }
+    None
+}
+
 /// Escape a processor ID for use as a filename on disk.
 /// Replaces `@` with `__at__` for Windows filesystem compatibility.
 pub fn id_to_filename(id: &str) -> String {

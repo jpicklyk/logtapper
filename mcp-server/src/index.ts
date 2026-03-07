@@ -179,16 +179,11 @@ server.tool(
 
 server.tool(
   "logtapper_get_metadata",
-  "Get rich metadata for a log session. Returns source name/type, total line " +
-    "count, file size, whether the session is live (ADB), time range, log level " +
-    "distribution, and top 50 tags by frequency. For bugreport/dumpstate files, " +
-    "also returns a sections array with {name, startLine, endLine} for each " +
-    "section (e.g. 'DUMPSYS ACTIVITY', 'SYSTEM LOG'). Bugreport files contain " +
-    "many sections — logcat data lives inside sections like 'SYSTEM LOG', " +
-    "'EVENT LOG', 'RADIO LOG', etc. Use startLine/endLine from these sections " +
-    "with logtapper_query's start_line/end_line to target specific sections. " +
-    "Call this as the first query against a session to orient before sampling " +
-    "lines or running searches.",
+  "Get lightweight metadata for a log session. Returns source name/type, " +
+    "total line count, file size, whether the session is live (ADB), time range, " +
+    "and section count. Does NOT include tag stats or full section details — " +
+    "use logtapper_get_sections for section name/startLine/endLine mapping. " +
+    "Call this as the first query against a session to orient.",
   {
     session_id: z.string().describe("Session ID from logtapper_get_status or logtapper_list_sessions"),
   },
@@ -196,6 +191,30 @@ server.tool(
     try {
       return ok(
         await bridgeGet(`/mcp/sessions/${encodeURIComponent(session_id)}/metadata`)
+      );
+    } catch (err) {
+      return ok({ error: String(err) });
+    }
+  }
+);
+
+// ── 3b. logtapper_get_sections ──────────────────────────────────────────
+
+server.tool(
+  "logtapper_get_sections",
+  "Get the named sections of a bugreport or dumpstate log file. Returns an " +
+    "array of {name, startLine, endLine} for each section (e.g. 'SYSTEM LOG', " +
+    "'DUMPSYS NORMAL', 'KERNEL LOG'). Use startLine/endLine with " +
+    "logtapper_query or logtapper_search_with_context's start_line/end_line " +
+    "params to target specific sections. Returns an empty array for non-bugreport " +
+    "files (logcat, kernel).",
+  {
+    session_id: z.string().describe("Session ID"),
+  },
+  async ({ session_id }) => {
+    try {
+      return ok(
+        await bridgeGet(`/mcp/sessions/${encodeURIComponent(session_id)}/sections`)
       );
     } catch (err) {
       return ok({ error: String(err) });
@@ -329,8 +348,20 @@ server.tool(
       .min(0)
       .optional()
       .describe("Number of matches to skip before collecting results (default 0). Use for pagination."),
+    start_line: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("Restrict search to lines >= start_line (0-based, inclusive)"),
+    end_line: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("Restrict search to lines < end_line (0-based, exclusive)"),
   },
-  async ({ session_id, query, max_results, context_lines, case_insensitive, offset }) => {
+  async ({ session_id, query, max_results, context_lines, case_insensitive, offset, start_line, end_line }) => {
     try {
       return ok(
         await bridgeGet(
@@ -341,6 +372,8 @@ server.tool(
             context_lines,
             case_insensitive: case_insensitive !== undefined ? String(case_insensitive) : undefined,
             offset,
+            start_line,
+            end_line,
           }
         )
       );
@@ -579,9 +612,11 @@ server.tool(
 server.tool(
   "logtapper_get_processor_definitions",
   "Get processor definitions to understand what each processor detects. " +
-    "Without processor_id: returns a summary list (id, name, type, description). " +
+    "Without processor_id: returns a summary list (id, name, type, description, sections, sourceTypes). " +
     "With processor_id: returns the full definition including filter rules, extract " +
-    "patterns, aggregations, state fields, and transition names. Use this to " +
+    "patterns, aggregations, state fields, transition names, sections, and sourceTypes. " +
+    "sections lists bugreport section names the processor targets; sourceTypes lists " +
+    "compatible log source types (logcat, bugreport, dumpstate). Use this to " +
     "understand pipeline results before drilling into specifics.",
   {
     processor_id: z

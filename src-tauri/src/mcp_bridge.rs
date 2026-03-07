@@ -21,11 +21,47 @@ use tauri::{AppHandle, Manager, Wry};
 
 use crate::anonymizer::LogAnonymizer;
 use crate::commands::AppState;
-use crate::processors::ProcessorKind;
+use crate::processors::{AnyProcessor, ProcessorKind};
+use crate::processors::marketplace::{resolve_processor_id, split_qualified_id};
 use crate::processors::reporter::engine::RunResult;
 use crate::processors::state_tracker::types::StateTransition;
 
 pub const PORT: u16 = 40404;
+
+// ---------------------------------------------------------------------------
+// Processor metadata extraction helpers
+// ---------------------------------------------------------------------------
+
+/// Extract the `sections` list from any processor kind.
+fn extract_sections(p: &AnyProcessor) -> Vec<String> {
+    match &p.kind {
+        ProcessorKind::Reporter(def) => def.sections.clone(),
+        ProcessorKind::StateTracker(def) => {
+            let mut sections: Vec<String> = def.transitions.iter()
+                .filter_map(|t| t.filter.section.clone())
+                .collect();
+            sections.sort();
+            sections.dedup();
+            sections
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Extract `source_types` from the processor's schema contract.
+fn extract_source_types(p: &AnyProcessor) -> Vec<String> {
+    p.schema.as_ref()
+        .map(|s| s.source_types.clone())
+        .unwrap_or_default()
+}
+
+/// Check whether a qualified (or bare) processor ID matches an optional filter.
+/// Returns `true` if no filter is set, or if the filter matches the full or bare ID.
+fn processor_id_matches(candidate: &str, filter: Option<&String>) -> bool {
+    filter.map_or(true, |fid| {
+        fid == candidate || split_qualified_id(candidate).0 == fid.as_str()
+    })
+}
 
 /// Concrete handle type — Wry is the only desktop runtime Tauri ships.
 type Handle = AppHandle<Wry>;
@@ -60,6 +96,8 @@ pub async fn start(handle: Handle) {
         .route("/mcp/sessions/{session_id}/tracker/{tracker_id}/state_at", get(h_state_at_line))
         .route("/mcp/sessions/{session_id}/search", get(h_search))
         .route("/mcp/sessions/{session_id}/metadata", get(h_metadata))
+        .route("/mcp/sessions/{session_id}/sections", get(h_sections))
+        .route("/mcp/sessions/{session_id}/tag-stats", get(h_tag_stats))
         .route("/mcp/sessions/{session_id}/lines_around", get(h_lines_around))
         .route("/mcp/sessions/{session_id}/search_with_context", get(h_search_with_context))
         .route("/mcp/processors", get(h_processor_defs_list))
@@ -605,9 +643,7 @@ async fn h_pipeline(
             None => vec![],
             Some(session_map) => session_map
                 .iter()
-                .filter(|(pid, _)| {
-                    params.processor_id.as_ref().map_or(true, |fid| fid == *pid)
-                })
+                .filter(|(pid, _)| processor_id_matches(pid, params.processor_id.as_ref()))
                 .map(|(proc_id, run_result)| {
                     let proc = procs.get(proc_id);
                     let name = proc.map(|p| p.meta.name.clone()).unwrap_or_else(|| proc_id.clone());
@@ -657,7 +693,7 @@ async fn h_pipeline(
                 }
             }
             tracker_ids.into_iter()
-                .filter(|tid| params.processor_id.as_ref().map_or(true, |fid| fid == tid))
+                .filter(|tid| processor_id_matches(tid, params.processor_id.as_ref()))
                 .map(|tracker_id| {
                     let proc = procs.get(&tracker_id);
                     let name = proc.map(|p| p.meta.name.clone()).unwrap_or_else(|| tracker_id.clone());
@@ -789,10 +825,13 @@ async fn h_processor_detail(
     let emission_offset = params.emission_offset.unwrap_or(0);
     let include_line_text = params.include_line_text.unwrap_or(false);
 
-    // Check what type of processor this is
-    let processor_type: Option<String> = {
+    // Resolve bare → qualified ID and check processor type in a single lock.
+    let (resolved_id, processor_type) = {
         let procs = state.processors.lock().unwrap();
-        procs.get(&processor_id).map(|p| p.processor_type().to_string())
+        let resolved = resolve_processor_id(&procs, &processor_id)
+            .unwrap_or_else(|| processor_id.clone());
+        let ptype = procs.get(&resolved).map(|p| p.processor_type().to_string());
+        (resolved, ptype)
     };
 
     match processor_type.as_deref() {
@@ -802,10 +841,10 @@ async fn h_processor_detail(
                 let results = state.pipeline_results.lock().unwrap();
                 let procs = state.processors.lock().unwrap();
                 results.get(&session_id)
-                    .and_then(|m| m.get(&processor_id))
+                    .and_then(|m| m.get(&resolved_id))
                     .map(|rr| {
-                        let proc = procs.get(&processor_id);
-                        let name = proc.map(|p| p.meta.name.clone()).unwrap_or_else(|| processor_id.clone());
+                        let proc = procs.get(&resolved_id);
+                        let name = proc.map(|p| p.meta.name.clone()).unwrap_or_else(|| resolved_id.clone());
                         let desc = proc.map(|p| p.meta.description.clone()).unwrap_or_default();
                         (RunResult {
                             emissions: rr.emissions.clone(),
@@ -895,12 +934,12 @@ async fn h_processor_detail(
                 let stream_res = state.stream_tracker_state.lock().unwrap();
                 let procs = state.processors.lock().unwrap();
 
-                let proc = procs.get(&processor_id);
-                let name = proc.map(|p| p.meta.name.clone()).unwrap_or_else(|| processor_id.clone());
+                let proc = procs.get(&resolved_id);
+                let name = proc.map(|p| p.meta.name.clone()).unwrap_or_else(|| resolved_id.clone());
                 let desc = proc.map(|p| p.meta.description.clone()).unwrap_or_default();
 
-                let from_pipeline = pipeline_res.get(&session_id).and_then(|m| m.get(&processor_id));
-                let from_stream = stream_res.get(&session_id).and_then(|m| m.get(&processor_id));
+                let from_pipeline = pipeline_res.get(&session_id).and_then(|m| m.get(&resolved_id));
+                let from_stream = stream_res.get(&session_id).and_then(|m| m.get(&resolved_id));
 
                 if let Some(pr) = from_pipeline {
                     Some((pr.transitions.clone(), json!(pr.final_state), name, desc))
@@ -1185,6 +1224,10 @@ struct SearchParams {
     case_insensitive: Option<bool>,
     /// Context lines before and after each match (default 0, max 5).
     context: Option<usize>,
+    /// Restrict search to lines >= start_line (0-based, inclusive).
+    start_line: Option<usize>,
+    /// Restrict search to lines < end_line (0-based, exclusive).
+    end_line: Option<usize>,
 }
 
 async fn h_search(
@@ -1233,9 +1276,11 @@ async fn h_search(
         };
 
         let total = source.total_lines();
+        let range_start = params.start_line.unwrap_or(0).min(total);
+        let range_end = params.end_line.unwrap_or(total).min(total);
         let mut results: Vec<MatchResult> = Vec::new();
 
-        for i in 0..total {
+        for i in range_start..range_end {
             if results.len() >= limit { break; }
             let Some(raw) = source.raw_line(i) else { continue };
 
@@ -1328,6 +1373,8 @@ async fn h_processor_defs_list(State(handle): State<Handle>) -> Json<Value> {
                 "version": p.meta.version,
                 "builtin": p.meta.builtin,
                 "tags": p.meta.tags,
+                "sections": extract_sections(p),
+                "sourceTypes": extract_source_types(p),
             })
         }).collect()
     };
@@ -1349,7 +1396,8 @@ async fn h_processor_defs_single(
     let state = handle.state::<AppState>();
 
     let procs = state.processors.lock().unwrap();
-    let Some(p) = procs.get(&processor_id) else {
+    let resolved = resolve_processor_id(&procs, &processor_id);
+    let Some(p) = resolved.as_ref().and_then(|rid| procs.get(rid)) else {
         return Json(json!({ "error": "processor not found", "processorId": processor_id }));
     };
 
@@ -1362,6 +1410,8 @@ async fn h_processor_defs_single(
         "author": p.meta.author,
         "builtin": p.meta.builtin,
         "tags": p.meta.tags,
+        "sections": extract_sections(p),
+        "sourceTypes": extract_source_types(p),
     });
 
     match &p.kind {
@@ -1500,6 +1550,83 @@ async fn h_metadata(
         0
     };
 
+    let section_count = source.sections().len();
+
+    Json(json!({
+        "sessionId": session_id,
+        "sourceName": source.name(),
+        "sourceType": source.source_type().to_string(),
+        "totalLines": total_lines,
+        "fileSize": file_size,
+        "isLive": source.is_live(),
+        "isIndexing": source.is_indexing(),
+        "firstTimestamp": first_ts,
+        "lastTimestamp": last_ts,
+        "sectionCount": section_count,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// GET /mcp/sessions/{session_id}/sections
+// ---------------------------------------------------------------------------
+
+async fn h_sections(
+    State(handle): State<Handle>,
+    Path(session_id): Path<String>,
+) -> Json<Value> {
+    let state = handle.state::<AppState>();
+
+    let sessions = state.sessions.lock().unwrap();
+    let Some(session) = sessions.get(&session_id) else {
+        return Json(json!({ "error": "session not found", "sessionId": session_id }));
+    };
+    let Some(source) = session.primary_source() else {
+        return Json(json!({ "error": "session has no sources", "sessionId": session_id }));
+    };
+
+    let sections: Vec<Value> = source.sections().iter().map(|s| {
+        json!({
+            "name": s.name,
+            "startLine": s.start_line,
+            "endLine": s.end_line,
+        })
+    }).collect();
+
+    Json(json!({
+        "sessionId": session_id,
+        "sectionCount": sections.len(),
+        "sections": sections,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// GET /mcp/sessions/{session_id}/tag-stats?top_n=50
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct TagStatsParams {
+    /// Number of top tags to return (default 50).
+    top_n: Option<usize>,
+}
+
+async fn h_tag_stats(
+    State(handle): State<Handle>,
+    Path(session_id): Path<String>,
+    Query(params): Query<TagStatsParams>,
+) -> Json<Value> {
+    let state = handle.state::<AppState>();
+    let top_n = params.top_n.unwrap_or(50);
+
+    let sessions = state.sessions.lock().unwrap();
+    let Some(session) = sessions.get(&session_id) else {
+        return Json(json!({ "error": "session not found", "sessionId": session_id }));
+    };
+    let Some(source) = session.primary_source() else {
+        return Json(json!({ "error": "session has no sources", "sessionId": session_id }));
+    };
+
+    let total_lines = source.total_lines();
+
     // Scan line meta for level distribution and tag counts
     let mut level_dist: HashMap<String, usize> = HashMap::new();
     let mut tag_counts: HashMap<u16, usize> = HashMap::new();
@@ -1518,26 +1645,13 @@ async fn h_metadata(
     top_tags.sort_by(|a, b| {
         b["count"].as_u64().unwrap_or(0).cmp(&a["count"].as_u64().unwrap_or(0))
     });
-    top_tags.truncate(50);
-
-    // Sections (bugreport/dumpstate only — empty for logcat/kernel)
-    let sections: Vec<Value> = source.sections().iter().map(|s| {
-        json!(s)
-    }).collect();
+    top_tags.truncate(top_n);
 
     Json(json!({
         "sessionId": session_id,
-        "sourceName": source.name(),
-        "sourceType": source.source_type().to_string(),
         "totalLines": total_lines,
-        "fileSize": file_size,
-        "isLive": source.is_live(),
-        "isIndexing": source.is_indexing(),
-        "firstTimestamp": first_ts,
-        "lastTimestamp": last_ts,
         "logLevelDistribution": level_dist,
         "topTags": top_tags,
-        "sections": sections,
     }))
 }
 
@@ -1617,6 +1731,10 @@ struct SearchWithContextParams {
     case_insensitive: Option<bool>,
     /// Number of matches to skip before collecting results (default 0).
     offset: Option<usize>,
+    /// Restrict search to lines >= start_line (0-based, inclusive).
+    start_line: Option<usize>,
+    /// Restrict search to lines < end_line (0-based, exclusive).
+    end_line: Option<usize>,
 }
 
 async fn h_search_with_context(
@@ -1655,10 +1773,12 @@ async fn h_search_with_context(
     };
 
     let total = source.total_lines();
+    let range_start = params.start_line.unwrap_or(0).min(total);
+    let range_end = params.end_line.unwrap_or(total).min(total);
     let mut results: Vec<Value> = Vec::new();
     let mut skipped: usize = 0;
 
-    for i in 0..total {
+    for i in range_start..range_end {
         if results.len() >= max_results {
             break;
         }
@@ -2097,9 +2217,15 @@ async fn h_run_pipeline(
         }
     }
 
-    // Resolve processor IDs — use provided list or all installed processors
-    let processor_ids = match body.processor_ids {
-        Some(ids) if !ids.is_empty() => ids,
+    // Resolve processor IDs — use provided list or all installed processors.
+    // Bare IDs (e.g. "wifi-state") are resolved to qualified keys ("wifi-state@official").
+    let processor_ids: Vec<String> = match body.processor_ids {
+        Some(ids) if !ids.is_empty() => {
+            let procs = state.processors.lock().unwrap();
+            ids.into_iter()
+                .map(|id| resolve_processor_id(&procs, &id).unwrap_or(id))
+                .collect()
+        }
         _ => {
             let procs = state.processors.lock().unwrap();
             procs.keys().cloned().collect()

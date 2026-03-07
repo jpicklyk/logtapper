@@ -12,6 +12,7 @@ use crate::core::line::PipelineContext;
 use crate::core::log_source::FileLogSource;
 use crate::core::session::{parser_for, SectionInfo};
 use crate::processors::ProcessorKind;
+use crate::processors::marketplace::resolve_processor_id;
 use crate::processors::correlator::engine::CorrelatorRun;
 use crate::processors::reporter::engine::ProcessorRun;
 use crate::processors::state_tracker::engine::StateTrackerRun;
@@ -532,12 +533,14 @@ pub fn execute_pipeline(
         let mut s_ids: Vec<String> = Vec::new();
         let mut c_ids: Vec<String> = Vec::new();
         for id in processor_ids {
-            if let Some(p) = procs.get(id.as_str()) {
+            let resolved = resolve_processor_id(&procs, id)
+                .unwrap_or_else(|| id.clone());
+            if let Some(p) = procs.get(resolved.as_str()) {
                 match &p.kind {
-                    ProcessorKind::Transformer(_) => t_ids.push(id.clone()),
-                    ProcessorKind::Reporter(_) => r_ids.push(id.clone()),
-                    ProcessorKind::StateTracker(_) => s_ids.push(id.clone()),
-                    ProcessorKind::Correlator(_) => c_ids.push(id.clone()),
+                    ProcessorKind::Transformer(_) => t_ids.push(resolved),
+                    ProcessorKind::Reporter(_) => r_ids.push(resolved),
+                    ProcessorKind::StateTracker(_) => s_ids.push(resolved),
+                    ProcessorKind::Correlator(_) => c_ids.push(resolved),
                     _ => {} // Annotator: schema stub, no engine yet
                 }
             }

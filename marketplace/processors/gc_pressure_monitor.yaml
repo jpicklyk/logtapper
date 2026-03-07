@@ -1,12 +1,14 @@
 meta:
   id: "gc-pressure-monitor"
   name: "GC Pressure Monitor"
-  version: "1.1.0"
+  version: "1.1.1"
   author: "LogTapper"
   description: "Tracks ART GC events. Monitors heap used/max and GC duration. Classifies heap pressure as normal (<70%), stressed (70-85%), or critical (>85%). Explicit (system-forced) GCs tracked separately."
   tags: ["gc", "heap", "art", "memory", "android"]
-  # Only matches logcat entries in the SYSTEM LOG section of bugreports
-  sections: ["SYSTEM LOG"]
+
+# Only matches logcat entries in the SYSTEM LOG section of bugreports
+sections:
+  - "SYSTEM LOG"
 
 vars:
   - name: gc_count
