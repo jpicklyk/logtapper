@@ -16,6 +16,29 @@ pub(crate) fn persist_processor(app: &AppHandle, id: &str, yaml: &str) -> Result
         .map_err(|e| format!("Failed to persist processor: {e}"))
 }
 
+/// Validate, persist, and install a parsed processor into the store.
+fn validate_and_install(
+    app: &AppHandle,
+    state: &AppState,
+    yaml: &str,
+    processor: AnyProcessor,
+) -> Result<ProcessorSummary, String> {
+    processor.validate_filter_rules()?;
+    if let Some(reporter_def) = processor.as_reporter() {
+        for stage in &reporter_def.pipeline {
+            use crate::processors::schema::PipelineStage;
+            if let PipelineStage::Script(s) = stage {
+                crate::scripting::sandbox::validate_for_install(&s.src)?;
+            }
+        }
+    }
+    persist_processor(app, &processor.meta.id, yaml)?;
+    let summary = ProcessorSummary::from(&processor);
+    let mut procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
+    procs.insert(processor.meta.id.clone(), processor);
+    Ok(summary)
+}
+
 fn delete_processor_file(app: &AppHandle, id: &str) {
     if let Ok(data_dir) = app.path().app_data_dir() {
         let filename = marketplace::id_to_filename(id);
@@ -47,19 +70,7 @@ pub async fn load_processor_yaml(
     yaml: String,
 ) -> Result<ProcessorSummary, String> {
     let processor = AnyProcessor::from_yaml(&yaml)?;
-    if let Some(reporter_def) = processor.as_reporter() {
-        for stage in &reporter_def.pipeline {
-            use crate::processors::schema::PipelineStage;
-            if let PipelineStage::Script(s) = stage {
-                crate::scripting::sandbox::validate_for_install(&s.src)?;
-            }
-        }
-    }
-    persist_processor(&app, &processor.meta.id, &yaml)?;
-    let summary = ProcessorSummary::from(&processor);
-    let mut procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
-    procs.insert(processor.meta.id.clone(), processor);
-    Ok(summary)
+    validate_and_install(&app, &state, &yaml, processor)
 }
 
 #[tauri::command]
@@ -70,19 +81,7 @@ pub async fn load_processor_from_file(
 ) -> Result<ProcessorSummary, String> {
     let yaml = std::fs::read_to_string(&path).map_err(|e| format!("Cannot read file: {e}"))?;
     let processor = AnyProcessor::from_yaml(&yaml)?;
-    if let Some(reporter_def) = processor.as_reporter() {
-        for stage in &reporter_def.pipeline {
-            use crate::processors::schema::PipelineStage;
-            if let PipelineStage::Script(s) = stage {
-                crate::scripting::sandbox::validate_for_install(&s.src)?;
-            }
-        }
-    }
-    persist_processor(&app, &processor.meta.id, &yaml)?;
-    let summary = ProcessorSummary::from(&processor);
-    let mut procs = state.processors.lock().map_err(|_| "lock poisoned")?;
-    procs.insert(processor.meta.id.clone(), processor);
-    Ok(summary)
+    validate_and_install(&app, &state, &yaml, processor)
 }
 
 #[tauri::command]
@@ -214,17 +213,5 @@ pub async fn install_from_registry(
     };
     let yaml = registry::download_processor(&state.http_client, &reg_entry, None).await?;
     let processor = AnyProcessor::from_yaml(&yaml)?;
-    if let Some(reporter_def) = processor.as_reporter() {
-        for stage in &reporter_def.pipeline {
-            use crate::processors::schema::PipelineStage;
-            if let PipelineStage::Script(s) = stage {
-                crate::scripting::sandbox::validate_for_install(&s.src)?;
-            }
-        }
-    }
-    persist_processor(&app, &processor.meta.id, &yaml)?;
-    let summary = ProcessorSummary::from(&processor);
-    let mut procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
-    procs.insert(processor.meta.id.clone(), processor);
-    Ok(summary)
+    validate_and_install(&app, &state, &yaml, processor)
 }

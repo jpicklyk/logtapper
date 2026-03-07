@@ -29,6 +29,36 @@ use crate::processors::state_tracker::types::StateTransition;
 pub const PORT: u16 = 40404;
 
 // ---------------------------------------------------------------------------
+// Session lookup macros
+// ---------------------------------------------------------------------------
+
+/// Acquire the sessions lock, look up `$session_id`, bind `$sessions` (the lock
+/// guard), `$session` (the `&AnalysisSession`), and `$source` (the `&dyn LogSource`).
+/// Returns a JSON error response on lookup failure.
+macro_rules! get_session_and_source {
+    ($state:expr, $session_id:expr => $sessions:ident, $session:ident, $source:ident) => {
+        let $sessions = $state.sessions.lock().unwrap();
+        let Some($session) = $sessions.get(&$session_id) else {
+            return Json(json!({ "error": format!("Session not found: {}", $session_id) }));
+        };
+        let Some($source) = $session.primary_source() else {
+            return Json(json!({ "error": format!("Session has no sources: {}", $session_id) }));
+        };
+    };
+}
+
+/// Verify a session exists (by key) and return a JSON error if not.
+/// Does not bind the session — drops the lock immediately.
+macro_rules! verify_session_exists {
+    ($state:expr, $session_id:expr) => {{
+        let sessions = $state.sessions.lock().unwrap();
+        if !sessions.contains_key(&$session_id) {
+            return Json(json!({ "error": format!("Session not found: {}", $session_id) }));
+        }
+    }};
+}
+
+// ---------------------------------------------------------------------------
 // Processor metadata extraction helpers
 // ---------------------------------------------------------------------------
 
@@ -415,13 +445,7 @@ async fn h_query(
     }
 
     let (snaps, total_lines): (Vec<LineSnap>, usize) = {
-        let sessions = state.sessions.lock().unwrap();
-        let Some(session) = sessions.get(&session_id) else {
-            return Json(json!({ "error": "session not found", "sessionId": session_id }));
-        };
-        let Some(source) = session.primary_source() else {
-            return Json(json!({ "error": "session has no sources", "sessionId": session_id }));
-        };
+        get_session_and_source!(state, session_id => sessions, session, source);
 
         let total = source.total_lines();
 
@@ -469,13 +493,7 @@ async fn h_query(
 
     let snaps = if has_filter {
         // Rebuild snap list by scanning real lines instead of using the sample.
-        let sessions = state.sessions.lock().unwrap();
-        let Some(session) = sessions.get(&session_id) else {
-            return Json(json!({ "error": "session not found", "sessionId": session_id }));
-        };
-        let Some(source) = session.primary_source() else {
-            return Json(json!({ "error": "session has no sources", "sessionId": session_id }));
-        };
+        get_session_and_source!(state, session_id => sessions, session, source);
 
         // Clamp scan range to [start_line, end_line)
         let range_start = params.start_line.unwrap_or(0).min(total_lines);
@@ -1267,13 +1285,7 @@ async fn h_search(
     }
 
     let matches: Vec<MatchResult> = {
-        let sessions = state.sessions.lock().unwrap();
-        let Some(session) = sessions.get(&session_id) else {
-            return Json(json!({ "error": "session not found", "sessionId": session_id }));
-        };
-        let Some(source) = session.primary_source() else {
-            return Json(json!({ "error": "session has no sources", "sessionId": session_id }));
-        };
+        get_session_and_source!(state, session_id => sessions, session, source);
 
         let total = source.total_lines();
         let range_start = params.start_line.unwrap_or(0).min(total);
@@ -1530,13 +1542,7 @@ async fn h_metadata(
 ) -> Json<Value> {
     let state = handle.state::<AppState>();
 
-    let sessions = state.sessions.lock().unwrap();
-    let Some(session) = sessions.get(&session_id) else {
-        return Json(json!({ "error": "session not found", "sessionId": session_id }));
-    };
-    let Some(source) = session.primary_source() else {
-        return Json(json!({ "error": "session has no sources", "sessionId": session_id }));
-    };
+    get_session_and_source!(state, session_id => sessions, session, source);
 
     let total_lines = source.total_lines();
     let first_ts = source.first_timestamp();
@@ -1576,13 +1582,7 @@ async fn h_sections(
 ) -> Json<Value> {
     let state = handle.state::<AppState>();
 
-    let sessions = state.sessions.lock().unwrap();
-    let Some(session) = sessions.get(&session_id) else {
-        return Json(json!({ "error": "session not found", "sessionId": session_id }));
-    };
-    let Some(source) = session.primary_source() else {
-        return Json(json!({ "error": "session has no sources", "sessionId": session_id }));
-    };
+    get_session_and_source!(state, session_id => sessions, session, source);
 
     let sections: Vec<Value> = source.sections().iter().map(|s| {
         json!({
@@ -1619,13 +1619,7 @@ async fn h_tag_stats(
 
     // Aggregate inside the lock (fast iteration, no allocations), then drop.
     let (total_lines, level_dist, tag_counts, tag_table) = {
-        let sessions = state.sessions.lock().unwrap();
-        let Some(session) = sessions.get(&session_id) else {
-            return Json(json!({ "error": "session not found", "sessionId": session_id }));
-        };
-        let Some(source) = session.primary_source() else {
-            return Json(json!({ "error": "session has no sources", "sessionId": session_id }));
-        };
+        get_session_and_source!(state, session_id => sessions, session, source);
 
         let mut level_dist: HashMap<&'static str, usize> = HashMap::new();
         let mut tag_counts: HashMap<u16, usize> = HashMap::new();
@@ -1689,13 +1683,7 @@ async fn h_lines_around(
     let after = params.after.unwrap_or(20).min(100);
     let center = params.line;
 
-    let sessions = state.sessions.lock().unwrap();
-    let Some(session) = sessions.get(&session_id) else {
-        return Json(json!({ "error": "session not found", "sessionId": session_id }));
-    };
-    let Some(source) = session.primary_source() else {
-        return Json(json!({ "error": "session has no sources", "sessionId": session_id }));
-    };
+    get_session_and_source!(state, session_id => sessions, session, source);
 
     let total = source.total_lines();
     let start = center.saturating_sub(before);
@@ -1774,13 +1762,7 @@ async fn h_search_with_context(
         }
     };
 
-    let sessions = state.sessions.lock().unwrap();
-    let Some(session) = sessions.get(&session_id) else {
-        return Json(json!({ "error": "session not found", "sessionId": session_id }));
-    };
-    let Some(source) = session.primary_source() else {
-        return Json(json!({ "error": "session has no sources", "sessionId": session_id }));
-    };
+    get_session_and_source!(state, session_id => sessions, session, source);
 
     let total = source.total_lines();
     let range_start = params.start_line.unwrap_or(0).min(total);
@@ -1871,13 +1853,7 @@ async fn h_create_bookmark(
 
     let state = handle.state::<AppState>();
 
-    // Verify session exists
-    {
-        let sessions = state.sessions.lock().unwrap();
-        if !sessions.contains_key(&session_id) {
-            return Json(json!({"error": format!("Session not found: {session_id}")}));
-        }
-    }
+    verify_session_exists!(state, session_id);
 
     let bookmark = Bookmark {
         id: uuid::Uuid::new_v4().to_string(),
@@ -1974,13 +1950,7 @@ async fn h_publish_analysis(
 
     let state = handle.state::<AppState>();
 
-    // Verify session exists
-    {
-        let sessions = state.sessions.lock().unwrap();
-        if !sessions.contains_key(&session_id) {
-            return Json(json!({"error": format!("Session not found: {session_id}")}));
-        }
-    }
+    verify_session_exists!(state, session_id);
 
     let artifact = AnalysisArtifact {
         id: uuid::Uuid::new_v4().to_string(),
@@ -2150,13 +2120,7 @@ async fn h_create_watch(
 
     let state = handle.state::<AppState>();
 
-    // Verify session exists
-    {
-        let sessions = state.sessions.lock().unwrap();
-        if !sessions.contains_key(&session_id) {
-            return Json(json!({"error": format!("Session not found: {session_id}")}));
-        }
-    }
+    verify_session_exists!(state, session_id);
 
     let watch_id = uuid::Uuid::new_v4().to_string();
     let watch = Arc::new(WatchSession::new(
@@ -2219,13 +2183,7 @@ async fn h_run_pipeline(
 
     let state = handle.state::<AppState>();
 
-    // Verify session exists
-    {
-        let sessions = state.sessions.lock().unwrap();
-        if !sessions.contains_key(&session_id) {
-            return Json(json!({"error": format!("Session not found: {session_id}")}));
-        }
-    }
+    verify_session_exists!(state, session_id);
 
     // Resolve processor IDs — use provided list or all installed processors.
     // Bare IDs (e.g. "wifi-state") are resolved to qualified keys ("wifi-state@official").

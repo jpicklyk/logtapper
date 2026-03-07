@@ -125,6 +125,44 @@ impl AnyProcessor {
         }
     }
 
+    /// Validate that filter rules are compatible with this processor type.
+    /// `SourceTypeIs` and `SectionIs` are only supported by reporters and state
+    /// trackers — reject them at install time for other processor types.
+    pub fn validate_filter_rules(&self) -> Result<(), String> {
+        use reporter::schema::FilterRule;
+
+        fn check_rules(rules: &[FilterRule], proc_id: &str, proc_type: &str) -> Result<(), String> {
+            for rule in rules {
+                match rule {
+                    FilterRule::SourceTypeIs { .. } | FilterRule::SectionIs { .. } => {
+                        return Err(format!(
+                            "Processor '{}' (type: {}) uses an unsupported filter rule: {}. \
+                             source_type_is and section_is are only supported in reporters and state_trackers.",
+                            proc_id, proc_type, rule.rule_name(),
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            Ok(())
+        }
+
+        match &self.kind {
+            ProcessorKind::Correlator(def) => {
+                for src in &def.sources {
+                    check_rules(&src.filter, &self.meta.id, "correlator")?;
+                }
+            }
+            ProcessorKind::Transformer(def) => {
+                if let Some(ref stage) = def.filter {
+                    check_rules(&stage.rules, &self.meta.id, "transformer")?;
+                }
+            }
+            _ => {} // Reporter, StateTracker, Annotator — all supported
+        }
+        Ok(())
+    }
+
     pub fn from_yaml(yaml: &str) -> Result<Self, String> {
         // Strip UTF-8 BOM if present (common Windows file artifact)
         let yaml = yaml.trim_start_matches('\u{FEFF}');

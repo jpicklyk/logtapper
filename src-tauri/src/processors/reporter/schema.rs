@@ -456,6 +456,20 @@ impl FilterRule {
         }
     }
 
+    /// Return the snake_case name of this rule variant (matches serde tag).
+    pub fn rule_name(&self) -> &'static str {
+        match self {
+            FilterRule::TagMatch { .. } => "tag_match",
+            FilterRule::MessageContains { .. } => "message_contains",
+            FilterRule::MessageContainsAny { .. } => "message_contains_any",
+            FilterRule::MessageRegex { .. } => "message_regex",
+            FilterRule::LevelMin { .. } => "level_min",
+            FilterRule::TimeRange { .. } => "time_range",
+            FilterRule::SourceTypeIs { .. } => "source_type_is",
+            FilterRule::SectionIs { .. } => "section_is",
+        }
+    }
+
     /// Populate the `tag_set` HashSet from the `tags` Vec for O(1) lookup.
     /// Call this once after deserialization, before processing lines.
     pub fn prepare_tag_set(&mut self) {
