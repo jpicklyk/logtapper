@@ -17,9 +17,23 @@ pub enum LogLevel {
     Fatal,
 }
 
+impl LogLevel {
+    /// Zero-allocation conversion to a static string matching `Debug`/serde output.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Verbose => "Verbose",
+            Self::Debug => "Debug",
+            Self::Info => "Info",
+            Self::Warn => "Warn",
+            Self::Error => "Error",
+            Self::Fatal => "Fatal",
+        }
+    }
+}
+
 impl std::fmt::Display for LogLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        f.write_str(self.as_str())
     }
 }
 

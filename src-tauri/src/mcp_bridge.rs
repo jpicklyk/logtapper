@@ -409,7 +409,7 @@ async fn h_query(
     // Snapshot the lines we need without holding the lock into async territory.
     struct LineSnap {
         line_num: usize,
-        level: String,   // e.g. "Info", "Error"
+        level: &'static str,   // e.g. "Info", "Error"
         tag: String,
         raw: String,
     }
@@ -447,7 +447,7 @@ async fn h_query(
                 let meta = source.meta_at(i)?;
                 Some(LineSnap {
                     line_num: i,
-                    level: format!("{:?}", meta.level),
+                    level: meta.level.as_str(),
                     tag: session.resolve_tag(meta.tag_id).to_string(),
                     raw,
                 })
@@ -512,7 +512,7 @@ async fn h_query(
             if matched.len() >= n { break; }
             let Some(raw) = source.raw_line(i) else { continue };
             let Some(meta) = source.meta_at(i) else { continue };
-            let level_str = format!("{:?}", meta.level);
+            let level_str = meta.level.as_str();
             // Tag filter
             if let Some(ref tf) = params.tag {
                 if session.resolve_tag(meta.tag_id) != tf { continue; }
@@ -523,7 +523,7 @@ async fn h_query(
             }
             // Level filter
             if let Some(ref lf) = params.level {
-                if !level_at_least(&level_str, lf) { continue; }
+                if !level_at_least(level_str, lf) { continue; }
             }
             // Time range filter
             if let Some(ts) = time_start_ns {
@@ -567,13 +567,13 @@ async fn h_query(
 
     // Build JSON output.
     let mut tag_counts: HashMap<String, usize> = HashMap::new();
-    let mut level_counts: HashMap<String, usize> = HashMap::new();
+    let mut level_counts: HashMap<&str, usize> = HashMap::new();
 
     let lines: Vec<Value> = snaps
         .into_iter()
         .map(|snap| {
             *tag_counts.entry(snap.tag.clone()).or_insert(0) += 1;
-            *level_counts.entry(snap.level.clone()).or_insert(0) += 1;
+            *level_counts.entry(snap.level).or_insert(0) += 1;
             json!({
                 "lineNum": snap.line_num,
                 "level": snap.level,
@@ -1617,29 +1617,39 @@ async fn h_tag_stats(
     let state = handle.state::<AppState>();
     let top_n = params.top_n.unwrap_or(50);
 
-    let sessions = state.sessions.lock().unwrap();
-    let Some(session) = sessions.get(&session_id) else {
-        return Json(json!({ "error": "session not found", "sessionId": session_id }));
-    };
-    let Some(source) = session.primary_source() else {
-        return Json(json!({ "error": "session has no sources", "sessionId": session_id }));
-    };
+    // Aggregate inside the lock (fast iteration, no allocations), then drop.
+    let (total_lines, level_dist, tag_counts, tag_table) = {
+        let sessions = state.sessions.lock().unwrap();
+        let Some(session) = sessions.get(&session_id) else {
+            return Json(json!({ "error": "session not found", "sessionId": session_id }));
+        };
+        let Some(source) = session.primary_source() else {
+            return Json(json!({ "error": "session has no sources", "sessionId": session_id }));
+        };
 
-    let total_lines = source.total_lines();
-
-    // Scan line meta for level distribution and tag counts
-    let mut level_dist: HashMap<String, usize> = HashMap::new();
-    let mut tag_counts: HashMap<u16, usize> = HashMap::new();
-    for meta in source.line_meta_slice() {
-        *level_dist.entry(format!("{:?}", meta.level)).or_insert(0) += 1;
-        *tag_counts.entry(meta.tag_id).or_insert(0) += 1;
-    }
+        let mut level_dist: HashMap<&'static str, usize> = HashMap::new();
+        let mut tag_counts: HashMap<u16, usize> = HashMap::new();
+        for m in source.line_meta_slice() {
+            *level_dist.entry(m.level.as_str()).or_insert(0) += 1;
+            *tag_counts.entry(m.tag_id).or_insert(0) += 1;
+        }
+        (
+            source.total_lines(),
+            level_dist,
+            tag_counts,
+            session.tag_table().to_vec(),
+        )
+    }; // lock drops here
 
     // Resolve tag IDs and sort by count descending
     let mut top_tags: Vec<Value> = tag_counts
         .into_iter()
         .map(|(tag_id, count)| {
-            json!({ "tag": session.resolve_tag(tag_id), "count": count })
+            let tag = tag_table
+                .get(tag_id as usize)
+                .map(|s| s.as_str())
+                .unwrap_or("<unknown>");
+            json!({ "tag": tag, "count": count })
         })
         .collect();
     top_tags.sort_by(|a, b| {
@@ -1697,7 +1707,7 @@ async fn h_lines_around(
             let meta = source.meta_at(i)?;
             Some(json!({
                 "lineNum": i,
-                "level": format!("{:?}", meta.level),
+                "level": meta.level.as_str(),
                 "tag": session.resolve_tag(meta.tag_id),
                 "raw": truncate_str(&raw, 500),
                 "isCenter": i == center,
@@ -1800,7 +1810,7 @@ async fn h_search_with_context(
                     let meta = source.meta_at(j)?;
                     Some(json!({
                         "lineNum": j,
-                        "level": format!("{:?}", meta.level),
+                        "level": meta.level.as_str(),
                         "tag": session.resolve_tag(meta.tag_id),
                         "raw": truncate_str(&line_raw, 500),
                         "isMatch": j == i,

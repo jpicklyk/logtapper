@@ -161,6 +161,11 @@ impl AnalysisSession {
         self.tag_interner.resolve(tag_id)
     }
 
+    /// Return the tag interner's string table (for cloning outside a lock).
+    pub fn tag_table(&self) -> &[String] {
+        &self.tag_interner.table
+    }
+
     /// Access the primary source (read-only).
     pub fn primary_source(&self) -> Option<&dyn LogSource> {
         self.source.as_deref()
