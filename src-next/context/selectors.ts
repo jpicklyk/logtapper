@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import type { LoadResult, SearchQuery, SearchSummary, ProcessorSummary, PipelineRunSummary, Source, UpdateAvailable } from '../bridge/types';
 import { useSessionContext, type IndexingProgress } from './SessionContext';
-import { useViewerContext } from './ViewerContext';
+import { useSearchCtx, useScrollCtx, useProcessorViewCtx } from './ViewerContext';
 import { usePipelineContext, type SessionPipelineState } from './PipelineContext';
 import { useTrackerContext } from './TrackerContext';
 import { useActionsContext } from './ActionsContext';
@@ -83,12 +83,12 @@ export function useSessionError(): string | null {
 // ---------------------------------------------------------------------------
 
 export function useSearch(): { query: SearchQuery | null; summary: SearchSummary | null; matchIndex: number } {
-  const { search, searchSummary, currentMatchIndex } = useViewerContext();
+  const { search, searchSummary, currentMatchIndex } = useSearchCtx();
   return { query: search, summary: searchSummary, matchIndex: currentMatchIndex };
 }
 
 export function useScrollTarget(): { lineNum: number | null; seq: number; paneId: string | null } {
-  const { scrollToLine, jumpSeq, jumpPaneId } = useViewerContext();
+  const { scrollToLine, jumpSeq, jumpPaneId } = useScrollCtx();
   return { lineNum: scrollToLine, seq: jumpSeq, paneId: jumpPaneId };
 }
 
@@ -225,7 +225,7 @@ export function useMarketplaceSources(): { sources: Source[]; loading: boolean }
 // ---------------------------------------------------------------------------
 
 export function useProcessorId(): string | null {
-  return useViewerContext().processorId;
+  return useProcessorViewCtx().processorId;
 }
 
 export function useStreamFilter(paneId: string): {
@@ -246,7 +246,7 @@ export function useStreamFilter(paneId: string): {
 }
 
 export function useSearchQuery(): SearchQuery | null {
-  return useViewerContext().search;
+  return useSearchCtx().search;
 }
 
 export function usePipelineProgress(): { current: number; total: number } | null {
