@@ -46,10 +46,11 @@ impl TagInterner {
         id
     }
 
-    /// Resolve a tag ID back to its string.  Panics if `id` is out of range
-    /// (which would indicate a bug — IDs are only produced by `intern`).
+    /// Resolve a tag ID back to its string.  Returns `""` if `id` is out of
+    /// range (defensive — IDs are only produced by `intern`, so out-of-range
+    /// indicates a bug, but we avoid panicking in production).
     pub fn resolve(&self, id: u16) -> &str {
-        &self.table[id as usize]
+        self.table.get(id as usize).map(|s| s.as_str()).unwrap_or("")
     }
 }
 

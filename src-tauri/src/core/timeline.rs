@@ -71,7 +71,11 @@ impl Timeline {
     }
 
     /// Return all entries in a timestamp range [from_ns, to_ns].
+    /// Returns an empty slice if `from_ns > to_ns`.
     pub fn entries_in_range(&self, from_ns: i64, to_ns: i64) -> &[TimelineEntry] {
+        if from_ns > to_ns {
+            return &[];
+        }
         let lo = self
             .entries
             .partition_point(|e| e.timestamp < from_ns);
