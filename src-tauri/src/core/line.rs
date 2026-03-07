@@ -29,6 +29,23 @@ impl LogLevel {
             Self::Fatal => "Fatal",
         }
     }
+
+    /// Parse a log-level string (short or long form).
+    ///
+    /// Recognises single-char Android logcat abbreviations (`V`, `D`, `I`, `W`,
+    /// `E`, `F`, `A`), long-form names (`VERBOSE`, `DEBUG`, etc.), and common
+    /// aliases (`WARNING`, `ASSERT`).
+    pub fn from_str_loose(s: &str) -> Option<LogLevel> {
+        match s.to_uppercase().as_str() {
+            "V" | "VERBOSE" => Some(Self::Verbose),
+            "D" | "DEBUG" => Some(Self::Debug),
+            "I" | "INFO" => Some(Self::Info),
+            "W" | "WARN" | "WARNING" => Some(Self::Warn),
+            "E" | "ERROR" => Some(Self::Error),
+            "F" | "A" | "FATAL" | "ASSERT" => Some(Self::Fatal),
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Display for LogLevel {

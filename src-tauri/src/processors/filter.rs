@@ -85,16 +85,9 @@ pub fn get_or_compile<'a>(
 }
 
 /// Parse a log-level string (short or long form) into a `LogLevel`.
+/// Delegates to [`LogLevel::from_str_loose`].
 pub fn parse_level(s: &str) -> Option<LogLevel> {
-    match s.to_uppercase().as_str() {
-        "V" | "VERBOSE" => Some(LogLevel::Verbose),
-        "D" | "DEBUG" => Some(LogLevel::Debug),
-        "I" | "INFO" => Some(LogLevel::Info),
-        "W" | "WARN" | "WARNING" => Some(LogLevel::Warn),
-        "E" | "ERROR" => Some(LogLevel::Error),
-        "F" | "FATAL" => Some(LogLevel::Fatal),
-        _ => None,
-    }
+    LogLevel::from_str_loose(s)
 }
 
 /// Parse `HH:MM:SS.mmm` into nanoseconds since midnight.
@@ -199,6 +192,8 @@ mod tests {
         assert_eq!(parse_level("V"), Some(LogLevel::Verbose));
         assert_eq!(parse_level("verbose"), Some(LogLevel::Verbose));
         assert_eq!(parse_level("WARNING"), Some(LogLevel::Warn));
+        assert_eq!(parse_level("A"), Some(LogLevel::Fatal));
+        assert_eq!(parse_level("ASSERT"), Some(LogLevel::Fatal));
         assert_eq!(parse_level("unknown"), None);
     }
 

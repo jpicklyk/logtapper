@@ -32,6 +32,18 @@ fn validate_and_install(
             }
         }
     }
+    if let Some(correlator_def) = processor.as_correlator() {
+        for src in &correlator_def.sources {
+            if let Some(condition) = &src.condition {
+                crate::scripting::sandbox::validate_expression(condition).map_err(|e| {
+                    format!(
+                        "Correlator source '{}' has invalid condition: {e}",
+                        src.id
+                    )
+                })?;
+            }
+        }
+    }
     persist_processor(app, &processor.meta.id, yaml)?;
     let summary = ProcessorSummary::from(&processor);
     let mut procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;

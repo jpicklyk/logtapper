@@ -47,6 +47,17 @@ pub fn validate_for_install(src: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Validate a Rhai expression (e.g. correlator `condition` fields).
+/// Expressions are single-line boolean tests like `fd_count > 900`.
+/// Returns the raw Rhai error string on failure — callers add context.
+pub fn validate_expression(src: &str) -> Result<(), String> {
+    let engine = make_validation_engine();
+    engine
+        .compile_expression(src)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

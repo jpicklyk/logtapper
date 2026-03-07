@@ -47,15 +47,7 @@ fn brief_re() -> &'static Regex {
 // ---------------------------------------------------------------------------
 
 pub fn parse_level(c: &str) -> LogLevel {
-    match c.to_uppercase().as_str() {
-        "V" => LogLevel::Verbose,
-        "D" => LogLevel::Debug,
-        "I" => LogLevel::Info,
-        "W" => LogLevel::Warn,
-        "E" => LogLevel::Error,
-        "F" | "A" => LogLevel::Fatal,
-        _ => LogLevel::Debug,
-    }
+    LogLevel::from_str_loose(c).unwrap_or(LogLevel::Debug)
 }
 
 /// Convert a logcat date+time string to nanoseconds since 2000-01-01 00:00:00 UTC.

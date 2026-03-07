@@ -249,8 +249,9 @@ impl<'a> CorrelatorRun<'a> {
     }
 
     /// Evaluate a simple Rhai condition expression against extracted fields.
-    /// Returns `true` if the expression evaluates to a truthy value, or if
-    /// evaluation fails (fail-open so the source still matches).
+    /// Returns `true` if the expression evaluates to a truthy value.
+    /// Returns `false` on evaluation failure (fail-closed — invalid conditions
+    /// are rejected at install time, so runtime failures indicate data issues).
     fn eval_condition(&self, condition: &str, fields: &HashMap<String, JsonValue>) -> bool {
         let mut scope = rhai::Scope::new();
 
@@ -270,7 +271,7 @@ impl<'a> CorrelatorRun<'a> {
             }
         }
 
-        self.rhai_engine.eval_expression_with_scope::<bool>(&mut scope, condition).unwrap_or(true)
+        self.rhai_engine.eval_expression_with_scope::<bool>(&mut scope, condition).unwrap_or(false)
     }
 
     /// Format the emit template by substituting `{{source_id.field_name}}` placeholders.
