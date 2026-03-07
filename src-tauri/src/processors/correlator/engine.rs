@@ -8,7 +8,7 @@ use std::collections::{HashMap, VecDeque};
 
 use crate::core::line::{LineContext, PipelineContext};
 // Arc<str> fields deref to &str, so most comparisons work via deref.
-use super::schema::{CorrelatorDef, ExtractField, FilterRule, SourceDef};
+use super::schema::{CorrelatorDef, ExtractField, SourceDef};
 
 // ---------------------------------------------------------------------------
 // Public output types
@@ -54,6 +54,8 @@ pub struct CorrelatorRun<'a> {
     events: Vec<CorrelationEvent>,
     /// Compiled regex cache.
     regex_cache: HashMap<String, Regex>,
+    /// Reusable Rhai engine for condition evaluation (avoids per-call allocation).
+    rhai_engine: rhai::Engine,
 }
 
 impl<'a> CorrelatorRun<'a> {
@@ -64,11 +66,14 @@ impl<'a> CorrelatorRun<'a> {
                 source_buffers.insert(src.id.clone(), VecDeque::new());
             }
         }
+        let mut rhai_engine = rhai::Engine::new();
+        rhai_engine.set_max_operations(10_000);
         Self {
             def,
             source_buffers,
             events: Vec::new(),
             regex_cache: HashMap::new(),
+            rhai_engine,
         }
     }
 
@@ -187,7 +192,7 @@ impl<'a> CorrelatorRun<'a> {
     ) -> Option<HashMap<String, JsonValue>> {
         // AND-ed filter rules.
         for rule in &src.filter {
-            if !self.rule_matches(rule, line) {
+            if !crate::processors::filter::rule_matches(&mut self.regex_cache, rule, line, None) {
                 return None;
             }
         }
@@ -204,10 +209,6 @@ impl<'a> CorrelatorRun<'a> {
         }
 
         Some(fields)
-    }
-
-    fn rule_matches(&mut self, rule: &FilterRule, line: &LineContext) -> bool {
-        crate::processors::filter::rule_matches(&mut self.regex_cache, rule, line, None)
     }
 
     fn apply_extract(
@@ -251,9 +252,6 @@ impl<'a> CorrelatorRun<'a> {
     /// Returns `true` if the expression evaluates to a truthy value, or if
     /// evaluation fails (fail-open so the source still matches).
     fn eval_condition(&self, condition: &str, fields: &HashMap<String, JsonValue>) -> bool {
-        // Build a minimal Rhai scope with only the extracted fields.
-        let mut engine = rhai::Engine::new();
-        engine.set_max_operations(10_000);
         let mut scope = rhai::Scope::new();
 
         // Push each field into scope.
@@ -272,7 +270,7 @@ impl<'a> CorrelatorRun<'a> {
             }
         }
 
-        engine.eval_expression_with_scope::<bool>(&mut scope, condition).unwrap_or(true)
+        self.rhai_engine.eval_expression_with_scope::<bool>(&mut scope, condition).unwrap_or(true)
     }
 
     /// Format the emit template by substituting `{{source_id.field_name}}` placeholders.

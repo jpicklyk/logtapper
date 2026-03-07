@@ -525,57 +525,27 @@ pub fn execute_pipeline(
     // Reset cancellation flag at the start
     state.pipeline_cancel.store(false, Ordering::Relaxed);
 
-    // ── Partition processor IDs by kind ──────────────────────────────────────
-    let (transformer_ids, reporter_ids, tracker_ids, correlator_ids) = {
+    // ── Partition processor IDs by kind and clone defs (single lock scope) ───
+    let mut transformer_defs = Vec::new();
+    let mut reporter_defs = Vec::new();
+    let mut tracker_defs = Vec::new();
+    let mut correlator_defs = Vec::new();
+    {
         let procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
-        let mut t_ids: Vec<String> = Vec::new();
-        let mut r_ids: Vec<String> = Vec::new();
-        let mut s_ids: Vec<String> = Vec::new();
-        let mut c_ids: Vec<String> = Vec::new();
         for id in processor_ids {
             let resolved = resolve_processor_id(&procs, id)
                 .unwrap_or_else(|| id.clone());
             if let Some(p) = procs.get(resolved.as_str()) {
                 match &p.kind {
-                    ProcessorKind::Transformer(_) => t_ids.push(resolved),
-                    ProcessorKind::Reporter(_) => r_ids.push(resolved),
-                    ProcessorKind::StateTracker(_) => s_ids.push(resolved),
-                    ProcessorKind::Correlator(_) => c_ids.push(resolved),
+                    ProcessorKind::Transformer(d) => transformer_defs.push((resolved, d.clone())),
+                    ProcessorKind::Reporter(d) => reporter_defs.push((resolved, d.clone())),
+                    ProcessorKind::StateTracker(d) => tracker_defs.push((resolved, d.clone())),
+                    ProcessorKind::Correlator(d) => correlator_defs.push((resolved, d.clone())),
                     _ => {} // Annotator: schema stub, no engine yet
                 }
             }
         }
-        (t_ids, r_ids, s_ids, c_ids)
-    };
-
-    // ── Clone defs (one lock acquisition per kind, released immediately) ──────
-    let transformer_defs: Vec<(String, crate::processors::transformer::schema::TransformerDef)> = {
-        let procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
-        transformer_ids.iter()
-            .filter_map(|id| procs.get(id).and_then(|p| p.as_transformer()).map(|d| (id.clone(), d.clone())))
-            .collect()
-    };
-
-    let mut reporter_defs: Vec<(String, crate::processors::reporter::schema::ReporterDef)> = {
-        let procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
-        reporter_ids.iter()
-            .filter_map(|id| procs.get(id).and_then(|p| p.as_reporter()).map(|d| (id.clone(), d.clone())))
-            .collect()
-    };
-
-    let mut tracker_defs: Vec<(String, crate::processors::state_tracker::schema::StateTrackerDef)> = {
-        let procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
-        tracker_ids.iter()
-            .filter_map(|id| procs.get(id).and_then(|p| p.as_state_tracker()).map(|d| (id.clone(), d.clone())))
-            .collect()
-    };
-
-    let mut correlator_defs: Vec<(String, crate::processors::correlator::schema::CorrelatorDef)> = {
-        let procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
-        correlator_ids.iter()
-            .filter_map(|id| procs.get(id).and_then(|p| p.as_correlator()).map(|d| (id.clone(), d.clone())))
-            .collect()
-    };
+    }
 
     // ── Snapshot source data ─────────────────────────────────────────────────
     let (source_snapshot, source_id, source_type, src_sections) = {
@@ -1002,7 +972,7 @@ pub fn execute_pipeline(
     let mut session_pipeline_results: HashMap<String, _> = HashMap::new();
 
     // Reporter results
-    for ((proc_id, _), (run, _)) in reporter_ids.iter().zip(reporter_defs.iter()).zip(reporter_runs.into_iter()) {
+    for ((proc_id, _def), (run, _sorted)) in reporter_defs.iter().zip(reporter_runs.into_iter()) {
         let result = run.finish();
         summaries.push(PipelineRunSummary {
             processor_id: proc_id.clone(),
@@ -1015,8 +985,8 @@ pub fn execute_pipeline(
     // StateTracker summaries (transition count as matched_lines)
     if let Ok(str_results) = state.state_tracker_results.lock() {
         if let Some(session_str) = str_results.get(session_id) {
-            for tracker_id in &tracker_ids {
-                if let Some(result) = session_str.get(tracker_id) {
+            for (tracker_id, _) in &tracker_defs {
+                if let Some(result) = session_str.get(tracker_id.as_str()) {
                     summaries.push(PipelineRunSummary {
                         processor_id: tracker_id.clone(),
                         matched_lines: result.transitions.len(),
@@ -1039,8 +1009,8 @@ pub fn execute_pipeline(
     // Correlator summaries (event count as emission_count)
     if let Ok(cr) = state.correlator_results.lock() {
         if let Some(session_map) = cr.get(session_id) {
-            for corr_id in &correlator_ids {
-                if let Some(result) = session_map.get(corr_id) {
+            for (corr_id, _) in &correlator_defs {
+                if let Some(result) = session_map.get(corr_id.as_str()) {
                     summaries.push(PipelineRunSummary {
                         processor_id: corr_id.clone(),
                         matched_lines: result.events.len(),

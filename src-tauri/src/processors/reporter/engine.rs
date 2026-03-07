@@ -229,17 +229,14 @@ impl<'a> ProcessorRun<'a> {
     // ────────────────────────────────────────────────────────────────────────
 
     fn apply_filter_sorted(&mut self, filter_idx: usize, line: &LineContext, pipeline_ctx: &PipelineContext) -> bool {
-        for i in 0..self.sorted_filter_rules[filter_idx].len() {
-            let rule = self.sorted_filter_rules[filter_idx][i].clone();
-            if !self.rule_matches(&rule, line, pipeline_ctx) {
+        // Call filter::rule_matches directly (not via self.rule_matches) to avoid
+        // borrowing &mut self while also borrowing self.sorted_filter_rules.
+        for rule in &self.sorted_filter_rules[filter_idx] {
+            if !crate::processors::filter::rule_matches(&mut self.regex_cache, rule, line, Some(pipeline_ctx)) {
                 return false;
             }
         }
         true
-    }
-
-    fn rule_matches(&mut self, rule: &FilterRule, line: &LineContext, pipeline_ctx: &PipelineContext) -> bool {
-        crate::processors::filter::rule_matches(&mut self.regex_cache, rule, line, Some(pipeline_ctx))
     }
 
     // ────────────────────────────────────────────────────────────────────────
