@@ -22,8 +22,9 @@ import { RightPane } from '../../components/RightPane';
 import { BottomPane } from '../../components/BottomPane';
 import { PaneContent } from '../../components/PaneContent';
 import { SettingsPanel } from '../../components/SettingsPanel';
-import { useSettings, useAnonymizerConfig } from '../../hooks';
+import { useSettings, useAnonymizerConfig, useToast, useAnalysisToast } from '../../hooks';
 import { useCacheManager } from '../../cache';
+import { Toast } from '../../ui';
 import { findTabAcrossTree, allPanes } from '../../hooks/workspace/splitTreeHelpers';
 import { usePendingUpdateCount } from '../../context';
 import type {
@@ -61,6 +62,8 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   const settingsHook = useSettings();
   const anonymizerConfig = useAnonymizerConfig();
   const cacheManager = useCacheManager();
+  const { toasts, addToast, dismissToast } = useToast();
+  useAnalysisToast(addToast);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const updateBadgeCount = usePendingUpdateCount();
 
@@ -337,6 +340,9 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
         if (!container) return null;
         return createPortal(<PaneContent pane={pane} />, container, pane.id);
       })}
+
+      {/* Toast notifications (e.g. MCP-published analyses) */}
+      <Toast toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 });

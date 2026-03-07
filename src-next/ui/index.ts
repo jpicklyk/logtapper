@@ -6,4 +6,6 @@ export { Modal } from './Modal/Modal';
 export { Badge } from './Badge/Badge';
 export { Spinner } from './Spinner/Spinner';
 export { Icon } from './Icon/Icon';
+export { Toast } from './Toast/Toast';
+export type { ToastItem } from './Toast/Toast';
 export { PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY } from './processorBadgeTypes';

@@ -9,6 +9,7 @@ import {
   deleteAnalysis,
 } from '../bridge/commands';
 import { onAnalysisUpdate } from '../bridge/events';
+import { bus } from '../events/bus';
 
 export interface AnalysisState {
   artifacts: AnalysisArtifact[];
@@ -96,6 +97,8 @@ export function useAnalysis(sessionId: string | null) {
     async (title: string, sections: AnalysisSection[]) => {
       if (!sessionId) return null;
       const art = await publishAnalysis(sessionId, title, sections);
+      // Notify toast hook so it can suppress the toast for this local publish
+      if (art) bus.emit('analysis:published-local', { artifactId: art.id });
       return art;
     },
     [sessionId],

@@ -68,6 +68,10 @@ export type AppEvents = {
   // ── Analysis ──────────────────────────────────────────────────────────────
   /** Fired when the user selects an analysis artifact to view in the center tab. */
   'analysis:open':          { artifactId: string };
+  /** Fired when the local UI publishes an analysis — used by useAnalysisToast to suppress toasts. */
+  'analysis:published-local':    { artifactId: string };
+  /** Fired when an analysis is published externally (e.g. via MCP bridge), not by local UI. */
+  'analysis:published-external': { artifactId: string; title: string; sessionId: string };
 
   // ── Marketplace ─────────────────────────────────────────────────────────
   'marketplace:processor-installed': { processorId: string; sourceName: string };
