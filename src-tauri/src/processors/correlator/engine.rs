@@ -207,34 +207,7 @@ impl<'a> CorrelatorRun<'a> {
     }
 
     fn rule_matches(&mut self, rule: &FilterRule, line: &LineContext) -> bool {
-        use crate::core::line::LogLevel;
-        use super::schema::FilterRule;
-        match rule {
-            FilterRule::TagMatch { tag_set, tags } => {
-                if !tag_set.is_empty() {
-                    tag_set.contains(&*line.tag)
-                } else {
-                    tags.iter().any(|t| t.as_str() == &*line.tag)
-                }
-            }
-            FilterRule::MessageContains { value } => line.message.contains(value.as_str()),
-            FilterRule::MessageContainsAny { values } => {
-                values.iter().any(|v| line.message.contains(v.as_str()))
-            }
-            FilterRule::MessageRegex { pattern } => {
-                let pat = pattern.clone();
-                match self.get_or_compile(&pat) {
-                    Some(re) => re.is_match(&line.message),
-                    None => false,
-                }
-            }
-            FilterRule::LevelMin { level } => {
-                let min = parse_level(level).unwrap_or(LogLevel::Verbose);
-                line.level >= min
-            }
-            FilterRule::TimeRange { .. } => true, // Not needed for correlators
-            FilterRule::SourceTypeIs { .. } | FilterRule::SectionIs { .. } => true, // Handled at pipeline level
-        }
+        crate::processors::filter::rule_matches(&mut self.regex_cache, rule, line, None)
     }
 
     fn apply_extract(
@@ -334,14 +307,7 @@ impl<'a> CorrelatorRun<'a> {
     }
 
     fn get_or_compile(&mut self, pattern: &str) -> Option<&Regex> {
-        if !self.regex_cache.contains_key(pattern) {
-            if let Ok(re) = Regex::new(pattern) {
-                self.regex_cache.insert(pattern.to_string(), re);
-            } else {
-                return None;
-            }
-        }
-        self.regex_cache.get(pattern)
+        crate::processors::filter::get_or_compile(&mut self.regex_cache, pattern)
     }
 }
 
@@ -369,19 +335,6 @@ pub struct ContinuousCorrelatorState {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn parse_level(s: &str) -> Option<crate::core::line::LogLevel> {
-    use crate::core::line::LogLevel;
-    match s.to_uppercase().as_str() {
-        "V" | "VERBOSE" => Some(LogLevel::Verbose),
-        "D" | "DEBUG" => Some(LogLevel::Debug),
-        "I" | "INFO" => Some(LogLevel::Info),
-        "W" | "WARN" | "WARNING" => Some(LogLevel::Warn),
-        "E" | "ERROR" => Some(LogLevel::Error),
-        "F" | "FATAL" => Some(LogLevel::Fatal),
-        _ => None,
-    }
-}
 
 fn json_val_to_str(v: &JsonValue) -> String {
     match v {

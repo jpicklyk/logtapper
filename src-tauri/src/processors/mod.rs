@@ -1,5 +1,6 @@
 pub mod annotator;
 pub mod correlator;
+pub mod filter;
 pub mod marketplace;
 pub mod registry;
 pub mod reporter;

@@ -239,62 +239,7 @@ impl<'a> ProcessorRun<'a> {
     }
 
     fn rule_matches(&mut self, rule: &FilterRule, line: &LineContext, pipeline_ctx: &PipelineContext) -> bool {
-        use crate::core::line::LogLevel;
-        match rule {
-            FilterRule::TagMatch { tag_set, tags } => {
-                let line_tag: &str = &line.tag;
-                if !tag_set.is_empty() {
-                    tag_set.iter().any(|t| line_tag.starts_with(t.as_str()))
-                } else {
-                    tags.iter().any(|t| line_tag.starts_with(t.as_str()))
-                }
-            }
-            FilterRule::MessageContains { value } => line.message.contains(value.as_str()),
-            FilterRule::MessageContainsAny { values } => {
-                values.iter().any(|v| line.message.contains(v.as_str()))
-            }
-            FilterRule::MessageRegex { pattern } => {
-                match self.get_or_compile(pattern) {
-                    Some(re) => re.is_match(&line.message),
-                    None => false, // Invalid pattern — treat as no-match.
-                }
-            }
-            FilterRule::LevelMin { level } => {
-                let min = parse_level(level).unwrap_or(LogLevel::Verbose);
-                line.level >= min
-            }
-            FilterRule::TimeRange { from, to } => {
-                // Parse as HH:MM:SS and compare against timestamp nanos.
-                let ts_nanos = line.timestamp;
-                let from_ns = parse_time_hms(from);
-                let to_ns = parse_time_hms(to);
-                // Timestamps are nanos since 2000-01-01; extract time-of-day nanos.
-                let nanos_per_day = 86_400_000_000_000i64;
-                let time_of_day = ts_nanos.rem_euclid(nanos_per_day);
-                time_of_day >= from_ns && time_of_day <= to_ns
-            }
-            FilterRule::SourceTypeIs { source_type } => {
-                pipeline_ctx.source_type.matches_str(source_type)
-            }
-            FilterRule::SectionIs { section } => {
-                let line_section = crate::core::line::section_for_line(&pipeline_ctx.sections, line.source_line_num);
-                line_section == section
-            }
-        }
-    }
-
-    /// Returns `None` if the pattern fails to compile (invalid regex).
-    fn get_or_compile(&mut self, pattern: &str) -> Option<&Regex> {
-        // We store only successfully compiled regexes; absent key means invalid.
-        if !self.regex_cache.contains_key(pattern) {
-            if let Ok(re) = Regex::new(pattern) {
-                self.regex_cache.insert(pattern.to_string(), re);
-            } else {
-                // Invalid pattern — return None to skip this rule.
-                return None;
-            }
-        }
-        self.regex_cache.get(pattern)
+        crate::processors::filter::rule_matches(&mut self.regex_cache, rule, line, Some(pipeline_ctx))
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -308,7 +253,7 @@ impl<'a> ProcessorRun<'a> {
         out: &mut FieldVec,
     ) {
         for field in fields {
-            let re = match self.get_or_compile(&field.pattern.clone()) {
+            let re = match crate::processors::filter::get_or_compile(&mut self.regex_cache, &field.pattern) {
                 Some(r) => r,
                 None => continue, // Invalid pattern — skip this field.
             };
@@ -461,31 +406,7 @@ pub struct ContinuousRunState {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn parse_level(s: &str) -> Option<crate::core::line::LogLevel> {
-    use crate::core::line::LogLevel;
-    match s.to_uppercase().as_str() {
-        "V" | "VERBOSE" => Some(LogLevel::Verbose),
-        "D" | "DEBUG" => Some(LogLevel::Debug),
-        "I" | "INFO" => Some(LogLevel::Info),
-        "W" | "WARN" | "WARNING" => Some(LogLevel::Warn),
-        "E" | "ERROR" => Some(LogLevel::Error),
-        "F" | "FATAL" => Some(LogLevel::Fatal),
-        _ => None,
-    }
-}
-
-fn parse_time_hms(s: &str) -> i64 {
-    let parts: Vec<&str> = s.splitn(3, ':').collect();
-    if parts.len() < 3 {
-        return 0;
-    }
-    let h = parts[0].parse::<i64>().unwrap_or(0);
-    let m = parts[1].parse::<i64>().unwrap_or(0);
-    let sec_ms: Vec<&str> = parts[2].splitn(2, '.').collect();
-    let sec = sec_ms[0].parse::<i64>().unwrap_or(0);
-    let ms = sec_ms.get(1).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
-    (h * 3_600 + m * 60 + sec) * 1_000_000_000 + ms * 1_000_000
-}
+// parse_level and parse_time_hms moved to crate::processors::filter
 
 // ---------------------------------------------------------------------------
 // Tests

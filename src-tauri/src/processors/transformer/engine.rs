@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use regex::Regex;
-use crate::core::line::{LineContext, LogLevel};
-use crate::processors::reporter::schema::{FilterRule, FilterStage};
+use crate::core::line::LineContext;
+use crate::processors::reporter::schema::FilterStage;
 use crate::anonymizer::config::AnonymizerConfig;
 use crate::processors::transformer::schema::{TransformerDef, TransformOp, BuiltinTransformer};
 use crate::processors::transformer::types::ContinuousTransformerState;
@@ -93,62 +93,17 @@ impl TransformerRun {
 
 fn apply_filter(regex_cache: &mut HashMap<String, Regex>, stage: &FilterStage, line: &LineContext) -> bool {
     for rule in &stage.rules {
-        if !rule_matches(regex_cache, rule, line) {
+        if !crate::processors::filter::rule_matches(regex_cache, rule, line, None) {
             return false;
         }
     }
     true
 }
 
-fn rule_matches(regex_cache: &mut HashMap<String, Regex>, rule: &FilterRule, line: &LineContext) -> bool {
-    match rule {
-        FilterRule::TagMatch { tag_set, tags } => {
-            if !tag_set.is_empty() {
-                tag_set.contains(&*line.tag)
-            } else {
-                tags.iter().any(|t| t.as_str() == &*line.tag)
-            }
-        }
-        FilterRule::MessageContains { value } => line.message.contains(value.as_str()),
-        FilterRule::MessageContainsAny { values } => {
-            values.iter().any(|v| line.message.contains(v.as_str()))
-        }
-        FilterRule::MessageRegex { pattern } => {
-            match get_or_compile(regex_cache, pattern) {
-                Some(re) => re.is_match(&line.message),
-                None => false,
-            }
-        }
-        FilterRule::LevelMin { level } => {
-            let min = parse_level(level).unwrap_or(LogLevel::Verbose);
-            line.level >= min
-        }
-        FilterRule::TimeRange { from, to } => {
-            let nanos_per_day = 86_400_000_000_000i64;
-            let time_of_day = line.timestamp.rem_euclid(nanos_per_day);
-            let from_ns = parse_time_hms(from);
-            let to_ns = parse_time_hms(to);
-            time_of_day >= from_ns && time_of_day <= to_ns
-        }
-        FilterRule::SourceTypeIs { .. } | FilterRule::SectionIs { .. } => true, // Handled at pipeline level
-    }
-}
-
-fn get_or_compile<'a>(regex_cache: &'a mut HashMap<String, Regex>, pattern: &str) -> Option<&'a Regex> {
-    if !regex_cache.contains_key(pattern) {
-        if let Ok(re) = Regex::new(pattern) {
-            regex_cache.insert(pattern.to_string(), re);
-        } else {
-            return None;
-        }
-    }
-    regex_cache.get(pattern)
-}
-
 fn apply_transform_op(regex_cache: &mut HashMap<String, Regex>, op: &TransformOp, line: &mut LineContext) {
     match op {
         TransformOp::ReplaceField { field, regex, replacement } => {
-            if let Some(re) = get_or_compile(regex_cache, regex) {
+            if let Some(re) = crate::processors::filter::get_or_compile(regex_cache, regex) {
                 if field == "message" {
                     let new_msg = re.replace_all(&line.message, replacement.as_str());
                     line.message = Arc::from(new_msg.as_ref());
@@ -198,32 +153,11 @@ fn yaml_to_json(value: &serde_yaml::Value) -> serde_json::Value {
 }
 
 
-fn parse_level(s: &str) -> Option<LogLevel> {
-    match s.to_uppercase().as_str() {
-        "V" | "VERBOSE" => Some(LogLevel::Verbose),
-        "D" | "DEBUG" => Some(LogLevel::Debug),
-        "I" | "INFO" => Some(LogLevel::Info),
-        "W" | "WARN" | "WARNING" => Some(LogLevel::Warn),
-        "E" | "ERROR" => Some(LogLevel::Error),
-        "F" | "FATAL" => Some(LogLevel::Fatal),
-        _ => None,
-    }
-}
-
-fn parse_time_hms(s: &str) -> i64 {
-    let parts: Vec<&str> = s.splitn(3, ':').collect();
-    if parts.len() < 3 { return 0; }
-    let h = parts[0].parse::<i64>().unwrap_or(0);
-    let m = parts[1].parse::<i64>().unwrap_or(0);
-    let sec_ms: Vec<&str> = parts[2].splitn(2, '.').collect();
-    let sec = sec_ms[0].parse::<i64>().unwrap_or(0);
-    let ms = sec_ms.get(1).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
-    (h * 3_600 + m * 60 + sec) * 1_000_000_000 + ms * 1_000_000
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::line::LogLevel;
     use crate::processors::transformer::schema::TransformOp;
 
     fn make_line(message: &str) -> LineContext {
