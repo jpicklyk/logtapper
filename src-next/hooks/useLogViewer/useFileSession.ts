@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import type { SourceType } from '../../bridge/types';
+import { isBugreportLike } from '../../bridge/types';
 import { loadLogFile, closeSession as closeSessionCmd } from '../../bridge/commands';
 import { onFileIndexProgress, onFileIndexComplete } from '../../bridge/events';
 import { useSessionContext } from '../../context/SessionContext';
@@ -123,7 +124,7 @@ export function useFileSession(
         previousSessionId,
       });
 
-      if (result.sourceType === 'Bugreport') {
+      if (isBugreportLike(result.sourceType)) {
         bus.emit('session:dumpstate:opened', {
           sessionId: result.sessionId,
           paneId: targetPaneId,
@@ -266,7 +267,7 @@ export function useFileSession(
   useEffect(() => {
     const handler = (e: { sessionId: string; totalLines: number }) => {
       const sess = sessions.get(e.sessionId);
-      if (sess?.sourceType === 'Bugreport') {
+      if (sess && isBugreportLike(sess.sourceType)) {
         bus.emit('session:dumpstate:indexing-complete', {
           sessionId: e.sessionId,
           totalLines: e.totalLines,

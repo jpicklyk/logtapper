@@ -495,9 +495,6 @@ export function useCenterTree(
       if (e.hasTrackers) {
         openBottomPane('timeline');
       }
-      if (e.hasCorrelators) {
-        openBottomPane('correlations');
-      }
     };
 
     const onSessionClosed = (e: { paneId: string; tabId?: string }) => {

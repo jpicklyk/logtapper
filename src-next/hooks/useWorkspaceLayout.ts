@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { isBugreportLike } from '../bridge/types';
 import { bus } from '../events/bus';
 import { useTogglePane } from './useTogglePane';
 import { useSessionContext } from '../context/SessionContext';
@@ -189,7 +190,7 @@ export function useWorkspaceLayout() {
     // Left-pane side-effect of session:loaded — set info tab for Bugreport sources.
     // (Tree mutations for session:loaded are handled inside useCenterTree.)
     const onSessionLoaded = (e: { sourceType: string; paneId: string }) => {
-      if (e.sourceType === 'Bugreport' && e.paneId === focusedPaneIdRef.current) {
+      if (isBugreportLike(e.sourceType) && e.paneId === focusedPaneIdRef.current) {
         setLeftPaneTabRaw('info');
       }
     };

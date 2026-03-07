@@ -69,8 +69,9 @@ pub struct ProcessorRun<'a> {
 }
 
 impl<'a> ProcessorRun<'a> {
-    pub fn new(def: &'a ReporterDef) -> Self {
-        let sorted_filter_rules: Vec<Vec<FilterRule>> = def.pipeline.iter()
+    /// Build filter stages with rules pre-sorted by ascending cost (cheapest first).
+    fn build_sorted_filter_rules(def: &ReporterDef) -> Vec<Vec<FilterRule>> {
+        def.pipeline.iter()
             .filter_map(|stage| match stage {
                 PipelineStage::Filter(fs) => {
                     let mut rules = fs.rules.clone();
@@ -82,7 +83,11 @@ impl<'a> ProcessorRun<'a> {
                 }
                 _ => None,
             })
-            .collect();
+            .collect()
+    }
+
+    pub fn new(def: &'a ReporterDef) -> Self {
+        let sorted_filter_rules = Self::build_sorted_filter_rules(def);
         Self {
             vars: VarStore::new(&def.vars),
             def,
@@ -99,19 +104,7 @@ impl<'a> ProcessorRun<'a> {
 
     /// Create a run seeded with previously saved state for continuous (streaming) processing.
     pub fn new_seeded(def: &'a ReporterDef, state: ContinuousRunState) -> Self {
-        let sorted_filter_rules: Vec<Vec<FilterRule>> = def.pipeline.iter()
-            .filter_map(|stage| match stage {
-                PipelineStage::Filter(fs) => {
-                    let mut rules = fs.rules.clone();
-                    rules.sort_by_key(|r| r.cost_rank());
-                    for rule in &mut rules {
-                        rule.prepare_tag_set();
-                    }
-                    Some(rules)
-                }
-                _ => None,
-            })
-            .collect();
+        let sorted_filter_rules = Self::build_sorted_filter_rules(def);
         Self {
             vars: state.vars,
             def,

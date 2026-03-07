@@ -3,7 +3,12 @@
 
 export type LogLevel = 'Verbose' | 'Debug' | 'Info' | 'Warn' | 'Error' | 'Fatal';
 
-export type SourceType = 'Bugreport' | 'Logcat' | 'Kernel' | 'Unknown';
+export type SourceType = 'Bugreport' | 'Dumpstate' | 'Logcat' | 'Kernel' | 'Unknown';
+
+/** Dumpstate is a superset of Bugreport (Samsung dumps). Both need identical UI treatment. */
+export function isBugreportLike(t: SourceType | string): boolean {
+  return t === 'Bugreport' || t === 'Dumpstate';
+}
 
 export type HighlightKind =
   | { type: 'Search' }

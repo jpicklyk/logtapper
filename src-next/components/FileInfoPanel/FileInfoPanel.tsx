@@ -4,6 +4,7 @@ import {
   FileText, Smartphone, Clock, HardDrive, Layers, Hash, ChevronRight,
 } from 'lucide-react';
 import type { DumpstateMetadata, SourceType } from '../../bridge/types';
+import { isBugreportLike } from '../../bridge/types';
 import type { IndexingProgress } from '../../context';
 import styles from './FileInfoPanel.module.css';
 import { getSectionDescription } from './sectionDescriptions';
@@ -382,7 +383,7 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
     sectionJumpSeq = 0,
     indexingProgress = null,
   }) {
-    const isScanning = sourceType === 'Bugreport' && indexingProgress !== null;
+    const isScanning = !!sourceType && isBugreportLike(sourceType) && indexingProgress !== null;
     const duration = formatDuration(firstTimestamp, lastTimestamp);
     const meta = dumpstateMetadata;
     const typeColor = sourceTypeColor(sourceType as SourceType | undefined);

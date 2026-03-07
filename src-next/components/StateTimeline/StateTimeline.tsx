@@ -553,7 +553,7 @@ function SparklineTrack({
   return (
     <div className={styles.track}>
       <div className={styles.trackLabel} title={`${series.processorName}: ${series.label}`} style={{ color }}>
-        {series.label}
+        {series.processorName}: {series.label}
       </div>
       <div className={styles.trackBody} style={{ height: TRACK_HEIGHT }}>
         <svg
