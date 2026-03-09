@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 
 /// How a source reference should be displayed in the gutter.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum HighlightType {
     /// A background annotation (subtle highlight).
+    #[default]
     Annotation,
     /// An anchor point (prominent marker).
     Anchor,
@@ -25,6 +26,7 @@ pub struct SourceReference {
     pub line_number: u32,
     pub end_line: Option<u32>,
     pub label: String,
+    #[serde(default)]
     pub highlight_type: HighlightType,
 }
 
@@ -175,6 +177,15 @@ mod tests {
         let json = serde_json::to_string(&art).unwrap();
         let parsed: AnalysisArtifact = serde_json::from_str(&json).unwrap();
         assert!(parsed.sections.is_empty());
+    }
+
+    #[test]
+    fn source_reference_missing_highlight_type_defaults_to_annotation() {
+        let json = r#"{"lineNumber": 42, "label": "test point"}"#;
+        let r: SourceReference = serde_json::from_str(json).unwrap();
+        assert_eq!(r.highlight_type, HighlightType::Annotation);
+        assert_eq!(r.line_number, 42);
+        assert_eq!(r.end_line, None);
     }
 
     #[test]
