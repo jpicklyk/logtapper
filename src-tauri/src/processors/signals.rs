@@ -4,9 +4,11 @@
 //!   `heap_pct >= 90`
 //!   `heap_pct >= 80 && heap_pct < 90`
 //!   `fd_count > 500`
+//!   `result == 'FAIL' && probe_type == 'DNS'`
 //!
 //! The evaluator parses a condition string into a minimal AST and evaluates
 //! it against a map of field values (from a single emission or from vars).
+//! Both numeric and string literal comparisons are supported.
 
 use std::collections::HashMap;
 use serde_json::Value;
@@ -25,12 +27,18 @@ pub enum CmpOp {
     Neq,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum CmpValue {
+    Num(f64),
+    Str(String),
+}
+
 #[derive(Debug, Clone)]
 pub enum Expr {
     Comparison {
         field: String,
         op: CmpOp,
-        value: f64,
+        value: CmpValue,
     },
     And(Box<Expr>, Box<Expr>),
     Or(Box<Expr>, Box<Expr>),
@@ -78,6 +86,18 @@ fn tokenize(input: &str) -> Vec<String> {
             }
             '(' => { chars.next(); tokens.push("(".to_string()); }
             ')' => { chars.next(); tokens.push(")".to_string()); }
+            '\'' | '"' => {
+                let quote = c;
+                chars.next(); // consume opening quote
+                let mut s = String::new();
+                while let Some(&c2) = chars.peek() {
+                    if c2 == quote { chars.next(); break; }
+                    s.push(c2);
+                    chars.next();
+                }
+                // Wrap in single quotes as a marker for the parser
+                tokens.push(format!("'{s}'"));
+            }
             _ => {
                 // Identifier or number
                 let mut s = String::new();
@@ -169,10 +189,17 @@ impl Parser {
             other => return Err(format!("Unknown operator '{other}'")),
         };
 
-        let num_str = self.consume()
-            .ok_or_else(|| format!("Expected number after operator for '{field}'"))?;
-        let value: f64 = num_str.parse()
-            .map_err(|_| format!("Cannot parse '{num_str}' as a number"))?;
+        let value_str = self.consume()
+            .ok_or_else(|| format!("Expected value after operator for '{field}'"))?;
+
+        let value = if value_str.starts_with('\'') && value_str.ends_with('\'') && value_str.len() >= 2 {
+            // String literal: 'FAIL', 'DNS', etc.
+            CmpValue::Str(value_str[1..value_str.len()-1].to_string())
+        } else {
+            // Numeric literal
+            CmpValue::Num(value_str.parse()
+                .map_err(|_| format!("Cannot parse '{value_str}' as a number"))?)
+        };
 
         Ok(Expr::Comparison { field, op, value })
     }
@@ -204,17 +231,32 @@ pub fn parse_condition(condition: &str) -> Result<Option<Expr>, String> {
 pub fn evaluate(expr: &Expr, fields: &HashMap<String, Value>) -> bool {
     match expr {
         Expr::Comparison { field, op, value } => {
-            let field_val = match fields.get(field) {
-                Some(v) => json_to_f64(v),
-                None => return false, // missing field — condition fails
+            let Some(field_val) = fields.get(field) else {
+                return false; // missing field — condition fails
             };
-            match op {
-                CmpOp::Gt  => field_val > *value,
-                CmpOp::Gte => field_val >= *value,
-                CmpOp::Lt  => field_val < *value,
-                CmpOp::Lte => field_val <= *value,
-                CmpOp::Eq  => (field_val - value).abs() < f64::EPSILON,
-                CmpOp::Neq => (field_val - value).abs() >= f64::EPSILON,
+            match value {
+                CmpValue::Str(s) => {
+                    let field_str = match field_val {
+                        Value::String(fs) => fs.as_str(),
+                        _ => return false, // type mismatch
+                    };
+                    match op {
+                        CmpOp::Eq  => field_str == s,
+                        CmpOp::Neq => field_str != s,
+                        _ => false, // >, <, >=, <= not meaningful for strings
+                    }
+                }
+                CmpValue::Num(n) => {
+                    let field_num = json_to_f64(field_val);
+                    match op {
+                        CmpOp::Gt  => field_num > *n,
+                        CmpOp::Gte => field_num >= *n,
+                        CmpOp::Lt  => field_num < *n,
+                        CmpOp::Lte => field_num <= *n,
+                        CmpOp::Eq  => (field_num - n).abs() < f64::EPSILON,
+                        CmpOp::Neq => (field_num - n).abs() >= f64::EPSILON,
+                    }
+                }
             }
         }
         Expr::And(left, right) => evaluate(left, fields) && evaluate(right, fields),
@@ -375,6 +417,50 @@ mod tests {
     fn string_field_numeric_coercion() {
         let f = fields(&[("heap_pct", json!("85"))]);
         assert!(eval_condition(Some("heap_pct >= 80"), &f));
+    }
+
+    // --- String literal comparisons ---
+
+    #[test]
+    fn string_eq() {
+        let f = fields(&[("result", json!("FAIL"))]);
+        assert!(eval_condition(Some("result == 'FAIL'"), &f));
+        assert!(!eval_condition(Some("result == 'OK'"), &f));
+    }
+
+    #[test]
+    fn string_neq() {
+        let f = fields(&[("result", json!("FAIL"))]);
+        assert!(eval_condition(Some("result != 'OK'"), &f));
+        assert!(!eval_condition(Some("result != 'FAIL'"), &f));
+    }
+
+    #[test]
+    fn string_and_numeric_combined() {
+        let f = fields(&[("result", json!("FAIL")), ("probe_type", json!("DNS"))]);
+        assert!(eval_condition(Some("result == 'FAIL' && probe_type == 'DNS'"), &f));
+        assert!(!eval_condition(Some("result == 'FAIL' && probe_type == 'HTTP'"), &f));
+    }
+
+    #[test]
+    fn string_missing_field() {
+        let f = fields(&[]);
+        assert!(!eval_condition(Some("result == 'FAIL'"), &f));
+    }
+
+    #[test]
+    fn string_double_quotes() {
+        let f = fields(&[("result", json!("FAIL"))]);
+        assert!(eval_condition(Some(r#"result == "FAIL""#), &f));
+    }
+
+    #[test]
+    fn string_condition_parses_successfully() {
+        // Verify that parse_condition succeeds for string conditions
+        // (previously failed silently, leaving parsed_condition = None)
+        let result = parse_condition("result == 'FAIL' && probe_type == 'DNS'");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
     }
 
     // --- Template rendering ---
