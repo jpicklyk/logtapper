@@ -229,8 +229,7 @@ pub const CATEGORIES: &[&str] = &[
 pub fn validate_processor_id(id: &str) -> Result<(), String> {
     if id.contains(NAMESPACE_SEP) {
         return Err(format!(
-            "Processor ID '{}' must not contain '{}' — that character is reserved for namespace qualification (id@source)",
-            id, NAMESPACE_SEP
+            "Processor ID '{id}' must not contain '{NAMESPACE_SEP}' — that character is reserved for namespace qualification (id@source)"
         ));
     }
     if id.is_empty() {
@@ -241,7 +240,7 @@ pub fn validate_processor_id(id: &str) -> Result<(), String> {
 
 /// Build a qualified ID: `{id}@{source}`.
 pub fn qualified_id(id: &str, source: &str) -> String {
-    format!("{}{}{}", id, NAMESPACE_SEP, source)
+    format!("{id}{NAMESPACE_SEP}{source}")
 }
 
 /// Split a qualified ID into `(bare_id, Some(source))` or `(id, None)`.

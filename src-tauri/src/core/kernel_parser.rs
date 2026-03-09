@@ -46,8 +46,7 @@ impl LogParser for KernelParser {
         let level = caps
             .get(1)
             .and_then(|m| m.as_str().parse::<u64>().ok())
-            .map(kmsg_level)
-            .unwrap_or(LogLevel::Info);
+            .map_or(LogLevel::Info, kmsg_level);
 
         let timestamp_sec: f64 = caps.get(2)?.as_str().parse().ok()?;
         // Convert to nanos since 2000-01-01 UTC
@@ -56,13 +55,9 @@ impl LogParser for KernelParser {
         let timestamp = BASE_NS + (timestamp_sec * 1_000_000_000.0) as i64;
 
         let tag: Arc<str> = caps
-            .get(3)
-            .map(|m| Arc::from(m.as_str()))
-            .unwrap_or_else(|| Arc::from("kernel"));
+            .get(3).map_or_else(|| Arc::from("kernel"), |m| Arc::from(m.as_str()));
 
-        let message: Arc<str> = caps.get(4)
-            .map(|m| Arc::from(m.as_str()))
-            .unwrap_or_else(|| Arc::from(""));
+        let message: Arc<str> = caps.get(4).map_or_else(|| Arc::from(""), |m| Arc::from(m.as_str()));
 
         Some(LineContext {
             raw: Arc::from(raw),

@@ -112,11 +112,11 @@ impl Parser {
     }
 
     fn peek(&self) -> Option<&str> {
-        self.tokens.get(self.pos).map(|s| s.as_str())
+        self.tokens.get(self.pos).map(std::string::String::as_str)
     }
 
     fn consume(&mut self) -> Option<&str> {
-        let t = self.tokens.get(self.pos).map(|s| s.as_str());
+        let t = self.tokens.get(self.pos).map(std::string::String::as_str);
         if t.is_some() { self.pos += 1; }
         t
     }
@@ -281,7 +281,7 @@ pub fn render_template(template: &str, vars: &HashMap<String, Value>) -> String 
                 }
             }
             let key = key.trim();
-            let replacement = vars.get(key).map(value_to_display).unwrap_or_else(|| "<unknown>".to_string());
+            let replacement = vars.get(key).map_or_else(|| "<unknown>".to_string(), value_to_display);
             result.push_str(&replacement);
         } else {
             result.push(c);

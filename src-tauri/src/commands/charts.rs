@@ -24,7 +24,7 @@ pub async fn get_chart_data(
         procs
             .get(&processor_id)
             .cloned()
-            .ok_or_else(|| format!("Processor '{}' not found", processor_id))?
+            .ok_or_else(|| format!("Processor '{processor_id}' not found"))?
     };
 
     // Get the pipeline run result
@@ -94,12 +94,12 @@ fn lttb_downsample(points: &[(usize, f64)], threshold: usize) -> Vec<(usize, f64
 
     for i in 0..(threshold - 2) {
         // Bucket boundaries
-        let bucket_start = ((i as f64 * bucket_size) + 1.0).floor() as usize;
-        let bucket_end = (((i + 1) as f64 * bucket_size) + 1.0).floor().min(n as f64) as usize;
+        let bucket_start = (i as f64).mul_add(bucket_size, 1.0).floor() as usize;
+        let bucket_end = ((i + 1) as f64).mul_add(bucket_size, 1.0).floor().min(n as f64) as usize;
 
         // Average of the next bucket (for the triangle area calculation)
         let next_start = bucket_end;
-        let next_end = (((i + 2) as f64 * bucket_size) + 1.0).floor().min(n as f64) as usize;
+        let next_end = ((i + 2) as f64).mul_add(bucket_size, 1.0).floor().min(n as f64) as usize;
         let (avg_x, avg_y) = if next_start < next_end {
             let count = (next_end - next_start) as f64;
             let sx: f64 = (next_start..next_end).map(|j| points[j].0 as f64).sum();
@@ -117,7 +117,7 @@ fn lttb_downsample(points: &[(usize, f64)], threshold: usize) -> Vec<(usize, f64
 
         for (j, pt) in points.iter().enumerate().take(bucket_end).skip(bucket_start) {
             let (cx, cy) = (pt.0 as f64, pt.1);
-            let area = ((prev_x - avg_x) * (cy - prev_y) - (prev_x - cx) * (avg_y - prev_y)).abs();
+            let area = (prev_x - avg_x).mul_add(cy - prev_y, -((prev_x - cx) * (avg_y - prev_y))).abs();
             if area > max_area {
                 max_area = area;
                 best = j;

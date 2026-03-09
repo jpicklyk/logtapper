@@ -26,7 +26,7 @@ pub fn create_watch(
 
     let watch_id = Uuid::new_v4().to_string();
     let watch = Arc::new(WatchSession::new(
-        watch_id.clone(),
+        watch_id,
         session_id.clone(),
         criteria.clone(),
     ));
@@ -120,7 +120,7 @@ pub fn evaluate_watches(
 
     let mut results = Vec::new();
 
-    for watch in watch_list.iter() {
+    for watch in watch_list {
         if !watch.is_active() {
             continue;
         }

@@ -43,7 +43,7 @@ fn build_line_map(input: &BridgeInput<'_>) -> RhaiMap {
 /// Build the `fields` Rhai map from extracted field pairs.
 fn build_fields_map(fields: &[(String, JsonValue)]) -> RhaiMap {
     let mut m = RhaiMap::new();
-    for (k, v) in fields.iter() {
+    for (k, v) in fields {
         m.insert(k.as_str().into(), json_to_dynamic(v));
     }
     m

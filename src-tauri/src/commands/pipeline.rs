@@ -95,7 +95,7 @@ impl SourceSnapshot {
                 std::str::from_utf8(trimmed).ok()
             }
             SourceSnapshot::Stream { raw_lines } => {
-                raw_lines.get(n).map(|s| s.as_str())
+                raw_lines.get(n).map(std::string::String::as_str)
             }
         }
     }
@@ -606,7 +606,7 @@ pub fn execute_pipeline(
     let section_ranges: Vec<Option<Vec<(usize, usize)>>> = reporter_defs.iter()
         .map(|(_, def)| {
             // Collect section names from both top-level sections AND SectionIs filter rules
-            let mut section_names: Vec<&str> = def.sections.iter().map(|s| s.as_str()).collect();
+            let mut section_names: Vec<&str> = def.sections.iter().map(std::string::String::as_str).collect();
 
             for stage in &def.pipeline {
                 if let crate::processors::reporter::schema::PipelineStage::Filter(f) = stage {
@@ -802,10 +802,10 @@ pub fn execute_pipeline(
 
         // ── PII pre-processing (built-in transformer) ───────────────────────
         if !transformer_defs.is_empty() {
-            for line_opt in parsed_chunk.iter_mut() {
+            for line_opt in &mut parsed_chunk {
                 if let Some(line) = line_opt.as_mut() {
                     let mut keep = true;
-                    for run in transformer_runs.iter_mut() {
+                    for run in &mut transformer_runs {
                         if !run.process_line(line) {
                             keep = false;
                             break;
@@ -847,7 +847,7 @@ pub fn execute_pipeline(
             let pctx = &pipeline_ctx;
 
             // Layer 2a: StateTrackers — one task per tracker
-            for (_, run) in tracker_runs.iter_mut() {
+            for (_, run) in &mut tracker_runs {
                 let lines = tracker_lines;
                 s.spawn(move |_| {
                     for line in lines {
@@ -857,10 +857,10 @@ pub fn execute_pipeline(
             }
 
             // Layer 2b: Reporters — one task per reporter
-            for (run, ranges) in reporter_runs.iter_mut() {
+            for (run, ranges) in &mut reporter_runs {
                 let lines = &enriched_chunk;
                 s.spawn(move |_| {
-                    for ctx in lines.iter() {
+                    for ctx in lines {
                         if let Some(ranges) = ranges {
                             if !ranges.iter().any(|(start, end)| {
                                 ctx.source_line_num >= *start && ctx.source_line_num <= *end
@@ -874,10 +874,10 @@ pub fn execute_pipeline(
             }
 
             // Layer 2c: Correlators — one task per correlator
-            for (_, run) in correlator_runs.iter_mut() {
+            for (_, run) in &mut correlator_runs {
                 let lines = &enriched_chunk;
                 s.spawn(move |_| {
-                    for line in lines.iter() {
+                    for line in lines {
                         run.process_line(line, pctx);
                     }
                 });
@@ -905,7 +905,7 @@ pub fn execute_pipeline(
     // ── Collect PII forward mappings from PII pre-processing ────────────────
     if !transformer_defs.is_empty() {
         forward_pii = transformer_runs.iter()
-            .flat_map(|r| r.get_pii_mappings())
+            .flat_map(super::super::processors::transformer::engine::TransformerRun::get_pii_mappings)
             .collect();
         if !forward_pii.is_empty() {
             let inverted: HashMap<String, String> =
@@ -924,8 +924,8 @@ pub fn execute_pipeline(
 
                 // Post-process: replace any captured raw PII values with tokens.
                 if !forward_pii.is_empty() {
-                    for transition in result.transitions.iter_mut() {
-                        for (_, change) in transition.changes.iter_mut() {
+                    for transition in &mut result.transitions {
+                        for change in transition.changes.values_mut() {
                             if let serde_json::Value::String(s) = &change.to {
                                 if let Some(token) = forward_pii.get(s.as_str()) {
                                     change.to = serde_json::Value::String(token.clone());

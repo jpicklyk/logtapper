@@ -132,10 +132,10 @@ impl LogParser for LogcatParser {
         }
 
         if let Some(caps) = threadtime_re().captures(raw) {
-            let date = caps.get(1).map(|m| m.as_str()).unwrap_or("01-01");
-            let time = caps.get(2).map(|m| m.as_str()).unwrap_or("00:00:00.000");
+            let date = caps.get(1).map_or("01-01", |m| m.as_str());
+            let time = caps.get(2).map_or("00:00:00.000", |m| m.as_str());
             // Group 6 = level, group 7 = tag (same offsets for both 2- and 3-field formats).
-            let level_char = caps.get(6).map(|m| m.as_str()).unwrap_or("I");
+            let level_char = caps.get(6).map_or("I", |m| m.as_str());
             let tag = caps
                 .get(7)
                 .map(|m| m.as_str().trim().to_string())
@@ -153,7 +153,7 @@ impl LogParser for LogcatParser {
 
         // Brief format — no timestamp, so use 0
         if let Some(caps) = brief_re().captures(raw) {
-            let level_char = caps.get(1).map(|m| m.as_str()).unwrap_or("I");
+            let level_char = caps.get(1).map_or("I", |m| m.as_str());
             let tag = caps
                 .get(2)
                 .map(|m| m.as_str().trim().to_string())

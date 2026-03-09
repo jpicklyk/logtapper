@@ -56,3 +56,35 @@ uuid = { version = "1", features = ["v4"] }
 
 # Window state persistence (saves position/size across restarts)
 tauri-plugin-window-state = "2"
+
+[lints.clippy]
+# === Deny (safety-critical, zero tolerance) ===
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+perf = { level = "deny", priority = -1 }
+
+# === Warn (code quality — prevent regressions) ===
+cloned_instead_of_copied = "warn"
+flat_map_option = "warn"
+unused_async = "warn"
+wildcard_imports = "warn"
+implicit_clone = "warn"
+inconsistent_struct_constructor = "warn"
+macro_use_imports = "warn"
+manual_string_new = "warn"
+inefficient_to_string = "warn"
+
+# === Warn (auto-fixable) ===
+uninlined_format_args = "warn"
+redundant_closure_for_method_calls = "warn"
+redundant_clone = "warn"
+explicit_iter_loop = "warn"
+or_fun_call = "warn"
+needless_collect = "warn"
+semicolon_if_nothing_returned = "warn"
+
+# === Warn (manual fixes — Phase 2) ===
+manual_let_else = "warn"
+map_unwrap_or = "warn"
+match_same_arms = "warn"
+suboptimal_flops = "warn"

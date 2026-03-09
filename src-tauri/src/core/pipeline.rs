@@ -136,7 +136,7 @@ impl Pipeline {
                             FilterRule::MessageRegex { .. } => {
                                 let re = self.filter_regexes.get(filter_regex_idx)?;
                                 filter_regex_idx += 1;
-                                re.as_ref().map(|r| r.is_match(&ctx.raw)).unwrap_or(false)
+                                re.as_ref().is_some_and(|r| r.is_match(&ctx.raw))
                             }
                             FilterRule::LevelMin { level } => ctx.level >= *level,
                         };

@@ -228,8 +228,7 @@ impl<'a> CorrelatorRun<'a> {
                 let raw = caps
                     .get(1)
                     .or_else(|| caps.get(0))
-                    .map(|m| m.as_str())
-                    .unwrap_or("");
+                    .map_or("", |m| m.as_str());
                 let val = match &field.cast {
                     Some(CastType::Int) => raw
                         .parse::<i64>()
@@ -286,7 +285,7 @@ impl<'a> CorrelatorRun<'a> {
 
         // Substitute trigger fields: {{trigger_id.field}}
         for (k, v) in trigger_fields {
-            let placeholder = format!("{{{{{}.{}}}}}", trigger_id, k);
+            let placeholder = format!("{{{{{trigger_id}.{k}}}}}");
             let replacement = json_val_to_str(v);
             result = result.replace(&placeholder, &replacement);
         }
@@ -295,7 +294,7 @@ impl<'a> CorrelatorRun<'a> {
         for (sid, records) in matched_sources {
             if let Some(rec) = records.last() {
                 for (k, v) in &rec.fields {
-                    let placeholder = format!("{{{{{}.{}}}}}", sid, k);
+                    let placeholder = format!("{{{{{sid}.{k}}}}}");
                     let replacement = json_val_to_str(v);
                     result = result.replace(&placeholder, &replacement);
                 }

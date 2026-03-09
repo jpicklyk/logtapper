@@ -93,7 +93,7 @@ fn install_snapshot_processors(state: &AppState, app: &tauri::AppHandle) {
             "\n_source: official\n_installed_version: {}\n_installed_at: 2000-01-01T00:00:00Z\n_sha256: \"\"\n",
             entry.version
         );
-        let final_yaml = format!("{}{}", raw_yaml, provenance_suffix);
+        let final_yaml = format!("{raw_yaml}{provenance_suffix}");
 
         match AnyProcessor::from_yaml(&final_yaml) {
             Ok(mut def) => {
@@ -104,7 +104,7 @@ fn install_snapshot_processors(state: &AppState, app: &tauri::AppHandle) {
                 let filename = processors::marketplace::id_to_filename(&qid);
                 let dest = proc_dir.join(format!("{filename}.yaml"));
                 if let Err(e) = std::fs::write(&dest, &final_yaml) {
-                    eprintln!("Failed to persist '{}': {e}", qid);
+                    eprintln!("Failed to persist '{qid}': {e}");
                 }
 
                 Some((qid, def, final_yaml))
@@ -252,9 +252,7 @@ pub fn run() {
             // In dev mode, resource_dir() points to src-tauri/ so ../marketplace
             // reaches the project root's marketplace/. In production builds,
             // Tauri bundles marketplace/ into the resource directory.
-            let marketplace_path = app.path().resource_dir()
-                .map(|d| d.join("marketplace"))
-                .unwrap_or_else(|_| std::path::PathBuf::from("marketplace"));
+            let marketplace_path = app.path().resource_dir().map_or_else(|_| std::path::PathBuf::from("marketplace"), |d| d.join("marketplace"));
 
             // Load or initialize sources
             let first_run = !sources_path.exists();

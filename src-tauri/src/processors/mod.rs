@@ -228,11 +228,11 @@ impl AnyProcessor {
         let auth = pick(ms.author.clone(),       ms.meta.as_ref().map(|m| m.author.clone()));
         let desc = pick(ms.description.clone(),  ms.meta.as_ref().map(|m| m.description.clone()));
         let tags = if !ms.tags.is_empty() { ms.tags } else { ms.meta.as_ref().map(|m| m.tags.clone()).unwrap_or_default() };
-        let builtin = ms.builtin || ms.meta.as_ref().map(|m| m.builtin).unwrap_or(false);
+        let builtin = ms.builtin || ms.meta.as_ref().is_some_and(|m| m.builtin);
         let license    = pick_opt(ms.license,    ms.meta.as_ref().and_then(|m| m.license.clone()));
         let category   = pick_opt(ms.category,   ms.meta.as_ref().and_then(|m| m.category.clone()));
         let repository = pick_opt(ms.repository, ms.meta.as_ref().and_then(|m| m.repository.clone()));
-        let deprecated = ms.deprecated || ms.meta.as_ref().map(|m| m.deprecated).unwrap_or(false);
+        let deprecated = ms.deprecated || ms.meta.as_ref().is_some_and(|m| m.deprecated);
 
         if id.is_empty()   { return Err("Processor YAML must have an 'id' field (or 'meta.id')".to_string()); }
         if name.is_empty() { return Err("Processor YAML must have a 'name' field (or 'meta.name')".to_string()); }

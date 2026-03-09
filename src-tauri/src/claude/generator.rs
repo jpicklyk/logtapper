@@ -139,7 +139,7 @@ pub fn extract_yaml(response: &str) -> String {
     if let Some(start) = trimmed.find("```") {
         let after = &trimmed[start + 3..];
         // Skip optional language identifier on same line
-        let content_start = after.find('\n').map(|i| i + 1).unwrap_or(0);
+        let content_start = after.find('\n').map_or(0, |i| i + 1);
         let content = &after[content_start..];
         if let Some(end) = content.find("```") {
             return content[..end].trim().to_string();

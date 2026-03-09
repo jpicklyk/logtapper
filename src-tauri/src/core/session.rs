@@ -50,7 +50,7 @@ impl TagInterner {
     /// range (defensive — IDs are only produced by `intern`, so out-of-range
     /// indicates a bug, but we avoid panicking in production).
     pub fn resolve(&self, id: u16) -> &str {
-        self.table.get(id as usize).map(|s| s.as_str()).unwrap_or("")
+        self.table.get(id as usize).map_or("", std::string::String::as_str)
     }
 }
 
@@ -107,7 +107,7 @@ impl std::fmt::Display for SourceType {
             SourceType::Dumpstate => write!(f, "Dumpstate"),
             SourceType::Tombstone => write!(f, "Tombstone"),
             SourceType::ANRTrace => write!(f, "ANRTrace"),
-            SourceType::Custom { parser_id } => write!(f, "Custom({})", parser_id),
+            SourceType::Custom { parser_id } => write!(f, "Custom({parser_id})"),
         }
     }
 }

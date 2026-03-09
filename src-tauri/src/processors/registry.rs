@@ -69,8 +69,7 @@ impl From<RegistryEntry> for MarketplaceEntry {
 /// Build the raw content URL for a GitHub source.
 fn github_raw_url(repo: &str, git_ref: &str, path: &str) -> String {
     format!(
-        "https://raw.githubusercontent.com/{}/{}/{}",
-        repo, git_ref, path
+        "https://raw.githubusercontent.com/{repo}/{git_ref}/{path}"
     )
 }
 

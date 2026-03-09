@@ -73,7 +73,7 @@ impl TransformerRun {
     pub fn get_pii_mappings(&self) -> HashMap<String, String> {
         self.pii_transformer
             .as_ref()
-            .map(|p| p.current_mappings())
+            .map(super::builtin::PiiTransformer::current_mappings)
             .unwrap_or_default()
     }
 
@@ -81,7 +81,7 @@ impl TransformerRun {
         let pii_mappings = self
             .pii_transformer
             .as_ref()
-            .map(|p| p.current_mappings())
+            .map(super::builtin::PiiTransformer::current_mappings)
             .filter(|m| !m.is_empty());
         ContinuousTransformerState {
             last_processed_line,
@@ -138,8 +138,7 @@ fn yaml_to_json(value: &serde_yaml::Value) -> serde_json::Value {
                 serde_json::Value::Number(i.into())
             } else if let Some(f) = n.as_f64() {
                 serde_json::Number::from_f64(f)
-                    .map(serde_json::Value::Number)
-                    .unwrap_or(serde_json::Value::Null)
+                    .map_or(serde_json::Value::Null, serde_json::Value::Number)
             } else {
                 serde_json::Value::Null
             }

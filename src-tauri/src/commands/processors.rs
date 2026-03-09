@@ -12,7 +12,7 @@ pub(crate) fn persist_processor(app: &AppHandle, id: &str, yaml: &str) -> Result
     let proc_dir = data_dir.join("processors");
     std::fs::create_dir_all(&proc_dir).map_err(|e| e.to_string())?;
     let filename = marketplace::id_to_filename(id);
-    std::fs::write(proc_dir.join(format!("{}.yaml", filename)), yaml)
+    std::fs::write(proc_dir.join(format!("{filename}.yaml")), yaml)
         .map_err(|e| format!("Failed to persist processor: {e}"))
 }
 
@@ -55,7 +55,7 @@ fn delete_processor_file(app: &AppHandle, id: &str) {
     if let Ok(data_dir) = app.path().app_data_dir() {
         let filename = marketplace::id_to_filename(id);
         let _ = std::fs::remove_file(
-            data_dir.join("processors").join(format!("{}.yaml", filename))
+            data_dir.join("processors").join(format!("{filename}.yaml"))
         );
     }
 }

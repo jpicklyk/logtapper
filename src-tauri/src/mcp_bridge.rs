@@ -7,6 +7,7 @@
 //! Lock discipline: acquire a Mutex, copy/clone the data needed, drop the lock,
 //! THEN build the JSON response. Never hold a lock across an `.await`.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use axum::{
@@ -63,26 +64,28 @@ macro_rules! verify_session_exists {
 // ---------------------------------------------------------------------------
 
 /// Extract the `sections` list from any processor kind.
-fn extract_sections(p: &AnyProcessor) -> Vec<String> {
+///
+/// Returns a borrowed slice for reporters (already stored) and an owned Vec
+/// for state trackers (computed from transition filters). Other kinds get `[]`.
+fn extract_sections(p: &AnyProcessor) -> Cow<'_, [String]> {
     match &p.kind {
-        ProcessorKind::Reporter(def) => def.sections.clone(),
+        ProcessorKind::Reporter(def) => Cow::Borrowed(&def.sections),
         ProcessorKind::StateTracker(def) => {
             let mut sections: Vec<String> = def.transitions.iter()
                 .filter_map(|t| t.filter.section.clone())
                 .collect();
             sections.sort();
             sections.dedup();
-            sections
+            Cow::Owned(sections)
         }
-        _ => Vec::new(),
+        _ => Cow::Borrowed(&[]),
     }
 }
 
 /// Extract `source_types` from the processor's schema contract.
-fn extract_source_types(p: &AnyProcessor) -> Vec<String> {
+fn extract_source_types(p: &AnyProcessor) -> &[String] {
     p.schema.as_ref()
-        .map(|s| s.source_types.clone())
-        .unwrap_or_default()
+        .map_or(&[], |s| s.source_types.as_slice())
 }
 
 /// Check whether a qualified (or bare) processor ID matches an optional filter.
@@ -243,8 +246,7 @@ fn truncate_str(s: &str, max_chars: usize) -> String {
     } else {
         let end = s.char_indices()
             .nth(max_chars)
-            .map(|(i, _)| i)
-            .unwrap_or(s.len());
+            .map_or(s.len(), |(i, _)| i);
         let mut t = s[..end].to_string();
         t.push_str("...");
         t
@@ -261,7 +263,7 @@ fn truncate_var_maps(vars: &HashMap<String, Value>) -> serde_json::Map<String, V
                 Value::Object(o) if o.is_empty() => None,
                 Value::Object(o) if o.len() > 20 => {
                     // Check if values are numeric
-                    let all_numeric = o.values().all(|v| v.is_number());
+                    let all_numeric = o.values().all(serde_json::Value::is_number);
                     if all_numeric {
                         let total_keys = o.len();
                         let mut entries: Vec<(&String, &Value)> = o.iter().collect();
@@ -664,7 +666,7 @@ async fn h_pipeline(
                 .filter(|(pid, _)| processor_id_matches(pid, params.processor_id.as_ref()))
                 .map(|(proc_id, run_result)| {
                     let proc = procs.get(proc_id);
-                    let name = proc.map(|p| p.meta.name.clone()).unwrap_or_else(|| proc_id.clone());
+                    let name = proc.map_or_else(|| proc_id.clone(), |p| p.meta.name.clone());
                     let description = proc.map(|p| p.meta.description.clone()).unwrap_or_default();
 
                     // Last 10 emissions, serialized
@@ -714,7 +716,7 @@ async fn h_pipeline(
                 .filter(|tid| processor_id_matches(tid, params.processor_id.as_ref()))
                 .map(|tracker_id| {
                     let proc = procs.get(&tracker_id);
-                    let name = proc.map(|p| p.meta.name.clone()).unwrap_or_else(|| tracker_id.clone());
+                    let name = proc.map_or_else(|| tracker_id.clone(), |p| p.meta.name.clone());
                     let description = proc.map(|p| p.meta.description.clone()).unwrap_or_default();
 
                     let (transitions, final_state): (&[StateTransition], Value) =
@@ -862,7 +864,7 @@ async fn h_processor_detail(
                     .and_then(|m| m.get(&resolved_id))
                     .map(|rr| {
                         let proc = procs.get(&resolved_id);
-                        let name = proc.map(|p| p.meta.name.clone()).unwrap_or_else(|| resolved_id.clone());
+                        let name = proc.map_or_else(|| resolved_id.clone(), |p| p.meta.name.clone());
                         let desc = proc.map(|p| p.meta.description.clone()).unwrap_or_default();
                         (RunResult {
                             emissions: rr.emissions.clone(),
@@ -953,7 +955,7 @@ async fn h_processor_detail(
                 let procs = state.processors.lock().unwrap();
 
                 let proc = procs.get(&resolved_id);
-                let name = proc.map(|p| p.meta.name.clone()).unwrap_or_else(|| resolved_id.clone());
+                let name = proc.map_or_else(|| resolved_id.clone(), |p| p.meta.name.clone());
                 let desc = proc.map(|p| p.meta.description.clone()).unwrap_or_default();
 
                 let from_pipeline = pipeline_res.get(&session_id).and_then(|m| m.get(&resolved_id));
@@ -1435,13 +1437,13 @@ async fn h_processor_defs_single(
                     PipelineStage::Filter(fs) => {
                         let rules: Vec<String> = fs.rules.iter().map(|r| match r {
                             crate::processors::reporter::schema::FilterRule::TagMatch { tags, .. } => format!("tag_match: [{}]", tags.join(", ")),
-                            crate::processors::reporter::schema::FilterRule::MessageContains { value } => format!("message_contains: \"{}\"", value),
+                            crate::processors::reporter::schema::FilterRule::MessageContains { value } => format!("message_contains: \"{value}\""),
                             crate::processors::reporter::schema::FilterRule::MessageContainsAny { values } => format!("message_contains_any: [{}]", values.join(", ")),
-                            crate::processors::reporter::schema::FilterRule::MessageRegex { pattern } => format!("message_regex: \"{}\"", pattern),
-                            crate::processors::reporter::schema::FilterRule::LevelMin { level } => format!("level_min: {}", level),
-                            crate::processors::reporter::schema::FilterRule::TimeRange { from, to } => format!("time_range: {} - {}", from, to),
-                            crate::processors::reporter::schema::FilterRule::SourceTypeIs { source_type } => format!("source_type_is: {}", source_type),
-                            crate::processors::reporter::schema::FilterRule::SectionIs { section } => format!("section_is: {}", section),
+                            crate::processors::reporter::schema::FilterRule::MessageRegex { pattern } => format!("message_regex: \"{pattern}\""),
+                            crate::processors::reporter::schema::FilterRule::LevelMin { level } => format!("level_min: {level}"),
+                            crate::processors::reporter::schema::FilterRule::TimeRange { from, to } => format!("time_range: {from} - {to}"),
+                            crate::processors::reporter::schema::FilterRule::SourceTypeIs { source_type } => format!("source_type_is: {source_type}"),
+                            crate::processors::reporter::schema::FilterRule::SectionIs { section } => format!("section_is: {section}"),
                         }).collect();
                         Some(json!(rules))
                     }
@@ -1458,7 +1460,7 @@ async fn h_processor_defs_single(
                             json!({
                                 "name": f.name,
                                 "pattern": f.pattern,
-                                "cast": f.cast.as_ref().map(|c| format!("{:?}", c).to_lowercase()),
+                                "cast": f.cast.as_ref().map(|c| format!("{c:?}").to_lowercase()),
                             })
                         }).collect();
                         Some(json!(fields))
@@ -1641,8 +1643,7 @@ async fn h_tag_stats(
         .map(|(tag_id, count)| {
             let tag = tag_table
                 .get(tag_id as usize)
-                .map(|s| s.as_str())
-                .unwrap_or("<unknown>");
+                .map_or("<unknown>", std::string::String::as_str);
             json!({ "tag": tag, "count": count })
         })
         .collect();
@@ -2124,7 +2125,7 @@ async fn h_create_watch(
 
     let watch_id = uuid::Uuid::new_v4().to_string();
     let watch = Arc::new(WatchSession::new(
-        watch_id.clone(),
+        watch_id,
         session_id.clone(),
         body.criteria.clone(),
     ));
@@ -2294,7 +2295,7 @@ async fn h_insights(
 
         proc_meta.into_iter().map(|(id, name, schema_mcp)| {
             let rr = session_map.and_then(|m| m.get(&id));
-            let total_emissions = rr.map(|r| r.emissions.len()).unwrap_or(0);
+            let total_emissions = rr.map_or(0, |r| r.emissions.len());
 
             let Some(ref mcp) = schema_mcp else {
                 return ProcSnap {
@@ -2374,8 +2375,8 @@ async fn h_insights(
             all_signals.sort_by(|a, b| {
                 let sa = a.get("severity").and_then(|v| serde_json::from_value::<Severity>(v.clone()).ok());
                 let sb = b.get("severity").and_then(|v| serde_json::from_value::<Severity>(v.clone()).ok());
-                let ra = sa.as_ref().map(severity_rank).unwrap_or(2);
-                let rb = sb.as_ref().map(severity_rank).unwrap_or(2);
+                let ra = sa.as_ref().map_or(2, severity_rank);
+                let rb = sb.as_ref().map_or(2, severity_rank);
                 ra.cmp(&rb)
             });
 

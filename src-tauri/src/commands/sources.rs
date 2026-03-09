@@ -280,7 +280,7 @@ pub async fn update_processor(
 ) -> Result<UpdateResult, String> {
     let (bare_id, source_name) = match marketplace::split_qualified_id(&processor_id) {
         (id, Some(src)) => (id.to_string(), src.to_string()),
-        _ => return Err(format!("Processor '{}' has no source qualifier — cannot update", processor_id)),
+        _ => return Err(format!("Processor '{processor_id}' has no source qualifier — cannot update")),
     };
 
     // Find the source config.
@@ -289,7 +289,7 @@ pub async fn update_processor(
         srcs.iter()
             .find(|s| s.name == source_name)
             .cloned()
-            .ok_or_else(|| format!("Source '{}' not found", source_name))?
+            .ok_or_else(|| format!("Source '{source_name}' not found"))?
     };
 
     // Construct entry from frontend-supplied metadata (avoids re-fetching full index).
@@ -311,13 +311,11 @@ pub async fn update_processor(
     // Get current installed version.
     let old_version = {
         let procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
-        procs.get(&processor_id)
-            .map(|p| p.meta.version.clone())
-            .unwrap_or_else(|| "unknown".to_string())
+        procs.get(&processor_id).map_or_else(|| "unknown".to_string(), |p| p.meta.version.clone())
     };
 
     let def = download_and_install_processor(&state, &app, &source, &entry, &processor_id).await?;
-    let new_version = def.meta.version.clone();
+    let new_version = def.meta.version;
 
     Ok(UpdateResult {
         processor_id,
@@ -341,7 +339,7 @@ pub async fn update_all_from_source(
         srcs.iter()
             .find(|s| s.name == source_name)
             .cloned()
-            .ok_or_else(|| format!("Source '{}' not found", source_name))?
+            .ok_or_else(|| format!("Source '{source_name}' not found"))?
     };
 
     // Fetch marketplace.
@@ -491,7 +489,7 @@ pub async fn install_from_marketplace(
         srcs.iter()
             .find(|s| s.name == source_name)
             .cloned()
-            .ok_or_else(|| format!("Source '{}' not found", source_name))?
+            .ok_or_else(|| format!("Source '{source_name}' not found"))?
     };
 
     // Construct entry from frontend-supplied metadata (avoids re-fetching full index).
@@ -537,7 +535,6 @@ pub(crate) fn chrono_now_iso() -> String {
 pub(crate) fn build_provenance_yaml(source_name: &str, version: &str, sha256: &str) -> String {
     let now = chrono_now_iso();
     format!(
-        "\n_source: {}\n_installed_version: {}\n_installed_at: {}\n_sha256: {}\n",
-        source_name, version, now, sha256
+        "\n_source: {source_name}\n_installed_version: {version}\n_installed_at: {now}\n_sha256: {sha256}\n"
     )
 }

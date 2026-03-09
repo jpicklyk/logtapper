@@ -135,9 +135,7 @@ fn parse_adb_devices(output: &str) -> Result<Vec<AdbDevice>, String> {
         // Extract model from "model:ModelName" token
         let model = line
             .split_whitespace()
-            .find(|t| t.starts_with("model:"))
-            .map(|t| t["model:".len()..].to_string())
-            .unwrap_or_else(|| serial.clone());
+            .find(|t| t.starts_with("model:")).map_or_else(|| serial.clone(), |t| t["model:".len()..].to_string());
 
         devices.push(AdbDevice { serial, model, state });
     }
@@ -235,7 +233,7 @@ pub async fn start_adb_stream(
     let app_clone = app.clone();
     let sid = session_id.clone();
     let src_id = source_id.clone();
-    let serial_clone = serial.clone();
+    let serial_clone = serial;
     let max_lines = max_raw_lines.unwrap_or(500_000) as usize;
     tokio::spawn(async move {
         run_streaming_task(
@@ -408,8 +406,7 @@ pub async fn update_stream_processors(
         sessions
             .get(&session_id)
             .and_then(|s| s.primary_source())
-            .map(|src| src.total_lines())
-            .unwrap_or(0)
+            .map_or(0, super::super::core::log_source::LogSource::total_lines)
     };
 
     // Clone the defs we need for any new processors.
@@ -429,7 +426,7 @@ pub async fn update_stream_processors(
         .lock()
         .map_err(|_| "Stream processor state lock poisoned")?;
 
-    let inner = sp_state.entry(session_id.clone()).or_default();
+    let inner = sp_state.entry(session_id).or_default();
 
     // Remove processors no longer in the requested set.
     inner.retain(|id, _| processor_ids.contains(id));
@@ -463,8 +460,7 @@ pub async fn update_stream_trackers(
         let sessions = state.sessions.lock().map_err(|_| "Session lock poisoned")?;
         sessions.get(&session_id)
             .and_then(|s| s.primary_source())
-            .map(|src| src.total_lines())
-            .unwrap_or(0)
+            .map_or(0, super::super::core::log_source::LogSource::total_lines)
     };
 
     let tracker_defs: HashMap<String, crate::processors::state_tracker::schema::StateTrackerDef> = {
@@ -510,8 +506,7 @@ pub async fn update_stream_transformers(
         let sessions = state.sessions.lock().map_err(|_| "Session lock poisoned")?;
         sessions.get(&session_id)
             .and_then(|s| s.primary_source())
-            .map(|src| src.total_lines())
-            .unwrap_or(0)
+            .map_or(0, super::super::core::log_source::LogSource::total_lines)
     };
 
     let mut st = state.stream_transformer_state.lock()
@@ -709,8 +704,7 @@ fn flush_batch(
         sessions
             .get(session_id)
             .and_then(|s| s.primary_source())
-            .map(|src| src.total_lines())
-            .unwrap_or(0)
+            .map_or(0, super::super::core::log_source::LogSource::total_lines)
     };
 
     let pipeline_ctx = PipelineContext {
@@ -870,7 +864,7 @@ fn flush_batch(
                     }).collect();
 
                 // Apply transformers using cached LineContext (no re-parse needed).
-                for pl in parsed.iter_mut() {
+                for pl in &mut parsed {
                     let mut ctx = match pl.ctx {
                         Some(ref c) if pii_modified => {
                             // PII modified the message — patch the clone
@@ -884,7 +878,7 @@ fn flush_batch(
                     };
 
                     let mut keep = true;
-                    for (_, run) in transformer_runs.iter_mut() {
+                    for (_, run) in &mut transformer_runs {
                         if !run.process_line(&mut ctx) {
                             keep = false;
                             break;

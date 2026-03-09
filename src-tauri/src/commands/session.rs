@@ -81,7 +81,7 @@ pub fn get_session_metadata(
     let sessions = state.sessions.lock().map_err(|_| "lock poisoned")?;
     let session = sessions
         .get(&session_id)
-        .ok_or_else(|| format!("Session '{}' not found", session_id))?;
+        .ok_or_else(|| format!("Session '{session_id}' not found"))?;
 
     let source = session.primary_source().ok_or("No source in session")?;
 

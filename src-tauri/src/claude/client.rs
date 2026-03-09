@@ -178,9 +178,7 @@ impl ClaudeClient {
                                 "message_stop" => break 'outer,
                                 "error" => {
                                     let msg = env
-                                        .error
-                                        .map(|e| e.to_string())
-                                        .unwrap_or_else(|| "Unknown error".into());
+                                        .error.map_or_else(|| "Unknown error".into(), |e| e.to_string());
                                     let _ = app.emit(
                                         "claude-stream",
                                         ClaudeStreamEvent {

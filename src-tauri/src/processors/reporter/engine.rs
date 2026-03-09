@@ -75,7 +75,7 @@ impl<'a> ProcessorRun<'a> {
             .filter_map(|stage| match stage {
                 PipelineStage::Filter(fs) => {
                     let mut rules = fs.rules.clone();
-                    rules.sort_by_key(|r| r.cost_rank());
+                    rules.sort_by_key(super::schema::FilterRule::cost_rank);
                     for rule in &mut rules {
                         rule.prepare_tag_set();
                     }
@@ -260,8 +260,7 @@ impl<'a> ProcessorRun<'a> {
                 let raw = caps
                     .get(1)
                     .or_else(|| caps.get(0))
-                    .map(|m| m.as_str())
-                    .unwrap_or("");
+                    .map_or("", |m| m.as_str());
 
                 let val = match &field.cast {
                     Some(CastType::Int) => raw

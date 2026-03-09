@@ -101,6 +101,6 @@ impl CrossSourceIndex {
     }
 
     pub fn entries_for_tag(&self, tag: &str) -> Option<&[usize]> {
-        self.by_tag.get(tag).map(|v| v.as_slice())
+        self.by_tag.get(tag).map(std::vec::Vec::as_slice)
     }
 }

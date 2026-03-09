@@ -58,16 +58,12 @@ pub fn build_analysis_context(
 
     // --- Session overview ---
     let source = session.primary_source();
-    let total_lines: usize = source.map(|s| s.total_lines()).unwrap_or(0);
-    let source_desc = source
-        .map(|s| format!("{} ({})", s.name(), s.source_type()))
-        .unwrap_or_else(|| "none".to_string());
+    let total_lines: usize = source.map_or(0, super::super::core::log_source::LogSource::total_lines);
+    let source_desc = source.map_or_else(|| "none".to_string(), |s| format!("{} ({})", s.name(), s.source_type()));
     context_parts.push(format!(
         "## Log Session Overview\n\
-         Sources: {}\n\
-         Total lines: {}\n",
-        source_desc,
-        total_lines,
+         Sources: {source_desc}\n\
+         Total lines: {total_lines}\n",
     ));
 
     // --- Sample log lines (head + tail + middle) ---

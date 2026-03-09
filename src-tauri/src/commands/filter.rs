@@ -70,7 +70,7 @@ pub async fn create_filter(
         let sessions = state.sessions.lock().map_err(|_| "lock poisoned")?;
         let session = sessions
             .get(&session_id)
-            .ok_or_else(|| format!("Session '{}' not found", session_id))?;
+            .ok_or_else(|| format!("Session '{session_id}' not found"))?;
         let source = session.primary_source().ok_or("No source in session")?;
         source.total_lines()
     };
@@ -79,7 +79,7 @@ pub async fn create_filter(
     let filter = Arc::new(FilterSession::new(
         filter_id.clone(),
         session_id.clone(),
-        criteria.clone(),
+        criteria,
         total_lines,
     ));
 
@@ -90,14 +90,14 @@ pub async fn create_filter(
     }
 
     let result = FilterCreateResult {
-        filter_id: filter_id.clone(),
-        session_id: session_id.clone(),
+        filter_id,
+        session_id,
         total_lines,
     };
 
     // Spawn background scanning task
     let filter_clone = Arc::clone(&filter);
-    let app_clone = app.clone();
+    let app_clone = app;
     tauri::async_runtime::spawn(async move {
         scan_filter_background(app_clone, filter_clone).await;
     });
@@ -152,8 +152,7 @@ async fn scan_filter_background(
                 let parser = parser_for(source.source_type());
                 let pid = parser
                     .parse_line(raw, source.id(), i)
-                    .map(|ctx| ctx.pid)
-                    .unwrap_or(0);
+                    .map_or(0, |ctx| ctx.pid);
 
                 if line_matches_criteria(
                     &filter.criteria,
@@ -230,7 +229,7 @@ pub async fn get_filtered_lines(
         filters
             .get(&filter_id)
             .cloned()
-            .ok_or_else(|| format!("Filter '{}' not found", filter_id))?
+            .ok_or_else(|| format!("Filter '{filter_id}' not found"))?
     };
 
     let total_matches = filter.matched_count();
@@ -322,7 +321,7 @@ pub fn cancel_filter(
         filter.cancel();
         Ok(())
     } else {
-        Err(format!("Filter '{}' not found", filter_id))
+        Err(format!("Filter '{filter_id}' not found"))
     }
 }
 
@@ -338,7 +337,7 @@ pub fn get_filter_info(
     let filters = state.active_filters.lock().map_err(|_| "lock poisoned")?;
     let filter = filters
         .get(&filter_id)
-        .ok_or_else(|| format!("Filter '{}' not found", filter_id))?;
+        .ok_or_else(|| format!("Filter '{filter_id}' not found"))?;
 
     let status = match filter.status() {
         FilterStatus::Scanning => "scanning",

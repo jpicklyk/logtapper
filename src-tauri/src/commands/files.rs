@@ -160,8 +160,8 @@ pub async fn load_log_file(
                 .map_err(|_| "State lock poisoned".to_string())?;
             tasks.insert(session_id.clone(), cancel_tx);
         }
-        let app_clone = app.clone();
-        let sid = session_id.clone();
+        let app_clone = app;
+        let sid = session_id;
         let initial_line_count = total_lines; // capture before session is moved into map
         tokio::spawn(async move {
             run_background_indexer(
@@ -321,10 +321,10 @@ async fn run_background_indexer(
                 // Adjust offsets: build_partial_line_index operates on a sub-slice starting
                 // at byte 0, but real byte_offsets are cursor + local_offset.
                 // chunk_index includes the sentinel as its last element.
-                for offset in chunk_index.iter_mut() {
+                for offset in &mut chunk_index {
                     *offset += cursor as u64;
                 }
-                for m in chunk_meta.iter_mut() {
+                for m in &mut chunk_meta {
                     m.byte_offset += cursor;
                 }
 
