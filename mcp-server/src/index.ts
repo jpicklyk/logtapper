@@ -202,20 +202,42 @@ server.tool(
 
 server.tool(
   "logtapper_get_sections",
-  "Get the named sections of a bugreport or dumpstate log file. Returns an " +
-    "array of {name, startLine, endLine} for each section (e.g. 'SYSTEM LOG', " +
+  "Get the named sections of a bugreport or dumpstate log file. Returns " +
+    "paginated {name, startLine, endLine} for each section (e.g. 'SYSTEM LOG', " +
     "'DUMPSYS NORMAL', 'KERNEL LOG'). Use startLine/endLine with " +
     "logtapper_query or logtapper_search_with_context's start_line/end_line " +
     "params to target specific sections. Returns an empty array for non-bugreport " +
-    "files (logcat, kernel).",
+    "files (logcat, kernel). Large dumpstate files may have 500-1000+ sections — " +
+    "use query to filter by name or paginate with limit/offset.",
   {
     session_id: z.string().describe("Session ID"),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe("Max sections to return (default 50, max 200)"),
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("Number of sections to skip for pagination (default 0)"),
+    query: z
+      .string()
+      .optional()
+      .describe("Case-insensitive substring filter on section name (e.g. 'DUMPSYS', 'WIFI', 'SYSTEM LOG')"),
   },
-  async ({ session_id }) => {
+  async ({ session_id, limit, offset, query }) => {
     try {
-      return ok(
-        await bridgeGet(`/mcp/sessions/${encodeURIComponent(session_id)}/sections`)
-      );
+      const params = new URLSearchParams();
+      if (limit !== undefined) params.set("limit", String(limit));
+      if (offset !== undefined) params.set("offset", String(offset));
+      if (query !== undefined) params.set("query", query);
+      const qs = params.toString();
+      const url = `/mcp/sessions/${encodeURIComponent(session_id)}/sections${qs ? `?${qs}` : ""}`;
+      return ok(await bridgeGet(url));
     } catch (err) {
       return ok({ error: String(err) });
     }

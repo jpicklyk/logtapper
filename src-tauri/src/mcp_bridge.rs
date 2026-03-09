@@ -1582,26 +1582,57 @@ async fn h_metadata(
 // GET /mcp/sessions/{session_id}/sections
 // ---------------------------------------------------------------------------
 
+#[derive(Deserialize)]
+struct SectionsParams {
+    /// Max sections to return (default 50, max 200).
+    limit: Option<usize>,
+    /// Number of sections to skip (default 0).
+    offset: Option<usize>,
+    /// Case-insensitive substring filter on section name.
+    query: Option<String>,
+}
+
 async fn h_sections(
     State(handle): State<Handle>,
     Path(session_id): Path<String>,
+    Query(params): Query<SectionsParams>,
 ) -> Json<Value> {
     let state = handle.state::<AppState>();
 
     get_session_and_source!(state, session_id => sessions, session, source);
 
-    let sections: Vec<Value> = source.sections().iter().map(|s| {
-        json!({
+    let all_sections = source.sections();
+    let query_lower = params.query.as_deref().map(str::to_lowercase);
+
+    // Apply name filter
+    let filtered: Vec<&crate::core::session::SectionInfo> = all_sections.iter()
+        .filter(|s| match &query_lower {
+            Some(q) => s.name.to_lowercase().contains(q),
+            None => true,
+        })
+        .collect();
+
+    let total = filtered.len();
+    let offset = params.offset.unwrap_or(0);
+    let limit = params.limit.unwrap_or(50).min(200);
+
+    let page: Vec<Value> = filtered.iter()
+        .skip(offset)
+        .take(limit)
+        .map(|s| json!({
             "name": s.name,
             "startLine": s.start_line,
             "endLine": s.end_line,
-        })
-    }).collect();
+        }))
+        .collect();
 
     Json(json!({
         "sessionId": session_id,
-        "sectionCount": sections.len(),
-        "sections": sections,
+        "total": total,
+        "returned": page.len(),
+        "offset": offset,
+        "limit": limit,
+        "sections": page,
     }))
 }
 
