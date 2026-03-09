@@ -143,11 +143,10 @@ fn yaml_to_json(value: &serde_yaml::Value) -> serde_json::Value {
                 serde_json::Value::Null
             }
         }
-        serde_yaml::Value::Null => serde_json::Value::Null,
         serde_yaml::Value::Sequence(seq) => {
             serde_json::Value::Array(seq.iter().map(yaml_to_json).collect())
         }
-        _ => serde_json::Value::Null,
+        _ => serde_json::Value::Null, // includes Null
     }
 }
 

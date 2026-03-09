@@ -37,9 +37,8 @@ impl StateTrackerRun {
     }
     pub fn process_line(&mut self, line: &LineContext, pipeline_ctx: &PipelineContext) {
         for rule in &self.def.transitions {
-            let captures = match matches_filter_with_captures(&rule.filter, line, pipeline_ctx) {
-                Some(caps) => caps,
-                None => continue,
+            let Some(captures) = matches_filter_with_captures(&rule.filter, line, pipeline_ctx) else {
+                continue;
             };
 
             let mut new_state = self.current_state.clone();
@@ -257,7 +256,7 @@ fn expand_captures(value: &serde_yaml::Value, captures: &Option<Vec<(usize, Stri
             if let Some(i) = n.as_i64() {
                 JsonValue::Number(i.into())
             } else if let Some(f) = n.as_f64() {
-                JsonValue::Number(serde_json::Number::from_f64(f).unwrap_or(0.into()))
+                JsonValue::Number(serde_json::Number::from_f64(f).unwrap_or_else(|| 0.into()))
             } else {
                 JsonValue::Null
             }

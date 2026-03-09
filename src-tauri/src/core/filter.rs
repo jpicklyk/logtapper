@@ -72,7 +72,6 @@ impl FilterStatus {
     pub fn from_u8(v: u8) -> Self {
         match v {
             0 => FilterStatus::Scanning,
-            1 => FilterStatus::Complete,
             2 => FilterStatus::Cancelled,
             _ => FilterStatus::Complete,
         }

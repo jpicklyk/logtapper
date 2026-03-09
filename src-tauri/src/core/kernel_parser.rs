@@ -25,14 +25,11 @@ fn kernel_re() -> &'static Regex {
 /// Convert kmsg level integer to LogLevel.
 fn kmsg_level(n: u64) -> LogLevel {
     match n & 7 {
-        0 => LogLevel::Fatal,   // KERN_EMERG
-        1 => LogLevel::Fatal,   // KERN_ALERT
-        2 => LogLevel::Error,   // KERN_CRIT
-        3 => LogLevel::Error,   // KERN_ERR
-        4 => LogLevel::Warn,    // KERN_WARNING
-        5 => LogLevel::Info,    // KERN_NOTICE
-        6 => LogLevel::Info,    // KERN_INFO
-        _ => LogLevel::Debug,   // KERN_DEBUG
+        0 | 1 => LogLevel::Fatal,   // KERN_EMERG, KERN_ALERT
+        2 | 3 => LogLevel::Error,   // KERN_CRIT, KERN_ERR
+        4 => LogLevel::Warn,        // KERN_WARNING
+        5 | 6 => LogLevel::Info,    // KERN_NOTICE, KERN_INFO
+        _ => LogLevel::Debug,       // KERN_DEBUG
     }
 }
 

@@ -16,10 +16,9 @@ pub fn parse_interval_ns(interval: &str) -> i64 {
         "ns" => 1,
         "us" | "µs" => 1_000,
         "ms" => 1_000_000,
-        "s" | "sec" => 1_000_000_000,
         "m" | "min" => 60 * 1_000_000_000,
         "h" | "hr" | "hour" => 3_600 * 1_000_000_000_i64,
-        _ => 1_000_000_000,
+        _ => 1_000_000_000, // includes "s" | "sec"
     };
     num * ns_per_unit
 }
@@ -82,7 +81,7 @@ pub fn count_by_time_grouped(
     let interval_ns = parse_interval_ns(interval);
     let mut groups: HashMap<String, HashMap<i64, usize>> = HashMap::new();
     for e in emissions {
-        let ts = match json_as_i64(e.get(time_field)) { Some(t) => t, None => continue };
+        let Some(ts) = json_as_i64(e.get(time_field)) else { continue };
         let group = match e.get(group_field) {
             Some(JsonValue::String(s)) => s.clone(),
             Some(v) => v.to_string(),

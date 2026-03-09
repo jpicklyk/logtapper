@@ -296,13 +296,11 @@ async fn run_background_indexer(
         // is available. memchr-based scanning of 8 MB chunks completes in < 1 ms,
         // so lock contention is negligible.
         let (chunk_line_count, bytes_in_chunk) = {
-            let mut sessions = match state.sessions.lock() {
-                Ok(s) => s,
-                Err(_) => return,
+            let Ok(mut sessions) = state.sessions.lock() else {
+                return;
             };
-            let session = match sessions.get_mut(&session_id) {
-                Some(s) => s,
-                None => return,
+            let Some(session) = sessions.get_mut(&session_id) else {
+                return;
             };
 
             let (mut chunk_index, mut chunk_meta, bytes_in_chunk) =
@@ -752,9 +750,8 @@ pub async fn search_logs(
             let source = session.primary_source().ok_or("No sources in session")?;
 
             for i in chunk_start..chunk_end {
-                let meta = match source.meta_at(i) {
-                    Some(m) => m,
-                    None => continue,
+                let Some(meta) = source.meta_at(i) else {
+                    continue;
                 };
 
                 // Level filter

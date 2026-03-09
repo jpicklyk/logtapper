@@ -43,9 +43,8 @@ pub async fn get_chart_data(
     };
 
     // Charts are only supported for Reporter-type processors.
-    let reporter = match def.as_reporter() {
-        Some(r) => r,
-        None => return Ok(vec![]),
+    let Some(reporter) = def.as_reporter() else {
+        return Ok(vec![]);
     };
     let charts = build_charts(reporter, &emissions, &vars);
     Ok(charts)
@@ -148,24 +147,22 @@ pub async fn get_timeline_data(
                 .processors
                 .lock()
                 .map_err(|_| "Processor store lock poisoned")?;
-            match procs.get(pid) {
-                Some(d) => d.clone(),
-                None => continue,
-            }
+            let Some(d) = procs.get(pid) else {
+                continue;
+            };
+            d.clone()
         };
 
-        let reporter = match def.as_reporter() {
-            Some(r) => r,
-            None => continue,
+        let Some(reporter) = def.as_reporter() else {
+            continue;
         };
 
         // Find ChartSpecs with timeline annotations
         let output = reporter.pipeline.iter().find_map(|s| {
             if let PipelineStage::Output(o) = s { Some(o) } else { None }
         });
-        let output = match output {
-            Some(o) => o,
-            None => continue,
+        let Some(output) = output else {
+            continue;
         };
 
         let timeline_specs: Vec<_> = output

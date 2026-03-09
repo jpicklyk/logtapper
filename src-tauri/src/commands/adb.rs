@@ -600,15 +600,12 @@ async fn run_streaming_task(
         }
     };
 
-    let stdout = match child.stdout.take() {
-        Some(s) => s,
-        None => {
-            let _ = on_event.send(AdbStreamEvent::StreamStopped(AdbStreamStopped {
-                session_id: session_id.clone(),
-                reason: "Failed to capture adb stdout".to_string(),
-            }));
-            return;
-        }
+    let Some(stdout) = child.stdout.take() else {
+        let _ = on_event.send(AdbStreamEvent::StreamStopped(AdbStreamStopped {
+            session_id: session_id.clone(),
+            reason: "Failed to capture adb stdout".to_string(),
+        }));
+        return;
     };
 
     // Log stderr from adb so errors surface in the Tauri dev console.
@@ -918,9 +915,8 @@ fn flush_batch(
                 return;
             }
         };
-        let session = match sessions.get_mut(session_id) {
-            Some(s) => s,
-            None => return,
+        let Some(session) = sessions.get_mut(session_id) else {
+            return;
         };
 
         // Intern tags first (needs &mut session for tag_interner).
@@ -937,9 +933,8 @@ fn flush_batch(
         }).collect();
 
         // Append to stream source.
-        let stream = match session.stream_source_mut() {
-            Some(s) => s,
-            None => return,
+        let Some(stream) = session.stream_source_mut() else {
+            return;
         };
 
         for (pl, meta) in parsed.iter().zip(metas.into_iter()) {
@@ -1014,9 +1009,8 @@ fn flush_batch(
             // Process all trackers (no locks held)
             let mut tracker_updates: Vec<(String, crate::processors::state_tracker::types::ContinuousTrackerState, usize)> = Vec::new();
             for t_id in &tracker_ids {
-                let def = match tracker_defs.get(t_id) {
-                    Some(d) => d,
-                    None => continue,
+                let Some(def) = tracker_defs.get(t_id) else {
+                    continue;
                 };
 
                 let cont_state = tracker_states.remove(t_id).unwrap_or_default();
@@ -1089,12 +1083,9 @@ fn flush_batch(
 
     // Clone processor defs (brief lock)
     let defs: HashMap<String, ReporterDef> = {
-        let procs = match state.processors.lock() {
-            Ok(g) => g,
-            Err(_) => {
-                send_batch(on_event, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
-                return;
-            }
+        let Ok(procs) = state.processors.lock() else {
+            send_batch(on_event, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
+            return;
         };
         proc_ids
             .iter()
@@ -1141,9 +1132,8 @@ fn flush_batch(
     let mut new_states: Vec<(String, ContinuousRunState)> = Vec::new();
 
     for (proc_id, def) in &defs {
-        let cont_state = match proc_states.remove(proc_id) {
-            Some(s) => s,
-            None => continue,
+        let Some(cont_state) = proc_states.remove(proc_id) else {
+            continue;
         };
 
         let mut run = ProcessorRun::new_seeded(def, cont_state);

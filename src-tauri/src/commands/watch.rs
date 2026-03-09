@@ -109,13 +109,11 @@ pub fn evaluate_watches(
 ) -> Vec<(String, u32, u32)> {
     use crate::core::filter::line_matches_criteria;
 
-    let watches = match state.active_watches.lock() {
-        Ok(g) => g,
-        Err(_) => return vec![],
+    let Ok(watches) = state.active_watches.lock() else {
+        return vec![];
     };
-    let watch_list = match watches.get(session_id) {
-        Some(list) => list,
-        None => return vec![],
+    let Some(watch_list) = watches.get(session_id) else {
+        return vec![];
     };
 
     let mut results = Vec::new();

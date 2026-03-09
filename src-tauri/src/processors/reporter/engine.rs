@@ -250,9 +250,8 @@ impl<'a> ProcessorRun<'a> {
         out: &mut FieldVec,
     ) {
         for field in fields {
-            let re = match crate::processors::filter::get_or_compile(&mut self.regex_cache, &field.pattern) {
-                Some(r) => r,
-                None => continue, // Invalid pattern — skip this field.
+            let Some(re) = crate::processors::filter::get_or_compile(&mut self.regex_cache, &field.pattern) else {
+                continue; // Invalid pattern — skip this field.
             };
 
             if let Some(caps) = re.captures(&line.message) {
@@ -265,14 +264,18 @@ impl<'a> ProcessorRun<'a> {
                 let val = match &field.cast {
                     Some(CastType::Int) => raw
                         .parse::<i64>()
-                        .map(JsonValue::from)
-                        .unwrap_or(JsonValue::String(raw.to_string())),
+                        .map_or_else(
+                            |_| JsonValue::String(raw.to_string()),
+                            JsonValue::from,
+                        ),
                     Some(CastType::Float) => raw
                         .parse::<f64>()
                         .ok()
                         .and_then(serde_json::Number::from_f64)
-                        .map(JsonValue::Number)
-                        .unwrap_or(JsonValue::String(raw.to_string())),
+                        .map_or_else(
+                            || JsonValue::String(raw.to_string()),
+                            JsonValue::Number,
+                        ),
                     _ => JsonValue::String(raw.to_string()),
                 };
                 out.push((field.name.clone(), val));

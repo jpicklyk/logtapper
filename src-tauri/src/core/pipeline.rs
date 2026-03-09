@@ -160,18 +160,18 @@ impl Pipeline {
                                     let value = match &field.cast {
                                         Some(CastType::Int) => raw_val
                                             .parse::<i64>()
-                                            .map(serde_json::Value::from)
-                                            .unwrap_or_else(|_| {
-                                                serde_json::Value::String(raw_val.to_string())
-                                            }),
+                                            .map_or_else(
+                                                |_| serde_json::Value::String(raw_val.to_string()),
+                                                serde_json::Value::from,
+                                            ),
                                         Some(CastType::Float) => raw_val
                                             .parse::<f64>()
                                             .ok()
                                             .and_then(serde_json::Number::from_f64)
-                                            .map(serde_json::Value::Number)
-                                            .unwrap_or_else(|| {
-                                                serde_json::Value::String(raw_val.to_string())
-                                            }),
+                                            .map_or_else(
+                                                || serde_json::Value::String(raw_val.to_string()),
+                                                serde_json::Value::Number,
+                                            ),
                                         _ => serde_json::Value::String(raw_val.to_string()),
                                     };
                                     ctx.fields.insert(field.name.clone(), value);

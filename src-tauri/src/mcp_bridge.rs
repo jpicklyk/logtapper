@@ -508,15 +508,13 @@ async fn h_query(
                 (start..range_end).rev().collect()
             }
             "around" => {
-                let center = params.around_line.unwrap_or(range_end.saturating_sub(1))
+                let center = params.around_line.unwrap_or_else(|| range_end.saturating_sub(1))
                     .clamp(range_start, range_end.saturating_sub(1));
                 let half = SCAN_CAP / 2;
                 let start = center.saturating_sub(half).max(range_start);
                 let end = (center + half).min(range_end);
                 // Interleave outward from center: center, center-1, center+1, …
-                let before: Vec<usize> = (start..=center).rev().collect();
-                let after: Vec<usize> = ((center + 1)..end).collect();
-                before.into_iter().zip(after.into_iter().map(Some).chain(std::iter::repeat(None)))
+                (start..=center).rev().zip(((center + 1)..end).map(Some).chain(std::iter::repeat(None)))
                     .flat_map(|(b, a)| std::iter::once(b).chain(a))
                     .collect()
             }
@@ -2435,7 +2433,7 @@ fn sample_indices(total: usize, n: usize, strategy: &str, around: Option<usize>)
             (start..total).collect()
         }
         "around" => {
-            let center = around.unwrap_or(total.saturating_sub(1));
+            let center = around.unwrap_or_else(|| total.saturating_sub(1));
             let half = n / 2;
             let start = center.saturating_sub(half);
             let end = (start + n).min(total);
@@ -2459,11 +2457,10 @@ fn level_at_least(line_level: &str, filter: &str) -> bool {
         match s.to_uppercase().chars().next().unwrap_or('I') {
             'V' => 0,
             'D' => 1,
-            'I' => 2,
             'W' => 3,
             'E' => 4,
             'F' => 5,
-            _ => 2,
+            _ => 2, // 'I' and unknown
         }
     }
     priority(line_level) >= priority(filter)

@@ -64,9 +64,8 @@ pub fn build_charts(
         if let PipelineStage::Output(o) = s { Some(o) } else { None }
     });
 
-    let output = match output {
-        Some(o) => o,
-        None => return vec![],
+    let Some(output) = output else {
+        return vec![];
     };
 
     output
@@ -128,9 +127,8 @@ fn build_bar_series(
     spec: &ChartSpec,
     emissions: &[&HashMap<String, JsonValue>],
 ) -> Vec<DataSeries> {
-    let x_field = match spec.x.as_ref().and_then(|x| x.field.as_deref()) {
-        Some(f) => f,
-        None => return vec![],
+    let Some(x_field) = spec.x.as_ref().and_then(|x| x.field.as_deref()) else {
+        return vec![];
     };
 
     let owned: Vec<HashMap<String, JsonValue>> = emissions.iter().map(|&m| m.clone()).collect();
@@ -162,13 +160,11 @@ fn build_time_series(
     spec: &ChartSpec,
     emissions: &[&HashMap<String, JsonValue>],
 ) -> Vec<DataSeries> {
-    let x_spec = match &spec.x {
-        Some(x) => x,
-        None => return vec![],
+    let Some(x_spec) = &spec.x else {
+        return vec![];
     };
-    let time_field = match x_spec.field.as_deref() {
-        Some(f) => f,
-        None => return vec![],
+    let Some(time_field) = x_spec.field.as_deref() else {
+        return vec![];
     };
     let interval = x_spec.bucket.as_deref().unwrap_or("1m");
 

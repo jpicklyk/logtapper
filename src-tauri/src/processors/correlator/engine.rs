@@ -220,9 +220,8 @@ impl<'a> CorrelatorRun<'a> {
         use crate::processors::reporter::schema::CastType;
         for field in fields {
             let pat = field.pattern.clone();
-            let re = match self.get_or_compile(&pat) {
-                Some(r) => r,
-                None => continue,
+            let Some(re) = self.get_or_compile(&pat) else {
+                continue;
             };
             if let Some(caps) = re.captures(&line.message) {
                 let raw = caps
@@ -232,14 +231,18 @@ impl<'a> CorrelatorRun<'a> {
                 let val = match &field.cast {
                     Some(CastType::Int) => raw
                         .parse::<i64>()
-                        .map(JsonValue::from)
-                        .unwrap_or(JsonValue::String(raw.to_string())),
+                        .map_or_else(
+                            |_| JsonValue::String(raw.to_string()),
+                            JsonValue::from,
+                        ),
                     Some(CastType::Float) => raw
                         .parse::<f64>()
                         .ok()
                         .and_then(serde_json::Number::from_f64)
-                        .map(JsonValue::Number)
-                        .unwrap_or(JsonValue::String(raw.to_string())),
+                        .map_or_else(
+                            || JsonValue::String(raw.to_string()),
+                            JsonValue::Number,
+                        ),
                     _ => JsonValue::String(raw.to_string()),
                 };
                 out.insert(field.name.clone(), val);

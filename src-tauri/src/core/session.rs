@@ -631,7 +631,6 @@ pub(crate) fn build_section_index(line_meta: &[LineMeta], source_type: &SourceTy
 
 pub(crate) fn parser_for(source_type: &SourceType) -> Box<dyn LogParser> {
     match source_type {
-        SourceType::Logcat | SourceType::Radio | SourceType::Events => Box::new(LogcatParser),
         SourceType::Kernel => Box::new(KernelParser),
         SourceType::Bugreport | SourceType::Dumpstate => Box::new(BugreportParser::new()),
         _ => Box::new(LogcatParser),

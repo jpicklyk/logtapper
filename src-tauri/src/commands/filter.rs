@@ -130,9 +130,8 @@ async fn scan_filter_background(
 
         // Acquire lock, scan batch, release lock
         let batch_matches: Vec<usize> = {
-            let sessions = match state.sessions.lock() {
-                Ok(s) => s,
-                Err(_) => break,
+            let Ok(sessions) = state.sessions.lock() else {
+                break;
             };
             let Some(session) = sessions.get(&filter.session_id) else {
                 break;
