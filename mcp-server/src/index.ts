@@ -438,7 +438,7 @@ server.tool(
     "Returns hasResults:false if the pipeline has not been run yet.",
   {
     session_id: z.string().describe("Session ID"),
-    processor_id: z.string().optional().describe("Filter to a single processor ID"),
+    processor_id: z.string().optional().describe("Filter to a single processor ID (qualified form like 'wifi-state@official' or bare like 'wifi-state')"),
   },
   async ({ session_id, processor_id }) => {
     try {
@@ -498,7 +498,7 @@ server.tool(
     "(avoids separate logtapper_query calls).",
   {
     session_id: z.string().describe("Session ID"),
-    processor_id: z.string().describe("Processor ID to drill into"),
+    processor_id: z.string().describe("Processor ID to drill into (qualified or bare — bare IDs are resolved automatically)"),
     include_emissions: z
       .boolean()
       .optional()
@@ -549,7 +549,7 @@ server.tool(
     "most recent transition before that line.",
   {
     session_id: z.string().describe("Session ID"),
-    tracker_id: z.string().describe("State tracker processor ID"),
+    tracker_id: z.string().describe("State tracker processor ID (qualified or bare — bare IDs are resolved automatically)"),
     line_num: z
       .number()
       .int()
@@ -622,7 +622,7 @@ server.tool(
     processor_id: z
       .string()
       .optional()
-      .describe("Specific processor ID for full definition (omit for summary list)"),
+      .describe("Specific processor ID for full definition (qualified or bare — omit for summary list)"),
   },
   async ({ processor_id }) => {
     try {

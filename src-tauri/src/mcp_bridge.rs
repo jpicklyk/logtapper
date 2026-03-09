@@ -1169,29 +1169,35 @@ async fn h_state_at_line(
     let state = handle.state::<AppState>();
     let line_num = params.line;
 
+    // Resolve bare ID → qualified ID (e.g. "wifi-state" → "wifi-state@official")
+    let resolved_id = {
+        let procs = state.processors.lock().unwrap();
+        resolve_processor_id(&procs, &tracker_id).unwrap_or_else(|| tracker_id.clone())
+    };
+
     // Resolve transitions from pipeline or stream state
     let transitions: Option<Vec<StateTransition>> = {
         let pipeline_res = state.state_tracker_results.lock().unwrap();
         pipeline_res.get(&session_id)
-            .and_then(|session_map| session_map.get(&tracker_id))
+            .and_then(|session_map| session_map.get(&resolved_id))
             .map(|r| r.transitions.clone())
     }.or_else(|| {
         let stream_res = state.stream_tracker_state.lock().unwrap();
         stream_res.get(&session_id)
-            .and_then(|m| m.get(&tracker_id))
+            .and_then(|m| m.get(&resolved_id))
             .map(|cont| cont.transitions.clone())
     });
 
     let Some(transitions) = transitions else {
         return Json(json!({
-            "error": format!("no tracker results for session {session_id} / tracker {tracker_id}"),
+            "error": format!("no tracker results for session {session_id} / tracker {resolved_id}"),
         }));
     };
 
     // Replay transitions up to line_num against declared defaults
     let defaults: HashMap<String, serde_json::Value> = {
         let procs = state.processors.lock().unwrap();
-        match procs.get(&tracker_id).and_then(|p| p.as_state_tracker()) {
+        match procs.get(&resolved_id).and_then(|p| p.as_state_tracker()) {
             Some(def) => def.state.iter().map(|f| (f.name.clone(), f.default.clone())).collect(),
             None => HashMap::new(),
         }
@@ -1218,7 +1224,7 @@ async fn h_state_at_line(
     };
 
     Json(json!({
-        "trackerId": tracker_id,
+        "trackerId": resolved_id,
         "sessionId": session_id,
         "lineNum": snap_line,
         "timestamp": snap_ts,
@@ -1376,9 +1382,9 @@ async fn h_processor_defs_list(State(handle): State<Handle>) -> Json<Value> {
 
     let processors: Vec<Value> = {
         let procs = state.processors.lock().unwrap();
-        procs.values().map(|p| {
+        procs.iter().map(|(qualified_id, p)| {
             json!({
-                "id": p.meta.id,
+                "id": qualified_id,
                 "name": p.meta.name,
                 "processorType": p.processor_type(),
                 "description": p.meta.description,
