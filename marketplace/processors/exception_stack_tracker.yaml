@@ -1,0 +1,357 @@
+meta:
+  id: "exception-stack-tracker"
+  name: "Exception Stack Tracker"
+  version: "1.3.4"
+  author: "LogTapper"
+  description: "Tracks exception stack traces across all tags — both fatal crashes (AndroidRuntime FATAL EXCEPTION) and non-fatal logged exceptions (Binder, system_server, etc.). Separates fatal vs non-fatal counts, shows which apps crashed and why, and groups non-fatal exceptions by source and type. System.err exceptions are attributed to the owning app package via stack frame analysis."
+  tags: ["exception", "crash", "stack-trace", "android", "stability"]
+
+# Only matches logcat entries in the SYSTEM LOG section of bugreports
+sections:
+  - "SYSTEM LOG"
+
+vars:
+  # ── Headline counters ──
+  - name: fatal_count
+    type: int
+    default: 0
+    display: true
+    label: "Fatal Crashes (app killed)"
+
+  - name: nonfatal_count
+    type: int
+    default: 0
+    display: true
+    label: "Non-Fatal Exceptions (logged but recovered)"
+
+  # ── Fatal crash detail ──
+  # Key: app package, Value: "ExceptionClass (root: RootCause) on thread T"
+  - name: fatal_crashes
+    type: map
+    default: {}
+    display: true
+    label: "Fatal Crashes"
+    display_as: table
+    columns: ["app", "detail"]
+
+  # ── Non-fatal breakdown ──
+  # Key: "Tag: ExceptionClass" (or "pkg: ExceptionClass" for attributed System.err), Value: count
+  - name: nonfatal_summary
+    type: map
+    default: {}
+    display: true
+    label: "Non-Fatal Exceptions (by source and type)"
+    display_as: table
+    columns: ["source: exception", "count"]
+
+  # ── Internal state — fatal trace (not displayed) ──
+  - name: current_fatal_thread
+    type: string
+    default: ""
+
+  - name: current_fatal_app
+    type: string
+    default: ""
+
+  - name: current_fatal_exception
+    type: string
+    default: ""
+
+  - name: current_fatal_root_cause
+    type: string
+    default: ""
+
+  - name: fatal_trace_start
+    type: int
+    default: 0
+
+  - name: in_fatal_trace
+    type: bool
+    default: false
+
+  # ── Internal state — System.err attribution trace (not displayed) ──
+  - name: in_stderr_trace
+    type: bool
+    default: false
+
+  - name: stderr_exception
+    type: string
+    default: ""
+
+  - name: stderr_root_cause
+    type: string
+    default: ""
+
+  - name: stderr_start_line
+    type: int
+    default: 0
+
+  - name: stderr_source
+    type: string
+    default: ""
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains_any
+        values: ["FATAL EXCEPTION", "Exception", "Error", "Process:", "at com."]
+
+  - stage: extract
+    fields:
+      - name: fatal_thread_name
+        pattern: 'FATAL EXCEPTION:\s+(.+)'
+      - name: process_name
+        pattern: 'Process:\s+([^\s,]+)'
+      - name: exception_class
+        pattern: '([a-z][\w.]*\.(?:\w+(?:Exception|Error|Throwable)))'
+      - name: caused_by_class
+        pattern: 'Caused by:\s+([a-z][\w.]*\.(?:\w+(?:Exception|Error|Throwable)))'
+      # Extracts the package portion of a stack frame line: "  at pkg.Class.method(...)"
+      # Captures up to (but not including) the first uppercase class name segment.
+      # Uses \s* (not \s+) because the logcat parser's :\s* strip eats the leading tab,
+      # leaving the message starting directly with "at " (no leading whitespace).
+      - name: at_class
+        pattern: '^\s*at\s+([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_$]*){2,})\.[A-Z]'
+
+  - stage: script
+    runtime: rhai
+    src: |
+      // ═══ FATAL TRACE TRACKING (AndroidRuntime multi-line) ═══
+      if "fatal_thread_name" in fields {
+        // Flush the previous fatal trace if pending
+        if vars.in_fatal_trace && vars.current_fatal_app != "" {
+          let detail = vars.current_fatal_exception;
+          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
+            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
+          }
+          detail = detail + " on " + vars.current_fatal_thread;
+          let crashes = vars.fatal_crashes;
+          crashes[vars.current_fatal_app] = detail;
+          vars.fatal_crashes = crashes;
+
+          _emits.push(#{
+            source: vars.current_fatal_app,
+            exception: vars.current_fatal_exception,
+            root_cause: if vars.current_fatal_root_cause != "" { vars.current_fatal_root_cause } else { vars.current_fatal_exception },
+            crash_thread: vars.current_fatal_thread,
+            start_line: vars.fatal_trace_start,
+            fatal: true,
+          });
+        }
+
+        vars.current_fatal_thread = fields.fatal_thread_name;
+        vars.current_fatal_app = "";
+        vars.current_fatal_exception = "";
+        vars.current_fatal_root_cause = "";
+        vars.fatal_trace_start = line.line_number;
+        vars.in_fatal_trace = true;
+        vars.fatal_count += 1;
+        return;
+      }
+
+      // Collect Process: line for fatal traces
+      if vars.in_fatal_trace && "process_name" in fields {
+        vars.current_fatal_app = fields.process_name;
+        return;
+      }
+
+      // Collect exception class within a fatal trace
+      if vars.in_fatal_trace && line.tag == "AndroidRuntime" {
+        if "caused_by_class" in fields {
+          vars.current_fatal_root_cause = fields.caused_by_class;
+        }
+        if "exception_class" in fields && vars.current_fatal_exception == "" {
+          vars.current_fatal_exception = fields.exception_class;
+        }
+        // Eagerly write to fatal_crashes so it's visible even if the trace is never flushed
+        // (e.g. fatal crash is the last entry in the log — no subsequent line triggers a flush)
+        if vars.current_fatal_app != "" && vars.current_fatal_exception != "" {
+          let detail = vars.current_fatal_exception;
+          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
+            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
+          }
+          detail = detail + " on " + vars.current_fatal_thread;
+          let crashes = vars.fatal_crashes;
+          crashes[vars.current_fatal_app] = detail;
+          vars.fatal_crashes = crashes;
+        }
+        return;
+      }
+
+      // Non-AndroidRuntime line ends a fatal trace — flush it
+      if vars.in_fatal_trace {
+        if vars.current_fatal_app != "" {
+          let detail = vars.current_fatal_exception;
+          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
+            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
+          }
+          detail = detail + " on " + vars.current_fatal_thread;
+          let crashes = vars.fatal_crashes;
+          crashes[vars.current_fatal_app] = detail;
+          vars.fatal_crashes = crashes;
+
+          _emits.push(#{
+            source: vars.current_fatal_app,
+            exception: vars.current_fatal_exception,
+            root_cause: if vars.current_fatal_root_cause != "" { vars.current_fatal_root_cause } else { vars.current_fatal_exception },
+            crash_thread: vars.current_fatal_thread,
+            start_line: vars.fatal_trace_start,
+            fatal: true,
+          });
+        }
+        vars.in_fatal_trace = false;
+      }
+
+      // ═══ SYSTEM.ERR TRACE HANDLING ═══
+      // System.err exceptions are deferred until the at-frames have been scanned.
+      // When a non-System.err line arrives, flush the pending trace with the
+      // attributed source (if found) or fall back to "System.err".
+
+      // Flush stderr trace when leaving the System.err block
+      if vars.in_stderr_trace && line.tag != "System.err" {
+        let src = if vars.stderr_source != "" { vars.stderr_source } else { "System.err" };
+        let exc = vars.stderr_exception;
+        let key = src + ": " + exc;
+        let summary = vars.nonfatal_summary;
+        if key in summary { summary[key] = summary[key] + 1; } else { summary[key] = 1; }
+        vars.nonfatal_summary = summary;
+        _emits.push(#{
+          source: src,
+          exception: exc,
+          root_cause: vars.stderr_root_cause,
+          crash_thread: "",
+          start_line: vars.stderr_start_line,
+          fatal: false,
+        });
+        vars.in_stderr_trace = false;
+        vars.stderr_source = "";
+        vars.stderr_exception = "";
+        vars.stderr_root_cause = "";
+        // Don't return — continue to process the current non-System.err line normally
+      }
+
+      // Process System.err lines
+      if line.tag == "System.err" {
+        // New exception: flush previous stderr trace (if any), start a new one
+        if "exception_class" in fields && !("caused_by_class" in fields) {
+          if vars.in_stderr_trace {
+            let src = if vars.stderr_source != "" { vars.stderr_source } else { "System.err" };
+            let exc = vars.stderr_exception;
+            let key = src + ": " + exc;
+            let summary = vars.nonfatal_summary;
+            if key in summary { summary[key] = summary[key] + 1; } else { summary[key] = 1; }
+            vars.nonfatal_summary = summary;
+            _emits.push(#{
+              source: src,
+              exception: exc,
+              root_cause: vars.stderr_root_cause,
+              crash_thread: "",
+              start_line: vars.stderr_start_line,
+              fatal: false,
+            });
+          }
+          vars.in_stderr_trace = true;
+          vars.stderr_exception = fields.exception_class;
+          vars.stderr_root_cause = fields.exception_class;
+          vars.stderr_start_line = line.line_number;
+          vars.stderr_source = "";
+          vars.nonfatal_count += 1;
+          return;
+        }
+
+        // Caused by: within stderr trace — update root cause
+        if vars.in_stderr_trace && "caused_by_class" in fields {
+          vars.stderr_root_cause = fields.caused_by_class;
+          return;
+        }
+
+        // at-frame: look for the first non-framework app package
+        if vars.in_stderr_trace && "at_class" in fields && vars.stderr_source == "" {
+          let pkg = fields.at_class;
+          if !pkg.starts_with("java.") && !pkg.starts_with("javax.") &&
+             !pkg.starts_with("android.") && !pkg.starts_with("com.android.") &&
+             !pkg.starts_with("libcore.") && !pkg.starts_with("sun.") &&
+             !pkg.starts_with("dalvik.") && !pkg.starts_with("kotlin.") &&
+             !pkg.starts_with("androidx.") {
+            vars.stderr_source = pkg;
+          }
+          return;
+        }
+
+        return; // Ignore other System.err lines
+      }
+
+      // ═══ NON-FATAL EXCEPTION DETECTION ═══
+      // Skip "Caused by:" lines — part of the preceding exception's chain.
+      // Skip at-frame lines — they are stack frames, not new exception events.
+      if "exception_class" in fields && !("caused_by_class" in fields) && !("at_class" in fields) {
+        let tag = line.tag;
+        let exc = fields.exception_class;
+
+        vars.nonfatal_count += 1;
+
+        // Build composite key: "Tag: ExceptionClass"
+        let key = tag + ": " + exc;
+        let summary = vars.nonfatal_summary;
+        if key in summary {
+          summary[key] = summary[key] + 1;
+        } else {
+          summary[key] = 1;
+        }
+        vars.nonfatal_summary = summary;
+
+        let root = if "caused_by_class" in fields {
+          fields.caused_by_class
+        } else {
+          exc
+        };
+
+        _emits.push(#{
+          source: tag,
+          exception: exc,
+          root_cause: root,
+          crash_thread: "",
+          start_line: line.line_number,
+          fatal: false,
+        });
+      }
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["fatal", "source", "exception", "root_cause", "start_line"]
+        sort: "source"
+
+schema:
+  source_types: ["logcat", "bugreport", "dumpstate"]
+  emissions:
+    - name: source
+      type: string
+      description: "App package (fatal) or log tag / attributed package (non-fatal) that produced the exception"
+    - name: exception
+      type: string
+      description: "Top-level exception class (e.g. java.lang.NullPointerException)"
+    - name: root_cause
+      type: string
+      description: "Deepest Caused-by exception, or same as exception if no chain"
+    - name: crash_thread
+      type: string
+      description: "Thread name (fatal crashes only, empty for non-fatal)"
+    - name: start_line
+      type: int
+      description: "Line number where the exception appeared"
+    - name: fatal
+      type: bool
+      description: "True for AndroidRuntime FATAL EXCEPTION, false for non-fatal"
+  mcp:
+    summary:
+      template: "{{fatal_count}} fatal crashes, {{nonfatal_count}} non-fatal exceptions."
+      include_vars: [fatal_count, nonfatal_count]
+    signals:
+      - name: fatal_exception
+        severity: critical
+        condition: "fatal == true"
+        fields: [source, exception, root_cause, crash_thread, start_line]
+        format: "FATAL: {{source}} crashed — {{exception}} (root cause: {{root_cause}}) on thread {{crash_thread}}"
+        type: emission

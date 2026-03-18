@@ -1,0 +1,232 @@
+meta:
+  id: dns-private-probe-tracker
+  name: DNS Private Probe Tracker
+  version: 1.0.2
+  author: LogTapper
+  description: >
+    Parses the PrivateDnsLog from the Android dnsresolver service dump to build
+    a timeline of DoT/DoH connection probe events. Each probe cycle goes
+    in_process → success or fail. Computes per-probe latency, tracks repeated
+    failures per server, and surfaces the pattern of 10.96.x.x local DHCP
+    servers that consistently fail DoT while public resolvers succeed.
+    Works on dumpstate/bugreport files only.
+  tags: [network, dns, android, bugreport, private-dns]
+
+sections:
+  - "DUMPSYS NORMAL"
+
+vars:
+  - name: total_probes
+    type: int
+    default: 0
+    display: true
+    label: "Total Probe Cycles"
+
+  - name: probes_success
+    type: int
+    default: 0
+    display: true
+    label: "Succeeded"
+
+  - name: probes_failed
+    type: int
+    default: 0
+    display: true
+    label: "Failed"
+
+  - name: failures_by_server
+    type: map
+    display: true
+    display_as: table
+    label: "Failures by Server"
+    columns: [server, fail_count]
+
+  - name: latency_by_server
+    type: map
+    display: true
+    display_as: table
+    label: "Avg Probe Latency by Server (ms)"
+    columns: [server, avg_ms]
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains_any
+        values:
+          - "DUMP OF SERVICE dnsresolver"
+          - "DUMP OF SERVICE "
+          - "PrivateDns={"
+
+  - stage: extract
+    fields:
+      # Full line: "  08:52:49.784 - netId=100 PrivateDns={8.8.8.8:853/} state=in_process"
+      - name: probe_time_h
+        pattern: '(\d+):(\d+):(\d+)\.(\d+)\s+-'
+        cast: string
+      - name: probe_net_id
+        pattern: 'netId=(\d+)'
+        cast: string
+      - name: probe_server
+        pattern: 'PrivateDns=\{([^/}]+)'
+        cast: string
+      - name: probe_state
+        pattern: 'state=(\w+)'
+        cast: string
+      # Parse timestamp parts individually for ms conversion
+      - name: ts_h
+        pattern: '^[\s]*(\d+):\d+:\d+\.\d+'
+        cast: int
+      - name: ts_m
+        pattern: '^[\s]*\d+:(\d+):\d+\.\d+'
+        cast: int
+      - name: ts_s
+        pattern: '^[\s]*\d+:\d+:(\d+)\.\d+'
+        cast: int
+      - name: ts_ms
+        pattern: '^[\s]*\d+:\d+:\d+\.(\d+)'
+        cast: int
+
+  - stage: script
+    runtime: rhai
+    src: |
+      // ── Section gate ──
+      let raw = line.raw;
+      if raw.contains("DUMP OF SERVICE dnsresolver") {
+        vars._in_dnsresolver = true;
+        return;
+      }
+      if raw.contains("DUMP OF SERVICE ") {
+        vars._in_dnsresolver = false;
+        return;
+      }
+      let in_section = if "_in_dnsresolver" in vars { vars._in_dnsresolver } else { false };
+      if !in_section { return; }
+
+      if !("probe_state" in fields) { return; }
+      if !("probe_server" in fields) { return; }
+
+      let server = fields.probe_server;
+      let net_id = if "probe_net_id" in fields { fields.probe_net_id } else { "?" };
+      let state = fields.probe_state;
+      let key = net_id + ":" + server;
+
+      // Convert HH:MM:SS.mmm to total milliseconds for latency calculation
+      let ts_total_ms = 0;
+      if "ts_h" in fields && "ts_m" in fields && "ts_s" in fields && "ts_ms" in fields {
+        ts_total_ms = fields.ts_h * 3600000
+                    + fields.ts_m * 60000
+                    + fields.ts_s * 1000
+                    + fields.ts_ms;
+      }
+
+      if state == "in_process" {
+        // Store start time keyed by netId:server
+        let pending = if "_pending" in vars { vars._pending } else { #{} };
+        pending[key] = ts_total_ms;
+        vars._pending = pending;
+        return;
+      }
+
+      // success or fail — look up pending start time
+      let latency_ms = -1;
+      let pending = if "_pending" in vars { vars._pending } else { #{} };
+      if key in pending {
+        let start = pending[key];
+        if ts_total_ms >= start {
+          latency_ms = ts_total_ms - start;
+        }
+        pending.remove(key);
+        vars._pending = pending;
+      }
+
+      vars.total_probes += 1;
+
+      if state == "success" {
+        vars.probes_success += 1;
+      } else {
+        vars.probes_failed += 1;
+
+        let fm = vars.failures_by_server;
+        if server in fm { fm[server] += 1; } else { fm[server] = 1; }
+        vars.failures_by_server = fm;
+      }
+
+      // Track latency per server (running average via separate sum/count maps)
+      if latency_ms >= 0 {
+        let sum_map = if "_lat_sum" in vars { vars._lat_sum } else { #{} };
+        let cnt_map = if "_lat_cnt" in vars { vars._lat_cnt } else { #{} };
+        let prev_sum = if server in sum_map { sum_map[server] } else { 0 };
+        let prev_cnt = if server in cnt_map { cnt_map[server] } else { 0 };
+        let new_sum = prev_sum + latency_ms;
+        let new_cnt = prev_cnt + 1;
+        sum_map[server] = new_sum;
+        cnt_map[server] = new_cnt;
+        vars._lat_sum = sum_map;
+        vars._lat_cnt = cnt_map;
+        // Store scalar avg so display_as:table renders correctly
+        let lm = vars.latency_by_server;
+        lm[server] = new_sum / new_cnt;
+        vars.latency_by_server = lm;
+      }
+
+      _emits.push(#{
+        net_id: net_id,
+        server: server,
+        result: state,
+        latency_ms: latency_ms
+      });
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: [net_id, server, result, latency_ms]
+        sort: net_id
+      - type: summary
+        source: vars
+        template: |
+          {{total_probes}} Private DNS probes: {{probes_success}} succeeded, {{probes_failed}} failed.
+    charts:
+      - id: probe_latency
+        type: time_series
+        title: "Private DNS Probe Latency"
+        source: emissions
+        x: { field: _timestamp, label: "Time" }
+        y: { field: latency_ms, label: "Latency (ms)" }
+        color: { field: server }
+        interactive: true
+      - id: probe_outcomes
+        type: bar
+        title: "Probe Outcomes by Server"
+        source: emissions
+        x: { field: server, label: "Server" }
+        y: { field: result, label: "Count", aggregation: count }
+        color: { field: result }
+        interactive: true
+
+schema:
+  source_types: ["bugreport"]
+  emissions:
+    - name: net_id
+      type: string
+      description: "Android network ID (netId) for this probe cycle"
+    - name: server
+      type: string
+      description: "DNS server IP:port being probed"
+    - name: result
+      type: string
+      description: "Probe outcome: success or fail"
+    - name: latency_ms
+      type: int
+      description: "Time from in_process to result in milliseconds (-1 if unpaired)"
+  mcp:
+    summary:
+      template: "Private DNS probes: {{total_probes}} total, {{probes_success}} succeeded, {{probes_failed}} failed."
+      include_vars: [total_probes, probes_success, probes_failed]
+    signals:
+      - name: repeated_dot_failure
+        severity: warning
+        condition: "result == 'fail'"
+        fields: [net_id, server, result, latency_ms]
+        format: "Private DNS probe failed: {{server}} on netId={{net_id}}"
+        type: emission

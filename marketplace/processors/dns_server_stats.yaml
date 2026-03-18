@@ -1,0 +1,483 @@
+meta:
+  id: dns-server-stats
+  name: DNS Server Stats
+  version: 1.0.5
+  author: LogTapper
+  description: >
+    Parses the Android dnsresolver service dump (DUMPSYS NORMAL) to extract
+    per-server DNS statistics: query totals, success/error/timeout counts, RTT
+    averages per protocol (UDP, DoH, DoT/TLS, TCP), rcode distributions, and
+    server reliability scores. Also captures Private DNS mode, search domains,
+    DoT/DoH configuration status, and resolver tuning parameters. Works on
+    dumpstate/bugreport files only.
+  tags: [network, dns, android, bugreport]
+
+sections:
+  - "DUMPSYS NORMAL"
+
+vars:
+  - name: private_dns_mode
+    type: string
+    default: ""
+    display: true
+    label: "Private DNS Mode"
+
+  - name: search_domains
+    type: string
+    default: ""
+    display: true
+    label: "Search Domains"
+
+  - name: total_queries
+    type: int
+    default: 0
+    display: true
+    label: "Total Queries (UDP)"
+
+  - name: total_answered
+    type: int
+    default: 0
+    display: true
+    label: "Answered"
+
+  - name: total_errors
+    type: int
+    default: 0
+    display: true
+    label: "Error Responses"
+
+  - name: total_timeouts
+    type: int
+    default: 0
+    display: true
+    label: "Timeouts (Unanswered)"
+
+  - name: drop_rate_pct
+    type: string
+    default: "0%"
+    display: true
+    label: "Drop Rate"
+
+  - name: server_summary
+    type: map
+    display: false
+
+  - name: dot_status
+    type: map
+    display: true
+    display_as: table
+    label: "DoT Status"
+    columns: [server, status]
+
+  - name: doh_status
+    type: map
+    display: true
+    display_as: table
+    label: "DoH Status"
+    columns: [server_url, status]
+
+  - name: experiments
+    type: map
+    display: true
+    display_as: table
+    label: "Resolver Experiments"
+    columns: [param, value]
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains_any
+        values:
+          - "DUMP OF SERVICE dnsresolver"
+          - "Private DNS mode:"
+          - "search domains:"
+          - "DNS servers:"
+          - "over UDP"
+          - "over DOH"
+          - "over TLS"
+          - "over TCP"
+          - "DoT configuration"
+          - "DoH configuration"
+          - "name{} status{"
+          - "url{"
+          - "score{"
+          - "<no data> score{"
+          - "ms, "
+          - "DUMP OF SERVICE "
+          - "Experiments list"
+          - "doh_"
+          - "dot_"
+          - "keep_listening_udp"
+          - "max_cache_entries"
+          - "max_queries_global"
+          - "mdns_resolution"
+          - "no_retry_after_cancel"
+          - "parallel_lookup_sleep_time"
+          - "retransmission_time_interval"
+          - "retry_count"
+          - "sort_nameservers"
+          - "fail_fast_on_uid"
+
+  - stage: extract
+    fields:
+      # Private DNS mode line: "  Private DNS mode: OPPORTUNISTIC"
+      - name: private_dns_mode
+        pattern: 'Private DNS mode:\s*(\w+)'
+        cast: string
+
+      # Search domains line: "  search domains: chick-fil-a.com"
+      - name: search_domains
+        pattern: 'search domains:\s*(.+)'
+        cast: string
+
+      # Protocol section header: "    over UDP" / "    over DOH" etc.
+      - name: proto_section
+        pattern: '^\s{4}over\s+(UDP|DOH|TLS|TCP|MDNS)\s*$'
+        cast: string
+
+      # DNS servers block — bare IP, 7-tuple: IP (total, succ, err, timeout, internal, Xms, Ys)
+      # e.g. "    10.96.50.147 (4, 4, 0, 0, 0, 10ms, 2524s)"
+      - name: srv_ip
+        pattern: '^\s{4}([\d.]+)\s+\(\d+'
+        cast: string
+      - name: srv_total
+        pattern: '^\s{4}[\d.]+\s+\((\d+),'
+        cast: int
+      - name: srv_answered
+        pattern: '^\s{4}[\d.]+\s+\(\d+,\s*(\d+),'
+        cast: int
+      - name: srv_errors
+        pattern: '^\s{4}[\d.]+\s+\(\d+,\s*\d+,\s*(\d+),'
+        cast: int
+      - name: srv_timeouts
+        pattern: '^\s{4}[\d.]+\s+\(\d+,\s*\d+,\s*\d+,\s*(\d+),'
+        cast: int
+      - name: srv_rtt
+        pattern: '^\s{4}[\d.]+\s+\(\d+,\s*\d+,\s*\d+,\s*\d+,\s*\d+,\s*(\d+)ms'
+        cast: int
+
+      # Server statistics block — IP:port, 4-tuple + score
+      # e.g. "      10.96.50.147:53 (4, 10ms, [NOERROR:4 ], 2524s) score{99.9}"
+      - name: stat_server
+        pattern: '^\s{6}([\d.]+:\d+)\s+\(\d+'
+        cast: string
+      - name: stat_total
+        pattern: '^\s{6}[\d.]+:\d+\s+\((\d+),'
+        cast: int
+      - name: stat_rtt
+        pattern: '^\s{6}[\d.]+:\d+\s+\(\d+,\s*(\d+)ms'
+        cast: int
+      - name: stat_rcodes
+        pattern: '^\s{6}[\d.]+:\d+\s+\(\d+,\s*\d+ms,\s*\[([^\]]+)\]'
+        cast: string
+      - name: stat_score
+        pattern: 'score\{([\d.]+)\}'
+        cast: string
+
+      # DoT config: "    8.8.8.8 name{} status{success}"
+      - name: dot_ip
+        pattern: '^\s{4}([\d.]+)\s+name\{[^}]*\}\s+status\{(success|fail)\}'
+        cast: string
+      - name: dot_result
+        pattern: '^\s{4}[\d.]+\s+name\{[^}]*\}\s+status\{(success|fail)\}'
+        cast: string
+
+      # DoH config: "    8.8.8.8:443 url{https://...} status{success}"
+      - name: doh_server
+        pattern: '^\s{4}([\d.]+:\d+)\s+url\{'
+        cast: string
+      - name: doh_url
+        pattern: 'url\{([^}]+)\}'
+        cast: string
+      - name: doh_result
+        pattern: 'status\{(success|fail)\}'
+        cast: string
+
+  - stage: script
+    runtime: rhai
+    src: |
+      // ── Section gate ──
+      // Turn processing on when we enter "DUMP OF SERVICE dnsresolver:",
+      // off when any other "DUMP OF SERVICE " line is seen.
+      let raw = line.raw;
+      if raw.contains("DUMP OF SERVICE dnsresolver") {
+        vars._in_dnsresolver = true;
+        return;
+      }
+      if raw.contains("DUMP OF SERVICE ") {
+        vars._in_dnsresolver = false;
+        return;
+      }
+      // Only process lines inside the dnsresolver dump
+      let in_section = if "_in_dnsresolver" in vars { vars._in_dnsresolver } else { false };
+      if !in_section { return; }
+
+      // ── Private DNS mode ──
+      if "private_dns_mode" in fields && fields.private_dns_mode != "" {
+        vars.private_dns_mode = fields.private_dns_mode;
+        return;
+      }
+
+      // ── Search domains ──
+      if "search_domains" in fields && fields.search_domains != "" {
+        vars.search_domains = fields.search_domains;
+        return;
+      }
+
+      // ── Protocol section header ──
+      // Track current protocol so stats lines know which section they're in
+      if "proto_section" in fields {
+        vars._current_proto = fields.proto_section;
+        return;
+      }
+
+      // ── DNS servers block (bare IP, 7-tuple) ──
+      // Distinct from server stats: no colon in IP field, 7 values
+      if "srv_ip" in fields && "srv_total" in fields && "srv_rtt" in fields
+         && !("stat_server" in fields) {
+        let ip = fields.srv_ip;
+        let total = fields.srv_total;
+        let answered = if "srv_answered" in fields { fields.srv_answered } else { 0 };
+        let errors = if "srv_errors" in fields { fields.srv_errors } else { 0 };
+        let timeouts = if "srv_timeouts" in fields { fields.srv_timeouts } else { 0 };
+        let rtt = fields.srv_rtt;
+
+        vars.total_queries += total;
+        vars.total_answered += answered;
+        vars.total_errors += errors;
+        vars.total_timeouts += timeouts;
+
+        let drop = if total > 0 {
+          let pct = (timeouts.to_float() / total.to_float() * 100.0);
+          pct.to_string() + "%"
+        } else { "0%" };
+
+        if vars.total_queries > 0 {
+          let overall_pct = vars.total_timeouts.to_float() / vars.total_queries.to_float() * 100.0;
+          vars.drop_rate_pct = overall_pct.to_string() + "%";
+        }
+
+        let m = vars.server_summary;
+        m[ip] = #{
+          total: total,
+          answered: answered,
+          errors: errors,
+          timeouts: timeouts,
+          rtt_avg_ms: rtt,
+          drop_rate: drop
+        };
+        vars.server_summary = m;
+
+        _emits.push(#{
+          record_type: "server_udp",
+          server: ip,
+          protocol: "UDP",
+          total: total,
+          answered: answered,
+          errors: errors,
+          timeouts: timeouts,
+          rtt_avg_ms: rtt,
+          drop_rate: drop
+        });
+        return;
+      }
+
+      // ── Server statistics block (IP:port, 4-tuple + score) ──
+      if "stat_server" in fields && "stat_total" in fields {
+        let proto = if "_current_proto" in vars && vars._current_proto != () {
+          vars._current_proto
+        } else { "?" };
+        let server = fields.stat_server;
+        let total = fields.stat_total;
+        let rtt = if "stat_rtt" in fields { fields.stat_rtt } else { 0 };
+        let rcodes = if "stat_rcodes" in fields { fields.stat_rcodes } else { "" };
+        let score = if "stat_score" in fields { fields.stat_score } else { "" };
+
+        _emits.push(#{
+          record_type: "server_proto_stats",
+          server: server,
+          protocol: proto,
+          total: total,
+          rtt_avg_ms: rtt,
+          rcodes: rcodes,
+          score: score
+        });
+        return;
+      }
+
+      // ── DoT configuration ──
+      if "dot_ip" in fields && "dot_result" in fields {
+        let m = vars.dot_status;
+        m[fields.dot_ip] = fields.dot_result;
+        vars.dot_status = m;
+
+        _emits.push(#{
+          record_type: "dot_config",
+          server: fields.dot_ip,
+          protocol: "DoT",
+          status: fields.dot_result
+        });
+        return;
+      }
+
+      // ── DoH configuration ──
+      if "doh_server" in fields && "doh_result" in fields {
+        let url = if "doh_url" in fields { fields.doh_url } else { "" };
+        let key = fields.doh_server + " " + url;
+        let m = vars.doh_status;
+        m[key] = fields.doh_result;
+        vars.doh_status = m;
+
+        _emits.push(#{
+          record_type: "doh_config",
+          server: fields.doh_server,
+          protocol: "DoH",
+          url: url,
+          status: fields.doh_result
+        });
+        return;
+      }
+
+      // ── Experiments ──
+      // Detect experiment lines directly by known key prefixes — no stateful header tracking.
+      // Each line is: "  key: value_or_UNSET" — trim() mutates in place in Rhai (returns void),
+      // so we copy first then trim, not: let x = str.trim().
+      let exp_msg = line.message;
+      exp_msg.trim();
+      let is_exp_line = exp_msg.starts_with("doh_") || exp_msg.starts_with("dot_")
+                     || exp_msg.starts_with("fail_fast") || exp_msg.starts_with("keep_")
+                     || exp_msg.starts_with("max_") || exp_msg.starts_with("mdns_")
+                     || exp_msg.starts_with("no_retry") || exp_msg.starts_with("parallel_")
+                     || exp_msg.starts_with("retransmission_") || exp_msg.starts_with("retry_")
+                     || exp_msg.starts_with("sort_");
+      if is_exp_line {
+        let parts = exp_msg.split(":");
+        if parts.len() >= 2 {
+          let exp_key = parts[0];
+          exp_key.trim();
+          let exp_val = parts[1];
+          exp_val.trim();
+          // Descriptions: each entry on one line to avoid Rhai multi-line map literal issues
+          let descs = #{
+            "doh_early_data": "TLS 1.3 0-RTT data for DoH - reduces reconnect latency but risks replaying stale queries",
+            "doh_idle_timeout_ms": "Time an idle DoH connection stays open before closing (ms)",
+            "doh_probe_timeout_ms": "Timeout for probing DoH server availability (ms)",
+            "doh_query_timeout_ms": "Per-query DoH timeout; UNSET/-1 = platform default; falls back to UDP on expiry",
+            "doh_session_resumption": "TLS session resumption for DoH - avoids full handshake on reconnect",
+            "dot_async_handshake": "Perform DoT TLS handshake asynchronously to avoid blocking concurrent queries",
+            "dot_connect_timeout_ms": "Max time to establish a DoT TLS connection (ms)",
+            "dot_maxtries": "Max DoT connection attempts before marking a server unusable",
+            "dot_query_timeout_ms": "Per-query DoT timeout; UNSET/-1 = platform default; falls back to UDP on expiry",
+            "dot_quick_fallback": "Immediately fall back to UDP if DoT is slow, trading security for latency",
+            "dot_revalidation_threshold": "Reliability score below which a DoT server is re-probed; -1 = platform default",
+            "dot_validation_latency_factor": "DoT stays preferred while latency <= (UDP latency x factor + offset); factor=3 gives wide tolerance",
+            "dot_validation_latency_offset_ms": "Flat offset (ms) in DoT tolerance formula; 100ms means DoT can be 100ms slower than UDP x factor",
+            "dot_xport_unusable_threshold": "Score below which a DoT transport is marked unusable; -1 = platform default",
+            "fail_fast_on_uid_network_blocking": "Return EPERM immediately when a UID is blocked from a network instead of timing out",
+            "keep_listening_udp": "Keep UDP socket open alongside DoT/DoH; 1=enabled, fires as fallback if encrypted DNS fails",
+            "max_cache_entries": "Max DNS cache entries; fewer entries means more upstream queries",
+            "max_queries_global": "Global cap on concurrent DNS queries across all apps - prevents resolver overload",
+            "mdns_resolution": "Enable mDNS for resolving .local hostnames",
+            "no_retry_after_cancel": "0=retry after app cancels query; 1=respect cancellation and skip retry",
+            "parallel_lookup_sleep_time": "Delay (ms) between parallel UDP and TCP lookup attempts",
+            "retransmission_time_interval": "Initial UDP retransmission interval (ms) - doubles on each retry up to retry_count",
+            "retry_count": "UDP retransmissions per server before the query fails",
+            "sort_nameservers": "0=query servers in configured order; 1=sort by reliability score first"
+          };
+          let desc = if exp_key in descs { descs[exp_key] } else { "" };
+          let disp = if desc != "" { exp_val + " | " + desc } else { exp_val };
+          let em = vars.experiments;
+          em[exp_key] = disp;
+          vars.experiments = em;
+          return;
+        }
+      }
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: [record_type, server, protocol, total, answered, errors, timeouts, rtt_avg_ms, drop_rate, rcodes, score, status, url]
+        sort: record_type
+      - type: summary
+        source: vars
+        template: |
+          Private DNS: {{private_dns_mode}} | Search: {{search_domains}}
+          UDP queries: {{total_queries}} total, {{total_answered}} answered, {{total_errors}} errors, {{total_timeouts}} timeouts ({{drop_rate_pct}} drop rate)
+    charts:
+      - id: dns_rtt_by_server
+        type: bar
+        title: "DNS RTT by Server & Protocol"
+        source: emissions
+        x: { field: server, label: "Server" }
+        y: { field: rtt_avg_ms, label: "RTT avg (ms)", aggregation: avg }
+        color: { field: protocol }
+        interactive: true
+      - id: dns_drop_rate
+        type: bar
+        title: "Timeout Rate by Server"
+        source: emissions
+        x: { field: server, label: "Server" }
+        y: { field: timeouts, label: "Timeouts", aggregation: sum }
+        color: { field: protocol }
+        interactive: true
+
+schema:
+  source_types: ["bugreport"]
+  emissions:
+    - name: record_type
+      type: string
+      description: "server_udp | server_proto_stats | dot_config | doh_config"
+    - name: server
+      type: string
+      description: "Server IP or IP:port"
+    - name: protocol
+      type: string
+      description: "UDP, DoH, DoT, TLS, TCP, MDNS"
+    - name: total
+      type: int
+      description: "Total queries sent to this server via this protocol"
+    - name: answered
+      type: int
+      description: "Queries that received a valid response (successes)"
+    - name: errors
+      type: int
+      description: "Queries that received an error response"
+    - name: timeouts
+      type: int
+      description: "Queries that received no response (dropped)"
+    - name: rtt_avg_ms
+      type: int
+      description: "Average round-trip time in milliseconds"
+    - name: drop_rate
+      type: string
+      description: "Percentage of queries that timed out"
+    - name: rcodes
+      type: string
+      description: "Response code breakdown e.g. NOERROR:96, NXDOMAIN:2"
+    - name: score
+      type: string
+      description: "Android resolver reliability score (0-100)"
+    - name: status
+      type: string
+      description: "success or fail (for DoT/DoH config entries)"
+    - name: url
+      type: string
+      description: "DoH endpoint URL"
+  mcp:
+    summary:
+      template: "DNS servers: {{total_queries}} UDP queries, {{total_answered}} answered, {{total_timeouts}} timeouts ({{drop_rate_pct}} drop rate). Private DNS: {{private_dns_mode}}."
+      include_vars: [total_queries, total_answered, total_errors, total_timeouts, drop_rate_pct, private_dns_mode, search_domains]
+    signals:
+      - name: dns_timeouts
+        severity: warning
+        condition: "timeouts > 0 && record_type == 'server_udp'"
+        fields: [server, total, timeouts, drop_rate]
+        format: "DNS timeouts on {{server}}: {{timeouts}}/{{total}} queries dropped ({{drop_rate}})"
+        type: emission
+      - name: dot_fail
+        severity: warning
+        condition: "status == 'fail' && record_type == 'dot_config'"
+        fields: [server, status]
+        format: "DoT connection failed for {{server}}"
+        type: emission

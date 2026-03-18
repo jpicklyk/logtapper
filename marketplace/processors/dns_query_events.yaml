@@ -1,0 +1,261 @@
+meta:
+  id: dns-query-events
+  name: DNS Query Events
+  version: 1.0.6
+  author: LogTapper
+  description: >
+    Tracks per-query DNS resolution events from NetdEventListenerService logcat.
+    Each line represents one resolved (or failed) DNS query with the requesting
+    app, network ID, result (SUCCESS/FAIL/SKIPPED), and latency. Aggregates
+    total queries, answered vs unanswered counts, per-app and per-network
+    breakdowns, and latency distribution. Works on logcat streams and
+    dumpstate/bugreport files.
+  tags: [network, dns, android, performance]
+
+vars:
+  - name: total_queries
+    type: int
+    default: 0
+    display: true
+    label: "Total DNS Queries"
+
+  - name: queries_success
+    type: int
+    default: 0
+    display: true
+    label: "Succeeded"
+
+  - name: queries_failed
+    type: int
+    default: 0
+    display: true
+    label: "Failed"
+
+  - name: queries_skipped
+    type: int
+    default: 0
+    display: true
+    label: "Skipped"
+
+  - name: max_latency_ms
+    type: int
+    default: 0
+    display: true
+    label: "Slowest Query (ms)"
+
+  - name: min_latency_ms
+    type: int
+    default: 999999
+    display: true
+    label: "Fastest Query (ms)"
+
+  - name: total_latency_ms
+    type: int
+    default: 0
+    display: false
+
+  - name: avg_latency_ms
+    type: string
+    default: "0"
+    display: true
+    label: "Avg Latency (ms)"
+
+  - name: queries_by_app
+    type: map
+    display: true
+    display_as: table
+    label: "Queries by App"
+    columns: [package, count]
+
+  - name: failures_by_app
+    type: map
+    display: true
+    display_as: table
+    label: "Failures by App"
+    columns: [package, fail_count]
+
+  - name: queries_by_net
+    type: map
+    display: true
+    display_as: table
+    label: "Queries by Network"
+    columns: [net_id, count]
+
+  - name: slow_queries
+    type: map
+    display: true
+    display_as: table
+    label: "Slow DNS Queries (>500ms)"
+    columns: [app, max_latency_ms]
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: tag_match
+        tags: ["NetdEventListenerService"]
+      - type: message_contains
+        value: "DNS Requested by"
+
+  - stage: extract
+    fields:
+      # Line format: "DNS Requested by 104, 10287(com.cfahome.sp.flex), SUCCESS, 24ms"
+      - name: net_id
+        pattern: 'DNS Requested by (\d+),'
+        cast: string
+      - name: uid
+        pattern: 'DNS Requested by \d+,\s*(\d+)\('
+        cast: string
+      - name: package
+        pattern: 'DNS Requested by \d+,\s*\d+\(([^)]+)\)'
+        cast: string
+      - name: latency_ms
+        pattern: ',\s*(\d+)ms\s*$'
+        cast: int
+
+  - stage: script
+    runtime: rhai
+    src: |
+      // Derive result from raw line — use imperative assignment to avoid
+      // `return` inside an if-expression, which aborts the script in Rhai.
+      let raw = line.raw;
+      let result = "";
+      if raw.contains("), SUCCESS,") || raw.ends_with("), SUCCESS") {
+        result = "SUCCESS";
+      } else if raw.contains("), FAIL,") || raw.ends_with("), FAIL") {
+        result = "FAIL";
+      } else if raw.contains("), SKIPPED,") || raw.ends_with("), SKIPPED") {
+        result = "SKIPPED";
+      } else if raw.contains("), TIMEOUT,") || raw.ends_with("), TIMEOUT") {
+        result = "TIMEOUT";
+      }
+      if result == "" { return; }
+
+      let net_id = if "net_id" in fields { fields.net_id } else { "?" };
+      let pkg = if "package" in fields { fields["package"] } else { "unknown" };
+      let latency = if "latency_ms" in fields { fields.latency_ms } else { 0 };
+
+      vars.total_queries += 1;
+
+      if result == "SUCCESS" {
+        vars.queries_success += 1;
+      } else if result == "SKIPPED" {
+        vars.queries_skipped += 1;
+      } else {
+        // FAIL, TIMEOUT, or anything else
+        vars.queries_failed += 1;
+
+        let fm = vars.failures_by_app;
+        if pkg in fm { fm[pkg] += 1; } else { fm[pkg] = 1; }
+        vars.failures_by_app = fm;
+      }
+
+      // Latency tracking
+      if latency > 0 {
+        vars.total_latency_ms += latency;
+        if latency > vars.max_latency_ms { vars.max_latency_ms = latency; }
+        if latency < vars.min_latency_ms { vars.min_latency_ms = latency; }
+        let denom = if vars.queries_success > 0 { vars.queries_success } else { 1 };
+        let avg = vars.total_latency_ms.to_float() / denom.to_float();
+        vars.avg_latency_ms = avg.to_string();
+      }
+
+      // Queries by app
+      let am = vars.queries_by_app;
+      if pkg in am { am[pkg] += 1; } else { am[pkg] = 1; }
+      vars.queries_by_app = am;
+
+      // Queries by network
+      let nm = vars.queries_by_net;
+      if net_id in nm { nm[net_id] += 1; } else { nm[net_id] = 1; }
+      vars.queries_by_net = nm;
+
+      // Slow query tracking (>500ms) — flat map: "pkg (net N)" → max latency
+      // Stored as int so isRankedObject sorts descending by worst latency.
+      if latency > 500 {
+        let sm = vars.slow_queries;
+        let sk = pkg + " (net " + net_id + ")";
+        let prev = if sk in sm { sm[sk] } else { 0 };
+        if latency > prev { sm[sk] = latency; }
+        vars.slow_queries = sm;
+      }
+
+      _emits.push(#{
+        net_id: net_id,
+        "package": pkg,
+        uid: if "uid" in fields { fields.uid } else { "" },
+        result: result,
+        latency_ms: latency
+      });
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: [net_id, package, result, latency_ms]
+        sort: latency_ms
+      - type: summary
+        source: vars
+        template: |
+          {{total_queries}} DNS queries: {{queries_success}} succeeded, {{queries_failed}} failed, {{queries_skipped}} skipped.
+          Latency: avg {{avg_latency_ms}}ms, fastest {{min_latency_ms}}ms, slowest {{max_latency_ms}}ms.
+    charts:
+      - id: dns_latency_timeline
+        type: time_series
+        title: "DNS Query Latency Over Time"
+        source: emissions
+        x: { field: _timestamp, label: "Time" }
+        y: { field: latency_ms, label: "Latency (ms)" }
+        color: { field: result }
+        interactive: true
+      - id: dns_queries_by_app
+        type: bar
+        title: "DNS Queries by App"
+        source: emissions
+        x: { field: package, label: "App" }
+        y: { field: package, label: "Count", aggregation: count }
+        color: { field: result }
+        interactive: true
+      - id: dns_queries_by_net
+        type: bar
+        title: "DNS Queries by Network"
+        source: emissions
+        x: { field: net_id, label: "Network ID" }
+        y: { field: net_id, label: "Count", aggregation: count }
+        color: { field: result }
+        interactive: true
+
+schema:
+  source_types: ["logcat", "bugreport"]
+  emissions:
+    - name: net_id
+      type: string
+      description: "Android network ID the query was sent on"
+    - name: package
+      type: string
+      description: "Package name of the app that made the DNS request"
+    - name: uid
+      type: string
+      description: "UID of the requesting app"
+    - name: result
+      type: string
+      description: "Query outcome: SUCCESS, FAIL, SKIPPED, or TIMEOUT (extracted as dns_result field)"
+    - name: latency_ms
+      type: int
+      description: "DNS resolution latency in milliseconds"
+  mcp:
+    summary:
+      template: "DNS queries: {{total_queries}} total, {{queries_success}} succeeded, {{queries_failed}} failed, {{queries_skipped}} skipped. Avg latency: {{avg_latency_ms}}ms, slowest: {{max_latency_ms}}ms."
+      include_vars: [total_queries, queries_success, queries_failed, queries_skipped, avg_latency_ms, min_latency_ms, max_latency_ms]
+    signals:
+      - name: dns_query_failed
+        severity: warning
+        condition: "result != 'SUCCESS' && result != 'SKIPPED'"
+        fields: [net_id, package, result, latency_ms]
+        format: "DNS query failed for {{package}} on net {{net_id}}: {{result}} ({{latency_ms}}ms)"
+        type: emission
+      - name: slow_dns_query
+        severity: info
+        condition: "latency_ms > 500 && result == 'SUCCESS'"
+        fields: [net_id, package, latency_ms]
+        format: "Slow DNS resolution: {{package}} took {{latency_ms}}ms on net {{net_id}}"
+        type: emission
