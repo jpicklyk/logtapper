@@ -237,6 +237,7 @@ export function useStreamFilter(paneId: string): {
   scanning: boolean;
   filteredLineNums: number[] | null;
   parseError: string | null;
+  sectionFilteredLineNums: number[] | null;
 } {
   const { filterStateBySession, paneSessionMap } = useSessionContext();
   const sessionId = paneSessionMap.get(paneId);
@@ -246,6 +247,7 @@ export function useStreamFilter(paneId: string): {
     scanning: state?.filterScanning ?? false,
     filteredLineNums: state?.filteredLineNums ?? null,
     parseError: state?.filterParseError ?? null,
+    sectionFilteredLineNums: state?.sectionFilteredLineNums ?? null,
   };
 }
 

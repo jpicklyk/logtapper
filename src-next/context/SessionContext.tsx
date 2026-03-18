@@ -16,6 +16,7 @@ export interface FilterState {
   filterScanning: boolean;
   filteredLineNums: number[] | null;
   filterParseError: string | null;
+  sectionFilteredLineNums: number[] | null;
 }
 
 const DEFAULT_FILTER_STATE: FilterState = {
@@ -25,6 +26,7 @@ const DEFAULT_FILTER_STATE: FilterState = {
   filterScanning: false,
   filteredLineNums: null,
   filterParseError: null,
+  sectionFilteredLineNums: null,
 };
 
 // ── State ─────────────────────────────────────────────────────────────────────
