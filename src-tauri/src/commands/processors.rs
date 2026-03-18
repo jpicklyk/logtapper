@@ -1,10 +1,9 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::HashMap;
 use tauri::{AppHandle, Manager, State};
 
 use crate::commands::AppState;
 use crate::processors::marketplace;
-use crate::processors::registry::{self, RegistryEntry};
 use crate::processors::{AnyProcessor, ProcessorSummary};
 
 pub(crate) fn persist_processor(app: &AppHandle, id: &str, yaml: &str) -> Result<(), String> {
@@ -182,48 +181,3 @@ pub async fn uninstall_processor(
     Ok(())
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RegistryEntryDto {
-    pub id: String,
-    pub name: String,
-    pub version: String,
-    pub description: Option<String>,
-    pub path: String,
-    pub tags: Vec<String>,
-    pub sha256: String,
-}
-
-impl From<RegistryEntry> for RegistryEntryDto {
-    fn from(e: RegistryEntry) -> Self {
-        Self {
-            id: e.id, name: e.name, version: e.version, description: e.description,
-            path: e.path, tags: e.tags, sha256: e.sha256,
-        }
-    }
-}
-
-#[tauri::command]
-pub async fn fetch_registry(
-    state: State<'_, AppState>,
-    registry_url: Option<String>,
-) -> Result<Vec<RegistryEntryDto>, String> {
-    let index = registry::fetch_registry(&state.http_client, registry_url.as_deref()).await?;
-    Ok(index.processors.into_iter().map(RegistryEntryDto::from).collect())
-}
-
-#[tauri::command]
-pub async fn install_from_registry(
-    state: State<'_, AppState>,
-    app: AppHandle,
-    entry: RegistryEntryDto,
-) -> Result<ProcessorSummary, String> {
-    let reg_entry = RegistryEntry {
-        id: entry.id.clone(), name: entry.name.clone(), version: entry.version.clone(),
-        description: entry.description.clone(), path: entry.path.clone(),
-        tags: entry.tags.clone(), sha256: entry.sha256.clone(),
-    };
-    let yaml = registry::download_processor(&state.http_client, &reg_entry, None).await?;
-    let processor = AnyProcessor::from_yaml(&yaml)?;
-    validate_and_install(&app, &state, &yaml, processor)
-}

@@ -106,8 +106,6 @@ fn normalize_yaml_indent(yaml: &str) -> String {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessorMeta {
-    #[serde(default)]
-    pub builtin: bool,
     pub id: String,
     pub name: String,
     #[serde(default = "default_version")]

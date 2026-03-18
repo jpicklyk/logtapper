@@ -366,8 +366,6 @@ pub fn run() {
             commands::claude::set_claude_api_key,
             commands::claude::claude_analyze,
             commands::claude::claude_generate_processor,
-            commands::processors::fetch_registry,
-            commands::processors::install_from_registry,
             commands::anonymizer::get_anonymizer_config,
             commands::anonymizer::set_anonymizer_config,
             commands::anonymizer::test_anonymizer,
