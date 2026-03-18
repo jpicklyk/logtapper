@@ -1,0 +1,294 @@
+meta:
+  id: "cellular-data-failure-reporter"
+  name: "Cellular Data Failure Reporter"
+  version: "1.0.0"
+  author: "LogTapper"
+  description: "Surfaces why mobile data setup fails on Android. Captures trySetupData failures, data-allowed gate rejections, and no-APN conditions. Extracts all data-enabled flag snapshots (isUserDataEnabled, mInternalDataEnabled, mPolicyDataEnabled, mCarrierDataEnabled, mThermalDataEnabled) so the root cause is visible immediately — e.g. isUserDataEnabled=false means the mobile data toggle is OFF."
+  tags: ["cellular", "mobile-data", "dct", "telephony", "android", "samsung"]
+
+# Restrict bugreport processing to sections where DCT-C-0 and DataEnabledSettings
+# log lines appear. For pure logcat files (no sections), this is a no-op.
+sections:
+  - "SYSTEM LOG"
+  - "RADIO LOG"
+
+vars:
+  - name: failure_count
+    type: int
+    default: 0
+    display: true
+    label: "Data Setup Failures"
+
+  - name: last_failure_reason
+    type: string
+    default: ""
+    display: true
+    label: "Last Failure Reason"
+
+  - name: last_apn_type
+    type: string
+    default: ""
+    display: true
+    label: "Last APN Type"
+
+  - name: user_data_enabled
+    type: string
+    default: "unknown"
+    display: true
+    label: "User Data Enabled"
+
+  - name: internal_data_enabled
+    type: string
+    default: "unknown"
+    display: true
+
+  - name: no_apn_count
+    type: int
+    default: 0
+    display: true
+    label: "No APN Available"
+
+  - name: failure_by_apn_type
+    type: map
+    default: {}
+    display: true
+    display_as: table
+    columns: ["apn_type", "count"]
+
+  - name: failure_by_reason
+    type: map
+    default: {}
+    display: true
+    display_as: table
+    columns: ["reason", "count"]
+
+  - name: data_enabled_flags
+    type: map
+    default: {}
+    display: true
+    display_as: table
+    columns: ["flag", "value"]
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: tag_match
+        values:
+          - "DCT-C-0"
+          - "DataEnabledSettings"
+      - type: message_contains_any
+        values:
+          - "trySetupData failed"
+          - "isDataAllowedExtra"
+          - "isDataAllowed(): disallowed"
+          # Samsung firmware typo — must be verbatim
+          - "There in no available apn"
+          - "setupDataOnAllConnectableApns"
+
+  - stage: extract
+    fields:
+      # APN context type: type=default or type=DEFAULT — handles both cases
+      - name: apn_type
+        pattern: 'type=([a-zA-Z_]+)[,\]]'
+        cast: string
+      - name: is_data_enabled
+        pattern: 'isDataEnabled\(\)\s*=\s*(true|false)'
+        cast: string
+      - name: user_data_en
+        pattern: 'isUserDataEnabled=\s*(true|false)'
+        cast: string
+      - name: internal_data_en
+        pattern: 'mInternalDataEnabled=\s*(true|false)'
+        cast: string
+      - name: policy_data_en
+        pattern: 'mPolicyDataEnabled=\s*(true|false)'
+        cast: string
+      - name: carrier_data_en
+        pattern: 'mCarrierDataEnabled=\s*(true|false)'
+        cast: string
+      - name: thermal_data_en
+        pattern: 'mThermalDataEnabled=\s*(true|false)'
+        cast: string
+      - name: disallow_reason
+        pattern: 'isDataAllowedExtra:\s*(.+)'
+        cast: string
+      - name: setup_all_reason
+        pattern: 'setupDataOnAllConnectableApns:\s*(\S+)'
+        cast: string
+
+  - stage: script
+    runtime: rhai
+    src: |
+      let msg = line.message;
+
+      if "trySetupData failed" in msg {
+        vars.failure_count += 1;
+
+        // Extract flag values with safe defaults
+        let apn_type = if "apn_type" in fields { fields.apn_type } else { "unknown" };
+        let is_data_en  = if "is_data_enabled" in fields  { fields.is_data_enabled  } else { "unknown" };
+        let user_en     = if "user_data_en"    in fields  { fields.user_data_en     } else { "unknown" };
+        let internal_en = if "internal_data_en" in fields { fields.internal_data_en } else { "unknown" };
+        let policy_en   = if "policy_data_en"  in fields  { fields.policy_data_en   } else { "unknown" };
+        let carrier_en  = if "carrier_data_en" in fields  { fields.carrier_data_en  } else { "unknown" };
+        let thermal_en  = if "thermal_data_en" in fields  { fields.thermal_data_en  } else { "unknown" };
+
+        // Determine human-readable failure reason — most actionable first
+        let reason = "unknown";
+        if user_en == "false" {
+          reason = "mobile data toggle OFF";
+        } else if is_data_en == "false" {
+          reason = "data disabled (see flags)";
+        } else if carrier_en == "false" {
+          reason = "carrier data disabled";
+        } else if policy_en == "false" {
+          reason = "policy data disabled";
+        } else if internal_en == "false" {
+          reason = "internal data disabled";
+        } else if thermal_en == "false" {
+          reason = "thermal data disabled";
+        }
+
+        vars.last_failure_reason = reason;
+        vars.last_apn_type = apn_type;
+        vars.user_data_enabled = user_en;
+        vars.internal_data_enabled = internal_en;
+
+        // Update failure_by_apn_type map (copy-modify-write)
+        let fat = vars.failure_by_apn_type;
+        if apn_type in fat { fat[apn_type] = fat[apn_type] + 1; } else { fat[apn_type] = 1; }
+        vars.failure_by_apn_type = fat;
+
+        // Update failure_by_reason map (copy-modify-write)
+        let fbr = vars.failure_by_reason;
+        if reason in fbr { fbr[reason] = fbr[reason] + 1; } else { fbr[reason] = 1; }
+        vars.failure_by_reason = fbr;
+
+        // Snapshot all data-enabled flags into the flags table
+        let flags = vars.data_enabled_flags;
+        flags["isUserDataEnabled"]    = user_en;
+        flags["mInternalDataEnabled"] = internal_en;
+        flags["mPolicyDataEnabled"]   = policy_en;
+        flags["mCarrierDataEnabled"]  = carrier_en;
+        flags["mThermalDataEnabled"]  = thermal_en;
+        flags["isDataEnabled"]        = is_data_en;
+        vars.data_enabled_flags = flags;
+
+        _emits.push(#{
+          event_type: "data_setup_failed",
+          apn_type: apn_type,
+          reason: reason,
+          is_data_enabled: is_data_en,
+          user_data_enabled: user_en,
+          internal_data_enabled: internal_en,
+          policy_data_enabled: policy_en,
+          carrier_data_enabled: carrier_en,
+          thermal_data_enabled: thermal_en,
+        });
+
+      } else if "isDataAllowedExtra" in msg || "isDataAllowed(): disallowed" in msg {
+        let reason = if "disallow_reason" in fields { fields.disallow_reason } else { "unknown" };
+        _emits.push(#{
+          event_type: "data_disallowed",
+          apn_type: "n/a",
+          reason: reason,
+          is_data_enabled: "n/a",
+          user_data_enabled: "n/a",
+          internal_data_enabled: "n/a",
+        });
+
+      } else if "There in no available apn" in msg {
+        vars.no_apn_count += 1;
+        _emits.push(#{
+          event_type: "no_apn_available",
+          apn_type: "n/a",
+          reason: "no APN configured",
+          is_data_enabled: "n/a",
+          user_data_enabled: "n/a",
+          internal_data_enabled: "n/a",
+        });
+
+      } else if "setupDataOnAllConnectableApns" in msg {
+        let setup_reason = if "setup_all_reason" in fields { fields.setup_all_reason } else { "unknown" };
+        _emits.push(#{
+          event_type: "setup_all_apns",
+          apn_type: "n/a",
+          reason: setup_reason,
+          is_data_enabled: "n/a",
+          user_data_enabled: "n/a",
+          internal_data_enabled: "n/a",
+        });
+      }
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["event_type", "apn_type", "reason", "user_data_enabled", "internal_data_enabled"]
+        sort: "event_type"
+      - type: summary
+        source: vars
+        template: |
+          {{failure_count}} data setup failures. Last reason: {{last_failure_reason}}. Last APN type: {{last_apn_type}}.
+          isUserDataEnabled: {{user_data_enabled}} | mInternalDataEnabled: {{internal_data_enabled}}
+          No APN available: {{no_apn_count}}
+
+    charts:
+      - id: failures_by_apn_type
+        type: bar
+        title: "Data Setup Failures by APN Type"
+        source: emissions
+        x: { field: apn_type, label: "APN Type" }
+        y: { field: apn_type, label: "Count", aggregation: count }
+
+      - id: failures_timeline
+        type: time_series
+        title: "Data Setup Failures Over Time"
+        source: emissions
+        x: { field: timestamp, label: "Time" }
+        y: { field: event_type, label: "Events", aggregation: count }
+
+schema:
+  source_types: ["logcat", "bugreport"]
+  emissions:
+    - name: event_type
+      type: string
+      description: "Classified event type (data_setup_failed, data_disallowed, no_apn_available, setup_all_apns)"
+    - name: apn_type
+      type: string
+      description: "APN context type (default, ims, mms, etc.)"
+    - name: reason
+      type: string
+      description: "Human-readable failure reason"
+    - name: is_data_enabled
+      type: string
+      description: "isDataEnabled() composite result"
+    - name: user_data_enabled
+      type: string
+      description: "isUserDataEnabled flag — false means mobile data toggle is OFF"
+    - name: internal_data_enabled
+      type: string
+      description: "mInternalDataEnabled flag"
+  mcp:
+    summary:
+      template: "{{failure_count}} data setup failures. isUserDataEnabled: {{user_data_enabled}}. Last reason: {{last_failure_reason}}."
+      include_vars: [failure_count, user_data_enabled, last_failure_reason, no_apn_count]
+    signals:
+      - name: data_toggle_off
+        severity: critical
+        condition: "user_data_enabled == \"false\" && failure_count > 0"
+        fields: [failure_count, user_data_enabled, last_apn_type]
+        format: "Mobile data toggle is OFF (isUserDataEnabled=false) — {{failure_count}} setup failure(s) on APN type {{last_apn_type}}"
+        type: aggregate
+      - name: data_setup_failures
+        severity: warning
+        condition: "failure_count > 0"
+        fields: [failure_count, last_failure_reason, last_apn_type]
+        format: "{{failure_count}} cellular data setup failure(s). Last reason: {{last_failure_reason}}."
+        type: aggregate
+      - name: no_apn_available
+        severity: warning
+        condition: "no_apn_count > 0"
+        fields: [no_apn_count]
+        format: "{{no_apn_count}} occurrence(s) of no available APN — carrier profile may be missing or corrupt"
+        type: aggregate

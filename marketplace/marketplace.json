@@ -296,6 +296,20 @@
       "processor_type": "state_tracker",
       "source_types": ["logcat", "bugreport"],
       "deprecated": false
+    },
+    {
+      "id": "cellular-data-failure-reporter",
+      "name": "Cellular Data Failure Reporter",
+      "version": "1.0.0",
+      "description": "Surfaces why mobile data setup fails on Android. Captures trySetupData failures, data-allowed gate rejections, and no-APN conditions from DCT-C-0 and DataEnabledSettings tags. Extracts all data-enabled flag snapshots so the root cause (e.g. isUserDataEnabled=false) is immediately visible.",
+      "path": "processors/cellular_data_failure_reporter.yaml",
+      "tags": ["cellular", "mobile-data", "dct", "telephony", "android", "samsung"],
+      "sha256": "",
+      "category": "network",
+      "license": null,
+      "processor_type": "reporter",
+      "source_types": ["logcat", "bugreport"],
+      "deprecated": false
     }
   ]
 }
