@@ -743,3 +743,42 @@
   border-radius: 2px;
   transition: width 0.5s ease-out;
 }
+
+/* ── Section checkbox ─────────────────────────────────────────────────────── */
+
+.sectionCheckbox {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  cursor: pointer;
+  accent-color: var(--accent, #4a9eff);
+}
+
+/* ── Section filter banner ────────────────────────────────────────────────── */
+
+.sectionFilterBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  margin: 0 6px 4px;
+  font-size: 11px;
+  background: var(--surface-accent, rgba(74, 158, 255, 0.1));
+  border-radius: 4px;
+  color: var(--text-secondary, #a0a0a0);
+  flex-shrink: 0;
+}
+
+.sectionFilterClear {
+  background: none;
+  border: none;
+  color: var(--accent, #4a9eff);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 4px;
+}
+
+.sectionFilterClear:hover {
+  text-decoration: underline;
+}

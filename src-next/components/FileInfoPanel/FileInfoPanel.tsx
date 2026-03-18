@@ -30,6 +30,11 @@ interface FileInfoPanelProps {
   activeSectionIndex?: number;
   sectionJumpSeq?: number;
   indexingProgress?: IndexingProgress | null;
+  selectedSectionIndices?: Set<number>;
+  onToggleSection?: (index: number) => void;
+  onToggleGroup?: (indices: number[]) => void;
+  onClearSectionFilter?: () => void;
+  isSectionFilterActive?: boolean;
 }
 
 // ── Formatters ───────────────────────────────────────────────────────────────
@@ -177,6 +182,9 @@ interface SectionItemProps {
   onJump: ((line: number) => void) | undefined;
   maxLines: number;
   isChild?: boolean;
+  originalIndex: number;
+  isSelected?: boolean;
+  onToggle?: (index: number) => void;
 }
 
 const SectionItem = memo<SectionItemProps>(function SectionItem({
@@ -187,9 +195,14 @@ const SectionItem = memo<SectionItemProps>(function SectionItem({
   onJump,
   maxLines,
   isChild = false,
+  originalIndex,
+  isSelected,
+  onToggle,
 }) {
   const btnRef = useRef<HTMLButtonElement>(null);
   const handleClick = useCallback(() => onJump?.(startLine), [onJump, startLine]);
+  const handleCheckboxChange = useCallback(() => onToggle?.(originalIndex), [onToggle, originalIndex]);
+  const stopProp = useCallback((e: React.MouseEvent) => e.stopPropagation(), []);
 
   useEffect(() => {
     if (!isActive || !btnRef.current) return;
@@ -218,6 +231,15 @@ const SectionItem = memo<SectionItemProps>(function SectionItem({
       onClick={handleClick}
       title={tooltip}
     >
+      {onToggle && (
+        <input
+          type="checkbox"
+          className={styles.sectionCheckbox}
+          checked={isSelected ?? false}
+          onChange={handleCheckboxChange}
+          onClick={stopProp}
+        />
+      )}
       <span className={styles.sectionName}>{section.name}</span>
       <span className={styles.sectionLine}>{lineCount.toLocaleString()}</span>
       <div className={styles.sizeBar} style={{ width: `${barWidth}%` }} />
@@ -387,6 +409,10 @@ interface ParentSectionProps {
   jumpSeq: number;
   onJump: ((line: number) => void) | undefined;
   maxLines: number;
+  selectedSectionIndices?: Set<number>;
+  onToggleSection?: (index: number) => void;
+  onToggleGroup?: (indices: number[]) => void;
+  startLineToOrigIdx: Map<number, number>;
 }
 
 const ParentSection = memo<ParentSectionProps>(function ParentSection({
@@ -397,12 +423,38 @@ const ParentSection = memo<ParentSectionProps>(function ParentSection({
   jumpSeq,
   onJump,
   maxLines,
+  selectedSectionIndices,
+  onToggleSection,
+  onToggleGroup,
+  startLineToOrigIdx,
 }) {
   const [expanded, setExpanded] = useState(false);
   const [visibleCount, setVisibleCount] = useState(EXPAND_PAGE_SIZE);
 
   const isParentActive = section.startLine === activeStartLine;
   const hasActiveChild = children.some(c => c.section.startLine === activeStartLine);
+
+  // Compute group original indices for tri-state checkbox
+  const parentOrigIdx = startLineToOrigIdx.get(section.startLine) ?? -1;
+  const childOrigIndices = useMemo(
+    () => children.map(c => startLineToOrigIdx.get(c.section.startLine) ?? -1).filter(i => i >= 0),
+    [children, startLineToOrigIdx],
+  );
+  const allIndices = useMemo(
+    () => (parentOrigIdx >= 0 ? [parentOrigIdx, ...childOrigIndices] : childOrigIndices),
+    [parentOrigIdx, childOrigIndices],
+  );
+  const allChecked = onToggleGroup != null && allIndices.length > 0
+    && allIndices.every(i => selectedSectionIndices?.has(i));
+  const someChecked = !allChecked && allIndices.some(i => selectedSectionIndices?.has(i));
+
+  const groupCheckboxRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (groupCheckboxRef.current) groupCheckboxRef.current.indeterminate = someChecked;
+  }, [someChecked]);
+
+  const handleGroupToggle = useCallback(() => onToggleGroup?.(allIndices), [onToggleGroup, allIndices]);
+  const stopGroupProp = useCallback((e: React.MouseEvent) => e.stopPropagation(), []);
 
   // Auto-expand when active child exists
   useEffect(() => {
@@ -433,6 +485,16 @@ const ParentSection = memo<ParentSectionProps>(function ParentSection({
         type="button"
         title={`${section.name} — ${children.length} services, ${totalLines.toLocaleString()} lines`}
       >
+        {onToggleGroup && (
+          <input
+            ref={groupCheckboxRef}
+            type="checkbox"
+            className={styles.sectionCheckbox}
+            checked={allChecked}
+            onChange={handleGroupToggle}
+            onClick={stopGroupProp}
+          />
+        )}
         <ChevronRight
           size={12}
           className={clsx(styles.sectionGroupChevron, expanded && styles.sectionGroupChevronOpen)}
@@ -443,18 +505,24 @@ const ParentSection = memo<ParentSectionProps>(function ParentSection({
       </button>
       {expanded && (
         <div className={styles.parentChildren}>
-          {visible.map(c => (
-            <SectionItem
-              key={c.section.startLine}
-              section={c.section}
-              isActive={c.section.startLine === activeStartLine}
-              jumpSeq={jumpSeq}
-              startLine={c.section.startLine}
-              onJump={onJump}
-              maxLines={maxLines}
-              isChild={true}
-            />
-          ))}
+          {visible.map(c => {
+            const origIdx = startLineToOrigIdx.get(c.section.startLine) ?? -1;
+            return (
+              <SectionItem
+                key={c.section.startLine}
+                section={c.section}
+                isActive={c.section.startLine === activeStartLine}
+                jumpSeq={jumpSeq}
+                startLine={c.section.startLine}
+                onJump={onJump}
+                maxLines={maxLines}
+                isChild={true}
+                originalIndex={origIdx}
+                isSelected={origIdx >= 0 ? selectedSectionIndices?.has(origIdx) : false}
+                onToggle={onToggleSection}
+              />
+            );
+          })}
           {hasMore && (
             <button className={styles.showMoreBtn} onClick={showMore} type="button">
               Show more ({children.length - visibleCount} remaining)
@@ -476,6 +544,10 @@ interface SectionGroupProps {
   jumpSeq: number;
   onJump: ((line: number) => void) | undefined;
   maxLines: number;
+  selectedSectionIndices?: Set<number>;
+  onToggleSection?: (index: number) => void;
+  onToggleGroup?: (indices: number[]) => void;
+  startLineToOrigIdx: Map<number, number>;
 }
 
 const SectionGroup = memo<SectionGroupProps>(function SectionGroup({
@@ -486,12 +558,33 @@ const SectionGroup = memo<SectionGroupProps>(function SectionGroup({
   jumpSeq,
   onJump,
   maxLines,
+  selectedSectionIndices,
+  onToggleSection,
+  onToggleGroup,
+  startLineToOrigIdx,
 }) {
   const [expanded, setExpanded] = useState(false);
   const [visibleCount, setVisibleCount] = useState(EXPAND_PAGE_SIZE);
 
   // Check if any section in this group is the active one
   const hasActive = sections.some((item) => item.section.startLine === activeStartLine);
+
+  // Compute group original indices for tri-state checkbox
+  const groupOrigIndices = useMemo(
+    () => sections.map(item => startLineToOrigIdx.get(item.section.startLine) ?? -1).filter(i => i >= 0),
+    [sections, startLineToOrigIdx],
+  );
+  const allChecked = onToggleGroup != null && groupOrigIndices.length > 0
+    && groupOrigIndices.every(i => selectedSectionIndices?.has(i));
+  const someChecked = !allChecked && groupOrigIndices.some(i => selectedSectionIndices?.has(i));
+
+  const groupCheckboxRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (groupCheckboxRef.current) groupCheckboxRef.current.indeterminate = someChecked;
+  }, [someChecked]);
+
+  const handleGroupToggle = useCallback(() => onToggleGroup?.(groupOrigIndices), [onToggleGroup, groupOrigIndices]);
+  const stopGroupProp = useCallback((e: React.MouseEvent) => e.stopPropagation(), []);
 
   // Auto-expand when the active section is inside this group
   useEffect(() => {
@@ -520,6 +613,16 @@ const SectionGroup = memo<SectionGroupProps>(function SectionGroup({
         onClick={toggle}
         type="button"
       >
+        {onToggleGroup && (
+          <input
+            ref={groupCheckboxRef}
+            type="checkbox"
+            className={styles.sectionCheckbox}
+            checked={allChecked}
+            onChange={handleGroupToggle}
+            onClick={stopGroupProp}
+          />
+        )}
         <ChevronRight
           size={12}
           className={clsx(styles.sectionGroupChevron, expanded && styles.sectionGroupChevronOpen)}
@@ -530,18 +633,24 @@ const SectionGroup = memo<SectionGroupProps>(function SectionGroup({
       </button>
       {expanded && (
         <div className={styles.sectionGroupItems}>
-          {visibleItems.map((item) => (
-            <SectionItem
-              key={item.section.startLine}
-              section={item.section}
-              isActive={item.section.startLine === activeStartLine}
-              jumpSeq={jumpSeq}
-              startLine={item.section.startLine}
-              onJump={onJump}
-              maxLines={maxLines}
-              isChild={false}
-            />
-          ))}
+          {visibleItems.map((item) => {
+            const origIdx = startLineToOrigIdx.get(item.section.startLine) ?? -1;
+            return (
+              <SectionItem
+                key={item.section.startLine}
+                section={item.section}
+                isActive={item.section.startLine === activeStartLine}
+                jumpSeq={jumpSeq}
+                startLine={item.section.startLine}
+                onJump={onJump}
+                maxLines={maxLines}
+                isChild={false}
+                originalIndex={origIdx}
+                isSelected={origIdx >= 0 ? selectedSectionIndices?.has(origIdx) : false}
+                onToggle={onToggleSection}
+              />
+            );
+          })}
           {hasMore && (
             <button
               className={styles.showMoreBtn}
@@ -573,6 +682,11 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
     activeSectionIndex = -1,
     sectionJumpSeq = 0,
     indexingProgress = null,
+    selectedSectionIndices,
+    onToggleSection,
+    onToggleGroup,
+    onClearSectionFilter,
+    isSectionFilterActive,
   }) {
     const isScanning = !!sourceType && isBugreportLike(sourceType) && indexingProgress !== null;
     const duration = formatDuration(firstTimestamp, lastTimestamp);
@@ -618,6 +732,13 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
     const activeStartLine = activeSectionIndex >= 0 && activeSectionIndex < sections.length
       ? sections[activeSectionIndex].startLine
       : -1;
+
+    // ── startLine → original index map (for checkbox selection) ───────────
+    const startLineToOrigIdx = useMemo(() => {
+      const map = new Map<number, number>();
+      sections.forEach((s, i) => map.set(s.startLine, i));
+      return map;
+    }, [sections]);
 
     return (
       <div className={styles.panel}>
@@ -742,10 +863,25 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
                   className={styles.searchInput}
                 />
               </div>
+              {isSectionFilterActive && selectedSectionIndices && (
+                <div className={styles.sectionFilterBanner}>
+                  <span>
+                    {selectedSectionIndices.size} section{selectedSectionIndices.size !== 1 ? 's' : ''} filtered
+                  </span>
+                  <button
+                    className={styles.sectionFilterClear}
+                    onClick={onClearSectionFilter}
+                    type="button"
+                  >
+                    Clear
+                  </button>
+                </div>
+              )}
               <div className={styles.sectionList}>
                 {groupedSections.map((row) => {
                   switch (row.kind) {
-                    case 'single':
+                    case 'single': {
+                      const origIdx = startLineToOrigIdx.get(row.section.startLine) ?? -1;
                       return (
                         <SectionItem
                           key={row.section.startLine}
@@ -755,8 +891,12 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
                           startLine={row.section.startLine}
                           onJump={onJumpToLine}
                           maxLines={maxLines}
+                          originalIndex={origIdx}
+                          isSelected={origIdx >= 0 ? selectedSectionIndices?.has(origIdx) : false}
+                          onToggle={onToggleSection}
                         />
                       );
+                    }
                     case 'prefixGroup':
                       return (
                         <SectionGroup
@@ -768,6 +908,10 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
                           jumpSeq={sectionJumpSeq}
                           onJump={onJumpToLine}
                           maxLines={maxLines}
+                          selectedSectionIndices={selectedSectionIndices}
+                          onToggleSection={onToggleSection}
+                          onToggleGroup={onToggleGroup}
+                          startLineToOrigIdx={startLineToOrigIdx}
                         />
                       );
                     case 'parent':
@@ -781,6 +925,10 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
                           jumpSeq={sectionJumpSeq}
                           onJump={onJumpToLine}
                           maxLines={maxLines}
+                          selectedSectionIndices={selectedSectionIndices}
+                          onToggleSection={onToggleSection}
+                          onToggleGroup={onToggleGroup}
+                          startLineToOrigIdx={startLineToOrigIdx}
                         />
                       );
                   }

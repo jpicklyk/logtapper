@@ -27,6 +27,11 @@ const FileInfoPane = React.memo(function FileInfoPane({ paneId }: FileInfoPanePr
       sectionJumpSeq={fileInfo.sectionJumpSeq}
       indexingProgress={fileInfo.indexingProgress}
       onJumpToLine={fileInfo.onJumpToLine}
+      selectedSectionIndices={fileInfo.selectedSectionIndices}
+      onToggleSection={fileInfo.toggleSection}
+      onToggleGroup={fileInfo.toggleGroup}
+      onClearSectionFilter={fileInfo.clearSectionFilter}
+      isSectionFilterActive={fileInfo.isSectionFilterActive}
     />
   );
 });
