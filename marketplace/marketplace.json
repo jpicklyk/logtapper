@@ -312,6 +312,20 @@
       "deprecated": false
     },
     {
+      "id": "radio-data-call-reporter",
+      "name": "Radio Data Call Reporter",
+      "version": "1.0.0",
+      "description": "Tracks RIL-level data call setup and teardown from RILJ, DSM-C-0, DCT-C-0, and SST. Captures SETUP_DATA_CALL and DEACTIVATE_DATA_CALL commands, DATA_REGISTRATION_STATE polls, and pollStateDone transitions.",
+      "path": "processors/radio_data_call_reporter.yaml",
+      "tags": ["telephony", "ril", "data-call", "cellular", "android", "radio"],
+      "sha256": "",
+      "category": "telephony",
+      "license": null,
+      "processor_type": "reporter",
+      "source_types": ["logcat", "bugreport"],
+      "deprecated": false
+    },
+    {
       "id": "radio-airplane-mode-state",
       "name": "Radio / Airplane Mode State",
       "version": "1.0.0",
@@ -322,6 +336,20 @@
       "category": "telephony",
       "license": null,
       "processor_type": "state_tracker",
+      "source_types": ["logcat", "bugreport"],
+      "deprecated": false
+    },
+    {
+      "id": "ims-volte-reporter",
+      "name": "IMS / VoLTE Bearer Reporter",
+      "version": "1.0.0",
+      "description": "Tracks IMS bearer setup and teardown events from logcat and bugreport. Extracts state transitions (CONNECTING → CONNECTED → DISCONNECTED), transport type (WWAN/WLAN), network type (LTE, NR), and interface name. Distinguishes 'IMS connected but no internet' situations from full connectivity loss.",
+      "path": "processors/ims_volte_reporter.yaml",
+      "tags": ["ims", "volte", "telephony", "bearer", "rcs", "android"],
+      "sha256": "",
+      "category": "telephony",
+      "license": null,
+      "processor_type": "reporter",
       "source_types": ["logcat", "bugreport"],
       "deprecated": false
     }
