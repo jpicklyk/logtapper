@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { StateTransition, TimelineSeriesData, ProcessorSummary } from '../../bridge/types';
+import type { StateTransition, TimelineSeriesData, ProcessorSummary, Bookmark } from '../../bridge/types';
 import type { AppEvents } from '../../events/events';
 import { getTimelineData } from '../../bridge/commands';
 import {
@@ -9,7 +9,7 @@ import {
   usePipelineResults,
   useViewerActions,
 } from '../../context';
-import { useStateTracker } from '../../hooks';
+import { useStateTracker, useBookmarks } from '../../hooks';
 import { bus } from '../../events';
 import styles from './StateTimeline.module.css';
 
@@ -80,6 +80,62 @@ function SelectionCursors({
   );
 }
 
+const BOOKMARK_COLORS: Record<string, string> = {
+  'error':        '#f85149',
+  'warning':      '#d29922',
+  'state-change': '#58a6ff',
+  'timing':       '#3fb950',
+  'observation':  '#8b949e',
+  'custom':       '#484f58',
+};
+
+/** Bookmark markers overlay — positioned over the track body area (left: LABEL_W).
+ *  Follows the same pattern as SelectionCursors. */
+const BookmarkMarkers = React.memo(function BookmarkMarkers({
+  bookmarks,
+  maxLine,
+  vpS,
+  vpSpan,
+  jumpToLine,
+}: {
+  bookmarks: Bookmark[];
+  maxLine: number;
+  vpS: number;
+  vpSpan: number;
+  jumpToLine: (lineNum: number) => void;
+}) {
+  if (bookmarks.length === 0 || maxLine === 0) return null;
+  return (
+    <div className={styles.cursorOverlay} style={{ pointerEvents: 'none' }}>
+      {bookmarks.map((b) => {
+        const norm = b.lineNumber / maxLine;
+        // Skip markers outside the visible viewport (with a small margin)
+        if (norm < vpS - 0.005 || norm > vpSpan + vpS + 0.005) return null;
+        const color = BOOKMARK_COLORS[b.category ?? 'custom'] ?? BOOKMARK_COLORS['custom'];
+        return (
+          <div
+            key={b.id}
+            style={{
+              position: 'absolute',
+              left: linePct(b.lineNumber, maxLine, vpS, vpSpan),
+              top: 0,
+              bottom: 0,
+              width: 2,
+              backgroundColor: color,
+              opacity: 0.7,
+              cursor: 'pointer',
+              zIndex: 3,
+              pointerEvents: 'auto',
+            }}
+            title={b.label}
+            onClick={(e) => { e.stopPropagation(); jumpToLine(b.lineNumber); }}
+          />
+        );
+      })}
+    </div>
+  );
+});
+
 function doZoom([s, e]: Viewport, xFrac: number, zoomIn: boolean): Viewport {
   const span = e - s;
   const factor = zoomIn ? 0.6 : 1 / 0.6;
@@ -109,6 +165,7 @@ const StateTimeline = React.memo(function StateTimeline() {
   const { runCount } = usePipelineResults();
   const { jumpToLine } = useViewerActions();
   const stateTracker = useStateTracker();
+  const { bookmarks } = useBookmarks(session?.sessionId ?? null);
 
   const [timelines, setTimelines] = useState<TrackerTimeline[]>([]);
   const [reporterTimelines, setReporterTimelines] = useState<TimelineSeriesData[]>([]);
@@ -370,6 +427,15 @@ const StateTimeline = React.memo(function StateTimeline() {
 
         {/* Selection cursors span the full height of the interact area (all tracks + ruler) */}
         <SelectionCursors selectedRange={selectedRange} maxLine={maxLine} vpS={vp[0]} vpSpan={Math.max(vp[1] - vp[0], 1e-9)} />
+
+        {/* Bookmark markers span the full height of the interact area */}
+        <BookmarkMarkers
+          bookmarks={bookmarks}
+          maxLine={maxLine}
+          vpS={vp[0]}
+          vpSpan={Math.max(vp[1] - vp[0], 1e-9)}
+          jumpToLine={jumpToLine}
+        />
       </div>
     </div>
   );

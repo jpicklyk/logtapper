@@ -1,9 +1,10 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, Download } from 'lucide-react';
 import type { Bookmark } from '../../bridge/types';
 import { useFocusedSession, useViewerActions } from '../../context';
 import { useBookmarks } from '../../hooks';
 import BookmarkItem from './BookmarkItem';
+import { exportBookmarksAsMarkdown } from './exportMarkdown';
 import styles from './BookmarkPanel.module.css';
 
 // ── Category config ────────────────────────────────────────────────────────
@@ -86,6 +87,7 @@ const BookmarkPanel = React.memo(function BookmarkPanel() {
   const sessionId = session?.sessionId ?? null;
   const { bookmarks, bookmarksLoading, editBookmark, removeBookmark } = useBookmarks(sessionId);
   const { jumpToLine } = useViewerActions();
+  const [exportLabel, setExportLabel] = useState<'export' | 'copied'>('export');
 
   // Group bookmarks by category, sorted by line number within each group
   const grouped = useMemo(() => {
@@ -131,6 +133,20 @@ const BookmarkPanel = React.memo(function BookmarkPanel() {
     removeBookmark(id);
   }, [removeBookmark]);
 
+  const handleExport = useCallback(async () => {
+    const markdown = exportBookmarksAsMarkdown(bookmarks, {
+      sourceName: session?.sourceName ?? undefined,
+      totalLines: session?.totalLines,
+    });
+    try {
+      await navigator.clipboard.writeText(markdown);
+      setExportLabel('copied');
+      setTimeout(() => setExportLabel('export'), 2000);
+    } catch {
+      // clipboard write failed — silently ignore
+    }
+  }, [bookmarks, session]);
+
   if (!sessionId) {
     return (
       <div className={styles.root}>
@@ -146,6 +162,16 @@ const BookmarkPanel = React.memo(function BookmarkPanel() {
         <span className={styles.headerLabel}>Bookmarks</span>
         {bookmarks.length > 0 && (
           <span className={styles.headerCount}>{bookmarks.length}</span>
+        )}
+        {bookmarks.length > 0 && (
+          <button
+            className={styles.exportBtn}
+            onClick={handleExport}
+            title="Copy bookmarks as Markdown"
+            type="button"
+          >
+            {exportLabel === 'copied' ? 'Copied!' : <Download size={12} />}
+          </button>
         )}
       </div>
 

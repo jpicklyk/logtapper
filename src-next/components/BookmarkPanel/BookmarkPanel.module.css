@@ -38,6 +38,29 @@
   color: var(--text-muted);
 }
 
+.exportBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 3px);
+  background: var(--bg-raised);
+  color: var(--text-dimmed);
+  cursor: pointer;
+  font-size: 10px;
+  font-family: var(--font-ui);
+  white-space: nowrap;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.exportBtn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
 /* ── Scrollable list area ────────────────────────────────────────────────── */
 
 .list {
