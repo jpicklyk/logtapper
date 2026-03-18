@@ -22,6 +22,30 @@ fn validate_and_install(
     yaml: &str,
     processor: AnyProcessor,
 ) -> Result<ProcessorSummary, String> {
+    use crate::processors::ProcessorKind;
+
+    // Reject processor kinds with no engine implementation.
+    if matches!(processor.kind, ProcessorKind::Annotator(_)) {
+        return Err("Annotator processors are not yet supported".to_string());
+    }
+
+    // Reject transformer AddField ops that have a non-empty script — the script
+    // is never evaluated (AddField only inserts an empty string placeholder).
+    if let Some(transformer_def) = processor.as_transformer() {
+        use crate::processors::transformer::schema::TransformOp;
+        for op in &transformer_def.transforms {
+            if let TransformOp::AddField { script, .. } = op {
+                if !script.is_empty() {
+                    return Err(
+                        "AddField with script is not yet supported. \
+                         Use SetField for static values."
+                            .to_string(),
+                    );
+                }
+            }
+        }
+    }
+
     processor.validate_filter_rules()?;
     if let Some(reporter_def) = processor.as_reporter() {
         for stage in &reporter_def.pipeline {
