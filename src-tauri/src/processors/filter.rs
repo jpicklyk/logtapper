@@ -306,4 +306,144 @@ mod tests {
     fn parse_time_hms_short_input() {
         assert_eq!(parse_time_hms("12:30"), 0);
     }
+
+    // ── Gap 5: TimeRange and context-based rules ─────────────────────────────
+
+    fn make_line_with_ts(tag: &str, message: &str, level: LogLevel, timestamp: i64) -> LineContext {
+        LineContext {
+            raw: Arc::from(message),
+            timestamp,
+            level,
+            tag: Arc::from(tag),
+            pid: 0,
+            tid: 0,
+            message: Arc::from(message),
+            source_id: Arc::from(""),
+            source_line_num: 1,
+            fields: HashMap::new(),
+            annotations: vec![],
+        }
+    }
+
+    fn make_line_with_line_num(tag: &str, message: &str, level: LogLevel, line_num: usize) -> LineContext {
+        LineContext {
+            raw: Arc::from(message),
+            timestamp: 0,
+            level,
+            tag: Arc::from(tag),
+            pid: 0,
+            tid: 0,
+            message: Arc::from(message),
+            source_id: Arc::from(""),
+            source_line_num: line_num,
+            fields: HashMap::new(),
+            annotations: vec![],
+        }
+    }
+
+    #[test]
+    fn time_range_within_window() {
+        let mut cache = HashMap::new();
+        let rule = FilterRule::TimeRange {
+            from: "10:00:00".into(),
+            to: "12:00:00".into(),
+            from_ns: None,
+            to_ns: None,
+        };
+        // 11:00:00 in nanos = 11 * 3600 * 1_000_000_000
+        let ts = 11i64 * 3600 * 1_000_000_000;
+        let line = make_line_with_ts("Tag", "msg", LogLevel::Info, ts);
+        assert!(rule_matches(&mut cache, &rule, &line, None).matched);
+    }
+
+    #[test]
+    fn time_range_outside_window() {
+        let mut cache = HashMap::new();
+        let rule = FilterRule::TimeRange {
+            from: "10:00:00".into(),
+            to: "12:00:00".into(),
+            from_ns: None,
+            to_ns: None,
+        };
+        // 09:00:00 in nanos = 9 * 3600 * 1_000_000_000
+        let ts = 9i64 * 3600 * 1_000_000_000;
+        let line = make_line_with_ts("Tag", "msg", LogLevel::Info, ts);
+        assert!(!rule_matches(&mut cache, &rule, &line, None).matched);
+    }
+
+    #[test]
+    fn time_range_with_precomputed_ns() {
+        let mut cache = HashMap::new();
+        let from_val = 10i64 * 3600 * 1_000_000_000;
+        let to_val = 12i64 * 3600 * 1_000_000_000;
+        let rule = FilterRule::TimeRange {
+            from: "10:00:00".into(),
+            to: "12:00:00".into(),
+            from_ns: Some(from_val),
+            to_ns: Some(to_val),
+        };
+        let ts = 11i64 * 3600 * 1_000_000_000;
+        let line = make_line_with_ts("Tag", "msg", LogLevel::Info, ts);
+        assert!(rule_matches(&mut cache, &rule, &line, None).matched);
+    }
+
+    #[test]
+    fn source_type_is_matches_with_context() {
+        use crate::core::line::PipelineContext;
+        use crate::core::session::SourceType;
+        let mut cache = HashMap::new();
+        let rule = FilterRule::SourceTypeIs { source_type: "Logcat".into() };
+        let line = make_line("Tag", "msg", LogLevel::Info);
+        let ctx = PipelineContext {
+            source_type: SourceType::Logcat,
+            source_name: std::sync::Arc::from("test"),
+            is_streaming: false,
+            sections: std::sync::Arc::from([]),
+        };
+        assert!(rule_matches(&mut cache, &rule, &line, Some(&ctx)).matched);
+    }
+
+    #[test]
+    fn source_type_is_rejects_mismatch_with_context() {
+        use crate::core::line::PipelineContext;
+        use crate::core::session::SourceType;
+        let mut cache = HashMap::new();
+        let rule = FilterRule::SourceTypeIs { source_type: "Logcat".into() };
+        let line = make_line("Tag", "msg", LogLevel::Info);
+        let ctx = PipelineContext {
+            source_type: SourceType::Bugreport,
+            source_name: std::sync::Arc::from("test"),
+            is_streaming: false,
+            sections: std::sync::Arc::from([]),
+        };
+        assert!(!rule_matches(&mut cache, &rule, &line, Some(&ctx)).matched);
+    }
+
+    #[test]
+    fn section_is_matches_with_context() {
+        use crate::core::line::PipelineContext;
+        use crate::core::session::{SectionInfo, SourceType};
+        let mut cache = HashMap::new();
+        let rule = FilterRule::SectionIs { section: "SYSTEM LOG".into() };
+        let line = make_line_with_line_num("Tag", "msg", LogLevel::Info, 200);
+        let sections: std::sync::Arc<[SectionInfo]> = std::sync::Arc::from(vec![
+            SectionInfo { name: "SYSTEM LOG".to_string(), start_line: 100, end_line: 500 },
+        ].as_slice());
+        let ctx = PipelineContext {
+            source_type: SourceType::Bugreport,
+            source_name: std::sync::Arc::from("test"),
+            is_streaming: false,
+            sections,
+        };
+        assert!(rule_matches(&mut cache, &rule, &line, Some(&ctx)).matched);
+    }
+
+    #[test]
+    fn get_or_compile_invalid_regex_returns_no_match() {
+        let mut cache = HashMap::new();
+        let rule = FilterRule::MessageRegex { pattern: "[invalid(".into() };
+        let line = make_line("Tag", "any message", LogLevel::Info);
+        let result = rule_matches(&mut cache, &rule, &line, None);
+        assert!(!result.matched);
+    }
 }
