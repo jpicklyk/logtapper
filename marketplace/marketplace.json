@@ -352,6 +352,20 @@
       "processor_type": "reporter",
       "source_types": ["logcat", "bugreport"],
       "deprecated": false
+    },
+    {
+      "id": "sim-identity-reporter",
+      "name": "SIM Identity Reporter",
+      "version": "1.0.0",
+      "description": "Extracts SIM card identity and subscription details. Surfaces SIM PLMN vs network PLMN mismatches (e.g. Sprint SIM on T-Mobile), ePDG FQDN DNS failures, EHPLMN/HPLMN lists, eSIM status, and carrier ID. Detects configuration issues that cause WiFi Calling and IMS handover failures.",
+      "path": "processors/sim_identity_reporter.yaml",
+      "tags": ["sim", "plmn", "carrier", "telephony", "android", "samsung"],
+      "sha256": "",
+      "category": "telephony",
+      "license": null,
+      "processor_type": "reporter",
+      "source_types": ["logcat", "bugreport"],
+      "deprecated": false
     }
   ]
 }

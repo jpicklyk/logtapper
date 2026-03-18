@@ -46,7 +46,7 @@ impl ScriptEngine {
 
         // Safety limits (per spec)
         engine.set_max_operations(1_000_000);
-        engine.set_max_string_size(50_000);
+        engine.set_max_string_size(500_000);
         engine.set_max_array_size(100_000);
         engine.set_max_map_size(10_000);
         engine.set_max_call_levels(32);

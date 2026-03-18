@@ -73,7 +73,7 @@ pipeline:
   - stage: filter
     rules:
       - type: tag_match
-        values:
+        tags:
           - "DCT-C-0"
           - "DataEnabledSettings"
       - type: message_contains_any

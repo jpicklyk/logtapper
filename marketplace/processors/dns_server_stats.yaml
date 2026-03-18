@@ -1,7 +1,7 @@
 meta:
   id: dns-server-stats
   name: DNS Server Stats
-  version: 1.0.5
+  version: 1.0.7
   author: LogTapper
   description: >
     Parses the Android dnsresolver service dump (DUMPSYS NORMAL) to extract
