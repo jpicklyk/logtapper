@@ -192,7 +192,7 @@ impl<'a> CorrelatorRun<'a> {
     ) -> Option<HashMap<String, JsonValue>> {
         // AND-ed filter rules.
         for rule in &src.filter {
-            if !crate::processors::filter::rule_matches(&mut self.regex_cache, rule, line, None) {
+            if !crate::processors::filter::rule_matches(&mut self.regex_cache, rule, line, None).matched {
                 return None;
             }
         }

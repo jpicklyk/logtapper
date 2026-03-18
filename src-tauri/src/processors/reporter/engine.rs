@@ -232,7 +232,7 @@ impl<'a> ProcessorRun<'a> {
         // Call filter::rule_matches directly (not via self.rule_matches) to avoid
         // borrowing &mut self while also borrowing self.sorted_filter_rules.
         for rule in &self.sorted_filter_rules[filter_idx] {
-            if !crate::processors::filter::rule_matches(&mut self.regex_cache, rule, line, Some(pipeline_ctx)) {
+            if !crate::processors::filter::rule_matches(&mut self.regex_cache, rule, line, Some(pipeline_ctx)).matched {
                 return false;
             }
         }

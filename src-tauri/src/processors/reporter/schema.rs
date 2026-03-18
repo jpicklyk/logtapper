@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -220,10 +219,14 @@ pub enum FilterRule {
         /// `"NetworkMonitor/102"`, and `"NetworkMonitorExtra"`. Use a trailing
         /// slash for tighter matching: `"NetworkMonitor/"` matches subtags only.
         tags: Vec<String>,
-        /// Pre-built set for iteration. Populated by `FilterRule::prepare_tag_sets`.
+        /// Pre-built sorted+deduped vec for prefix matching. Populated by
+        /// `FilterRule::prepare_tag_set`.
         #[serde(skip)]
-        tag_set: HashSet<String>,
+        tag_set: Vec<String>,
     },
+    /// Regex-based tag matching with capture group support.
+    /// The pattern is matched against the full tag string.
+    TagRegex { pattern: String },
     MessageContains { value: String },
     MessageContainsAny { values: Vec<String> },
     MessageRegex { pattern: String },
@@ -448,9 +451,10 @@ impl FilterRule {
             FilterRule::LevelMin { .. } => 2,
             FilterRule::TimeRange { .. } => 3,
             FilterRule::TagMatch { .. } => 4,
-            FilterRule::MessageContains { .. } => 5,
-            FilterRule::MessageContainsAny { .. } => 6,
-            FilterRule::MessageRegex { .. } => 7,
+            FilterRule::TagRegex { .. } => 5,
+            FilterRule::MessageContains { .. } => 6,
+            FilterRule::MessageContainsAny { .. } => 7,
+            FilterRule::MessageRegex { .. } => 8,
         }
     }
 
@@ -458,6 +462,7 @@ impl FilterRule {
     pub fn rule_name(&self) -> &'static str {
         match self {
             FilterRule::TagMatch { .. } => "tag_match",
+            FilterRule::TagRegex { .. } => "tag_regex",
             FilterRule::MessageContains { .. } => "message_contains",
             FilterRule::MessageContainsAny { .. } => "message_contains_any",
             FilterRule::MessageRegex { .. } => "message_regex",
@@ -468,12 +473,15 @@ impl FilterRule {
         }
     }
 
-    /// Populate the `tag_set` HashSet from the `tags` Vec for O(1) lookup.
+    /// Populate the `tag_set` sorted Vec from the `tags` Vec for prefix matching.
     /// Call this once after deserialization, before processing lines.
     pub fn prepare_tag_set(&mut self) {
         if let FilterRule::TagMatch { tags, tag_set } = self {
             if tag_set.is_empty() && !tags.is_empty() {
-                *tag_set = tags.iter().cloned().collect();
+                let mut v: Vec<String> = tags.clone();
+                v.sort();
+                v.dedup();
+                *tag_set = v;
             }
         }
     }
@@ -732,7 +740,7 @@ pipeline:
         let rules = vec![
             FilterRule::MessageRegex { pattern: ".*".to_string() },
             FilterRule::SourceTypeIs { source_type: "Logcat".to_string() },
-            FilterRule::TagMatch { tags: vec!["test".to_string()], tag_set: HashSet::new() },
+            FilterRule::TagMatch { tags: vec!["test".to_string()], tag_set: Vec::new() },
             FilterRule::SectionIs { section: "SYSTEM LOG".to_string() },
         ];
         let mut sorted = rules.clone();

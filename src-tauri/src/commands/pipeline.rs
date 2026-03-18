@@ -226,15 +226,24 @@ fn collect_tag_filters(
     let mut tag_union = HashSet::new();
     let mut has_unfiltered = false;
 
-    // Reporters: check pipeline filter stages for TagMatch rules
+    // Reporters: check pipeline filter stages for TagMatch and TagRegex rules
     for (_, def) in reporter_defs {
         let mut has_tag_filter = false;
         for stage in &def.pipeline {
             if let crate::processors::reporter::schema::PipelineStage::Filter(filter_stage) = stage {
                 for rule in &filter_stage.rules {
-                    if let crate::processors::reporter::schema::FilterRule::TagMatch { tags, .. } = rule {
-                        has_tag_filter = true;
-                        tag_union.extend(tags.iter().cloned());
+                    match rule {
+                        crate::processors::reporter::schema::FilterRule::TagMatch { tags, .. } => {
+                            has_tag_filter = true;
+                            tag_union.extend(tags.iter().cloned());
+                        }
+                        crate::processors::reporter::schema::FilterRule::TagRegex { pattern } => {
+                            has_tag_filter = true;
+                            if let Some(prefix) = extract_regex_literal_prefix(pattern) {
+                                tag_union.insert(prefix);
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -269,14 +278,23 @@ fn collect_tag_filters(
         }
     }
 
-    // Correlators: check each source's filter rules for TagMatch
+    // Correlators: check each source's filter rules for TagMatch and TagRegex
     for (_, def) in correlator_defs {
         for source in &def.sources {
             let mut has_tag_filter = false;
             for rule in &source.filter {
-                if let crate::processors::reporter::schema::FilterRule::TagMatch { tags, .. } = rule {
-                    has_tag_filter = true;
-                    tag_union.extend(tags.iter().cloned());
+                match rule {
+                    crate::processors::reporter::schema::FilterRule::TagMatch { tags, .. } => {
+                        has_tag_filter = true;
+                        tag_union.extend(tags.iter().cloned());
+                    }
+                    crate::processors::reporter::schema::FilterRule::TagRegex { pattern } => {
+                        has_tag_filter = true;
+                        if let Some(prefix) = extract_regex_literal_prefix(pattern) {
+                            tag_union.insert(prefix);
+                        }
+                    }
+                    _ => {}
                 }
             }
             if !has_tag_filter {

@@ -93,7 +93,7 @@ impl TransformerRun {
 
 fn apply_filter(regex_cache: &mut HashMap<String, Regex>, stage: &FilterStage, line: &LineContext) -> bool {
     for rule in &stage.rules {
-        if !crate::processors::filter::rule_matches(regex_cache, rule, line, None) {
+        if !crate::processors::filter::rule_matches(regex_cache, rule, line, None).matched {
             return false;
         }
     }
