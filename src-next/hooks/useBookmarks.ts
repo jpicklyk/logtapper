@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import type { Bookmark, CreatedBy } from '../bridge/types';
 import {
@@ -87,19 +87,42 @@ export function useBookmarks(sessionId: string | null) {
   }, []);
 
   const addBookmark = useCallback(
-    async (lineNumber: number, label: string, note: string, createdBy: CreatedBy = 'User') => {
+    async (
+      lineNumber: number,
+      label: string,
+      note: string,
+      createdBy: CreatedBy = 'User',
+      lineNumberEnd?: number,
+      snippet?: string[],
+      category?: string,
+      tags?: string[],
+    ): Promise<Bookmark | null> => {
       if (!sessionId) return null;
-      const bm = await createBookmark(sessionId, lineNumber, label, note, createdBy);
-      return bm;
+      try {
+        return await createBookmark(sessionId, lineNumber, label, note, createdBy, lineNumberEnd, snippet, category, tags);
+      } catch (e) {
+        console.error('[useBookmarks] addBookmark error:', e);
+        return null;
+      }
     },
     [sessionId],
   );
 
   const editBookmark = useCallback(
-    async (bookmarkId: string, label?: string, note?: string) => {
+    async (
+      bookmarkId: string,
+      label?: string,
+      note?: string,
+      category?: string,
+      tags?: string[],
+    ): Promise<Bookmark | null> => {
       if (!sessionId) return null;
-      const bm = await updateBookmark(sessionId, bookmarkId, label, note);
-      return bm;
+      try {
+        return await updateBookmark(sessionId, bookmarkId, label, note, category, tags);
+      } catch (e) {
+        console.error('[useBookmarks] editBookmark error:', e);
+        return null;
+      }
     },
     [sessionId],
   );
@@ -119,4 +142,52 @@ export function useBookmarks(sessionId: string | null) {
     editBookmark,
     removeBookmark,
   };
+}
+
+/**
+ * Derives a Set of all line numbers that have bookmarks (including range expansion).
+ * Used by gutter markers for O(1) render lookup.
+ */
+export function useBookmarkLines(bookmarks: Bookmark[]): Set<number> {
+  return useMemo(() => {
+    const set = new Set<number>();
+    for (const b of bookmarks) {
+      if (b.lineNumberEnd != null && b.lineNumberEnd > b.lineNumber) {
+        for (let i = b.lineNumber; i <= b.lineNumberEnd; i++) {
+          set.add(i);
+        }
+      } else {
+        set.add(b.lineNumber);
+      }
+    }
+    return set;
+  }, [bookmarks]);
+}
+
+/**
+ * Returns a lookup function: (lineNum) => Bookmark | undefined.
+ * Rebuilt only when bookmarks change. Range bookmarks are matched if lineNum
+ * falls within [lineNumber, lineNumberEnd].
+ */
+export function useBookmarkLookup(bookmarks: Bookmark[]): (lineNum: number) => Bookmark | undefined {
+  return useMemo(() => {
+    const lineMap = new Map<number, Bookmark>();
+    const ranges: Bookmark[] = [];
+    for (const b of bookmarks) {
+      if (b.lineNumberEnd != null && b.lineNumberEnd > b.lineNumber) {
+        lineMap.set(b.lineNumber, b);
+        ranges.push(b);
+      } else {
+        lineMap.set(b.lineNumber, b);
+      }
+    }
+    return (lineNum: number): Bookmark | undefined => {
+      const direct = lineMap.get(lineNum);
+      if (direct) return direct;
+      for (const r of ranges) {
+        if (lineNum >= r.lineNumber && lineNum <= r.lineNumberEnd!) return r;
+      }
+      return undefined;
+    };
+  }, [bookmarks]);
 }

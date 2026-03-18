@@ -324,31 +324,49 @@ export function getSessionMetadata(sessionId: string): Promise<SessionMetadata> 
 // Bookmark commands (Phase 2)
 // ---------------------------------------------------------------------------
 
-export function createBookmark(
+export async function createBookmark(
   sessionId: string,
   lineNumber: number,
   label: string,
   note: string,
   createdBy: CreatedBy,
+  lineNumberEnd?: number,
+  snippet?: string[],
+  category?: string,
+  tags?: string[],
 ): Promise<Bookmark> {
-  return invoke('create_bookmark', { sessionId, lineNumber, label, note, createdBy });
+  return invoke('create_bookmark', {
+    sessionId,
+    lineNumber,
+    label,
+    note,
+    createdBy,
+    lineNumberEnd: lineNumberEnd ?? null,
+    snippet: snippet ?? null,
+    category: category ?? null,
+    tags: tags ?? null,
+  });
 }
 
 export function listBookmarks(sessionId: string): Promise<Bookmark[]> {
   return invoke('list_bookmarks', { sessionId });
 }
 
-export function updateBookmark(
+export async function updateBookmark(
   sessionId: string,
   bookmarkId: string,
   label?: string,
   note?: string,
+  category?: string,
+  tags?: string[],
 ): Promise<Bookmark> {
   return invoke('update_bookmark', {
     sessionId,
     bookmarkId,
     label: label ?? null,
     note: note ?? null,
+    category: category ?? null,
+    tags: tags ?? null,
   });
 }
 

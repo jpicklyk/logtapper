@@ -562,10 +562,16 @@ export interface SessionMetadata {
 
 export type CreatedBy = 'User' | 'Agent';
 
+export type BookmarkCategory = 'error' | 'warning' | 'state-change' | 'timing' | 'observation' | 'custom';
+
 export interface Bookmark {
   id: string;
   sessionId: string;
   lineNumber: number;
+  lineNumberEnd?: number;
+  snippet?: string[];
+  category?: string;
+  tags?: string[];
   label: string;
   note: string;
   createdBy: CreatedBy;
