@@ -10,9 +10,19 @@ import {
   useTrackerTransitions,
   useSearchQuery,
 } from '../../context';
+import { useBookmarks, useBookmarkLines, useBookmarkLookup } from '../../hooks';
 import { bus } from '../../events';
 import type { AppEvents } from '../../events';
 import styles from './LogViewer.module.css';
+
+const CATEGORY_COLORS: Record<string, string> = {
+  'error': '#f85149',
+  'warning': '#d29922',
+  'state-change': '#58a6ff',
+  'timing': '#3fb950',
+  'observation': '#8b949e',
+  'custom': '#484f58',
+};
 
 interface Props {
   paneId: string;
@@ -33,6 +43,12 @@ const LogViewer = React.memo(function LogViewer({
   const totalLines = session?.totalLines ?? 0;
   const search = useSearchQuery();
   const cacheManager = useCacheManager();
+
+  // Bookmark gutter markers
+  const sessionId = session?.sessionId ?? null;
+  const { bookmarks } = useBookmarks(sessionId);
+  const bookmarkLines = useBookmarkLines(bookmarks);
+  const bookmarkLookup = useBookmarkLookup(bookmarks);
   const { lineNum: scrollToLine, seq: jumpSeq, paneId: jumpPaneId } = useScrollTarget();
   // Only honour the jump if it targets this specific pane or is unfocused/global (null).
   const isJumpForThisPane = jumpPaneId === null || jumpPaneId === paneId;
@@ -41,7 +57,6 @@ const LogViewer = React.memo(function LogViewer({
   const { allLineNums: transitionLineNums, byLine: transitionsByLine } = useTrackerTransitions();
 
   // View cache handle
-  const sessionId = session?.sessionId ?? null;
   const viewId = sessionId ? `view-${sessionId}` : null;
   const viewCache = useViewCache(viewId, sessionId);
   const registry = useDataSourceRegistry();
@@ -136,7 +151,7 @@ const LogViewer = React.memo(function LogViewer({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, isStreaming]);
 
-  // Gutter columns: line number + transition dot
+  // Gutter columns: line number + transition dot + bookmark dot
   const gutterColumns = useMemo<GutterColumnDef[]>(() => {
     const cols: GutterColumnDef[] = [
       {
@@ -167,8 +182,35 @@ const LogViewer = React.memo(function LogViewer({
       });
     }
 
+    if (bookmarkLines.size > 0) {
+      cols.push({
+        id: 'bookmarks',
+        width: 16,
+        render: (lineNum: number) => {
+          if (!bookmarkLines.has(lineNum)) return null;
+          const bookmark = bookmarkLookup(lineNum);
+          const color = bookmark?.category
+            ? (CATEGORY_COLORS[bookmark.category] ?? CATEGORY_COLORS['custom'])
+            : CATEGORY_COLORS['custom'];
+          return (
+            <span
+              style={{
+                display: 'inline-block',
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                backgroundColor: color,
+                opacity: 0.85,
+              }}
+              title={bookmark?.label ?? 'Bookmark'}
+            />
+          );
+        },
+      });
+    }
+
     return cols;
-  }, [transitionLineNums, transitionsByLine]);
+  }, [transitionLineNums, transitionsByLine, bookmarkLines, bookmarkLookup]);
 
   // Line decorators: level coloring
   const lineDecorators = useMemo<LineDecoratorDef[]>(
