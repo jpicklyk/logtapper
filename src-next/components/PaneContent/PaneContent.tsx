@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { FileText } from 'lucide-react';
 import { LogViewer } from '../LogViewer';
 import { ProcessorDashboard } from '../ProcessorDashboard';
@@ -22,6 +22,23 @@ export interface Pane {
 
 interface Props {
   pane: Pane;
+}
+
+/** Sorted merge intersection of two sorted number arrays. O(n+m). */
+function intersectSorted(a: number[], b: number[]): number[] {
+  const result: number[] = [];
+  let i = 0, j = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      result.push(a[i]);
+      i++; j++;
+    } else if (a[i] < b[j]) {
+      i++;
+    } else {
+      j++;
+    }
+  }
+  return result;
 }
 
 function EmptyDropZone() {
@@ -50,7 +67,14 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
   const isLoading = useIsLoadingForPane(pane.id);
   const { setFocusedPane, setStreamFilter, cancelStreamFilter } = useViewerActions();
   const { fetchLines } = useLogViewerActions(pane.id);
-  const { value: filterValue, scanning: filterScanning, filteredLineNums, parseError: filterParseError } = useStreamFilter(pane.id);
+  const { value: filterValue, scanning: filterScanning, filteredLineNums, parseError: filterParseError, sectionFilteredLineNums } = useStreamFilter(pane.id);
+
+  const effectiveLineNums = useMemo(() => {
+    if (!filteredLineNums && !sectionFilteredLineNums) return null;
+    if (!filteredLineNums) return sectionFilteredLineNums;
+    if (!sectionFilteredLineNums) return filteredLineNums;
+    return intersectSorted(sectionFilteredLineNums, filteredLineNums);
+  }, [filteredLineNums, sectionFilteredLineNums]);
 
   const handlePaneFocus = useCallback(() => {
     setFocusedPane(pane.id);
@@ -82,7 +106,7 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
               value={filterValue}
               onCommit={setStreamFilter}
               onCancel={cancelStreamFilter}
-              matchCount={filteredLineNums?.length ?? null}
+              matchCount={filteredLineNums ? (effectiveLineNums?.length ?? null) : null}
               totalLines={session.totalLines}
               parseError={filterParseError}
               scanning={filterScanning}
@@ -91,7 +115,7 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
           <LogViewer
             paneId={pane.id}
             fetchLines={fetchLines}
-            lineNumbers={filteredLineNums ?? undefined}
+            lineNumbers={effectiveLineNums ?? undefined}
           />
         </div>
       );
