@@ -2,6 +2,7 @@ import React from 'react';
 import { StatePanel } from '../StatePanel';
 import { FileInfoPane } from '../FileInfoPanel';
 import { AnalysisList } from '../AnalysisPanel';
+import { BookmarkPanel } from '../BookmarkPanel';
 import styles from './LeftPane.module.css';
 
 export type LeftPaneTab = 'info' | 'state' | 'bookmarks' | 'analysis';
@@ -16,9 +17,7 @@ const LeftPane = React.memo(function LeftPane({ activeTab, displayPaneId }: Prop
     <div className={styles.root}>
       {activeTab === 'info' && <FileInfoPane paneId={displayPaneId} />}
       {activeTab === 'state' && <StatePanel />}
-      {activeTab === 'bookmarks' && (
-        <div className={styles.placeholder}>Bookmarks</div>
-      )}
+      {activeTab === 'bookmarks' && <BookmarkPanel />}
       {activeTab === 'analysis' && <AnalysisList />}
     </div>
   );
