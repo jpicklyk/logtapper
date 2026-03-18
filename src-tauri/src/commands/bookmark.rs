@@ -6,6 +6,7 @@ use crate::core::bookmark::{Bookmark, BookmarkUpdateEvent, CreatedBy};
 
 /// Create a new bookmark on a specific line.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn create_bookmark(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -14,6 +15,10 @@ pub fn create_bookmark(
     label: String,
     note: String,
     created_by: CreatedBy,
+    line_number_end: Option<u32>,
+    snippet: Option<Vec<String>>,
+    category: Option<String>,
+    tags: Option<Vec<String>>,
 ) -> Result<Bookmark, String> {
     // Verify session exists
     {
@@ -27,6 +32,10 @@ pub fn create_bookmark(
         id: Uuid::new_v4().to_string(),
         session_id: session_id.clone(),
         line_number,
+        line_number_end,
+        snippet,
+        category,
+        tags,
         label,
         note,
         created_by,
@@ -67,8 +76,9 @@ pub fn list_bookmarks(
     Ok(bookmarks.get(&session_id).cloned().unwrap_or_default())
 }
 
-/// Update an existing bookmark's label and note.
+/// Update an existing bookmark's label, note, category, and tags.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn update_bookmark(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -76,6 +86,8 @@ pub fn update_bookmark(
     bookmark_id: String,
     label: Option<String>,
     note: Option<String>,
+    category: Option<String>,
+    tags: Option<Vec<String>>,
 ) -> Result<Bookmark, String> {
     let mut bookmarks = state.bookmarks.lock().map_err(|_| "lock poisoned")?;
     let list = bookmarks
@@ -92,6 +104,12 @@ pub fn update_bookmark(
     }
     if let Some(n) = note {
         bm.note = n;
+    }
+    if let Some(c) = category {
+        bm.category = Some(c);
+    }
+    if let Some(t) = tags {
+        bm.tags = Some(t);
     }
 
     let updated = bm.clone();

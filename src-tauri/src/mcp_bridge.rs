@@ -137,7 +137,7 @@ pub async fn start(handle: Handle) {
         .route("/mcp/processors/{processor_id}", get(h_processor_defs_single))
         // Phase 2 — Bookmarks
         .route("/mcp/sessions/{session_id}/bookmarks", get(h_list_bookmarks).post(h_create_bookmark))
-        .route("/mcp/sessions/{session_id}/bookmarks/{bookmark_id}", delete(h_delete_bookmark))
+        .route("/mcp/sessions/{session_id}/bookmarks/{bookmark_id}", delete(h_delete_bookmark).put(h_update_bookmark))
         // Phase 2 — Analysis artifacts
         .route("/mcp/sessions/{session_id}/analyses", get(h_list_analyses).post(h_publish_analysis))
         .route("/mcp/sessions/{session_id}/analyses/{artifact_id}", get(h_get_analysis).put(h_update_analysis).delete(h_delete_analysis))
@@ -1869,13 +1869,42 @@ async fn h_search_with_context(
 // Bookmark endpoints
 // ---------------------------------------------------------------------------
 
+#[derive(Deserialize)]
+struct BookmarkListQuery {
+    category: Option<String>,
+    tag: Option<String>,
+}
+
 async fn h_list_bookmarks(
     State(handle): State<Handle>,
     Path(session_id): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<BookmarkListQuery>,
 ) -> Json<Value> {
     let state = handle.state::<AppState>();
     let bookmarks = state.bookmarks.lock().unwrap();
-    let list = bookmarks.get(&session_id).cloned().unwrap_or_default();
+    let list: Vec<_> = bookmarks
+        .get(&session_id)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|bm| {
+            if let Some(ref cat) = query.category {
+                if bm.category.as_deref() != Some(cat.as_str()) {
+                    return false;
+                }
+            }
+            if let Some(ref tag) = query.tag {
+                let has_tag = bm
+                    .tags
+                    .as_ref()
+                    .is_some_and(|tags| tags.iter().any(|t| t == tag));
+                if !has_tag {
+                    return false;
+                }
+            }
+            true
+        })
+        .collect();
     Json(json!(list))
 }
 
@@ -1887,6 +1916,10 @@ struct CreateBookmarkBody {
     label: String,
     #[serde(default)]
     note: String,
+    line_number_end: Option<u32>,
+    snippet: Option<Vec<String>>,
+    category: Option<String>,
+    tags: Option<Vec<String>>,
 }
 
 async fn h_create_bookmark(
@@ -1904,6 +1937,10 @@ async fn h_create_bookmark(
         id: uuid::Uuid::new_v4().to_string(),
         session_id: session_id.clone(),
         line_number: body.line_number,
+        line_number_end: body.line_number_end,
+        snippet: body.snippet,
+        category: body.category,
+        tags: body.tags,
         label: body.label,
         note: body.note,
         created_by: CreatedBy::Agent,
@@ -1959,6 +1996,59 @@ async fn h_delete_bookmark(
             );
 
             return Json(json!({"ok": true}));
+        }
+    }
+
+    Json(json!({"error": format!("Bookmark not found: {bookmark_id}")}))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateBookmarkBody {
+    label: Option<String>,
+    note: Option<String>,
+    category: Option<String>,
+    tags: Option<Vec<String>>,
+}
+
+async fn h_update_bookmark(
+    State(handle): State<Handle>,
+    Path((session_id, bookmark_id)): Path<(String, String)>,
+    Json(body): Json<UpdateBookmarkBody>,
+) -> Json<Value> {
+    use crate::core::bookmark::BookmarkUpdateEvent;
+
+    let state = handle.state::<AppState>();
+    let mut bookmarks = state.bookmarks.lock().unwrap();
+
+    if let Some(list) = bookmarks.get_mut(&session_id) {
+        if let Some(bm) = list.iter_mut().find(|b| b.id == bookmark_id) {
+            if let Some(l) = body.label {
+                bm.label = l;
+            }
+            if let Some(n) = body.note {
+                bm.note = n;
+            }
+            if let Some(c) = body.category {
+                bm.category = Some(c);
+            }
+            if let Some(t) = body.tags {
+                bm.tags = Some(t);
+            }
+            let updated = bm.clone();
+            drop(bookmarks);
+
+            use tauri::Emitter;
+            let _ = handle.emit(
+                "bookmark-update",
+                BookmarkUpdateEvent {
+                    session_id,
+                    action: "updated".to_string(),
+                    bookmark: updated.clone(),
+                },
+            );
+
+            return Json(json!(updated));
         }
     }
 
