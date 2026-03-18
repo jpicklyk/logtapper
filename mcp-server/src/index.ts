@@ -666,13 +666,16 @@ server.tool(
 server.tool(
   "logtapper_bookmarks",
   "Manage bookmarks on log lines within a session. Bookmarks mark lines of " +
-    "interest for quick navigation. Use action 'list' to see all bookmarks, " +
-    "'create' to add a new bookmark at a line, or 'delete' to remove one.",
+    "interest for quick navigation. Use action 'list' to see all bookmarks " +
+    "(optionally filtered by category or tag), 'create' to add a new bookmark " +
+    "at a line (supports line ranges, snippets, categories, and tags), 'update' " +
+    "to modify an existing bookmark's label, note, category, or tags, or " +
+    "'delete' to remove one.",
   {
     session_id: z.string().describe("Session ID"),
     action: z
-      .enum(["list", "create", "delete"])
-      .describe("Action to perform: list all bookmarks, create a new one, or delete an existing one"),
+      .enum(["list", "create", "update", "delete"])
+      .describe("Action to perform: list all bookmarks, create a new one, update an existing one, or delete an existing one"),
     line_number: z
       .number()
       .int()
@@ -682,33 +685,86 @@ server.tool(
     label: z
       .string()
       .optional()
-      .describe("Short label for the bookmark (required for 'create')"),
+      .describe("Short label for the bookmark (required for 'create', optional for 'update')"),
     note: z
       .string()
       .optional()
-      .describe("Optional longer note for the bookmark (used with 'create')"),
+      .describe("Optional longer note for the bookmark (used with 'create' and 'update')"),
     bookmark_id: z
       .string()
       .optional()
-      .describe("Bookmark ID to delete (required for 'delete')"),
+      .describe("Bookmark ID (required for 'update' and 'delete')"),
+    line_number_end: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("End line number for range/snippet bookmarks (creates a bookmark spanning line_number to line_number_end)"),
+    snippet: z
+      .array(z.string())
+      .optional()
+      .describe("Captured raw line text for the bookmark range"),
+    category: z
+      .enum(["error", "warning", "state-change", "timing", "observation", "custom"])
+      .optional()
+      .describe("Category for visual grouping"),
+    tags: z
+      .array(z.string())
+      .optional()
+      .describe("Free-form tags for filtering and grouping"),
+    filter_category: z
+      .string()
+      .optional()
+      .describe("Filter bookmarks by category (exact match, used with 'list')"),
+    filter_tag: z
+      .string()
+      .optional()
+      .describe("Filter bookmarks by tag (matches if bookmark has this tag, used with 'list')"),
   },
-  async ({ session_id, action, line_number, label, note, bookmark_id }) => {
+  async ({ session_id, action, line_number, label, note, bookmark_id, line_number_end, snippet, category, tags, filter_category, filter_tag }) => {
     const sid = encodeURIComponent(session_id);
     try {
       switch (action) {
         case "list":
-          return ok(await bridgeGet(`/mcp/sessions/${sid}/bookmarks`));
+          return ok(
+            await bridgeGet(`/mcp/sessions/${sid}/bookmarks`, {
+              category: filter_category,
+              tag: filter_tag,
+            })
+          );
         case "create":
           if (line_number === undefined || !label) {
             return ok({ error: "line_number and label are required for 'create'" });
           }
-          return ok(
-            await bridgePost(`/mcp/sessions/${sid}/bookmarks`, {
+          {
+            const body: Record<string, unknown> = {
               lineNumber: line_number,
               label,
               note: note ?? "",
-            })
-          );
+            };
+            if (line_number_end !== undefined) body.lineNumberEnd = line_number_end;
+            if (snippet !== undefined) body.snippet = snippet;
+            if (category !== undefined) body.category = category;
+            if (tags !== undefined) body.tags = tags;
+            return ok(await bridgePost(`/mcp/sessions/${sid}/bookmarks`, body));
+          }
+        case "update":
+          if (!bookmark_id) {
+            return ok({ error: "bookmark_id is required for 'update'" });
+          }
+          {
+            const updateBody: Record<string, unknown> = {};
+            if (label !== undefined) updateBody.label = label;
+            if (note !== undefined) updateBody.note = note;
+            if (category !== undefined) updateBody.category = category;
+            if (tags !== undefined) updateBody.tags = tags;
+            return ok(
+              await bridgePut(
+                `/mcp/sessions/${sid}/bookmarks/${encodeURIComponent(bookmark_id)}`,
+                updateBody
+              )
+            );
+          }
         case "delete":
           if (!bookmark_id) {
             return ok({ error: "bookmark_id is required for 'delete'" });
