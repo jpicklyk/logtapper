@@ -868,6 +868,8 @@ async fn h_processor_detail(
                             emissions: rr.emissions.clone(),
                             vars: rr.vars.clone(),
                             matched_line_nums: rr.matched_line_nums.clone(),
+                            script_errors: rr.script_errors,
+                            first_script_error: rr.first_script_error.clone(),
                         }, name, desc)
                     })
             };

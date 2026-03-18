@@ -292,6 +292,8 @@ export interface PipelineRunSummary {
   processorId: string;
   matchedLines: number;
   emissionCount: number;
+  scriptErrors?: number;
+  firstScriptError?: string;
 }
 
 export interface MatchedLine {

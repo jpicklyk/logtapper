@@ -39,6 +39,16 @@ pub struct PipelineRunSummary {
     pub processor_id: String,
     pub matched_lines: usize,
     pub emission_count: usize,
+    /// Number of Rhai script errors encountered (reporters only).
+    #[serde(skip_serializing_if = "is_zero_u32")]
+    pub script_errors: u32,
+    /// First script error message for diagnostics (reporters only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_script_error: Option<String>,
+}
+
+fn is_zero_u32(v: &u32) -> bool {
+    *v == 0
 }
 
 // ---------------------------------------------------------------------------
@@ -315,6 +325,8 @@ pub fn execute_pipeline(
             processor_id: proc_id.clone(),
             matched_lines: result.matched_line_nums.len(),
             emission_count: result.emissions.len(),
+            script_errors: result.script_errors,
+            first_script_error: result.first_script_error.clone(),
         });
         session_pipeline_results.insert(proc_id.clone(), result.clone());
     }
@@ -328,6 +340,8 @@ pub fn execute_pipeline(
                         processor_id: tracker_id.clone(),
                         matched_lines: result.transitions.len(),
                         emission_count: 0,
+                        script_errors: 0,
+                        first_script_error: None,
                     });
                 }
             }
@@ -340,6 +354,8 @@ pub fn execute_pipeline(
             processor_id: t_id.clone(),
             matched_lines: 0,
             emission_count: 0,
+            script_errors: 0,
+            first_script_error: None,
         });
     }
 
@@ -352,6 +368,8 @@ pub fn execute_pipeline(
                         processor_id: corr_id.clone(),
                         matched_lines: result.events.len(),
                         emission_count: result.events.len(),
+                        script_errors: 0,
+                        first_script_error: None,
                     });
                 }
             }

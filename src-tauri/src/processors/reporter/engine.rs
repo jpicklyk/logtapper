@@ -66,6 +66,10 @@ pub struct ProcessorRun<'a> {
     burst_active: HashSet<String>,
     /// Filter stages with rules pre-sorted by ascending cost (cheapest first).
     sorted_filter_rules: Vec<Vec<FilterRule>>,
+    /// Count of Rhai script errors encountered during this run.
+    script_errors: u32,
+    /// First script error message (for user-facing diagnostics).
+    first_script_error: Option<String>,
 }
 
 impl<'a> ProcessorRun<'a> {
@@ -99,6 +103,8 @@ impl<'a> ProcessorRun<'a> {
             burst_windows: HashMap::new(),
             burst_active: HashSet::new(),
             sorted_filter_rules,
+            script_errors: 0,
+            first_script_error: None,
         }
     }
 
@@ -116,6 +122,8 @@ impl<'a> ProcessorRun<'a> {
             burst_windows: state.burst_windows,
             burst_active: state.burst_active,
             sorted_filter_rules,
+            script_errors: state.script_errors,
+            first_script_error: state.first_script_error,
         }
     }
 
@@ -146,18 +154,26 @@ impl<'a> ProcessorRun<'a> {
                         history: self.history.make_contiguous(),
                         pipeline_ctx,
                     };
-                    if let Ok((new_vars, new_emissions)) = engine.run_script(&ss.src, &input) {
-                        // Merge var updates
-                        self.vars.update_from_rhai(&new_vars);
-                        // Collect emissions — auto-inject timestamp so time series charts work
-                        for mut e in new_emissions {
-                            if !e.iter().any(|(k, _)| k == "timestamp") {
-                                e.push(("timestamp".to_string(), JsonValue::Number(line.timestamp.into())));
+                    match engine.run_script(&ss.src, &input) {
+                        Ok((new_vars, new_emissions)) => {
+                            // Merge var updates
+                            self.vars.update_from_rhai(&new_vars);
+                            // Collect emissions — auto-inject timestamp so time series charts work
+                            for mut e in new_emissions {
+                                if !e.iter().any(|(k, _)| k == "timestamp") {
+                                    e.push(("timestamp".to_string(), JsonValue::Number(line.timestamp.into())));
+                                }
+                                self.emissions.push(Emission {
+                                    line_num: line.source_line_num,
+                                    fields: e,
+                                });
                             }
-                            self.emissions.push(Emission {
-                                line_num: line.source_line_num,
-                                fields: e,
-                            });
+                        }
+                        Err(e) => {
+                            self.script_errors += 1;
+                            if self.first_script_error.is_none() {
+                                self.first_script_error = Some(e);
+                            }
                         }
                     }
                 }
@@ -195,6 +211,8 @@ impl<'a> ProcessorRun<'a> {
             emissions: self.emissions,
             vars: self.vars.to_json(),
             matched_line_nums: self.matched_line_nums,
+            script_errors: self.script_errors,
+            first_script_error: self.first_script_error,
         }
     }
 
@@ -204,6 +222,8 @@ impl<'a> ProcessorRun<'a> {
             emissions: self.emissions.clone(),
             vars: self.vars.to_json(),
             matched_line_nums: self.matched_line_nums.clone(),
+            script_errors: self.script_errors,
+            first_script_error: self.first_script_error.clone(),
         }
     }
 
@@ -221,6 +241,8 @@ impl<'a> ProcessorRun<'a> {
             last_processed_line,
             burst_windows: self.burst_windows,
             burst_active: self.burst_active,
+            script_errors: self.script_errors,
+            first_script_error: self.first_script_error,
         }
     }
 
@@ -378,6 +400,10 @@ pub struct RunResult {
     pub vars: HashMap<String, JsonValue>,
     /// Line numbers of lines that matched (had at least one emission or passed filter).
     pub matched_line_nums: Vec<usize>,
+    /// Number of Rhai script errors encountered during this run.
+    pub script_errors: u32,
+    /// First script error message (for user-facing diagnostics).
+    pub first_script_error: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -399,6 +425,10 @@ pub struct ContinuousRunState {
     pub burst_windows: HashMap<String, VecDeque<i64>>,
     /// BurstDetector active-burst keys (persisted to prevent double-firing).
     pub burst_active: HashSet<String>,
+    /// Cumulative script error count (persisted across batches).
+    pub script_errors: u32,
+    /// First script error encountered (persisted across batches).
+    pub first_script_error: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
