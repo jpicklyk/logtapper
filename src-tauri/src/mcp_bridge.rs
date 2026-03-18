@@ -1622,11 +1622,17 @@ async fn h_sections(
     let page: Vec<Value> = filtered.iter()
         .skip(offset)
         .take(limit)
-        .map(|s| json!({
-            "name": s.name,
-            "startLine": s.start_line,
-            "endLine": s.end_line,
-        }))
+        .map(|s| {
+            let mut obj = json!({
+                "name": s.name,
+                "startLine": s.start_line,
+                "endLine": s.end_line,
+            });
+            if let Some(pi) = s.parent_index {
+                obj["parentIndex"] = json!(pi);
+            }
+            obj
+        })
         .collect();
 
     Json(json!({
