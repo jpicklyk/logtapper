@@ -33,4 +33,9 @@ export interface SharedLogViewerRefs {
   // Orchestrator writes this after defining resetSessionState so useStreamSession
   // can call it from startStream without being in the hook signature.
   resetSessionStateRef: MutableRefObject<() => void>;
+
+  // Written by PaneContent on every render to reflect the intersection of all
+  // active filters (section + stream filter). Read by useSearchNavigation to
+  // scope search navigation to visible lines only.
+  effectiveLineNumsRef: MutableRefObject<number[] | null>;
 }

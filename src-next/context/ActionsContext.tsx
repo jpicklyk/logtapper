@@ -21,6 +21,11 @@ export interface ActionsContextValue {
   openTab: (type: string) => void;
   /** Focus a specific pane, updating SessionContext and emitting session:focused. */
   setFocusedPane: (paneId: string) => void;
+  /**
+   * Called by PaneContent on every render to keep effectiveLineNumsRef in sync.
+   * Enables search navigation to scope results to the currently visible lines.
+   */
+  setEffectiveLineNums: (lineNums: number[] | null) => void;
 }
 
 const noop = () => { /* stub */ };
@@ -45,6 +50,7 @@ const DEFAULT_ACTIONS: ActionsContextValue = {
   cancelStreamFilter: noop,
   openTab: (_type: string) => noop(),
   setFocusedPane: (_paneId: string) => noop(),
+  setEffectiveLineNums: (_lineNums: number[] | null) => noop(),
 };
 
 const ActionsContext = createContext<ActionsContextValue | null>(null);

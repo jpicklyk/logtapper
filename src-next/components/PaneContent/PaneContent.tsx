@@ -65,7 +65,7 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
   const session = useSessionForPane(pane.id);
   const focusedSession = useFocusedSession();
   const isLoading = useIsLoadingForPane(pane.id);
-  const { setFocusedPane, setStreamFilter, cancelStreamFilter } = useViewerActions();
+  const { setFocusedPane, setStreamFilter, cancelStreamFilter, setEffectiveLineNums } = useViewerActions();
   const { fetchLines } = useLogViewerActions(pane.id);
   const { value: filterValue, scanning: filterScanning, filteredLineNums, parseError: filterParseError, sectionFilteredLineNums } = useStreamFilter(pane.id);
 
@@ -75,6 +75,11 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
     if (!sectionFilteredLineNums) return filteredLineNums;
     return intersectSorted(sectionFilteredLineNums, filteredLineNums);
   }, [filteredLineNums, sectionFilteredLineNums]);
+
+  // Sync effectiveLineNums into the shared ref so useSearchNavigation can scope
+  // search navigation to the currently visible lines. This is a synchronous write
+  // during render (ref mutation, no state change) — safe per React's ref contract.
+  setEffectiveLineNums(effectiveLineNums);
 
   const handlePaneFocus = useCallback(() => {
     setFocusedPane(pane.id);

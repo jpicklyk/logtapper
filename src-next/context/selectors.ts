@@ -189,10 +189,10 @@ export function useTrackerTransitions(): {
 export function useViewerActions() {
   const { loadFile, openFileDialog, startStream, stopStream, closeSession,
           jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
-          openTab, setFocusedPane } = useActionsContext();
+          openTab, setFocusedPane, setEffectiveLineNums } = useActionsContext();
   return { loadFile, openFileDialog, startStream, stopStream, closeSession,
            jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
-           openTab, setFocusedPane };
+           openTab, setFocusedPane, setEffectiveLineNums };
 }
 
 export function usePipelineActions() {

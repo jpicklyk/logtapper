@@ -70,9 +70,11 @@ function HookWiring({ children }: { children: ReactNode }) {
     cancelStreamFilter: logViewer.cancelStreamFilter,
     openTab: (type: string) => { bus.emit('layout:open-tab', { type }); },
     setFocusedPane,
+    setEffectiveLineNums: logViewer.setEffectiveLineNums,
   }), [logViewer.loadFile, openFileDialog, logViewer.startStream, logViewer.stopStream,
        logViewer.closeSession, logViewer.jumpToLine, logViewer.jumpToMatch,
-       logViewer.handleSearch, logViewer.setStreamFilter, logViewer.cancelStreamFilter]);
+       logViewer.handleSearch, logViewer.setStreamFilter, logViewer.cancelStreamFilter,
+       logViewer.setEffectiveLineNums]);
 
   return (
     <ActionsProvider actions={actions}>

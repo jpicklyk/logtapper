@@ -105,10 +105,32 @@ export function useSearchNavigation(refs: SharedLogViewerRefs): SearchNavigation
     (direction: 1 | -1) => {
       setSearchSummary((summary) => {
         if (!summary || summary.matchLineNums.length === 0) return summary;
+
+        // Scope matches to the currently visible lines (intersection of all active
+        // filters: stream filter + section filter). If no filter is active,
+        // effectiveLineNumsRef is null and all matches are navigable.
+        const effectiveLines = refs.effectiveLineNumsRef.current;
+        const matches = effectiveLines
+          ? summary.matchLineNums.filter((ln) => {
+              // Binary search in the sorted effectiveLines array — O(log n).
+              let lo = 0;
+              let hi = effectiveLines.length - 1;
+              while (lo <= hi) {
+                const mid = (lo + hi) >>> 1;
+                if (effectiveLines[mid] === ln) return true;
+                if (effectiveLines[mid] < ln) lo = mid + 1;
+                else hi = mid - 1;
+              }
+              return false;
+            })
+          : summary.matchLineNums;
+
+        if (matches.length === 0) return summary;
+
         setCurrentMatchIndex((idx) => {
-          const len = summary.matchLineNums.length;
+          const len = matches.length;
           const next = (idx + direction + len) % len;
-          setScrollToLine(summary.matchLineNums[next]);
+          setScrollToLine(matches[next]);
           setJumpPaneId(refs.focusedPaneIdRef.current ?? null);
           setJumpSeq((s) => s + 1);
           return next;
@@ -116,7 +138,7 @@ export function useSearchNavigation(refs: SharedLogViewerRefs): SearchNavigation
         return summary;
       });
     },
-    [refs.focusedPaneIdRef, setSearchSummary, setCurrentMatchIndex, setScrollToLine, setJumpPaneId, setJumpSeq],
+    [refs.focusedPaneIdRef, refs.effectiveLineNumsRef, setSearchSummary, setCurrentMatchIndex, setScrollToLine, setJumpPaneId, setJumpSeq],
   );
 
   const jumpToLine = useCallback((lineNum: number, paneId?: string) => {

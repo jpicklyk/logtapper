@@ -33,6 +33,12 @@ export interface LogViewerActions {
   filteredLineNums: number[] | null;
   filterParseError: string | null;
   timeFilterLineNums: number[] | null;
+  /**
+   * Called by PaneContent on every render to keep effectiveLineNumsRef current.
+   * The ref is read by useSearchNavigation to scope search navigation to the
+   * filtered/section-visible lines only.
+   */
+  setEffectiveLineNums: (lineNums: number[] | null) => void;
 }
 
 export function useLogViewer(cacheManager: CacheController, registry: StreamPusher): LogViewerActions {
@@ -69,6 +75,7 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
       packagePidsRef:          { current: new Map() },
       appendFilterMatchesRef:  { current: null },
       resetSessionStateRef:    { current: () => {} },
+      effectiveLineNumsRef:    { current: null },
     };
   }
   const refs = refsContainer.current;
@@ -161,5 +168,8 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     setProcessorView:   searchNav.setProcessorView,
     clearProcessorView: searchNav.clearProcessorView,
     closeSession:       tabManager.closeSession,
+    setEffectiveLineNums: (lineNums: number[] | null) => {
+      refs.effectiveLineNumsRef.current = lineNums;
+    },
   };
 }
