@@ -231,18 +231,27 @@ function filterSections(sections: SectionEntry[], query: string): SectionEntry[]
   if (!query) return sections;
   const q = query.toLowerCase();
   const matchIndices = new Set<number>();
+  // Track which parents matched the query directly (not just via child promotion)
+  const directParentMatches = new Set<number>();
 
   // Direct name matches — include parent of any matching child
   sections.forEach((s, i) => {
     if (s.name.toLowerCase().includes(q)) {
       matchIndices.add(i);
-      if (s.parentIndex !== undefined) matchIndices.add(s.parentIndex);
+      if (s.parentIndex === undefined) {
+        // This is a top-level section that directly matched
+        directParentMatches.add(i);
+      } else {
+        // Child matched — promote its parent (but don't mark as direct match)
+        matchIndices.add(s.parentIndex);
+      }
     }
   });
 
-  // Include children of matching parents
+  // Only include ALL children when the parent itself directly matched the query.
+  // When a parent was only included because a child matched, keep only matching children.
   sections.forEach((s, i) => {
-    if (s.parentIndex !== undefined && matchIndices.has(s.parentIndex)) {
+    if (s.parentIndex !== undefined && directParentMatches.has(s.parentIndex)) {
       matchIndices.add(i);
     }
   });
@@ -316,19 +325,21 @@ function applyPrefixGrouping(
  * without children are subject to prefix grouping. Top-level sections that have
  * children become parent rows.
  *
- * The `index` in each row refers to the section's position in the array passed
- * in (which may be filtered), NOT the original unfiltered array — but since
- * active highlighting is done by startLine comparison, this is fine.
+ * `originalSections` is needed because `parentIndex` values reference positions
+ * in the unfiltered backend array — when sections are filtered, array positions
+ * shift but parentIndex values don't. We resolve parent identity via startLine.
  */
-function buildSectionTree(sections: SectionEntry[]): SectionRow[] {
+function buildSectionTree(sections: SectionEntry[], originalSections: SectionEntry[]): SectionRow[] {
   if (sections.length === 0) return [];
 
-  // 1. Build parentIndex → children map
-  const childrenByParent = new Map<number, { section: SectionEntry; index: number }[]>();
+  // 1. Build parent-startLine → children map.
+  // parentIndex references the *original* array, so resolve to startLine for stable matching.
+  const childrenByParentStartLine = new Map<number, { section: SectionEntry; index: number }[]>();
   sections.forEach((s, i) => {
-    if (s.parentIndex !== undefined) {
-      let arr = childrenByParent.get(s.parentIndex);
-      if (!arr) { arr = []; childrenByParent.set(s.parentIndex, arr); }
+    if (s.parentIndex !== undefined && s.parentIndex < originalSections.length) {
+      const parentStartLine = originalSections[s.parentIndex].startLine;
+      let arr = childrenByParentStartLine.get(parentStartLine);
+      if (!arr) { arr = []; childrenByParentStartLine.set(parentStartLine, arr); }
       arr.push({ section: s, index: i });
     }
   });
@@ -348,7 +359,7 @@ function buildSectionTree(sections: SectionEntry[]): SectionRow[] {
   sections.forEach((s, i) => {
     if (s.parentIndex !== undefined) return; // skip children — handled via parent
 
-    const children = childrenByParent.get(i);
+    const children = childrenByParentStartLine.get(s.startLine);
     if (children && children.length > 0) {
       // Flush any pending childless sections first to preserve order
       flushPending();
@@ -591,7 +602,7 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
       () => filterSections(sections, debouncedQuery),
       [sections, debouncedQuery],
     );
-    const groupedSections = useMemo(() => buildSectionTree(filteredSections), [filteredSections]);
+    const groupedSections = useMemo(() => buildSectionTree(filteredSections, sections), [filteredSections, sections]);
 
     // ── Max lines for proportional size bars ──────────────────────────────
     const maxLines = useMemo(() => {
@@ -725,7 +736,7 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
               <div className={styles.searchBar}>
                 <Input
                   prefixIcon={Search as React.ComponentType<{ size?: number }>}
-                  placeholder="Filter sections\u2026"
+                  placeholder="Filter sections..."
                   value={searchQuery}
                   onChange={handleSearchChange}
                   className={styles.searchInput}
