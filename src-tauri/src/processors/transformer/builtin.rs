@@ -23,6 +23,15 @@ impl PiiTransformer {
         }
     }
 
+    /// Restore a PiiTransformer with previously saved token mappings so that
+    /// the same raw values continue to receive the same tokens across batches.
+    pub fn from_mappings(mappings: HashMap<String, String>) -> Self {
+        use crate::anonymizer::mapping::PiiMappings;
+        PiiTransformer {
+            anonymizer: LogAnonymizer::with_saved_mappings(PiiMappings::from_saved(mappings)),
+        }
+    }
+
     /// Apply PII anonymization to a line in place.
     /// Updates line.message. The anonymizer internal PiiMappings tracks
     /// raw_value to token mapping for consistency within a session.

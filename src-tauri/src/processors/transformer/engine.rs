@@ -51,8 +51,28 @@ impl TransformerRun {
         }
     }
 
-    pub fn new_seeded(def: &TransformerDef, _saved: ContinuousTransformerState) -> Self {
-        Self::new(def)
+    pub fn new_seeded(def: &TransformerDef, saved: ContinuousTransformerState) -> Self {
+        let is_pii = def
+            .builtin
+            .as_ref()
+            .is_some_and(|b| matches!(b, BuiltinTransformer::PiiAnonymizer));
+
+        let pii_transformer = if is_pii {
+            Some(match saved.pii_mappings {
+                Some(mappings) if !mappings.is_empty() => {
+                    PiiTransformer::from_mappings(mappings)
+                }
+                _ => PiiTransformer::new(),
+            })
+        } else {
+            None
+        };
+
+        TransformerRun {
+            def: def.clone(),
+            pii_transformer,
+            regex_cache: HashMap::new(),
+        }
     }
 
     pub fn process_line(&mut self, line: &mut LineContext) -> bool {

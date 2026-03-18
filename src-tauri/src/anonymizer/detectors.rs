@@ -45,6 +45,28 @@ impl PiiCategory {
             PiiCategory::Custom => "PII",
         }
     }
+
+    /// Reverse of `prefix` — used when restoring saved token mappings.
+    pub fn from_prefix(prefix: &str) -> Option<Self> {
+        match prefix {
+            "EMAIL" => Some(Self::Email),
+            "IPv4" => Some(Self::Ipv4),
+            "IPv6" => Some(Self::Ipv6),
+            "MAC" => Some(Self::Mac),
+            "PHONE" => Some(Self::Phone),
+            "IMEI" => Some(Self::Imei),
+            "SERIAL" => Some(Self::Serial),
+            "AID" => Some(Self::AndroidId),
+            "JWT" => Some(Self::Jwt),
+            "KEY" => Some(Self::ApiKey),
+            "TOKEN" => Some(Self::BearerToken),
+            "GAID" => Some(Self::Gaid),
+            "SESSION" => Some(Self::SessionId),
+            "CRED" => Some(Self::UrlCredentials),
+            "PII" => Some(Self::Custom),
+            _ => None,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
