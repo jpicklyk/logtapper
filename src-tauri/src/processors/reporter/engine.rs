@@ -1217,4 +1217,829 @@ pipeline:
         let result = run.finish();
         assert_eq!(result.vars["is_unit"], JsonValue::Bool(true));
     }
+
+    #[test]
+    fn exception_stack_tracker_fatal_and_nonfatal() {
+        let script = r#"
+      if "fatal_thread_name" in fields {
+        if vars.in_fatal_trace && vars.current_fatal_app != "" {
+          let detail = vars.current_fatal_exception;
+          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
+            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
+          }
+          detail = detail + " on " + vars.current_fatal_thread;
+          let crashes = vars.fatal_crashes;
+          crashes[vars.current_fatal_app] = detail;
+          vars.fatal_crashes = crashes;
+          _emits.push(#{
+            source: vars.current_fatal_app,
+            exception: vars.current_fatal_exception,
+            root_cause: if vars.current_fatal_root_cause != "" { vars.current_fatal_root_cause } else { vars.current_fatal_exception },
+            crash_thread: vars.current_fatal_thread,
+            start_line: vars.fatal_trace_start,
+            fatal: true,
+          });
+        }
+        vars.current_fatal_thread = fields.fatal_thread_name;
+        vars.current_fatal_app = "";
+        vars.current_fatal_exception = "";
+        vars.current_fatal_root_cause = "";
+        vars.fatal_trace_start = line.line_number;
+        vars.in_fatal_trace = true;
+        vars.fatal_count += 1;
+        return;
+      }
+
+      if vars.in_fatal_trace && "process_name" in fields {
+        vars.current_fatal_app = fields.process_name;
+        return;
+      }
+
+      if vars.in_fatal_trace && line.tag == "AndroidRuntime" {
+        if "caused_by_class" in fields {
+          vars.current_fatal_root_cause = fields.caused_by_class;
+        }
+        if "exception_class" in fields && vars.current_fatal_exception == "" {
+          vars.current_fatal_exception = fields.exception_class;
+        }
+        if vars.current_fatal_app != "" && vars.current_fatal_exception != "" {
+          let detail = vars.current_fatal_exception;
+          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
+            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
+          }
+          detail = detail + " on " + vars.current_fatal_thread;
+          let crashes = vars.fatal_crashes;
+          crashes[vars.current_fatal_app] = detail;
+          vars.fatal_crashes = crashes;
+        }
+        return;
+      }
+
+      if vars.in_fatal_trace {
+        if vars.current_fatal_app != "" {
+          let detail = vars.current_fatal_exception;
+          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
+            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
+          }
+          detail = detail + " on " + vars.current_fatal_thread;
+          let crashes = vars.fatal_crashes;
+          crashes[vars.current_fatal_app] = detail;
+          vars.fatal_crashes = crashes;
+          _emits.push(#{
+            source: vars.current_fatal_app,
+            exception: vars.current_fatal_exception,
+            root_cause: if vars.current_fatal_root_cause != "" { vars.current_fatal_root_cause } else { vars.current_fatal_exception },
+            crash_thread: vars.current_fatal_thread,
+            start_line: vars.fatal_trace_start,
+            fatal: true,
+          });
+        }
+        vars.in_fatal_trace = false;
+      }
+
+      if vars.in_stderr_trace && line.tag != "System.err" {
+        let src = if vars.stderr_source != "" { vars.stderr_source } else { "System.err" };
+        let exc = vars.stderr_exception;
+        let key = src + ": " + exc;
+        let summary = vars.nonfatal_summary;
+        if key in summary { summary[key] = summary[key] + 1; } else { summary[key] = 1; }
+        vars.nonfatal_summary = summary;
+        _emits.push(#{
+          source: src,
+          exception: exc,
+          root_cause: vars.stderr_root_cause,
+          crash_thread: "",
+          start_line: vars.stderr_start_line,
+          fatal: false,
+        });
+        vars.in_stderr_trace = false;
+        vars.stderr_source = "";
+        vars.stderr_exception = "";
+        vars.stderr_root_cause = "";
+      }
+
+      if line.tag == "System.err" {
+        if "exception_class" in fields && !("caused_by_class" in fields) {
+          if vars.in_stderr_trace {
+            let src = if vars.stderr_source != "" { vars.stderr_source } else { "System.err" };
+            let exc = vars.stderr_exception;
+            let key = src + ": " + exc;
+            let summary = vars.nonfatal_summary;
+            if key in summary { summary[key] = summary[key] + 1; } else { summary[key] = 1; }
+            vars.nonfatal_summary = summary;
+            _emits.push(#{
+              source: src,
+              exception: exc,
+              root_cause: vars.stderr_root_cause,
+              crash_thread: "",
+              start_line: vars.stderr_start_line,
+              fatal: false,
+            });
+          }
+          vars.in_stderr_trace = true;
+          vars.stderr_exception = fields.exception_class;
+          vars.stderr_root_cause = fields.exception_class;
+          vars.stderr_start_line = line.line_number;
+          vars.stderr_source = "";
+          vars.nonfatal_count += 1;
+          return;
+        }
+        if vars.in_stderr_trace && "caused_by_class" in fields {
+          vars.stderr_root_cause = fields.caused_by_class;
+          return;
+        }
+        if vars.in_stderr_trace && "at_class" in fields && vars.stderr_source == "" {
+          let pkg = fields.at_class;
+          if !pkg.starts_with("java.") && !pkg.starts_with("javax.") &&
+             !pkg.starts_with("android.") && !pkg.starts_with("com.android.") &&
+             !pkg.starts_with("libcore.") && !pkg.starts_with("sun.") &&
+             !pkg.starts_with("dalvik.") && !pkg.starts_with("kotlin.") &&
+             !pkg.starts_with("androidx.") {
+            vars.stderr_source = pkg;
+          }
+          return;
+        }
+        return;
+      }
+
+      if "exception_class" in fields && !("caused_by_class" in fields) && !("at_class" in fields) {
+        let tag = line.tag;
+        let exc = fields.exception_class;
+        vars.nonfatal_count += 1;
+        let key = tag + ": " + exc;
+        let summary = vars.nonfatal_summary;
+        if key in summary {
+          summary[key] = summary[key] + 1;
+        } else {
+          summary[key] = 1;
+        }
+        vars.nonfatal_summary = summary;
+        let root = if "caused_by_class" in fields { fields.caused_by_class } else { exc };
+        _emits.push(#{
+          source: tag,
+          exception: exc,
+          root_cause: root,
+          crash_thread: "",
+          start_line: line.line_number,
+          fatal: false,
+        });
+      }
+"#;
+        let d = def(&format!(r#"
+meta:
+  id: t
+  name: T
+vars:
+  - name: fatal_count
+    type: int
+    default: 0
+  - name: nonfatal_count
+    type: int
+    default: 0
+  - name: fatal_crashes
+    type: map
+    default: {{}}
+  - name: nonfatal_summary
+    type: map
+    default: {{}}
+  - name: current_fatal_thread
+    type: string
+    default: ""
+  - name: current_fatal_app
+    type: string
+    default: ""
+  - name: current_fatal_exception
+    type: string
+    default: ""
+  - name: current_fatal_root_cause
+    type: string
+    default: ""
+  - name: fatal_trace_start
+    type: int
+    default: 0
+  - name: in_fatal_trace
+    type: bool
+    default: false
+  - name: in_stderr_trace
+    type: bool
+    default: false
+  - name: stderr_exception
+    type: string
+    default: ""
+  - name: stderr_root_cause
+    type: string
+    default: ""
+  - name: stderr_start_line
+    type: int
+    default: 0
+  - name: stderr_source
+    type: string
+    default: ""
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains_any
+        values: ["FATAL EXCEPTION", "Exception", "Error", "Process:", "at com."]
+  - stage: extract
+    fields:
+      - name: fatal_thread_name
+        pattern: 'FATAL EXCEPTION:\s+(.+)'
+      - name: process_name
+        pattern: 'Process:\s+([^\s,]+)'
+      - name: exception_class
+        pattern: '([a-z][\w.]*\.(?:\w+(?:Exception|Error|Throwable)))'
+      - name: caused_by_class
+        pattern: 'Caused by:\s+([a-z][\w.]*\.(?:\w+(?:Exception|Error|Throwable)))'
+      - name: at_class
+        pattern: '^\s*at\s+([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_$]*){{2,}})\.[A-Z]'
+  - stage: script
+    runtime: rhai
+    src: |
+{script}
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["fatal", "source", "exception", "root_cause", "start_line"]
+        sort: "source"
+"#));
+        let mut run = ProcessorRun::new(&d);
+
+        // Fatal trace: AndroidRuntime
+        run.process_line(&make_line("AndroidRuntime", "FATAL EXCEPTION: main", LogLevel::Error, 100), &PipelineContext::test_default());
+        run.process_line(&make_line("AndroidRuntime", "Process: com.samsung.knox.kpu, PID: 1234", LogLevel::Error, 101), &PipelineContext::test_default());
+        run.process_line(&make_line("AndroidRuntime", "java.lang.RuntimeException: Unable to start", LogLevel::Error, 102), &PipelineContext::test_default());
+        run.process_line(&make_line("AndroidRuntime", "Caused by: java.lang.SecurityException: permission denied", LogLevel::Error, 103), &PipelineContext::test_default());
+
+        // Non-fatal: Binder exception (ends the fatal trace and emits it)
+        run.process_line(&make_line("Binder", "Caught a RuntimeException from the binder stub implementation.", LogLevel::Warn, 200), &PipelineContext::test_default());
+        run.process_line(&make_line("Binder", "java.lang.SecurityException: Permission Denial: broadcast from android", LogLevel::Warn, 201), &PipelineContext::test_default());
+
+        // System.err printStackTrace — should be attributed to the owning app via at-frames
+        // top-level exception starts the deferred trace
+        run.process_line(&make_line("System.err", "java.io.FileNotFoundException: /some/path: open failed: ENOENT", LogLevel::Warn, 300), &PipelineContext::test_default());
+        // framework at-frames are skipped for attribution
+        run.process_line(&make_line("System.err", "\tat libcore.io.IoBridge.open(IoBridge.java:496)", LogLevel::Warn, 301), &PipelineContext::test_default());
+        run.process_line(&make_line("System.err", "\tat java.io.FileInputStream.<init>(FileInputStream.java:76)", LogLevel::Warn, 302), &PipelineContext::test_default());
+        // first non-framework app frame — sets attribution source
+        // No leading \t — the logcat parser strips it via :\s* in the threadtime regex
+        run.process_line(&make_line("System.err", "at com.sec.android.app.servicemode.SystemDump$1.run(SystemDump.java:2327)", LogLevel::Warn, 303), &PipelineContext::test_default());
+        // Caused by: counts as root cause, not a new exception
+        run.process_line(&make_line("System.err", "Caused by: android.system.ErrnoException: open failed: ENOENT", LogLevel::Warn, 310), &PipelineContext::test_default());
+        // Non-System.err line flushes the pending stderr trace with attributed source
+        run.process_line(&make_line("ActivityManager", "Process died due to Error", LogLevel::Warn, 400), &PipelineContext::test_default());
+
+        let result = run.finish();
+        // 1 fatal + 2 non-fatal (Binder + attributed System.err FileNotFoundException)
+        assert_eq!(result.vars["fatal_count"], JsonValue::Number(1.into()));
+        assert_eq!(result.vars["nonfatal_count"], JsonValue::Number(2.into()));
+        assert_eq!(result.vars["in_fatal_trace"], JsonValue::Bool(false));
+        assert_eq!(result.vars["in_stderr_trace"], JsonValue::Bool(false));
+        let fatal_crashes = result.vars["fatal_crashes"].as_object().unwrap();
+        assert!(fatal_crashes.contains_key("com.samsung.knox.kpu"));
+        let detail = fatal_crashes["com.samsung.knox.kpu"].as_str().unwrap();
+        assert!(detail.contains("java.lang.RuntimeException"), "detail: {detail}");
+        assert!(detail.contains("java.lang.SecurityException"), "detail: {detail}");
+        assert!(detail.contains("on main"), "detail: {detail}");
+        let nonfatal = result.vars["nonfatal_summary"].as_object().unwrap();
+        assert!(nonfatal.contains_key("Binder: java.lang.SecurityException"), "nonfatal: {nonfatal:?}");
+        // System.err attributed to app package, not "System.err"
+        assert!(nonfatal.contains_key("com.sec.android.app.servicemode: java.io.FileNotFoundException"), "nonfatal: {nonfatal:?}");
+        assert!(!nonfatal.contains_key("System.err: java.io.FileNotFoundException"), "should be attributed, not System.err: {nonfatal:?}");
+        assert!(!nonfatal.contains_key("System.err: android.system.ErrnoException"), "Caused by must not be counted: {nonfatal:?}");
+        // 1 fatal emission + 2 non-fatal emissions
+        assert_eq!(result.emissions.len(), 3);
+        // Attributed emission has the correct source and root_cause from Caused by:
+        let get_field = |e: &Emission, key: &str| -> Option<String> {
+            e.fields.iter().find(|(k, _)| k == key).and_then(|(_, v)| v.as_str()).map(|s| s.to_string())
+        };
+        let stderr_emit = result.emissions.iter().find(|e| {
+            get_field(e, "fatal").as_deref() == Some("false") ||
+            e.fields.iter().any(|(k, v)| k == "fatal" && v == &JsonValue::Bool(false))
+        }).and_then(|_| result.emissions.iter().find(|e| {
+            e.fields.iter().any(|(k, v)| k == "source" && v.as_str().map(|s| s.contains("servicemode")).unwrap_or(false))
+        }));
+        assert!(stderr_emit.is_some(), "attributed emission not found in {:?}", result.emissions);
+        let root_cause = get_field(stderr_emit.unwrap(), "root_cause").unwrap_or_default();
+        assert!(root_cause.contains("ErrnoException"), "root_cause should be from Caused by: {root_cause}");
+    }
+
+    #[test]
+    fn exception_stack_tracker_fatal_at_end_of_log() {
+        // Fatal crash is the last thing in the log — no subsequent line triggers a flush.
+        // fatal_crashes must still be populated via the eager write path.
+        let script = r#"
+      if "fatal_thread_name" in fields {
+        if vars.in_fatal_trace && vars.current_fatal_app != "" {
+          let detail = vars.current_fatal_exception;
+          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
+            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
+          }
+          detail = detail + " on " + vars.current_fatal_thread;
+          let crashes = vars.fatal_crashes;
+          crashes[vars.current_fatal_app] = detail;
+          vars.fatal_crashes = crashes;
+          _emits.push(#{
+            source: vars.current_fatal_app,
+            exception: vars.current_fatal_exception,
+            root_cause: if vars.current_fatal_root_cause != "" { vars.current_fatal_root_cause } else { vars.current_fatal_exception },
+            crash_thread: vars.current_fatal_thread,
+            start_line: vars.fatal_trace_start,
+            fatal: true,
+          });
+        }
+        vars.current_fatal_thread = fields.fatal_thread_name;
+        vars.current_fatal_app = "";
+        vars.current_fatal_exception = "";
+        vars.current_fatal_root_cause = "";
+        vars.fatal_trace_start = line.line_number;
+        vars.in_fatal_trace = true;
+        vars.fatal_count += 1;
+        return;
+      }
+
+      if vars.in_fatal_trace && "process_name" in fields {
+        vars.current_fatal_app = fields.process_name;
+        return;
+      }
+
+      if vars.in_fatal_trace && line.tag == "AndroidRuntime" {
+        if "caused_by_class" in fields {
+          vars.current_fatal_root_cause = fields.caused_by_class;
+        }
+        if "exception_class" in fields && vars.current_fatal_exception == "" {
+          vars.current_fatal_exception = fields.exception_class;
+        }
+        if vars.current_fatal_app != "" && vars.current_fatal_exception != "" {
+          let detail = vars.current_fatal_exception;
+          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
+            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
+          }
+          detail = detail + " on " + vars.current_fatal_thread;
+          let crashes = vars.fatal_crashes;
+          crashes[vars.current_fatal_app] = detail;
+          vars.fatal_crashes = crashes;
+        }
+        return;
+      }
+
+      if vars.in_fatal_trace {
+        if vars.current_fatal_app != "" {
+          let detail = vars.current_fatal_exception;
+          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
+            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
+          }
+          detail = detail + " on " + vars.current_fatal_thread;
+          let crashes = vars.fatal_crashes;
+          crashes[vars.current_fatal_app] = detail;
+          vars.fatal_crashes = crashes;
+          _emits.push(#{
+            source: vars.current_fatal_app,
+            exception: vars.current_fatal_exception,
+            root_cause: if vars.current_fatal_root_cause != "" { vars.current_fatal_root_cause } else { vars.current_fatal_exception },
+            crash_thread: vars.current_fatal_thread,
+            start_line: vars.fatal_trace_start,
+            fatal: true,
+          });
+        }
+        vars.in_fatal_trace = false;
+      }
+
+      if vars.in_stderr_trace && line.tag != "System.err" {
+        let src = if vars.stderr_source != "" { vars.stderr_source } else { "System.err" };
+        let exc = vars.stderr_exception;
+        let key = src + ": " + exc;
+        let summary = vars.nonfatal_summary;
+        if key in summary { summary[key] = summary[key] + 1; } else { summary[key] = 1; }
+        vars.nonfatal_summary = summary;
+        _emits.push(#{
+          source: src,
+          exception: exc,
+          root_cause: vars.stderr_root_cause,
+          crash_thread: "",
+          start_line: vars.stderr_start_line,
+          fatal: false,
+        });
+        vars.in_stderr_trace = false;
+        vars.stderr_source = "";
+        vars.stderr_exception = "";
+        vars.stderr_root_cause = "";
+      }
+
+      if line.tag == "System.err" {
+        if "exception_class" in fields && !("caused_by_class" in fields) {
+          if vars.in_stderr_trace {
+            let src = if vars.stderr_source != "" { vars.stderr_source } else { "System.err" };
+            let exc = vars.stderr_exception;
+            let key = src + ": " + exc;
+            let summary = vars.nonfatal_summary;
+            if key in summary { summary[key] = summary[key] + 1; } else { summary[key] = 1; }
+            vars.nonfatal_summary = summary;
+            _emits.push(#{
+              source: src,
+              exception: exc,
+              root_cause: vars.stderr_root_cause,
+              crash_thread: "",
+              start_line: vars.stderr_start_line,
+              fatal: false,
+            });
+          }
+          vars.in_stderr_trace = true;
+          vars.stderr_exception = fields.exception_class;
+          vars.stderr_root_cause = fields.exception_class;
+          vars.stderr_start_line = line.line_number;
+          vars.stderr_source = "";
+          vars.nonfatal_count += 1;
+          return;
+        }
+        if vars.in_stderr_trace && "caused_by_class" in fields {
+          vars.stderr_root_cause = fields.caused_by_class;
+          return;
+        }
+        if vars.in_stderr_trace && "at_class" in fields && vars.stderr_source == "" {
+          let pkg = fields.at_class;
+          if !pkg.starts_with("java.") && !pkg.starts_with("javax.") &&
+             !pkg.starts_with("android.") && !pkg.starts_with("com.android.") &&
+             !pkg.starts_with("libcore.") && !pkg.starts_with("sun.") &&
+             !pkg.starts_with("dalvik.") && !pkg.starts_with("kotlin.") &&
+             !pkg.starts_with("androidx.") {
+            vars.stderr_source = pkg;
+          }
+          return;
+        }
+        return;
+      }
+
+      if "exception_class" in fields && !("caused_by_class" in fields) && !("at_class" in fields) {
+        let tag = line.tag;
+        let exc = fields.exception_class;
+        vars.nonfatal_count += 1;
+        let key = tag + ": " + exc;
+        let summary = vars.nonfatal_summary;
+        if key in summary {
+          summary[key] = summary[key] + 1;
+        } else {
+          summary[key] = 1;
+        }
+        vars.nonfatal_summary = summary;
+        let root = if "caused_by_class" in fields { fields.caused_by_class } else { exc };
+        _emits.push(#{
+          source: tag,
+          exception: exc,
+          root_cause: root,
+          crash_thread: "",
+          start_line: line.line_number,
+          fatal: false,
+        });
+      }
+"#;
+        let d = def(&format!(r#"
+meta:
+  id: t
+  name: T
+vars:
+  - name: fatal_count
+    type: int
+    default: 0
+  - name: nonfatal_count
+    type: int
+    default: 0
+  - name: fatal_crashes
+    type: map
+    default: {{}}
+  - name: nonfatal_summary
+    type: map
+    default: {{}}
+  - name: current_fatal_thread
+    type: string
+    default: ""
+  - name: current_fatal_app
+    type: string
+    default: ""
+  - name: current_fatal_exception
+    type: string
+    default: ""
+  - name: current_fatal_root_cause
+    type: string
+    default: ""
+  - name: fatal_trace_start
+    type: int
+    default: 0
+  - name: in_fatal_trace
+    type: bool
+    default: false
+  - name: in_stderr_trace
+    type: bool
+    default: false
+  - name: stderr_exception
+    type: string
+    default: ""
+  - name: stderr_root_cause
+    type: string
+    default: ""
+  - name: stderr_start_line
+    type: int
+    default: 0
+  - name: stderr_source
+    type: string
+    default: ""
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains_any
+        values: ["FATAL EXCEPTION", "Exception", "Error", "Process:", "at com."]
+  - stage: extract
+    fields:
+      - name: fatal_thread_name
+        pattern: 'FATAL EXCEPTION:\s+(.+)'
+      - name: process_name
+        pattern: 'Process:\s+([^\s,]+)'
+      - name: exception_class
+        pattern: '([a-z][\w.]*\.(?:\w+(?:Exception|Error|Throwable)))'
+      - name: caused_by_class
+        pattern: 'Caused by:\s+([a-z][\w.]*\.(?:\w+(?:Exception|Error|Throwable)))'
+      - name: at_class
+        pattern: '^\s*at\s+([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_$]*){{2,}})\.[A-Z]'
+  - stage: script
+    runtime: rhai
+    src: |
+{script}
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["fatal", "source", "exception", "root_cause", "start_line"]
+        sort: "source"
+"#));
+        let mut run = ProcessorRun::new(&d);
+
+        // Fatal trace at end of log — no subsequent line to flush it
+        run.process_line(&make_line("AndroidRuntime", "FATAL EXCEPTION: main", LogLevel::Error, 100), &PipelineContext::test_default());
+        run.process_line(&make_line("AndroidRuntime", "Process: com.example.app, PID: 9999", LogLevel::Error, 101), &PipelineContext::test_default());
+        run.process_line(&make_line("AndroidRuntime", "java.lang.NullPointerException: attempt to dereference null", LogLevel::Error, 102), &PipelineContext::test_default());
+        run.process_line(&make_line("AndroidRuntime", "Caused by: java.lang.IllegalStateException: bad state", LogLevel::Error, 103), &PipelineContext::test_default());
+        // Log ends here — no flush trigger
+
+        let result = run.finish();
+        assert_eq!(result.vars["fatal_count"], JsonValue::Number(1.into()));
+        assert_eq!(result.vars["nonfatal_count"], JsonValue::Number(0.into()));
+        // fatal_crashes must be populated via eager write even without a flush
+        let fatal_crashes = result.vars["fatal_crashes"].as_object().unwrap();
+        assert!(fatal_crashes.contains_key("com.example.app"), "fatal_crashes should have app entry");
+        let detail = fatal_crashes["com.example.app"].as_str().unwrap();
+        assert!(detail.contains("java.lang.NullPointerException"), "detail: {detail}");
+        assert!(detail.contains("java.lang.IllegalStateException"), "detail: {detail}");
+        assert!(detail.contains("on main"), "detail: {detail}");
+        // No emission yet (trace not flushed) — but display map has the data
+        assert_eq!(result.emissions.len(), 0);
+    }
+
+    #[test]
+    fn exception_stack_tracker_stderr_attribution_two_consecutive_traces() {
+        // Replicates the real-log scenario: two back-to-back System.err FileNotFoundException
+        // traces from com.sec.android.app.servicemodeapp, with app at-frames that should
+        // be attributed. The second trace starts before the first has a non-System.err flush.
+        // Inline the same script used by the other exception_stack_tracker tests.
+        // Copy from exception_stack_tracker_fatal_at_end_of_log above (same script var).
+        let script = r#"
+      if "fatal_thread_name" in fields {
+        if vars.in_fatal_trace && vars.current_fatal_app != "" {
+          let detail = vars.current_fatal_exception;
+          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
+            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
+          }
+          detail = detail + " on " + vars.current_fatal_thread;
+          let crashes = vars.fatal_crashes;
+          crashes[vars.current_fatal_app] = detail;
+          vars.fatal_crashes = crashes;
+          _emits.push(#{
+            source: vars.current_fatal_app,
+            exception: vars.current_fatal_exception,
+            root_cause: if vars.current_fatal_root_cause != "" { vars.current_fatal_root_cause } else { vars.current_fatal_exception },
+            crash_thread: vars.current_fatal_thread,
+            start_line: vars.fatal_trace_start,
+            fatal: true,
+          });
+        }
+        vars.current_fatal_thread = fields.fatal_thread_name;
+        vars.current_fatal_app = "";
+        vars.current_fatal_exception = "";
+        vars.current_fatal_root_cause = "";
+        vars.fatal_trace_start = line.line_number;
+        vars.in_fatal_trace = true;
+        vars.fatal_count += 1;
+        return;
+      }
+      if vars.in_fatal_trace && "process_name" in fields {
+        vars.current_fatal_app = fields.process_name;
+        return;
+      }
+      if vars.in_fatal_trace && line.tag == "AndroidRuntime" {
+        if "caused_by_class" in fields { vars.current_fatal_root_cause = fields.caused_by_class; }
+        if "exception_class" in fields && vars.current_fatal_exception == "" { vars.current_fatal_exception = fields.exception_class; }
+        if vars.current_fatal_app != "" && vars.current_fatal_exception != "" {
+          let detail = vars.current_fatal_exception;
+          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
+            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
+          }
+          detail = detail + " on " + vars.current_fatal_thread;
+          let crashes = vars.fatal_crashes;
+          crashes[vars.current_fatal_app] = detail;
+          vars.fatal_crashes = crashes;
+        }
+        return;
+      }
+      if vars.in_fatal_trace {
+        if vars.current_fatal_app != "" {
+          let detail = vars.current_fatal_exception;
+          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
+            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
+          }
+          detail = detail + " on " + vars.current_fatal_thread;
+          let crashes = vars.fatal_crashes;
+          crashes[vars.current_fatal_app] = detail;
+          vars.fatal_crashes = crashes;
+          _emits.push(#{
+            source: vars.current_fatal_app,
+            exception: vars.current_fatal_exception,
+            root_cause: if vars.current_fatal_root_cause != "" { vars.current_fatal_root_cause } else { vars.current_fatal_exception },
+            crash_thread: vars.current_fatal_thread,
+            start_line: vars.fatal_trace_start,
+            fatal: true,
+          });
+        }
+        vars.in_fatal_trace = false;
+      }
+      if vars.in_stderr_trace && line.tag != "System.err" {
+        let src = if vars.stderr_source != "" { vars.stderr_source } else { "System.err" };
+        let exc = vars.stderr_exception;
+        let key = src + ": " + exc;
+        let summary = vars.nonfatal_summary;
+        if key in summary { summary[key] = summary[key] + 1; } else { summary[key] = 1; }
+        vars.nonfatal_summary = summary;
+        _emits.push(#{
+          source: src, exception: exc, root_cause: vars.stderr_root_cause,
+          crash_thread: "", start_line: vars.stderr_start_line, fatal: false,
+        });
+        vars.in_stderr_trace = false;
+        vars.stderr_source = "";
+        vars.stderr_exception = "";
+        vars.stderr_root_cause = "";
+      }
+      if line.tag == "System.err" {
+        if "exception_class" in fields && !("caused_by_class" in fields) {
+          if vars.in_stderr_trace {
+            let src = if vars.stderr_source != "" { vars.stderr_source } else { "System.err" };
+            let exc = vars.stderr_exception;
+            let key = src + ": " + exc;
+            let summary = vars.nonfatal_summary;
+            if key in summary { summary[key] = summary[key] + 1; } else { summary[key] = 1; }
+            vars.nonfatal_summary = summary;
+            _emits.push(#{
+              source: src, exception: exc, root_cause: vars.stderr_root_cause,
+              crash_thread: "", start_line: vars.stderr_start_line, fatal: false,
+            });
+          }
+          vars.in_stderr_trace = true;
+          vars.stderr_exception = fields.exception_class;
+          vars.stderr_root_cause = fields.exception_class;
+          vars.stderr_start_line = line.line_number;
+          vars.stderr_source = "";
+          vars.nonfatal_count += 1;
+          return;
+        }
+        if vars.in_stderr_trace && "caused_by_class" in fields {
+          vars.stderr_root_cause = fields.caused_by_class;
+          return;
+        }
+        if vars.in_stderr_trace && "at_class" in fields && vars.stderr_source == "" {
+          let pkg = fields.at_class;
+          if !pkg.starts_with("java.") && !pkg.starts_with("javax.") &&
+             !pkg.starts_with("android.") && !pkg.starts_with("com.android.") &&
+             !pkg.starts_with("libcore.") && !pkg.starts_with("sun.") &&
+             !pkg.starts_with("dalvik.") && !pkg.starts_with("kotlin.") &&
+             !pkg.starts_with("androidx.") {
+            vars.stderr_source = pkg;
+          }
+          return;
+        }
+        return;
+      }
+      if "exception_class" in fields && !("caused_by_class" in fields) && !("at_class" in fields) {
+        let tag = line.tag;
+        let exc = fields.exception_class;
+        vars.nonfatal_count += 1;
+        let key = tag + ": " + exc;
+        let summary = vars.nonfatal_summary;
+        if key in summary { summary[key] = summary[key] + 1; } else { summary[key] = 1; }
+        vars.nonfatal_summary = summary;
+        let root = if "caused_by_class" in fields { fields.caused_by_class } else { exc };
+        _emits.push(#{
+          source: tag, exception: exc, root_cause: root,
+          crash_thread: "", start_line: line.line_number, fatal: false,
+        });
+      }
+"#;
+        let d = def(&format!(r#"
+meta:
+  id: t
+  name: T
+vars:
+  - name: fatal_count
+    type: int
+    default: 0
+  - name: nonfatal_count
+    type: int
+    default: 0
+  - name: fatal_crashes
+    type: map
+    default: {{}}
+  - name: nonfatal_summary
+    type: map
+    default: {{}}
+  - name: current_fatal_thread
+    type: string
+    default: ""
+  - name: current_fatal_app
+    type: string
+    default: ""
+  - name: current_fatal_exception
+    type: string
+    default: ""
+  - name: current_fatal_root_cause
+    type: string
+    default: ""
+  - name: fatal_trace_start
+    type: int
+    default: 0
+  - name: in_fatal_trace
+    type: bool
+    default: false
+  - name: in_stderr_trace
+    type: bool
+    default: false
+  - name: stderr_exception
+    type: string
+    default: ""
+  - name: stderr_root_cause
+    type: string
+    default: ""
+  - name: stderr_start_line
+    type: int
+    default: 0
+  - name: stderr_source
+    type: string
+    default: ""
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains_any
+        values: ["FATAL EXCEPTION", "Exception", "Error", "Process:", "at com."]
+  - stage: extract
+    fields:
+      - name: fatal_thread_name
+        pattern: 'FATAL EXCEPTION:\s+(.+)'
+      - name: process_name
+        pattern: 'Process:\s+([^\s,]+)'
+      - name: exception_class
+        pattern: '([a-z][\w.]*\.(?:\w+(?:Exception|Error|Throwable)))'
+      - name: caused_by_class
+        pattern: 'Caused by:\s+([a-z][\w.]*\.(?:\w+(?:Exception|Error|Throwable)))'
+      - name: at_class
+        pattern: '^\s*at\s+([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_$]*){{2,}})\.[A-Z]'
+  - stage: script
+    runtime: rhai
+    src: |
+{script}
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["fatal", "source", "exception", "root_cause", "start_line"]
+        sort: "source"
+"#));
+        let mut run = ProcessorRun::new(&d);
+
+        // First trace: FileNotFoundException with app at-frame.
+        // NOTE: messages are constructed WITHOUT leading \t — the logcat parser's :\s* strips
+        // the tab from "System.err: \tat com.sec..." leaving "at com.sec..." in line.message.
+        run.process_line(&make_line("System.err", "java.io.FileNotFoundException: /sys/class/sec/ap_pmic/wake_enabled: open failed: ENOENT (No such file or directory)", LogLevel::Warn, 467406), &PipelineContext::test_default());
+        // framework at-frames: NOT in filter (no "at com.") — never reach script
+        // app at-frame: contains "at com." → passes filter, at_class extracted
+        run.process_line(&make_line("System.err", "at com.sec.android.app.servicemodeapp.SysDump.getSysfsFile(SysDump.java:1093)", LogLevel::Warn, 467410), &PipelineContext::test_default());
+        // Second trace arrives without an intervening non-System.err filter line
+        run.process_line(&make_line("System.err", "java.io.FileNotFoundException: /sys/module/qpnp_power_on/parameters/wake_enabled: open failed: ENOENT (No such file or directory)", LogLevel::Warn, 467441), &PipelineContext::test_default());
+        run.process_line(&make_line("System.err", "at com.sec.android.app.servicemodeapp.SysDump.getSysfsFile(SysDump.java:1093)", LogLevel::Warn, 467445), &PipelineContext::test_default());
+        // Non-System.err flush trigger
+        run.process_line(&make_line("ServiceModeApp", "some Error in file", LogLevel::Error, 467500), &PipelineContext::test_default());
+
+        let result = run.finish();
+        assert_eq!(result.vars["nonfatal_count"], JsonValue::Number(2.into()));
+        let nonfatal = result.vars["nonfatal_summary"].as_object().unwrap();
+        // Both traces should be attributed to the app package
+        assert!(nonfatal.contains_key("com.sec.android.app.servicemodeapp: java.io.FileNotFoundException"),
+            "expected attribution, got: {nonfatal:?}");
+        assert!(!nonfatal.contains_key("System.err: java.io.FileNotFoundException"),
+            "should not fall back to System.err: {nonfatal:?}");
+    }
 }
