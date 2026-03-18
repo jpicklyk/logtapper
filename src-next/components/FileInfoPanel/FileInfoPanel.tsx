@@ -227,6 +227,7 @@ const SectionItem = memo<SectionItemProps>(function SectionItem({
         styles.sectionItem,
         isActive && styles.sectionItemActive,
         isChild && styles.sectionItemChild,
+        isSelected && styles.sectionItemSelected,
       )}
       onClick={handleClick}
       title={tooltip}

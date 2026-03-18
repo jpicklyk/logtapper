@@ -358,8 +358,9 @@
   display: flex;
   flex-direction: column;
   gap: 0;
-  padding: 0 4px 8px;
+  padding: 0 4px 8px 2px;
   overflow-y: scroll;
+  overflow-x: hidden;
 }
 
 .sectionList::-webkit-scrollbar {
@@ -375,8 +376,8 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
+  gap: 7px;
+  padding: 12px 8px 12px 10px;
   border: none;
   border-bottom: 1px solid var(--border);
   background: transparent;
@@ -405,6 +406,14 @@
   animation: section-flash 600ms ease-out;
   border-left: 2px solid var(--accent);
   padding-left: 6px; /* reduced to compensate for border */
+}
+
+.sectionItemSelected {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.sectionItemSelected:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .sectionName {
@@ -438,7 +447,7 @@
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 5px 8px;
+  padding: 6px 8px 6px 10px;
   border: none;
   background: var(--bg-raised);
   color: var(--text);
@@ -546,7 +555,7 @@
 /* ── Child section indent ──────────────────────────────────────────────────── */
 
 .sectionItemChild {
-  padding-left: 20px;
+  padding-left: 14px;
   border-left: 2px solid var(--border-subtle);
   margin-left: 8px;
 }
@@ -570,7 +579,7 @@
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 6px 8px;
+  padding: 6px 8px 6px 10px;
   border: none;
   background: var(--bg-raised);
   color: var(--text);
@@ -744,15 +753,60 @@
   transition: width 0.5s ease-out;
 }
 
-/* ── Section checkbox ─────────────────────────────────────────────────────── */
+/* ── Section checkbox (custom styled) ─────────────────────────────────────── */
 
 .sectionCheckbox {
+  /* Hide native checkbox, keep accessible */
+  appearance: none;
+  -webkit-appearance: none;
   flex-shrink: 0;
-  width: 14px;
-  height: 14px;
-  margin-right: 6px;
+  width: 13px;
+  height: 13px;
+  margin: 0;
   cursor: pointer;
-  accent-color: var(--accent, #4a9eff);
+  border: 1.5px solid var(--border-subtle);
+  border-radius: 3px;
+  background: transparent;
+  position: relative;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.sectionCheckbox:hover {
+  border-color: var(--accent);
+}
+
+.sectionCheckbox:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Checkmark via pseudo-element */
+.sectionCheckbox:checked::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  left: 3.5px;
+  width: 3.5px;
+  height: 7px;
+  border: solid var(--bg-base);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+
+/* Indeterminate dash (tri-state for group headers) */
+.sectionCheckbox:indeterminate {
+  border-color: var(--accent);
+  background: transparent;
+}
+
+.sectionCheckbox:indeterminate::after {
+  content: '';
+  position: absolute;
+  top: 4.5px;
+  left: 2px;
+  width: 6px;
+  height: 0;
+  border-top: 1.5px solid var(--accent);
 }
 
 /* ── Section filter banner ────────────────────────────────────────────────── */
@@ -761,24 +815,29 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 8px;
-  margin: 0 6px 4px;
+  padding: 5px 10px;
+  margin: 0 6px 2px;
   font-size: 11px;
-  background: var(--surface-accent, rgba(74, 158, 255, 0.1));
+  font-weight: 500;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
   border-radius: 4px;
-  color: var(--text-secondary, #a0a0a0);
+  color: var(--text-muted);
   flex-shrink: 0;
 }
 
 .sectionFilterClear {
   background: none;
   border: none;
-  color: var(--accent, #4a9eff);
+  color: var(--accent);
   cursor: pointer;
   font-size: 11px;
-  padding: 0 4px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 3px;
+  transition: background 120ms ease;
 }
 
 .sectionFilterClear:hover {
-  text-decoration: underline;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
