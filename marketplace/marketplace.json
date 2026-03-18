@@ -48,7 +48,7 @@
     {
       "id": "network-connectivity",
       "name": "Network Connectivity",
-      "version": "3.1.0",
+      "version": "3.1.1",
       "description": "Tracks network connectivity state: connected/disconnected, network type (WIFI, MOBILE, etc.), and validation status.",
       "path": "processors/network_connectivity.yaml",
       "tags": ["network", "connectivity", "android"],
@@ -90,7 +90,7 @@
     {
       "id": "connectivity-check-state",
       "name": "Connectivity Check State",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "description": "Tracks Android NetworkMonitor validation lifecycle per network. Monitors probe-level DNS failures, HTTP/HTTPS probe outcomes, and the final isCaptivePortal verdict.",
       "path": "processors/connectivity_check_state.yaml",
       "tags": ["network", "connectivity", "dns", "android"],
@@ -328,7 +328,7 @@
     {
       "id": "radio-airplane-mode-state",
       "name": "Radio / Airplane Mode State",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Tracks airplane mode, data connection state, emergency-only mode, and SIM card state from MobileSignalController. Compound transitions capture all four fields atomically when possible.",
       "path": "processors/radio_airplane_mode_state.yaml",
       "tags": ["telephony", "radio", "airplane-mode", "sim", "android"],

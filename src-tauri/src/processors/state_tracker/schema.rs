@@ -7,6 +7,11 @@ use crate::processors::reporter::schema::FilterRule;
 pub struct StateTrackerDef {
     #[serde(default)]
     pub group: String,
+    /// Section names to restrict processing to (Bugreport/Dumpstate only).
+    /// Empty = process all lines regardless of section.
+    /// Exact match against section names as parsed by BugreportParser.
+    #[serde(default)]
+    pub sections: Vec<String>,
     #[serde(default)]
     pub state: Vec<StateFieldDecl>,
     #[serde(default)]

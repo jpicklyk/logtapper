@@ -122,11 +122,13 @@ impl PreFilter {
 /// feed it parsed batches, then collect results.
 /// Type alias for the complex reporter run tuple to satisfy clippy::type_complexity.
 type ReporterRunEntry<'a> = (String, ProcessorRun<'a>, Option<Vec<(usize, usize)>>);
+/// Type alias for the state tracker run tuple (mirrors ReporterRunEntry).
+type TrackerRunEntry = (String, StateTrackerRun, Option<Vec<(usize, usize)>>);
 
 pub struct PipelineCore<'a> {
     pub transformer_runs: Vec<(String, TransformerRun)>,
     pub reporter_runs: Vec<ReporterRunEntry<'a>>,
-    pub tracker_runs: Vec<(String, StateTrackerRun)>,
+    pub tracker_runs: Vec<TrackerRunEntry>,
     pub correlator_runs: Vec<(String, CorrelatorRun<'a>)>,
     pub pipeline_ctx: PipelineContext,
     pub prefilter: PreFilter,
@@ -203,10 +205,12 @@ impl<'a> PipelineCore<'a> {
             .map(|((id, def), ranges)| (id.clone(), ProcessorRun::new(def), ranges))
             .collect();
 
-        let tracker_runs: Vec<(String, StateTrackerRun)> = defs
+        let tracker_section_ranges = compute_tracker_section_ranges(&defs.tracker_defs, sections);
+        let tracker_runs: Vec<TrackerRunEntry> = defs
             .tracker_defs
             .iter()
-            .map(|(tid, def)| (tid.clone(), StateTrackerRun::new(tid, def)))
+            .zip(tracker_section_ranges)
+            .map(|((tid, def), ranges)| (tid.clone(), StateTrackerRun::new(tid, def), ranges))
             .collect();
 
         let correlator_runs: Vec<(String, CorrelatorRun<'a>)> = defs
@@ -263,7 +267,8 @@ impl<'a> PipelineCore<'a> {
             })
             .collect();
 
-        let tracker_runs: Vec<(String, StateTrackerRun)> = defs
+        // Streaming: no section filtering (sections always empty)
+        let tracker_runs: Vec<TrackerRunEntry> = defs
             .tracker_defs
             .iter()
             .map(|(tid, def)| {
@@ -271,7 +276,7 @@ impl<'a> PipelineCore<'a> {
                     .tracker_states
                     .remove(tid)
                     .unwrap_or_default();
-                (tid.clone(), StateTrackerRun::new_seeded(tid, def, cont))
+                (tid.clone(), StateTrackerRun::new_seeded(tid, def, cont), None)
             })
             .collect();
 
@@ -374,11 +379,18 @@ impl<'a> PipelineCore<'a> {
         let pctx = &self.pipeline_ctx;
 
         rayon::scope(|s| {
-            // Layer 2a: StateTrackers
-            for (_, run) in &mut self.tracker_runs {
+            // Layer 2a: StateTrackers (with section filtering)
+            for (_, run, ranges) in &mut self.tracker_runs {
                 let lines = tracker_lines;
                 s.spawn(move |_| {
                     for line in lines {
+                        if let Some(ranges) = ranges {
+                            if !ranges.iter().any(|(start, end)| {
+                                line.source_line_num >= *start && line.source_line_num <= *end
+                            }) {
+                                continue;
+                            }
+                        }
                         run.process_line(line, pctx);
                     }
                 });
@@ -463,7 +475,7 @@ impl<'a> PipelineCore<'a> {
         let tracker_results: HashMap<String, StateTrackerResult> = self
             .tracker_runs
             .into_iter()
-            .map(|(id, run)| {
+            .map(|(id, run, _)| {
                 let mut result = run.finish();
                 // Post-process: replace captured raw PII values with tokens.
                 if !forward_pii.is_empty() {
@@ -498,7 +510,7 @@ impl<'a> PipelineCore<'a> {
         let tracker_states: HashMap<String, ContinuousTrackerState> = self
             .tracker_runs
             .into_iter()
-            .map(|(id, run)| (id, run.into_continuous_state(last_line)))
+            .map(|(id, run, _)| (id, run.into_continuous_state(last_line)))
             .collect();
 
         let transformer_states: HashMap<String, ContinuousTransformerState> = self
@@ -577,6 +589,41 @@ fn compute_section_ranges(
                                 section_names.push(section.as_str());
                             }
                         }
+                    }
+                }
+            }
+
+            if section_names.is_empty() {
+                None
+            } else {
+                let r: Vec<(usize, usize)> = section_names
+                    .iter()
+                    .filter_map(|name| sections.iter().find(|s| s.name == *name))
+                    .map(|s| (s.start_line, s.end_line))
+                    .collect();
+                if r.is_empty() { None } else { Some(r) }
+            }
+        })
+        .collect()
+}
+
+/// Compute section ranges parallel to tracker_defs. Merges top-level `sections`
+/// with any per-transition `SectionIs` filter rules.
+fn compute_tracker_section_ranges(
+    tracker_defs: &[(String, StateTrackerDef)],
+    sections: &[SectionInfo],
+) -> Vec<Option<Vec<(usize, usize)>>> {
+    tracker_defs
+        .iter()
+        .map(|(_, def)| {
+            let mut section_names: Vec<&str> =
+                def.sections.iter().map(String::as_str).collect();
+
+            // Also collect section names from per-transition SectionIs filters
+            for transition in &def.transitions {
+                if let Some(ref sec) = transition.filter.section {
+                    if !section_names.contains(&sec.as_str()) {
+                        section_names.push(sec.as_str());
                     }
                 }
             }

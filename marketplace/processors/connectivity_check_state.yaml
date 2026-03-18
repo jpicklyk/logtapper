@@ -1,7 +1,7 @@
 type: state_tracker
 id: connectivity-check-state
 name: Connectivity Check State
-version: 1.1.0
+version: 1.1.1
 author: LogTapper
 description: >
   Tracks Android NetworkMonitor validation lifecycle per network.
@@ -13,6 +13,9 @@ description: >
 tags: [network, connectivity, dns, android]
 
 group: Network
+
+sections:
+  - "SYSTEM LOG"
 
 state:
   - name: validation_state

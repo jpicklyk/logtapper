@@ -322,6 +322,7 @@ mod tests {
         };
         let mut def = StateTrackerDef {
             group: "Network".to_string(),
+            sections: vec![],
             state: vec![
                 StateFieldDecl {
                     name: "enabled".to_string(),
@@ -481,6 +482,7 @@ mod tests {
         };
         let mut def = StateTrackerDef {
             group: String::new(),
+            sections: vec![],
             state: vec![
                 StateFieldDecl { name: "network_id".into(), field_type: StateFieldType::String, default: serde_json::Value::Null },
                 StateFieldDecl { name: "time_ms".into(), field_type: StateFieldType::String, default: serde_json::Value::Null },
@@ -525,6 +527,7 @@ mod tests {
         };
         let mut def = StateTrackerDef {
             group: String::new(),
+            sections: vec![],
             state: vec![
                 StateFieldDecl { name: "time_ms".into(), field_type: StateFieldType::String, default: serde_json::Value::Null },
             ],
@@ -563,6 +566,7 @@ mod tests {
         };
         let mut def = StateTrackerDef {
             group: "Wifi".to_string(),
+            sections: vec![],
             state: vec![
                 StateFieldDecl {
                     name: "connected".into(),
@@ -606,6 +610,7 @@ mod tests {
         };
         let mut def = StateTrackerDef {
             group: "Test".to_string(),
+            sections: vec![],
             state: vec![
                 StateFieldDecl {
                     name: "error_seen".into(),
@@ -655,6 +660,7 @@ mod tests {
         };
         let mut def = StateTrackerDef {
             group: String::new(),
+            sections: vec![],
             state: vec![
                 StateFieldDecl { name: "net_id".into(), field_type: StateFieldType::String, default: serde_json::Value::Null },
                 StateFieldDecl { name: "time".into(), field_type: StateFieldType::String, default: serde_json::Value::Null },
