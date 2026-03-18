@@ -11,6 +11,7 @@ import {
   useSearchQuery,
 } from '../../context';
 import { bus } from '../../events';
+import type { AppEvents } from '../../events';
 import styles from './LogViewer.module.css';
 
 interface Props {
@@ -211,8 +212,13 @@ const LogViewer = React.memo(function LogViewer({
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
 
+  // Track the latest selection in a ref so context-menu / Ctrl+B can read it
+  // without creating a new callback on every selection change.
+  const lastSelectionRef = useRef<Selection | null>(null);
+
   const handleSelectionChange = useCallback(
     (sel: Selection) => {
+      lastSelectionRef.current = sel;
       const sid = sessionIdRef.current;
       if (sel.selected.size === 0) {
         bus.emit('selection:changed', { paneId, sessionId: sid, anchor: null, range: null });
@@ -228,6 +234,65 @@ const LogViewer = React.memo(function LogViewer({
     [paneId],
   );
 
+  // Helper: emit bookmark:create-request for the current selection
+  const emitBookmarkRequest = useCallback(
+    (position?: { x: number; y: number }) => {
+      const sid = sessionIdRef.current;
+      if (!sid) return;
+      const sel = lastSelectionRef.current;
+      if (!sel || sel.anchor == null || sel.selected.size === 0) return;
+
+      let lineNumber = sel.anchor;
+      let lineNumberEnd: number | undefined;
+
+      if (sel.selected.size > 1) {
+        let min = Infinity, max = -Infinity;
+        for (const n of sel.selected) {
+          if (n < min) min = n;
+          if (n > max) max = n;
+        }
+        lineNumber = min;
+        lineNumberEnd = max;
+      }
+
+      const payload: AppEvents['bookmark:create-request'] = {
+        paneId,
+        sessionId: sid,
+        lineNumber,
+        lineNumberEnd,
+        position,
+      };
+      bus.emit('bookmark:create-request', payload);
+    },
+    [paneId],
+  );
+
+  // Right-click context menu → bookmark creation
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      // Only intercept if there is an active selection; otherwise let the browser default.
+      const sel = lastSelectionRef.current;
+      if (!sel || sel.anchor == null || sel.selected.size === 0) return;
+      e.preventDefault();
+      emitBookmarkRequest({ x: e.clientX, y: e.clientY });
+    },
+    [emitBookmarkRequest],
+  );
+
+  // Ctrl+B keyboard shortcut
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+        const sel = lastSelectionRef.current;
+        if (!sel || sel.anchor == null || sel.selected.size === 0) return;
+        e.preventDefault();
+        emitBookmarkRequest();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [emitBookmarkRequest]);
+
   if (!dataSource) {
     return (
       <div className={styles.empty}>
@@ -241,20 +306,24 @@ const LogViewer = React.memo(function LogViewer({
   const effectiveTotalLines = lineNumbers ? lineNumbers.length : totalLines;
 
   return (
-    <ReadOnlyViewer
-      dataSource={dataSource}
-      totalLineCount={effectiveTotalLines}
-      scrollToLine={effectiveScrollToLine ?? undefined}
-      jumpSeq={effectiveJumpSeq}
-      tailMode={isStreaming}
-      gutterColumns={gutterColumns}
-      lineDecorators={lineDecorators}
-      onLineClick={handleLineClick}
-      onSelectionChange={handleSelectionChange}
-      className={styles.viewer}
-      initialVirtualBase={initialVirtualBase}
-      virtualBaseOutRef={virtualBaseOutRef}
-    />
+    // Wrap in a div to capture context-menu events before they bubble out.
+    // onContextMenu is suppressed when there is no selection (handled in handler).
+    <div style={{ height: '100%' }} onContextMenu={handleContextMenu}>
+      <ReadOnlyViewer
+        dataSource={dataSource}
+        totalLineCount={effectiveTotalLines}
+        scrollToLine={effectiveScrollToLine ?? undefined}
+        jumpSeq={effectiveJumpSeq}
+        tailMode={isStreaming}
+        gutterColumns={gutterColumns}
+        lineDecorators={lineDecorators}
+        onLineClick={handleLineClick}
+        onSelectionChange={handleSelectionChange}
+        className={styles.viewer}
+        initialVirtualBase={initialVirtualBase}
+        virtualBaseOutRef={virtualBaseOutRef}
+      />
+    </div>
   );
 });
 

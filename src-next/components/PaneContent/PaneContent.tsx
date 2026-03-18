@@ -1,12 +1,15 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { FileText } from 'lucide-react';
 import { LogViewer } from '../LogViewer';
 import { ProcessorDashboard } from '../ProcessorDashboard';
 import { AnalysisReader } from '../AnalysisReader';
 import { ScratchPad } from '../ScratchPad';
 import { StreamFilterBar } from '../StreamFilterBar';
+import { BookmarkCreateDialog } from '../BookmarkPanel';
+import type { BookmarkCreateRequest } from '../BookmarkPanel';
 import { useSessionForPane, useIsLoadingForPane, useViewerActions, useStreamFilter, useFocusedSession } from '../../context';
 import { useLogViewerActions } from './useLogViewerActions';
+import { bus } from '../../events';
 import styles from './PaneContent.module.css';
 
 export interface PaneTab {
@@ -69,6 +72,25 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
   const { fetchLines } = useLogViewerActions(pane.id);
   const { value: filterValue, scanning: filterScanning, filteredLineNums, parseError: filterParseError, sectionFilteredLineNums } = useStreamFilter(pane.id);
 
+  // ── Bookmark creation dialog ──────────────────────────────────────────────
+  const [bookmarkRequest, setBookmarkRequest] = useState<BookmarkCreateRequest | null>(null);
+
+  // Listen for bookmark:create-request events targeted at this pane.
+  // StrictMode-safe: the handler is not async so no cleanup race needed.
+  useEffect(() => {
+    const handler = (req: BookmarkCreateRequest) => {
+      if (req.paneId === pane.id) {
+        setBookmarkRequest(req);
+      }
+    };
+    bus.on('bookmark:create-request', handler);
+    return () => bus.off('bookmark:create-request', handler);
+  }, [pane.id]);
+
+  const handleBookmarkDialogClose = useCallback(() => {
+    setBookmarkRequest(null);
+  }, []);
+
   const effectiveLineNums = useMemo(() => {
     if (!filteredLineNums && !sectionFilteredLineNums) return null;
     if (!filteredLineNums) return sectionFilteredLineNums;
@@ -87,11 +109,23 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
 
   const activeTab = pane.tabs.find((t) => t.id === pane.activeTabId);
 
+  // Bookmark dialog is rendered as a portal to document.body regardless of
+  // which tab is active — it persists as long as this PaneContent is mounted.
+  const bookmarkDialog = (
+    <BookmarkCreateDialog
+      request={bookmarkRequest}
+      onClose={handleBookmarkDialogClose}
+    />
+  );
+
   if (!activeTab) {
     return (
-      <div onClick={handlePaneFocus} onFocus={handlePaneFocus} style={{ height: '100%' }}>
-        <EmptyDropZone />
-      </div>
+      <>
+        <div onClick={handlePaneFocus} onFocus={handlePaneFocus} style={{ height: '100%' }}>
+          <EmptyDropZone />
+        </div>
+        {bookmarkDialog}
+      </>
     );
   }
 
@@ -99,58 +133,78 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
     case 'logviewer':
       if (!session && !isLoading) {
         return (
-          <div onClick={handlePaneFocus} onFocus={handlePaneFocus} style={{ height: '100%' }}>
-            <EmptyDropZone />
-          </div>
+          <>
+            <div onClick={handlePaneFocus} onFocus={handlePaneFocus} style={{ height: '100%' }}>
+              <EmptyDropZone />
+            </div>
+            {bookmarkDialog}
+          </>
         );
       }
       return (
-        <div className={styles.logviewerPane} onClick={handlePaneFocus} onFocus={handlePaneFocus}>
-          {session && (
-            <StreamFilterBar
-              value={filterValue}
-              onCommit={setStreamFilter}
-              onCancel={cancelStreamFilter}
-              matchCount={filteredLineNums ? (effectiveLineNums?.length ?? null) : null}
-              totalLines={sectionFilteredLineNums ? sectionFilteredLineNums.length : session.totalLines}
-              parseError={filterParseError}
-              scanning={filterScanning}
+        <>
+          <div className={styles.logviewerPane} onClick={handlePaneFocus} onFocus={handlePaneFocus}>
+            {session && (
+              <StreamFilterBar
+                value={filterValue}
+                onCommit={setStreamFilter}
+                onCancel={cancelStreamFilter}
+                matchCount={filteredLineNums ? (effectiveLineNums?.length ?? null) : null}
+                totalLines={sectionFilteredLineNums ? sectionFilteredLineNums.length : session.totalLines}
+                parseError={filterParseError}
+                scanning={filterScanning}
+              />
+            )}
+            <LogViewer
+              paneId={pane.id}
+              fetchLines={fetchLines}
+              lineNumbers={effectiveLineNums ?? undefined}
             />
-          )}
-          <LogViewer
-            paneId={pane.id}
-            fetchLines={fetchLines}
-            lineNumbers={effectiveLineNums ?? undefined}
-          />
-        </div>
+          </div>
+          {bookmarkDialog}
+        </>
       );
 
     case 'dashboard':
       // Dashboard displays results for the focused session — clicking it should
       // NOT move the focus marker away from the logviewer tab that owns the session.
       return focusedSession ? (
-        <div style={{ height: '100%' }}>
-          <ProcessorDashboard />
-        </div>
+        <>
+          <div style={{ height: '100%' }}>
+            <ProcessorDashboard />
+          </div>
+          {bookmarkDialog}
+        </>
       ) : (
-        <div className={styles.placeholder}>
-          Open a log file to see the dashboard.
-        </div>
+        <>
+          <div className={styles.placeholder}>
+            Open a log file to see the dashboard.
+          </div>
+          {bookmarkDialog}
+        </>
       );
 
     case 'analysis':
       return (
-        <div style={{ height: '100%' }}>
-          <AnalysisReader />
-        </div>
+        <>
+          <div style={{ height: '100%' }}>
+            <AnalysisReader />
+          </div>
+          {bookmarkDialog}
+        </>
       );
 
     case 'scratch':
     case 'editor':
-      return <ScratchPad />;
+      return (
+        <>
+          <ScratchPad />
+          {bookmarkDialog}
+        </>
+      );
 
     default:
-      return null;
+      return bookmarkDialog;
   }
 });
 

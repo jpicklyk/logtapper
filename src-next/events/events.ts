@@ -65,6 +65,18 @@ export type AppEvents = {
   'selection:changed':      { paneId: string; sessionId: string | null;
                               anchor: number | null; range: [number, number] | null };
 
+  // ── Bookmarks ─────────────────────────────────────────────────────────────
+  /** Fired when the user triggers a bookmark creation action (right-click context menu,
+   *  Ctrl+B shortcut). Consumers render a creation dialog. */
+  'bookmark:create-request': {
+    paneId: string;
+    sessionId: string;
+    lineNumber: number;
+    lineNumberEnd?: number;
+    defaultLabel?: string;
+    position?: { x: number; y: number };
+  };
+
   // ── Analysis ──────────────────────────────────────────────────────────────
   /** Fired when the user selects an analysis artifact to view in the center tab. */
   'analysis:open':          { artifactId: string };
