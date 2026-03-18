@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSessionForPane, useScrollTarget, useViewerActions, useIndexingProgress } from '../../context';
+import { useSessionForPane, useScrollTarget, useViewerActions, useIndexingProgress, useSetSessionFilter } from '../../context';
 import type { IndexingProgress } from '../../context';
 import { getDumpstateMetadata, getSections, getSessionMetadata } from '../../bridge/commands';
 import { isBugreportLike } from '../../bridge/types';
@@ -21,6 +21,11 @@ export interface FileInfoData {
   sectionJumpSeq: number;
   indexingProgress: IndexingProgress | null;
   onJumpToLine: (line: number) => void;
+  selectedSectionIndices: Set<number>;
+  toggleSection: (index: number) => void;
+  toggleGroup: (indices: number[]) => void;
+  clearSectionFilter: () => void;
+  isSectionFilterActive: boolean;
 }
 
 /** Cached metadata for a session so tab switches restore data instantly. */
@@ -29,6 +34,7 @@ interface SessionCache {
   sections: SectionEntry[];
   firstTimestamp: number | null | undefined;
   lastTimestamp: number | null | undefined;
+  selectedSections: Set<number>;
 }
 
 // Module-level cache — survives component re-mounts (tab switch away and back).
@@ -37,6 +43,7 @@ const metadataCache = new Map<string, SessionCache>();
 export function useFileInfo(paneId: string | null): FileInfoData {
   const session = useSessionForPane(paneId);
   const { jumpToLine } = useViewerActions();
+  const setSessionFilter = useSetSessionFilter();
   const { lineNum: scrollToLine, paneId: jumpPaneId } = useScrollTarget();
   // Only track scroll position as active section if the jump targeted this pane (or was global).
   const effectiveScrollToLine = (jumpPaneId === null || jumpPaneId === paneId) ? scrollToLine : null;
@@ -58,6 +65,9 @@ export function useFileInfo(paneId: string | null): FileInfoData {
   const [sections, setSections] = useState<SectionEntry[]>(cached?.sections ?? []);
   const [dumpstateMetadata, setDumpstateMetadata] = useState<DumpstateMetadata | null>(cached?.dumpstateMetadata ?? null);
   const [sectionJumpSeq, setSectionJumpSeq] = useState(0);
+  const [selectedSectionIndices, setSelectedSectionIndices] = useState<Set<number>>(
+    () => cached?.selectedSections ?? new Set(),
+  );
 
   const sessionIdRef = useRef<string | null>(null);
   sessionIdRef.current = sessionId;
@@ -70,8 +80,9 @@ export function useFileInfo(paneId: string | null): FileInfoData {
       sections,
       firstTimestamp,
       lastTimestamp,
+      selectedSections: selectedSectionIndices,
     });
-  }, [sessionId, dumpstateMetadata, sections, firstTimestamp, lastTimestamp]);
+  }, [sessionId, dumpstateMetadata, sections, firstTimestamp, lastTimestamp, selectedSectionIndices]);
 
   // Reset base metadata and fetch device info whenever the session changes.
   useEffect(() => {
@@ -82,6 +93,7 @@ export function useFileInfo(paneId: string | null): FileInfoData {
       setLastTimestamp(undefined);
       setSections([]);
       setDumpstateMetadata(null);
+      setSelectedSectionIndices(new Set());
       return;
     }
 
@@ -94,6 +106,7 @@ export function useFileInfo(paneId: string | null): FileInfoData {
     setLastTimestamp(c?.lastTimestamp ?? session.lastTimestamp ?? null);
     setSections(c?.sections ?? []);
     setDumpstateMetadata(c?.dumpstateMetadata ?? null);
+    setSelectedSectionIndices(c?.selectedSections ?? new Set());
 
     // Always fetch fresh metadata (updates cache on completion).
     let cancelled = false;
@@ -218,6 +231,55 @@ export function useFileInfo(paneId: string | null): FileInfoData {
     return -1;
   }, [sections, trackingLine]);
 
+  // Section toggle callbacks — indices into the original (unfiltered) sections array.
+  const toggleSection = useCallback((index: number) => {
+    setSelectedSectionIndices(prev => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }, []);
+
+  const toggleGroup = useCallback((indices: number[]) => {
+    setSelectedSectionIndices(prev => {
+      const allSelected = indices.every(i => prev.has(i));
+      const next = new Set(prev);
+      if (allSelected) {
+        indices.forEach(i => next.delete(i));
+      } else {
+        indices.forEach(i => next.add(i));
+      }
+      return next;
+    });
+  }, []);
+
+  const clearSectionFilter = useCallback(() => {
+    setSelectedSectionIndices(new Set());
+  }, []);
+
+  // Compute line numbers for the section filter — null when no sections selected.
+  const sectionFilteredLineNums = useMemo(() => {
+    if (selectedSectionIndices.size === 0) return null;
+    const lines: number[] = [];
+    for (const idx of selectedSectionIndices) {
+      const section = sections[idx];
+      if (!section) continue;
+      for (let i = section.startLine; i <= section.endLine; i++) {
+        lines.push(i);
+      }
+    }
+    lines.sort((a, b) => a - b);
+    return lines;
+  }, [selectedSectionIndices, sections]);
+
+  // Write section filter into SessionContext so PaneContent can compose it
+  // with the stream filter.
+  useEffect(() => {
+    if (!sessionId) return;
+    setSessionFilter(sessionId, { sectionFilteredLineNums });
+  }, [sessionId, sectionFilteredLineNums, setSessionFilter]);
+
   const onJumpToLine = useCallback(
     (line: number) => {
       setSectionJumpSeq((s) => s + 1);
@@ -239,5 +301,10 @@ export function useFileInfo(paneId: string | null): FileInfoData {
     sectionJumpSeq,
     indexingProgress,
     onJumpToLine,
+    selectedSectionIndices,
+    toggleSection,
+    toggleGroup,
+    clearSectionFilter,
+    isSectionFilterActive: selectedSectionIndices.size > 0,
   };
 }

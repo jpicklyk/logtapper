@@ -130,6 +130,7 @@ export {
   useProcessorId,
   useSearchQuery,
   useStreamFilter,
+  useSetSessionFilter,
   usePipelineProgress,
   usePipelineError,
   useTotalLines,

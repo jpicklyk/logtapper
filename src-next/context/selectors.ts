@@ -232,6 +232,11 @@ export function useProcessorId(): string | null {
   return useProcessorViewCtx().processorId;
 }
 
+/** Returns the stable `setSessionFilter` dispatch from SessionContext. */
+export function useSetSessionFilter() {
+  return useSessionContext().setSessionFilter;
+}
+
 export function useStreamFilter(paneId: string): {
   value: string;
   scanning: boolean;
