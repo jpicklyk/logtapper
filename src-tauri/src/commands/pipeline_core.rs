@@ -893,7 +893,10 @@ fn collect_prefilter_info(
 
 #[cfg(test)]
 mod tests {
-    use super::extract_regex_literal_prefix;
+    use super::*;
+    use std::collections::HashSet;
+
+    // ── extract_regex_literal_prefix ─────────────────────────────────────────
 
     #[test]
     fn extract_prefix_simple_tag() {
@@ -929,5 +932,154 @@ mod tests {
     #[test]
     fn extract_prefix_empty_pattern() {
         assert_eq!(extract_regex_literal_prefix(""), None);
+    }
+
+    // ── Gap 1a: quick_extract_tag ─────────────────────────────────────────────
+
+    #[test]
+    fn quick_extract_tag_normal() {
+        let line = "03-13 11:33:42.416  1000  2723  5261 D NetdEventListenerService: DNS Requested";
+        assert_eq!(quick_extract_tag(line), Some("NetdEventListenerService"));
+    }
+
+    #[test]
+    fn quick_extract_tag_with_spaces() {
+        // Tag with trailing spaces — should be trimmed
+        let line = "03-13 11:33:42.416  1000  2723  5261 D MyTag   : some message";
+        let tag = quick_extract_tag(line);
+        assert_eq!(tag, Some("MyTag"));
+    }
+
+    #[test]
+    fn quick_extract_tag_non_logcat() {
+        let line = "DUMP OF SERVICE activity:";
+        assert_eq!(quick_extract_tag(line), None);
+    }
+
+    #[test]
+    fn quick_extract_tag_short_line() {
+        let line = "short line";
+        assert_eq!(quick_extract_tag(line), None);
+    }
+
+    // ── Gap 1b: PreFilter::should_process ────────────────────────────────────
+
+    fn make_prefilter_with_tag(tag: &str) -> PreFilter {
+        let mut tag_union = HashSet::new();
+        tag_union.insert(tag.to_string());
+        PreFilter {
+            tag_union,
+            ac_automaton: None,
+            regex_set: None,
+            use_tag_prefilter: true,
+            use_content_prefilter: false,
+        }
+    }
+
+    #[test]
+    fn prefilter_passes_matching_tag() {
+        let pf = make_prefilter_with_tag("NetdEventListenerService");
+        let line = "03-13 11:33:42.416  1000  2723  5261 D NetdEventListenerService: DNS event";
+        assert!(pf.should_process(line));
+    }
+
+    #[test]
+    fn prefilter_rejects_non_matching_tag() {
+        let pf = make_prefilter_with_tag("NetdEventListenerService");
+        let line = "03-13 11:33:42.416  1000  2723  5261 D ActivityManager: starting activity";
+        assert!(!pf.should_process(line));
+    }
+
+    #[test]
+    fn prefilter_passes_when_inactive() {
+        // use_tag_prefilter = false means all lines pass regardless of tag
+        let pf = PreFilter {
+            tag_union: {
+                let mut s = HashSet::new();
+                s.insert("OnlyThisTag".to_string());
+                s
+            },
+            ac_automaton: None,
+            regex_set: None,
+            use_tag_prefilter: false,
+            use_content_prefilter: false,
+        };
+        let line = "03-13 11:33:42.416  1000  2723  5261 D SomeOtherTag: message";
+        assert!(pf.should_process(line));
+    }
+
+    #[test]
+    fn prefilter_tag_prefix_matching() {
+        // tag_union has "ConnectivityService", line has "ConnectivityServiceHandler"
+        // should_process uses starts_with so it should pass
+        let pf = make_prefilter_with_tag("ConnectivityService");
+        let line = "03-13 11:33:42.416  1000  2723  5261 D ConnectivityServiceHandler: some event";
+        assert!(pf.should_process(line));
+    }
+
+    // ── Gap 1c: collect_prefilter_info / transformer exclusion ───────────────
+
+    #[test]
+    fn transformer_does_not_disable_prefilter() {
+        use crate::processors::reporter::schema::{FilterRule, FilterStage, PipelineStage, ReporterDef};
+        use crate::processors::transformer::schema::TransformerDef;
+
+        // A reporter with a tag filter
+        let reporter_yaml = r#"
+meta:
+  id: test_reporter
+  name: Test Reporter
+pipeline:
+  - stage: filter
+    rules:
+      - type: tag_match
+        tags: [ActivityManager]
+"#;
+        let reporter_def: ReporterDef = serde_yaml::from_str(reporter_yaml).unwrap();
+        let reporter_defs = vec![("test_reporter".to_string(), reporter_def)];
+
+        // A transformer with NO tag filter (no filter at all)
+        let transformer_def = TransformerDef {
+            filter: None,
+            transforms: vec![],
+            builtin: None,
+        };
+        let transformer_defs = vec![("test_transformer".to_string(), transformer_def)];
+
+        let desc = collect_prefilter_info(&reporter_defs, &[], &[]);
+        // Transformers are excluded — should not set has_tag_unfiltered
+        assert!(!desc.has_tag_unfiltered, "Transformer without tag filter must not disable tag pre-filter");
+        assert!(desc.tag_union.contains("ActivityManager"));
+
+        // Verify PreFilter::build also uses transformer_defs arg without disabling the filter
+        let prefilter = PreFilter::build(&reporter_defs, &[], &[], &transformer_defs);
+        assert!(prefilter.use_tag_prefilter, "Tag pre-filter should be active when transformer is excluded");
+    }
+
+    #[test]
+    fn tag_content_prefilter_decoupled() {
+        use crate::processors::reporter::schema::{FilterRule, FilterStage, PipelineStage, ReporterDef};
+
+        // Reporter with NO tag filter but WITH a message_contains filter
+        let reporter_yaml = r#"
+meta:
+  id: test_reporter
+  name: Test Reporter
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains
+        value: "ERROR"
+"#;
+        let reporter_def: ReporterDef = serde_yaml::from_str(reporter_yaml).unwrap();
+        let reporter_defs = vec![("test_reporter".to_string(), reporter_def)];
+
+        let desc = collect_prefilter_info(&reporter_defs, &[], &[]);
+        // No tag filter → has_tag_unfiltered = true
+        assert!(desc.has_tag_unfiltered, "Reporter with no tag filter should set has_tag_unfiltered");
+        // Has message filter → has_content_unfiltered = false
+        assert!(!desc.has_content_unfiltered, "Reporter with message_contains filter should not set has_content_unfiltered");
+        // The AC pattern should be collected
+        assert!(desc.ac_patterns.contains(&"ERROR".to_string()), "AC patterns should contain the message_contains value");
     }
 }

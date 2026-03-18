@@ -1417,6 +1417,52 @@ pipeline:
         assert_eq!(result.vars["is_unit"], JsonValue::Bool(true));
     }
 
+    // ── Gap 7: history_get returns correct fields (timestamp, pid, tid) ──────
+
+    #[test]
+    fn script_history_get_timestamp_and_pid_fields() {
+        // Verify history_get returns the full set of fields including timestamp and pid.
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+vars:
+  - name: prev_ts
+    type: int
+    default: 0
+  - name: prev_pid
+    type: int
+    default: 0
+  - name: prev_tid
+    type: int
+    default: 0
+pipeline:
+  - stage: script
+    runtime: rhai
+    src: |
+      if history_len() > 0 {
+        let prev = history_get(history_len() - 1);
+        vars.prev_ts = prev.timestamp;
+        vars.prev_pid = prev.pid;
+        vars.prev_tid = prev.tid;
+      }
+"#);
+        let mut run = ProcessorRun::new(&d);
+        // First line: timestamp=999, pid=42, tid=99
+        let mut line1 = make_line("TagA", "first", LogLevel::Info, 0);
+        line1.timestamp = 999;
+        line1.pid = 42;
+        line1.tid = 99;
+        run.process_line(&line1, &PipelineContext::test_default());
+        // Second line: triggers script — history contains [line1]
+        let line2 = make_line("TagB", "second", LogLevel::Info, 1);
+        run.process_line(&line2, &PipelineContext::test_default());
+        let result = run.finish();
+        assert_eq!(result.vars["prev_ts"], JsonValue::Number(999.into()));
+        assert_eq!(result.vars["prev_pid"], JsonValue::Number(42.into()));
+        assert_eq!(result.vars["prev_tid"], JsonValue::Number(99.into()));
+    }
+
     #[test]
     fn exception_stack_tracker_fatal_and_nonfatal() {
         let script = EXCEPTION_TRACKER_SCRIPT;
@@ -1772,5 +1818,77 @@ pipeline:
             "expected attribution, got: {nonfatal:?}");
         assert!(!nonfatal.contains_key("System.err: java.io.FileNotFoundException"),
             "should not fall back to System.err: {nonfatal:?}");
+    }
+
+    // ── Gap 2: Script error observability ────────────────────────────────────
+
+    fn def_with_broken_script() -> ReporterDef {
+        def(r#"
+meta:
+  id: broken_script
+  name: Broken Script
+pipeline:
+  - stage: script
+    runtime: rhai
+    src: |
+      let x = 1 / 0;
+"#)
+    }
+
+    fn def_with_working_script() -> ReporterDef {
+        def(r#"
+meta:
+  id: working_script
+  name: Working Script
+pipeline:
+  - stage: script
+    runtime: rhai
+    src: |
+      _emits.push(#{ count: 1 });
+"#)
+    }
+
+    #[test]
+    fn script_error_increments_counter() {
+        let d = def_with_broken_script();
+        let mut run = ProcessorRun::new(&d);
+        run.process_line(&make_line("Tag", "hello", LogLevel::Info, 1), &PipelineContext::test_default());
+        let result = run.finish();
+        assert!(result.script_errors > 0, "Expected script_errors > 0 for division by zero");
+    }
+
+    #[test]
+    fn script_error_captures_first_error() {
+        let d = def_with_broken_script();
+        let mut run = ProcessorRun::new(&d);
+        run.process_line(&make_line("Tag", "hello", LogLevel::Info, 1), &PipelineContext::test_default());
+        let result = run.finish();
+        assert!(result.first_script_error.is_some(), "Expected first_script_error to be Some");
+        let msg = result.first_script_error.unwrap();
+        assert!(!msg.is_empty(), "Expected non-empty error message");
+    }
+
+    #[test]
+    fn script_error_does_not_abort_run() {
+        let d = def_with_broken_script();
+        let mut run = ProcessorRun::new(&d);
+        let n = 5usize;
+        for i in 0..n {
+            run.process_line(&make_line("Tag", "hello", LogLevel::Info, i), &PipelineContext::test_default());
+        }
+        let result = run.finish();
+        // Every matched line should have errored
+        assert_eq!(result.script_errors, n as u32,
+            "Expected one error per matched line, got {}", result.script_errors);
+    }
+
+    #[test]
+    fn script_error_zero_when_script_succeeds() {
+        let d = def_with_working_script();
+        let mut run = ProcessorRun::new(&d);
+        run.process_line(&make_line("Tag", "hello", LogLevel::Info, 1), &PipelineContext::test_default());
+        let result = run.finish();
+        assert_eq!(result.script_errors, 0, "Expected no script errors for working script");
+        assert!(result.first_script_error.is_none(), "Expected first_script_error to be None");
     }
 }

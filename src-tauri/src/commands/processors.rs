@@ -15,13 +15,9 @@ pub(crate) fn persist_processor(app: &AppHandle, id: &str, yaml: &str) -> Result
         .map_err(|e| format!("Failed to persist processor: {e}"))
 }
 
-/// Validate, persist, and install a parsed processor into the store.
-fn validate_and_install(
-    app: &AppHandle,
-    state: &AppState,
-    yaml: &str,
-    processor: AnyProcessor,
-) -> Result<ProcessorSummary, String> {
+/// Pure validation checks for an `AnyProcessor` — no I/O, no AppHandle needed.
+/// Returns `Ok(())` if all checks pass, or an error string describing the problem.
+pub(crate) fn validate_processor(processor: &AnyProcessor) -> Result<(), String> {
     use crate::processors::ProcessorKind;
 
     // Reject processor kinds with no engine implementation.
@@ -83,6 +79,17 @@ fn validate_and_install(
             }
         }
     }
+    Ok(())
+}
+
+/// Validate, persist, and install a parsed processor into the store.
+fn validate_and_install(
+    app: &AppHandle,
+    state: &AppState,
+    yaml: &str,
+    processor: AnyProcessor,
+) -> Result<ProcessorSummary, String> {
+    validate_processor(&processor)?;
     persist_processor(app, &processor.meta.id, yaml)?;
     let summary = ProcessorSummary::from(&processor);
     let mut procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
@@ -221,3 +228,164 @@ pub async fn uninstall_processor(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Gap 4: Install validation tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::validate_processor;
+    use crate::processors::{AnyProcessor, ProcessorKind, ProcessorMeta};
+    use crate::processors::annotator::schema::AnnotatorDef;
+    use crate::processors::transformer::schema::{TransformerDef, TransformOp};
+    use crate::processors::reporter::schema::{
+        ReporterDef, AggType, AggregateGroup, AggregateStage, PipelineStage,
+    };
+
+    fn make_meta(id: &str) -> ProcessorMeta {
+        ProcessorMeta {
+            id: id.to_string(),
+            name: "Test".to_string(),
+            version: "1.0.0".to_string(),
+            author: String::new(),
+            description: String::new(),
+            tags: vec![],
+            builtin: false,
+            license: None,
+            category: None,
+            repository: None,
+            deprecated: false,
+        }
+    }
+
+    fn make_reporter_with_agg(agg_type: AggType) -> AnyProcessor {
+        let def: ReporterDef = serde_yaml::from_str(&format!(r#"
+meta:
+  id: test_reporter
+  name: Test
+pipeline:
+  - stage: aggregate
+    groups:
+      - type: {agg_type}
+"#, agg_type = match agg_type {
+    AggType::Count => "count",
+    AggType::CountBy => "count_by",
+    AggType::Min => "min",
+    AggType::Max => "max",
+    AggType::Avg => "avg",
+    AggType::Percentile => "percentile",
+    AggType::TimeBucket => "time_bucket",
+    AggType::BurstDetector => "burst_detector",
+})).unwrap();
+        AnyProcessor {
+            meta: make_meta("test_reporter"),
+            kind: ProcessorKind::Reporter(def),
+            schema: None,
+            source: None,
+        }
+    }
+
+    // ── 4a. Rejects annotator ─────────────────────────────────────────────────
+
+    #[test]
+    fn rejects_annotator_processor() {
+        let proc = AnyProcessor {
+            meta: make_meta("test_annotator"),
+            kind: ProcessorKind::Annotator(AnnotatorDef { phases: vec![] }),
+            schema: None,
+            source: None,
+        };
+        let result = validate_processor(&proc);
+        assert!(result.is_err(), "Expected annotator to be rejected");
+        let msg = result.unwrap_err();
+        assert!(msg.contains("not yet supported"), "Error should mention 'not yet supported', got: {msg}");
+    }
+
+    // ── 4b. Rejects AddField with non-empty script ────────────────────────────
+
+    #[test]
+    fn rejects_addfield_with_script() {
+        let def = TransformerDef {
+            filter: None,
+            transforms: vec![TransformOp::AddField {
+                name: "foo".to_string(),
+                script: "some_script".to_string(),
+            }],
+            builtin: None,
+        };
+        let proc = AnyProcessor {
+            meta: make_meta("__test_transformer"),
+            kind: ProcessorKind::Transformer(def),
+            schema: None,
+            source: None,
+        };
+        let result = validate_processor(&proc);
+        assert!(result.is_err(), "Expected AddField with script to be rejected");
+    }
+
+    // ── 4c. Accepts AddField with empty script ────────────────────────────────
+
+    #[test]
+    fn accepts_addfield_without_script() {
+        let def = TransformerDef {
+            filter: None,
+            transforms: vec![TransformOp::AddField {
+                name: "foo".to_string(),
+                script: String::new(),
+            }],
+            builtin: None,
+        };
+        let proc = AnyProcessor {
+            meta: make_meta("__test_transformer"),
+            kind: ProcessorKind::Transformer(def),
+            schema: None,
+            source: None,
+        };
+        // The AddField check should pass (other checks may still apply but at
+        // minimum the AddField-specific rejection must not trigger)
+        let result = validate_processor(&proc);
+        assert!(
+            result.is_ok() || !result.as_ref().unwrap_err().contains("AddField"),
+            "AddField with empty script should not be rejected for AddField reason, got: {:?}",
+            result
+        );
+    }
+
+    // ── 4d. Rejects aggregate min ─────────────────────────────────────────────
+
+    #[test]
+    fn rejects_unimplemented_aggregate_min() {
+        let proc = make_reporter_with_agg(AggType::Min);
+        let result = validate_processor(&proc);
+        assert!(result.is_err(), "Expected 'min' aggregate to be rejected");
+        assert!(result.unwrap_err().contains("min"), "Error should mention 'min'");
+    }
+
+    // ── 4e. Rejects aggregate avg ─────────────────────────────────────────────
+
+    #[test]
+    fn rejects_unimplemented_aggregate_avg() {
+        let proc = make_reporter_with_agg(AggType::Avg);
+        let result = validate_processor(&proc);
+        assert!(result.is_err(), "Expected 'avg' aggregate to be rejected");
+        assert!(result.unwrap_err().contains("avg"), "Error should mention 'avg'");
+    }
+
+    // ── 4f. Accepts aggregate count ──────────────────────────────────────────
+
+    #[test]
+    fn accepts_implemented_aggregate_count() {
+        let proc = make_reporter_with_agg(AggType::Count);
+        let result = validate_processor(&proc);
+        assert!(result.is_ok(), "Expected 'count' aggregate to be accepted, got: {:?}", result);
+    }
+
+    // ── 4g. Accepts aggregate count_by ───────────────────────────────────────
+
+    #[test]
+    fn accepts_implemented_aggregate_count_by() {
+        let proc = make_reporter_with_agg(AggType::CountBy);
+        let result = validate_processor(&proc);
+        assert!(result.is_ok(), "Expected 'count_by' aggregate to be accepted, got: {:?}", result);
+    }
+}
