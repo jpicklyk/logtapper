@@ -109,12 +109,12 @@ pub fn rule_matches(
             let min = parse_level(level).unwrap_or(LogLevel::Verbose);
             if line.level >= min { FilterMatch::matched() } else { FilterMatch::no_match() }
         }
-        FilterRule::TimeRange { from, to } => {
+        FilterRule::TimeRange { from, to, from_ns, to_ns } => {
             let nanos_per_day = 86_400_000_000_000i64;
             let time_of_day = line.timestamp.rem_euclid(nanos_per_day);
-            let from_ns = parse_time_hms(from);
-            let to_ns = parse_time_hms(to);
-            if time_of_day >= from_ns && time_of_day <= to_ns {
+            let from_val = from_ns.unwrap_or_else(|| parse_time_hms(from));
+            let to_val = to_ns.unwrap_or_else(|| parse_time_hms(to));
+            if time_of_day >= from_val && time_of_day <= to_val {
                 FilterMatch::matched()
             } else {
                 FilterMatch::no_match()

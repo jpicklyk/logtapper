@@ -36,11 +36,13 @@ impl ReporterDef {
 
     /// Populate the pre-built `HashSet` in every `TagMatch` filter rule
     /// for deduplication. At runtime, tags are prefix-matched via iteration.
+    /// Also pre-computes `from_ns`/`to_ns` for `TimeRange` rules.
     pub fn prepare_tag_sets(&mut self) {
         for stage in &mut self.pipeline {
             if let PipelineStage::Filter(fs) = stage {
                 for rule in &mut fs.rules {
                     rule.prepare_tag_set();
+                    rule.prepare_time_range();
                 }
             }
         }
@@ -231,7 +233,16 @@ pub enum FilterRule {
     MessageContainsAny { values: Vec<String> },
     MessageRegex { pattern: String },
     LevelMin { level: String },
-    TimeRange { from: String, to: String },
+    TimeRange {
+        from: String,
+        to: String,
+        /// Pre-computed nanoseconds since midnight for `from`. Populated by `prepare_time_range`.
+        #[serde(skip)]
+        from_ns: Option<i64>,
+        /// Pre-computed nanoseconds since midnight for `to`. Populated by `prepare_time_range`.
+        #[serde(skip)]
+        to_ns: Option<i64>,
+    },
     SourceTypeIs { source_type: String },
     SectionIs { section: String },
 }
@@ -482,6 +493,20 @@ impl FilterRule {
                 v.sort();
                 v.dedup();
                 *tag_set = v;
+            }
+        }
+    }
+
+    /// Pre-compute `from_ns` / `to_ns` for `TimeRange` rules so `parse_time_hms`
+    /// is not called on every line in the hot loop.
+    /// Call this once after deserialization, before processing lines.
+    pub fn prepare_time_range(&mut self) {
+        if let FilterRule::TimeRange { from, to, from_ns, to_ns } = self {
+            if from_ns.is_none() {
+                *from_ns = Some(crate::processors::filter::parse_time_hms(from));
+            }
+            if to_ns.is_none() {
+                *to_ns = Some(crate::processors::filter::parse_time_hms(to));
             }
         }
     }

@@ -82,6 +82,7 @@ impl<'a> ProcessorRun<'a> {
                     rules.sort_by_key(super::schema::FilterRule::cost_rank);
                     for rule in &mut rules {
                         rule.prepare_tag_set();
+                        rule.prepare_time_range();
                     }
                     Some(rules)
                 }
