@@ -1,7 +1,7 @@
 type: state_tracker
 id: cellular-registration-state
 name: Cellular Registration State
-version: 1.0.0
+version: 1.1.0
 author: LogTapper
 description: >
   Tracks cellular voice and data registration state, radio access technology (RAT),
@@ -29,6 +29,15 @@ state:
   - name: slot
     type: string
     default: "0"
+  - name: reject_code
+    type: string
+    default: ""
+  - name: combined_reg_state
+    type: string
+    default: ""
+  - name: nr_state
+    type: string
+    default: ""
 
 transitions:
   # ── Full service state line — captures all fields at once ──
@@ -108,6 +117,61 @@ transitions:
       slot: $1
       data_reg_state: OUT_OF_SERVICE
 
+  # ── RADIO LOG: SST (ServiceStateTracker) ─────────────────────────────
+  # Modem-level registration details complementing PhoneStateTracker.
+  # Only fires on bugreport/dumpstate files (section filter).
+
+  - name: SST Reject Cause
+    filter:
+      section: "RADIO LOG"
+      tag: SST
+      message_regex: 'getStringForRejectCause.*isRadioOn:\s*(true|false).*mSS\.getState:\s*(\d+).*RejectCode:\s*(\d+).*plmn:\s*(.*)'
+    set:
+      reject_code: $3
+      operator: $4
+
+  - name: SST Combined Reg State
+    filter:
+      section: "RADIO LOG"
+      tag: SST
+      message_regex: 'updateOperatorName.*combinedRegState:\s*(\d+)'
+    set:
+      combined_reg_state: $1
+
+  # ── RADIO LOG: DefaultPhoneNotifier ──────────────────────────────────
+  # Same ServiceState format as PhoneStateTracker but from radio process.
+
+  - name: Radio Notifier State (Full)
+    filter:
+      section: "RADIO LOG"
+      tag: DefaultPhoneNotifier
+      message_regex: 'notifyServiceStateForSubId:.*mVoiceRegState=\d+\(([^)]+)\).*mDataRegState=\d+\(([^)]+)\).*getRilDataRadioTechnology=\d+\(([^)]+)\).*mOperatorAlphaLong=([^,}\s][^,}]*)'
+    set:
+      voice_reg_state: $1
+      data_reg_state: $2
+      rat: $3
+      operator: $4
+
+  - name: Radio Notifier State (Voice + Data)
+    filter:
+      section: "RADIO LOG"
+      tag: DefaultPhoneNotifier
+      message_regex: 'notifyServiceStateForSubId:.*mVoiceRegState=\d+\(([^)]+)\).*mDataRegState=\d+\(([^)]+)\)'
+    set:
+      voice_reg_state: $1
+      data_reg_state: $2
+
+  # ── RADIO LOG: NetworkTypeController ─────────────────────────────────
+  # NR (5G) state machine transitions.
+
+  - name: NR State Change
+    filter:
+      section: "RADIO LOG"
+      tag: NetworkTypeController
+      message_regex: 'updateNrAdvancedState:\s*(\w+)\s*->\s*(\w+)'
+    set:
+      nr_state: $2
+
 output:
   timeline: true
   annotate: true
@@ -117,6 +181,6 @@ schema:
   emissions: []
   mcp:
     summary:
-      template: "Cellular: voice={{voice_reg_state}}, data={{data_reg_state}}, RAT={{rat}}, operator={{operator}}."
-      include_vars: [voice_reg_state, data_reg_state, rat, operator, slot]
+      template: "Cellular: voice={{voice_reg_state}}, data={{data_reg_state}}, RAT={{rat}}, operator={{operator}}, NR={{nr_state}}, reject={{reject_code}}."
+      include_vars: [voice_reg_state, data_reg_state, rat, operator, slot, nr_state, reject_code, combined_reg_state]
     signals: []

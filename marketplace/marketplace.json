@@ -286,8 +286,8 @@
     {
       "id": "cellular-registration-state",
       "name": "Cellular Registration State",
-      "version": "1.0.0",
-      "description": "Tracks cellular voice and data registration state, RAT (NR_SA, LTE, etc.), and operator name. Reconstructs the cellular registration timeline automatically from PhoneStateTracker and VolteServiceModule logs.",
+      "version": "1.1.0",
+      "description": "Tracks cellular voice and data registration state, RAT (NR_SA, LTE, etc.), and operator name. Reconstructs the cellular registration timeline from PhoneStateTracker, VolteServiceModule, SST, and DefaultPhoneNotifier logs. Captures reject causes and NR state from the RADIO LOG.",
       "path": "processors/cellular_registration_state.yaml",
       "tags": ["telephony", "cellular", "registration", "rat", "android"],
       "sha256": "",
