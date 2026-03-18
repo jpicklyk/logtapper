@@ -343,6 +343,15 @@
   margin-top: 2px;
 }
 
+.searchBar {
+  padding: 4px 6px;
+  flex-shrink: 0;
+}
+
+.searchInput {
+  width: 100%;
+}
+
 .sectionList {
   flex: 1;
   min-height: 0;

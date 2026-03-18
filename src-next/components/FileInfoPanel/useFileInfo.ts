@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSessionForPane, useScrollTarget, useViewerActions, useIndexingProgress } from '../../context';
 import type { IndexingProgress } from '../../context';
 import { getDumpstateMetadata, getSections, getSessionMetadata } from '../../bridge/commands';
@@ -205,9 +205,18 @@ export function useFileInfo(paneId: string | null): FileInfoData {
   }, [effectiveScrollToLine]);
 
   const trackingLine = selectedLine ?? effectiveScrollToLine;
-  const activeSectionIndex = sections.findIndex(
-    (s) => trackingLine != null && trackingLine >= s.startLine && trackingLine <= s.endLine,
-  );
+
+  // Reverse iteration prefers the most specific (child) section when ranges overlap.
+  // Children come after parents in the array and have narrower ranges, so the last
+  // match is always the most specific.
+  const activeSectionIndex = useMemo(() => {
+    if (trackingLine == null) return -1;
+    for (let i = sections.length - 1; i >= 0; i--) {
+      const s = sections[i];
+      if (trackingLine >= s.startLine && trackingLine <= s.endLine) return i;
+    }
+    return -1;
+  }, [sections, trackingLine]);
 
   const onJumpToLine = useCallback(
     (line: number) => {

@@ -1,11 +1,12 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import {
-  FileText, Smartphone, Clock, HardDrive, Layers, Hash, ChevronRight,
+  FileText, Smartphone, Clock, HardDrive, Layers, Hash, ChevronRight, Search,
 } from 'lucide-react';
 import type { DumpstateMetadata, SourceType } from '../../bridge/types';
 import { isBugreportLike } from '../../bridge/types';
 import type { IndexingProgress } from '../../context';
+import { Input } from '../../ui';
 import styles from './FileInfoPanel.module.css';
 import { getSectionDescription } from './sectionDescriptions';
 
@@ -13,6 +14,7 @@ export interface SectionEntry {
   name: string;
   startLine: number;
   endLine: number;
+  parentIndex?: number;
 }
 
 interface FileInfoPanelProps {
@@ -213,6 +215,31 @@ const SectionItem = memo<SectionItemProps>(function SectionItem({
   );
 });
 
+// ── Section filter ────────────────────────────────────────────────────────────
+
+function filterSections(sections: SectionEntry[], query: string): SectionEntry[] {
+  if (!query) return sections;
+  const q = query.toLowerCase();
+  const matchIndices = new Set<number>();
+
+  // Direct name matches — include parent of any matching child
+  sections.forEach((s, i) => {
+    if (s.name.toLowerCase().includes(q)) {
+      matchIndices.add(i);
+      if (s.parentIndex !== undefined) matchIndices.add(s.parentIndex);
+    }
+  });
+
+  // Include children of matching parents
+  sections.forEach((s, i) => {
+    if (s.parentIndex !== undefined && matchIndices.has(s.parentIndex)) {
+      matchIndices.add(i);
+    }
+  });
+
+  return sections.filter((_, i) => matchIndices.has(i));
+}
+
 // ── Section grouping ─────────────────────────────────────────────────────────
 
 /** A single section or a collapsed group of sections sharing a prefix. */
@@ -280,10 +307,8 @@ const EXPAND_PAGE_SIZE = 50;
 interface SectionGroupProps {
   prefix: string;
   sections: SectionEntry[];
-  firstIndex: number;
-  lastIndex: number;
   totalLines: number;
-  activeSectionIndex: number;
+  activeStartLine: number;
   jumpSeq: number;
   onJump: ((line: number) => void) | undefined;
 }
@@ -291,18 +316,16 @@ interface SectionGroupProps {
 const SectionGroup = memo<SectionGroupProps>(function SectionGroup({
   prefix,
   sections,
-  firstIndex,
-  lastIndex,
   totalLines,
-  activeSectionIndex,
+  activeStartLine,
   jumpSeq,
   onJump,
 }) {
   const [expanded, setExpanded] = useState(false);
   const [visibleCount, setVisibleCount] = useState(EXPAND_PAGE_SIZE);
 
-  // O(1) range check instead of O(n) array.includes
-  const hasActive = activeSectionIndex >= firstIndex && activeSectionIndex <= lastIndex;
+  // Check if any section in this group is the active one
+  const hasActive = sections.some((s) => s.startLine === activeStartLine);
 
   // Auto-expand when the active section is inside this group
   useEffect(() => {
@@ -341,11 +364,11 @@ const SectionGroup = memo<SectionGroupProps>(function SectionGroup({
       </button>
       {expanded && (
         <div className={styles.sectionGroupItems}>
-          {visibleSections.map((s, j) => (
+          {visibleSections.map((s) => (
             <SectionItem
               key={s.startLine}
               section={s}
-              isActive={(firstIndex + j) === activeSectionIndex}
+              isActive={s.startLine === activeStartLine}
               jumpSeq={jumpSeq}
               startLine={s.startLine}
               onJump={onJump}
@@ -387,7 +410,38 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
     const duration = formatDuration(firstTimestamp, lastTimestamp);
     const meta = dumpstateMetadata;
     const typeColor = sourceTypeColor(sourceType as SourceType | undefined);
-    const groupedSections = useMemo(() => groupSections(sections), [sections]);
+
+    // ── Search state (local per principle #5) ──────────────────────────────
+    const [searchQuery, setSearchQuery] = useState('');
+    const [debouncedQuery, setDebouncedQuery] = useState('');
+
+    useEffect(() => {
+      if (!searchQuery) {
+        setDebouncedQuery('');
+        return;
+      }
+      const timer = setTimeout(() => setDebouncedQuery(searchQuery), 150);
+      return () => clearTimeout(timer);
+    }, [searchQuery]);
+
+    const handleSearchChange = useCallback(
+      (e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value),
+      [],
+    );
+
+    // ── Filtered and grouped sections ─────────────────────────────────────
+    const filteredSections = useMemo(
+      () => filterSections(sections, debouncedQuery),
+      [sections, debouncedQuery],
+    );
+    const groupedSections = useMemo(() => groupSections(filteredSections), [filteredSections]);
+
+    // ── Active section tracking (by startLine, works across filter) ────────
+    // Convert the index (into the unfiltered array) to a startLine so active
+    // highlighting works correctly even when the section list is filtered.
+    const activeStartLine = activeSectionIndex >= 0 && activeSectionIndex < sections.length
+      ? sections[activeSectionIndex].startLine
+      : -1;
 
     return (
       <div className={styles.panel}>
@@ -497,7 +551,20 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
               <div className={styles.groupHeader}>
                 <Layers size={11} />
                 <span>Sections</span>
-                <span className={styles.groupCount}>{sections.length}</span>
+                <span className={styles.groupCount}>
+                  {debouncedQuery
+                    ? `${filteredSections.length}/${sections.length}`
+                    : sections.length}
+                </span>
+              </div>
+              <div className={styles.searchBar}>
+                <Input
+                  prefixIcon={Search as React.ComponentType<{ size?: number }>}
+                  placeholder="Filter sections\u2026"
+                  value={searchQuery}
+                  onChange={handleSearchChange}
+                  className={styles.searchInput}
+                />
               </div>
               <div className={styles.sectionList}>
                 {groupedSections.map((row) =>
@@ -505,7 +572,7 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
                     <SectionItem
                       key={row.section.startLine}
                       section={row.section}
-                      isActive={row.index === activeSectionIndex}
+                      isActive={row.section.startLine === activeStartLine}
                       jumpSeq={sectionJumpSeq}
                       startLine={row.section.startLine}
                       onJump={onJumpToLine}
@@ -515,10 +582,8 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
                       key={`group-${row.sections[0].startLine}`}
                       prefix={row.prefix}
                       sections={row.sections}
-                      firstIndex={row.firstIndex}
-                      lastIndex={row.lastIndex}
                       totalLines={row.totalLines}
-                      activeSectionIndex={activeSectionIndex}
+                      activeStartLine={activeStartLine}
                       jumpSeq={sectionJumpSeq}
                       onJump={onJumpToLine}
                     />

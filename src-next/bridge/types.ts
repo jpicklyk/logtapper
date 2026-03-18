@@ -521,6 +521,7 @@ export interface SectionInfo {
   name: string;
   startLine: number;
   endLine: number;
+  parentIndex?: number;
 }
 
 export interface FilterInfo {
