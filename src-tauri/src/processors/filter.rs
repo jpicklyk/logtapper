@@ -427,7 +427,7 @@ mod tests {
         let rule = FilterRule::SectionIs { section: "SYSTEM LOG".into() };
         let line = make_line_with_line_num("Tag", "msg", LogLevel::Info, 200);
         let sections: std::sync::Arc<[SectionInfo]> = std::sync::Arc::from(vec![
-            SectionInfo { name: "SYSTEM LOG".to_string(), start_line: 100, end_line: 500 },
+            SectionInfo { name: "SYSTEM LOG".to_string(), start_line: 100, end_line: 500, parent_index: None },
         ].as_slice());
         let ctx = PipelineContext {
             source_type: SourceType::Bugreport,

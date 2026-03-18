@@ -124,6 +124,9 @@ pub struct SectionInfo {
     pub start_line: usize,
     /// 0-based index of the duration footer, or the last indexed line if no footer found.
     pub end_line: usize,
+    /// Index into the sections vec of the parent section (None for top-level sections).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_index: Option<usize>,
 }
 
 // ---------------------------------------------------------------------------
@@ -220,7 +223,7 @@ impl AnalysisSession {
         let source_type = detect_source_type(&mmap);
 
         let (line_index, line_meta) = build_line_index(&mmap, &source_type, &mut self.tag_interner);
-        let sections = build_section_index(&line_meta, &source_type, &self.tag_interner);
+        let sections = build_section_index(&line_meta, &source_type, &self.tag_interner, mmap.as_ref(), &line_index);
 
         let name = path
             .file_name()
@@ -276,7 +279,7 @@ impl AnalysisSession {
         let parser = parser_for(&source_type);
         let (line_index, line_meta, bytes_consumed) =
             build_partial_line_index(mmap.as_ref(), parser.as_ref(), &mut self.tag_interner, max_bytes);
-        let sections = build_section_index(&line_meta, &source_type, &self.tag_interner);
+        let sections = build_section_index(&line_meta, &source_type, &self.tag_interner, mmap.as_ref(), &line_index);
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
@@ -315,13 +318,20 @@ impl AnalysisSession {
             file_src.extend_index(new_offsets, new_line_meta, sentinel, done);
         }
         if done {
-            // Rebuild sections from the completed index. We access the file source
-            // fields via raw pointer arithmetic to avoid overlapping borrows with
-            // tag_interner. Instead, clone what we need.
+            // Rebuild sections from the completed index. Clone the mmap Arc and
+            // needed metadata to avoid overlapping borrows with tag_interner.
             if let Some(file_src) = self.file_source() {
                 let source_type = file_src.source_type.clone();
-                let line_meta_ref = &file_src.line_meta;
-                let sections = build_section_index(line_meta_ref, &source_type, &self.tag_interner);
+                let line_meta_snapshot: Vec<LineMeta> = file_src.line_meta.clone();
+                let mmap_clone = Arc::clone(&file_src.mmap);
+                let line_index_snapshot: Vec<u64> = file_src.line_index.clone();
+                let sections = build_section_index(
+                    &line_meta_snapshot,
+                    &source_type,
+                    &self.tag_interner,
+                    mmap_clone.as_ref(),
+                    &line_index_snapshot,
+                );
                 // Re-borrow mutably to set sections
                 if let Some(file_src) = self.file_source_mut() {
                     file_src.set_sections(sections);
@@ -599,7 +609,15 @@ pub(crate) fn build_partial_line_index(
 }
 
 /// Scan `line_meta` to extract named section boundaries for Bugreport files.
-pub(crate) fn build_section_index(line_meta: &[LineMeta], source_type: &SourceType, interner: &TagInterner) -> Vec<SectionInfo> {
+/// `raw_data` and `line_index` are used to detect DUMPSYS subsections (DUMP OF SERVICE lines).
+/// Pass empty slices when the raw data is not available (e.g. stream sources or tests for non-DUMPSYS content).
+pub(crate) fn build_section_index(
+    line_meta: &[LineMeta],
+    source_type: &SourceType,
+    interner: &TagInterner,
+    raw_data: &[u8],
+    line_index: &[u64],
+) -> Vec<SectionInfo> {
     if !matches!(source_type, SourceType::Bugreport | SourceType::Dumpstate) {
         return Vec::new();
     }
@@ -621,12 +639,106 @@ pub(crate) fn build_section_index(line_meta: &[LineMeta], source_type: &SourceTy
                     name,
                     start_line: start,
                     end_line: i,
+                    parent_index: None,
                 });
             }
         }
     }
 
-    sections
+    // Phase 2: Detect DUMPSYS subsections (DUMP OF SERVICE lines) when raw data is available.
+    if raw_data.is_empty() || line_index.is_empty() {
+        return sections;
+    }
+
+    let mut all_subsections: Vec<(usize, Vec<SectionInfo>)> = Vec::new();
+
+    for (parent_pos, section) in sections.iter().enumerate() {
+        if !section.name.starts_with("DUMPSYS") {
+            continue;
+        }
+
+        let mut children: Vec<SectionInfo> = Vec::new();
+
+        for line_num in (section.start_line + 1)..=section.end_line {
+            let raw = extract_raw_line(raw_data, line_index, line_num);
+            if let Some(after) = raw.strip_prefix("DUMP OF SERVICE ") {
+                let service_name = after.trim_end_matches(':').trim();
+                // Strip priority prefix: "CRITICAL activity" -> "activity", "HIGH meminfo" -> "meminfo"
+                let clean_name = if let Some(rest) = service_name.strip_prefix("CRITICAL ") {
+                    rest
+                } else if let Some(rest) = service_name.strip_prefix("HIGH ") {
+                    rest
+                } else {
+                    service_name
+                };
+
+                // Close previous child's end_line
+                if let Some(prev) = children.last_mut() {
+                    prev.end_line = line_num - 1;
+                }
+
+                children.push(SectionInfo {
+                    name: clean_name.to_string(),
+                    start_line: line_num,
+                    end_line: section.end_line, // tentative; closed by next child or stays as parent end
+                    parent_index: Some(0), // placeholder; corrected in rebuild phase
+                });
+            }
+        }
+
+        if !children.is_empty() {
+            all_subsections.push((parent_pos, children));
+        }
+    }
+
+    // Phase 3: Rebuild flat vec with children interleaved after their parents.
+    if all_subsections.is_empty() {
+        return sections;
+    }
+
+    let mut result: Vec<SectionInfo> = Vec::new();
+    let mut subsection_map: HashMap<usize, Vec<SectionInfo>> = all_subsections.into_iter().collect();
+
+    for (orig_pos, mut section) in sections.into_iter().enumerate() {
+        section.parent_index = None; // ensure top-level
+        let parent_idx = result.len();
+        result.push(section);
+
+        if let Some(mut children) = subsection_map.remove(&orig_pos) {
+            for child in &mut children {
+                child.parent_index = Some(parent_idx);
+            }
+            result.extend(children);
+        }
+    }
+
+    result
+}
+
+/// Extract a raw line from mmap bytes using the line_index.
+fn extract_raw_line<'a>(raw_data: &'a [u8], line_index: &[u64], line_num: usize) -> &'a str {
+    if line_num >= line_index.len() {
+        return "";
+    }
+    let start = line_index[line_num] as usize;
+    let end = if line_num + 1 < line_index.len() {
+        line_index[line_num + 1] as usize
+    } else {
+        raw_data.len()
+    };
+    if start > raw_data.len() || end > raw_data.len() || start > end {
+        return "";
+    }
+    let bytes = &raw_data[start..end];
+    // Trim trailing newline
+    let trimmed = if bytes.ends_with(b"\r\n") {
+        &bytes[..bytes.len() - 2]
+    } else if bytes.ends_with(b"\n") {
+        &bytes[..bytes.len() - 1]
+    } else {
+        bytes
+    };
+    std::str::from_utf8(trimmed).unwrap_or("")
 }
 
 pub(crate) fn parser_for(source_type: &SourceType) -> Box<dyn LogParser> {
@@ -703,7 +815,7 @@ mod tests {
 
         let mut interner = TagInterner::new();
         let (line_index, line_meta) = build_line_index(&mmap, &SourceType::Logcat, &mut interner);
-        let sections = build_section_index(&line_meta, &SourceType::Logcat, &interner);
+        let sections = build_section_index(&line_meta, &SourceType::Logcat, &interner, &[], &[]);
 
         let src = FileLogSource {
             source_id: "file-src".into(),
@@ -1747,5 +1859,209 @@ mod tests {
         }
         // After drop, the spill file should be deleted
         assert!(!spill_path.exists(), "spill file should be cleaned up on drop");
+    }
+
+    // =========================================================================
+    // build_section_index — DUMPSYS subsection tests
+    // =========================================================================
+
+    /// Build a fake bugreport-style raw byte buffer and corresponding line_index and
+    /// line_meta for use in DUMPSYS subsection tests.
+    ///
+    /// Layout:
+    ///   line 0: ------ SYSTEM LOG (/path) ------      (section start, level=Info, is_boundary)
+    ///   line 1: some log line                          (content)
+    ///   line 2: ------ 0.001s was the duration of 'SYSTEM LOG' ------  (section end, level=Verbose)
+    ///   line 3: ------ DUMPSYS (/path) ------          (section start, level=Info, is_boundary)
+    ///   line 4: content line                           (content)
+    ///   line 5: DUMP OF SERVICE wifi:                  (subsection header)
+    ///   line 6: wifi content                           (content)
+    ///   line 7: DUMP OF SERVICE CRITICAL activity:     (subsection header with priority prefix)
+    ///   line 8: activity content                       (content)
+    ///   line 9: DUMP OF SERVICE HIGH meminfo:          (subsection header with HIGH prefix)
+    ///   line 10: meminfo content                       (content)
+    ///   line 11: ------ 0.002s was the duration of 'DUMPSYS' ------   (section end, level=Verbose)
+    fn make_dumpsys_data() -> (Vec<u8>, Vec<u64>, Vec<LineMeta>, TagInterner) {
+        let lines: &[&str] = &[
+            "------ SYSTEM LOG (/proc/sys) ------",         // 0
+            "some log line",                                  // 1
+            "------ 0.001s was the duration of 'SYSTEM LOG' ------", // 2
+            "------ DUMPSYS (/path) ------",                  // 3
+            "content line",                                   // 4
+            "DUMP OF SERVICE wifi:",                          // 5
+            "wifi content",                                   // 6
+            "DUMP OF SERVICE CRITICAL activity:",             // 7
+            "activity content",                               // 8
+            "DUMP OF SERVICE HIGH meminfo:",                  // 9
+            "meminfo content",                                // 10
+            "------ 0.002s was the duration of 'DUMPSYS' ------", // 11
+        ];
+
+        let mut data: Vec<u8> = Vec::new();
+        let mut line_index: Vec<u64> = Vec::new();
+
+        for line in lines {
+            line_index.push(data.len() as u64);
+            data.extend_from_slice(line.as_bytes());
+            data.push(b'\n');
+        }
+        // Sentinel
+        line_index.push(data.len() as u64);
+
+        let mut interner = TagInterner::new();
+        let system_log_id = interner.intern("SYSTEM LOG");
+        let dumpsys_id = interner.intern("DUMPSYS");
+
+        // Build LineMeta matching the lines above
+        let meta = vec![
+            // line 0: section start for SYSTEM LOG
+            LineMeta { level: LogLevel::Info, tag_id: system_log_id, timestamp: 0, byte_offset: 0, byte_len: 0, is_section_boundary: true },
+            // line 1: content
+            LineMeta { level: LogLevel::Info, tag_id: 0, timestamp: 0, byte_offset: 0, byte_len: 0, is_section_boundary: false },
+            // line 2: section end for SYSTEM LOG
+            LineMeta { level: LogLevel::Verbose, tag_id: system_log_id, timestamp: 0, byte_offset: 0, byte_len: 0, is_section_boundary: true },
+            // line 3: section start for DUMPSYS
+            LineMeta { level: LogLevel::Info, tag_id: dumpsys_id, timestamp: 0, byte_offset: 0, byte_len: 0, is_section_boundary: true },
+            // line 4: content
+            LineMeta { level: LogLevel::Info, tag_id: 0, timestamp: 0, byte_offset: 0, byte_len: 0, is_section_boundary: false },
+            // line 5: DUMP OF SERVICE wifi: (content — parser doesn't mark these as boundaries)
+            LineMeta { level: LogLevel::Info, tag_id: 0, timestamp: 0, byte_offset: 0, byte_len: 0, is_section_boundary: false },
+            // line 6: wifi content
+            LineMeta { level: LogLevel::Info, tag_id: 0, timestamp: 0, byte_offset: 0, byte_len: 0, is_section_boundary: false },
+            // line 7: DUMP OF SERVICE CRITICAL activity:
+            LineMeta { level: LogLevel::Info, tag_id: 0, timestamp: 0, byte_offset: 0, byte_len: 0, is_section_boundary: false },
+            // line 8: activity content
+            LineMeta { level: LogLevel::Info, tag_id: 0, timestamp: 0, byte_offset: 0, byte_len: 0, is_section_boundary: false },
+            // line 9: DUMP OF SERVICE HIGH meminfo:
+            LineMeta { level: LogLevel::Info, tag_id: 0, timestamp: 0, byte_offset: 0, byte_len: 0, is_section_boundary: false },
+            // line 10: meminfo content
+            LineMeta { level: LogLevel::Info, tag_id: 0, timestamp: 0, byte_offset: 0, byte_len: 0, is_section_boundary: false },
+            // line 11: section end for DUMPSYS
+            LineMeta { level: LogLevel::Verbose, tag_id: dumpsys_id, timestamp: 0, byte_offset: 0, byte_len: 0, is_section_boundary: true },
+        ];
+
+        (data, line_index, meta, interner)
+    }
+
+    #[test]
+    fn build_section_index_detects_dumpsys_subsections() {
+        let (data, line_index, meta, interner) = make_dumpsys_data();
+        let sections = build_section_index(
+            &meta,
+            &SourceType::Bugreport,
+            &interner,
+            &data,
+            &line_index,
+        );
+
+        // Expected flat order:
+        //   [0] SYSTEM LOG (top-level, parent_index=None)
+        //   [1] DUMPSYS (top-level, parent_index=None)
+        //   [2] wifi (child of DUMPSYS at index 1, parent_index=Some(1))
+        //   [3] activity (child of DUMPSYS at index 1, parent_index=Some(1))
+        //   [4] meminfo (child of DUMPSYS at index 1, parent_index=Some(1))
+
+        assert_eq!(sections.len(), 5, "expected 2 top-level + 3 children");
+
+        // Top-level SYSTEM LOG
+        assert_eq!(sections[0].name, "SYSTEM LOG");
+        assert_eq!(sections[0].start_line, 0);
+        assert_eq!(sections[0].end_line, 2);
+        assert!(sections[0].parent_index.is_none(), "SYSTEM LOG should be top-level");
+
+        // Top-level DUMPSYS
+        assert_eq!(sections[1].name, "DUMPSYS");
+        assert_eq!(sections[1].start_line, 3);
+        assert_eq!(sections[1].end_line, 11);
+        assert!(sections[1].parent_index.is_none(), "DUMPSYS should be top-level");
+
+        // Child: wifi
+        assert_eq!(sections[2].name, "wifi");
+        assert_eq!(sections[2].start_line, 5);
+        assert_eq!(sections[2].end_line, 6, "wifi end_line should be closed by next child");
+        assert_eq!(sections[2].parent_index, Some(1), "wifi parent should be DUMPSYS at index 1");
+
+        // Child: activity (after stripping CRITICAL prefix)
+        assert_eq!(sections[3].name, "activity");
+        assert_eq!(sections[3].start_line, 7);
+        assert_eq!(sections[3].end_line, 8, "activity end_line should be closed by next child");
+        assert_eq!(sections[3].parent_index, Some(1), "activity parent should be DUMPSYS at index 1");
+
+        // Child: meminfo (after stripping HIGH prefix)
+        assert_eq!(sections[4].name, "meminfo");
+        assert_eq!(sections[4].start_line, 9);
+        assert_eq!(sections[4].end_line, 11, "last child end_line should match parent end_line");
+        assert_eq!(sections[4].parent_index, Some(1), "meminfo parent should be DUMPSYS at index 1");
+    }
+
+    #[test]
+    fn build_section_index_priority_prefix_stripping() {
+        // Minimal test: verify priority prefix variants are stripped correctly.
+        // Reuse the data from make_dumpsys_data() and check names directly.
+        let (data, line_index, meta, interner) = make_dumpsys_data();
+        let sections = build_section_index(
+            &meta,
+            &SourceType::Bugreport,
+            &interner,
+            &data,
+            &line_index,
+        );
+
+        let child_names: Vec<&str> = sections.iter()
+            .filter(|s| s.parent_index.is_some())
+            .map(|s| s.name.as_str())
+            .collect();
+
+        assert!(child_names.contains(&"wifi"), "plain service name should be unchanged");
+        assert!(child_names.contains(&"activity"), "CRITICAL prefix should be stripped");
+        assert!(child_names.contains(&"meminfo"), "HIGH prefix should be stripped");
+        assert!(!child_names.iter().any(|n| n.starts_with("CRITICAL ")), "CRITICAL prefix must be stripped");
+        assert!(!child_names.iter().any(|n| n.starts_with("HIGH ")), "HIGH prefix must be stripped");
+    }
+
+    #[test]
+    fn build_section_index_non_dumpsys_sections_have_no_children() {
+        // Build data where a non-DUMPSYS section contains a DUMP OF SERVICE line.
+        // That section should NOT get children — only sections named DUMPSYS* get subsection detection.
+        let lines: &[&str] = &[
+            "------ SYSTEM LOG (/path) ------",         // 0 — section start
+            "DUMP OF SERVICE wifi:",                     // 1 — should NOT become a child
+            "some content",                              // 2
+            "------ 0.001s was the duration of 'SYSTEM LOG' ------", // 3 — section end
+        ];
+
+        let mut data: Vec<u8> = Vec::new();
+        let mut line_index: Vec<u64> = Vec::new();
+
+        for line in lines {
+            line_index.push(data.len() as u64);
+            data.extend_from_slice(line.as_bytes());
+            data.push(b'\n');
+        }
+        line_index.push(data.len() as u64);
+
+        let mut interner = TagInterner::new();
+        let system_log_id = interner.intern("SYSTEM LOG");
+
+        let meta = vec![
+            LineMeta { level: LogLevel::Info, tag_id: system_log_id, timestamp: 0, byte_offset: 0, byte_len: 0, is_section_boundary: true },
+            LineMeta { level: LogLevel::Info, tag_id: 0, timestamp: 0, byte_offset: 0, byte_len: 0, is_section_boundary: false },
+            LineMeta { level: LogLevel::Info, tag_id: 0, timestamp: 0, byte_offset: 0, byte_len: 0, is_section_boundary: false },
+            LineMeta { level: LogLevel::Verbose, tag_id: system_log_id, timestamp: 0, byte_offset: 0, byte_len: 0, is_section_boundary: true },
+        ];
+
+        let sections = build_section_index(
+            &meta,
+            &SourceType::Bugreport,
+            &interner,
+            &data,
+            &line_index,
+        );
+
+        // Only one top-level section, no children
+        assert_eq!(sections.len(), 1, "non-DUMPSYS section should have no children");
+        assert_eq!(sections[0].name, "SYSTEM LOG");
+        assert!(sections[0].parent_index.is_none());
+        assert!(!sections.iter().any(|s| s.parent_index.is_some()), "no children should exist");
     }
 }

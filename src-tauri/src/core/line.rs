@@ -288,9 +288,9 @@ mod tests {
 
     fn make_sections() -> Vec<SectionInfo> {
         vec![
-            SectionInfo { name: "SYSTEM LOG".to_string(), start_line: 10, end_line: 50 },
-            SectionInfo { name: "DUMP OF SERVICE wifi".to_string(), start_line: 60, end_line: 100 },
-            SectionInfo { name: "DUMPSYS".to_string(), start_line: 120, end_line: 200 },
+            SectionInfo { name: "SYSTEM LOG".to_string(), start_line: 10, end_line: 50, parent_index: None },
+            SectionInfo { name: "DUMP OF SERVICE wifi".to_string(), start_line: 60, end_line: 100, parent_index: None },
+            SectionInfo { name: "DUMPSYS".to_string(), start_line: 120, end_line: 200, parent_index: None },
         ]
     }
 
