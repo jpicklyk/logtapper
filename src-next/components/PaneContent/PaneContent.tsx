@@ -112,7 +112,7 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
               onCommit={setStreamFilter}
               onCancel={cancelStreamFilter}
               matchCount={filteredLineNums ? (effectiveLineNums?.length ?? null) : null}
-              totalLines={session.totalLines}
+              totalLines={sectionFilteredLineNums ? sectionFilteredLineNums.length : session.totalLines}
               parseError={filterParseError}
               scanning={filterScanning}
             />
