@@ -59,7 +59,7 @@ pipeline:
   - stage: filter
     rules:
       - type: tag_match
-        values:
+        tags:
           - "RILJ"
           - "DSM-C-0"
           - "DCT-C-0"

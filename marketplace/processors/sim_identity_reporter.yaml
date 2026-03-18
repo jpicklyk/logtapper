@@ -1,0 +1,429 @@
+meta:
+  id: "sim-identity-reporter"
+  name: "SIM Identity Reporter"
+  version: "1.0.0"
+  author: "LogTapper"
+  description: >
+    Extracts SIM card identity and subscription details from SubscriptionController
+    and SIMRecords in the radio log. Surfaces the SIM MCC/MNC, display name, carrier
+    ID, embedded/physical status, eSIM profile class, EHPLMN/HPLMN lists, and the
+    registered network operator numeric. Detects SIM/network PLMN mismatches
+    (e.g. Sprint SIM on T-Mobile network) that cause ePDG FQDN failures and
+    IMS handover issues.
+  tags: [sim, plmn, mcc, mnc, carrier, telephony, android, samsung]
+
+group: Telephony
+
+sections:
+  - "RADIO LOG"
+  - "SYSTEM LOG"
+
+vars:
+  - name: sim_mcc
+    type: string
+    default: ""
+    display: true
+    label: "SIM MCC"
+
+  - name: sim_mnc
+    type: string
+    default: ""
+    display: true
+    label: "SIM MNC"
+
+  - name: sim_plmn
+    type: string
+    default: ""
+    display: true
+    label: "SIM PLMN (MCC+MNC)"
+
+  - name: network_plmn
+    type: string
+    default: ""
+    display: true
+    label: "Network PLMN"
+
+  - name: plmn_match
+    type: string
+    default: "unknown"
+    display: true
+    label: "SIM/Network PLMN Match"
+
+  - name: display_name
+    type: string
+    default: ""
+    display: true
+    label: "Display Name"
+
+  - name: carrier_name
+    type: string
+    default: ""
+    display: true
+    label: "Carrier Name"
+
+  - name: carrier_id
+    type: string
+    default: ""
+    display: true
+    label: "Carrier ID"
+
+  - name: country_iso
+    type: string
+    default: ""
+    display: true
+    label: "Country"
+
+  - name: is_embedded
+    type: string
+    default: ""
+    display: true
+    label: "eSIM (embedded)"
+
+  - name: profile_class
+    type: string
+    default: ""
+    display: true
+    label: "Profile Class"
+
+  - name: subscription_type
+    type: string
+    default: ""
+    display: true
+    label: "Subscription Type"
+
+  - name: is_opportunistic
+    type: string
+    default: ""
+    display: true
+    label: "Opportunistic"
+
+  - name: ehplmns
+    type: string
+    default: ""
+    display: true
+    label: "EHPLMN List"
+
+  - name: hplmns
+    type: string
+    default: ""
+    display: true
+    label: "HPLMN List"
+
+  - name: data_roaming
+    type: string
+    default: ""
+    display: true
+    label: "Data Roaming"
+
+  - name: sim_operator_numeric
+    type: string
+    default: ""
+    display: true
+    label: "SIM Operator Numeric"
+
+  - name: slot_index
+    type: string
+    default: ""
+    display: true
+    label: "SIM Slot"
+
+  - name: sub_id
+    type: string
+    default: ""
+    display: true
+    label: "Subscription ID"
+
+  - name: epdg_fqdn_status
+    type: string
+    default: ""
+    display: true
+    label: "ePDG FQDN Status"
+
+  - name: epdg_fqdn
+    type: string
+    default: ""
+    display: true
+    label: "ePDG FQDN"
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains_any
+        values:
+          - "getActiveSubscriptionInfoForSimSlotIndex"
+          - "gsm.sim.operator.numeric"
+          - "onAllRecordsLoaded"
+          - "OperatorNumeric("
+          - "prepareFqdn: operatorNumeric"
+          - "DNS resolution failed for epdg server"
+          - "epdg.epc.mnc"
+
+  - stage: extract
+    fields:
+      # SubscriptionController fields
+      - name: sub_id
+        pattern: 'subId=\{id=(\d+)'
+        cast: string
+      - name: slot_index
+        pattern: 'simSlotIndex=(\d+)'
+        cast: string
+      - name: carrier_id
+        pattern: 'carrierId=(\d+)'
+        cast: string
+      - name: display_name
+        pattern: 'displayName=([^\s][^,]*?)(?:\s+carrierName)'
+        cast: string
+      - name: carrier_name
+        pattern: 'carrierName=([^\s][^,]*?)(?:\s+nameSource)'
+        cast: string
+      - name: sim_mcc
+        pattern: '\smcc=(\d{3})'
+        cast: string
+      - name: sim_mnc
+        pattern: '\smnc=(\d{2,3})'
+        cast: string
+      - name: country_iso
+        pattern: 'countryIso=(\w+)'
+        cast: string
+      - name: is_embedded
+        pattern: 'isEmbedded=(true|false)'
+        cast: string
+      - name: data_roaming
+        pattern: 'dataRoaming=(\d+)'
+        cast: string
+      - name: is_opportunistic
+        pattern: 'isOpportunistic=(true|false)'
+        cast: string
+      - name: profile_class
+        pattern: 'profileClass=(-?\d+)'
+        cast: string
+      - name: ehplmns
+        pattern: 'ehplmns=(\[?[^\s]*)'
+        cast: string
+      - name: hplmns
+        pattern: 'hplmns=(\[?[^\s]*)'
+        cast: string
+      - name: subscription_type
+        pattern: 'subscriptionType=(\d+)'
+        cast: string
+
+      # SIMRecords operator numeric
+      - name: sim_operator
+        pattern: "gsm\\.sim\\.operator\\.numeric.*?'(\\d+)'"
+        cast: string
+
+      # Network operator from LocaleTracker / SST
+      - name: network_operator
+        pattern: 'OperatorNumeric\((\d+)\)'
+        cast: string
+
+      # ePDG FQDN
+      - name: epdg_operator
+        pattern: 'prepareFqdn: operatorNumeric:(\d+)'
+        cast: string
+      - name: epdg_fqdn_host
+        pattern: 'resolve host "([^"]+)"'
+        cast: string
+
+  - stage: script
+    runtime: rhai
+    src: |
+      let msg = line.message;
+
+      // ── SubscriptionController — extract SIM identity ──
+      if "getActiveSubscriptionInfoForSimSlotIndex" in msg {
+        if "sub_id" in fields { vars.sub_id = fields.sub_id; }
+        if "slot_index" in fields { vars.slot_index = fields.slot_index; }
+        if "carrier_id" in fields { vars.carrier_id = fields.carrier_id; }
+        if "display_name" in fields && fields.display_name != "" {
+          vars.display_name = fields.display_name;
+        }
+        if "carrier_name" in fields && fields.carrier_name != "" {
+          vars.carrier_name = fields.carrier_name;
+        }
+        if "sim_mcc" in fields { vars.sim_mcc = fields.sim_mcc; }
+        if "sim_mnc" in fields { vars.sim_mnc = fields.sim_mnc; }
+        if "country_iso" in fields { vars.country_iso = fields.country_iso; }
+        if "is_embedded" in fields { vars.is_embedded = fields.is_embedded; }
+        if "data_roaming" in fields { vars.data_roaming = fields.data_roaming; }
+        if "is_opportunistic" in fields { vars.is_opportunistic = fields.is_opportunistic; }
+        if "profile_class" in fields { vars.profile_class = fields.profile_class; }
+        if "subscription_type" in fields { vars.subscription_type = fields.subscription_type; }
+
+        if "ehplmns" in fields {
+          let val = fields.ehplmns;
+          if val != "null" { vars.ehplmns = val; }
+        }
+        if "hplmns" in fields {
+          let val = fields.hplmns;
+          if val != "null" { vars.hplmns = val; }
+        }
+
+        // Build SIM PLMN
+        if vars.sim_mcc != "" && vars.sim_mnc != "" {
+          vars.sim_plmn = vars.sim_mcc + vars.sim_mnc;
+        }
+
+        // Check PLMN match if we have both
+        if vars.sim_plmn != "" && vars.network_plmn != "" {
+          if vars.sim_plmn == vars.network_plmn {
+            vars.plmn_match = "MATCH";
+          } else {
+            vars.plmn_match = "MISMATCH (" + vars.sim_plmn + " vs " + vars.network_plmn + ")";
+          }
+        }
+
+        _emits.push(#{
+          event_type: "subscription_info",
+          sim_plmn: vars.sim_plmn,
+          network_plmn: vars.network_plmn,
+          display_name: vars.display_name,
+          carrier_id: vars.carrier_id,
+          is_embedded: vars.is_embedded,
+          country: vars.country_iso,
+          ehplmns: vars.ehplmns,
+          hplmns: vars.hplmns,
+        });
+        return;
+      }
+
+      // ── SIMRecords — operator numeric set ──
+      if "gsm.sim.operator.numeric" in msg {
+        if "sim_operator" in fields {
+          vars.sim_operator_numeric = fields.sim_operator;
+          // This confirms the SIM PLMN
+          if vars.sim_plmn == "" {
+            vars.sim_plmn = fields.sim_operator;
+            if fields.sim_operator.len() >= 5 {
+              vars.sim_mcc = fields.sim_operator.sub_string(0, 3);
+              vars.sim_mnc = fields.sim_operator.sub_string(3);
+            }
+          }
+        }
+        _emits.push(#{
+          event_type: "sim_records_loaded",
+          sim_plmn: vars.sim_plmn,
+          network_plmn: vars.network_plmn,
+          display_name: vars.display_name,
+          carrier_id: "",
+          is_embedded: "",
+          country: "",
+          ehplmns: "",
+          hplmns: "",
+        });
+        return;
+      }
+
+      // ── Network operator from LocaleTracker ──
+      if "OperatorNumeric(" in msg {
+        if "network_operator" in fields {
+          vars.network_plmn = fields.network_operator;
+
+          // Check PLMN match
+          if vars.sim_plmn != "" {
+            if vars.sim_plmn == vars.network_plmn {
+              vars.plmn_match = "MATCH";
+            } else {
+              vars.plmn_match = "MISMATCH (" + vars.sim_plmn + " vs " + vars.network_plmn + ")";
+            }
+          }
+        }
+        return;
+      }
+
+      // ── ePDG FQDN ──
+      if "prepareFqdn" in msg {
+        if "epdg_operator" in fields {
+          vars.epdg_fqdn = "epdg.epc.mnc" + fields.epdg_operator.sub_string(3) + ".mcc" + fields.epdg_operator.sub_string(0, 3) + ".pub.3gppnetwork.org";
+          vars.epdg_fqdn_status = "resolving (from " + fields.epdg_operator + ")";
+        }
+        return;
+      }
+
+      if "DNS resolution failed for epdg server" in msg {
+        if "epdg_fqdn_host" in fields {
+          vars.epdg_fqdn = fields.epdg_fqdn_host;
+        }
+        vars.epdg_fqdn_status = "FAILED — DNS resolution failed";
+
+        _emits.push(#{
+          event_type: "epdg_dns_failure",
+          sim_plmn: vars.sim_plmn,
+          network_plmn: vars.network_plmn,
+          display_name: vars.epdg_fqdn,
+          carrier_id: "",
+          is_embedded: "",
+          country: "",
+          ehplmns: "",
+          hplmns: "",
+        });
+        return;
+      }
+
+  - stage: output
+    views:
+      - type: summary
+        source: vars
+        template: |
+          SIM: {{sim_plmn}} (MCC={{sim_mcc}} MNC={{sim_mnc}}) | Network: {{network_plmn}} | Match: {{plmn_match}}
+          Name: {{display_name}} | Carrier: {{carrier_name}} | ID: {{carrier_id}}
+          Slot: {{slot_index}} | eSIM: {{is_embedded}} | Country: {{country_iso}} | Roaming: {{data_roaming}}
+          EHPLMN: {{ehplmns}} | HPLMN: {{hplmns}}
+          ePDG: {{epdg_fqdn}} — {{epdg_fqdn_status}}
+      - type: table
+        source: emissions
+        columns: [event_type, sim_plmn, network_plmn, display_name, is_embedded, country, ehplmns, hplmns]
+
+schema:
+  source_types: ["logcat", "bugreport"]
+  emissions:
+    - name: event_type
+      type: string
+      description: "subscription_info | sim_records_loaded | epdg_dns_failure"
+    - name: sim_plmn
+      type: string
+      description: "SIM PLMN (MCC+MNC from SIM card)"
+    - name: network_plmn
+      type: string
+      description: "Registered network PLMN"
+    - name: display_name
+      type: string
+      description: "Subscription display name (or ePDG FQDN for DNS failure events)"
+    - name: carrier_id
+      type: string
+      description: "Android carrier ID"
+    - name: is_embedded
+      type: string
+      description: "true for eSIM, false for physical SIM"
+    - name: country
+      type: string
+      description: "Country ISO code"
+    - name: ehplmns
+      type: string
+      description: "Equivalent HPLMN list from SIM"
+    - name: hplmns
+      type: string
+      description: "HPLMN list from SIM"
+  mcp:
+    summary:
+      template: "SIM {{sim_plmn}} ({{display_name}}) on network {{network_plmn}}. Match: {{plmn_match}}. eSIM: {{is_embedded}}. ePDG: {{epdg_fqdn_status}}."
+      include_vars: [sim_plmn, sim_mcc, sim_mnc, network_plmn, plmn_match, display_name, carrier_name, carrier_id, country_iso, is_embedded, ehplmns, hplmns, epdg_fqdn, epdg_fqdn_status]
+    signals:
+      - name: plmn_mismatch
+        severity: warning
+        condition: "plmn_match != 'MATCH' && plmn_match != 'unknown' && sim_plmn != ''"
+        fields: [sim_plmn, network_plmn, plmn_match, display_name]
+        format: "SIM/Network PLMN mismatch: SIM={{sim_plmn}} Network={{network_plmn}} ({{display_name}}). May cause ePDG FQDN failures and WiFi Calling issues."
+        type: aggregate
+      - name: epdg_dns_failed
+        severity: warning
+        condition: "epdg_fqdn_status == 'FAILED — DNS resolution failed'"
+        fields: [epdg_fqdn, sim_plmn, network_plmn]
+        format: "ePDG DNS resolution failed for {{epdg_fqdn}} — SIM PLMN {{sim_plmn}} may be using a defunct ePDG server"
+        type: aggregate
+      - name: ehplmn_empty
+        severity: info
+        condition: "ehplmns == '' && sim_plmn != '' && network_plmn != '' && sim_plmn != network_plmn"
+        fields: [sim_plmn, network_plmn]
+        format: "SIM has no EHPLMN list but is on a different network ({{sim_plmn}} vs {{network_plmn}}) — SIM may need OTA update"
+        type: aggregate
