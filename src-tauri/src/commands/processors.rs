@@ -26,8 +26,24 @@ fn validate_and_install(
     if let Some(reporter_def) = processor.as_reporter() {
         for stage in &reporter_def.pipeline {
             use crate::processors::schema::PipelineStage;
-            if let PipelineStage::Script(s) = stage {
-                crate::scripting::sandbox::validate_for_install(&s.src)?;
+            use crate::processors::reporter::schema::AggType;
+            match stage {
+                PipelineStage::Script(s) => {
+                    crate::scripting::sandbox::validate_for_install(&s.src)?;
+                }
+                PipelineStage::Aggregate(agg) => {
+                    for group in &agg.groups {
+                        match &group.agg_type {
+                            AggType::Min => return Err("Unsupported aggregate type 'min'. Supported types: count, count_by, burst_detector".to_string()),
+                            AggType::Max => return Err("Unsupported aggregate type 'max'. Supported types: count, count_by, burst_detector".to_string()),
+                            AggType::Avg => return Err("Unsupported aggregate type 'avg'. Supported types: count, count_by, burst_detector".to_string()),
+                            AggType::Percentile => return Err("Unsupported aggregate type 'percentile'. Supported types: count, count_by, burst_detector".to_string()),
+                            AggType::TimeBucket => return Err("Unsupported aggregate type 'time_bucket'. Supported types: count, count_by, burst_detector".to_string()),
+                            AggType::Count | AggType::CountBy | AggType::BurstDetector => {}
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }
