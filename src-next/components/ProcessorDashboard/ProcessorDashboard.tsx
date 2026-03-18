@@ -104,6 +104,14 @@ const RankedList = React.memo(function RankedList({
   );
 });
 
+// Detect "value | description" pattern used by annotated map vars (e.g. resolver experiments).
+// Returns null if the separator is absent so normal rendering is used.
+function splitValueDesc(raw: string): { value: string; desc: string } | null {
+  const idx = raw.indexOf(' | ');
+  if (idx === -1) return null;
+  return { value: raw.slice(0, idx), desc: raw.slice(idx + 3) };
+}
+
 const DataTable = React.memo(function DataTable({
   name,
   label,
@@ -114,6 +122,12 @@ const DataTable = React.memo(function DataTable({
   value: Record<string, unknown>[];
 }) {
   const keys = Object.keys(value[0] ?? {});
+
+  // Check once whether any cell uses the annotated "val | desc" format.
+  const hasAnnotated = value.some((row) =>
+    Object.values(row).some((v) => String(v ?? '').includes(' | ')),
+  );
+
   return (
     <div className={styles.section}>
       <div className={styles.sectionLabel}>{label ?? snakeToTitle(name)}</div>
@@ -129,9 +143,30 @@ const DataTable = React.memo(function DataTable({
           <tbody>
             {value.slice(0, 100).map((row, i) => (
               <tr key={i}>
-                {keys.map((k) => (
-                  <td key={k}>{String(row[k] ?? '')}</td>
-                ))}
+                {keys.map((k, ki) => {
+                  const raw = String(row[k] ?? '');
+                  const split = hasAnnotated ? splitValueDesc(raw) : null;
+
+                  if (split) {
+                    return (
+                      <td key={k} className={styles.tdValueDesc}>
+                        <span className={styles.valueBadge}>{split.value}</span>
+                        <span className={styles.valueDesc}>{split.desc}</span>
+                      </td>
+                    );
+                  }
+
+                  // In annotated tables, style the key column as a dim mono identifier.
+                  if (hasAnnotated && ki === 0) {
+                    return (
+                      <td key={k} className={styles.tdParamKey}>
+                        {raw}
+                      </td>
+                    );
+                  }
+
+                  return <td key={k}>{raw}</td>;
+                })}
               </tr>
             ))}
           </tbody>
@@ -374,12 +409,25 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
                       </div>
                     );
                   }
-                  if (m.displayAs === 'table' && isRankedObject(value)) {
+                  if (
+                    m.displayAs === 'table' &&
+                    typeof value === 'object' &&
+                    value !== null &&
+                    !Array.isArray(value)
+                  ) {
                     const colKey = m.columns[0] ?? 'key';
-                    const colVal = m.columns[1] ?? 'count';
-                    const rows = Object.entries(value as Record<string, number>)
-                      .sort((a, b) => b[1] - a[1])
-                      .map(([k, v]) => ({ [colKey]: k, [colVal]: v }));
+                    const colVal = m.columns[1] ?? 'value';
+                    let rows: Record<string, unknown>[];
+                    if (isRankedObject(value)) {
+                      // Numeric values — sort descending by count
+                      rows = Object.entries(value as Record<string, number>)
+                        .sort((a, b) => b[1] - a[1])
+                        .map(([k, v]) => ({ [colKey]: k, [colVal]: v }));
+                    } else {
+                      // String (or mixed) values — preserve insertion order
+                      rows = Object.entries(value as Record<string, unknown>)
+                        .map(([k, v]) => ({ [colKey]: k, [colVal]: String(v) }));
+                    }
                     return (
                       <DataTable
                         key={m.name}
