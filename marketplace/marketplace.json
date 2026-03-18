@@ -310,6 +310,20 @@
       "processor_type": "reporter",
       "source_types": ["logcat", "bugreport"],
       "deprecated": false
+    },
+    {
+      "id": "radio-airplane-mode-state",
+      "name": "Radio / Airplane Mode State",
+      "version": "1.0.0",
+      "description": "Tracks airplane mode, data connection state, emergency-only mode, and SIM card state from MobileSignalController. Compound transitions capture all four fields atomically when possible.",
+      "path": "processors/radio_airplane_mode_state.yaml",
+      "tags": ["telephony", "radio", "airplane-mode", "sim", "android"],
+      "sha256": "",
+      "category": "telephony",
+      "license": null,
+      "processor_type": "state_tracker",
+      "source_types": ["logcat", "bugreport"],
+      "deprecated": false
     }
   ]
 }
