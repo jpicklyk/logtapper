@@ -1,5 +1,6 @@
 use rhai::{Dynamic, Engine, Map as RhaiMap, OptimizationLevel, Scope, AST};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::core::line::LineContext;
@@ -15,16 +16,21 @@ pub type EmissionFields = Vec<(String, serde_json::Value)>;
 /// Wraps a Rhai `Engine` configured with safety limits and an AST cache.
 /// One instance lives for the duration of a processor run.
 ///
-/// History access is lazy: instead of materializing the full history buffer
-/// into a Rhai array on every script invocation (~300KB per call), scripts
-/// call `history_get(i)` and `history_len()` which read from a shared
-/// `Arc<Mutex<Vec<LineContext>>>` populated before each `run_script()` call.
+/// History population is lazy: instead of copying up to 1000 `LineContext`
+/// entries on every invocation, the copy is skipped when the previous
+/// invocation did not call `history_get()` or `history_len()`. An
+/// `AtomicBool` (`history_accessed`) is set to `true` whenever either
+/// function is called and reset to `false` at the start of each `run_script`
+/// call after the copy decision is made.
 pub struct ScriptEngine {
     engine: Engine,
     ast_cache: Mutex<HashMap<String, AST>>,
-    /// Shared history buffer swapped in before each `run_script()` call.
-    /// Registered Rhai functions `history_get(i)` and `history_len()` read from this.
+    /// Shared history buffer swapped in before each `run_script()` call
+    /// (only when `history_accessed` was true on the previous invocation).
     shared_history: Arc<Mutex<Vec<LineContext>>>,
+    /// Set to `true` by `history_get`/`history_len` closures to signal that
+    /// history was accessed during the last invocation.
+    history_accessed: Arc<AtomicBool>,
     /// Persistent scope reused across `run_script()` calls.
     /// On the first call, built from scratch via `build_scope()` and stored here.
     /// On subsequent calls, only `line`, `fields`, and `_emits` are updated in-place;
@@ -35,6 +41,7 @@ pub struct ScriptEngine {
 impl ScriptEngine {
     pub fn new() -> Self {
         let shared_history: Arc<Mutex<Vec<LineContext>>> = Arc::new(Mutex::new(Vec::new()));
+        let history_accessed: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
         let mut engine = Engine::new();
 
         // Safety limits (per spec)
@@ -47,10 +54,13 @@ impl ScriptEngine {
 
         // Register lazy history access functions.
         // Scripts call history_get(i) to fetch a single entry on demand,
-        // and history_len() to get the buffer size, instead of the old
-        // `history` array variable that cloned all entries into scope.
+        // and history_len() to get the buffer size. Both functions set
+        // `history_accessed` so the next invocation knows to populate
+        // `shared_history` (skipping the clone when history is unused).
         let hist_ref = Arc::clone(&shared_history);
+        let accessed_ref = Arc::clone(&history_accessed);
         engine.register_fn("history_get", move |idx: i64| -> Dynamic {
+            accessed_ref.store(true, Ordering::Relaxed);
             let history = hist_ref.lock().unwrap();
             match history.get(idx as usize) {
                 Some(lc) => {
@@ -68,7 +78,9 @@ impl ScriptEngine {
         });
 
         let hist_ref2 = Arc::clone(&shared_history);
+        let accessed_ref2 = Arc::clone(&history_accessed);
         engine.register_fn("history_len", move || -> i64 {
+            accessed_ref2.store(true, Ordering::Relaxed);
             hist_ref2.lock().unwrap().len() as i64
         });
 
@@ -76,6 +88,7 @@ impl ScriptEngine {
             engine,
             ast_cache: Mutex::new(HashMap::new()),
             shared_history,
+            history_accessed,
             scope: None,
         }
     }
@@ -109,8 +122,16 @@ impl ScriptEngine {
 
         let ast = self.compile(src)?;
 
-        // Populate shared_history for this invocation so history_get()/history_len() work.
-        {
+        // Populate shared_history only when necessary to avoid cloning up to
+        // 1000 LineContext entries on every invocation:
+        //   - On the first call (`scope` is None), populate unconditionally so
+        //     scripts that access history on line 1 get correct results.
+        //   - On subsequent calls, only populate when the *previous* invocation
+        //     called history_get() or history_len() (flag set by the closures).
+        // The flag is reset here so each invocation starts with a clean slate.
+        let history_was_accessed = self.history_accessed.swap(false, Ordering::Relaxed);
+        let is_first_call = self.scope.is_none();
+        if is_first_call || history_was_accessed {
             let mut h = self.shared_history.lock().unwrap();
             h.clear();
             h.extend_from_slice(input.history);
