@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Trash2, MessageSquare } from 'lucide-react';
 import type { Bookmark } from '../../bridge/types';
 import styles from './BookmarkPanel.module.css';
 
@@ -33,6 +33,9 @@ const BookmarkItem = React.memo(function BookmarkItem({
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const [editingNote, setEditingNote] = useState(false);
+  const [noteValue, setNoteValue] = useState('');
+  const noteRef = useRef<HTMLTextAreaElement>(null);
 
   const lineIndicator = formatLineIndicator(bookmark);
   const snippetLine = bookmark.snippet?.[0] ? truncateSnippet(bookmark.snippet[0]) : null;
@@ -67,6 +70,32 @@ const BookmarkItem = React.memo(function BookmarkItem({
       setEditing(false);
     }
   }, [handleEditSave]);
+
+  const handleNoteClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setNoteValue(bookmark.note ?? '');
+    setEditingNote(true);
+    setTimeout(() => noteRef.current?.focus(), 0);
+  }, [bookmark.note]);
+
+  const handleNoteSave = useCallback(() => {
+    const trimmed = noteValue.trim();
+    if (trimmed !== (bookmark.note ?? '')) {
+      onEdit(bookmark.id, undefined, trimmed);
+    }
+    setEditingNote(false);
+  }, [noteValue, bookmark.note, bookmark.id, onEdit]);
+
+  const handleNoteKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      setEditingNote(false);
+    }
+    // Ctrl+Enter to save
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      handleNoteSave();
+    }
+  }, [handleNoteSave]);
 
   const handleDeleteClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -128,6 +157,41 @@ const BookmarkItem = React.memo(function BookmarkItem({
         {/* Snippet preview */}
         {snippetLine && (
           <div className={styles.snippet}>{snippetLine}</div>
+        )}
+
+        {/* Note / comment */}
+        {editingNote ? (
+          <div className={styles.noteEdit} onClick={(e) => e.stopPropagation()}>
+            <textarea
+              ref={noteRef}
+              className={styles.noteTextarea}
+              value={noteValue}
+              onChange={(e) => setNoteValue(e.target.value)}
+              onBlur={handleNoteSave}
+              onKeyDown={handleNoteKeyDown}
+              rows={3}
+              placeholder="Add a note..."
+            />
+            <div className={styles.noteHint}>Ctrl+Enter to save, Escape to cancel</div>
+          </div>
+        ) : bookmark.note ? (
+          <div
+            className={styles.noteDisplay}
+            onClick={handleNoteClick}
+            title="Click to edit note"
+          >
+            <MessageSquare size={10} className={styles.noteIcon} />
+            <span>{bookmark.note}</span>
+          </div>
+        ) : (
+          <button
+            className={styles.addNoteBtn}
+            onClick={handleNoteClick}
+            type="button"
+          >
+            <MessageSquare size={10} />
+            <span>Add note</span>
+          </button>
         )}
 
         {/* Tag pills */}

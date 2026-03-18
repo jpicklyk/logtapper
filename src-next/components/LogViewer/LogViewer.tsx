@@ -266,17 +266,24 @@ const LogViewer = React.memo(function LogViewer({
         bus.emit('selection:changed', { paneId, sessionId: sid, anchor: null, range: null });
         return;
       }
+      // Map virtual indices to actual line numbers when filtering is active.
+      const ln = lineNumbersRef.current;
+      const toActual = (v: number): number => ln ? (ln[v] ?? v) : v;
       let min = Infinity, max = -Infinity;
       for (const n of sel.selected) {
-        if (n < min) min = n;
-        if (n > max) max = n;
+        const actual = toActual(n);
+        if (actual < min) min = actual;
+        if (actual > max) max = actual;
       }
-      bus.emit('selection:changed', { paneId, sessionId: sid, anchor: sel.anchor, range: [min, max] });
+      const anchor = sel.anchor != null ? toActual(sel.anchor) : null;
+      bus.emit('selection:changed', { paneId, sessionId: sid, anchor, range: [min, max] });
     },
     [paneId],
   );
 
-  // Helper: emit bookmark:create-request for the current selection
+  // Helper: emit bookmark:create-request for the current selection.
+  // Selection indices are virtual (0-based in the filtered view). When a filter
+  // is active, map them to actual file line numbers via lineNumbersRef.
   const emitBookmarkRequest = useCallback(
     (position?: { x: number; y: number }) => {
       const sid = sessionIdRef.current;
@@ -284,7 +291,11 @@ const LogViewer = React.memo(function LogViewer({
       const sel = lastSelectionRef.current;
       if (!sel || sel.anchor == null || sel.selected.size === 0) return;
 
-      let lineNumber = sel.anchor;
+      const ln = lineNumbersRef.current;
+      const toActual = (virtualIdx: number): number =>
+        ln ? (ln[virtualIdx] ?? virtualIdx) : virtualIdx;
+
+      let lineNumber: number;
       let lineNumberEnd: number | undefined;
 
       if (sel.selected.size > 1) {
@@ -293,8 +304,10 @@ const LogViewer = React.memo(function LogViewer({
           if (n < min) min = n;
           if (n > max) max = n;
         }
-        lineNumber = min;
-        lineNumberEnd = max;
+        lineNumber = toActual(min);
+        lineNumberEnd = toActual(max);
+      } else {
+        lineNumber = toActual(sel.anchor);
       }
 
       const payload: AppEvents['bookmark:create-request'] = {

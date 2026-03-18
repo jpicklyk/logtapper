@@ -324,6 +324,87 @@
   margin-top: 1px;
 }
 
+/* ── Note display / edit ─────────────────────────────────────────────────── */
+
+.noteDisplay {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin-top: 4px;
+  padding: 4px 6px;
+  background: var(--bg-overlay);
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  word-break: break-word;
+}
+
+.noteDisplay:hover {
+  background: var(--border);
+}
+
+.noteIcon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--text-dimmed);
+}
+
+.addNoteBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  font-size: 10px;
+  color: var(--text-dimmed);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.card:hover .addNoteBtn {
+  opacity: 1;
+}
+
+.addNoteBtn:hover {
+  color: var(--accent);
+}
+
+.noteEdit {
+  margin-top: 4px;
+}
+
+.noteTextarea {
+  width: 100%;
+  min-height: 48px;
+  padding: 5px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--bg-base);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 1.4;
+  resize: vertical;
+  outline: none;
+}
+
+.noteTextarea::placeholder {
+  color: var(--text-dimmed);
+}
+
+.noteHint {
+  font-size: 9px;
+  color: var(--text-dimmed);
+  margin-top: 2px;
+  text-align: right;
+}
+
 /* ── Tag pills ───────────────────────────────────────────────────────────── */
 
 .tags {
