@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSessionForPane, useScrollTarget, useViewerActions, useIndexingProgress } from '../../context';
 import type { IndexingProgress } from '../../context';
 import { getDumpstateMetadata, getSections, getSessionMetadata } from '../../bridge/commands';
+import { isBugreportLike } from '../../bridge/types';
 import type { DumpstateMetadata } from '../../bridge/types';
 import type { AppEvents } from '../../events/events';
 import { bus } from '../../events';
@@ -104,12 +105,12 @@ export function useFileInfo(paneId: string | null): FileInfoData {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
-  // Fetch sections from backend — Bugreport files only.
+  // Fetch sections from backend — Bugreport and Dumpstate files only.
   //
   // Gated on `indexingProgress === null` — the backend only populates sections after full
   // indexing completes, so there is no point calling earlier.
   useEffect(() => {
-    if (!sessionId || !session || session.sourceType !== 'Bugreport') return;
+    if (!sessionId || !session || !isBugreportLike(session.sourceType)) return;
     if (indexingProgress !== null) return;  // Still indexing — wait for null
 
     // Skip fetch if cache already has sections for this session.
@@ -168,7 +169,7 @@ export function useFileInfo(paneId: string | null): FileInfoData {
     if (session.lastTimestamp != null) {
       setLastTimestamp(session.lastTimestamp);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [session?.isStreaming, session?.totalLines, session?.fileSize,
       session?.firstTimestamp, session?.lastTimestamp]);
 
