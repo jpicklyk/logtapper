@@ -263,7 +263,6 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
   const value = useMemo<PipelineContextValue>(
     () => ({ ...state, dispatch }),
     // dispatch is stable — the only trigger for a new context value is state changing.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [state],
   );
 

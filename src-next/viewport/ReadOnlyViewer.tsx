@@ -245,7 +245,7 @@ export default function ReadOnlyViewer({
 
     window.addEventListener('keydown', handleCopy);
     return () => window.removeEventListener('keydown', handleCopy);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [selection, dataSource]);
 
   // ── Scroll to a specific line when requested ─────────────────────────────

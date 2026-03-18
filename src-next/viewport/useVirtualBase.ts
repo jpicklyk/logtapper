@@ -46,7 +46,7 @@ export function useVirtualBase(
     virtualBaseRef.current = base;
     setVirtualBaseState(base);
     pendingScrollTarget.current = null;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [sourceId]);
 
   // Reset to line 0 when entering tail mode (streaming).

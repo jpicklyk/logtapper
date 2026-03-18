@@ -111,7 +111,7 @@ export function useStreamSession(
         );
       }, RECONNECT_DELAY_MS);
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);  
 
   const detachStream = useCallback((_paneId: string) => {
     // Cancel any pending reconnect when the stream is detached (replaced by file load).
