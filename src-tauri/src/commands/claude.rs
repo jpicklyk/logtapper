@@ -4,7 +4,7 @@ use crate::claude::analysis::build_analysis_context;
 use crate::claude::client::ClaudeClient;
 use crate::claude::generator::{build_generator_prompt, extract_yaml};
 use crate::commands::AppState;
-use crate::processors::schema::ProcessorDef;
+use crate::processors::AnyProcessor;
 use crate::scripting::sandbox::validate_for_install;
 
 // ---------------------------------------------------------------------------
@@ -109,14 +109,16 @@ pub async fn claude_generate_processor(
     let yaml = extract_yaml(&raw_response);
 
     // Validate the generated YAML before returning it.
-    let def = ProcessorDef::from_yaml(&yaml)
+    let processor = AnyProcessor::from_yaml(&yaml)
         .map_err(|e| format!("Generated YAML is invalid: {e}"))?;
 
-    // Validate any inline Rhai scripts.
-    for stage in &def.pipeline {
-        use crate::processors::schema::PipelineStage;
-        if let PipelineStage::Script(s) = stage {
-            validate_for_install(&s.src)?;
+    // Validate any inline Rhai scripts (AI-generated processors are always reporters).
+    if let Some(def) = processor.as_reporter() {
+        for stage in &def.pipeline {
+            use crate::processors::reporter::schema::PipelineStage;
+            if let PipelineStage::Script(s) = stage {
+                validate_for_install(&s.src)?;
+            }
         }
     }
 

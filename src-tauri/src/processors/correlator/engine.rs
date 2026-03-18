@@ -77,6 +77,26 @@ impl<'a> CorrelatorRun<'a> {
         }
     }
 
+    /// Create a run seeded with previously saved state for continuous (streaming) processing.
+    pub fn new_seeded(def: &'a CorrelatorDef, saved: ContinuousCorrelatorState) -> Self {
+        let mut source_buffers = saved.source_buffers;
+        // Ensure all non-trigger sources have a buffer entry
+        for src in &def.sources {
+            if src.id != def.correlate.trigger {
+                source_buffers.entry(src.id.clone()).or_default();
+            }
+        }
+        let mut rhai_engine = rhai::Engine::new();
+        rhai_engine.set_max_operations(10_000);
+        Self {
+            def,
+            source_buffers,
+            events: saved.events,
+            regex_cache: HashMap::new(),
+            rhai_engine,
+        }
+    }
+
     /// Process one log line through all source definitions.
     pub fn process_line(&mut self, line: &LineContext, _pipeline_ctx: &PipelineContext) {
         let trigger_id = self.def.correlate.trigger.clone();
@@ -153,6 +173,12 @@ impl<'a> CorrelatorRun<'a> {
                         matched_sources,
                         message,
                     });
+
+                    // Clear non-trigger buffers so subsequent triggers don't
+                    // re-match the same records (prevents duplicate events).
+                    for buf in self.source_buffers.values_mut() {
+                        buf.clear();
+                    }
                 }
             }
         }
@@ -192,7 +218,7 @@ impl<'a> CorrelatorRun<'a> {
     ) -> Option<HashMap<String, JsonValue>> {
         // AND-ed filter rules.
         for rule in &src.filter {
-            if !crate::processors::filter::rule_matches(&mut self.regex_cache, rule, line, None) {
+            if !crate::processors::filter::rule_matches(&mut self.regex_cache, rule, line, None).matched {
                 return None;
             }
         }
@@ -343,5 +369,243 @@ fn json_val_to_str(v: &JsonValue) -> String {
         JsonValue::Number(n) => n.to_string(),
         JsonValue::Bool(b) => b.to_string(),
         _ => v.to_string(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::line::{LogLevel, PipelineContext};
+    use crate::processors::correlator::schema::{CorrelateDef, CorrelatorDef, SourceDef};
+    use crate::processors::reporter::schema::FilterRule;
+    use std::sync::Arc;
+
+    fn make_line(source_line_num: usize, tag: &str, message: &str) -> LineContext {
+        LineContext {
+            raw: Arc::from(message),
+            timestamp: source_line_num as i64 * 1_000_000, // 1ms per line
+            level: LogLevel::Info,
+            tag: Arc::from(tag),
+            pid: 0,
+            tid: 0,
+            message: Arc::from(message),
+            source_id: Arc::from(""),
+            source_line_num,
+            fields: Default::default(),
+            annotations: vec![],
+        }
+    }
+
+    fn make_def(trigger_id: &str, non_trigger_id: &str) -> CorrelatorDef {
+        CorrelatorDef {
+            sources: vec![
+                SourceDef {
+                    id: trigger_id.to_string(),
+                    filter: vec![FilterRule::MessageContains {
+                        value: "TRIGGER".to_string(),
+                    }],
+                    extract: vec![],
+                    condition: None,
+                },
+                SourceDef {
+                    id: non_trigger_id.to_string(),
+                    filter: vec![FilterRule::MessageContains {
+                        value: "NON_TRIGGER".to_string(),
+                    }],
+                    extract: vec![],
+                    condition: None,
+                },
+            ],
+            correlate: CorrelateDef {
+                trigger: trigger_id.to_string(),
+                within_lines: None,
+                within_ms: None,
+                emit: "correlated".to_string(),
+                guidance: None,
+            },
+            output: Default::default(),
+        }
+    }
+
+    /// Two consecutive trigger lines should NOT produce duplicate events from
+    /// the same non-trigger match.
+    #[test]
+    fn two_triggers_no_duplicate_events() {
+        let def = make_def("trigger_src", "non_trigger_src");
+        let ctx = PipelineContext::test_default();
+        let mut run = CorrelatorRun::new(&def);
+
+        // Non-trigger line comes in first.
+        run.process_line(&make_line(1, "tag", "NON_TRIGGER match"), &ctx);
+
+        // First trigger — should emit one event.
+        run.process_line(&make_line(2, "tag", "TRIGGER fire"), &ctx);
+
+        // Second trigger — buffers were cleared; should NOT emit another event.
+        run.process_line(&make_line(3, "tag", "TRIGGER fire again"), &ctx);
+
+        let result = run.finish();
+        assert_eq!(
+            result.events.len(),
+            1,
+            "Expected exactly 1 correlation event, got {}",
+            result.events.len()
+        );
+    }
+
+    /// A non-trigger match followed by two triggers, then a new non-trigger match
+    /// followed by a third trigger should produce exactly 2 events.
+    #[test]
+    fn second_non_trigger_enables_second_event() {
+        let def = make_def("trigger_src", "non_trigger_src");
+        let ctx = PipelineContext::test_default();
+        let mut run = CorrelatorRun::new(&def);
+
+        // First non-trigger then trigger → 1 event.
+        run.process_line(&make_line(1, "tag", "NON_TRIGGER first"), &ctx);
+        run.process_line(&make_line(2, "tag", "TRIGGER first"), &ctx);
+
+        // No non-trigger → trigger should not emit.
+        run.process_line(&make_line(3, "tag", "TRIGGER second (no match)"), &ctx);
+
+        // New non-trigger then trigger → 1 more event.
+        run.process_line(&make_line(4, "tag", "NON_TRIGGER second"), &ctx);
+        run.process_line(&make_line(5, "tag", "TRIGGER third"), &ctx);
+
+        let result = run.finish();
+        assert_eq!(
+            result.events.len(),
+            2,
+            "Expected exactly 2 correlation events, got {}",
+            result.events.len()
+        );
+    }
+
+    // ── Gap 6: Window eviction ───────────────────────────────────────────────
+
+    fn make_def_with_lines_window(trigger_id: &str, non_trigger_id: &str, within_lines: usize) -> CorrelatorDef {
+        CorrelatorDef {
+            sources: vec![
+                SourceDef {
+                    id: trigger_id.to_string(),
+                    filter: vec![FilterRule::MessageContains { value: "TRIGGER".to_string() }],
+                    extract: vec![],
+                    condition: None,
+                },
+                SourceDef {
+                    id: non_trigger_id.to_string(),
+                    filter: vec![FilterRule::MessageContains { value: "NON_TRIGGER".to_string() }],
+                    extract: vec![],
+                    condition: None,
+                },
+            ],
+            correlate: CorrelateDef {
+                trigger: trigger_id.to_string(),
+                within_lines: Some(within_lines),
+                within_ms: None,
+                emit: "correlated".to_string(),
+                guidance: None,
+            },
+            output: Default::default(),
+        }
+    }
+
+    fn make_def_with_ms_window(trigger_id: &str, non_trigger_id: &str, within_ms: u64) -> CorrelatorDef {
+        CorrelatorDef {
+            sources: vec![
+                SourceDef {
+                    id: trigger_id.to_string(),
+                    filter: vec![FilterRule::MessageContains { value: "TRIGGER".to_string() }],
+                    extract: vec![],
+                    condition: None,
+                },
+                SourceDef {
+                    id: non_trigger_id.to_string(),
+                    filter: vec![FilterRule::MessageContains { value: "NON_TRIGGER".to_string() }],
+                    extract: vec![],
+                    condition: None,
+                },
+            ],
+            correlate: CorrelateDef {
+                trigger: trigger_id.to_string(),
+                within_lines: None,
+                within_ms: Some(within_ms),
+                emit: "correlated".to_string(),
+                guidance: None,
+            },
+            output: Default::default(),
+        }
+    }
+
+    /// Non-trigger at line 10, trigger at line 20: gap is 10 lines > window of 5 → evicted, no event.
+    #[test]
+    fn within_lines_evicts_old_matches() {
+        let def = make_def_with_lines_window("trigger_src", "non_trigger_src", 5);
+        let ctx = PipelineContext::test_default();
+        let mut run = CorrelatorRun::new(&def);
+
+        run.process_line(&make_line(10, "tag", "NON_TRIGGER match"), &ctx);
+        run.process_line(&make_line(20, "tag", "TRIGGER fire"), &ctx);
+
+        let result = run.finish();
+        assert_eq!(result.events.len(), 0, "Expected no event (non-trigger evicted), got {}", result.events.len());
+    }
+
+    /// Non-trigger at line 10, trigger at line 14: gap is 4 lines <= window of 5 → event emitted.
+    #[test]
+    fn within_lines_keeps_recent_matches() {
+        let def = make_def_with_lines_window("trigger_src", "non_trigger_src", 5);
+        let ctx = PipelineContext::test_default();
+        let mut run = CorrelatorRun::new(&def);
+
+        run.process_line(&make_line(10, "tag", "NON_TRIGGER match"), &ctx);
+        run.process_line(&make_line(14, "tag", "TRIGGER fire"), &ctx);
+
+        let result = run.finish();
+        assert_eq!(result.events.len(), 1, "Expected 1 event (within window), got {}", result.events.len());
+    }
+
+    /// Non-trigger at T=0ms, trigger at T+10000ms: gap > window of 5000ms → evicted, no event.
+    #[test]
+    fn within_ms_evicts_old_matches() {
+        let def = make_def_with_ms_window("trigger_src", "non_trigger_src", 5000);
+        let ctx = PipelineContext::test_default();
+        let mut run = CorrelatorRun::new(&def);
+
+        // make_line sets timestamp = line_num * 1_000_000 (1ms per line)
+        // Use explicit timestamps: non-trigger at 0, trigger at 10_000ms (10_000 * 1_000_000 ns)
+        let mut non_trigger = make_line(1, "tag", "NON_TRIGGER match");
+        non_trigger.timestamp = 0;
+        let mut trigger = make_line(2, "tag", "TRIGGER fire");
+        trigger.timestamp = 10_000i64 * 1_000_000; // 10000ms in nanos
+
+        run.process_line(&non_trigger, &ctx);
+        run.process_line(&trigger, &ctx);
+
+        let result = run.finish();
+        assert_eq!(result.events.len(), 0, "Expected no event (non-trigger evicted by ms window), got {}", result.events.len());
+    }
+
+    /// Non-trigger at T=0ms, trigger at T+3000ms: gap 3000ms <= window of 5000ms → event emitted.
+    #[test]
+    fn within_ms_keeps_recent_matches() {
+        let def = make_def_with_ms_window("trigger_src", "non_trigger_src", 5000);
+        let ctx = PipelineContext::test_default();
+        let mut run = CorrelatorRun::new(&def);
+
+        let mut non_trigger = make_line(1, "tag", "NON_TRIGGER match");
+        non_trigger.timestamp = 0;
+        let mut trigger = make_line(2, "tag", "TRIGGER fire");
+        trigger.timestamp = 3_000i64 * 1_000_000; // 3000ms in nanos
+
+        run.process_line(&non_trigger, &ctx);
+        run.process_line(&trigger, &ctx);
+
+        let result = run.finish();
+        assert_eq!(result.events.len(), 1, "Expected 1 event (within ms window), got {}", result.events.len());
     }
 }

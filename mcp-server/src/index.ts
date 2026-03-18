@@ -203,12 +203,15 @@ server.tool(
 server.tool(
   "logtapper_get_sections",
   "Get the named sections of a bugreport or dumpstate log file. Returns " +
-    "paginated {name, startLine, endLine} for each section (e.g. 'SYSTEM LOG', " +
-    "'DUMPSYS NORMAL', 'KERNEL LOG'). Use startLine/endLine with " +
-    "logtapper_query or logtapper_search_with_context's start_line/end_line " +
-    "params to target specific sections. Returns an empty array for non-bugreport " +
-    "files (logcat, kernel). Large dumpstate files may have 500-1000+ sections — " +
-    "use query to filter by name or paginate with limit/offset.",
+    "paginated {name, startLine, endLine, parentIndex?} for each section. " +
+    "DUMPSYS sections (CRITICAL, HIGH, NORMAL) include subsections for each " +
+    "dumpsys service (e.g. 'activity', 'wifi', 'battery') — subsections have " +
+    "a parentIndex pointing to their parent DUMPSYS section's array index. " +
+    "Use startLine/endLine with logtapper_query or logtapper_search_with_context " +
+    "to target specific sections or subsections. The query param filters both " +
+    "parent and subsection names. Returns an empty array for non-bugreport files. " +
+    "Large dumpstate files may have 1000+ sections — use query to filter or " +
+    "paginate with limit/offset.",
   {
     session_id: z.string().describe("Session ID"),
     limit: z

@@ -40,6 +40,14 @@ impl LogAnonymizer {
         }
     }
 
+    /// Restore default detectors with pre-seeded mappings from a previous session.
+    pub fn with_saved_mappings(mappings: PiiMappings) -> Self {
+        Self {
+            detectors: default_detectors(),
+            mappings,
+        }
+    }
+
     /// Build with detectors selected by `AnonymizerConfig`.
     pub fn from_config(config: &AnonymizerConfig) -> Self {
         let mut detectors: Vec<Box<dyn PiiDetector>> = Vec::new();

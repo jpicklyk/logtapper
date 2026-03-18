@@ -292,6 +292,8 @@ export interface PipelineRunSummary {
   processorId: string;
   matchedLines: number;
   emissionCount: number;
+  scriptErrors?: number;
+  firstScriptError?: string;
 }
 
 export interface MatchedLine {
@@ -519,6 +521,7 @@ export interface SectionInfo {
   name: string;
   startLine: number;
   endLine: number;
+  parentIndex?: number;
 }
 
 export interface FilterInfo {

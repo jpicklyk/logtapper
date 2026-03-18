@@ -281,8 +281,9 @@ impl AnyProcessor {
                 ProcessorKind::Transformer(def)
             }
             "state_tracker" => {
-                let def: StateTrackerDef = serde_yaml::from_str(yaml)
+                let mut def: StateTrackerDef = serde_yaml::from_str(yaml)
                     .map_err(|e| format!("StateTracker YAML parse error: {e}"))?;
+                def.compile_filter_rules();
                 ProcessorKind::StateTracker(def)
             }
             "correlator" => {

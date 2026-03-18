@@ -26,6 +26,7 @@ pub mod correlator;
 pub mod files;
 pub mod filter;
 pub mod pipeline;
+pub mod pipeline_core;
 pub mod processors;
 pub mod session;
 pub mod sources;

@@ -1,10 +1,11 @@
 use std::collections::HashMap;
-use std::sync::OnceLock;
 use regex::Regex;
 use serde_json::Value as JsonValue;
 
-use crate::core::line::{LineContext, LogLevel, PipelineContext};
-use crate::processors::state_tracker::schema::{StateTrackerDef, TransitionFilter};
+use crate::core::line::{LineContext, PipelineContext};
+use crate::processors::filter::{rule_matches, FilterMatch};
+use crate::processors::reporter::schema::FilterRule;
+use crate::processors::state_tracker::schema::StateTrackerDef;
 use crate::processors::state_tracker::types::{
     ContinuousTrackerState, FieldChange, StateSnapshot, StateTrackerResult, StateTransition,
 };
@@ -14,6 +15,7 @@ pub struct StateTrackerRun {
     current_state: HashMap<String, JsonValue>,
     transitions: Vec<StateTransition>,
     tracker_id: String,
+    regex_cache: HashMap<String, Regex>,
 }
 
 impl StateTrackerRun {
@@ -24,6 +26,7 @@ impl StateTrackerRun {
             current_state,
             transitions: Vec::new(),
             tracker_id: tracker_id.to_string(),
+            regex_cache: HashMap::new(),
         }
     }
 
@@ -33,11 +36,17 @@ impl StateTrackerRun {
             current_state: saved.current_state,
             transitions: saved.transitions,
             tracker_id: tracker_id.to_string(),
+            regex_cache: HashMap::new(),
         }
     }
     pub fn process_line(&mut self, line: &LineContext, pipeline_ctx: &PipelineContext) {
         for rule in &self.def.transitions {
-            let Some(captures) = matches_filter_with_captures(&rule.filter, line, pipeline_ctx) else {
+            let Some(captures) = matches_filter_with_captures(
+                &rule.filter_rules,
+                line,
+                pipeline_ctx,
+                &mut self.regex_cache,
+            ) else {
                 continue;
             };
 
@@ -131,112 +140,44 @@ fn find_default(def: &StateTrackerDef, name: &str) -> Option<JsonValue> {
         .find(|f| f.name == name)
         .map(|f| f.default.clone())
 }
-fn level_char(level: &LogLevel) -> &'static str {
-    match level {
-        LogLevel::Verbose => "V",
-        LogLevel::Debug   => "D",
-        LogLevel::Info    => "I",
-        LogLevel::Warn    => "W",
-        LogLevel::Error   => "E",
-        LogLevel::Fatal   => "F",
-    }
-}
-
-
-/// Check all filter conditions and extract capture groups in a single pass.
+/// Check all filter rules and collect capture groups in a single pass.
 ///
-/// Returns `None` if the filter does not match. Returns `Some(captures)` on match,
+/// Returns `None` if any rule does not match. Returns `Some(captures)` on match,
 /// where captures may be `None` (no regex groups) or `Some(vec)` with `$N` pairs.
 /// Tag regex captures are numbered first ($1, $2, ...), then message regex captures
 /// continue the sequence.
 fn matches_filter_with_captures(
-    filter: &TransitionFilter,
+    filter_rules: &[FilterRule],
     line: &LineContext,
     pipeline_ctx: &PipelineContext,
+    regex_cache: &mut HashMap<String, Regex>,
 ) -> Option<Option<Vec<(usize, String)>>> {
-    // Check source_type and section first (cheapest comparisons)
-    if let Some(ref st) = filter.source_type {
-        if !pipeline_ctx.source_type.matches_str(st) {
+    let mut all_captures: Vec<(usize, String)> = Vec::new();
+    let mut capture_offset: usize = 0;
+
+    for rule in filter_rules {
+        let result: FilterMatch = rule_matches(regex_cache, rule, line, Some(pipeline_ctx));
+        if !result.matched {
             return None;
         }
-    }
-    if let Some(ref sec) = filter.section {
-        let line_section = crate::core::line::section_for_line(&pipeline_ctx.sections, line.source_line_num);
-        if line_section != sec {
-            return None;
+        if !result.captures.is_empty() {
+            // Offset capture group indices so tag captures come first,
+            // then message captures continue the sequence.
+            for (i, s) in &result.captures {
+                all_captures.push((i + capture_offset, s.clone()));
+            }
+            // Advance offset by the max capture index seen in this rule
+            if let Some(max_idx) = result.captures.iter().map(|(i, _)| *i).max() {
+                capture_offset += max_idx;
+            }
         }
     }
 
-    if let Some(tag) = &filter.tag {
-        if &*line.tag != tag.as_str() {
-            return None;
-        }
-    }
-
-    // Tag regex: use captures() instead of is_match() to avoid double execution.
-    let tag_caps: Vec<(usize, String)> = if let Some(pattern) = &filter.tag_regex {
-        match get_compiled_regex(pattern).and_then(|re| re.captures(&line.tag)) {
-            Some(caps) => caps.iter().enumerate().skip(1)
-                .filter_map(|(i, m)| m.map(|m| (i, m.as_str().to_string())))
-                .collect(),
-            None => return None,
-        }
+    if all_captures.is_empty() {
+        Some(None)
     } else {
-        Vec::new()
-    };
-
-    if let Some(substr) = &filter.message_contains {
-        if !line.message.contains(substr.as_str()) {
-            return None;
-        }
+        Some(Some(all_captures))
     }
-
-    // Message regex: use captures() and offset group indices by tag capture count.
-    let msg_caps: Vec<(usize, String)> = if let Some(pattern) = &filter.message_regex {
-        match get_compiled_regex(pattern).and_then(|re| re.captures(&line.message)) {
-            Some(caps) => caps.iter().enumerate().skip(1)
-                .filter_map(|(i, m)| {
-                    m.map(|m| (i + tag_caps.len(), m.as_str().to_string()))
-                })
-                .collect(),
-            None => return None,
-        }
-    } else {
-        Vec::new()
-    };
-
-    if let Some(level_str) = &filter.level {
-        if level_char(&line.level) != level_str.as_str() {
-            return None;
-        }
-    }
-
-    let captures = if tag_caps.is_empty() && msg_caps.is_empty() {
-        None
-    } else {
-        let mut combined = tag_caps;
-        combined.extend(msg_caps);
-        Some(combined)
-    };
-    Some(captures)
-}
-
-/// Thread-safe compiled regex cache.
-fn get_compiled_regex(pattern: &str) -> Option<&'static Regex> {
-    use std::sync::Mutex;
-
-    static CACHE: OnceLock<Mutex<HashMap<String, Option<Regex>>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut map = cache.lock().unwrap();
-
-    if let Some(opt) = map.get(pattern) {
-        // SAFETY: entries are never removed; Regex lifetime is effectively 'static
-        return opt.as_ref().map(|re| unsafe { &*(re as *const Regex) });
-    }
-
-    let compiled = Regex::new(pattern).ok();
-    map.insert(pattern.to_string(), compiled);
-    map.get(pattern).unwrap().as_ref().map(|re| unsafe { &*(re as *const Regex) })
 }
 
 /// Expand capture references ($1, $2, ...) in a serde_yaml::Value.
@@ -285,8 +226,9 @@ fn compute_changes(
 mod tests {
     use super::*;
     use std::sync::Arc;
+    use crate::core::line::LogLevel;
     use crate::processors::state_tracker::schema::{
-        StateFieldDecl, StateFieldType, StateTrackerOutput, TransitionRule,
+        StateFieldDecl, StateFieldType, StateTrackerOutput, TransitionFilter, TransitionRule,
     };
     use serde_json::json;
 
@@ -363,7 +305,22 @@ mod tests {
     }
 
     fn make_def() -> StateTrackerDef {
-        StateTrackerDef {
+        let filter1 = TransitionFilter {
+            tag: Some("WifiStateMachine".to_string()),
+            message_contains: Some("ENABLED".to_string()),
+            ..Default::default()
+        };
+        let filter2 = TransitionFilter {
+            tag: Some("WifiInfo".to_string()),
+            message_regex: Some(r#"SSID: "([^"]+)""#.to_string()),
+            ..Default::default()
+        };
+        let filter3 = TransitionFilter {
+            tag: Some("WifiStateMachine".to_string()),
+            message_contains: Some("DISABLED".to_string()),
+            ..Default::default()
+        };
+        let mut def = StateTrackerDef {
             group: "Network".to_string(),
             state: vec![
                 StateFieldDecl {
@@ -380,11 +337,8 @@ mod tests {
             transitions: vec![
                 TransitionRule {
                     name: "WiFi Enabled".to_string(),
-                    filter: TransitionFilter {
-                        tag: Some("WifiStateMachine".to_string()),
-                        message_contains: Some("ENABLED".to_string()),
-                        ..Default::default()
-                    },
+                    filter_rules: filter1.to_filter_rules(),
+                    filter: filter1,
                     set: {
                         let mut m = std::collections::HashMap::new();
                         m.insert("enabled".to_string(), serde_yaml::Value::Bool(true));
@@ -394,11 +348,8 @@ mod tests {
                 },
                 TransitionRule {
                     name: "Connected".to_string(),
-                    filter: TransitionFilter {
-                        tag: Some("WifiInfo".to_string()),
-                        message_regex: Some(r#"SSID: "([^"]+)""#.to_string()),
-                        ..Default::default()
-                    },
+                    filter_rules: filter2.to_filter_rules(),
+                    filter: filter2,
                     set: {
                         let mut m = std::collections::HashMap::new();
                         m.insert("ssid".to_string(), serde_yaml::Value::String("$1".to_string()));
@@ -408,11 +359,8 @@ mod tests {
                 },
                 TransitionRule {
                     name: "WiFi Disabled".to_string(),
-                    filter: TransitionFilter {
-                        tag: Some("WifiStateMachine".to_string()),
-                        message_contains: Some("DISABLED".to_string()),
-                        ..Default::default()
-                    },
+                    filter_rules: filter3.to_filter_rules(),
+                    filter: filter3,
                     set: {
                         let mut m = std::collections::HashMap::new();
                         m.insert("enabled".to_string(), serde_yaml::Value::Bool(false));
@@ -422,7 +370,9 @@ mod tests {
                 },
             ],
             output: StateTrackerOutput { timeline: true, annotate: true },
-        }
+        };
+        def.compile_filter_rules();
+        def
     }
 
     #[test]
@@ -524,7 +474,12 @@ mod tests {
     // ── tag_regex capture groups ─────────────────────────────────────────────
 
     fn make_tag_capture_def() -> StateTrackerDef {
-        StateTrackerDef {
+        let filter = TransitionFilter {
+            tag_regex: Some(r"NetworkMonitor/(\d+)".into()),
+            message_regex: Some(r"Time=(\d+)ms".into()),
+            ..Default::default()
+        };
+        let mut def = StateTrackerDef {
             group: String::new(),
             state: vec![
                 StateFieldDecl { name: "network_id".into(), field_type: StateFieldType::String, default: serde_json::Value::Null },
@@ -533,11 +488,8 @@ mod tests {
             transitions: vec![
                 TransitionRule {
                     name: "Validation Failed".into(),
-                    filter: TransitionFilter {
-                        tag_regex: Some(r"NetworkMonitor/(\d+)".into()),
-                        message_regex: Some(r"Time=(\d+)ms".into()),
-                        ..Default::default()
-                    },
+                    filter_rules: filter.to_filter_rules(),
+                    filter,
                     set: {
                         let mut m = std::collections::HashMap::new();
                         m.insert("network_id".into(), serde_yaml::Value::String("$1".into()));
@@ -548,7 +500,9 @@ mod tests {
                 },
             ],
             output: StateTrackerOutput { timeline: true, annotate: true },
-        }
+        };
+        def.compile_filter_rules();
+        def
     }
 
     #[test]
@@ -564,7 +518,12 @@ mod tests {
     #[test]
     fn tag_regex_no_groups_preserves_message_numbering() {
         // tag_regex with no capture groups — $1 should still be message capture
-        let def = StateTrackerDef {
+        let filter = TransitionFilter {
+            tag_regex: Some(r"NetworkMonitor/\d+".into()),
+            message_regex: Some(r"Time=(\d+)ms".into()),
+            ..Default::default()
+        };
+        let mut def = StateTrackerDef {
             group: String::new(),
             state: vec![
                 StateFieldDecl { name: "time_ms".into(), field_type: StateFieldType::String, default: serde_json::Value::Null },
@@ -572,11 +531,8 @@ mod tests {
             transitions: vec![
                 TransitionRule {
                     name: "Timed".into(),
-                    filter: TransitionFilter {
-                        tag_regex: Some(r"NetworkMonitor/\d+".into()),
-                        message_regex: Some(r"Time=(\d+)ms".into()),
-                        ..Default::default()
-                    },
+                    filter_rules: filter.to_filter_rules(),
+                    filter,
                     set: {
                         let mut m = std::collections::HashMap::new();
                         m.insert("time_ms".into(), serde_yaml::Value::String("$1".into()));
@@ -587,10 +543,147 @@ mod tests {
             ],
             output: StateTrackerOutput { timeline: true, annotate: true },
         };
+        def.compile_filter_rules();
         let mut run = StateTrackerRun::new("test", &def);
         run.process_line(&make_line(1, "NetworkMonitor/102", "Validation Time=500ms"), &PipelineContext::test_default());
         assert_eq!(run.transitions.len(), 1);
         assert_eq!(run.current_state["time_ms"], json!("500"));
+    }
+
+    // ── Unified filter system tests ─────────────────────────────────────────
+
+    #[test]
+    fn tag_prefix_matching_via_unified_filter() {
+        // Samsung-style tags like "WifiClientModeImpl[7403570:wlan0]" should
+        // match when filter.tag is "WifiClientModeImpl" (prefix matching).
+        let filter = TransitionFilter {
+            tag: Some("WifiClientModeImpl".to_string()),
+            message_contains: Some("connected".to_string()),
+            ..Default::default()
+        };
+        let mut def = StateTrackerDef {
+            group: "Wifi".to_string(),
+            state: vec![
+                StateFieldDecl {
+                    name: "connected".into(),
+                    field_type: StateFieldType::Bool,
+                    default: json!(false),
+                },
+            ],
+            transitions: vec![
+                TransitionRule {
+                    name: "Connected".into(),
+                    filter_rules: filter.to_filter_rules(),
+                    filter,
+                    set: {
+                        let mut m = HashMap::new();
+                        m.insert("connected".into(), serde_yaml::Value::Bool(true));
+                        m
+                    },
+                    clear: vec![],
+                },
+            ],
+            output: StateTrackerOutput::default(),
+        };
+        def.compile_filter_rules();
+        let mut run = StateTrackerRun::new("test", &def);
+        // Tag has Samsung-style suffix — should match via prefix
+        run.process_line(
+            &make_line(1, "WifiClientModeImpl[7403570:wlan0]", "connected to network"),
+            &PipelineContext::test_default(),
+        );
+        assert_eq!(run.transitions.len(), 1, "prefix matching should match Samsung-style tags");
+        assert_eq!(run.current_state["connected"], json!(true));
+    }
+
+    #[test]
+    fn level_min_threshold_via_unified_filter() {
+        // level: "W" should now match W, E, and F (LevelMin behavior)
+        let filter = TransitionFilter {
+            tag: Some("Test".to_string()),
+            level: Some("W".to_string()),
+            ..Default::default()
+        };
+        let mut def = StateTrackerDef {
+            group: "Test".to_string(),
+            state: vec![
+                StateFieldDecl {
+                    name: "error_seen".into(),
+                    field_type: StateFieldType::Bool,
+                    default: json!(false),
+                },
+            ],
+            transitions: vec![
+                TransitionRule {
+                    name: "High severity".into(),
+                    filter_rules: filter.to_filter_rules(),
+                    filter,
+                    set: {
+                        let mut m = HashMap::new();
+                        m.insert("error_seen".into(), serde_yaml::Value::Bool(true));
+                        m
+                    },
+                    clear: vec![],
+                },
+            ],
+            output: StateTrackerOutput::default(),
+        };
+        def.compile_filter_rules();
+
+        // Error level (above W) should match
+        let mut run = StateTrackerRun::new("test", &def);
+        let mut line = make_line(1, "Test", "something bad");
+        line.level = LogLevel::Error;
+        run.process_line(&line, &PipelineContext::test_default());
+        assert_eq!(run.transitions.len(), 1, "Error level should match LevelMin W");
+
+        // Debug level (below W) should NOT match
+        let mut run2 = StateTrackerRun::new("test", &def);
+        let mut line2 = make_line(1, "Test", "something fine");
+        line2.level = LogLevel::Debug;
+        run2.process_line(&line2, &PipelineContext::test_default());
+        assert_eq!(run2.transitions.len(), 0, "Debug level should not match LevelMin W");
+    }
+
+    #[test]
+    fn tag_regex_captures_with_unified_filter() {
+        // Verify capture groups still work correctly through the unified system
+        let filter = TransitionFilter {
+            tag_regex: Some(r"NetworkMonitor/(\d+)".into()),
+            message_regex: Some(r"validation.*Time=(\d+)ms".into()),
+            ..Default::default()
+        };
+        let mut def = StateTrackerDef {
+            group: String::new(),
+            state: vec![
+                StateFieldDecl { name: "net_id".into(), field_type: StateFieldType::String, default: serde_json::Value::Null },
+                StateFieldDecl { name: "time".into(), field_type: StateFieldType::String, default: serde_json::Value::Null },
+            ],
+            transitions: vec![
+                TransitionRule {
+                    name: "Captured".into(),
+                    filter_rules: filter.to_filter_rules(),
+                    filter,
+                    set: {
+                        let mut m = HashMap::new();
+                        m.insert("net_id".into(), serde_yaml::Value::String("$1".into()));
+                        m.insert("time".into(), serde_yaml::Value::String("$2".into()));
+                        m
+                    },
+                    clear: vec![],
+                },
+            ],
+            output: StateTrackerOutput::default(),
+        };
+        def.compile_filter_rules();
+        let mut run = StateTrackerRun::new("test", &def);
+        run.process_line(
+            &make_line(1, "NetworkMonitor/42", "validation complete Time=123ms"),
+            &PipelineContext::test_default(),
+        );
+        assert_eq!(run.transitions.len(), 1);
+        assert_eq!(run.current_state["net_id"], json!("42"));
+        assert_eq!(run.current_state["time"], json!("123"));
     }
 }
 

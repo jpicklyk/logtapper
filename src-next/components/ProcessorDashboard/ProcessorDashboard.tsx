@@ -369,6 +369,17 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
                 )}
               </div>
             )}
+            {summary && runCount > 0 && (summary.scriptErrors ?? 0) > 0 && (
+              <div className={styles.scriptErrorBanner} title={summary.firstScriptError}>
+                <span className={styles.scriptErrorIcon}>!</span>
+                <span>
+                  {summary.scriptErrors} script error{summary.scriptErrors !== 1 ? 's' : ''}
+                  {summary.firstScriptError && (
+                    <span className={styles.scriptErrorMsg}> — {summary.firstScriptError}</span>
+                  )}
+                </span>
+              </div>
+            )}
             {selectedProc?.description && (
               <p className={styles.detailDesc}>{selectedProc.description}</p>
             )}

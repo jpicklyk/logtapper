@@ -66,6 +66,10 @@ pub struct ProcessorRun<'a> {
     burst_active: HashSet<String>,
     /// Filter stages with rules pre-sorted by ascending cost (cheapest first).
     sorted_filter_rules: Vec<Vec<FilterRule>>,
+    /// Count of Rhai script errors encountered during this run.
+    script_errors: u32,
+    /// First script error message (for user-facing diagnostics).
+    first_script_error: Option<String>,
 }
 
 impl<'a> ProcessorRun<'a> {
@@ -78,6 +82,7 @@ impl<'a> ProcessorRun<'a> {
                     rules.sort_by_key(super::schema::FilterRule::cost_rank);
                     for rule in &mut rules {
                         rule.prepare_tag_set();
+                        rule.prepare_time_range();
                     }
                     Some(rules)
                 }
@@ -99,6 +104,8 @@ impl<'a> ProcessorRun<'a> {
             burst_windows: HashMap::new(),
             burst_active: HashSet::new(),
             sorted_filter_rules,
+            script_errors: 0,
+            first_script_error: None,
         }
     }
 
@@ -116,6 +123,8 @@ impl<'a> ProcessorRun<'a> {
             burst_windows: state.burst_windows,
             burst_active: state.burst_active,
             sorted_filter_rules,
+            script_errors: state.script_errors,
+            first_script_error: state.first_script_error,
         }
     }
 
@@ -146,18 +155,26 @@ impl<'a> ProcessorRun<'a> {
                         history: self.history.make_contiguous(),
                         pipeline_ctx,
                     };
-                    if let Ok((new_vars, new_emissions)) = engine.run_script(&ss.src, &input) {
-                        // Merge var updates
-                        self.vars.update_from_rhai(&new_vars);
-                        // Collect emissions — auto-inject timestamp so time series charts work
-                        for mut e in new_emissions {
-                            if !e.iter().any(|(k, _)| k == "timestamp") {
-                                e.push(("timestamp".to_string(), JsonValue::Number(line.timestamp.into())));
+                    match engine.run_script(&ss.src, &input) {
+                        Ok((new_vars, new_emissions)) => {
+                            // Merge var updates
+                            self.vars.update_from_rhai(&new_vars);
+                            // Collect emissions — auto-inject timestamp so time series charts work
+                            for mut e in new_emissions {
+                                if !e.iter().any(|(k, _)| k == "timestamp") {
+                                    e.push(("timestamp".to_string(), JsonValue::Number(line.timestamp.into())));
+                                }
+                                self.emissions.push(Emission {
+                                    line_num: line.source_line_num,
+                                    fields: e,
+                                });
                             }
-                            self.emissions.push(Emission {
-                                line_num: line.source_line_num,
-                                fields: e,
-                            });
+                        }
+                        Err(e) => {
+                            self.script_errors += 1;
+                            if self.first_script_error.is_none() {
+                                self.first_script_error = Some(e);
+                            }
                         }
                     }
                 }
@@ -195,6 +212,8 @@ impl<'a> ProcessorRun<'a> {
             emissions: self.emissions,
             vars: self.vars.to_json(),
             matched_line_nums: self.matched_line_nums,
+            script_errors: self.script_errors,
+            first_script_error: self.first_script_error,
         }
     }
 
@@ -204,6 +223,8 @@ impl<'a> ProcessorRun<'a> {
             emissions: self.emissions.clone(),
             vars: self.vars.to_json(),
             matched_line_nums: self.matched_line_nums.clone(),
+            script_errors: self.script_errors,
+            first_script_error: self.first_script_error.clone(),
         }
     }
 
@@ -221,6 +242,8 @@ impl<'a> ProcessorRun<'a> {
             last_processed_line,
             burst_windows: self.burst_windows,
             burst_active: self.burst_active,
+            script_errors: self.script_errors,
+            first_script_error: self.first_script_error,
         }
     }
 
@@ -232,7 +255,7 @@ impl<'a> ProcessorRun<'a> {
         // Call filter::rule_matches directly (not via self.rule_matches) to avoid
         // borrowing &mut self while also borrowing self.sorted_filter_rules.
         for rule in &self.sorted_filter_rules[filter_idx] {
-            if !crate::processors::filter::rule_matches(&mut self.regex_cache, rule, line, Some(pipeline_ctx)) {
+            if !crate::processors::filter::rule_matches(&mut self.regex_cache, rule, line, Some(pipeline_ctx)).matched {
                 return false;
             }
         }
@@ -378,6 +401,10 @@ pub struct RunResult {
     pub vars: HashMap<String, JsonValue>,
     /// Line numbers of lines that matched (had at least one emission or passed filter).
     pub matched_line_nums: Vec<usize>,
+    /// Number of Rhai script errors encountered during this run.
+    pub script_errors: u32,
+    /// First script error message (for user-facing diagnostics).
+    pub first_script_error: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -399,6 +426,10 @@ pub struct ContinuousRunState {
     pub burst_windows: HashMap<String, VecDeque<i64>>,
     /// BurstDetector active-burst keys (persisted to prevent double-firing).
     pub burst_active: HashSet<String>,
+    /// Cumulative script error count (persisted across batches).
+    pub script_errors: u32,
+    /// First script error encountered (persisted across batches).
+    pub first_script_error: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -417,6 +448,174 @@ mod tests {
     use std::sync::Arc;
     use crate::core::line::{LineContext, LogLevel, PipelineContext};
     use crate::processors::reporter::schema::ReporterDef;
+
+    // ── Shared Rhai script for exception stack tracker tests ─────────────────
+
+    const EXCEPTION_TRACKER_SCRIPT: &str = r#"
+      if "fatal_thread_name" in fields {
+        if vars.in_fatal_trace && vars.current_fatal_app != "" {
+          let detail = vars.current_fatal_exception;
+          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
+            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
+          }
+          detail = detail + " on " + vars.current_fatal_thread;
+          let crashes = vars.fatal_crashes;
+          crashes[vars.current_fatal_app] = detail;
+          vars.fatal_crashes = crashes;
+          _emits.push(#{
+            source: vars.current_fatal_app,
+            exception: vars.current_fatal_exception,
+            root_cause: if vars.current_fatal_root_cause != "" { vars.current_fatal_root_cause } else { vars.current_fatal_exception },
+            crash_thread: vars.current_fatal_thread,
+            start_line: vars.fatal_trace_start,
+            fatal: true,
+          });
+        }
+        vars.current_fatal_thread = fields.fatal_thread_name;
+        vars.current_fatal_app = "";
+        vars.current_fatal_exception = "";
+        vars.current_fatal_root_cause = "";
+        vars.fatal_trace_start = line.line_number;
+        vars.in_fatal_trace = true;
+        vars.fatal_count += 1;
+        return;
+      }
+
+      if vars.in_fatal_trace && "process_name" in fields {
+        vars.current_fatal_app = fields.process_name;
+        return;
+      }
+
+      if vars.in_fatal_trace && line.tag == "AndroidRuntime" {
+        if "caused_by_class" in fields {
+          vars.current_fatal_root_cause = fields.caused_by_class;
+        }
+        if "exception_class" in fields && vars.current_fatal_exception == "" {
+          vars.current_fatal_exception = fields.exception_class;
+        }
+        if vars.current_fatal_app != "" && vars.current_fatal_exception != "" {
+          let detail = vars.current_fatal_exception;
+          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
+            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
+          }
+          detail = detail + " on " + vars.current_fatal_thread;
+          let crashes = vars.fatal_crashes;
+          crashes[vars.current_fatal_app] = detail;
+          vars.fatal_crashes = crashes;
+        }
+        return;
+      }
+
+      if vars.in_fatal_trace {
+        if vars.current_fatal_app != "" {
+          let detail = vars.current_fatal_exception;
+          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
+            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
+          }
+          detail = detail + " on " + vars.current_fatal_thread;
+          let crashes = vars.fatal_crashes;
+          crashes[vars.current_fatal_app] = detail;
+          vars.fatal_crashes = crashes;
+          _emits.push(#{
+            source: vars.current_fatal_app,
+            exception: vars.current_fatal_exception,
+            root_cause: if vars.current_fatal_root_cause != "" { vars.current_fatal_root_cause } else { vars.current_fatal_exception },
+            crash_thread: vars.current_fatal_thread,
+            start_line: vars.fatal_trace_start,
+            fatal: true,
+          });
+        }
+        vars.in_fatal_trace = false;
+      }
+
+      if vars.in_stderr_trace && line.tag != "System.err" {
+        let src = if vars.stderr_source != "" { vars.stderr_source } else { "System.err" };
+        let exc = vars.stderr_exception;
+        let key = src + ": " + exc;
+        let summary = vars.nonfatal_summary;
+        if key in summary { summary[key] = summary[key] + 1; } else { summary[key] = 1; }
+        vars.nonfatal_summary = summary;
+        _emits.push(#{
+          source: src,
+          exception: exc,
+          root_cause: vars.stderr_root_cause,
+          crash_thread: "",
+          start_line: vars.stderr_start_line,
+          fatal: false,
+        });
+        vars.in_stderr_trace = false;
+        vars.stderr_source = "";
+        vars.stderr_exception = "";
+        vars.stderr_root_cause = "";
+      }
+
+      if line.tag == "System.err" {
+        if "exception_class" in fields && !("caused_by_class" in fields) {
+          if vars.in_stderr_trace {
+            let src = if vars.stderr_source != "" { vars.stderr_source } else { "System.err" };
+            let exc = vars.stderr_exception;
+            let key = src + ": " + exc;
+            let summary = vars.nonfatal_summary;
+            if key in summary { summary[key] = summary[key] + 1; } else { summary[key] = 1; }
+            vars.nonfatal_summary = summary;
+            _emits.push(#{
+              source: src,
+              exception: exc,
+              root_cause: vars.stderr_root_cause,
+              crash_thread: "",
+              start_line: vars.stderr_start_line,
+              fatal: false,
+            });
+          }
+          vars.in_stderr_trace = true;
+          vars.stderr_exception = fields.exception_class;
+          vars.stderr_root_cause = fields.exception_class;
+          vars.stderr_start_line = line.line_number;
+          vars.stderr_source = "";
+          vars.nonfatal_count += 1;
+          return;
+        }
+        if vars.in_stderr_trace && "caused_by_class" in fields {
+          vars.stderr_root_cause = fields.caused_by_class;
+          return;
+        }
+        if vars.in_stderr_trace && "at_class" in fields && vars.stderr_source == "" {
+          let pkg = fields.at_class;
+          if !pkg.starts_with("java.") && !pkg.starts_with("javax.") &&
+             !pkg.starts_with("android.") && !pkg.starts_with("com.android.") &&
+             !pkg.starts_with("libcore.") && !pkg.starts_with("sun.") &&
+             !pkg.starts_with("dalvik.") && !pkg.starts_with("kotlin.") &&
+             !pkg.starts_with("androidx.") {
+            vars.stderr_source = pkg;
+          }
+          return;
+        }
+        return;
+      }
+
+      if "exception_class" in fields && !("caused_by_class" in fields) && !("at_class" in fields) {
+        let tag = line.tag;
+        let exc = fields.exception_class;
+        vars.nonfatal_count += 1;
+        let key = tag + ": " + exc;
+        let summary = vars.nonfatal_summary;
+        if key in summary {
+          summary[key] = summary[key] + 1;
+        } else {
+          summary[key] = 1;
+        }
+        vars.nonfatal_summary = summary;
+        let root = if "caused_by_class" in fields { fields.caused_by_class } else { exc };
+        _emits.push(#{
+          source: tag,
+          exception: exc,
+          root_cause: root,
+          crash_thread: "",
+          start_line: line.line_number,
+          fatal: false,
+        });
+      }
+"#;
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -1218,173 +1417,55 @@ pipeline:
         assert_eq!(result.vars["is_unit"], JsonValue::Bool(true));
     }
 
+    // ── Gap 7: history_get returns correct fields (timestamp, pid, tid) ──────
+
+    #[test]
+    fn script_history_get_timestamp_and_pid_fields() {
+        // Verify history_get returns the full set of fields including timestamp and pid.
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+vars:
+  - name: prev_ts
+    type: int
+    default: 0
+  - name: prev_pid
+    type: int
+    default: 0
+  - name: prev_tid
+    type: int
+    default: 0
+pipeline:
+  - stage: script
+    runtime: rhai
+    src: |
+      if history_len() > 0 {
+        let prev = history_get(history_len() - 1);
+        vars.prev_ts = prev.timestamp;
+        vars.prev_pid = prev.pid;
+        vars.prev_tid = prev.tid;
+      }
+"#);
+        let mut run = ProcessorRun::new(&d);
+        // First line: timestamp=999, pid=42, tid=99
+        let mut line1 = make_line("TagA", "first", LogLevel::Info, 0);
+        line1.timestamp = 999;
+        line1.pid = 42;
+        line1.tid = 99;
+        run.process_line(&line1, &PipelineContext::test_default());
+        // Second line: triggers script — history contains [line1]
+        let line2 = make_line("TagB", "second", LogLevel::Info, 1);
+        run.process_line(&line2, &PipelineContext::test_default());
+        let result = run.finish();
+        assert_eq!(result.vars["prev_ts"], JsonValue::Number(999.into()));
+        assert_eq!(result.vars["prev_pid"], JsonValue::Number(42.into()));
+        assert_eq!(result.vars["prev_tid"], JsonValue::Number(99.into()));
+    }
+
     #[test]
     fn exception_stack_tracker_fatal_and_nonfatal() {
-        let script = r#"
-      if "fatal_thread_name" in fields {
-        if vars.in_fatal_trace && vars.current_fatal_app != "" {
-          let detail = vars.current_fatal_exception;
-          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
-            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
-          }
-          detail = detail + " on " + vars.current_fatal_thread;
-          let crashes = vars.fatal_crashes;
-          crashes[vars.current_fatal_app] = detail;
-          vars.fatal_crashes = crashes;
-          _emits.push(#{
-            source: vars.current_fatal_app,
-            exception: vars.current_fatal_exception,
-            root_cause: if vars.current_fatal_root_cause != "" { vars.current_fatal_root_cause } else { vars.current_fatal_exception },
-            crash_thread: vars.current_fatal_thread,
-            start_line: vars.fatal_trace_start,
-            fatal: true,
-          });
-        }
-        vars.current_fatal_thread = fields.fatal_thread_name;
-        vars.current_fatal_app = "";
-        vars.current_fatal_exception = "";
-        vars.current_fatal_root_cause = "";
-        vars.fatal_trace_start = line.line_number;
-        vars.in_fatal_trace = true;
-        vars.fatal_count += 1;
-        return;
-      }
-
-      if vars.in_fatal_trace && "process_name" in fields {
-        vars.current_fatal_app = fields.process_name;
-        return;
-      }
-
-      if vars.in_fatal_trace && line.tag == "AndroidRuntime" {
-        if "caused_by_class" in fields {
-          vars.current_fatal_root_cause = fields.caused_by_class;
-        }
-        if "exception_class" in fields && vars.current_fatal_exception == "" {
-          vars.current_fatal_exception = fields.exception_class;
-        }
-        if vars.current_fatal_app != "" && vars.current_fatal_exception != "" {
-          let detail = vars.current_fatal_exception;
-          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
-            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
-          }
-          detail = detail + " on " + vars.current_fatal_thread;
-          let crashes = vars.fatal_crashes;
-          crashes[vars.current_fatal_app] = detail;
-          vars.fatal_crashes = crashes;
-        }
-        return;
-      }
-
-      if vars.in_fatal_trace {
-        if vars.current_fatal_app != "" {
-          let detail = vars.current_fatal_exception;
-          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
-            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
-          }
-          detail = detail + " on " + vars.current_fatal_thread;
-          let crashes = vars.fatal_crashes;
-          crashes[vars.current_fatal_app] = detail;
-          vars.fatal_crashes = crashes;
-          _emits.push(#{
-            source: vars.current_fatal_app,
-            exception: vars.current_fatal_exception,
-            root_cause: if vars.current_fatal_root_cause != "" { vars.current_fatal_root_cause } else { vars.current_fatal_exception },
-            crash_thread: vars.current_fatal_thread,
-            start_line: vars.fatal_trace_start,
-            fatal: true,
-          });
-        }
-        vars.in_fatal_trace = false;
-      }
-
-      if vars.in_stderr_trace && line.tag != "System.err" {
-        let src = if vars.stderr_source != "" { vars.stderr_source } else { "System.err" };
-        let exc = vars.stderr_exception;
-        let key = src + ": " + exc;
-        let summary = vars.nonfatal_summary;
-        if key in summary { summary[key] = summary[key] + 1; } else { summary[key] = 1; }
-        vars.nonfatal_summary = summary;
-        _emits.push(#{
-          source: src,
-          exception: exc,
-          root_cause: vars.stderr_root_cause,
-          crash_thread: "",
-          start_line: vars.stderr_start_line,
-          fatal: false,
-        });
-        vars.in_stderr_trace = false;
-        vars.stderr_source = "";
-        vars.stderr_exception = "";
-        vars.stderr_root_cause = "";
-      }
-
-      if line.tag == "System.err" {
-        if "exception_class" in fields && !("caused_by_class" in fields) {
-          if vars.in_stderr_trace {
-            let src = if vars.stderr_source != "" { vars.stderr_source } else { "System.err" };
-            let exc = vars.stderr_exception;
-            let key = src + ": " + exc;
-            let summary = vars.nonfatal_summary;
-            if key in summary { summary[key] = summary[key] + 1; } else { summary[key] = 1; }
-            vars.nonfatal_summary = summary;
-            _emits.push(#{
-              source: src,
-              exception: exc,
-              root_cause: vars.stderr_root_cause,
-              crash_thread: "",
-              start_line: vars.stderr_start_line,
-              fatal: false,
-            });
-          }
-          vars.in_stderr_trace = true;
-          vars.stderr_exception = fields.exception_class;
-          vars.stderr_root_cause = fields.exception_class;
-          vars.stderr_start_line = line.line_number;
-          vars.stderr_source = "";
-          vars.nonfatal_count += 1;
-          return;
-        }
-        if vars.in_stderr_trace && "caused_by_class" in fields {
-          vars.stderr_root_cause = fields.caused_by_class;
-          return;
-        }
-        if vars.in_stderr_trace && "at_class" in fields && vars.stderr_source == "" {
-          let pkg = fields.at_class;
-          if !pkg.starts_with("java.") && !pkg.starts_with("javax.") &&
-             !pkg.starts_with("android.") && !pkg.starts_with("com.android.") &&
-             !pkg.starts_with("libcore.") && !pkg.starts_with("sun.") &&
-             !pkg.starts_with("dalvik.") && !pkg.starts_with("kotlin.") &&
-             !pkg.starts_with("androidx.") {
-            vars.stderr_source = pkg;
-          }
-          return;
-        }
-        return;
-      }
-
-      if "exception_class" in fields && !("caused_by_class" in fields) && !("at_class" in fields) {
-        let tag = line.tag;
-        let exc = fields.exception_class;
-        vars.nonfatal_count += 1;
-        let key = tag + ": " + exc;
-        let summary = vars.nonfatal_summary;
-        if key in summary {
-          summary[key] = summary[key] + 1;
-        } else {
-          summary[key] = 1;
-        }
-        vars.nonfatal_summary = summary;
-        let root = if "caused_by_class" in fields { fields.caused_by_class } else { exc };
-        _emits.push(#{
-          source: tag,
-          exception: exc,
-          root_cause: root,
-          crash_thread: "",
-          start_line: line.line_number,
-          fatal: false,
-        });
-      }
-"#;
+        let script = EXCEPTION_TRACKER_SCRIPT;
         let d = def(&format!(r#"
 meta:
   id: t
@@ -1528,171 +1609,7 @@ pipeline:
     fn exception_stack_tracker_fatal_at_end_of_log() {
         // Fatal crash is the last thing in the log — no subsequent line triggers a flush.
         // fatal_crashes must still be populated via the eager write path.
-        let script = r#"
-      if "fatal_thread_name" in fields {
-        if vars.in_fatal_trace && vars.current_fatal_app != "" {
-          let detail = vars.current_fatal_exception;
-          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
-            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
-          }
-          detail = detail + " on " + vars.current_fatal_thread;
-          let crashes = vars.fatal_crashes;
-          crashes[vars.current_fatal_app] = detail;
-          vars.fatal_crashes = crashes;
-          _emits.push(#{
-            source: vars.current_fatal_app,
-            exception: vars.current_fatal_exception,
-            root_cause: if vars.current_fatal_root_cause != "" { vars.current_fatal_root_cause } else { vars.current_fatal_exception },
-            crash_thread: vars.current_fatal_thread,
-            start_line: vars.fatal_trace_start,
-            fatal: true,
-          });
-        }
-        vars.current_fatal_thread = fields.fatal_thread_name;
-        vars.current_fatal_app = "";
-        vars.current_fatal_exception = "";
-        vars.current_fatal_root_cause = "";
-        vars.fatal_trace_start = line.line_number;
-        vars.in_fatal_trace = true;
-        vars.fatal_count += 1;
-        return;
-      }
-
-      if vars.in_fatal_trace && "process_name" in fields {
-        vars.current_fatal_app = fields.process_name;
-        return;
-      }
-
-      if vars.in_fatal_trace && line.tag == "AndroidRuntime" {
-        if "caused_by_class" in fields {
-          vars.current_fatal_root_cause = fields.caused_by_class;
-        }
-        if "exception_class" in fields && vars.current_fatal_exception == "" {
-          vars.current_fatal_exception = fields.exception_class;
-        }
-        if vars.current_fatal_app != "" && vars.current_fatal_exception != "" {
-          let detail = vars.current_fatal_exception;
-          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
-            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
-          }
-          detail = detail + " on " + vars.current_fatal_thread;
-          let crashes = vars.fatal_crashes;
-          crashes[vars.current_fatal_app] = detail;
-          vars.fatal_crashes = crashes;
-        }
-        return;
-      }
-
-      if vars.in_fatal_trace {
-        if vars.current_fatal_app != "" {
-          let detail = vars.current_fatal_exception;
-          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
-            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
-          }
-          detail = detail + " on " + vars.current_fatal_thread;
-          let crashes = vars.fatal_crashes;
-          crashes[vars.current_fatal_app] = detail;
-          vars.fatal_crashes = crashes;
-          _emits.push(#{
-            source: vars.current_fatal_app,
-            exception: vars.current_fatal_exception,
-            root_cause: if vars.current_fatal_root_cause != "" { vars.current_fatal_root_cause } else { vars.current_fatal_exception },
-            crash_thread: vars.current_fatal_thread,
-            start_line: vars.fatal_trace_start,
-            fatal: true,
-          });
-        }
-        vars.in_fatal_trace = false;
-      }
-
-      if vars.in_stderr_trace && line.tag != "System.err" {
-        let src = if vars.stderr_source != "" { vars.stderr_source } else { "System.err" };
-        let exc = vars.stderr_exception;
-        let key = src + ": " + exc;
-        let summary = vars.nonfatal_summary;
-        if key in summary { summary[key] = summary[key] + 1; } else { summary[key] = 1; }
-        vars.nonfatal_summary = summary;
-        _emits.push(#{
-          source: src,
-          exception: exc,
-          root_cause: vars.stderr_root_cause,
-          crash_thread: "",
-          start_line: vars.stderr_start_line,
-          fatal: false,
-        });
-        vars.in_stderr_trace = false;
-        vars.stderr_source = "";
-        vars.stderr_exception = "";
-        vars.stderr_root_cause = "";
-      }
-
-      if line.tag == "System.err" {
-        if "exception_class" in fields && !("caused_by_class" in fields) {
-          if vars.in_stderr_trace {
-            let src = if vars.stderr_source != "" { vars.stderr_source } else { "System.err" };
-            let exc = vars.stderr_exception;
-            let key = src + ": " + exc;
-            let summary = vars.nonfatal_summary;
-            if key in summary { summary[key] = summary[key] + 1; } else { summary[key] = 1; }
-            vars.nonfatal_summary = summary;
-            _emits.push(#{
-              source: src,
-              exception: exc,
-              root_cause: vars.stderr_root_cause,
-              crash_thread: "",
-              start_line: vars.stderr_start_line,
-              fatal: false,
-            });
-          }
-          vars.in_stderr_trace = true;
-          vars.stderr_exception = fields.exception_class;
-          vars.stderr_root_cause = fields.exception_class;
-          vars.stderr_start_line = line.line_number;
-          vars.stderr_source = "";
-          vars.nonfatal_count += 1;
-          return;
-        }
-        if vars.in_stderr_trace && "caused_by_class" in fields {
-          vars.stderr_root_cause = fields.caused_by_class;
-          return;
-        }
-        if vars.in_stderr_trace && "at_class" in fields && vars.stderr_source == "" {
-          let pkg = fields.at_class;
-          if !pkg.starts_with("java.") && !pkg.starts_with("javax.") &&
-             !pkg.starts_with("android.") && !pkg.starts_with("com.android.") &&
-             !pkg.starts_with("libcore.") && !pkg.starts_with("sun.") &&
-             !pkg.starts_with("dalvik.") && !pkg.starts_with("kotlin.") &&
-             !pkg.starts_with("androidx.") {
-            vars.stderr_source = pkg;
-          }
-          return;
-        }
-        return;
-      }
-
-      if "exception_class" in fields && !("caused_by_class" in fields) && !("at_class" in fields) {
-        let tag = line.tag;
-        let exc = fields.exception_class;
-        vars.nonfatal_count += 1;
-        let key = tag + ": " + exc;
-        let summary = vars.nonfatal_summary;
-        if key in summary {
-          summary[key] = summary[key] + 1;
-        } else {
-          summary[key] = 1;
-        }
-        vars.nonfatal_summary = summary;
-        let root = if "caused_by_class" in fields { fields.caused_by_class } else { exc };
-        _emits.push(#{
-          source: tag,
-          exception: exc,
-          root_cause: root,
-          crash_thread: "",
-          start_line: line.line_number,
-          fatal: false,
-        });
-      }
-"#;
+        let script = EXCEPTION_TRACKER_SCRIPT;
         let d = def(&format!(r#"
 meta:
   id: t
@@ -1799,147 +1716,7 @@ pipeline:
         // Replicates the real-log scenario: two back-to-back System.err FileNotFoundException
         // traces from com.sec.android.app.servicemodeapp, with app at-frames that should
         // be attributed. The second trace starts before the first has a non-System.err flush.
-        // Inline the same script used by the other exception_stack_tracker tests.
-        // Copy from exception_stack_tracker_fatal_at_end_of_log above (same script var).
-        let script = r#"
-      if "fatal_thread_name" in fields {
-        if vars.in_fatal_trace && vars.current_fatal_app != "" {
-          let detail = vars.current_fatal_exception;
-          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
-            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
-          }
-          detail = detail + " on " + vars.current_fatal_thread;
-          let crashes = vars.fatal_crashes;
-          crashes[vars.current_fatal_app] = detail;
-          vars.fatal_crashes = crashes;
-          _emits.push(#{
-            source: vars.current_fatal_app,
-            exception: vars.current_fatal_exception,
-            root_cause: if vars.current_fatal_root_cause != "" { vars.current_fatal_root_cause } else { vars.current_fatal_exception },
-            crash_thread: vars.current_fatal_thread,
-            start_line: vars.fatal_trace_start,
-            fatal: true,
-          });
-        }
-        vars.current_fatal_thread = fields.fatal_thread_name;
-        vars.current_fatal_app = "";
-        vars.current_fatal_exception = "";
-        vars.current_fatal_root_cause = "";
-        vars.fatal_trace_start = line.line_number;
-        vars.in_fatal_trace = true;
-        vars.fatal_count += 1;
-        return;
-      }
-      if vars.in_fatal_trace && "process_name" in fields {
-        vars.current_fatal_app = fields.process_name;
-        return;
-      }
-      if vars.in_fatal_trace && line.tag == "AndroidRuntime" {
-        if "caused_by_class" in fields { vars.current_fatal_root_cause = fields.caused_by_class; }
-        if "exception_class" in fields && vars.current_fatal_exception == "" { vars.current_fatal_exception = fields.exception_class; }
-        if vars.current_fatal_app != "" && vars.current_fatal_exception != "" {
-          let detail = vars.current_fatal_exception;
-          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
-            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
-          }
-          detail = detail + " on " + vars.current_fatal_thread;
-          let crashes = vars.fatal_crashes;
-          crashes[vars.current_fatal_app] = detail;
-          vars.fatal_crashes = crashes;
-        }
-        return;
-      }
-      if vars.in_fatal_trace {
-        if vars.current_fatal_app != "" {
-          let detail = vars.current_fatal_exception;
-          if vars.current_fatal_root_cause != "" && vars.current_fatal_root_cause != vars.current_fatal_exception {
-            detail = detail + " (root: " + vars.current_fatal_root_cause + ")";
-          }
-          detail = detail + " on " + vars.current_fatal_thread;
-          let crashes = vars.fatal_crashes;
-          crashes[vars.current_fatal_app] = detail;
-          vars.fatal_crashes = crashes;
-          _emits.push(#{
-            source: vars.current_fatal_app,
-            exception: vars.current_fatal_exception,
-            root_cause: if vars.current_fatal_root_cause != "" { vars.current_fatal_root_cause } else { vars.current_fatal_exception },
-            crash_thread: vars.current_fatal_thread,
-            start_line: vars.fatal_trace_start,
-            fatal: true,
-          });
-        }
-        vars.in_fatal_trace = false;
-      }
-      if vars.in_stderr_trace && line.tag != "System.err" {
-        let src = if vars.stderr_source != "" { vars.stderr_source } else { "System.err" };
-        let exc = vars.stderr_exception;
-        let key = src + ": " + exc;
-        let summary = vars.nonfatal_summary;
-        if key in summary { summary[key] = summary[key] + 1; } else { summary[key] = 1; }
-        vars.nonfatal_summary = summary;
-        _emits.push(#{
-          source: src, exception: exc, root_cause: vars.stderr_root_cause,
-          crash_thread: "", start_line: vars.stderr_start_line, fatal: false,
-        });
-        vars.in_stderr_trace = false;
-        vars.stderr_source = "";
-        vars.stderr_exception = "";
-        vars.stderr_root_cause = "";
-      }
-      if line.tag == "System.err" {
-        if "exception_class" in fields && !("caused_by_class" in fields) {
-          if vars.in_stderr_trace {
-            let src = if vars.stderr_source != "" { vars.stderr_source } else { "System.err" };
-            let exc = vars.stderr_exception;
-            let key = src + ": " + exc;
-            let summary = vars.nonfatal_summary;
-            if key in summary { summary[key] = summary[key] + 1; } else { summary[key] = 1; }
-            vars.nonfatal_summary = summary;
-            _emits.push(#{
-              source: src, exception: exc, root_cause: vars.stderr_root_cause,
-              crash_thread: "", start_line: vars.stderr_start_line, fatal: false,
-            });
-          }
-          vars.in_stderr_trace = true;
-          vars.stderr_exception = fields.exception_class;
-          vars.stderr_root_cause = fields.exception_class;
-          vars.stderr_start_line = line.line_number;
-          vars.stderr_source = "";
-          vars.nonfatal_count += 1;
-          return;
-        }
-        if vars.in_stderr_trace && "caused_by_class" in fields {
-          vars.stderr_root_cause = fields.caused_by_class;
-          return;
-        }
-        if vars.in_stderr_trace && "at_class" in fields && vars.stderr_source == "" {
-          let pkg = fields.at_class;
-          if !pkg.starts_with("java.") && !pkg.starts_with("javax.") &&
-             !pkg.starts_with("android.") && !pkg.starts_with("com.android.") &&
-             !pkg.starts_with("libcore.") && !pkg.starts_with("sun.") &&
-             !pkg.starts_with("dalvik.") && !pkg.starts_with("kotlin.") &&
-             !pkg.starts_with("androidx.") {
-            vars.stderr_source = pkg;
-          }
-          return;
-        }
-        return;
-      }
-      if "exception_class" in fields && !("caused_by_class" in fields) && !("at_class" in fields) {
-        let tag = line.tag;
-        let exc = fields.exception_class;
-        vars.nonfatal_count += 1;
-        let key = tag + ": " + exc;
-        let summary = vars.nonfatal_summary;
-        if key in summary { summary[key] = summary[key] + 1; } else { summary[key] = 1; }
-        vars.nonfatal_summary = summary;
-        let root = if "caused_by_class" in fields { fields.caused_by_class } else { exc };
-        _emits.push(#{
-          source: tag, exception: exc, root_cause: root,
-          crash_thread: "", start_line: line.line_number, fatal: false,
-        });
-      }
-"#;
+        let script = EXCEPTION_TRACKER_SCRIPT;
         let d = def(&format!(r#"
 meta:
   id: t
@@ -2041,5 +1818,77 @@ pipeline:
             "expected attribution, got: {nonfatal:?}");
         assert!(!nonfatal.contains_key("System.err: java.io.FileNotFoundException"),
             "should not fall back to System.err: {nonfatal:?}");
+    }
+
+    // ── Gap 2: Script error observability ────────────────────────────────────
+
+    fn def_with_broken_script() -> ReporterDef {
+        def(r#"
+meta:
+  id: broken_script
+  name: Broken Script
+pipeline:
+  - stage: script
+    runtime: rhai
+    src: |
+      let x = 1 / 0;
+"#)
+    }
+
+    fn def_with_working_script() -> ReporterDef {
+        def(r#"
+meta:
+  id: working_script
+  name: Working Script
+pipeline:
+  - stage: script
+    runtime: rhai
+    src: |
+      _emits.push(#{ count: 1 });
+"#)
+    }
+
+    #[test]
+    fn script_error_increments_counter() {
+        let d = def_with_broken_script();
+        let mut run = ProcessorRun::new(&d);
+        run.process_line(&make_line("Tag", "hello", LogLevel::Info, 1), &PipelineContext::test_default());
+        let result = run.finish();
+        assert!(result.script_errors > 0, "Expected script_errors > 0 for division by zero");
+    }
+
+    #[test]
+    fn script_error_captures_first_error() {
+        let d = def_with_broken_script();
+        let mut run = ProcessorRun::new(&d);
+        run.process_line(&make_line("Tag", "hello", LogLevel::Info, 1), &PipelineContext::test_default());
+        let result = run.finish();
+        assert!(result.first_script_error.is_some(), "Expected first_script_error to be Some");
+        let msg = result.first_script_error.unwrap();
+        assert!(!msg.is_empty(), "Expected non-empty error message");
+    }
+
+    #[test]
+    fn script_error_does_not_abort_run() {
+        let d = def_with_broken_script();
+        let mut run = ProcessorRun::new(&d);
+        let n = 5usize;
+        for i in 0..n {
+            run.process_line(&make_line("Tag", "hello", LogLevel::Info, i), &PipelineContext::test_default());
+        }
+        let result = run.finish();
+        // Every matched line should have errored
+        assert_eq!(result.script_errors, n as u32,
+            "Expected one error per matched line, got {}", result.script_errors);
+    }
+
+    #[test]
+    fn script_error_zero_when_script_succeeds() {
+        let d = def_with_working_script();
+        let mut run = ProcessorRun::new(&d);
+        run.process_line(&make_line("Tag", "hello", LogLevel::Info, 1), &PipelineContext::test_default());
+        let result = run.finish();
+        assert_eq!(result.script_errors, 0, "Expected no script errors for working script");
+        assert!(result.first_script_error.is_none(), "Expected first_script_error to be None");
     }
 }

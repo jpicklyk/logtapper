@@ -1,10 +1,9 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::HashMap;
 use tauri::{AppHandle, Manager, State};
 
 use crate::commands::AppState;
 use crate::processors::marketplace;
-use crate::processors::registry::{self, RegistryEntry};
 use crate::processors::{AnyProcessor, ProcessorSummary};
 
 pub(crate) fn persist_processor(app: &AppHandle, id: &str, yaml: &str) -> Result<(), String> {
@@ -16,19 +15,55 @@ pub(crate) fn persist_processor(app: &AppHandle, id: &str, yaml: &str) -> Result
         .map_err(|e| format!("Failed to persist processor: {e}"))
 }
 
-/// Validate, persist, and install a parsed processor into the store.
-fn validate_and_install(
-    app: &AppHandle,
-    state: &AppState,
-    yaml: &str,
-    processor: AnyProcessor,
-) -> Result<ProcessorSummary, String> {
+/// Pure validation checks for an `AnyProcessor` — no I/O, no AppHandle needed.
+/// Returns `Ok(())` if all checks pass, or an error string describing the problem.
+pub(crate) fn validate_processor(processor: &AnyProcessor) -> Result<(), String> {
+    use crate::processors::ProcessorKind;
+
+    // Reject processor kinds with no engine implementation.
+    if matches!(processor.kind, ProcessorKind::Annotator(_)) {
+        return Err("Annotator processors are not yet supported".to_string());
+    }
+
+    // Reject transformer AddField ops that have a non-empty script — the script
+    // is never evaluated (AddField only inserts an empty string placeholder).
+    if let Some(transformer_def) = processor.as_transformer() {
+        use crate::processors::transformer::schema::TransformOp;
+        for op in &transformer_def.transforms {
+            if let TransformOp::AddField { script, .. } = op {
+                if !script.is_empty() {
+                    return Err(
+                        "AddField with script is not yet supported. \
+                         Use SetField for static values."
+                            .to_string(),
+                    );
+                }
+            }
+        }
+    }
+
     processor.validate_filter_rules()?;
     if let Some(reporter_def) = processor.as_reporter() {
         for stage in &reporter_def.pipeline {
             use crate::processors::schema::PipelineStage;
-            if let PipelineStage::Script(s) = stage {
-                crate::scripting::sandbox::validate_for_install(&s.src)?;
+            use crate::processors::reporter::schema::AggType;
+            match stage {
+                PipelineStage::Script(s) => {
+                    crate::scripting::sandbox::validate_for_install(&s.src)?;
+                }
+                PipelineStage::Aggregate(agg) => {
+                    for group in &agg.groups {
+                        match &group.agg_type {
+                            AggType::Min => return Err("Unsupported aggregate type 'min'. Supported types: count, count_by, burst_detector".to_string()),
+                            AggType::Max => return Err("Unsupported aggregate type 'max'. Supported types: count, count_by, burst_detector".to_string()),
+                            AggType::Avg => return Err("Unsupported aggregate type 'avg'. Supported types: count, count_by, burst_detector".to_string()),
+                            AggType::Percentile => return Err("Unsupported aggregate type 'percentile'. Supported types: count, count_by, burst_detector".to_string()),
+                            AggType::TimeBucket => return Err("Unsupported aggregate type 'time_bucket'. Supported types: count, count_by, burst_detector".to_string()),
+                            AggType::Count | AggType::CountBy | AggType::BurstDetector => {}
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -44,6 +79,17 @@ fn validate_and_install(
             }
         }
     }
+    Ok(())
+}
+
+/// Validate, persist, and install a parsed processor into the store.
+fn validate_and_install(
+    app: &AppHandle,
+    state: &AppState,
+    yaml: &str,
+    processor: AnyProcessor,
+) -> Result<ProcessorSummary, String> {
+    validate_processor(&processor)?;
     persist_processor(app, &processor.meta.id, yaml)?;
     let summary = ProcessorSummary::from(&processor);
     let mut procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
@@ -182,48 +228,164 @@ pub async fn uninstall_processor(
     Ok(())
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RegistryEntryDto {
-    pub id: String,
-    pub name: String,
-    pub version: String,
-    pub description: Option<String>,
-    pub path: String,
-    pub tags: Vec<String>,
-    pub sha256: String,
-}
+// ---------------------------------------------------------------------------
+// Gap 4: Install validation tests
+// ---------------------------------------------------------------------------
 
-impl From<RegistryEntry> for RegistryEntryDto {
-    fn from(e: RegistryEntry) -> Self {
-        Self {
-            id: e.id, name: e.name, version: e.version, description: e.description,
-            path: e.path, tags: e.tags, sha256: e.sha256,
+#[cfg(test)]
+mod tests {
+    use super::validate_processor;
+    use crate::processors::{AnyProcessor, ProcessorKind, ProcessorMeta};
+    use crate::processors::annotator::schema::AnnotatorDef;
+    use crate::processors::transformer::schema::{TransformerDef, TransformOp};
+    use crate::processors::reporter::schema::{
+        ReporterDef, AggType, AggregateGroup, AggregateStage, PipelineStage,
+    };
+
+    fn make_meta(id: &str) -> ProcessorMeta {
+        ProcessorMeta {
+            id: id.to_string(),
+            name: "Test".to_string(),
+            version: "1.0.0".to_string(),
+            author: String::new(),
+            description: String::new(),
+            tags: vec![],
+            builtin: false,
+            license: None,
+            category: None,
+            repository: None,
+            deprecated: false,
         }
     }
-}
 
-#[tauri::command]
-pub async fn fetch_registry(
-    state: State<'_, AppState>,
-    registry_url: Option<String>,
-) -> Result<Vec<RegistryEntryDto>, String> {
-    let index = registry::fetch_registry(&state.http_client, registry_url.as_deref()).await?;
-    Ok(index.processors.into_iter().map(RegistryEntryDto::from).collect())
-}
+    fn make_reporter_with_agg(agg_type: AggType) -> AnyProcessor {
+        let def: ReporterDef = serde_yaml::from_str(&format!(r#"
+meta:
+  id: test_reporter
+  name: Test
+pipeline:
+  - stage: aggregate
+    groups:
+      - type: {agg_type}
+"#, agg_type = match agg_type {
+    AggType::Count => "count",
+    AggType::CountBy => "count_by",
+    AggType::Min => "min",
+    AggType::Max => "max",
+    AggType::Avg => "avg",
+    AggType::Percentile => "percentile",
+    AggType::TimeBucket => "time_bucket",
+    AggType::BurstDetector => "burst_detector",
+})).unwrap();
+        AnyProcessor {
+            meta: make_meta("test_reporter"),
+            kind: ProcessorKind::Reporter(def),
+            schema: None,
+            source: None,
+        }
+    }
 
-#[tauri::command]
-pub async fn install_from_registry(
-    state: State<'_, AppState>,
-    app: AppHandle,
-    entry: RegistryEntryDto,
-) -> Result<ProcessorSummary, String> {
-    let reg_entry = RegistryEntry {
-        id: entry.id.clone(), name: entry.name.clone(), version: entry.version.clone(),
-        description: entry.description.clone(), path: entry.path.clone(),
-        tags: entry.tags.clone(), sha256: entry.sha256.clone(),
-    };
-    let yaml = registry::download_processor(&state.http_client, &reg_entry, None).await?;
-    let processor = AnyProcessor::from_yaml(&yaml)?;
-    validate_and_install(&app, &state, &yaml, processor)
+    // ── 4a. Rejects annotator ─────────────────────────────────────────────────
+
+    #[test]
+    fn rejects_annotator_processor() {
+        let proc = AnyProcessor {
+            meta: make_meta("test_annotator"),
+            kind: ProcessorKind::Annotator(AnnotatorDef { phases: vec![] }),
+            schema: None,
+            source: None,
+        };
+        let result = validate_processor(&proc);
+        assert!(result.is_err(), "Expected annotator to be rejected");
+        let msg = result.unwrap_err();
+        assert!(msg.contains("not yet supported"), "Error should mention 'not yet supported', got: {msg}");
+    }
+
+    // ── 4b. Rejects AddField with non-empty script ────────────────────────────
+
+    #[test]
+    fn rejects_addfield_with_script() {
+        let def = TransformerDef {
+            filter: None,
+            transforms: vec![TransformOp::AddField {
+                name: "foo".to_string(),
+                script: "some_script".to_string(),
+            }],
+            builtin: None,
+        };
+        let proc = AnyProcessor {
+            meta: make_meta("__test_transformer"),
+            kind: ProcessorKind::Transformer(def),
+            schema: None,
+            source: None,
+        };
+        let result = validate_processor(&proc);
+        assert!(result.is_err(), "Expected AddField with script to be rejected");
+    }
+
+    // ── 4c. Accepts AddField with empty script ────────────────────────────────
+
+    #[test]
+    fn accepts_addfield_without_script() {
+        let def = TransformerDef {
+            filter: None,
+            transforms: vec![TransformOp::AddField {
+                name: "foo".to_string(),
+                script: String::new(),
+            }],
+            builtin: None,
+        };
+        let proc = AnyProcessor {
+            meta: make_meta("__test_transformer"),
+            kind: ProcessorKind::Transformer(def),
+            schema: None,
+            source: None,
+        };
+        // The AddField check should pass (other checks may still apply but at
+        // minimum the AddField-specific rejection must not trigger)
+        let result = validate_processor(&proc);
+        assert!(
+            result.is_ok() || !result.as_ref().unwrap_err().contains("AddField"),
+            "AddField with empty script should not be rejected for AddField reason, got: {:?}",
+            result
+        );
+    }
+
+    // ── 4d. Rejects aggregate min ─────────────────────────────────────────────
+
+    #[test]
+    fn rejects_unimplemented_aggregate_min() {
+        let proc = make_reporter_with_agg(AggType::Min);
+        let result = validate_processor(&proc);
+        assert!(result.is_err(), "Expected 'min' aggregate to be rejected");
+        assert!(result.unwrap_err().contains("min"), "Error should mention 'min'");
+    }
+
+    // ── 4e. Rejects aggregate avg ─────────────────────────────────────────────
+
+    #[test]
+    fn rejects_unimplemented_aggregate_avg() {
+        let proc = make_reporter_with_agg(AggType::Avg);
+        let result = validate_processor(&proc);
+        assert!(result.is_err(), "Expected 'avg' aggregate to be rejected");
+        assert!(result.unwrap_err().contains("avg"), "Error should mention 'avg'");
+    }
+
+    // ── 4f. Accepts aggregate count ──────────────────────────────────────────
+
+    #[test]
+    fn accepts_implemented_aggregate_count() {
+        let proc = make_reporter_with_agg(AggType::Count);
+        let result = validate_processor(&proc);
+        assert!(result.is_ok(), "Expected 'count' aggregate to be accepted, got: {:?}", result);
+    }
+
+    // ── 4g. Accepts aggregate count_by ───────────────────────────────────────
+
+    #[test]
+    fn accepts_implemented_aggregate_count_by() {
+        let proc = make_reporter_with_agg(AggType::CountBy);
+        let result = validate_processor(&proc);
+        assert!(result.is_ok(), "Expected 'count_by' aggregate to be accepted, got: {:?}", result);
+    }
 }

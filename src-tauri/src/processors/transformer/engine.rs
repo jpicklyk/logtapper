@@ -51,8 +51,28 @@ impl TransformerRun {
         }
     }
 
-    pub fn new_seeded(def: &TransformerDef, _saved: ContinuousTransformerState) -> Self {
-        Self::new(def)
+    pub fn new_seeded(def: &TransformerDef, saved: ContinuousTransformerState) -> Self {
+        let is_pii = def
+            .builtin
+            .as_ref()
+            .is_some_and(|b| matches!(b, BuiltinTransformer::PiiAnonymizer));
+
+        let pii_transformer = if is_pii {
+            Some(match saved.pii_mappings {
+                Some(mappings) if !mappings.is_empty() => {
+                    PiiTransformer::from_mappings(mappings)
+                }
+                _ => PiiTransformer::new(),
+            })
+        } else {
+            None
+        };
+
+        TransformerRun {
+            def: def.clone(),
+            pii_transformer,
+            regex_cache: HashMap::new(),
+        }
     }
 
     pub fn process_line(&mut self, line: &mut LineContext) -> bool {
@@ -93,7 +113,7 @@ impl TransformerRun {
 
 fn apply_filter(regex_cache: &mut HashMap<String, Regex>, stage: &FilterStage, line: &LineContext) -> bool {
     for rule in &stage.rules {
-        if !crate::processors::filter::rule_matches(regex_cache, rule, line, None) {
+        if !crate::processors::filter::rule_matches(regex_cache, rule, line, None).matched {
             return false;
         }
     }
@@ -277,5 +297,87 @@ mod tests {
         let mut line = make_line("hello");
         let keep = run.process_line(&mut line);
         assert!(keep);
+    }
+
+    // ── Gap 3a: new_seeded restores PII mappings ──────────────────────────────
+
+    #[test]
+    fn new_seeded_restores_pii_mappings() {
+        use crate::processors::transformer::schema::BuiltinTransformer;
+
+        // Create a saved state with a known IP → token mapping
+        let mut saved_mappings = HashMap::new();
+        saved_mappings.insert("192.168.1.1".to_string(), "<IPv4-1>".to_string());
+        let saved = ContinuousTransformerState {
+            last_processed_line: 10,
+            pii_mappings: Some(saved_mappings),
+        };
+
+        let def = TransformerDef {
+            filter: None,
+            transforms: vec![],
+            builtin: Some(BuiltinTransformer::PiiAnonymizer),
+        };
+        let mut run = TransformerRun::new_seeded(&def, saved);
+
+        // Process a line containing the previously-seen IP
+        let mut line = make_line("Connected to 192.168.1.1 via wifi");
+        run.process_line(&mut line);
+
+        // The output must use the restored token "<IPv4-1>", not a new "<IPv4-2>"
+        assert!(
+            line.message.contains("<IPv4-1>"),
+            "Expected restored token <IPv4-1> but got: {}",
+            &*line.message
+        );
+        assert!(
+            !line.message.contains("192.168.1.1"),
+            "Raw IP should have been replaced, got: {}",
+            &*line.message
+        );
+    }
+
+    // ── Gap 3b: into_continuous_state saves PII mappings ─────────────────────
+
+    #[test]
+    fn into_continuous_state_saves_pii_mappings() {
+        use crate::processors::transformer::schema::BuiltinTransformer;
+
+        let def = TransformerDef {
+            filter: None,
+            transforms: vec![],
+            builtin: Some(BuiltinTransformer::PiiAnonymizer),
+        };
+        let mut run = TransformerRun::new(&def);
+
+        // Process a line with an IP address to generate a mapping
+        let mut line = make_line("Connection from 10.0.0.5 dropped");
+        run.process_line(&mut line);
+
+        // IP should have been replaced
+        assert!(
+            !line.message.contains("10.0.0.5"),
+            "IP should be replaced, got: {}",
+            &*line.message
+        );
+
+        // Extract the token that was assigned
+        let token = line.message.trim_end().to_string();
+
+        // Save continuous state and verify PII mappings are included
+        let state = run.into_continuous_state(1);
+        assert!(state.pii_mappings.is_some(), "Expected pii_mappings to be Some");
+        let mappings = state.pii_mappings.unwrap();
+        assert!(
+            mappings.contains_key("10.0.0.5"),
+            "Expected IP 10.0.0.5 in saved mappings, got: {:?}",
+            mappings
+        );
+        let saved_token = mappings.get("10.0.0.5").unwrap();
+        // Token format is <IPv4-N>
+        assert!(
+            saved_token.starts_with("<IPv4-"),
+            "Expected token starting with <IPv4-, got: {saved_token}"
+        );
     }
 }

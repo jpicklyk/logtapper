@@ -868,6 +868,8 @@ async fn h_processor_detail(
                             emissions: rr.emissions.clone(),
                             vars: rr.vars.clone(),
                             matched_line_nums: rr.matched_line_nums.clone(),
+                            script_errors: rr.script_errors,
+                            first_script_error: rr.first_script_error.clone(),
                         }, name, desc)
                     })
             };
@@ -1445,8 +1447,9 @@ async fn h_processor_defs_single(
                             crate::processors::reporter::schema::FilterRule::MessageContainsAny { values } => format!("message_contains_any: [{}]", values.join(", ")),
                             crate::processors::reporter::schema::FilterRule::MessageRegex { pattern } => format!("message_regex: \"{pattern}\""),
                             crate::processors::reporter::schema::FilterRule::LevelMin { level } => format!("level_min: {level}"),
-                            crate::processors::reporter::schema::FilterRule::TimeRange { from, to } => format!("time_range: {from} - {to}"),
+                            crate::processors::reporter::schema::FilterRule::TimeRange { from, to, .. } => format!("time_range: {from} - {to}"),
                             crate::processors::reporter::schema::FilterRule::SourceTypeIs { source_type } => format!("source_type_is: {source_type}"),
+                            crate::processors::reporter::schema::FilterRule::TagRegex { pattern } => format!("tag_regex: \"{pattern}\""),
                             crate::processors::reporter::schema::FilterRule::SectionIs { section } => format!("section_is: {section}"),
                         }).collect();
                         Some(json!(rules))

@@ -1,0 +1,210 @@
+meta:
+  id: "radio-data-call-reporter"
+  name: "Radio Data Call Reporter"
+  version: "1.0.0"
+  author: "LogTapper"
+  description: "Tracks RIL-level data call setup and teardown from RILJ, DSM-C-0, DCT-C-0, and SST. Captures SETUP_DATA_CALL and DEACTIVATE_DATA_CALL commands, DATA_REGISTRATION_STATE polls, and pollStateDone transitions. Complements the higher-level Cellular Data Failure Reporter with raw RIL visibility."
+  tags: ["telephony", "ril", "data-call", "cellular", "android", "radio"]
+  group: Telephony
+
+# Restrict bugreport processing to RADIO LOG — this is where RILJ, DSM-C-0, DCT-C-0, and SST
+# data call entries live. For pure logcat files (no sections), this is a no-op.
+sections:
+  - "RADIO LOG"
+
+vars:
+  - name: setup_count
+    type: int
+    default: 0
+    display: true
+    label: "Data Call Setups"
+
+  - name: deactivate_count
+    type: int
+    default: 0
+    display: true
+    label: "Data Call Deactivations"
+
+  - name: reg_state_count
+    type: int
+    default: 0
+    display: true
+    label: "Reg State Polls"
+
+  - name: last_reg_state
+    type: string
+    default: ""
+    display: true
+    label: "Last Reg State"
+
+  - name: last_rat
+    type: string
+    default: ""
+    display: true
+    label: "Last RAT"
+
+  - name: poll_registered_count
+    type: int
+    default: 0
+    display: true
+    label: "Registration Events"
+
+  - name: poll_deregistered_count
+    type: int
+    default: 0
+    display: true
+    label: "Deregistration Events"
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: tag_match
+        values:
+          - "RILJ"
+          - "DSM-C-0"
+          - "DCT-C-0"
+          - "SST"
+      - type: message_contains_any
+        values:
+          - "SETUP_DATA_CALL"
+          - "setupDataCall"
+          - "DEACTIVATE_DATA_CALL"
+          - "deactivateDataCall"
+          - "DATA_REGISTRATION_STATE"
+          - "pollStateDone"
+
+  - stage: extract
+    fields:
+      # Registration state: REG_HOME, NOT_REG_NOT_SEARCHING, etc.
+      - name: reg_state_name
+        pattern: 'regState:\s*([A-Z_]+)'
+        cast: string
+      # Radio access technology: LTE, LTE_CA, NR_SA, etc.
+      - name: rat_name
+        pattern: 'rat:\s*([A-Z_0-9]+)'
+        cast: string
+      # pollStateDone registration flag
+      - name: poll_registered
+        pattern: 'hasRegistered\s*=\s*(true|false)'
+        cast: string
+      # pollStateDone deregistration flag
+      - name: poll_deregistered
+        pattern: 'hasDeregistered\s*=\s*(true|false)'
+        cast: string
+      # pollStateDone data attached flag (map key 1)
+      - name: poll_data_attached
+        pattern: 'hasDataAttached\s*=\s*\{[^}]*1=(true|false)'
+        cast: string
+      # pollStateDone data detached flag (map key 1)
+      - name: poll_data_detached
+        pattern: 'hasDataDetached\s*=\s*\{[^}]*1=(true|false)'
+        cast: string
+
+  - stage: script
+    runtime: rhai
+    src: |
+      let msg = line.message;
+
+      if "SETUP_DATA_CALL" in msg || "setupDataCall" in msg {
+        vars.setup_count += 1;
+        _emits.push(#{
+          event_type: "setup_data_call",
+          reg_state: vars.last_reg_state,
+          rat: vars.last_rat,
+          tag: line.tag,
+        });
+
+      } else if "DEACTIVATE_DATA_CALL" in msg || "deactivateDataCall" in msg {
+        vars.deactivate_count += 1;
+        _emits.push(#{
+          event_type: "deactivate_data_call",
+          reg_state: vars.last_reg_state,
+          rat: vars.last_rat,
+          tag: line.tag,
+        });
+
+      } else if "DATA_REGISTRATION_STATE" in msg {
+        // Only emit on the response line that carries regState — skip request lines
+        if "reg_state_name" in fields {
+          let reg_state = fields.reg_state_name;
+          let rat = if "rat_name" in fields { fields.rat_name } else { "unknown" };
+
+          vars.last_reg_state = reg_state;
+          vars.last_rat = rat;
+          vars.reg_state_count += 1;
+
+          _emits.push(#{
+            event_type: "data_reg_state",
+            reg_state: reg_state,
+            rat: rat,
+            tag: line.tag,
+          });
+        }
+
+      } else if "pollStateDone" in msg {
+        let registered   = if "poll_registered"   in fields { fields.poll_registered   } else { "unknown" };
+        let deregistered = if "poll_deregistered"  in fields { fields.poll_deregistered  } else { "unknown" };
+
+        if registered == "true" {
+          vars.poll_registered_count += 1;
+        }
+        if deregistered == "true" {
+          vars.poll_deregistered_count += 1;
+        }
+
+        _emits.push(#{
+          event_type: "poll_state_done",
+          reg_state: registered,
+          rat: deregistered,
+          tag: line.tag,
+        });
+      }
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["event_type", "reg_state", "rat", "tag"]
+        sort: "event_type"
+      - type: summary
+        source: vars
+        template: |
+          RIL: {{setup_count}} setups, {{deactivate_count}} deactivations. Last reg: {{last_reg_state}} on {{last_rat}}.
+          Reg state polls: {{reg_state_count}} | Registration events: {{poll_registered_count}} | Deregistration events: {{poll_deregistered_count}}
+
+    charts:
+      - id: events_by_type_bar
+        type: bar
+        title: "RIL Data Call Events by Type"
+        source: emissions
+        x: { field: event_type, label: "Event Type" }
+        y: { field: event_type, label: "Count", aggregation: count }
+
+schema:
+  source_types: ["logcat", "bugreport"]
+  emissions:
+    - name: event_type
+      type: string
+      description: "Classified event type (setup_data_call, deactivate_data_call, data_reg_state, poll_state_done)"
+    - name: reg_state
+      type: string
+      description: "Registration state string (REG_HOME, NOT_REG_NOT_SEARCHING, etc.) or hasRegistered boolean for poll_state_done events"
+    - name: rat
+      type: string
+      description: "Radio access technology (LTE, LTE_CA, NR_SA, etc.) or hasDeregistered boolean for poll_state_done events"
+    - name: tag
+      type: string
+      description: "Log tag from the source line (RILJ, DSM-C-0, DCT-C-0, SST)"
+  mcp:
+    summary:
+      template: "RIL: {{setup_count}} setups, {{deactivate_count}} deactivations. Last reg: {{last_reg_state}} on {{last_rat}}."
+      include_vars: [setup_count, deactivate_count, reg_state_count, last_reg_state, last_rat, poll_registered_count, poll_deregistered_count]
+    signals:
+      - name: data_deregistered
+        severity: warning
+        condition: "poll_deregistered_count > 0"
+        fields: [poll_deregistered_count, last_reg_state, last_rat]
+        format: "{{poll_deregistered_count}} data deregistration event(s) detected — device lost cellular data registration"
+        type: emission
+        emission_field: rat
+        emission_value: "true"

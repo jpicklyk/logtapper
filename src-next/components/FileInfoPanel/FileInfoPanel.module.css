@@ -343,6 +343,15 @@
   margin-top: 2px;
 }
 
+.searchBar {
+  padding: 4px 6px;
+  flex-shrink: 0;
+}
+
+.searchInput {
+  width: 100%;
+}
+
 .sectionList {
   flex: 1;
   min-height: 0;
@@ -394,6 +403,8 @@
   background: var(--bg-overlay);
   color: var(--accent);
   animation: section-flash 600ms ease-out;
+  border-left: 2px solid var(--accent);
+  padding-left: 6px; /* reduced to compensate for border */
 }
 
 .sectionName {
@@ -482,6 +493,7 @@
 .sectionGroupItems {
   padding-left: 12px;
   border-top: 1px solid var(--border);
+  animation: expandIn 150ms ease;
 }
 
 .showMoreBtn {
@@ -507,6 +519,96 @@
 @keyframes section-flash {
   0% { background-color: rgba(88, 166, 255, 0.25); }
   100% { background-color: var(--bg-overlay); }
+}
+
+/* ── Proportional size bar ─────────────────────────────────────────────────── */
+
+.sizeBar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: var(--accent);
+  opacity: 0.12;
+  border-radius: 0 1px 1px 0;
+  transition: opacity var(--transition-fast);
+  pointer-events: none;
+}
+
+.sectionItem:hover .sizeBar {
+  opacity: 0.25;
+}
+
+.sectionItemActive .sizeBar {
+  opacity: 0.35;
+}
+
+/* ── Child section indent ──────────────────────────────────────────────────── */
+
+.sectionItemChild {
+  padding-left: 20px;
+  border-left: 2px solid var(--border-subtle);
+  margin-left: 8px;
+}
+
+.sectionItemChild.sectionItemActive {
+  border-left-color: var(--accent);
+}
+
+/* ── Parent DUMPSYS group ──────────────────────────────────────────────────── */
+
+.parentGroup {
+  border-bottom: 1px solid var(--border);
+}
+
+.parentGroup:last-child {
+  border-bottom: none;
+}
+
+.parentHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  background: var(--bg-raised);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.parentHeader:hover {
+  background: var(--bg-overlay);
+}
+
+.parentHeaderActive {
+  color: var(--accent);
+}
+
+.parentName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.parentChildren {
+  border-top: 1px solid var(--border);
+  animation: expandIn 150ms ease;
+}
+
+/* ── Expand animation ──────────────────────────────────────────────────────── */
+
+@keyframes expandIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* ── Sections scanning progress indicator ─────────────────────────────────── */

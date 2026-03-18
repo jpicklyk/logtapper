@@ -1,0 +1,122 @@
+type: state_tracker
+id: cellular-registration-state
+name: Cellular Registration State
+version: 1.0.0
+author: LogTapper
+description: >
+  Tracks cellular voice and data registration state, radio access technology (RAT),
+  and operator name from PhoneStateTracker and VolteServiceModule logs.
+  Automatically reconstructs the cellular registration timeline
+  (e.g. OUT_OF_SERVICE → NR_SA IN_SERVICE → voice IN_SERVICE → LTE)
+  without manual searching through dumpstate output.
+tags: [telephony, cellular, registration, rat, android]
+
+group: Telephony
+
+state:
+  - name: voice_reg_state
+    type: string
+    default: "UNKNOWN"
+  - name: data_reg_state
+    type: string
+    default: "UNKNOWN"
+  - name: rat
+    type: string
+    default: "UNKNOWN"
+  - name: operator
+    type: string
+    default: ""
+  - name: slot
+    type: string
+    default: "0"
+
+transitions:
+  # ── Full service state line — captures all fields at once ──
+  # tag_regex $1 = slot; message_regex captures start at $2.
+
+  - name: Service State Changed (Full)
+    filter:
+      tag_regex: 'PhoneStateTracker<(\d+)>'
+      message_regex: 'mVoiceRegState=\d+\(([^)]+)\).*mDataRegState=\d+\(([^)]+)\).*getRilDataRadioTechnology=\d+\(([^)]+)\).*mOperatorAlphaLong=([^,}\s][^,}]*)'
+    set:
+      slot: $1
+      voice_reg_state: $2
+      data_reg_state: $3
+      rat: $4
+      operator: $5
+
+  # ── Fallback: voice + data present but RAT/operator absent ──
+
+  - name: Service State Changed (Voice + Data)
+    filter:
+      tag_regex: 'PhoneStateTracker<(\d+)>'
+      message_regex: 'onServiceStateChanged.*mVoiceRegState=\d+\(([^)]+)\).*mDataRegState=\d+\(([^)]+)\)'
+    set:
+      slot: $1
+      voice_reg_state: $2
+      data_reg_state: $3
+
+  # ── RAT and operator updates from VolteServiceModule ──
+
+  - name: Data RAT Changed
+    filter:
+      tag: VolteServiceModule
+      message_regex: 'getRilDataRadioTechnology=\d+\(([^)]+)\)'
+    set:
+      rat: $1
+
+  - name: Operator Changed
+    filter:
+      tag: VolteServiceModule
+      message_regex: 'mOperatorAlphaLong=([A-Za-z][^,}]+)'
+    set:
+      operator: $1
+
+  # ── Targeted single-field updates from PhoneStateTracker ──
+  # Ordered most-specific first. These fire when the Full/VoiceData
+  # transitions do not match (e.g. partial log lines or alternate formats).
+
+  - name: Voice In Service
+    filter:
+      tag_regex: 'PhoneStateTracker<(\d+)>'
+      message_contains: "mVoiceRegState=0(IN_SERVICE)"
+    set:
+      slot: $1
+      voice_reg_state: IN_SERVICE
+
+  - name: Voice Out of Service
+    filter:
+      tag_regex: 'PhoneStateTracker<(\d+)>'
+      message_contains: "mVoiceRegState=1(OUT_OF_SERVICE)"
+    set:
+      slot: $1
+      voice_reg_state: OUT_OF_SERVICE
+
+  - name: Data In Service
+    filter:
+      tag_regex: 'PhoneStateTracker<(\d+)>'
+      message_contains: "mDataRegState=0(IN_SERVICE)"
+    set:
+      slot: $1
+      data_reg_state: IN_SERVICE
+
+  - name: Data Out of Service
+    filter:
+      tag_regex: 'PhoneStateTracker<(\d+)>'
+      message_contains: "mDataRegState=1(OUT_OF_SERVICE)"
+    set:
+      slot: $1
+      data_reg_state: OUT_OF_SERVICE
+
+output:
+  timeline: true
+  annotate: true
+
+schema:
+  source_types: ["logcat", "bugreport"]
+  emissions: []
+  mcp:
+    summary:
+      template: "Cellular: voice={{voice_reg_state}}, data={{data_reg_state}}, RAT={{rat}}, operator={{operator}}."
+      include_vars: [voice_reg_state, data_reg_state, rat, operator, slot]
+    signals: []

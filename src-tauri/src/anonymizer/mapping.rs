@@ -28,6 +28,42 @@ impl PiiMappings {
         }
     }
 
+    /// Restore a `PiiMappings` from a previously saved forward-mapping snapshot.
+    ///
+    /// The reverse map is rebuilt from the forward map. Counters are reconstructed
+    /// by scanning token suffixes so new tokens continue from the right index.
+    pub fn from_saved(forward_map: HashMap<String, String>) -> Self {
+        let mut counters: HashMap<PiiCategory, usize> = HashMap::new();
+        let mut reverse: HashMap<String, String> = HashMap::with_capacity(forward_map.len());
+
+        for (raw, token) in &forward_map {
+            reverse.insert(token.clone(), raw.clone());
+
+            // Tokens have the form `<PREFIX-N>` — extract N to restore counter.
+            // E.g. `<EMAIL-3>` → category Email, counter 3.
+            if let Some(inner) = token.strip_prefix('<').and_then(|s| s.strip_suffix('>')) {
+                if let Some(dash_pos) = inner.rfind('-') {
+                    let prefix = &inner[..dash_pos];
+                    let n_str = &inner[dash_pos + 1..];
+                    if let Ok(n) = n_str.parse::<usize>() {
+                        if let Some(cat) = PiiCategory::from_prefix(prefix) {
+                            let entry = counters.entry(cat).or_insert(0);
+                            if n > *entry {
+                                *entry = n;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Self {
+            forward: Mutex::new(forward_map),
+            reverse: Mutex::new(reverse),
+            counters: Mutex::new(counters),
+        }
+    }
+
     /// Return (or create) the token for `raw`, deterministically.
     pub fn token_for(&self, raw: &str, category: PiiCategory) -> String {
         let mut fwd: MutexGuard<HashMap<String, String>> = self.forward.lock().unwrap();

@@ -1,0 +1,102 @@
+type: state_tracker
+id: radio-airplane-mode-state
+name: Radio / Airplane Mode State
+version: 1.0.0
+author: LogTapper
+description: "Tracks airplane mode, data connection state, emergency-only mode, and SIM card state from MobileSignalController. Compound transitions capture all four fields atomically when possible; simpler fallback transitions handle partial log lines."
+tags: [telephony, radio, airplane-mode, sim, android]
+builtin: false
+
+group: Telephony
+
+state:
+  - name: airplane_mode
+    type: bool
+    default: false
+  - name: data_connected
+    type: bool
+    default: false
+  - name: emergency_only
+    type: bool
+    default: false
+  - name: sim_card_state
+    type: string
+    default: UNKNOWN
+
+transitions:
+  # ── Compound transitions — capture all four fields atomically ─────────────
+  # airplaneMode literal is split across two rules to avoid bool coercion
+  # issues (same pattern as battery_state.yaml level: "$1").
+
+  - name: Airplane On, Data Off
+    filter:
+      tag_regex: MobileSignalController
+      message_regex: 'airplaneMode=true.*dataConnected=(true|false).*emergencyOnly=(true|false).*simCard=(\w+)'
+    set:
+      airplane_mode: true
+      data_connected: "$1"
+      emergency_only: "$2"
+      sim_card_state: $3
+
+  - name: Airplane Off, Data Connected
+    filter:
+      tag_regex: MobileSignalController
+      message_regex: 'airplaneMode=false.*dataConnected=true.*emergencyOnly=(true|false).*simCard=(\w+)'
+    set:
+      airplane_mode: false
+      data_connected: true
+      emergency_only: "$1"
+      sim_card_state: $2
+
+  - name: Airplane Off, Data Disconnected
+    filter:
+      tag_regex: MobileSignalController
+      message_regex: 'airplaneMode=false.*dataConnected=false.*emergencyOnly=(true|false).*simCard=(\w+)'
+    set:
+      airplane_mode: false
+      data_connected: false
+      emergency_only: "$1"
+      sim_card_state: $2
+
+  # ── Fallback simpler transitions — one field at a time ───────────────────
+
+  - name: Airplane Mode On (simple)
+    filter:
+      tag_regex: MobileSignalController
+      message_contains: "airplaneMode=true"
+    set:
+      airplane_mode: true
+
+  - name: Airplane Mode Off (simple)
+    filter:
+      tag_regex: MobileSignalController
+      message_contains: "airplaneMode=false"
+    set:
+      airplane_mode: false
+
+  - name: Emergency Only On
+    filter:
+      tag_regex: MobileSignalController
+      message_contains: "emergencyOnly=true"
+    set:
+      emergency_only: true
+
+  - name: Emergency Only Off
+    filter:
+      tag_regex: MobileSignalController
+      message_contains: "emergencyOnly=false"
+    set:
+      emergency_only: false
+
+output:
+  timeline: true
+  annotate: true
+
+schema:
+  source_types: ["logcat", "bugreport"]
+  emissions: []
+  mcp:
+    summary:
+      template: "Radio state: airplane_mode={{airplane_mode}}, data_connected={{data_connected}}, emergency_only={{emergency_only}}, SIM={{sim_card_state}}."
+      include_vars: [airplane_mode, data_connected, emergency_only, sim_card_state]
+    signals: []
