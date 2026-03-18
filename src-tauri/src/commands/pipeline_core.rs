@@ -45,35 +45,28 @@ impl PreFilter {
         reporter_defs: &[(String, ReporterDef)],
         tracker_defs: &[(String, StateTrackerDef)],
         correlator_defs: &[(String, CorrelatorDef)],
-        transformer_defs: &[(String, TransformerDef)],
+        _transformer_defs: &[(String, TransformerDef)],
     ) -> Self {
-        let (tag_union, has_unfiltered) = collect_tag_filters(
-            reporter_defs, tracker_defs, correlator_defs, transformer_defs,
-        );
-        let (ac_patterns, _has_proc_without_substring_filter) =
-            collect_substring_filters(reporter_defs, tracker_defs, correlator_defs);
-        let (regex_patterns, has_proc_without_any_message_filter) =
-            collect_regex_filters(reporter_defs, tracker_defs, correlator_defs);
+        let desc = collect_prefilter_info(reporter_defs, tracker_defs, correlator_defs);
 
-        let ac_automaton = if !ac_patterns.is_empty() {
-            AhoCorasick::new(&ac_patterns).ok()
+        let ac_automaton = if !desc.ac_patterns.is_empty() {
+            AhoCorasick::new(&desc.ac_patterns).ok()
         } else {
             None
         };
 
-        let regex_set = if !regex_patterns.is_empty() {
-            RegexSet::new(&regex_patterns).ok()
+        let regex_set = if !desc.regex_patterns.is_empty() {
+            RegexSet::new(&desc.regex_patterns).ok()
         } else {
             None
         };
 
-        let use_content_prefilter = !has_unfiltered
-            && !has_proc_without_any_message_filter
+        let use_tag_prefilter = !desc.has_tag_unfiltered && !desc.tag_union.is_empty();
+        let use_content_prefilter = !desc.has_content_unfiltered
             && (ac_automaton.is_some() || regex_set.is_some());
-        let use_tag_prefilter = !has_unfiltered && !tag_union.is_empty();
 
         PreFilter {
-            tag_union,
+            tag_union: desc.tag_union,
             ac_automaton,
             regex_set,
             use_tag_prefilter,
@@ -706,22 +699,56 @@ pub fn extract_regex_literal_prefix(pattern: &str) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Tag filter collection
+// Pre-filter descriptor — single-pass collection over all processor defs
 // ---------------------------------------------------------------------------
 
-/// Collect the union of all tag filters from Layer 2 processors only.
-/// Transformers are excluded (they run in Layer 1 on all lines).
-fn collect_tag_filters(
+/// All pre-filter information collected in one pass over the processor defs.
+struct PreFilterDescriptor {
+    /// Union of all tag literals across Layer 2 processors.
+    tag_union: HashSet<String>,
+    /// True if any Layer 2 processor has no tag filter → disables tag pre-filter.
+    has_tag_unfiltered: bool,
+    /// Aho-Corasick literal substring patterns (MessageContains / MessageContainsAny).
+    ac_patterns: Vec<String>,
+    /// RegexSet patterns (MessageRegex).
+    regex_patterns: Vec<String>,
+    /// True if any processor has NO message filters at all → disables content pre-filter.
+    has_content_unfiltered: bool,
+}
+
+/// Collect all pre-filter info in a single pass over the three Layer 2 processor slices.
+/// Transformers are excluded — they run in Layer 1 on all lines and must not influence
+/// the pre-filter (an unfiltered transformer would disable the whole pre-filter).
+fn collect_prefilter_info(
     reporter_defs: &[(String, ReporterDef)],
     tracker_defs: &[(String, StateTrackerDef)],
     correlator_defs: &[(String, CorrelatorDef)],
-    _transformer_defs: &[(String, TransformerDef)],
-) -> (HashSet<String>, bool) {
-    let mut tag_union = HashSet::new();
-    let mut has_unfiltered = false;
+) -> PreFilterDescriptor {
+    let mut tag_union: HashSet<String> = HashSet::new();
+    let mut has_tag_unfiltered = false;
+    let mut ac_patterns: Vec<String> = Vec::new();
+    let mut ac_seen: HashSet<String> = HashSet::new();
+    let mut regex_patterns: Vec<String> = Vec::new();
+    let mut regex_seen: HashSet<String> = HashSet::new();
+    let mut has_content_unfiltered = false;
 
+    let add_ac = |s: &str, patterns: &mut Vec<String>, seen: &mut HashSet<String>| {
+        if !seen.contains(s) {
+            seen.insert(s.to_string());
+            patterns.push(s.to_string());
+        }
+    };
+    let add_regex = |s: &str, patterns: &mut Vec<String>, seen: &mut HashSet<String>| {
+        if !seen.contains(s) && regex::Regex::new(s).is_ok() {
+            seen.insert(s.to_string());
+            patterns.push(s.to_string());
+        }
+    };
+
+    // --- Reporters ---
     for (_, def) in reporter_defs {
         let mut has_tag_filter = false;
+        let mut has_any_message_filter = false;
         for stage in &def.pipeline {
             if let PipelineStage::Filter(filter_stage) = stage {
                 for rule in &filter_stage.rules {
@@ -736,25 +763,46 @@ fn collect_tag_filters(
                                 tag_union.insert(prefix);
                             }
                         }
+                        FilterRule::MessageContains { value } => {
+                            has_any_message_filter = true;
+                            add_ac(value, &mut ac_patterns, &mut ac_seen);
+                        }
+                        FilterRule::MessageContainsAny { values } => {
+                            has_any_message_filter = true;
+                            for v in values {
+                                add_ac(v, &mut ac_patterns, &mut ac_seen);
+                            }
+                        }
+                        FilterRule::MessageRegex { pattern } => {
+                            has_any_message_filter = true;
+                            add_regex(pattern, &mut regex_patterns, &mut regex_seen);
+                        }
                         _ => {}
                     }
                 }
             }
         }
         if !has_tag_filter {
-            has_unfiltered = true;
+            has_tag_unfiltered = true;
+        }
+        if !has_any_message_filter {
+            has_content_unfiltered = true;
         }
     }
 
+    // --- State Trackers ---
     for (_, def) in tracker_defs {
-        let mut has_tag_filter = true;
-        for transition in &def.transitions {
-            let has_exact = transition.filter.tag.is_some();
-            let has_regex = transition.filter.tag_regex.is_some();
+        // A tracker is tag-unfiltered if any transition lacks a tag filter.
+        let mut all_transitions_have_tag = !def.transitions.is_empty();
+        // A tracker is content-unfiltered if any transition lacks any message filter.
+        let mut all_transitions_have_msg = !def.transitions.is_empty();
 
-            if !has_exact && !has_regex {
-                has_tag_filter = false;
-            } else {
+        for transition in &def.transitions {
+            let has_tag = transition.filter.tag.is_some() || transition.filter.tag_regex.is_some();
+            let has_msg = transition.filter.message_contains.is_some()
+                || transition.filter.message_regex.is_some();
+
+            if has_tag {
                 if let Some(tag) = &transition.filter.tag {
                     tag_union.insert(tag.clone());
                 }
@@ -763,16 +811,35 @@ fn collect_tag_filters(
                         tag_union.insert(prefix);
                     }
                 }
+            } else {
+                all_transitions_have_tag = false;
+            }
+
+            if has_msg {
+                if let Some(mc) = &transition.filter.message_contains {
+                    add_ac(mc, &mut ac_patterns, &mut ac_seen);
+                }
+                if let Some(pattern) = &transition.filter.message_regex {
+                    add_regex(pattern, &mut regex_patterns, &mut regex_seen);
+                }
+            } else {
+                all_transitions_have_msg = false;
             }
         }
-        if !has_tag_filter || def.transitions.is_empty() {
-            has_unfiltered = true;
+
+        if !all_transitions_have_tag {
+            has_tag_unfiltered = true;
+        }
+        if !all_transitions_have_msg {
+            has_content_unfiltered = true;
         }
     }
 
+    // --- Correlators ---
     for (_, def) in correlator_defs {
         for source in &def.sources {
             let mut has_tag_filter = false;
+            let mut has_any_message_filter = false;
             for rule in &source.filter {
                 match rule {
                     FilterRule::TagMatch { tags, .. } => {
@@ -785,198 +852,39 @@ fn collect_tag_filters(
                             tag_union.insert(prefix);
                         }
                     }
+                    FilterRule::MessageContains { value } => {
+                        has_any_message_filter = true;
+                        add_ac(value, &mut ac_patterns, &mut ac_seen);
+                    }
+                    FilterRule::MessageContainsAny { values } => {
+                        has_any_message_filter = true;
+                        for v in values {
+                            add_ac(v, &mut ac_patterns, &mut ac_seen);
+                        }
+                    }
+                    FilterRule::MessageRegex { pattern } => {
+                        has_any_message_filter = true;
+                        add_regex(pattern, &mut regex_patterns, &mut regex_seen);
+                    }
                     _ => {}
                 }
             }
             if !has_tag_filter {
-                has_unfiltered = true;
-            }
-        }
-    }
-
-    (tag_union, has_unfiltered)
-}
-
-// ---------------------------------------------------------------------------
-// Substring filter collection (Aho-Corasick)
-// ---------------------------------------------------------------------------
-
-fn collect_substring_filters(
-    reporter_defs: &[(String, ReporterDef)],
-    tracker_defs: &[(String, StateTrackerDef)],
-    correlator_defs: &[(String, CorrelatorDef)],
-) -> (Vec<String>, bool) {
-    let mut patterns: Vec<String> = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut has_proc_without_substring_filter = false;
-
-    let mut add_pattern = |s: &str| {
-        if !seen.contains(s) {
-            seen.insert(s.to_string());
-            patterns.push(s.to_string());
-        }
-    };
-
-    for (_, def) in reporter_defs {
-        let mut has_message_filter = false;
-        for stage in &def.pipeline {
-            if let PipelineStage::Filter(filter_stage) = stage {
-                for rule in &filter_stage.rules {
-                    match rule {
-                        FilterRule::MessageContains { value } => {
-                            has_message_filter = true;
-                            add_pattern(value);
-                        }
-                        FilterRule::MessageContainsAny { values } => {
-                            has_message_filter = true;
-                            for v in values {
-                                add_pattern(v);
-                            }
-                        }
-                        FilterRule::MessageRegex { .. } => {
-                            has_message_filter = true;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-        if !has_message_filter {
-            has_proc_without_substring_filter = true;
-        }
-    }
-
-    for (_, def) in tracker_defs {
-        let mut has_message_filter = true;
-        for transition in &def.transitions {
-            let has_msg = transition.filter.message_contains.is_some()
-                || transition.filter.message_regex.is_some();
-            if !has_msg {
-                has_message_filter = false;
-            }
-            if let Some(mc) = &transition.filter.message_contains {
-                add_pattern(mc);
-            }
-        }
-        if !has_message_filter || def.transitions.is_empty() {
-            has_proc_without_substring_filter = true;
-        }
-    }
-
-    for (_, def) in correlator_defs {
-        for source in &def.sources {
-            let mut has_message_filter = false;
-            for rule in &source.filter {
-                match rule {
-                    FilterRule::MessageContains { value } => {
-                        has_message_filter = true;
-                        add_pattern(value);
-                    }
-                    FilterRule::MessageContainsAny { values } => {
-                        has_message_filter = true;
-                        for v in values {
-                            add_pattern(v);
-                        }
-                    }
-                    FilterRule::MessageRegex { .. } => {
-                        has_message_filter = true;
-                    }
-                    _ => {}
-                }
-            }
-            if !has_message_filter {
-                has_proc_without_substring_filter = true;
-            }
-        }
-    }
-
-    (patterns, has_proc_without_substring_filter)
-}
-
-// ---------------------------------------------------------------------------
-// Regex filter collection (RegexSet)
-// ---------------------------------------------------------------------------
-
-fn collect_regex_filters(
-    reporter_defs: &[(String, ReporterDef)],
-    tracker_defs: &[(String, StateTrackerDef)],
-    correlator_defs: &[(String, CorrelatorDef)],
-) -> (Vec<String>, bool) {
-    let mut patterns: Vec<String> = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut has_proc_without_any_message_filter = false;
-
-    let mut add_pattern = |s: &str| {
-        if !seen.contains(s) && regex::Regex::new(s).is_ok() {
-            seen.insert(s.to_string());
-            patterns.push(s.to_string());
-        }
-    };
-
-    for (_, def) in reporter_defs {
-        let mut has_any_message_filter = false;
-        for stage in &def.pipeline {
-            if let PipelineStage::Filter(filter_stage) = stage {
-                for rule in &filter_stage.rules {
-                    match rule {
-                        FilterRule::MessageRegex { pattern } => {
-                            has_any_message_filter = true;
-                            add_pattern(pattern);
-                        }
-                        FilterRule::MessageContains { .. }
-                        | FilterRule::MessageContainsAny { .. } => {
-                            has_any_message_filter = true;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-        if !has_any_message_filter {
-            has_proc_without_any_message_filter = true;
-        }
-    }
-
-    for (_, def) in tracker_defs {
-        let mut has_any_message_filter = true;
-        for transition in &def.transitions {
-            let has_msg = transition.filter.message_contains.is_some()
-                || transition.filter.message_regex.is_some();
-            if !has_msg {
-                has_any_message_filter = false;
-            }
-            if let Some(pattern) = &transition.filter.message_regex {
-                add_pattern(pattern);
-            }
-        }
-        if !has_any_message_filter || def.transitions.is_empty() {
-            has_proc_without_any_message_filter = true;
-        }
-    }
-
-    for (_, def) in correlator_defs {
-        for source in &def.sources {
-            let mut has_any_message_filter = false;
-            for rule in &source.filter {
-                match rule {
-                    FilterRule::MessageRegex { pattern } => {
-                        has_any_message_filter = true;
-                        add_pattern(pattern);
-                    }
-                    FilterRule::MessageContains { .. }
-                    | FilterRule::MessageContainsAny { .. } => {
-                        has_any_message_filter = true;
-                    }
-                    _ => {}
-                }
+                has_tag_unfiltered = true;
             }
             if !has_any_message_filter {
-                has_proc_without_any_message_filter = true;
+                has_content_unfiltered = true;
             }
         }
     }
 
-    (patterns, has_proc_without_any_message_filter)
+    PreFilterDescriptor {
+        tag_union,
+        has_tag_unfiltered,
+        ac_patterns,
+        regex_patterns,
+        has_content_unfiltered,
+    }
 }
 
 // ---------------------------------------------------------------------------
