@@ -77,6 +77,26 @@ impl<'a> CorrelatorRun<'a> {
         }
     }
 
+    /// Create a run seeded with previously saved state for continuous (streaming) processing.
+    pub fn new_seeded(def: &'a CorrelatorDef, saved: ContinuousCorrelatorState) -> Self {
+        let mut source_buffers = saved.source_buffers;
+        // Ensure all non-trigger sources have a buffer entry
+        for src in &def.sources {
+            if src.id != def.correlate.trigger {
+                source_buffers.entry(src.id.clone()).or_default();
+            }
+        }
+        let mut rhai_engine = rhai::Engine::new();
+        rhai_engine.set_max_operations(10_000);
+        Self {
+            def,
+            source_buffers,
+            events: saved.events,
+            regex_cache: HashMap::new(),
+            rhai_engine,
+        }
+    }
+
     /// Process one log line through all source definitions.
     pub fn process_line(&mut self, line: &LineContext, _pipeline_ctx: &PipelineContext) {
         let trigger_id = self.def.correlate.trigger.clone();

@@ -10,6 +10,7 @@ use tokio_stream::{wrappers::ReceiverStream, StreamExt as _};
 use crate::anonymizer::LogAnonymizer;
 use crate::commands::AppState;
 use crate::commands::files::LoadResult;
+use crate::commands::pipeline_core::{ContinuousStates, PartitionedDefs, PipelineCore};
 use crate::core::line::{LineContext, LineMeta, LogLevel, ParsedLineMeta, PipelineContext, ViewLine};
 use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;
@@ -812,6 +813,9 @@ fn flush_batch(
     }
 
     // ── Step 2c: Apply built-in transformers / PII pipeline (if active) ──────
+    // Transformers in streaming mode modify content but do NOT drop lines —
+    // dropping would desync the ViewLine stream. The transformer runs are
+    // managed through the same extract-process-reinsert pattern.
     {
         let transformer_ids: Vec<String> = {
             match state.stream_transformer_state.lock() {
@@ -966,217 +970,178 @@ fn flush_batch(
     // Collect ViewLines for the batch event
     let view_lines: Vec<ViewLine> = parsed.iter().map(|pl| pl.view_line.clone()).collect();
 
-    // ── Step 3.5: StateTracker layer (consolidated lock pattern) ────────────
-    // Trackers see original (pre-PII) messages for capture regexes — use
-    // the cached ctx from the initial parse directly (no re-parse needed).
+    // ── Step 3.5 + Step 4: Run trackers and reporters via PipelineCore ──────
+    // Extract continuous state from AppState, build a PipelineCore, process
+    // lines, then persist results and state back. This unifies the execution
+    // path with file-mode pipeline processing.
+    let mut proc_updates: Vec<AdbProcessorUpdate> = Vec::new();
     {
-        let tracker_ids: Vec<String> = {
-            match state.stream_tracker_state.lock() {
-                Ok(st) => st.get(session_id).map(|m| m.keys().cloned().collect()).unwrap_or_default(),
-                Err(_) => Vec::new(),
-            }
-        };
+        // Collect active processor IDs from all state stores
+        let tracker_ids: Vec<String> = state.stream_tracker_state.lock()
+            .ok()
+            .and_then(|st| st.get(session_id).map(|m| m.keys().cloned().collect()))
+            .unwrap_or_default();
 
-        if !tracker_ids.is_empty() {
-            let tracker_defs: HashMap<String, crate::processors::state_tracker::schema::StateTrackerDef> = {
+        let reporter_ids: Vec<String> = state.stream_processor_state.lock()
+            .ok()
+            .and_then(|sp| sp.get(session_id).map(|m| m.keys().cloned().collect()))
+            .unwrap_or_default();
+
+        // Only proceed if there are active processors
+        if !tracker_ids.is_empty() || !reporter_ids.is_empty() {
+            // Clone processor defs (brief lock)
+            let partitioned = {
                 match state.processors.lock() {
-                    Ok(procs) => tracker_ids.iter()
-                        .filter_map(|id| procs.get(id.as_str()).and_then(|p| p.as_state_tracker()).map(|d| (id.clone(), d.clone())))
-                        .collect(),
+                    Ok(procs) => {
+                        let reporter_defs: Vec<_> = reporter_ids.iter()
+                            .filter_map(|id| procs.get(id.as_str())
+                                .and_then(|p| p.as_reporter())
+                                .map(|d| (id.clone(), d.clone())))
+                            .collect();
+                        let tracker_defs: Vec<_> = tracker_ids.iter()
+                            .filter_map(|id| procs.get(id.as_str())
+                                .and_then(|p| p.as_state_tracker())
+                                .map(|d| (id.clone(), d.clone())))
+                            .collect();
+                        Some(PartitionedDefs {
+                            transformer_defs: Vec::new(), // transformers already applied above
+                            reporter_defs,
+                            tracker_defs,
+                            correlator_defs: Vec::new(), // TODO: add correlator streaming support
+                        })
+                    }
                     Err(e) => {
-                        eprintln!("[adb flush_batch] processors lock poisoned (trackers): {e}");
-                        HashMap::new()
+                        eprintln!("[adb flush_batch] processors lock poisoned: {e}");
+                        None
                     }
                 }
             };
 
-            // Extract ALL tracker continuous states in one lock (2N → 2 lock acquisitions)
-            let mut tracker_states: HashMap<String, crate::processors::state_tracker::types::ContinuousTrackerState> = {
-                match state.stream_tracker_state.lock() {
-                    Ok(mut st) => {
-                        if let Some(inner) = st.get_mut(session_id) {
+            if let Some(partitioned) = partitioned {
+                // Extract continuous states from AppState
+                let reporter_states: HashMap<String, ContinuousRunState> = state.stream_processor_state.lock()
+                    .ok()
+                    .and_then(|mut sp| {
+                        sp.get_mut(session_id).map(|inner| {
+                            reporter_ids.iter()
+                                .filter_map(|id| inner.remove(id).map(|s| (id.clone(), s)))
+                                .collect()
+                        })
+                    })
+                    .unwrap_or_default();
+
+                let tracker_states = state.stream_tracker_state.lock()
+                    .ok()
+                    .and_then(|mut st| {
+                        st.get_mut(session_id).map(|inner| {
                             tracker_ids.iter()
                                 .filter_map(|id| inner.remove(id).map(|s| (id.clone(), s)))
                                 .collect()
-                        } else {
-                            HashMap::new()
-                        }
-                    }
-                    Err(_) => HashMap::new(),
-                }
-            };
+                        })
+                    })
+                    .unwrap_or_default();
 
-            // Process all trackers (no locks held)
-            let mut tracker_updates: Vec<(String, crate::processors::state_tracker::types::ContinuousTrackerState, usize)> = Vec::new();
-            for t_id in &tracker_ids {
-                let Some(def) = tracker_defs.get(t_id) else {
-                    continue;
+                let continuous = ContinuousStates {
+                    reporter_states,
+                    tracker_states,
+                    transformer_states: HashMap::new(),
+                    correlator_states: HashMap::new(),
                 };
 
-                let cont_state = tracker_states.remove(t_id).unwrap_or_default();
-                let mut run = crate::processors::state_tracker::engine::StateTrackerRun::new_seeded(
-                    t_id, def, cont_state,
+                // Build PipelineCore from continuous state
+                let mut core = PipelineCore::from_continuous_state(
+                    &partitioned,
+                    pipeline_ctx,
+                    continuous,
                 );
 
-                // Reuse cached LineContext — no re-parse needed
-                for pl in &parsed {
-                    if let Some(ref ctx) = pl.ctx {
-                        run.process_line(ctx, &pipeline_ctx);
-                    }
-                }
-
-                let new_cont = run.into_continuous_state(first_new_line + parsed.len());
-                let transition_count = new_cont.transitions.len();
-                tracker_updates.push((t_id.clone(), new_cont, transition_count));
-            }
-
-            // Re-insert ALL tracker states in one lock, emit events after
-            if !tracker_updates.is_empty() {
-                // Collect event data before consuming the vec
-                let event_data: Vec<(String, usize)> = tracker_updates.iter()
-                    .map(|(t_id, _, tc)| (t_id.clone(), *tc))
-                    .collect();
-
-                if let Ok(mut st) = state.stream_tracker_state.lock() {
-                    let inner = st.entry(session_id.to_string()).or_default();
-                    for (t_id, new_cont, _) in tracker_updates {
-                        inner.insert(t_id, new_cont); // moved, no clone
-                    }
-                }
-
-                for (t_id, transition_count) in event_data {
-                    let _ = app.emit("adb-tracker-update", AdbTrackerUpdate {
-                        session_id: session_id.to_string(),
-                        tracker_id: t_id,
-                        transition_count,
-                    });
-                }
-            }
-        }
-    }
-
-    // ── Step 4: Run active reporters on new lines (consolidated lock pattern)
-    // Reporters see post-PII/transform messages. Reuse cached LineContext,
-    // patching message/raw only if PII or transformers modified them.
-    let proc_ids: Vec<String> = {
-        let sp_state: std::sync::MutexGuard<'_, HashMap<String, HashMap<String, ContinuousRunState>>> =
-            match state.stream_processor_state.lock() {
-                Ok(g) => g,
-                Err(_) => {
-                    send_batch(on_event, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
-                    return;
-                }
-            };
-        match sp_state.get(session_id) {
-            Some(m) => m.keys().cloned().collect(),
-            None => {
-                send_batch(on_event, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
-                return;
-            }
-        }
-    };
-
-    if proc_ids.is_empty() {
-        send_batch(on_event, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
-        return;
-    }
-
-    // Clone processor defs (brief lock)
-    let defs: HashMap<String, ReporterDef> = {
-        let Ok(procs) = state.processors.lock() else {
-            send_batch(on_event, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
-            return;
-        };
-        proc_ids
-            .iter()
-            .filter_map(|id| procs.get(id.as_str()).and_then(|p| p.as_reporter()).map(|d| (id.clone(), d.clone())))
-            .collect()
-    };
-
-    // Build reporter-ready contexts: if PII/transformer modified messages,
-    // patch the cached ctx (cheap Arc clone, no regex re-parse).
-    let reporter_ctxs: Option<Vec<Option<LineContext>>> = if pii_modified {
-        Some(parsed.iter().map(|pl| {
-            pl.ctx.as_ref().map(|c| {
-                let mut rc = c.clone();
-                rc.message = std::sync::Arc::from(pl.view_line.message.as_str());
-                rc.raw = std::sync::Arc::from(pl.view_line.raw.as_str());
-                rc
-            })
-        }).collect())
-    } else {
-        None
-    };
-
-    // Extract ALL reporter continuous states in one lock (2N → 2 lock acquisitions)
-    let mut proc_states: HashMap<String, ContinuousRunState> = {
-        match state.stream_processor_state.lock() {
-            Ok(mut sp) => {
-                if let Some(inner) = sp.get_mut(session_id) {
-                    defs.keys()
-                        .filter_map(|id| inner.remove(id).map(|s| (id.clone(), s)))
-                        .collect()
+                // Build LineContext batch for the core to process.
+                // Trackers see original (pre-PII) messages for capture regexes.
+                // Reporters see post-PII/transform messages.
+                // Since PipelineCore handles pre-transform message saving internally,
+                // we prepare the reporter-ready contexts here.
+                let batch_ctxs: Vec<Option<LineContext>> = if pii_modified {
+                    parsed.iter().map(|pl| {
+                        pl.ctx.as_ref().map(|c| {
+                            let mut rc = c.clone();
+                            rc.message = std::sync::Arc::from(pl.view_line.message.as_str());
+                            rc.raw = std::sync::Arc::from(pl.view_line.raw.as_str());
+                            rc
+                        })
+                    }).collect()
                 } else {
-                    HashMap::new()
+                    parsed.iter().map(|pl| pl.ctx.clone()).collect()
+                };
+
+                // Run Layer 2 directly (transformers already handled above)
+                let enriched: Vec<LineContext> = batch_ctxs.into_iter().flatten().collect();
+
+                // For trackers: use original (pre-PII) messages
+                let pre_transform_msgs: HashMap<usize, std::sync::Arc<str>> =
+                    if pii_modified && !core.tracker_runs.is_empty() {
+                        parsed.iter()
+                            .filter_map(|pl| pl.ctx.as_ref().map(|c| (c.source_line_num, std::sync::Arc::clone(&c.message))))
+                            .collect()
+                    } else {
+                        HashMap::new()
+                    };
+
+                core.run_layer2_parallel(&enriched, &pre_transform_msgs);
+
+                // Snapshot results for event emission
+                let snapshot = core.current_results();
+
+                // Store reporter results in pipeline_results
+                if !snapshot.reporter_results.is_empty() {
+                    if let Ok(mut pr) = state.pipeline_results.lock() {
+                        let session_results = pr.entry(session_id.to_string()).or_default();
+                        for (proc_id, result) in &snapshot.reporter_results {
+                            proc_updates.push(AdbProcessorUpdate {
+                                session_id: session_id.to_string(),
+                                processor_id: proc_id.clone(),
+                                matched_lines: result.matched_line_nums.len(),
+                                emission_count: result.emissions.len(),
+                            });
+                            session_results.insert(proc_id.clone(), result.clone());
+                        }
+                    }
+                }
+
+                // Persist continuous state back to AppState
+                let cont = core.into_continuous_state(total_lines);
+
+                // Re-insert reporter states
+                if !cont.reporter_states.is_empty() {
+                    if let Ok(mut sp) = state.stream_processor_state.lock() {
+                        let inner = sp.entry(session_id.to_string()).or_default();
+                        for (id, new_state) in cont.reporter_states {
+                            inner.insert(id, new_state);
+                        }
+                    }
+                }
+
+                // Re-insert tracker states and emit tracker events
+                if !cont.tracker_states.is_empty() {
+                    let event_data: Vec<(String, usize)> = cont.tracker_states.iter()
+                        .map(|(t_id, cs)| (t_id.clone(), cs.transitions.len()))
+                        .collect();
+
+                    if let Ok(mut st) = state.stream_tracker_state.lock() {
+                        let inner = st.entry(session_id.to_string()).or_default();
+                        for (t_id, new_cont) in cont.tracker_states {
+                            inner.insert(t_id, new_cont);
+                        }
+                    }
+
+                    for (t_id, transition_count) in event_data {
+                        let _ = app.emit("adb-tracker-update", AdbTrackerUpdate {
+                            session_id: session_id.to_string(),
+                            tracker_id: t_id,
+                            transition_count,
+                        });
+                    }
                 }
             }
-            Err(_) => {
-                send_batch(on_event, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
-                return;
-            }
-        }
-    };
-
-    // Process all reporters (no locks held)
-    let mut proc_updates: Vec<AdbProcessorUpdate> = Vec::new();
-    let mut new_states: Vec<(String, ContinuousRunState)> = Vec::new();
-
-    for (proc_id, def) in &defs {
-        let Some(cont_state) = proc_states.remove(proc_id) else {
-            continue;
-        };
-
-        let mut run = ProcessorRun::new_seeded(def, cont_state);
-
-        // Reuse cached LineContext — no re-parse needed
-        for (i, pl) in parsed.iter().enumerate() {
-            let ctx_ref = match &reporter_ctxs {
-                Some(patched) => patched[i].as_ref(),
-                None => pl.ctx.as_ref(),
-            };
-            if let Some(ctx) = ctx_ref {
-                run.process_line(ctx, &pipeline_ctx);
-            }
-        }
-
-        // Snapshot results
-        let result = run.current_result();
-        let matched_lines = result.matched_line_nums.len();
-        let emission_count = result.emissions.len();
-
-        // Store results in pipeline_results (best effort)
-        if let Ok(mut pr) = state.pipeline_results.lock() {
-            pr.entry(session_id.to_string())
-                .or_default()
-                .insert(proc_id.clone(), result);
-        }
-
-        let new_state = run.into_continuous_state(total_lines, true);
-        new_states.push((proc_id.clone(), new_state));
-
-        proc_updates.push(AdbProcessorUpdate {
-            session_id: session_id.to_string(),
-            processor_id: proc_id.clone(),
-            matched_lines,
-            emission_count,
-        });
-    }
-
-    // Re-insert ALL reporter states in one lock
-    if let Ok(mut sp_state) = state.stream_processor_state.lock() {
-        let inner = sp_state.entry(session_id.to_string()).or_default();
-        for (id, new_state) in new_states {
-            inner.insert(id, new_state);
         }
     }
 
