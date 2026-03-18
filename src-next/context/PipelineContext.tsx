@@ -45,7 +45,9 @@ function withSessionState(
 interface PipelineState {
   processors: ProcessorSummary[];
   pipelineChain: string[];
-  /** Always mirrors pipelineChain — kept as a separate field for selector stability. */
+  /** Processor IDs present in the chain but excluded from execution. */
+  disabledChainIds: string[];
+  /** Enabled subset of pipelineChain — kept as a separate field for selector stability. */
   activeProcessorIds: string[];
   /** Per-session pipeline results, keyed by sessionId. */
   resultsBySession: Map<string, SessionPipelineState>;
@@ -68,13 +70,14 @@ export type PipelineAction =
   // Session cleanup
   | { type: 'session:removed'; sessionId: string }
   // Processor library
-  | { type: 'processors:loaded'; processors: ProcessorSummary[]; initialChain?: string[] }
+  | { type: 'processors:loaded'; processors: ProcessorSummary[]; initialChain?: string[]; initialDisabled?: string[] }
   | { type: 'processor:installed'; processor: ProcessorSummary }
   | { type: 'processor:removed'; id: string }
   // Chain management (PINNED_TAIL_IDS logic lives in the reducer, not at call sites)
   | { type: 'chain:add'; id: string }
   | { type: 'chain:remove'; id: string }
   | { type: 'chain:reorder'; fromIndex: number; toIndex: number }
+  | { type: 'chain:toggle-enabled'; id: string }
   // ADB streaming incremental updates
   | { type: 'adb:results-update'; sessionId: string; processorId: string; matchedLines: number; emissionCount: number }
   | { type: 'adb:run-count-bump'; sessionId: string }
@@ -87,14 +90,22 @@ export type PipelineAction =
 const initialState: PipelineState = {
   processors: [],
   pipelineChain: [],
+  disabledChainIds: [],
   activeProcessorIds: [],
   resultsBySession: new Map(),
   error: null,
 };
 
 /** Apply a new chain value and keep activeProcessorIds in sync. */
-function withChain(state: PipelineState, chain: string[]): PipelineState {
-  return { ...state, pipelineChain: chain, activeProcessorIds: chain };
+function withChain(state: PipelineState, chain: string[], disabledChainIds?: string[]): PipelineState {
+  const disabled = disabledChainIds ?? state.disabledChainIds;
+  const disabledSet = new Set(disabled);
+  return {
+    ...state,
+    pipelineChain: chain,
+    disabledChainIds: disabled,
+    activeProcessorIds: chain.filter((id) => !disabledSet.has(id)),
+  };
 }
 
 function pipelineReducer(state: PipelineState, action: PipelineAction): PipelineState {
@@ -168,7 +179,9 @@ function pipelineReducer(state: PipelineState, action: PipelineAction): Pipeline
     // ── Processor library ────────────────────────────────────────────────────
     case 'processors:loaded': {
       const next = { ...state, processors: action.processors };
-      return action.initialChain !== undefined ? withChain(next, action.initialChain) : next;
+      return action.initialChain !== undefined
+        ? withChain(next, action.initialChain, action.initialDisabled ?? [])
+        : next;
     }
 
     case 'processor:installed': {
@@ -180,7 +193,8 @@ function pipelineReducer(state: PipelineState, action: PipelineAction): Pipeline
     case 'processor:removed': {
       const processors = state.processors.filter((p) => p.id !== action.id);
       const chain = state.pipelineChain.filter((id) => id !== action.id);
-      return withChain({ ...state, processors }, chain);
+      const nextDisabled = state.disabledChainIds.filter((id) => id !== action.id);
+      return withChain({ ...state, processors }, chain, nextDisabled);
     }
 
     // ── Chain management ─────────────────────────────────────────────────────
@@ -198,8 +212,18 @@ function pipelineReducer(state: PipelineState, action: PipelineAction): Pipeline
       return withChain(state, chain);
     }
 
-    case 'chain:remove':
-      return withChain(state, state.pipelineChain.filter((id) => id !== action.id));
+    case 'chain:remove': {
+      const nextDisabled = state.disabledChainIds.filter((id) => id !== action.id);
+      return withChain(state, state.pipelineChain.filter((id) => id !== action.id), nextDisabled);
+    }
+
+    case 'chain:toggle-enabled': {
+      if (!state.pipelineChain.includes(action.id)) return state;
+      const disabledSet = new Set(state.disabledChainIds);
+      if (disabledSet.has(action.id)) disabledSet.delete(action.id);
+      else disabledSet.add(action.id);
+      return withChain(state, state.pipelineChain, [...disabledSet]);
+    }
 
     case 'chain:reorder': {
       if (PINNED_TAIL_IDS.has(state.pipelineChain[action.fromIndex])) return state;

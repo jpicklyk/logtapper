@@ -488,3 +488,209 @@
 .mcpCapSep {
   opacity: 0.3;
 }
+
+/* ── Header actions row ──────────────────────────────────────────────────── */
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ── Compact mode ────────────────────────────────────────────────────────── */
+
+.chainNodeCompact {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-raised);
+  width: 100%;
+  position: relative;
+  cursor: grab;
+  min-height: 26px;
+}
+
+.chainNodeCompact:active {
+  cursor: grabbing;
+}
+
+.chainNodeCompact.chainNodeDragging {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.chainNodeCompact.chainNodePinned {
+  border-style: dashed;
+  cursor: default;
+}
+
+.compactDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--proc-accent, var(--accent));
+  flex-shrink: 0;
+}
+
+.compactName {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compactStat {
+  font-size: 9px;
+  color: var(--text-dimmed);
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+}
+
+.compactLock {
+  color: var(--text-dimmed);
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+.connectorCompact {
+  padding: 1px 0;
+}
+
+.connectorCompact .connectorDot:nth-child(2),
+.connectorCompact .connectorDot:nth-child(3) {
+  display: none;
+}
+
+.chainNodeCompact .nodeRemove {
+  position: static;
+  opacity: 0;
+  flex-shrink: 0;
+}
+
+.chainNodeCompact:hover .nodeRemove {
+  opacity: 1;
+}
+
+/* ── Disabled node ───────────────────────────────────────────────────────── */
+
+.nodeDisabled {
+  opacity: 0.35;
+}
+
+.nodeDisabled .nodeAccent,
+.nodeDisabled .compactDot {
+  background: var(--border) !important;
+}
+
+/* ── Toggle enabled button ───────────────────────────────────────────────── */
+
+.toggleBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  background: none;
+  border: none;
+  color: var(--text-dimmed);
+  cursor: pointer;
+  border-radius: 2px;
+  flex-shrink: 0;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.chainNode:hover .toggleBtn,
+.chainNodeCompact:hover .toggleBtn {
+  opacity: 0.6;
+}
+
+.toggleBtn:hover {
+  opacity: 1 !important;
+  color: var(--accent);
+}
+
+.toggleBtnOff {
+  opacity: 0.6 !important;
+  color: var(--text-dimmed);
+}
+
+.toggleBtnOff:hover {
+  color: var(--accent) !important;
+}
+
+/* ── Chain filter ────────────────────────────────────────────────────────── */
+
+.chainFilterRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 2px;
+}
+
+.chainFilterInput {
+  flex: 1;
+  padding: 3px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-raised);
+  color: var(--text);
+  min-width: 0;
+}
+
+.chainFilterInput:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.chainFilterCount {
+  font-size: 9px;
+  color: var(--text-dimmed);
+  white-space: nowrap;
+}
+
+.chainFilterClear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  background: none;
+  border: none;
+  color: var(--text-dimmed);
+  cursor: pointer;
+  border-radius: 2px;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.chainFilterClear:hover {
+  color: var(--text);
+}
+
+.chainFilterEmpty {
+  font-size: 10px;
+  color: var(--text-dimmed);
+  text-align: center;
+  padding: 8px 0;
+}
+
+/* ── Node actions row (detailed mode) ────────────────────────────────────── */
+
+.nodeActions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 4px;
+  flex-shrink: 0;
+}

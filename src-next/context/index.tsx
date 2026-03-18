@@ -115,6 +115,7 @@ export {
   useScrollTarget,
   usePipelineChain,
   useActiveProcessorIds,
+  useDisabledChainIds,
   usePipelineRunning,
   usePipelineRunningForSession,
   usePipelineResults,

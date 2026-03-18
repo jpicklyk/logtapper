@@ -15,6 +15,7 @@ import { usePipelineContext } from '../context/PipelineContext';
 import { bus } from '../events/bus';
 
 const LS_KEY = 'logtapper_pipeline_chain';
+const LS_DISABLED_KEY = 'logtapper_pipeline_disabled';
 
 function loadChainFromStorage(validIds: Set<string>): string[] {
   try {
@@ -28,6 +29,19 @@ function loadChainFromStorage(validIds: Set<string>): string[] {
   }
 }
 
+function loadDisabledFromStorage(chainIds: Set<string>): string[] {
+  try {
+    const raw = localStorage.getItem(LS_DISABLED_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    // Only keep IDs that are actually in the chain
+    return (parsed as unknown[]).filter((id): id is string => typeof id === 'string' && chainIds.has(id));
+  } catch {
+    return [];
+  }
+}
+
 export interface PipelineActions {
   loadProcessors: () => Promise<void>;
   installFromYaml: (yaml: string) => Promise<void>;
@@ -35,6 +49,7 @@ export interface PipelineActions {
   addToChain: (id: string) => void;
   removeFromChain: (id: string) => void;
   reorderChain: (fromIndex: number, toIndex: number) => void;
+  toggleChainEnabled: (id: string) => void;
   /** @deprecated Use addToChain / removeFromChain instead */
   toggleProcessor: (id: string) => void;
   run: (sessionId: string, anonymize?: boolean) => Promise<void>;
@@ -44,7 +59,7 @@ export interface PipelineActions {
 }
 
 export function usePipeline(): PipelineActions {
-  const { processors, pipelineChain, resultsBySession, dispatch } = usePipelineContext();
+  const { processors, pipelineChain, disabledChainIds, resultsBySession, dispatch } = usePipelineContext();
 
   // Track the focused pane so session:pre-load can resolve the outgoing sessionId.
   const { focusedPaneId, paneSessionMap } = useSessionContext();
@@ -60,6 +75,9 @@ export function usePipeline(): PipelineActions {
   const pipelineChainRef = useRef(pipelineChain);
   useEffect(() => { pipelineChainRef.current = pipelineChain; }, [pipelineChain]);
 
+  const disabledChainIdsRef = useRef(disabledChainIds);
+  useEffect(() => { disabledChainIdsRef.current = disabledChainIds; }, [disabledChainIds]);
+
   const resultsBySessionRef = useRef(resultsBySession);
   resultsBySessionRef.current = resultsBySession;
 
@@ -67,12 +85,13 @@ export function usePipeline(): PipelineActions {
   const adbProcUnlistenRef = useRef<UnlistenFn | null>(null);
   const chainInitializedRef = useRef(false);
 
-  // Persist chain to localStorage and sync MCP anonymize flag whenever chain changes
+  // Persist chain + disabled state to localStorage whenever they change
   useEffect(() => {
     if (!chainInitializedRef.current) return;
     localStorage.setItem(LS_KEY, JSON.stringify(pipelineChain));
+    localStorage.setItem(LS_DISABLED_KEY, JSON.stringify(disabledChainIds));
     bus.emit('pipeline:chain-changed', { chain: pipelineChain });
-  }, [pipelineChain]);
+  }, [pipelineChain, disabledChainIds]);
 
   useEffect(() => {
     if (!chainInitializedRef.current) return;
@@ -174,7 +193,8 @@ export function usePipeline(): PipelineActions {
         chainInitializedRef.current = true;
         const validIds = new Set(list.map((p) => p.id));
         const initialChain = loadChainFromStorage(validIds);
-        dispatch({ type: 'processors:loaded', processors: list, initialChain });
+        const initialDisabled = loadDisabledFromStorage(new Set(initialChain));
+        dispatch({ type: 'processors:loaded', processors: list, initialChain, initialDisabled });
       } else {
         dispatch({ type: 'processors:loaded', processors: list });
       }
@@ -215,6 +235,10 @@ export function usePipeline(): PipelineActions {
     dispatch({ type: 'chain:reorder', fromIndex, toIndex });
   }, [dispatch]);
 
+  const toggleChainEnabled = useCallback((id: string) => {
+    dispatch({ type: 'chain:toggle-enabled', id });
+  }, [dispatch]);
+
   const toggleProcessor = useCallback((id: string) => {
     // Implemented via add/remove to keep logic in the reducer
     dispatch(pipelineChainRef.current.includes(id)
@@ -225,17 +249,19 @@ export function usePipeline(): PipelineActions {
   const run = useCallback(
     async (sessionId: string, anonymize = false) => {
       const chain = pipelineChainRef.current;
-      if (chain.length === 0) return;
+      const disabled = new Set(disabledChainIdsRef.current);
+      const effectiveChain = chain.filter((id) => !disabled.has(id));
+      if (effectiveChain.length === 0) return;
       dispatch({ type: 'run:started', sessionId });
       try {
-        const results = await runPipeline(sessionId, chain, anonymize);
+        const results = await runPipeline(sessionId, effectiveChain, anonymize);
         // Compute newRunCount before dispatching — the reducer will set runCount to this value.
         const prevState = resultsBySessionRef.current.get(sessionId);
         const newRunCount = (prevState?.runCount ?? 0) + 1;
         dispatch({ type: 'run:complete', sessionId, results, newRunCount });
 
         // Determine which processor types are active in this run
-        const chainSet = new Set(chain);
+        const chainSet = new Set(effectiveChain);
         const activeProcessors = processorsRef.current.filter((p) => chainSet.has(p.id));
         bus.emit('pipeline:completed', {
           sessionId,
@@ -279,6 +305,7 @@ export function usePipeline(): PipelineActions {
     addToChain,
     removeFromChain,
     reorderChain,
+    toggleChainEnabled,
     toggleProcessor,
     run,
     stop,

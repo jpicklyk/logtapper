@@ -20,6 +20,7 @@ import {
   useIsStreaming,
   useProcessors,
   usePipelineChain,
+  useDisabledChainIds,
   usePipelineRunning,
   usePipelineResults,
   usePipelineProgress,
@@ -136,17 +137,68 @@ const PROC_TYPE_ACCENT: Record<string, string> = {
 
 const PINNED_TAIL_IDS = new Set(['__pii_anonymizer']);
 
+const LS_COMPACT_KEY = 'logtapper_pipeline_compact';
+
+// ── SVG Icons ────────────────────────────────────────────────────────────────
+
+const DragHandleSvg = (
+  <svg width="10" height="14" viewBox="0 0 10 14" fill="none">
+    <circle cx="3" cy="2.5" r="1.2" fill="currentColor" />
+    <circle cx="7" cy="2.5" r="1.2" fill="currentColor" />
+    <circle cx="3" cy="7" r="1.2" fill="currentColor" />
+    <circle cx="7" cy="7" r="1.2" fill="currentColor" />
+    <circle cx="3" cy="11.5" r="1.2" fill="currentColor" />
+    <circle cx="7" cy="11.5" r="1.2" fill="currentColor" />
+  </svg>
+);
+
+const LockSvg = (
+  <svg width="10" height="12" viewBox="0 0 10 12" fill="none">
+    <rect x="2" y="5.5" width="6" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.2" />
+    <path d="M3 5.5V3.5a2 2 0 014 0v2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+  </svg>
+);
+
+const RemoveSvg = (
+  <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
+    <path d="M1 1l8 8M9 1L1 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+);
+
+// Eye icon (enabled)
+const EyeSvg = (
+  <svg width="12" height="10" viewBox="0 0 16 12" fill="none">
+    <path d="M1 6s3-5 7-5 7 5 7 5-3 5-7 5-7-5-7-5z" stroke="currentColor" strokeWidth="1.3" />
+    <circle cx="8" cy="6" r="2" stroke="currentColor" strokeWidth="1.3" />
+  </svg>
+);
+
+// Eye-off icon (disabled)
+const EyeOffSvg = (
+  <svg width="12" height="10" viewBox="0 0 16 12" fill="none">
+    <path d="M1 6s3-5 7-5 7 5 7 5-3 5-7 5-7-5-7-5z" stroke="currentColor" strokeWidth="1.3" />
+    <path d="M3 1l10 10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+  </svg>
+);
+
 // ── ChainConnector ───────────────────────────────────────────────────────────
 
-function ChainConnector({ isActive }: { isActive: boolean }) {
+const ChainConnector = React.memo(function ChainConnector({
+  isActive,
+  compact,
+}: {
+  isActive: boolean;
+  compact: boolean;
+}) {
+  const cls = `${styles.connector}${isActive ? ` ${styles.connectorActive}` : ''}${compact ? ` ${styles.connectorCompact}` : ''}`;
   return (
-    <div className={`${styles.connector}${isActive ? ` ${styles.connectorActive}` : ''}`}>
+    <div className={cls}>
       <div className={styles.connectorDot} />
       <div className={styles.connectorDot} />
       <div className={styles.connectorDot} />
     </div>
   );
-}
+});
 
 // ── StatLine ─────────────────────────────────────────────────────────────────
 
@@ -187,6 +239,32 @@ function StatLine({
   );
 }
 
+/** Format a compact stat string from a result. */
+function compactStatText(result?: PipelineRunSummary): string {
+  if (!result) return '';
+  return result.matchedLines.toLocaleString();
+}
+
+// ── Toggle button ────────────────────────────────────────────────────────────
+
+function ToggleEnabledBtn({
+  disabled,
+  onClick,
+}: {
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className={`${styles.toggleBtn}${disabled ? ` ${styles.toggleBtnOff}` : ''}`}
+      title={disabled ? 'Enable processor' : 'Disable processor'}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+    >
+      {disabled ? EyeOffSvg : EyeSvg}
+    </button>
+  );
+}
+
 // ── ChainNode ────────────────────────────────────────────────────────────────
 
 interface ChainNodeProps {
@@ -197,10 +275,13 @@ interface ChainNodeProps {
   result?: PipelineRunSummary;
   progress?: PipelineProgress;
   running: boolean;
+  compact: boolean;
+  disabled: boolean;
   onRemove: (id: string) => void;
+  onToggleEnabled: (id: string) => void;
 }
 
-function ChainNode({
+const ChainNode = React.memo(function ChainNode({
   id,
   name,
   processorType,
@@ -208,35 +289,55 @@ function ChainNode({
   result,
   progress,
   running,
+  compact,
+  disabled,
   onRemove,
+  onToggleEnabled,
 }: ChainNodeProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
 
+  const accentColor = PROC_TYPE_ACCENT[processorType] ?? '#58a6ff';
+
+  if (compact) {
+    const style: React.CSSProperties = {
+      transform: CSS.Transform.toString(transform),
+      transition,
+      opacity: isDragging ? 0.5 : 1,
+      '--proc-accent': accentColor,
+    } as React.CSSProperties;
+
+    const cls = `${styles.chainNodeCompact}${isDragging ? ` ${styles.chainNodeDragging}` : ''}${disabled ? ` ${styles.nodeDisabled}` : ''}`;
+
+    return (
+      <div ref={setNodeRef} style={style} className={cls} {...attributes} {...listeners}>
+        <div className={styles.compactDot} />
+        <span className={styles.compactName}>{name}</span>
+        {result && <span className={styles.compactStat}>{compactStatText(result)}</span>}
+        <ToggleEnabledBtn disabled={disabled} onClick={() => onToggleEnabled(id)} />
+        <button className={styles.nodeRemove} title="Remove from chain" onClick={(e) => { e.stopPropagation(); onRemove(id); }}>
+          {RemoveSvg}
+        </button>
+      </div>
+    );
+  }
+
+  // Detailed mode
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
-    '--proc-accent': PROC_TYPE_ACCENT[processorType] ?? '#58a6ff',
+    '--proc-accent': accentColor,
   } as React.CSSProperties;
 
   const [typeLabel, typeBadgeClass] = (PINNED_TAIL_IDS.has(id) ? PII_TYPE_META : null)
     ?? getProcTypeMeta(processorType);
 
+  const cls = `${styles.chainNode}${isDragging ? ` ${styles.chainNodeDragging}` : ''}${disabled ? ` ${styles.nodeDisabled}` : ''}`;
+
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className={`${styles.chainNode}${isDragging ? ` ${styles.chainNodeDragging}` : ''}`}
-    >
+    <div ref={setNodeRef} style={style} className={cls}>
       <div className={styles.nodeHandle} {...attributes} {...listeners} title="Drag to reorder">
-        <svg width="10" height="14" viewBox="0 0 10 14" fill="none">
-          <circle cx="3" cy="2.5" r="1.2" fill="currentColor" />
-          <circle cx="7" cy="2.5" r="1.2" fill="currentColor" />
-          <circle cx="3" cy="7" r="1.2" fill="currentColor" />
-          <circle cx="7" cy="7" r="1.2" fill="currentColor" />
-          <circle cx="3" cy="11.5" r="1.2" fill="currentColor" />
-          <circle cx="7" cy="11.5" r="1.2" fill="currentColor" />
-        </svg>
+        {DragHandleSvg}
       </div>
       <div className={styles.nodeAccent} />
       <div className={styles.nodeBody}>
@@ -247,18 +348,19 @@ function ChainNode({
         </div>
         <StatLine processorType={processorType} result={result} progress={progress} running={running} />
       </div>
+      <div className={styles.nodeActions}>
+        <ToggleEnabledBtn disabled={disabled} onClick={() => onToggleEnabled(id)} />
+      </div>
       <button className={styles.nodeRemove} title="Remove from chain" onClick={() => onRemove(id)}>
-        <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
-          <path d="M1 1l8 8M9 1L1 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
+        {RemoveSvg}
       </button>
     </div>
   );
-}
+});
 
 // ── PinnedChainNode ──────────────────────────────────────────────────────────
 
-function PinnedChainNode({
+const PinnedChainNode = React.memo(function PinnedChainNode({
   id,
   name,
   processorType,
@@ -266,26 +368,52 @@ function PinnedChainNode({
   result,
   progress,
   running,
+  compact,
+  disabled,
   onRemove,
+  onToggleEnabled,
 }: ChainNodeProps) {
+  const accentColor = PROC_TYPE_ACCENT[processorType] ?? '#58a6ff';
+
+  if (compact) {
+    const style: React.CSSProperties = {
+      '--proc-accent': accentColor,
+    } as React.CSSProperties;
+
+    const cls = `${styles.chainNodeCompact} ${styles.chainNodePinned}${disabled ? ` ${styles.nodeDisabled}` : ''}`;
+
+    return (
+      <div style={style} className={cls}>
+        <span className={styles.compactLock}>{LockSvg}</span>
+        <div className={styles.compactDot} />
+        <span className={styles.compactName}>{name}</span>
+        {result && <span className={styles.compactStat}>{compactStatText(result)}</span>}
+        <ToggleEnabledBtn disabled={disabled} onClick={() => onToggleEnabled(id)} />
+        <button className={styles.nodeRemove} title="Remove from chain" onClick={(e) => { e.stopPropagation(); onRemove(id); }}>
+          {RemoveSvg}
+        </button>
+      </div>
+    );
+  }
+
+  // Detailed mode
   const style: React.CSSProperties = {
-    '--proc-accent': PROC_TYPE_ACCENT[processorType] ?? '#58a6ff',
+    '--proc-accent': accentColor,
   } as React.CSSProperties;
 
   const [typeLabel, typeBadgeClass] = (PINNED_TAIL_IDS.has(id) ? PII_TYPE_META : null)
     ?? getProcTypeMeta(processorType);
+
+  const cls = `${styles.chainNode} ${styles.chainNodePinned}${disabled ? ` ${styles.nodeDisabled}` : ''}`;
 
   return (
     <>
       <div className={styles.outputGateSep}>
         <span className={styles.outputGateLabel}>output gate</span>
       </div>
-      <div style={style} className={`${styles.chainNode} ${styles.chainNodePinned}`}>
+      <div style={style} className={cls}>
         <div className={`${styles.nodeHandle} ${styles.nodeHandleLocked}`} title="Pinned to end">
-          <svg width="10" height="12" viewBox="0 0 10 12" fill="none">
-            <rect x="2" y="5.5" width="6" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.2" />
-            <path d="M3 5.5V3.5a2 2 0 014 0v2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-          </svg>
+          {LockSvg}
         </div>
         <div className={styles.nodeAccent} />
         <div className={styles.nodeBody}>
@@ -296,15 +424,16 @@ function PinnedChainNode({
           </div>
           <StatLine processorType={processorType} result={result} progress={progress} running={running} />
         </div>
+        <div className={styles.nodeActions}>
+          <ToggleEnabledBtn disabled={disabled} onClick={() => onToggleEnabled(id)} />
+        </div>
         <button className={styles.nodeRemove} title="Remove from chain" onClick={() => onRemove(id)}>
-          <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
-            <path d="M1 1l8 8M9 1L1 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
+          {RemoveSvg}
         </button>
       </div>
     </>
   );
-}
+});
 
 // ── ProcessorPanel ───────────────────────────────────────────────────────────
 
@@ -313,11 +442,25 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
   const isStreaming = useIsStreaming();
   const processors = useProcessors();
   const pipelineChain = usePipelineChain();
+  const disabledChainIds = useDisabledChainIds();
   const running = usePipelineRunning();
   const { results: lastResults } = usePipelineResults();
   const progress = usePipelineProgress();
   const pipelineError = usePipelineError();
   const pipeline = usePipeline();
+
+  // ── Compact mode (persisted to localStorage) ──
+  const [compact, setCompact] = useState(() => localStorage.getItem(LS_COMPACT_KEY) === '1');
+  const handleToggleCompact = useCallback(() => {
+    setCompact((prev) => {
+      const next = !prev;
+      localStorage.setItem(LS_COMPACT_KEY, next ? '1' : '0');
+      return next;
+    });
+  }, []);
+
+  // ── Chain filter (local ephemeral state) ──
+  const [chainFilter, setChainFilter] = useState('');
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -362,6 +505,8 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
     setLibraryOpen(false);
   }, []);
 
+  const disabledSet = useMemo(() => new Set(disabledChainIds), [disabledChainIds]);
+
   const resultMap = useMemo(
     () =>
       new Map<string, PipelineRunSummary>(
@@ -386,10 +531,26 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
     () => allChainProcessors.filter((p) => PINNED_TAIL_IDS.has(p.id)),
     [allChainProcessors],
   );
-  const sortableIds = useMemo(
-    () => sortableProcessors.map((p) => p.id),
-    [sortableProcessors],
+
+  // ── Filtered lists for search ──
+  const filteredSortable = useMemo(() => {
+    if (!chainFilter) return sortableProcessors;
+    const q = chainFilter.toLowerCase();
+    return sortableProcessors.filter((p) => p.name.toLowerCase().includes(q));
+  }, [sortableProcessors, chainFilter]);
+
+  const filteredPinned = useMemo(() => {
+    if (!chainFilter) return pinnedProcessors;
+    const q = chainFilter.toLowerCase();
+    return pinnedProcessors.filter((p) => p.name.toLowerCase().includes(q));
+  }, [pinnedProcessors, chainFilter]);
+
+  const filteredSortableIds = useMemo(
+    () => filteredSortable.map((p) => p.id),
+    [filteredSortable],
   );
+
+  const filteredTotal = filteredSortable.length + filteredPinned.length;
 
   const isActive = running || isStreaming;
   const sessionId = session?.sessionId ?? null;
@@ -398,8 +559,6 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
   // Progress map from context
   const progressMap = useMemo(() => {
     if (!progress) return {};
-    // The progress object from context is a simple { current, total }
-    // Map it to per-processor PipelineProgress for StatLine
     const map: Record<string, PipelineProgress> = {};
     for (const id of pipelineChain) {
       map[id] = {
@@ -423,12 +582,63 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
             <span className={styles.count}>{pipelineChain.length}</span>
           )}
         </div>
-        <button className={styles.actionBtn} title="Add processor" onClick={handleOpenLibrary}>
-          <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
-            <path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-        </button>
+        <div className={styles.headerActions}>
+          {/* Compact/detailed toggle */}
+          <button
+            className={styles.actionBtn}
+            title={compact ? 'Detailed view' : 'Compact view'}
+            onClick={handleToggleCompact}
+          >
+            {compact ? (
+              <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+                <rect x="1" y="2" width="12" height="3" rx="1" stroke="currentColor" strokeWidth="1.2" />
+                <rect x="1" y="9" width="12" height="3" rx="1" stroke="currentColor" strokeWidth="1.2" />
+              </svg>
+            ) : (
+              <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+                <line x1="1" y1="3.5" x2="13" y2="3.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                <line x1="1" y1="7" x2="13" y2="7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                <line x1="1" y1="10.5" x2="13" y2="10.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+              </svg>
+            )}
+          </button>
+          {/* Add processor */}
+          <button className={styles.actionBtn} title="Add processor" onClick={handleOpenLibrary}>
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+              <path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
       </div>
+
+      {/* Chain filter — only show when chain has 4+ processors */}
+      {allChainProcessors.length >= 4 && (
+        <div className={styles.chainFilterRow}>
+          <input
+            className={styles.chainFilterInput}
+            type="text"
+            placeholder="Filter..."
+            value={chainFilter}
+            onChange={(e) => setChainFilter(e.target.value)}
+          />
+          {chainFilter && (
+            <>
+              <span className={styles.chainFilterCount}>
+                {filteredTotal}/{allChainProcessors.length}
+              </span>
+              <button
+                className={styles.chainFilterClear}
+                title="Clear filter"
+                onClick={() => setChainFilter('')}
+              >
+                <svg width="8" height="8" viewBox="0 0 10 10" fill="none">
+                  <path d="M1 1l8 8M9 1L1 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Pipeline chain */}
       <div className={styles.chain}>
@@ -441,22 +651,24 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
 
         {allChainProcessors.length === 0 ? (
           <div className={styles.chainEmpty}>
-            <ChainConnector isActive={false} />
+            <ChainConnector isActive={false} compact={compact} />
             <div className={styles.emptyHint}>
               Add processors with{' '}
               <button className={styles.emptyHintBtn} onClick={handleOpenLibrary}>
                 +
               </button>
             </div>
-            <ChainConnector isActive={false} />
+            <ChainConnector isActive={false} compact={compact} />
           </div>
+        ) : chainFilter && filteredTotal === 0 ? (
+          <div className={styles.chainFilterEmpty}>No matches</div>
         ) : (
           <>
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-              <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
-                {sortableProcessors.map((proc) => (
+              <SortableContext items={filteredSortableIds} strategy={verticalListSortingStrategy}>
+                {filteredSortable.map((proc) => (
                   <Fragment key={proc.id}>
-                    <ChainConnector isActive={isActive} />
+                    <ChainConnector isActive={isActive} compact={compact} />
                     <ChainNode
                       id={proc.id}
                       name={proc.name}
@@ -465,15 +677,18 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
                       result={resultMap.get(proc.id)}
                       progress={progressMap[proc.id]}
                       running={running}
+                      compact={compact}
+                      disabled={disabledSet.has(proc.id)}
                       onRemove={pipeline.removeFromChain}
+                      onToggleEnabled={pipeline.toggleChainEnabled}
                     />
                   </Fragment>
                 ))}
               </SortableContext>
             </DndContext>
-            {pinnedProcessors.map((proc) => (
+            {filteredPinned.map((proc) => (
               <Fragment key={proc.id}>
-                <ChainConnector isActive={isActive} />
+                <ChainConnector isActive={isActive} compact={compact} />
                 <PinnedChainNode
                   id={proc.id}
                   name={proc.name}
@@ -482,14 +697,19 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
                   result={resultMap.get(proc.id)}
                   progress={progressMap[proc.id]}
                   running={running}
+                  compact={compact}
+                  disabled={disabledSet.has(proc.id)}
                   onRemove={pipeline.removeFromChain}
+                  onToggleEnabled={pipeline.toggleChainEnabled}
                 />
               </Fragment>
             ))}
           </>
         )}
 
-        {allChainProcessors.length > 0 && <ChainConnector isActive={isActive} />}
+        {allChainProcessors.length > 0 && filteredTotal > 0 && (
+          <ChainConnector isActive={isActive} compact={compact} />
+        )}
 
         <div className={styles.sinkNode}>
           <svg width="10" height="10" viewBox="0 0 12 12" fill="none">

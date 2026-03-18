@@ -104,6 +104,10 @@ export function useActiveProcessorIds(): string[] {
   return usePipelineContext().activeProcessorIds;
 }
 
+export function useDisabledChainIds(): string[] {
+  return usePipelineContext().disabledChainIds;
+}
+
 export function useProcessors(): ProcessorSummary[] {
   return usePipelineContext().processors;
 }
