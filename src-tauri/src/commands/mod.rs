@@ -92,6 +92,8 @@ pub struct AppState {
     pub sources: Mutex<Vec<Source>>,
     /// Pending processor updates found by the startup check (for UI badges).
     pub pending_updates: Mutex<Vec<crate::commands::sources::UpdateAvailable>>,
+    /// Pending workspace auto-save cancellation senders: session_id → cancel sender.
+    pub workspace_save_tasks: Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
 }
 
 impl Default for AppState {
@@ -141,6 +143,7 @@ impl AppState {
             active_watches: Mutex::new(HashMap::new()),
             sources: Mutex::new(Vec::new()),
             pending_updates: Mutex::new(Vec::new()),
+            workspace_save_tasks: Mutex::new(HashMap::new()),
         }
     }
 }

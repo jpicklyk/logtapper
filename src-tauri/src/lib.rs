@@ -6,6 +6,7 @@ pub mod core;
 pub mod mcp_bridge;
 pub mod processors;
 pub mod scripting;
+pub mod workspace;
 
 use commands::AppState;
 use processors::marketplace::{qualified_id, Source, SourceType};
