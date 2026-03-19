@@ -27,6 +27,7 @@ import { useCacheManager } from '../../cache';
 import { Toast } from '../../ui';
 import { findTabAcrossTree, allPanes } from '../../hooks/workspace/splitTreeHelpers';
 import { usePendingUpdateCount } from '../../context';
+import { bus } from '../../events';
 import type {
   WorkspaceLayoutState,
   LeftPaneTab,
@@ -64,6 +65,15 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   const cacheManager = useCacheManager();
   const { toasts, addToast, dismissToast } = useToast();
   useAnalysisToast(addToast);
+
+  // Generic toast event — any component can fire 'toast:show' to display a message.
+  useEffect(() => {
+    const handler = ({ title, message }: { title: string; message: string }) => {
+      addToast({ id: `toast-${Date.now()}`, title, message });
+    };
+    bus.on('toast:show', handler);
+    return () => bus.off('toast:show', handler);
+  }, [addToast]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const updateBadgeCount = usePendingUpdateCount();
 

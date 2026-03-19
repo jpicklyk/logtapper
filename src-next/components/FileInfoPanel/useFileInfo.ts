@@ -280,8 +280,29 @@ export function useFileInfo(paneId: string | null): FileInfoData {
     setSessionFilter(sessionId, { sectionFilteredLineNums });
   }, [sessionId, sectionFilteredLineNums, setSessionFilter]);
 
+  // Keep a ref so the callback doesn't re-create on every filter change.
+  const sectionFilterRef = useRef(sectionFilteredLineNums);
+  sectionFilterRef.current = sectionFilteredLineNums;
+
   const onJumpToLine = useCallback(
     (line: number) => {
+      const filtered = sectionFilterRef.current;
+      if (filtered) {
+        // Binary search — filtered is sorted.
+        let lo = 0, hi = filtered.length - 1, found = false;
+        while (lo <= hi) {
+          const mid = (lo + hi) >>> 1;
+          if (filtered[mid] === line) { found = true; break; }
+          if (filtered[mid] < line) lo = mid + 1; else hi = mid - 1;
+        }
+        if (!found) {
+          bus.emit('toast:show', {
+            title: 'Section not visible',
+            message: 'That section is outside the active section filter.',
+          });
+          return;
+        }
+      }
       setSectionJumpSeq((s) => s + 1);
       jumpToLine(line, paneId ?? undefined);
     },

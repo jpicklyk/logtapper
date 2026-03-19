@@ -85,6 +85,10 @@ export type AppEvents = {
   /** Fired when an analysis is published externally (e.g. via MCP bridge), not by local UI. */
   'analysis:published-external': { artifactId: string; title: string; sessionId: string };
 
+  // ── Toast ───────────────────────────────────────────────────────────────
+  /** Generic toast event — any component can fire this to show a transient message. */
+  'toast:show':                      { title: string; message: string };
+
   // ── Marketplace ─────────────────────────────────────────────────────────
   'marketplace:processor-installed': { processorId: string; sourceName: string };
   'marketplace:processor-updated':   { processorId: string; oldVersion: string; newVersion: string };
