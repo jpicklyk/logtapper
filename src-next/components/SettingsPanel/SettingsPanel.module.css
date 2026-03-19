@@ -205,17 +205,17 @@
 
 .fpBadgeTier1 {
   background: rgba(63, 185, 80, 0.15);
-  color: var(--green);
+  color: var(--success);
 }
 
 .fpBadgeTier2 {
   background: rgba(210, 153, 34, 0.15);
-  color: var(--yellow);
+  color: var(--warning);
 }
 
 .fpBadgeTier3 {
   background: rgba(248, 81, 73, 0.15);
-  color: var(--red);
+  color: var(--danger);
 }
 
 .expandBtn {
@@ -287,7 +287,7 @@
 }
 
 .patternDelBtn:hover {
-  color: var(--red);
+  color: var(--danger);
 }
 
 /* Add pattern form */
@@ -342,7 +342,7 @@
 
 .addPatternError {
   font-size: 10px;
-  color: var(--red);
+  color: var(--danger);
 }
 
 .addPatternToggle {
@@ -394,7 +394,7 @@
 }
 
 .customDelBtn:hover {
-  color: var(--red);
+  color: var(--danger);
 }
 
 .addCustomForm {
@@ -562,7 +562,7 @@
 }
 
 .catDeleteBtn:hover {
-  color: var(--error, #f85149);
+  color: var(--danger);
 }
 
 .catActions {

@@ -99,12 +99,12 @@
 }
 
 .boolTrue {
-  color: var(--green);
+  color: var(--success);
   font-weight: 600;
 }
 
 .boolFalse {
-  color: var(--red);
+  color: var(--danger);
   font-weight: 600;
 }
 

@@ -254,7 +254,7 @@
 }
 
 .nodeRemove:hover {
-  color: var(--red);
+  color: var(--danger);
   background: var(--bg-overlay);
 }
 
@@ -304,7 +304,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--green);
+  background: var(--success);
   animation: pulse 1.5s infinite;
 }
 
@@ -370,13 +370,13 @@
 }
 
 .stopBtn:hover {
-  color: var(--red);
-  border-color: var(--red);
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 .error {
   font-size: 11px;
-  color: var(--red);
+  color: var(--danger);
   padding: 4px 8px;
   background: rgba(255, 100, 100, 0.08);
   border-radius: 4px;
@@ -413,7 +413,7 @@
   color: var(--text-dimmed);
 }
 
-.mcpPill_connected { color: var(--green); }
+.mcpPill_connected { color: var(--success); }
 .mcpPill_ready { color: var(--accent); }
 .mcpPill_offline { color: var(--text-dimmed); opacity: 0.5; }
 

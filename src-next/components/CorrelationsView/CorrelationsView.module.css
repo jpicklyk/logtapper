@@ -45,7 +45,7 @@
 
 .panelError {
   padding: 12px;
-  color: var(--red);
+  color: var(--danger);
   font-size: 12px;
 }
 
