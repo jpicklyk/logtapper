@@ -13,6 +13,7 @@
   overflow-y: auto;
   overflow-x: auto;
   position: relative;
+  background: var(--viewer-bg);
 }
 
 .altMode {

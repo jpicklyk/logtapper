@@ -17,7 +17,7 @@
 }
 
 .lineNum {
-  color: var(--text-dimmed);
+  color: var(--viewer-gutter-text);
   min-width: 60px;
   text-align: right;
   padding-right: 8px;
@@ -47,12 +47,12 @@
 .levelF { color: var(--level-fatal);   background: var(--level-fatal-bg); font-weight: 600; }
 
 .selected {
-  background: rgba(255, 200, 50, 0.12);
-  border-left-color: rgba(255, 200, 50, 0.75);
+  background: var(--viewer-selection-bg);
+  border-left-color: var(--viewer-selection-border);
 }
 
 .selected:hover {
-  background: rgba(255, 200, 50, 0.18);
+  background: color-mix(in srgb, var(--viewer-selection-border) 24%, transparent);
 }
 
 .jumpTarget {
