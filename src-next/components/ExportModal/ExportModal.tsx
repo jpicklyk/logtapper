@@ -5,6 +5,7 @@ import { Spinner } from '../../ui';
 import { useSession } from '../../context';
 import { getExportSessionInfo, exportSession } from '../../bridge/commands';
 import type { ExportSessionInfo } from '../../bridge/types';
+import { formatFileSize } from '../../utils';
 import styles from './ExportModal.module.css';
 
 interface ExportModalProps {
@@ -26,6 +27,7 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
     if (!open || !session) {
       setInfo(null);
       setError(null);
+      setLoading(false);
       return;
     }
     let cancelled = false;
@@ -68,13 +70,6 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
     }
   }, [session, info, includeBookmarks, includeAnalyses, onClose]);
 
-  // Format file size for display
-  const formatSize = (bytes: number): string => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  };
-
   return (
     <Modal open={open} onClose={onClose} title="Export Session" width={420}>
       {loading ? (
@@ -89,7 +84,7 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
           <div className={styles.sourceInfo}>
             <span className={styles.sourceLabel}>Source:</span>
             <span className={styles.sourceValue}>
-              {info.sourceFilename} ({formatSize(info.sourceSize)})
+              {info.sourceFilename} ({formatFileSize(info.sourceSize)})
             </span>
           </div>
 

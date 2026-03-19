@@ -7,6 +7,7 @@ import type { DumpstateMetadata, SourceType } from '../../bridge/types';
 import { isBugreportLike } from '../../bridge/types';
 import type { IndexingProgress } from '../../context';
 import { Input } from '../../ui';
+import { formatFileSize } from '../../utils';
 import styles from './FileInfoPanel.module.css';
 import { getSectionDescription } from './sectionDescriptions';
 
@@ -74,12 +75,6 @@ function formatDuration(startNs: number | null | undefined, endNs: number | null
   return `${d}d ${h}h`;
 }
 
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
 
 function sourceTypeColor(type: SourceType | undefined): string {
   switch (type) {
