@@ -1,7 +1,11 @@
 import { memo, useCallback, useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Moon, Monitor, Plus, Sun, Trash2 } from 'lucide-react';
 import type { AppSettings, UseSettingsResult, BookmarkCategoryDef } from '../../hooks';
 import { SETTING_DEFAULTS, DEFAULT_BOOKMARK_CATEGORIES } from '../../hooks';
+import { useTheme } from '../../context';
+import { SegmentedControl } from '../../ui';
+import type { SegmentedOption } from '../../ui';
+import type { ThemeMode } from '../../context';
 import css from './SettingsPanel.module.css';
 
 function formatNumber(n: number): string {
@@ -14,12 +18,20 @@ function estimateCacheMB(lines: number): string {
   return `~${(bytes / 1_000_000).toFixed(0)} MB`;
 }
 
+const THEME_OPTIONS: SegmentedOption<ThemeMode>[] = [
+  { value: 'dark',   icon: Moon,    tooltip: 'Dark'   },
+  { value: 'light',  icon: Sun,     tooltip: 'Light'  },
+  { value: 'system', icon: Monitor, tooltip: 'System' },
+];
+
 interface GeneralTabProps {
   settings: AppSettings;
   onUpdate: UseSettingsResult['updateSetting'];
 }
 
 export const GeneralTab = memo(function GeneralTab({ settings, onUpdate }: GeneralTabProps) {
+  const { theme, setTheme } = useTheme();
+
   const handleNumberInput = useCallback(
     (key: keyof AppSettings, raw: string, fallback: number) => {
       const parsed = parseInt(raw.replace(/,/g, ''), 10);
@@ -30,6 +42,26 @@ export const GeneralTab = memo(function GeneralTab({ settings, onUpdate }: Gener
 
   return (
     <>
+      <div className={css.section}>
+        <div className={css.sectionTitle}>Appearance</div>
+        <div className={css.row}>
+          <div className={css.label}>
+            <span className={css.labelText}>Theme</span>
+            <span className={css.labelHint}>
+              Choose between dark, light, or follow the system preference.
+            </span>
+          </div>
+          <div className={css.control}>
+            <SegmentedControl
+              options={THEME_OPTIONS}
+              value={theme}
+              onChange={setTheme}
+              size="md"
+            />
+          </div>
+        </div>
+      </div>
+
       <div className={css.section}>
         <div className={css.sectionTitle}>Viewer</div>
         <div className={css.row}>

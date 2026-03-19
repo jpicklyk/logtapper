@@ -2,6 +2,8 @@ import { useMemo, useCallback, useRef, type ReactNode } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { SessionProvider } from './SessionContext';
 import { useSessionContext } from './SessionContext';
+export { ThemeProvider, useTheme } from './ThemeContext';
+export type { ThemeMode, ResolvedTheme } from './ThemeContext';
 import { ViewerProvider } from './ViewerContext';
 import { PipelineProvider } from './PipelineContext';
 import { TrackerProvider } from './TrackerContext';

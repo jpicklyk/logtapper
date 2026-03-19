@@ -24,6 +24,10 @@
   color-scheme: dark;
 }
 
+[data-theme="light"] {
+  color-scheme: light;
+}
+
 body {
   min-height: 100vh;
 }
