@@ -10,7 +10,7 @@ use crate::commands::pipeline_core::{
     excluded_by_source_type, PartitionedDefs, PipelineCore,
 };
 use crate::core::line::PipelineContext;
-use crate::core::log_source::FileLogSource;
+use crate::core::log_source::{FileLogSource, ZipLogSource};
 use crate::core::session::parser_for;
 use crate::processors::ProcessorKind;
 use crate::processors::marketplace::resolve_processor_id;
@@ -65,6 +65,10 @@ enum SourceSnapshot {
     Stream {
         raw_lines: Vec<String>,
     },
+    Zip {
+        data: Arc<Vec<u8>>,
+        line_index: Vec<u64>,
+    },
 }
 
 impl SourceSnapshot {
@@ -75,6 +79,9 @@ impl SourceSnapshot {
                 if line_index.is_empty() { 0 } else { line_index.len() - 1 }
             }
             SourceSnapshot::Stream { raw_lines } => raw_lines.len(),
+            SourceSnapshot::Zip { line_index, .. } => {
+                if line_index.len() > 1 { line_index.len() - 1 } else { 0 }
+            }
         }
     }
 
@@ -103,6 +110,25 @@ impl SourceSnapshot {
             }
             SourceSnapshot::Stream { raw_lines } => {
                 raw_lines.get(n).map(std::string::String::as_str)
+            }
+            SourceSnapshot::Zip { data, line_index } => {
+                if n + 1 >= line_index.len() {
+                    return None;
+                }
+                let start = line_index[n] as usize;
+                let end = line_index[n + 1] as usize;
+                if start >= end || end > data.len() {
+                    return None;
+                }
+                // Trim trailing \r\n or \n
+                let mut slice_end = end;
+                if slice_end > start && data[slice_end - 1] == b'\n' {
+                    slice_end -= 1;
+                }
+                if slice_end > start && data[slice_end - 1] == b'\r' {
+                    slice_end -= 1;
+                }
+                std::str::from_utf8(&data[start..slice_end]).ok()
             }
         }
     }
@@ -177,6 +203,11 @@ pub fn execute_pipeline(
             SourceSnapshot::File {
                 mmap: Arc::clone(file_src.mmap()),
                 line_index: file_src.line_index().to_vec(),
+            }
+        } else if let Some(zip_src) = src.as_any().downcast_ref::<ZipLogSource>() {
+            SourceSnapshot::Zip {
+                data: Arc::clone(zip_src.data()),
+                line_index: zip_src.line_index().to_vec(),
             }
         } else {
             // StreamLogSource — clone the raw lines

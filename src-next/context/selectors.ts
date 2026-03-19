@@ -33,6 +33,12 @@ export function useFocusedPaneId(): string | null {
   return useSessionContext().focusedPaneId;
 }
 
+/** Returns true only for the pane that is currently focused — avoids
+ *  re-rendering sibling PaneContent instances when focus changes. */
+export function useIsFocusedPane(paneId: string): boolean {
+  return useSessionContext().focusedPaneId === paneId;
+}
+
 export function useIndexingProgress(sessionId: string | null): IndexingProgress | null {
   const { indexingProgressBySession } = useSessionContext();
   if (!sessionId) return null;
@@ -187,12 +193,14 @@ export function useTrackerTransitions(): {
 // ---------------------------------------------------------------------------
 
 export function useViewerActions() {
-  const { loadFile, openFileDialog, startStream, stopStream, closeSession,
+  const { loadFile, openFileDialog, openInEditorDialog, startStream, stopStream, closeSession,
           jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
-          openTab, setFocusedPane, setEffectiveLineNums } = useActionsContext();
-  return { loadFile, openFileDialog, startStream, stopStream, closeSession,
+          openTab, setFocusedPane, setEffectiveLineNums,
+          saveFile, saveFileAs, exportSession } = useActionsContext();
+  return { loadFile, openFileDialog, openInEditorDialog, startStream, stopStream, closeSession,
            jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
-           openTab, setFocusedPane, setEffectiveLineNums };
+           openTab, setFocusedPane, setEffectiveLineNums,
+           saveFile, saveFileAs, exportSession };
 }
 
 export function usePipelineActions() {

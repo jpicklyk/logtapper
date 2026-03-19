@@ -196,8 +196,8 @@ export function useWorkspaceLayout() {
       }
     };
 
-    const onOpenTab = (e: { type: string }) => {
-      openCenterTabRef.current(e.type as CenterTabType);
+    const onOpenTab = (e: { type: string; label?: string; filePath?: string }) => {
+      openCenterTabRef.current(e.type as CenterTabType, e.label, e.filePath);
     };
 
     bus.on('session:focused', onSessionFocused);
@@ -241,6 +241,7 @@ export function useWorkspaceLayout() {
     addCenterTab: centerTree.addCenterTab,
     resizeSplit: centerTree.resizeSplit,
     renameTab: centerTree.renameTab,
+    setTabUnsaved: centerTree.setTabUnsaved,
     openCenterTab: centerTree.openCenterTab,
     dropTabOnPane: centerTree.dropTabOnPane,
 

@@ -10,7 +10,7 @@ use crate::core::bugreport_parser::BugreportParser;
 use crate::core::index::CrossSourceIndex;
 use crate::core::kernel_parser::KernelParser;
 use crate::core::line::{LineMeta, LogLevel, ParsedLineMeta};
-use crate::core::log_source::{FileLogSource, LogSource, StreamLogSource};
+use crate::core::log_source::{FileLogSource, LogSource, StreamLogSource, ZipLogSource};
 use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;
 use crate::core::timeline::{Timeline, TimelineEntry};
@@ -141,6 +141,9 @@ pub struct AnalysisSession {
     pub tag_interner: TagInterner,
     /// Absolute path of the loaded file, if this is a file-backed session.
     pub file_path: Option<String>,
+    /// Holds the extracted temp file for zip-backed sessions. The temp file is
+    /// deleted when the session is dropped. Must outlive the mmap.
+    pub temp_file: Option<tempfile::NamedTempFile>,
 }
 
 impl AnalysisSession {
@@ -152,6 +155,7 @@ impl AnalysisSession {
             index: CrossSourceIndex::build(&[]),
             tag_interner: TagInterner::new(),
             file_path: None,
+            temp_file: None,
         }
     }
 
@@ -259,6 +263,41 @@ impl AnalysisSession {
             self.id.clone(),
             temp_dir,
         )));
+    }
+
+    /// Load decompressed bytes as a new source (for zip-extracted log files).
+    /// The bytes are kept in memory (no mmap) and fully indexed synchronously.
+    pub fn add_zip_source(
+        &mut self,
+        data: Vec<u8>,
+        source_id: String,
+        source_name: String,
+    ) -> Result<(), String> {
+        let data = Arc::new(data);
+        let source_type = detect_source_type_from_slice(&data);
+        let parser = parser_for(&source_type);
+        let (line_index, line_meta, _bytes_consumed) =
+            build_partial_line_index(&data, parser.as_ref(), &mut self.tag_interner, data.len());
+        let sections = build_section_index(&line_meta, &source_type, &self.tag_interner, &data, &line_index);
+
+        self.source = Some(Box::new(ZipLogSource {
+            source_id,
+            source_name,
+            source_type,
+            data,
+            line_index,
+            line_meta,
+            section_info: sections,
+        }));
+        self.rebuild_timeline();
+        Ok(())
+    }
+
+    /// Downcast the source to a ZipLogSource (read-only).
+    pub fn zip_source(&self) -> Option<&ZipLogSource> {
+        self.source
+            .as_ref()
+            .and_then(|s| s.as_any().downcast_ref::<ZipLogSource>())
     }
 
     /// Like `add_source_from_file` but only indexes the first `max_bytes` synchronously.
@@ -371,7 +410,11 @@ impl AnalysisSession {
 // ---------------------------------------------------------------------------
 
 fn detect_source_type(mmap: &Mmap) -> SourceType {
-    let sample = &mmap[..mmap.len().min(4096)];
+    detect_source_type_from_slice(mmap.as_ref())
+}
+
+pub fn detect_source_type_from_slice(data: &[u8]) -> SourceType {
+    let sample = &data[..data.len().min(4096)];
     let text = std::str::from_utf8(sample).unwrap_or("");
 
     // Samsung dumpstate files start with "== dumpstate:" and are a superset of bugreport.
@@ -757,7 +800,7 @@ pub(crate) fn parser_for(source_type: &SourceType) -> Box<dyn LogParser> {
 mod tests {
     use super::*;
     use crate::core::line::LogLevel;
-    use crate::core::log_source::{FileLogSource, LogSource, StreamLogSource};
+    use crate::core::log_source::{FileLogSource, LogSource, StreamLogSource, ZipLogSource};
 
     /// Helper: build a StreamLogSource with `n` retained lines and `evicted`
     /// evicted lines (simulated by setting evicted_count and pushing metadata
@@ -2063,5 +2106,197 @@ mod tests {
         assert_eq!(sections[0].name, "SYSTEM LOG");
         assert!(sections[0].parent_index.is_none());
         assert!(!sections.iter().any(|s| s.parent_index.is_some()), "no children should exist");
+    }
+
+    // =========================================================================
+    // ZipLogSource tests
+    // =========================================================================
+
+    #[test]
+    fn zip_source_basic() {
+        let raw = b"01-01 00:00:01.000  1234  5678 D TestTag: Hello world\n\
+                    01-01 00:00:02.000  1234  5678 I TestTag: Second line\n";
+        let mut session = AnalysisSession::new("test-zip".to_string());
+        session
+            .add_zip_source(raw.to_vec(), "src-1".to_string(), "test.log".to_string())
+            .unwrap();
+        let source = session.primary_source().unwrap();
+        assert_eq!(source.total_lines(), 2);
+        assert!(source.raw_line(0).is_some());
+        assert!(source.raw_line(1).is_some());
+        assert!(source.raw_line(2).is_none());
+        assert!(!source.is_live());
+        assert!(!source.is_indexing());
+    }
+
+    #[test]
+    fn zip_source_id_name_type() {
+        let raw = b"01-01 00:00:01.000  1000  1001 I Tag: msg\n";
+        let mut session = AnalysisSession::new("s".to_string());
+        session
+            .add_zip_source(raw.to_vec(), "zip-src-id".to_string(), "myfile.log".to_string())
+            .unwrap();
+        let source = session.primary_source().unwrap();
+        assert_eq!(source.id(), "zip-src-id");
+        assert_eq!(source.name(), "myfile.log");
+        assert!(matches!(source.source_type(), SourceType::Logcat));
+    }
+
+    #[test]
+    fn zip_source_downcast_accessor() {
+        let raw = b"01-01 00:00:01.000  1000  1001 I Tag: msg\n";
+        let mut session = AnalysisSession::new("s".to_string());
+        session
+            .add_zip_source(raw.to_vec(), "z1".to_string(), "z.log".to_string())
+            .unwrap();
+        assert!(session.zip_source().is_some());
+        assert!(session.file_source().is_none());
+        assert!(session.stream_source().is_none());
+    }
+
+    #[test]
+    fn zip_source_raw_line_content() {
+        let raw = b"01-01 00:00:01.000  1234  5678 D TestTag: Hello world\n\
+                    01-01 00:00:02.000  1234  5678 I TestTag: Second line\n";
+        let mut session = AnalysisSession::new("s".to_string());
+        session
+            .add_zip_source(raw.to_vec(), "z".to_string(), "z.log".to_string())
+            .unwrap();
+        let source = session.primary_source().unwrap();
+        let line0 = source.raw_line(0).unwrap();
+        assert!(line0.contains("Hello world"), "line 0 should contain 'Hello world'");
+        let line1 = source.raw_line(1).unwrap();
+        assert!(line1.contains("Second line"), "line 1 should contain 'Second line'");
+    }
+
+    #[test]
+    fn zip_source_meta_at() {
+        let raw = b"01-01 00:00:01.000  1000  1001 I Tag: msg\n";
+        let mut session = AnalysisSession::new("s".to_string());
+        session
+            .add_zip_source(raw.to_vec(), "z".to_string(), "z.log".to_string())
+            .unwrap();
+        let source = session.primary_source().unwrap();
+        assert!(source.meta_at(0).is_some());
+        assert!(source.meta_at(1).is_none());
+    }
+
+    #[test]
+    fn zip_source_downcast_via_boxed_trait() {
+        let raw = b"01-01 00:00:01.000  1000  1001 I Tag: msg\n";
+        let mut session = AnalysisSession::new("s".to_string());
+        session
+            .add_zip_source(raw.to_vec(), "z".to_string(), "z.log".to_string())
+            .unwrap();
+        let boxed: &Box<dyn LogSource> = session.source.as_ref().unwrap();
+        assert!(boxed.as_any().downcast_ref::<ZipLogSource>().is_some());
+        assert!(boxed.as_any().downcast_ref::<FileLogSource>().is_none());
+        assert!(boxed.as_any().downcast_ref::<StreamLogSource>().is_none());
+    }
+
+    #[test]
+    fn zip_source_empty_data() {
+        // Empty Vec<u8> must produce 0 lines and raw_line(0) returns None.
+        let mut session = AnalysisSession::new("s".to_string());
+        session
+            .add_zip_source(vec![], "z".to_string(), "empty.log".to_string())
+            .unwrap();
+        let source = session.primary_source().unwrap();
+        assert_eq!(source.total_lines(), 0, "empty data must produce 0 lines");
+        assert!(source.raw_line(0).is_none(), "raw_line(0) on empty source must return None");
+        assert!(source.meta_at(0).is_none(), "meta_at(0) on empty source must return None");
+    }
+
+    #[test]
+    fn zip_source_no_trailing_newline() {
+        // A single line without a trailing '\n' must still be indexed.
+        let raw = b"01-01 00:00:01.000  1000  1001 I Tag: only line";
+        let mut session = AnalysisSession::new("s".to_string());
+        session
+            .add_zip_source(raw.to_vec(), "z".to_string(), "z.log".to_string())
+            .unwrap();
+        let source = session.primary_source().unwrap();
+        assert_eq!(source.total_lines(), 1, "single line without trailing newline must be indexed");
+        let text = source.raw_line(0).unwrap();
+        assert!(text.contains("only line"), "raw_line(0) must contain the line content");
+        assert!(source.raw_line(1).is_none(), "raw_line(1) must be None for single-line source");
+    }
+
+    #[test]
+    fn zip_source_crlf_handling() {
+        // Lines terminated with \r\n must have both stripped.
+        let raw = b"01-01 00:00:01.000  1000  1001 I Tag: first\r\n\
+                    01-01 00:00:02.000  1000  1001 I Tag: second\r\n";
+        let mut session = AnalysisSession::new("s".to_string());
+        session
+            .add_zip_source(raw.to_vec(), "z".to_string(), "z.log".to_string())
+            .unwrap();
+        let source = session.primary_source().unwrap();
+        assert_eq!(source.total_lines(), 2);
+        let line0 = source.raw_line(0).unwrap();
+        assert!(!line0.contains('\r'), "\\r must be stripped from line 0");
+        assert!(!line0.contains('\n'), "\\n must be stripped from line 0");
+        assert!(line0.contains("first"), "line 0 must contain 'first'");
+        let line1 = source.raw_line(1).unwrap();
+        assert!(!line1.contains('\r'), "\\r must be stripped from line 1");
+        assert!(line1.contains("second"), "line 1 must contain 'second'");
+    }
+
+    #[test]
+    fn zip_source_sections_detected() {
+        // Bugreport-format data must get section_info populated.
+        // The section detector matches a start header line with a duration footer
+        // where the footer's single-quoted name equals the section header name.
+        //
+        // Start:  `------ KERNEL VERSION (uname -a) ------`
+        //   → tag = "KERNEL VERSION", level = Info, is_section_boundary = true
+        // Footer: `------ 0.001s was the duration of 'KERNEL VERSION' ------`
+        //   → tag = "KERNEL VERSION", level = Verbose, is_section_boundary = true
+        let raw = b"== dumpstate: 2024-01-15 10:00:00\n\
+                    ------ KERNEL VERSION (uname -a) ------\n\
+                    Linux localhost 5.15.0\n\
+                    ------ 0.001s was the duration of 'KERNEL VERSION' ------\n";
+        let mut session = AnalysisSession::new("s".to_string());
+        session
+            .add_zip_source(raw.to_vec(), "z".to_string(), "bugreport.txt".to_string())
+            .unwrap();
+        let source = session.primary_source().unwrap();
+        // The source type must be detected as Bugreport or Dumpstate.
+        let st = source.source_type();
+        assert!(
+            matches!(st, SourceType::Bugreport | SourceType::Dumpstate),
+            "source type should be Bugreport or Dumpstate, got {st:?}"
+        );
+        // Sections must be non-empty for bugreport format data.
+        assert!(
+            !source.sections().is_empty(),
+            "bugreport-format data must have sections populated"
+        );
+        // The KERNEL VERSION section must be present.
+        let has_kernel = source.sections().iter().any(|s| s.name.contains("KERNEL VERSION"));
+        assert!(has_kernel, "KERNEL VERSION section must be detected; sections: {:?}", source.sections());
+    }
+
+    #[test]
+    fn zip_source_timestamps() {
+        // first_timestamp / last_timestamp must return correct values.
+        let raw = b"01-15 08:30:00.000  1000  1001 I Tag: first\n\
+                    03-22 14:45:30.500  2000  2001 W Tag: second\n\
+                    06-01 20:00:00.000  3000  3001 E Tag: third\n";
+        let mut session = AnalysisSession::new("s".to_string());
+        session
+            .add_zip_source(raw.to_vec(), "z".to_string(), "z.log".to_string())
+            .unwrap();
+        let source = session.primary_source().unwrap();
+        assert_eq!(source.total_lines(), 3);
+        let first_ts = source.first_timestamp();
+        let last_ts = source.last_timestamp();
+        assert!(first_ts.is_some(), "first_timestamp must be Some for lines with timestamps");
+        assert!(last_ts.is_some(), "last_timestamp must be Some for lines with timestamps");
+        assert!(
+            last_ts.unwrap() > first_ts.unwrap(),
+            "last_timestamp {} must be greater than first_timestamp {}",
+            last_ts.unwrap(), first_ts.unwrap()
+        );
     }
 }

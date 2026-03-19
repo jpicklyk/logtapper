@@ -7,24 +7,16 @@ import { EditorTab } from '../EditorTab';
 import { StreamFilterBar } from '../StreamFilterBar';
 import { BookmarkCreateDialog } from '../BookmarkPanel';
 import type { BookmarkCreateRequest } from '../BookmarkPanel';
-import { useSessionForPane, useIsLoadingForPane, useViewerActions, useStreamFilter, useFocusedSession } from '../../context';
+import { useSessionForPane, useIsLoadingForPane, useViewerActions, useStreamFilter, useFocusedSession, useIsFocusedPane } from '../../context';
+import type { CenterPane } from '../../hooks/workspace/workspaceTypes';
 import { useLogViewerActions } from './useLogViewerActions';
 import { bus } from '../../events';
 import styles from './PaneContent.module.css';
 
-export interface PaneTab {
-  id: string;
-  type: 'logviewer' | 'dashboard' | 'editor' | 'analysis';
-}
-
-export interface Pane {
-  id: string;
-  tabs: PaneTab[];
-  activeTabId: string;
-}
-
 interface Props {
-  pane: Pane;
+  pane: CenterPane;
+  onDirtyChanged?: (tabId: string, isDirty: boolean) => void;
+  onFilePathChanged?: (tabId: string, newLabel: string) => void;
 }
 
 /** Sorted merge intersection of two sorted number arrays. O(n+m). */
@@ -67,10 +59,11 @@ function EmptyDropZone() {
 const NOTICE_EXIT_MS = 400;
 const NOTICE_VISIBLE_MS = 4000;
 
-const PaneContent = React.memo(function PaneContent({ pane }: Props) {
+const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFilePathChanged }: Props) {
   // Use the pane's own session, not the global focused session.
   const session = useSessionForPane(pane.id);
   const focusedSession = useFocusedSession();
+  const isFocusedPane = useIsFocusedPane(pane.id);
   const isLoading = useIsLoadingForPane(pane.id);
   const { setFocusedPane, setStreamFilter, cancelStreamFilter, setEffectiveLineNums } = useViewerActions();
   const { fetchLines } = useLogViewerActions(pane.id);
@@ -238,7 +231,16 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
     case 'editor':
       return (
         <>
-          <EditorTab tabId={activeTab.id} />
+          {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
+          <div onClick={handlePaneFocus} onFocus={handlePaneFocus} style={{ height: '100%' }}>
+            <EditorTab
+              tabId={activeTab.id}
+              tabLabel={activeTab.label}
+              isFocused={isFocusedPane}
+              onDirtyChanged={onDirtyChanged}
+              onFilePathChanged={onFilePathChanged}
+            />
+          </div>
           {bookmarkDialog}
         </>
       );

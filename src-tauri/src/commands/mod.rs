@@ -23,6 +23,7 @@ pub mod bookmark;
 pub mod charts;
 pub mod claude;
 pub mod correlator;
+pub mod export;
 pub mod files;
 pub mod filter;
 pub mod pipeline;
@@ -32,6 +33,7 @@ pub mod session;
 pub mod sources;
 pub mod state_tracker;
 pub mod watch;
+pub mod workspace_sync;
 
 /// Global application state managed by Tauri.
 pub struct AppState {
@@ -92,6 +94,8 @@ pub struct AppState {
     pub sources: Mutex<Vec<Source>>,
     /// Pending processor updates found by the startup check (for UI badges).
     pub pending_updates: Mutex<Vec<crate::commands::sources::UpdateAvailable>>,
+    /// Pending workspace auto-save cancellation senders: session_id → cancel sender.
+    pub workspace_save_tasks: Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
 }
 
 impl Default for AppState {
@@ -141,6 +145,7 @@ impl AppState {
             active_watches: Mutex::new(HashMap::new()),
             sources: Mutex::new(Vec::new()),
             pending_updates: Mutex::new(Vec::new()),
+            workspace_save_tasks: Mutex::new(HashMap::new()),
         }
     }
 }

@@ -229,3 +229,26 @@
   box-shadow: var(--shadow-focus);
   outline: none;
 }
+
+/* ── Read-only badge (lock icon for bugreport/dumpstate tabs) ──────────────── */
+
+.readOnlyBadge {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  opacity: 0.7;
+  flex-shrink: 0;
+  margin-right: 2px;
+}
+
+/* ── Unsaved changes indicator (dirty dot) ───────────────────────────────── */
+
+.unsavedDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warning);
+  flex-shrink: 0;
+  display: inline-block;
+  margin-left: 4px;
+}

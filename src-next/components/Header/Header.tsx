@@ -1,17 +1,24 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import clsx from 'clsx';
-import { FolderOpen, Radio, Square, Smartphone } from 'lucide-react';
+import { FolderOpen, FileEdit, Menu, Radio, Square, Smartphone, Download } from 'lucide-react';
 import { useSession, useIsStreaming, useViewerActions } from '../../context';
 import { listAdbDevices } from '../../bridge/commands';
 import type { AdbDevice } from '../../bridge/types';
 import { Modal } from '../../ui/Modal/Modal';
+import { DropdownMenu } from '../../ui';
+import type { MenuItem } from '../../ui';
 import { SearchBar } from '../SearchBar';
+import { ExportModal } from '../ExportModal';
+import { bus } from '../../events';
 import styles from './Header.module.css';
 
 export const Header = React.memo(function Header() {
   const session = useSession();
   const isStreaming = useIsStreaming();
-  const { openFileDialog, startStream, stopStream } = useViewerActions();
+  const { openFileDialog, openInEditorDialog, startStream, stopStream, saveFile, saveFileAs } = useViewerActions();
+
+  const [fileMenuOpen, setFileMenuOpen] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
 
   const [devices, setDevices] = useState<AdbDevice[]>([]);
   const [showPicker, setShowPicker] = useState(false);
@@ -57,6 +64,32 @@ export const Header = React.memo(function Header() {
     setDeviceError(null);
   }, []);
 
+  const fileMenuItems = useMemo<MenuItem[]>(() => [
+    { id: 'open-log', label: 'Open Log...', icon: FolderOpen, shortcut: 'Ctrl+O' },
+    { id: 'open-editor', label: 'Open in Editor...', icon: FileEdit, shortcut: 'Ctrl+Shift+O' },
+    { separator: true },
+    { id: 'save', label: isStreaming ? 'Save Capture' : 'Save', shortcut: 'Ctrl+S' },
+    { id: 'save-as', label: 'Save As...', shortcut: 'Ctrl+Shift+S' },
+    { separator: true },
+    { id: 'export-session', label: 'Export Session...', icon: Download, shortcut: 'Ctrl+Shift+E', disabled: !session },
+  ], [isStreaming, session]);
+
+  const handleFileMenuSelect = useCallback((id: string) => {
+    switch (id) {
+      case 'open-log': openFileDialog(); break;
+      case 'open-editor': openInEditorDialog(); break;
+      case 'save': saveFile(); break;
+      case 'save-as': saveFileAs(); break;
+      case 'export-session': setShowExportModal(true); break;
+    }
+  }, [openFileDialog, openInEditorDialog, saveFile, saveFileAs]);
+
+  useEffect(() => {
+    const handler = () => { setShowExportModal(true); };
+    bus.on('layout:export-session-requested', handler);
+    return () => { bus.off('layout:export-session-requested', handler); };
+  }, []);
+
   return (
     <header className={styles.header}>
       <div className={styles.brand}>
@@ -71,14 +104,17 @@ export const Header = React.memo(function Header() {
       </div>
 
       <div className={styles.actions}>
-        <button
-          className={styles.actionBtn}
-          onClick={openFileDialog}
-          title="Open log file"
-        >
-          <FolderOpen size={14} />
-          <span>Open</span>
-        </button>
+        <DropdownMenu
+          trigger={
+            <button className={styles.actionBtn} title="Menu">
+              <Menu size={16} />
+            </button>
+          }
+          items={fileMenuItems}
+          onSelect={handleFileMenuSelect}
+          open={fileMenuOpen}
+          onOpenChange={setFileMenuOpen}
+        />
         <button
           className={clsx(
             styles.actionBtn,
@@ -135,6 +171,11 @@ export const Header = React.memo(function Header() {
           </ul>
         )}
       </Modal>
+
+      <ExportModal
+        open={showExportModal}
+        onClose={() => setShowExportModal(false)}
+      />
     </header>
   );
 });

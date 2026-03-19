@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { X, Plus } from 'lucide-react';
+import { X, Plus, Lock } from 'lucide-react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import clsx from 'clsx';
@@ -10,6 +10,8 @@ interface TabBarTab {
   label: string;
   closable?: boolean;
   type?: string;
+  readOnly?: boolean;
+  unsaved?: boolean;
 }
 
 const TAB_COLORS: Record<string, string> = {
@@ -61,6 +63,8 @@ export const TabBar = React.memo(function TabBar({
           onActivate={onActivate}
           onClose={onClose}
           onRename={RENAMABLE_TYPES.has(tab.type ?? '') ? onRename : undefined}
+          readOnly={tab.readOnly}
+          unsaved={tab.unsaved}
         />
       ))}
       {onAdd && (
@@ -81,6 +85,8 @@ interface SortableTabButtonProps {
   onActivate: (tabId: string) => void;
   onClose?: (tabId: string) => void;
   onRename?: (tabId: string, newLabel: string) => void;
+  readOnly?: boolean;
+  unsaved?: boolean;
 }
 
 const SortableTabButton = React.memo(function SortableTabButton({
@@ -92,6 +98,8 @@ const SortableTabButton = React.memo(function SortableTabButton({
   onActivate,
   onClose,
   onRename,
+  readOnly,
+  unsaved,
 }: SortableTabButtonProps) {
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
@@ -201,7 +209,17 @@ const SortableTabButton = React.memo(function SortableTabButton({
           spellCheck={false}
         />
       ) : (
-        <span className={styles.label} onDoubleClick={handleDoubleClick}>{tab.label}</span>
+        <>
+          {readOnly && (
+            <span className={styles.readOnlyBadge} title="Read-only (Bugreport)">
+              <Lock size={10} />
+            </span>
+          )}
+          <span className={styles.label} onDoubleClick={handleDoubleClick}>{tab.label}</span>
+          {unsaved && !editing && (
+            <span className={styles.unsavedDot} title="Unsaved changes" />
+          )}
+        </>
       )}
       {tab.closable && !editing && (
         <span

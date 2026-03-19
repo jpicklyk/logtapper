@@ -7,6 +7,11 @@ export function clamp(val: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, val));
 }
 
+/** Extract the filename from a path (handles both / and \ separators). */
+export function basename(path: string): string {
+  return path.split(/[\\/]/).pop() || path;
+}
+
 // ---------------------------------------------------------------------------
 // localStorage helpers — wrap try/catch so callers don't need to
 // ---------------------------------------------------------------------------
@@ -55,4 +60,12 @@ export function storageSetJSON<T>(key: string, value: T): void {
   } catch {
     // storage full or unavailable
   }
+}
+
+/** Format a byte count as a human-readable string (B, KB, MB, GB). */
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }

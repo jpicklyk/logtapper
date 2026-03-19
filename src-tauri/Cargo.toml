@@ -29,6 +29,8 @@ memmap2 = "0.9"
 memchr = "2"
 regex = "1.11"
 tauri-plugin-dialog = "2.6.0"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+tempfile = "3"
 
 # Phase 2: Scripting and YAML
 rhai = { version = "1", features = ["sync"] }

@@ -20,7 +20,7 @@ export type AppEvents = {
    * logviewer tab's mapping intact.
    */
   'session:loaded':         { sessionId: string; paneId: string; sourceName: string; sourceType: SourceType;
-                              tabId: string; isNewTab?: boolean; previousSessionId?: string };
+                              tabId: string; isNewTab?: boolean; previousSessionId?: string; readOnly?: boolean };
   'session:closed':         { sessionId: string; paneId: string; sourceType: SourceType; tabId?: string };
   'session:focused':        { sessionId: string | null; paneId: string | null };
   'session:indexing-complete': { sessionId: string; totalLines: number };
@@ -44,7 +44,7 @@ export type AppEvents = {
   'pipeline:library-open':  undefined;
 
   // ── Layout / navigation ───────────────────────────────────────────────────
-  'layout:open-tab':        { type: string };
+  'layout:open-tab':        { type: string; label?: string; filePath?: string };
   /** Fired when a logviewer tab is explicitly closed via the UI tab bar. */
   'layout:logviewer-tab-closed': { tabId: string; paneId: string; sessionId: string };
   /** Fired when the user switches to a logviewer tab that has its own session.
@@ -93,4 +93,12 @@ export type AppEvents = {
   'marketplace:processor-installed': { processorId: string; sourceName: string };
   'marketplace:processor-updated':   { processorId: string; oldVersion: string; newVersion: string };
   'marketplace:sources-changed':     undefined;
+
+  // ── File operations ──────────────────────────────────────────────────────
+  /** Emitted when user triggers Save. Focused EditorTab should handle. */
+  'file:save-request':    undefined;
+  /** Emitted when user triggers Save As. Focused EditorTab should handle. */
+  'file:save-as-request': undefined;
+  /** Fired when Export Session is requested (menu or shortcut). Header shows the export modal. */
+  'layout:export-session-requested': undefined;
 };

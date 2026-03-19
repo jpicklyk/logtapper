@@ -18,6 +18,7 @@ export interface ActionsContextValue {
   setSearch: (query: SearchQuery | null) => void;
   setStreamFilter: (expr: string) => Promise<void>;
   cancelStreamFilter: () => void;
+  openInEditorDialog: () => Promise<void>;
   openTab: (type: string) => void;
   /** Focus a specific pane, updating SessionContext and emitting session:focused. */
   setFocusedPane: (paneId: string) => void;
@@ -26,6 +27,9 @@ export interface ActionsContextValue {
    * Enables search navigation to scope results to the currently visible lines.
    */
   setEffectiveLineNums: (lineNums: number[] | null) => void;
+  saveFile: () => Promise<void>;
+  saveFileAs: () => Promise<void>;
+  exportSession: () => void;
 }
 
 const noop = () => { /* stub */ };
@@ -48,9 +52,13 @@ const DEFAULT_ACTIONS: ActionsContextValue = {
   setSearch: (_query: SearchQuery | null) => noop(),
   setStreamFilter: (_expr: string) => noopAsync(),
   cancelStreamFilter: noop,
+  openInEditorDialog: () => noopAsync(),
   openTab: (_type: string) => noop(),
   setFocusedPane: (_paneId: string) => noop(),
   setEffectiveLineNums: (_lineNums: number[] | null) => noop(),
+  saveFile: () => noopAsync(),
+  saveFileAs: () => noopAsync(),
+  exportSession: noop,
 };
 
 const ActionsContext = createContext<ActionsContextValue | null>(null);

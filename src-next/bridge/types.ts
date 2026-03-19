@@ -679,3 +679,27 @@ export interface UpdateResult {
   success: boolean;
   error?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Export types (T4 + T5)
+// ---------------------------------------------------------------------------
+
+export interface ExportProcessorEntry {
+  id: string;
+  name: string;
+  builtin: boolean;
+}
+
+export interface ExportSessionInfo {
+  sourceFilename: string;
+  sourceSize: number;
+  bookmarkCount: number;
+  analysisCount: number;
+  processors: ExportProcessorEntry[];
+}
+
+export interface ExportOptions {
+  destPath: string;
+  includeBookmarks: boolean;
+  includeAnalyses: boolean;
+}

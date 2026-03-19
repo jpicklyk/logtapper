@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tempfile::NamedTempFile;
 
 use crate::commands::{lock_or_err, AppState};
 use crate::core::line::{
@@ -12,6 +13,49 @@ use crate::core::line::{
     SearchSummary, ViewLine, ViewMode,
 };
 use crate::core::session::{AnalysisSession, SectionInfo, parser_for};
+
+// ---------------------------------------------------------------------------
+// Zip extraction for bugreport .zip files
+// ---------------------------------------------------------------------------
+
+/// Extract the dumpstate/bugreport .txt from a bugreport .zip to a temp file.
+/// Picks the largest `.txt` file in the archive (the main dumpstate dump).
+/// Returns a `NamedTempFile` that must be kept alive for the session duration.
+fn extract_bugreport_from_zip(zip_path: &Path) -> Result<NamedTempFile, String> {
+    let file = std::fs::File::open(zip_path)
+        .map_err(|e| format!("Cannot open zip '{}': {e}", zip_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| format!("Invalid zip archive '{}': {e}", zip_path.display()))?;
+
+    // Find the largest .txt entry (the main bugreport/dumpstate text).
+    let best_index = (0..archive.len())
+        .filter_map(|i| {
+            let entry = archive.by_index(i).ok()?;
+            let name = entry.name().to_string();
+            if name.ends_with('/') { return None; } // skip directories
+            if name.to_lowercase().ends_with(".txt") {
+                Some((i, entry.size()))
+            } else {
+                None
+            }
+        })
+        .max_by_key(|&(_, size)| size)
+        .map(|(i, _)| i);
+
+    let index = best_index.ok_or_else(|| {
+        format!("No .txt file found in zip '{}'", zip_path.display())
+    })?;
+
+    let mut entry = archive.by_index(index)
+        .map_err(|e| format!("Failed to read zip entry: {e}"))?;
+
+    let mut temp = NamedTempFile::new()
+        .map_err(|e| format!("Failed to create temp file: {e}"))?;
+    std::io::copy(&mut entry, &mut temp)
+        .map_err(|e| format!("Failed to extract bugreport: {e}"))?;
+
+    Ok(temp)
+}
 
 // ---------------------------------------------------------------------------
 // DumpstateMetadata
@@ -84,11 +128,27 @@ pub async fn load_log_file(
 ) -> Result<LoadResult, String> {
     let path_obj = Path::new(&path);
 
-    let file_size = std::fs::metadata(path_obj)
+    // If the file is a .lts session export, use the dedicated import path.
+    if path_obj.extension().and_then(|e| e.to_str()) == Some("lts") {
+        return load_lts_file_inner(&state, &app, &path);
+    }
+
+    // If the file is a .zip, extract the dumpstate/bugreport .txt to a temp file
+    // and load that instead. The temp file persists for the session lifetime.
+    let (effective_path, _temp_file) = if path_obj.extension().and_then(|e| e.to_str()) == Some("zip") {
+        let extracted = extract_bugreport_from_zip(path_obj)?;
+        let p = extracted.path().to_string_lossy().to_string();
+        (p, Some(extracted))
+    } else {
+        (path.clone(), None)
+    };
+    let effective_path_obj = Path::new(&effective_path);
+
+    let file_size = std::fs::metadata(effective_path_obj)
         .map(|m| m.len())
         .unwrap_or(0);
 
-    // Derive stable IDs from the path
+    // Derive stable IDs from the original path (not the temp extraction)
     let session_id = uuid::Uuid::new_v4().to_string();
     let source_id = path_obj
         .file_stem()
@@ -106,15 +166,17 @@ pub async fn load_log_file(
             .map(|s| s.id.clone())
     };
     if let Some(stale_id) = stale_id {
-        close_session_inner(&state, &stale_id)?;
+        close_session_inner(&state, Some(&app), &stale_id)?;
     }
 
     const INITIAL_BYTES: usize = 1_000_000; // 1 MB initial chunk
 
     let mut session = AnalysisSession::new(session_id.clone());
     session.file_path = Some(path.clone());
+    // Hold the temp file handle in the session so it persists (deleted on drop).
+    session.temp_file = _temp_file;
     let (mmap_arc, total_bytes, bytes_consumed) =
-        session.add_source_partial(path_obj, source_id.clone(), INITIAL_BYTES)?;
+        session.add_source_partial(effective_path_obj, source_id.clone(), INITIAL_BYTES)?;
 
     let source = session.primary_source().ok_or("No source after partial load")?;
     let total_lines = source.total_lines();
@@ -144,6 +206,10 @@ pub async fn load_log_file(
         sessions.insert(session_id.clone(), session);
     }
 
+    // ── Workspace restore ────────────────────────────────────────────
+    // Check for a matching .ltw file and restore bookmarks/analyses.
+    let (_restored_bm, _restored_an) = try_restore_workspace(&state, &app, &session_id, &path);
+
     // Spawn background indexing task if there's more to scan.
     if is_indexing {
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
@@ -172,8 +238,94 @@ pub async fn load_log_file(
     Ok(result)
 }
 
-#[tauri::command]
-fn close_session_inner(state: &AppState, session_id: &str) -> Result<(), String> {
+fn load_lts_file_inner(
+    state: &AppState,
+    app: &tauri::AppHandle,
+    lts_path: &str,
+) -> Result<LoadResult, String> {
+    use tauri::Emitter;
+
+    let path_obj = std::path::Path::new(lts_path);
+
+    // 1. Read the .lts zip (all I/O, no locks)
+    let lts = crate::workspace::lts::read_lts(path_obj)?;
+
+    // Extract processor fields before lts is partially consumed by moves below.
+    let processor_manifest = lts.processor_manifest.clone();
+    let processor_yamls = lts.processor_yamls.clone();
+
+    // 2. Create session
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let source_id = path_obj
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("lts-source")
+        .to_string();
+
+    let mut session = crate::core::session::AnalysisSession::new(session_id.clone());
+    session.file_path = Some(lts_path.to_string());
+
+    // 3. Create ZipLogSource from decompressed bytes
+    session.add_zip_source(
+        lts.source_bytes,
+        source_id.clone(),
+        lts.manifest.source_filename.clone(),
+    )?;
+
+    let source = session.primary_source().ok_or("No source after zip load")?;
+    let total_lines = source.total_lines();
+    let first_ts = source.first_timestamp();
+    let last_ts = source.last_timestamp();
+    let source_type_str = source.source_type().to_string();
+    let source_name = source.name().to_string();
+
+    let file_size = path_obj.metadata().map(|m| m.len()).unwrap_or(0);
+
+    let result = LoadResult {
+        session_id: session_id.clone(),
+        source_id,
+        source_name,
+        file_path: Some(lts_path.to_string()),
+        total_lines,
+        file_size,
+        first_timestamp: first_ts,
+        last_timestamp: last_ts,
+        source_type: source_type_str,
+        is_streaming: false,
+        is_indexing: false, // ZipLogSource is fully indexed
+    };
+
+    // 4. Insert session (brief lock)
+    {
+        let mut sessions = lock_or_err(&state.sessions, "sessions")?;
+        sessions.insert(session_id.clone(), session);
+    }
+
+    // 5 & 6. Restore bookmarks and analyses (rewrite session_id)
+    let (bm_count, an_count) = restore_artifacts(state, &session_id, lts.bookmarks, lts.analyses);
+
+    // 6.5. Resolve bundled processors (install missing / hash-mismatched processors globally).
+    // processor_manifest and processor_yamls were cloned before the partial moves above.
+    let _resolved = crate::commands::export::resolve_lts_processors_raw(
+        state,
+        app,
+        &processor_manifest,
+        &processor_yamls,
+    );
+
+    // 7. Emit restore event
+    if bm_count > 0 || an_count > 0 {
+        let _ = app.emit("workspace-restored", serde_json::json!({
+            "sessionId": session_id,
+            "bookmarkCount": bm_count,
+            "analysisCount": an_count,
+        }));
+    }
+
+    Ok(result)
+}
+
+fn close_session_inner(state: &AppState, app: Option<&tauri::AppHandle>, session_id: &str) -> Result<(), String> {
     // 1. Cancel active ADB stream (if any)
     if let Some(cancel_tx) = lock_or_err(&state.stream_tasks, "stream_tasks")?.remove(session_id) {
         let _ = cancel_tx.send(());
@@ -182,6 +334,39 @@ fn close_session_inner(state: &AppState, session_id: &str) -> Result<(), String>
     // 2. Cancel active background indexing (if any)
     if let Some(cancel_tx) = lock_or_err(&state.indexing_tasks, "indexing_tasks")?.remove(session_id) {
         let _ = cancel_tx.send(());
+    }
+
+    // ── Workspace save (before session removal) ──────────────────────────────
+    // Cancel any pending debounced save for this session.
+    if let Ok(mut tasks) = state.workspace_save_tasks.lock() {
+        tasks.remove(session_id); // dropping the sender cancels the pending task
+    }
+
+    // Snapshot file_path under sessions lock, then drop it before acquiring
+    // bookmarks/analyses locks. Never hold sessions + bookmarks simultaneously
+    // (undefined lock ordering — see CLAUDE.md).
+    let file_path: Option<String> = {
+        let sessions = lock_or_err(&state.sessions, "sessions")?;
+        sessions.get(session_id).and_then(|s| s.file_path.clone())
+    };
+    let save_data = file_path.map(|fp| {
+        let bm = crate::commands::workspace_sync::snapshot_bookmarks(state, session_id);
+        let an = crate::commands::workspace_sync::snapshot_analyses(state, session_id);
+        (fp, bm, an)
+    });
+
+    if let (Some(app), Some((file_path, bookmarks, analyses))) = (app, save_data) {
+        // Skip workspace save for .lts sessions — they're self-contained
+        if !file_path.ends_with(".lts") {
+            if let Ok(ws_path) = crate::workspace::workspace_path_for(app, &file_path) {
+                let meta = crate::workspace::SessionMeta::default();
+                if let Err(e) = crate::workspace::save_workspace(&ws_path, &file_path, &bookmarks, &analyses, &meta) {
+                    log::warn!("Workspace save failed for session {session_id}: {e}");
+                } else if let Ok(dir) = crate::workspace::workspace_dir(app) {
+                    crate::workspace::evict_old_workspaces(&dir, 20);
+                }
+            }
+        }
     }
 
     // 3. Remove session (drops mmap / stream data)
@@ -214,15 +399,24 @@ fn close_session_inner(state: &AppState, session_id: &str) -> Result<(), String>
     // 12. Remove MCP anonymizer
     lock_or_err(&state.mcp_anonymizers, "mcp_anonymizers")?.remove(session_id);
 
+    // 13. Clean up bookmarks and analyses (previously leaked in memory).
+    if let Ok(mut bookmarks) = state.bookmarks.lock() {
+        bookmarks.remove(session_id);
+    }
+    if let Ok(mut analyses) = state.analyses.lock() {
+        analyses.remove(session_id);
+    }
+
     Ok(())
 }
 
 #[tauri::command]
 pub async fn close_session(
     state: State<'_, AppState>,
+    app: tauri::AppHandle,
     session_id: String,
 ) -> Result<(), String> {
-    close_session_inner(&state, &session_id)
+    close_session_inner(&state, Some(&app), &session_id)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -956,6 +1150,20 @@ pub async fn get_dumpstate_metadata(
 }
 
 // ---------------------------------------------------------------------------
+// read_text_file / write_text_file
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn read_text_file(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| format!("Failed to read file: {e}"))
+}
+
+#[tauri::command]
+pub fn write_text_file(path: String, content: String) -> Result<(), String> {
+    std::fs::write(&path, &content).map_err(|e| format!("Failed to write file: {e}"))
+}
+
+// ---------------------------------------------------------------------------
 // get_sections
 // ---------------------------------------------------------------------------
 
@@ -1033,6 +1241,87 @@ pub fn compute_search_highlights(raw: &str, query: &SearchQuery) -> Vec<Highligh
     spans
 }
 
+// ---------------------------------------------------------------------------
+// restore_artifacts — shared helper
+// ---------------------------------------------------------------------------
+
+/// Restore bookmarks and analyses into AppState with session ID rewritten.
+fn restore_artifacts(
+    state: &AppState,
+    session_id: &str,
+    bookmarks: Vec<crate::core::bookmark::Bookmark>,
+    analyses: Vec<crate::core::analysis::AnalysisArtifact>,
+) -> (usize, usize) {
+    let bm_count = bookmarks.len();
+    let an_count = analyses.len();
+    if !bookmarks.is_empty() {
+        let mut bm = bookmarks;
+        for b in &mut bm {
+            b.session_id = session_id.to_string();
+        }
+        if let Ok(mut map) = state.bookmarks.lock() {
+            map.insert(session_id.to_string(), bm);
+        }
+    }
+    if !analyses.is_empty() {
+        let mut an = analyses;
+        for a in &mut an {
+            a.session_id = session_id.to_string();
+        }
+        if let Ok(mut map) = state.analyses.lock() {
+            map.insert(session_id.to_string(), an);
+        }
+    }
+    (bm_count, an_count)
+}
+
+// ---------------------------------------------------------------------------
+// try_restore_workspace
+// ---------------------------------------------------------------------------
+
+/// Attempt to restore bookmarks and analyses from a matching `.ltw` workspace.
+/// Returns (bookmark_count, analysis_count) on success, (0, 0) on failure or no workspace.
+fn try_restore_workspace(
+    state: &crate::commands::AppState,
+    app: &tauri::AppHandle,
+    session_id: &str,
+    file_path: &str,
+) -> (usize, usize) {
+    // 1. Compute workspace path
+    let Ok(ws_path) = crate::workspace::workspace_path_for(app, file_path) else {
+        return (0, 0);
+    };
+
+    // 2. Check if workspace file exists
+    if !ws_path.exists() {
+        return (0, 0);
+    }
+
+    // 3. Load workspace
+    let data = match crate::workspace::load_workspace(&ws_path) {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("Failed to load workspace for '{file_path}': {e}");
+            return (0, 0);
+        }
+    };
+
+    // 4-6. Rewrite session IDs and insert into AppState
+    let (bm_count, an_count) = restore_artifacts(state, session_id, data.bookmarks, data.analyses);
+
+    // 7. Emit workspace-restored event
+    if bm_count > 0 || an_count > 0 {
+        use tauri::Emitter;
+        let _ = app.emit("workspace-restored", serde_json::json!({
+            "sessionId": session_id,
+            "bookmarkCount": bm_count,
+            "analysisCount": an_count,
+        }));
+    }
+
+    (bm_count, an_count)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1060,7 +1349,7 @@ mod tests {
         insert_session(&state, "sess-1", None);
         assert!(state.sessions.lock().unwrap().contains_key("sess-1"));
 
-        close_session_inner(&state, "sess-1").unwrap();
+        close_session_inner(&state, None, "sess-1").unwrap();
 
         assert!(!state.sessions.lock().unwrap().contains_key("sess-1"),
             "session must be removed after close");
@@ -1073,7 +1362,7 @@ mod tests {
         let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
         state.indexing_tasks.lock().unwrap().insert("sess-2".to_string(), cancel_tx);
 
-        close_session_inner(&state, "sess-2").unwrap();
+        close_session_inner(&state, None, "sess-2").unwrap();
 
         // The sender was consumed and the cancellation signal delivered
         assert!(cancel_rx.try_recv().is_ok(),
@@ -1087,7 +1376,7 @@ mod tests {
         state.pipeline_results.lock().unwrap()
             .insert("sess-3".to_string(), HashMap::new());
 
-        close_session_inner(&state, "sess-3").unwrap();
+        close_session_inner(&state, None, "sess-3").unwrap();
 
         assert!(!state.pipeline_results.lock().unwrap().contains_key("sess-3"),
             "pipeline results must be cleared on close");
@@ -1097,7 +1386,7 @@ mod tests {
     fn close_session_inner_is_noop_on_unknown_id() {
         let state = make_state();
         // Must not panic or error when the session doesn't exist
-        assert!(close_session_inner(&state, "nonexistent").is_ok());
+        assert!(close_session_inner(&state, None, "nonexistent").is_ok());
     }
 
     // -------------------------------------------------------------------------
@@ -1123,7 +1412,7 @@ mod tests {
         assert_eq!(stale_id.as_deref(), Some("stale-id"),
             "must find the stale session by file path");
 
-        close_session_inner(&state, stale_id.unwrap().as_str()).unwrap();
+        close_session_inner(&state, None, stale_id.unwrap().as_str()).unwrap();
 
         assert!(!state.sessions.lock().unwrap().contains_key("stale-id"),
             "stale session must be removed");
@@ -1164,5 +1453,134 @@ mod tests {
 
         assert!(stale_id.is_none(),
             "stream sessions with no file_path must not be matched");
+    }
+
+    // -------------------------------------------------------------------------
+    // restore_artifacts
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn restore_artifacts_rewrites_session_id() {
+        use crate::core::bookmark::{Bookmark, CreatedBy};
+        use crate::core::analysis::AnalysisArtifact;
+
+        let state = make_state();
+        let new_session_id = "new-session-xyz";
+
+        // Bookmarks and analyses arrive with an old session_id from the .lts file.
+        let bm = Bookmark {
+            id: "bm-1".to_string(),
+            session_id: "old-session-id".to_string(),
+            line_number: 7,
+            line_number_end: None,
+            snippet: None,
+            category: None,
+            tags: None,
+            label: "Test".to_string(),
+            note: String::new(),
+            created_by: CreatedBy::User,
+            created_at: 1000,
+        };
+        let artifact = AnalysisArtifact {
+            id: "art-1".to_string(),
+            session_id: "old-session-id".to_string(),
+            title: "Analysis".to_string(),
+            created_at: 2000,
+            sections: vec![],
+        };
+
+        let (bm_count, an_count) =
+            restore_artifacts(&state, new_session_id, vec![bm], vec![artifact]);
+
+        assert_eq!(bm_count, 1);
+        assert_eq!(an_count, 1);
+
+        // Verify session_id was rewritten on stored bookmarks.
+        let bookmarks = state.bookmarks.lock().unwrap();
+        let stored_bms = bookmarks.get(new_session_id).expect("bookmarks must be stored under new session id");
+        assert_eq!(stored_bms[0].session_id, new_session_id, "bookmark session_id must be rewritten");
+        assert_eq!(stored_bms[0].line_number, 7);
+        drop(bookmarks);
+
+        // Verify session_id was rewritten on stored analyses.
+        let analyses = state.analyses.lock().unwrap();
+        let stored_ans = analyses.get(new_session_id).expect("analyses must be stored under new session id");
+        assert_eq!(stored_ans[0].session_id, new_session_id, "analysis session_id must be rewritten");
+    }
+
+    #[test]
+    fn restore_artifacts_empty_vecs_are_noop() {
+        let state = make_state();
+        let session_id = "empty-sess";
+
+        // Calling with empty vecs must not insert anything into AppState.
+        let (bm_count, an_count) = restore_artifacts(&state, session_id, vec![], vec![]);
+
+        assert_eq!(bm_count, 0);
+        assert_eq!(an_count, 0);
+        assert!(
+            !state.bookmarks.lock().unwrap().contains_key(session_id),
+            "no bookmark entry must be created for empty input"
+        );
+        assert!(
+            !state.analyses.lock().unwrap().contains_key(session_id),
+            "no analysis entry must be created for empty input"
+        );
+    }
+
+    #[test]
+    fn close_session_inner_no_panic_with_none_app() {
+        // Passing None for app must not panic even when there is a file_path set.
+        let state = make_state();
+        insert_session(&state, "sess-no-app", Some("/logs/file.log"));
+        // Must return Ok without panicking.
+        assert!(close_session_inner(&state, None, "sess-no-app").is_ok());
+        assert!(!state.sessions.lock().unwrap().contains_key("sess-no-app"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Bookmarks and analyses cleanup
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn close_session_inner_removes_bookmarks_and_analyses() {
+        use crate::core::bookmark::{Bookmark, CreatedBy};
+        use crate::core::analysis::AnalysisArtifact;
+
+        let state = make_state();
+        insert_session(&state, "sess-bm", None);
+
+        // Populate bookmarks for the session.
+        let bm = Bookmark {
+            id: "bm-1".to_string(),
+            session_id: "sess-bm".to_string(),
+            line_number: 42,
+            line_number_end: None,
+            snippet: None,
+            category: None,
+            tags: None,
+            label: "Test".to_string(),
+            note: String::new(),
+            created_by: CreatedBy::User,
+            created_at: 1000,
+        };
+        state.bookmarks.lock().unwrap().insert("sess-bm".to_string(), vec![bm]);
+
+        // Populate analyses for the session.
+        let artifact = AnalysisArtifact {
+            id: "art-1".to_string(),
+            session_id: "sess-bm".to_string(),
+            title: "Test".to_string(),
+            created_at: 2000,
+            sections: vec![],
+        };
+        state.analyses.lock().unwrap().insert("sess-bm".to_string(), vec![artifact]);
+
+        close_session_inner(&state, None, "sess-bm").unwrap();
+
+        assert!(!state.bookmarks.lock().unwrap().contains_key("sess-bm"),
+            "bookmarks must be removed on close");
+        assert!(!state.analyses.lock().unwrap().contains_key("sess-bm"),
+            "analyses must be removed on close");
     }
 }

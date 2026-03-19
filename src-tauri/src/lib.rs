@@ -6,6 +6,7 @@ pub mod core;
 pub mod mcp_bridge;
 pub mod processors;
 pub mod scripting;
+pub mod workspace;
 
 use commands::AppState;
 use processors::marketplace::{qualified_id, Source, SourceType};
@@ -353,6 +354,8 @@ pub fn run() {
             commands::files::get_dumpstate_metadata,
             commands::files::get_sections,
             commands::files::close_session,
+            commands::files::read_text_file,
+            commands::files::write_text_file,
             commands::pipeline::run_pipeline,
             commands::pipeline::stop_pipeline,
             commands::processors::list_processors,
@@ -412,6 +415,9 @@ pub fn run() {
             commands::sources::save_sources_to_disk,
             commands::sources::get_pending_updates,
             commands::sources::install_from_marketplace,
+            // Export commands (T4 + T5)
+            commands::export::get_export_session_info,
+            commands::export::export_session,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -22,11 +22,11 @@ import { RightPane } from '../../components/RightPane';
 import { BottomPane } from '../../components/BottomPane';
 import { PaneContent } from '../../components/PaneContent';
 import { SettingsPanel } from '../../components/SettingsPanel';
-import { useSettings, useAnonymizerConfig, useToast, useAnalysisToast } from '../../hooks';
+import { useSettings, useAnonymizerConfig, useToast, useAnalysisToast, useWorkspaceRestoreToast, useFileShortcuts } from '../../hooks';
 import { useCacheManager } from '../../cache';
 import { Toast } from '../../ui';
 import { findTabAcrossTree, allPanes } from '../../hooks/workspace/splitTreeHelpers';
-import { usePendingUpdateCount } from '../../context';
+import { usePendingUpdateCount, useViewerActions } from '../../context';
 import type {
   WorkspaceLayoutState,
   LeftPaneTab,
@@ -64,8 +64,11 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   const cacheManager = useCacheManager();
   const { toasts, addToast, dismissToast } = useToast();
   useAnalysisToast(addToast);
+  useWorkspaceRestoreToast(addToast);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const updateBadgeCount = usePendingUpdateCount();
+  const { openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession } = useViewerActions();
+  useFileShortcuts({ openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession });
 
   const rightTopItems = useMemo(
     () => [
@@ -346,7 +349,15 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
       {currentPanes.map((pane) => {
         const container = contentRefsRef.current.get(pane.id);
         if (!container) return null;
-        return createPortal(<PaneContent pane={pane} />, container, pane.id);
+        return createPortal(
+          <PaneContent
+            pane={pane}
+            onDirtyChanged={workspace.setTabUnsaved}
+            onFilePathChanged={workspace.renameTab}
+          />,
+          container,
+          pane.id,
+        );
       })}
 
       {/* Toast notifications (e.g. MCP-published analyses) */}

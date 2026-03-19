@@ -8,6 +8,26 @@ use std::sync::{Arc, Mutex};
 use crate::core::line::LineMeta;
 use crate::core::session::{SectionInfo, SourceType};
 
+/// Shared line extraction from indexed byte data. Used by FileLogSource and ZipLogSource.
+fn raw_line_from_bytes<'a>(data: &'a [u8], line_index: &[u64], line_num: usize) -> Option<Cow<'a, str>> {
+    if line_num + 1 >= line_index.len() {
+        return None;
+    }
+    let start = line_index[line_num] as usize;
+    let end = line_index[line_num + 1] as usize;
+    if start >= end || end > data.len() {
+        return None;
+    }
+    let mut slice_end = end;
+    if slice_end > start && data[slice_end - 1] == b'\n' {
+        slice_end -= 1;
+    }
+    if slice_end > start && data[slice_end - 1] == b'\r' {
+        slice_end -= 1;
+    }
+    std::str::from_utf8(&data[start..slice_end]).ok().map(Cow::Borrowed)
+}
+
 // ---------------------------------------------------------------------------
 // LogSource trait — the foundational abstraction for log data access
 // ---------------------------------------------------------------------------
@@ -83,25 +103,7 @@ impl LogSource for FileLogSource {
     }
 
     fn raw_line(&self, line_num: usize) -> Option<Cow<'_, str>> {
-        if line_num + 1 >= self.line_index.len() {
-            return None;
-        }
-        let start = self.line_index[line_num] as usize;
-        let end = self.line_index[line_num + 1] as usize;
-        if start >= end || end > self.mmap.len() {
-            return None;
-        }
-        // Strip trailing \n and \r\n
-        let mut slice_end = end;
-        if slice_end > start && self.mmap[slice_end - 1] == b'\n' {
-            slice_end -= 1;
-        }
-        if slice_end > start && self.mmap[slice_end - 1] == b'\r' {
-            slice_end -= 1;
-        }
-        std::str::from_utf8(&self.mmap[start..slice_end])
-            .ok()
-            .map(Cow::Borrowed)
+        raw_line_from_bytes(&self.mmap, &self.line_index, line_num)
     }
 
     fn meta_at(&self, line_num: usize) -> Option<&LineMeta> {
@@ -173,6 +175,157 @@ impl FileLogSource {
     /// Update sections (called after indexing completes).
     pub fn set_sections(&mut self, sections: Vec<SectionInfo>) {
         self.section_info = sections;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ZipLogSource — decompressed in-memory log source
+// ---------------------------------------------------------------------------
+
+pub struct ZipLogSource {
+    pub(crate) source_id: String,
+    pub(crate) source_name: String,
+    pub(crate) source_type: SourceType,
+    /// Decompressed source bytes held in memory.
+    pub(crate) data: Arc<Vec<u8>>,
+    /// Byte offsets for every line (sentinel at end, same as FileLogSource).
+    pub(crate) line_index: Vec<u64>,
+    pub(crate) line_meta: Vec<LineMeta>,
+    pub(crate) section_info: Vec<SectionInfo>,
+}
+
+impl LogSource for ZipLogSource {
+    fn id(&self) -> &str {
+        &self.source_id
+    }
+
+    fn name(&self) -> &str {
+        &self.source_name
+    }
+
+    fn source_type(&self) -> &SourceType {
+        &self.source_type
+    }
+
+    fn total_lines(&self) -> usize {
+        self.line_meta.len()
+    }
+
+    fn raw_line(&self, line_num: usize) -> Option<Cow<'_, str>> {
+        raw_line_from_bytes(&self.data, &self.line_index, line_num)
+    }
+
+    fn meta_at(&self, line_num: usize) -> Option<&LineMeta> {
+        self.line_meta.get(line_num)
+    }
+
+    fn line_meta_slice(&self) -> &[LineMeta] {
+        &self.line_meta
+    }
+
+    fn is_live(&self) -> bool {
+        false
+    }
+
+    fn sections(&self) -> &[SectionInfo] {
+        &self.section_info
+    }
+
+    fn is_indexing(&self) -> bool {
+        false
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+impl ZipLogSource {
+    pub fn data(&self) -> &Arc<Vec<u8>> {
+        &self.data
+    }
+
+    pub fn line_index(&self) -> &[u64] {
+        &self.line_index
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests for raw_line_from_bytes
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::raw_line_from_bytes;
+
+    /// Empty line_index (no sentinel) returns None for any line_num.
+    #[test]
+    fn raw_line_from_bytes_empty_index() {
+        let data = b"hello\n";
+        let index: Vec<u64> = vec![];
+        assert!(
+            raw_line_from_bytes(data, &index, 0).is_none(),
+            "empty index must return None for line 0"
+        );
+    }
+
+    /// A single-sentinel index (no lines) returns None for line 0.
+    #[test]
+    fn raw_line_from_bytes_sentinel_only() {
+        let data = b"hello\n";
+        // A sentinel-only index has one entry: the end offset, no line spans.
+        let index: Vec<u64> = vec![6];
+        assert!(
+            raw_line_from_bytes(data, &index, 0).is_none(),
+            "sentinel-only index must return None for line 0"
+        );
+    }
+
+    /// \r\n is stripped correctly from the returned content.
+    #[test]
+    fn raw_line_from_bytes_strips_crlf() {
+        let data = b"hello\r\nworld\r\n";
+        // line_index: [0, 7, 14] — each entry is the start of a line, last is sentinel.
+        let index: Vec<u64> = vec![0, 7, 14];
+        let line0 = raw_line_from_bytes(data, &index, 0).unwrap();
+        assert_eq!(line0.as_ref(), "hello", "\\r\\n must be fully stripped from line 0");
+        let line1 = raw_line_from_bytes(data, &index, 1).unwrap();
+        assert_eq!(line1.as_ref(), "world", "\\r\\n must be fully stripped from line 1");
+    }
+
+    /// Plain \n is stripped correctly.
+    #[test]
+    fn raw_line_from_bytes_strips_lf() {
+        let data = b"alpha\nbeta\n";
+        let index: Vec<u64> = vec![0, 6, 11];
+        let line0 = raw_line_from_bytes(data, &index, 0).unwrap();
+        assert_eq!(line0.as_ref(), "alpha");
+        let line1 = raw_line_from_bytes(data, &index, 1).unwrap();
+        assert_eq!(line1.as_ref(), "beta");
+    }
+
+    /// line_num beyond total lines returns None.
+    #[test]
+    fn raw_line_from_bytes_out_of_bounds() {
+        let data = b"line0\nline1\n";
+        let index: Vec<u64> = vec![0, 6, 12];
+        // Valid lines are 0 and 1.
+        assert!(raw_line_from_bytes(data, &index, 2).is_none(), "line 2 must return None");
+        assert!(raw_line_from_bytes(data, &index, 100).is_none(), "line 100 must return None");
+    }
+
+    /// Non-UTF-8 bytes return None (not a panic).
+    #[test]
+    fn raw_line_from_bytes_invalid_utf8() {
+        // 0xFF 0xFE is not valid UTF-8.
+        let data: &[u8] = &[0xFF, 0xFE, b'\n'];
+        let index: Vec<u64> = vec![0, 3];
+        let result = raw_line_from_bytes(data, &index, 0);
+        assert!(result.is_none(), "invalid UTF-8 bytes must return None, not panic");
     }
 }
 
