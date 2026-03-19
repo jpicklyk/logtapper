@@ -68,7 +68,7 @@
 .pulse {
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   background: var(--accent);
   box-shadow: 0 0 6px 1px color-mix(in srgb, var(--accent) 50%, transparent);
   animation: pulseDot 2s ease-in-out infinite;
@@ -106,7 +106,7 @@
   line-height: 1;
   font-family: var(--font-mono);
   border-radius: var(--radius-sm);
-  transition: color 120ms ease, background 120ms ease;
+  transition: color var(--transition-normal), background var(--transition-normal);
 }
 
 .close:hover {

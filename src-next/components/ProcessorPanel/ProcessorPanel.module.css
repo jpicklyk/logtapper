@@ -246,7 +246,7 @@
   cursor: pointer;
   border-radius: 3px;
   opacity: 0;
-  transition: opacity 0.15s;
+  transition: opacity var(--transition-normal);
 }
 
 .chainNode:hover .nodeRemove {
@@ -604,7 +604,7 @@
   flex-shrink: 0;
   padding: 0;
   opacity: 0;
-  transition: opacity 0.15s;
+  transition: opacity var(--transition-normal);
 }
 
 .chainNode:hover .toggleBtn,

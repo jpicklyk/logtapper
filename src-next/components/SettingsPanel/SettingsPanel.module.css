@@ -66,7 +66,7 @@
   color: var(--text-dimmed);
   font-size: 12px;
   font-weight: 500;
-  transition: all 0.15s;
+  transition: all var(--transition-normal);
 }
 
 .tab:hover {
@@ -476,7 +476,7 @@
   gap: 8px;
   padding: 7px 10px;
   background: var(--bg-base);
-  transition: background 120ms ease;
+  transition: background var(--transition-normal);
 }
 
 .catRow:hover {
@@ -491,7 +491,7 @@
   border-radius: 4px;
   cursor: pointer;
   border: 1.5px solid rgba(255, 255, 255, 0.1);
-  transition: border-color 120ms ease;
+  transition: border-color var(--transition-normal);
 }
 
 .catSwatch:hover {
@@ -522,7 +522,7 @@
   font-size: 12px;
   font-family: var(--font-ui);
   outline: none;
-  transition: border-color 120ms ease, background 120ms ease;
+  transition: border-color var(--transition-normal), background var(--transition-normal);
 }
 
 .catLabelInput:hover {
@@ -554,7 +554,7 @@
   padding: 2px;
   flex-shrink: 0;
   opacity: 0;
-  transition: opacity 120ms ease, color 120ms ease;
+  transition: opacity var(--transition-normal), color var(--transition-normal);
 }
 
 .catRow:hover .catDeleteBtn {

@@ -2,7 +2,7 @@
   display: flex;
   background: var(--panel-bg);
   overflow: hidden;
-  transition: width 150ms ease, height 150ms ease;
+  transition: width var(--transition-normal), height var(--transition-normal);
 }
 
 .collapsed {

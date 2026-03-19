@@ -46,7 +46,7 @@
   border-radius: 6px;
   background: var(--bg-raised);
   cursor: pointer;
-  transition: border-color 0.15s;
+  transition: border-color var(--transition-normal);
 }
 
 .procCard:hover {

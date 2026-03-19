@@ -67,7 +67,7 @@
   color: color-mix(in srgb, var(--accent) 60%, transparent);
   letter-spacing: 0.025em;
   flex-shrink: 0;
-  transition: background 120ms ease, color 100ms ease;
+  transition: background var(--transition-normal), color 100ms ease;
 }
 
 .navTop {
@@ -133,7 +133,7 @@
   color: var(--bg-base);
   background: var(--accent);
   border: none;
-  border-radius: 12px;
+  border-radius: var(--radius-xl);
   cursor: pointer;
   animation: slideUp 0.25s ease-out;
   font-weight: 500;
