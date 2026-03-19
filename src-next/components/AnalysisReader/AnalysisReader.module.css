@@ -260,7 +260,7 @@
   height: 100%;
   gap: 8px;
   color: var(--text-dimmed);
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .emptyState p {

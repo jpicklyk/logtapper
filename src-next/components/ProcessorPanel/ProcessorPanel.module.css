@@ -23,7 +23,7 @@
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.04em;
   color: var(--text-dimmed);
 }
 
@@ -379,6 +379,7 @@
   color: var(--danger);
   padding: 4px 8px;
   background: var(--danger-muted);
+  border: 1px solid var(--danger-muted-border);
   border-radius: var(--radius-sm);
 }
 

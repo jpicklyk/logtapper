@@ -15,7 +15,7 @@
   height: 100%;
   gap: 6px;
   color: var(--text-dimmed);
-  font-size: 13px;
+  font-size: 12px;
   text-align: center;
 }
 
@@ -47,6 +47,9 @@
   padding: 12px;
   color: var(--danger);
   font-size: 12px;
+  background: var(--danger-muted);
+  border: 1px solid var(--danger-muted-border);
+  border-radius: var(--radius-sm);
 }
 
 .panelHeader {
