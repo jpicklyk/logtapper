@@ -22,11 +22,11 @@ import { RightPane } from '../../components/RightPane';
 import { BottomPane } from '../../components/BottomPane';
 import { PaneContent } from '../../components/PaneContent';
 import { SettingsPanel } from '../../components/SettingsPanel';
-import { useSettings, useAnonymizerConfig, useToast, useAnalysisToast } from '../../hooks';
+import { useSettings, useAnonymizerConfig, useToast, useAnalysisToast, useFileShortcuts } from '../../hooks';
 import { useCacheManager } from '../../cache';
 import { Toast } from '../../ui';
 import { findTabAcrossTree, allPanes } from '../../hooks/workspace/splitTreeHelpers';
-import { usePendingUpdateCount } from '../../context';
+import { usePendingUpdateCount, useViewerActions } from '../../context';
 import type {
   WorkspaceLayoutState,
   LeftPaneTab,
@@ -66,6 +66,8 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   useAnalysisToast(addToast);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const updateBadgeCount = usePendingUpdateCount();
+  const { openFileDialog, openBugreportDialog, saveFile, saveFileAs } = useViewerActions();
+  useFileShortcuts({ openFileDialog, openBugreportDialog, saveFile, saveFileAs });
 
   const rightTopItems = useMemo(
     () => [

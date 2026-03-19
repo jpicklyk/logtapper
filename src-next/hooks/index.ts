@@ -39,3 +39,4 @@ export { useMarketplace } from './useMarketplace';
 export type { MarketplaceState } from './useMarketplace';
 export { useToast } from './useToast';
 export { useAnalysisToast } from './useAnalysisToast';
+export { useFileShortcuts } from './useFileShortcuts';
