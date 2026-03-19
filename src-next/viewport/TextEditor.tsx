@@ -12,6 +12,8 @@ interface TextEditorProps {
   readOnly?: boolean;
   className?: string;
   placeholder?: string;
+  /** Enable line wrapping. Defaults to false (horizontal scroll). */
+  lineWrapping?: boolean;
 }
 
 const darkTheme = EditorView.theme({
@@ -49,12 +51,15 @@ const TextEditor = React.memo(function TextEditor({
   readOnly = false,
   className,
   placeholder,
+  lineWrapping: enableLineWrapping = false,
 }: TextEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const readOnlyCompartment = useRef(new Compartment());
-  // Track whether the current change originated from the editor itself
-  const internalChange = useRef(false);
+  // Tracks the last value emitted by the editor via onChange. When the parent
+  // feeds this value back as the `value` prop, the sync effect can skip the
+  // expensive doc.toString() comparison — the editor already has this content.
+  const lastEmittedRef = useRef(value);
 
   // Create editor on mount
   useEffect(() => {
@@ -67,15 +72,15 @@ const TextEditor = React.memo(function TextEditor({
       history(),
       rectangularSelection(),
       crosshairCursor(),
-      EditorView.lineWrapping,
+      ...(enableLineWrapping ? [EditorView.lineWrapping] : []),
       keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
       darkTheme,
       readOnlyCompartment.current.of(EditorState.readOnly.of(readOnly)),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
-          internalChange.current = true;
-          onChange(update.state.doc.toString());
-          internalChange.current = false;
+          const text = update.state.doc.toString();
+          lastEmittedRef.current = text;
+          onChange(text);
         }
       }),
     ];
@@ -104,10 +109,14 @@ const TextEditor = React.memo(function TextEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Sync external value changes into the editor
+  // Sync external value changes into the editor. Skip when the value is just
+  // the editor's own output echoed back (avoids O(n) doc.toString() per keystroke).
   useEffect(() => {
     const view = viewRef.current;
-    if (!view || internalChange.current) return;
+    if (!view) return;
+
+    // Fast path: if value matches what we last emitted, the editor already has it.
+    if (value === lastEmittedRef.current) return;
 
     const currentDoc = view.state.doc.toString();
     if (currentDoc !== value) {
@@ -119,6 +128,7 @@ const TextEditor = React.memo(function TextEditor({
         },
       });
     }
+    lastEmittedRef.current = value;
   }, [value]);
 
   // Sync readOnly prop

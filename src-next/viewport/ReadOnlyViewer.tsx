@@ -9,6 +9,7 @@ import { useVirtualBase } from './useVirtualBase';
 import { useScrollControls } from './useScrollControls';
 import { useFetchScheduler } from './useFetchScheduler';
 import TextLine, { TextLineSkeleton } from './TextLine';
+import { clamp } from '../utils';
 import styles from './ReadOnlyViewer.module.css';
 
 const LINE_HEIGHT = 22;
@@ -98,8 +99,8 @@ export default function ReadOnlyViewer({
     disableAutoScroll,
   } = useScrollControls(parentRef, tailMode, totalLines, dataSource, bumpCacheVersion);
 
-  const effectiveCount = Math.min(Math.max(0, totalLines - virtualBase), MAX_VIRTUAL_LINES);
-  const liveEffectiveCount = Math.min(Math.max(0, liveTotalLines - virtualBase), MAX_VIRTUAL_LINES);
+  const effectiveCount = clamp(totalLines - virtualBase, 0, MAX_VIRTUAL_LINES);
+  const liveEffectiveCount = clamp(liveTotalLines - virtualBase, 0, MAX_VIRTUAL_LINES);
 
   // ── Virtualizer ──────────────────────────────────────────────────────────
   const virtualizer = useVirtualizer({

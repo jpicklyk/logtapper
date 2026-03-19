@@ -6,17 +6,17 @@ import { useSessionContext } from '../../context/SessionContext';
 import { useViewerContext } from '../../context/ViewerContext';
 import { bus } from '../../events/bus';
 import { sessionScrollPositions } from '../../viewport';
+import { storageGetJSON, storageSetJSON } from '../../utils';
 import type { CacheController } from '../../cache';
 import type { SharedLogViewerRefs } from './types';
 
 const LS_TAB_PATHS = 'logtapper_tab_paths';
 
 function readTabPaths(): Record<string, string> {
-  try { return JSON.parse(localStorage.getItem(LS_TAB_PATHS) ?? '{}') as Record<string, string>; }
-  catch { return {}; }
+  return storageGetJSON<Record<string, string>>(LS_TAB_PATHS, {});
 }
 function saveTabPaths(paths: Record<string, string>): void {
-  try { localStorage.setItem(LS_TAB_PATHS, JSON.stringify(paths)); } catch { /* storage full */ }
+  storageSetJSON(LS_TAB_PATHS, paths);
 }
 const DEFAULT_PANE_ID = 'primary';
 

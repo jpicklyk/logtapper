@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { storageGetJSON, storageSetJSON, storageRemove } from '../utils';
 
 export interface BookmarkCategoryDef {
   id: string;
@@ -36,13 +37,7 @@ export const SETTING_DEFAULTS: AppSettings = {
 };
 
 export function loadSettings(): AppSettings {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...SETTING_DEFAULTS };
-    return { ...SETTING_DEFAULTS, ...JSON.parse(raw) };
-  } catch {
-    return { ...SETTING_DEFAULTS };
-  }
+  return { ...SETTING_DEFAULTS, ...storageGetJSON<Partial<AppSettings>>(STORAGE_KEY, {}) };
 }
 
 export interface UseSettingsResult {
@@ -58,11 +53,7 @@ export function useSettings(): UseSettingsResult {
     <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
       setSettings((prev) => {
         const next = { ...prev, [key]: value };
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-        } catch {
-          // localStorage unavailable -- continue without persistence
-        }
+        storageSetJSON(STORAGE_KEY, next);
         return next;
       });
     },
@@ -71,11 +62,7 @@ export function useSettings(): UseSettingsResult {
 
   const resetSettings = useCallback(() => {
     setSettings({ ...SETTING_DEFAULTS });
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch {
-      // ignore
-    }
+    storageRemove(STORAGE_KEY);
   }, []);
 
   return { settings, updateSetting, resetSettings };

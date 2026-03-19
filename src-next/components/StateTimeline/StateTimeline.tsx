@@ -11,6 +11,7 @@ import {
 } from '../../context';
 import { useStateTracker, useBookmarks, useSettings } from '../../hooks';
 import { bus } from '../../events';
+import { clamp } from '../../utils';
 import styles from './StateTimeline.module.css';
 
 type Viewport = readonly [number, number];
@@ -132,7 +133,7 @@ const BookmarkMarkers = React.memo(function BookmarkMarkers({
 function doZoom([s, e]: Viewport, xFrac: number, zoomIn: boolean): Viewport {
   const span = e - s;
   const factor = zoomIn ? 0.6 : 1 / 0.6;
-  const newSpan = Math.min(1, Math.max(0.0005, span * factor));
+  const newSpan = clamp(span * factor, 0.0005, 1);
   const center = s + xFrac * span;
   let ns = center - xFrac * newSpan;
   let ne = ns + newSpan;
@@ -143,7 +144,7 @@ function doZoom([s, e]: Viewport, xFrac: number, zoomIn: boolean): Viewport {
 
 function doPan([s, e]: Viewport, deltaNorm: number): Viewport {
   const span = e - s;
-  const ns = Math.max(0, Math.min(1 - span, s + deltaNorm));
+  const ns = clamp(s + deltaNorm, 0, 1 - span);
   return [ns, ns + span];
 }
 
@@ -315,7 +316,7 @@ const StateTimeline = React.memo(function StateTimeline() {
       const rect = el.getBoundingClientRect();
       const bodyW = rect.width - LABEL_W;
       if (bodyW <= 0) return;
-      const xInBody = Math.max(0, Math.min(bodyW, e.clientX - rect.left - LABEL_W));
+      const xInBody = clamp(e.clientX - rect.left - LABEL_W, 0, bodyW);
       setVp((prev) => doZoom(prev, xInBody / bodyW, e.deltaY < 0));
     };
     el.addEventListener('wheel', onWheel, { passive: false });

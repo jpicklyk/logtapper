@@ -64,20 +64,12 @@
 /* ── Scrollable list area ────────────────────────────────────────────────── */
 
 .list {
+  composes: scrollbar-thin from global;
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
   display: flex;
   flex-direction: column;
-}
-
-.list::-webkit-scrollbar {
-  width: 5px;
-}
-
-.list::-webkit-scrollbar-thumb {
-  background: var(--border-subtle);
-  border-radius: 3px;
 }
 
 /* ── Empty state ─────────────────────────────────────────────────────────── */

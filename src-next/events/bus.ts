@@ -1,5 +1,6 @@
 import mitt from 'mitt';
 import type { AppEvents } from './events';
+import { storageGet } from '../utils';
 
 export const bus = mitt<AppEvents>();
 
@@ -11,7 +12,7 @@ export const bus = mitt<AppEvents>();
 const MUTED_EVENTS = new Set<string>(['selection:changed']);
 
 const isLoggingEnabled =
-  import.meta.env.DEV || localStorage.getItem('logtapper_bus_debug') === '1';
+  import.meta.env.DEV || storageGet('logtapper_bus_debug') === '1';
 
 if (isLoggingEnabled) {
   bus.on('*', (type, payload) => {

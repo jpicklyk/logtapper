@@ -1,6 +1,9 @@
 import type { CenterTabType, CenterPane, SplitNode, Tab } from './workspaceTypes';
 import { TAB_LABELS } from './workspaceTypes';
 
+// Re-export clamp from shared utils so existing imports continue to work.
+export { clamp } from '../../utils';
+
 export function makeTab(type: CenterTabType, label?: string): Tab {
   return {
     id: crypto.randomUUID(),
@@ -25,10 +28,6 @@ export function makeLeaf(tabs: Tab[] = []): SplitNode {
 export function defaultTree(): SplitNode {
   // Start with a single empty leaf (no tabs). Logviewer tab is created on session:loaded.
   return makeLeaf([]);
-}
-
-export function clamp(val: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, val));
 }
 
 /** Find a leaf node whose pane has the given id. */

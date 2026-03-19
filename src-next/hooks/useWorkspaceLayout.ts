@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isBugreportLike } from '../bridge/types';
+import { storageRemove } from '../utils';
 import { bus } from '../events/bus';
 import { useTogglePane } from './useTogglePane';
 import { useSessionContext } from '../context/SessionContext';
@@ -214,7 +215,7 @@ export function useWorkspaceLayout() {
   // ---------------------------------------------------------------------------
 
   const resetLayout = useCallback(() => {
-    localStorage.removeItem(STORAGE_KEY);
+    storageRemove(STORAGE_KEY);
     window.location.reload();
   }, []);
 

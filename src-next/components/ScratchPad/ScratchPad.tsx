@@ -1,35 +1,43 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import TextEditor from '../../viewport/TextEditor';
+import { storageGet, storageSet } from '../../utils';
 import styles from './ScratchPad.module.css';
 
-const LS_KEY = 'logtapper_scratchpad';
+const LS_KEY_PREFIX = 'logtapper_scratchpad_';
 
-function loadSavedText(): string {
-  try {
-    return localStorage.getItem(LS_KEY) ?? '';
-  } catch {
-    return '';
-  }
+interface ScratchPadProps {
+  tabId: string;
 }
 
-const ScratchPad = React.memo(function ScratchPad() {
-  const [value, setValue] = useState(loadSavedText);
+const ScratchPad = React.memo(function ScratchPad({ tabId }: ScratchPadProps) {
+  const [value, setValue] = useState(() => storageGet(LS_KEY_PREFIX + tabId));
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  const prevTabIdRef = useRef(tabId);
+
+  // When the active scratch tab switches, flush the outgoing tab's content
+  // synchronously and load the new tab's content.
+  useEffect(() => {
+    if (prevTabIdRef.current === tabId) return;
+    // Save outgoing tab before switching
+    storageSet(LS_KEY_PREFIX + prevTabIdRef.current, valueRef.current);
+    prevTabIdRef.current = tabId;
+    setValue(storageGet(LS_KEY_PREFIX + tabId));
+  }, [tabId]);
 
   const handleChange = useCallback((next: string) => {
     setValue(next);
   }, []);
 
-  // Persist to localStorage on change (debounced)
+  // Persist to localStorage on change (debounced).
+  // The tabId-switch effect above handles flushing the outgoing tab, so this
+  // effect only needs to save the current tab's content on edits.
   useEffect(() => {
     const timer = setTimeout(() => {
-      try {
-        localStorage.setItem(LS_KEY, value);
-      } catch {
-        // storage full
-      }
+      storageSet(LS_KEY_PREFIX + tabId, value);
     }, 500);
     return () => clearTimeout(timer);
-  }, [value]);
+  }, [tabId, value]);
 
   return (
     <div className={styles.root}>

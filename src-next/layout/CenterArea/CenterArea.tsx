@@ -14,6 +14,7 @@ import { SortableContext, horizontalListSortingStrategy } from '@dnd-kit/sortabl
 import { DragHandle } from '../DragHandle';
 import { TabBar } from '../TabBar';
 import { DropZoneOverlay } from './DropZoneOverlay';
+import { clamp } from '../../utils';
 import type { SplitNode, CenterPane, DropZone, Tab } from '../../hooks';
 import styles from './CenterArea.module.css';
 
@@ -214,6 +215,11 @@ const SplitContainer = React.memo(function SplitContainer({
   onTabReorder,
 }: SplitContainerProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
+  // Use a ref so the drag callback always reads the latest ratio without
+  // needing to recreate the callback (which the DragHandle's pointer listener
+  // would not pick up mid-drag).
+  const ratioRef = React.useRef(ratio);
+  ratioRef.current = ratio;
 
   const handleDrag = useCallback(
     (delta: number) => {
@@ -222,10 +228,10 @@ const SplitContainer = React.memo(function SplitContainer({
       const totalSize = isHorizontal ? container.clientWidth : container.clientHeight;
       if (totalSize === 0) return;
       const ratioDelta = delta / totalSize;
-      const newRatio = Math.max(0.1, Math.min(0.9, ratio + ratioDelta));
+      const newRatio = clamp(ratioRef.current + ratioDelta, 0.1, 0.9);
       onSplitResize(nodeId, newRatio);
     },
-    [isHorizontal, ratio, onSplitResize, nodeId],
+    [isHorizontal, onSplitResize, nodeId],
   );
 
   const flexDir = isHorizontal ? 'row' : 'column';

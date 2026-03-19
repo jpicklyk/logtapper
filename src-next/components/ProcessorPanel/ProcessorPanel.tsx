@@ -29,6 +29,7 @@ import {
 import { usePipeline } from '../../hooks';
 import { ProcessorLibrary } from '../ProcessorLibrary';
 import { bus } from '../../events';
+import { storageGet, storageSet } from '../../utils';
 import styles from './ProcessorPanel.module.css';
 import badgeCss from '../../ui/processorBadge.module.css';
 import { PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY } from '../../ui/processorBadgeTypes';
@@ -450,11 +451,11 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
   const pipeline = usePipeline();
 
   // ── Compact mode (persisted to localStorage) ──
-  const [compact, setCompact] = useState(() => localStorage.getItem(LS_COMPACT_KEY) === '1');
+  const [compact, setCompact] = useState(() => storageGet(LS_COMPACT_KEY) === '1');
   const handleToggleCompact = useCallback(() => {
     setCompact((prev) => {
       const next = !prev;
-      localStorage.setItem(LS_COMPACT_KEY, next ? '1' : '0');
+      storageSet(LS_COMPACT_KEY, next ? '1' : '0');
       return next;
     });
   }, []);

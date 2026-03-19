@@ -198,7 +198,7 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
     case 'editor':
       return (
         <>
-          <ScratchPad />
+          <ScratchPad tabId={activeTab.id} />
           {bookmarkDialog}
         </>
       );

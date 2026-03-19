@@ -12,34 +12,23 @@ import {
   setMcpAnonymize,
 } from '../bridge/commands';
 import { usePipelineContext } from '../context/PipelineContext';
+import { storageGetJSON, storageSetJSON } from '../utils';
 import { bus } from '../events/bus';
 
 const LS_KEY = 'logtapper_pipeline_chain';
 const LS_DISABLED_KEY = 'logtapper_pipeline_disabled';
 
 function loadChainFromStorage(validIds: Set<string>): string[] {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return (parsed as unknown[]).filter((id): id is string => typeof id === 'string' && validIds.has(id));
-  } catch {
-    return [];
-  }
+  const parsed = storageGetJSON<unknown>(LS_KEY, []);
+  if (!Array.isArray(parsed)) return [];
+  return (parsed as unknown[]).filter((id): id is string => typeof id === 'string' && validIds.has(id));
 }
 
 function loadDisabledFromStorage(chainIds: Set<string>): string[] {
-  try {
-    const raw = localStorage.getItem(LS_DISABLED_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    // Only keep IDs that are actually in the chain
-    return (parsed as unknown[]).filter((id): id is string => typeof id === 'string' && chainIds.has(id));
-  } catch {
-    return [];
-  }
+  const parsed = storageGetJSON<unknown>(LS_DISABLED_KEY, []);
+  if (!Array.isArray(parsed)) return [];
+  // Only keep IDs that are actually in the chain
+  return (parsed as unknown[]).filter((id): id is string => typeof id === 'string' && chainIds.has(id));
 }
 
 export interface PipelineActions {
@@ -88,8 +77,8 @@ export function usePipeline(): PipelineActions {
   // Persist chain + disabled state to localStorage whenever they change
   useEffect(() => {
     if (!chainInitializedRef.current) return;
-    localStorage.setItem(LS_KEY, JSON.stringify(pipelineChain));
-    localStorage.setItem(LS_DISABLED_KEY, JSON.stringify(disabledChainIds));
+    storageSetJSON(LS_KEY, pipelineChain);
+    storageSetJSON(LS_DISABLED_KEY, disabledChainIds);
     bus.emit('pipeline:chain-changed', { chain: pipelineChain });
   }, [pipelineChain, disabledChainIds]);
 

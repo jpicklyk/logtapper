@@ -9,6 +9,7 @@
 }
 
 .body {
+  composes: scrollbar-thin from global;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -16,15 +17,6 @@
   overflow-y: auto;
   overflow-x: hidden;
   padding-bottom: 8px;
-}
-
-.body::-webkit-scrollbar {
-  width: 5px;
-}
-
-.body::-webkit-scrollbar-thumb {
-  background: var(--border-subtle);
-  border-radius: 3px;
 }
 
 /* ── File identity ────────────────────────────────────────────────────────── */
@@ -353,6 +345,7 @@
 }
 
 .sectionList {
+  composes: scrollbar-thin from global;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -361,15 +354,6 @@
   padding: 0 4px 8px 2px;
   overflow-y: scroll;
   overflow-x: hidden;
-}
-
-.sectionList::-webkit-scrollbar {
-  width: 5px;
-}
-
-.sectionList::-webkit-scrollbar-thumb {
-  background: var(--border-subtle);
-  border-radius: 3px;
 }
 
 .sectionItem {

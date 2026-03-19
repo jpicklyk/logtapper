@@ -1,21 +1,16 @@
 import { createContext, useContext, useEffect, useRef, type ReactNode } from 'react';
 import { CacheManager, type WritableViewCache, type CacheController } from './CacheManager';
 import { DataSourceRegistry, type DataSourceRegistrar } from '../viewport/DataSourceRegistry';
+import { storageGetJSON } from '../utils';
 
 /** Default total line budget — matches SETTING_DEFAULTS.fileCacheBudget. */
 const DEFAULT_BUDGET = 100_000;
 
 /** Read the persisted fileCacheBudget from localStorage at startup. Falls back to DEFAULT_BUDGET. */
 function readPersistedBudget(): number {
-  try {
-    const raw = localStorage.getItem('logtapper_settings');
-    if (!raw) return DEFAULT_BUDGET;
-    const parsed = JSON.parse(raw) as { fileCacheBudget?: unknown };
-    const v = parsed.fileCacheBudget;
-    return typeof v === 'number' && v > 0 ? v : DEFAULT_BUDGET;
-  } catch {
-    return DEFAULT_BUDGET;
-  }
+  const parsed = storageGetJSON<{ fileCacheBudget?: unknown }>('logtapper_settings', {});
+  const v = parsed.fileCacheBudget;
+  return typeof v === 'number' && v > 0 ? v : DEFAULT_BUDGET;
 }
 
 interface CacheContextValue {
