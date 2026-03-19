@@ -40,6 +40,8 @@ pub fn publish_analysis(
             .push(artifact.clone());
     }
 
+    crate::commands::workspace_sync::schedule_workspace_save(&app, &state, &session_id);
+
     use tauri::Emitter;
     let _ = app.emit(
         "analysis-update",
@@ -82,6 +84,8 @@ pub fn update_analysis(
 
     let updated = art.clone();
     drop(analyses);
+
+    crate::commands::workspace_sync::schedule_workspace_save(&app, &state, &session_id);
 
     use tauri::Emitter;
     let _ = app.emit(
@@ -144,6 +148,8 @@ pub fn delete_analysis(
 
     list.remove(idx);
     drop(analyses);
+
+    crate::commands::workspace_sync::schedule_workspace_save(&app, &state, &session_id);
 
     use tauri::Emitter;
     let _ = app.emit(
