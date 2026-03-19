@@ -51,7 +51,7 @@ function HookWiring({ children }: { children: ReactNode }) {
 
   const openFileDialog = useCallback(
     () => openWithFilters([
-      { name: 'Log Files', extensions: ['log', 'txt', 'zip', 'gz'] },
+      { name: 'Log Files', extensions: ['log', 'txt', 'zip', 'gz', 'lts'] },
       { name: 'All Files', extensions: ['*'] },
     ]),
     [openWithFilters],
