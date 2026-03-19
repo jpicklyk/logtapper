@@ -177,6 +177,100 @@ impl FileLogSource {
 }
 
 // ---------------------------------------------------------------------------
+// ZipLogSource — decompressed in-memory log source
+// ---------------------------------------------------------------------------
+
+pub struct ZipLogSource {
+    pub(crate) source_id: String,
+    pub(crate) source_name: String,
+    pub(crate) source_type: SourceType,
+    /// Decompressed source bytes held in memory.
+    pub(crate) data: Arc<Vec<u8>>,
+    /// Byte offsets for every line (sentinel at end, same as FileLogSource).
+    pub(crate) line_index: Vec<u64>,
+    pub(crate) line_meta: Vec<LineMeta>,
+    pub(crate) section_info: Vec<SectionInfo>,
+}
+
+impl LogSource for ZipLogSource {
+    fn id(&self) -> &str {
+        &self.source_id
+    }
+
+    fn name(&self) -> &str {
+        &self.source_name
+    }
+
+    fn source_type(&self) -> &SourceType {
+        &self.source_type
+    }
+
+    fn total_lines(&self) -> usize {
+        self.line_meta.len()
+    }
+
+    fn raw_line(&self, line_num: usize) -> Option<Cow<'_, str>> {
+        if line_num + 1 >= self.line_index.len() {
+            return None;
+        }
+        let start = self.line_index[line_num] as usize;
+        let end = self.line_index[line_num + 1] as usize;
+        if start >= end || end > self.data.len() {
+            return None;
+        }
+        // Strip trailing \n and \r\n
+        let mut slice_end = end;
+        if slice_end > start && self.data[slice_end - 1] == b'\n' {
+            slice_end -= 1;
+        }
+        if slice_end > start && self.data[slice_end - 1] == b'\r' {
+            slice_end -= 1;
+        }
+        std::str::from_utf8(&self.data[start..slice_end])
+            .ok()
+            .map(Cow::Borrowed)
+    }
+
+    fn meta_at(&self, line_num: usize) -> Option<&LineMeta> {
+        self.line_meta.get(line_num)
+    }
+
+    fn line_meta_slice(&self) -> &[LineMeta] {
+        &self.line_meta
+    }
+
+    fn is_live(&self) -> bool {
+        false
+    }
+
+    fn sections(&self) -> &[SectionInfo] {
+        &self.section_info
+    }
+
+    fn is_indexing(&self) -> bool {
+        false
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+impl ZipLogSource {
+    pub fn data(&self) -> &Arc<Vec<u8>> {
+        &self.data
+    }
+
+    pub fn line_index(&self) -> &[u64] {
+        &self.line_index
+    }
+}
+
+// ---------------------------------------------------------------------------
 // SpillFile — temp file for evicted stream lines
 // ---------------------------------------------------------------------------
 
