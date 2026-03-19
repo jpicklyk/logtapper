@@ -68,7 +68,7 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
   position: relative;
-  transition: all var(--transition-fast);
+  transition: color var(--transition-fast), background var(--transition-fast);
 }
 
 .tab:hover {
