@@ -1,17 +1,21 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import clsx from 'clsx';
-import { FolderOpen, Radio, Square, Smartphone } from 'lucide-react';
+import { FolderOpen, FileArchive, ChevronDown, Radio, Square, Smartphone } from 'lucide-react';
 import { useSession, useIsStreaming, useViewerActions } from '../../context';
 import { listAdbDevices } from '../../bridge/commands';
 import type { AdbDevice } from '../../bridge/types';
 import { Modal } from '../../ui/Modal/Modal';
+import { DropdownMenu } from '../../ui';
+import type { MenuItem } from '../../ui';
 import { SearchBar } from '../SearchBar';
 import styles from './Header.module.css';
 
 export const Header = React.memo(function Header() {
   const session = useSession();
   const isStreaming = useIsStreaming();
-  const { openFileDialog, startStream, stopStream } = useViewerActions();
+  const { openFileDialog, openBugreportDialog, startStream, stopStream, saveFile, saveFileAs } = useViewerActions();
+
+  const [fileMenuOpen, setFileMenuOpen] = useState(false);
 
   const [devices, setDevices] = useState<AdbDevice[]>([]);
   const [showPicker, setShowPicker] = useState(false);
@@ -57,6 +61,23 @@ export const Header = React.memo(function Header() {
     setDeviceError(null);
   }, []);
 
+  const fileMenuItems = useMemo<MenuItem[]>(() => [
+    { id: 'open-log', label: 'Open Log...', icon: FolderOpen, shortcut: 'Ctrl+O' },
+    { id: 'open-bugreport', label: 'Open Bugreport...', icon: FileArchive, shortcut: 'Ctrl+Shift+O' },
+    { separator: true },
+    { id: 'save', label: isStreaming ? 'Save Capture' : 'Save', shortcut: 'Ctrl+S' },
+    { id: 'save-as', label: 'Save As...', shortcut: 'Ctrl+Shift+S' },
+  ], [isStreaming]);
+
+  const handleFileMenuSelect = useCallback((id: string) => {
+    switch (id) {
+      case 'open-log': openFileDialog(); break;
+      case 'open-bugreport': openBugreportDialog(); break;
+      case 'save': saveFile(); break;
+      case 'save-as': saveFileAs(); break;
+    }
+  }, [openFileDialog, openBugreportDialog, saveFile, saveFileAs]);
+
   return (
     <header className={styles.header}>
       <div className={styles.brand}>
@@ -71,14 +92,19 @@ export const Header = React.memo(function Header() {
       </div>
 
       <div className={styles.actions}>
-        <button
-          className={styles.actionBtn}
-          onClick={openFileDialog}
-          title="Open log file"
-        >
-          <FolderOpen size={14} />
-          <span>Open</span>
-        </button>
+        <DropdownMenu
+          trigger={
+            <button className={styles.actionBtn} title="File operations">
+              <FolderOpen size={14} />
+              <span>File</span>
+              <ChevronDown size={10} />
+            </button>
+          }
+          items={fileMenuItems}
+          onSelect={handleFileMenuSelect}
+          open={fileMenuOpen}
+          onOpenChange={setFileMenuOpen}
+        />
         <button
           className={clsx(
             styles.actionBtn,
