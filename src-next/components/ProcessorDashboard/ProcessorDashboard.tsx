@@ -185,7 +185,7 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
   const { results: lastResults, runCount } = usePipelineResults();
   const { jumpToLine } = useViewerActions();
   const pipeline = usePipeline();
-  const { fetchCharts, getProcessorCharts, loading: _chartsLoading } = useChartData();
+  const { fetchCharts } = useChartData();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [vars, setVars] = useState<Record<string, unknown> | null>(null);
@@ -274,8 +274,6 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
     );
   }
 
-  // TODO: wire processorCharts into the dashboard UI
-  void (selected && sessionId ? getProcessorCharts(sessionId, selected) : []);
   const varGroups = vars ? groupVars(vars) : null;
   const summary = selected ? getSummary(selected) : null;
 
