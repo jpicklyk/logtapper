@@ -93,4 +93,10 @@ export type AppEvents = {
   'marketplace:processor-installed': { processorId: string; sourceName: string };
   'marketplace:processor-updated':   { processorId: string; oldVersion: string; newVersion: string };
   'marketplace:sources-changed':     undefined;
+
+  // ── File operations ──────────────────────────────────────────────────────
+  /** Emitted when user triggers Save. Focused EditorTab should handle. */
+  'file:save-request':    undefined;
+  /** Emitted when user triggers Save As. Focused EditorTab should handle. */
+  'file:save-as-request': undefined;
 };

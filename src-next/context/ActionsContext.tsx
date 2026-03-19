@@ -27,6 +27,8 @@ export interface ActionsContextValue {
    * Enables search navigation to scope results to the currently visible lines.
    */
   setEffectiveLineNums: (lineNums: number[] | null) => void;
+  saveFile: () => Promise<void>;
+  saveFileAs: () => Promise<void>;
 }
 
 const noop = () => { /* stub */ };
@@ -53,6 +55,8 @@ const DEFAULT_ACTIONS: ActionsContextValue = {
   openTab: (_type: string) => noop(),
   setFocusedPane: (_paneId: string) => noop(),
   setEffectiveLineNums: (_lineNums: number[] | null) => noop(),
+  saveFile: () => noopAsync(),
+  saveFileAs: () => noopAsync(),
 };
 
 const ActionsContext = createContext<ActionsContextValue | null>(null);

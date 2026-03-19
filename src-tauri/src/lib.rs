@@ -353,6 +353,8 @@ pub fn run() {
             commands::files::get_dumpstate_metadata,
             commands::files::get_sections,
             commands::files::close_session,
+            commands::files::read_text_file,
+            commands::files::write_text_file,
             commands::pipeline::run_pipeline,
             commands::pipeline::stop_pipeline,
             commands::processors::list_processors,

@@ -1,7 +1,8 @@
 import { useMemo, useCallback, useRef, type ReactNode } from 'react';
-import { open } from '@tauri-apps/plugin-dialog';
+import { open, save } from '@tauri-apps/plugin-dialog';
 import { SessionProvider } from './SessionContext';
 import { useSessionContext } from './SessionContext';
+import { saveLiveCapture } from '../bridge/commands';
 import { ViewerProvider } from './ViewerContext';
 
 export { ThemeProvider, useTheme } from './ThemeContext';
@@ -23,7 +24,8 @@ import { bus } from '../events/bus';
 function HookWiring({ children }: { children: ReactNode }) {
   const cacheManager = useCacheManager();
   const registry = useDataSourceRegistry();
-  const { paneSessionMap } = useSessionContext();
+  const sessionCtx = useSessionContext();
+  const { paneSessionMap } = sessionCtx;
   const logViewer = useLogViewer(cacheManager, registry);
   const { settings } = useSettings();
   const settingsRef = useRef(settings);
@@ -34,6 +36,10 @@ function HookWiring({ children }: { children: ReactNode }) {
   // the entire ActionsContext useMemo on every session load/close).
   const paneSessionMapRef = useRef(paneSessionMap);
   paneSessionMapRef.current = paneSessionMap;
+
+  // Session context ref for save callbacks — avoids stale closure over session state.
+  const sessionCtxRef = useRef(sessionCtx);
+  sessionCtxRef.current = sessionCtx;
 
   const openFileDialog = useCallback(async () => {
     const selected = await open({
@@ -71,6 +77,27 @@ function HookWiring({ children }: { children: ReactNode }) {
     bus.emit('session:focused', { sessionId, paneId });
   }, []);
 
+  const saveFile = useCallback(async () => {
+    const { streamingSessionIds, paneSessionMap: psMap, focusedPaneId } = sessionCtxRef.current;
+    const sessionId = focusedPaneId ? (psMap.get(focusedPaneId) ?? null) : null;
+    if (sessionId && streamingSessionIds.has(sessionId)) {
+      // Streaming session: prompt for output path and save live capture
+      const outputPath = await save({
+        filters: [{ name: 'Log Files', extensions: ['log', 'txt'] }],
+      });
+      if (typeof outputPath === 'string') {
+        await saveLiveCapture(sessionId, outputPath);
+      }
+    } else {
+      // Static file / editor tab: emit bus event for the focused EditorTab to handle
+      bus.emit('file:save-request', undefined);
+    }
+  }, []);
+
+  const saveFileAs = useCallback(async () => {
+    bus.emit('file:save-as-request', undefined);
+  }, []);
+
   const actions = useMemo<Partial<ActionsContextValue>>(() => ({
     loadFile: logViewer.loadFile,
     openFileDialog,
@@ -88,10 +115,12 @@ function HookWiring({ children }: { children: ReactNode }) {
     openTab: (type: string) => { bus.emit('layout:open-tab', { type }); },
     setFocusedPane,
     setEffectiveLineNums: logViewer.setEffectiveLineNums,
+    saveFile,
+    saveFileAs,
   }), [logViewer.loadFile, openFileDialog, openBugreportDialog, logViewer.startStream, logViewer.stopStream,
        logViewer.closeSession, logViewer.jumpToLine, logViewer.jumpToMatch,
        logViewer.handleSearch, logViewer.setStreamFilter, logViewer.cancelStreamFilter,
-       logViewer.setEffectiveLineNums]);
+       logViewer.setEffectiveLineNums, saveFile, saveFileAs]);
 
   return (
     <ActionsProvider actions={actions}>

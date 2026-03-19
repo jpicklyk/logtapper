@@ -956,6 +956,20 @@ pub async fn get_dumpstate_metadata(
 }
 
 // ---------------------------------------------------------------------------
+// read_text_file / write_text_file
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn read_text_file(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| format!("Failed to read file: {e}"))
+}
+
+#[tauri::command]
+pub fn write_text_file(path: String, content: String) -> Result<(), String> {
+    std::fs::write(&path, &content).map_err(|e| format!("Failed to write file: {e}"))
+}
+
+// ---------------------------------------------------------------------------
 // get_sections
 // ---------------------------------------------------------------------------
 

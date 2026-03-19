@@ -495,6 +495,18 @@ export function installFromMarketplace(
 }
 
 // ---------------------------------------------------------------------------
+// Text file I/O
+// ---------------------------------------------------------------------------
+
+export function readTextFile(path: string): Promise<string> {
+  return invoke('read_text_file', { path });
+}
+
+export function writeTextFile(path: string, content: string): Promise<void> {
+  return invoke('write_text_file', { path, content });
+}
+
+// ---------------------------------------------------------------------------
 // Capture save (Phase 4)
 // ---------------------------------------------------------------------------
 

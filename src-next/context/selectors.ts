@@ -189,10 +189,12 @@ export function useTrackerTransitions(): {
 export function useViewerActions() {
   const { loadFile, openFileDialog, openBugreportDialog, startStream, stopStream, closeSession,
           jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
-          openTab, setFocusedPane, setEffectiveLineNums } = useActionsContext();
+          openTab, setFocusedPane, setEffectiveLineNums,
+          saveFile, saveFileAs } = useActionsContext();
   return { loadFile, openFileDialog, openBugreportDialog, startStream, stopStream, closeSession,
            jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
-           openTab, setFocusedPane, setEffectiveLineNums };
+           openTab, setFocusedPane, setEffectiveLineNums,
+           saveFile, saveFileAs };
 }
 
 export function usePipelineActions() {
