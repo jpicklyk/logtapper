@@ -58,7 +58,7 @@ function HookWiring({ children }: { children: ReactNode }) {
 
   const openBugreportDialog = useCallback(
     () => openWithFilters([
-      { name: 'Bugreport Files', extensions: ['zip', 'txt'] },
+      { name: 'Bugreport Files', extensions: ['zip', 'txt', 'log'] },
       { name: 'All Files', extensions: ['*'] },
     ]),
     [openWithFilters],
