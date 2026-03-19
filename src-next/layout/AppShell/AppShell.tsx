@@ -164,7 +164,7 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
     (tabId: string, paneId: string) => {
       workspace.setActiveTab(tabId, paneId);
       // Only move focus when activating a logviewer tab — utility tabs
-      // (dashboard, scratch) display data for the already-focused session
+      // (dashboard, editor) display data for the already-focused session
       // and should not steal the focus marker from the logviewer tab.
       const found = findTabAcrossTree(centerTreeRef.current, tabId);
       if (found?.tab.type === 'logviewer') {
@@ -183,7 +183,7 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
 
   const handleTabAdd = useCallback(
     (paneId: string) => {
-      workspace.addCenterTab(paneId, 'scratch');
+      workspace.addCenterTab(paneId, 'editor');
     },
     [workspace.addCenterTab],
   );
@@ -200,6 +200,13 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
       workspace.dropTabOnPane(tabId, fromPaneId, toPaneId, zone);
     },
     [workspace.dropTabOnPane],
+  );
+
+  const handleTabRename = useCallback(
+    (tabId: string, newLabel: string) => {
+      workspace.renameTab(tabId, newLabel);
+    },
+    [workspace.renameTab],
   );
 
   const handleTabReorder = useCallback(
@@ -268,6 +275,7 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
           onTabActivate={handleTabActivate}
           onTabClose={handleTabClose}
           onTabAdd={handleTabAdd}
+          onTabRename={handleTabRename}
           onSplitResize={handleSplitResize}
           onTabDrop={handleTabDrop}
           onTabReorder={handleTabReorder}

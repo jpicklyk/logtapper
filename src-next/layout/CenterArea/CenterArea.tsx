@@ -34,6 +34,7 @@ interface CenterAreaProps {
   onTabActivate: (tabId: string, paneId: string) => void;
   onTabClose: (tabId: string, paneId: string) => void;
   onTabAdd?: (paneId: string) => void;
+  onTabRename?: (tabId: string, newLabel: string) => void;
   onSplitResize: (nodeId: string, ratio: number) => void;
   onTabDrop?: (tabId: string, fromPaneId: string, toPaneId: string, zone: DropZone) => void;
   onTabReorder?: (paneId: string, fromIndex: number, toIndex: number) => void;
@@ -122,6 +123,7 @@ interface SplitNodeRendererProps {
   onTabActivate: (tabId: string, paneId: string) => void;
   onTabClose: (tabId: string, paneId: string) => void;
   onTabAdd?: (paneId: string) => void;
+  onTabRename?: (tabId: string, newLabel: string) => void;
   onSplitResize: (nodeId: string, ratio: number) => void;
   onTabDrop?: (tabId: string, fromPaneId: string, toPaneId: string, zone: DropZone) => void;
   onTabReorder?: (paneId: string, fromIndex: number, toIndex: number) => void;
@@ -134,6 +136,7 @@ const SplitNodeRenderer = React.memo(function SplitNodeRenderer({
   onTabActivate,
   onTabClose,
   onTabAdd,
+  onTabRename,
   onSplitResize,
   onTabDrop,
   onTabReorder,
@@ -147,6 +150,7 @@ const SplitNodeRenderer = React.memo(function SplitNodeRenderer({
         onTabActivate={onTabActivate}
         onTabClose={onTabClose}
         onTabAdd={onTabAdd}
+        onTabRename={onTabRename}
         onTabDrop={onTabDrop}
         onTabReorder={onTabReorder}
       />
@@ -172,6 +176,7 @@ const SplitNodeRenderer = React.memo(function SplitNodeRenderer({
       onTabActivate={onTabActivate}
       onTabClose={onTabClose}
       onTabAdd={onTabAdd}
+      onTabRename={onTabRename}
       onSplitResize={onSplitResize}
       onTabDrop={onTabDrop}
       onTabReorder={onTabReorder}
@@ -192,6 +197,7 @@ interface SplitContainerProps {
   onTabActivate: (tabId: string, paneId: string) => void;
   onTabClose: (tabId: string, paneId: string) => void;
   onTabAdd?: (paneId: string) => void;
+  onTabRename?: (tabId: string, newLabel: string) => void;
   onSplitResize: (nodeId: string, ratio: number) => void;
   onTabDrop?: (tabId: string, fromPaneId: string, toPaneId: string, zone: DropZone) => void;
   onTabReorder?: (paneId: string, fromIndex: number, toIndex: number) => void;
@@ -210,6 +216,7 @@ const SplitContainer = React.memo(function SplitContainer({
   onTabActivate,
   onTabClose,
   onTabAdd,
+  onTabRename,
   onSplitResize,
   onTabDrop,
   onTabReorder,
@@ -251,6 +258,7 @@ const SplitContainer = React.memo(function SplitContainer({
           onTabActivate={onTabActivate}
           onTabClose={onTabClose}
           onTabAdd={onTabAdd}
+          onTabRename={onTabRename}
           onSplitResize={onSplitResize}
           onTabDrop={onTabDrop}
           onTabReorder={onTabReorder}
@@ -265,6 +273,7 @@ const SplitContainer = React.memo(function SplitContainer({
           onTabActivate={onTabActivate}
           onTabClose={onTabClose}
           onTabAdd={onTabAdd}
+          onTabRename={onTabRename}
           onSplitResize={onSplitResize}
           onTabDrop={onTabDrop}
           onTabReorder={onTabReorder}
@@ -283,6 +292,7 @@ interface LeafPaneProps {
   onTabActivate: (tabId: string, paneId: string) => void;
   onTabClose: (tabId: string, paneId: string) => void;
   onTabAdd?: (paneId: string) => void;
+  onTabRename?: (tabId: string, newLabel: string) => void;
   onTabDrop?: (tabId: string, fromPaneId: string, toPaneId: string, zone: DropZone) => void;
   onTabReorder?: (paneId: string, fromIndex: number, toIndex: number) => void;
 }
@@ -294,6 +304,7 @@ const LeafPane = React.memo(function LeafPane({
   onTabActivate,
   onTabClose,
   onTabAdd,
+  onTabRename,
   onTabReorder,
 }: LeafPaneProps) {
   const { active } = useDndContext();
@@ -334,6 +345,7 @@ const LeafPane = React.memo(function LeafPane({
           onActivate={handleActivate}
           onClose={handleClose}
           onAdd={onTabAdd ? handleAdd : undefined}
+          onRename={onTabRename}
           onReorder={handleReorder}
         />
       </SortableContext>

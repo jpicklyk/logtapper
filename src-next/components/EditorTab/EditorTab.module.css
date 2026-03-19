@@ -1,0 +1,48 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.content[data-mode="editor"] {
+  flex-direction: column;
+}
+
+.content[data-mode="split"] {
+  flex-direction: row;
+  gap: 1px;
+  background: var(--border);
+}
+
+.content[data-mode="preview"] {
+  flex-direction: column;
+}
+
+.editorPane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-base);
+}
+
+.editor {
+  flex: 1;
+  min-height: 0;
+}
+
+.previewPane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg-base);
+}

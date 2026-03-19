@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { X, Plus } from 'lucide-react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -15,9 +15,11 @@ interface TabBarTab {
 const TAB_COLORS: Record<string, string> = {
   logviewer:  '#58a6ff',   // blue  — log viewer
   dashboard:  '#3fb950',   // green — processor dashboard
-  scratch:    '#f0a500',   // amber — scratch pad
   editor:     '#f0a500',   // amber — editor
 };
+
+/** Tab types that support double-click to rename. */
+const RENAMABLE_TYPES = new Set(['editor']);
 
 interface TabBarProps {
   tabs: TabBarTab[];
@@ -30,6 +32,7 @@ interface TabBarProps {
   onClose?: (tabId: string) => void;
   onAdd?: () => void;
   onReorder?: (fromIndex: number, toIndex: number) => void;
+  onRename?: (tabId: string, newLabel: string) => void;
   size?: 'sm' | 'md';
 }
 
@@ -41,6 +44,7 @@ export const TabBar = React.memo(function TabBar({
   onActivate,
   onClose,
   onAdd,
+  onRename,
   size = 'md',
 }: TabBarProps) {
   return (
@@ -55,6 +59,7 @@ export const TabBar = React.memo(function TabBar({
           tabColor={TAB_COLORS[tab.type ?? ''] ?? TAB_COLORS.logviewer}
           onActivate={onActivate}
           onClose={onClose}
+          onRename={RENAMABLE_TYPES.has(tab.type ?? '') ? onRename : undefined}
         />
       ))}
       {onAdd && (
@@ -74,6 +79,7 @@ interface SortableTabButtonProps {
   tabColor: string;
   onActivate: (tabId: string) => void;
   onClose?: (tabId: string) => void;
+  onRename?: (tabId: string, newLabel: string) => void;
 }
 
 const SortableTabButton = React.memo(function SortableTabButton({
@@ -84,7 +90,13 @@ const SortableTabButton = React.memo(function SortableTabButton({
   tabColor,
   onActivate,
   onClose,
+  onRename,
 }: SortableTabButtonProps) {
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+  const committedRef = useRef(false);
+
   const {
     attributes,
     listeners,
@@ -117,6 +129,54 @@ const SortableTabButton = React.memo(function SortableTabButton({
     [onClose, tab.id],
   );
 
+  // ── Inline rename ──────────────────────────────────────────────────────
+  const handleDoubleClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (!onRename) return;
+      e.stopPropagation();
+      committedRef.current = false;
+      setEditValue(tab.label);
+      setEditing(true);
+    },
+    [onRename, tab.label],
+  );
+
+  // Auto-focus and select-all when entering edit mode.
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
+
+  const commitRename = useCallback(() => {
+    if (committedRef.current) return;
+    committedRef.current = true;
+    const trimmed = editValue.trim();
+    if (trimmed && trimmed !== tab.label) {
+      onRename?.(tab.id, trimmed);
+    }
+    setEditing(false);
+  }, [editValue, tab.id, tab.label, onRename]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commitRename();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setEditing(false);
+      }
+    },
+    [commitRename],
+  );
+
+  // Prevent drag system from capturing pointer events on the input.
+  const handleInputPointerDown = useCallback((e: React.PointerEvent) => {
+    e.stopPropagation();
+  }, []);
+
   return (
     <button
       ref={setNodeRef}
@@ -128,8 +188,21 @@ const SortableTabButton = React.memo(function SortableTabButton({
     >
       {/* Drag handle — only this zone initiates drag and shows grab cursor */}
       <span className={styles.dragHandle} {...listeners} />
-      <span className={styles.label}>{tab.label}</span>
-      {tab.closable && (
+      {editing ? (
+        <input
+          ref={inputRef}
+          className={styles.labelInput}
+          value={editValue}
+          onChange={(e) => setEditValue(e.target.value)}
+          onBlur={commitRename}
+          onKeyDown={handleKeyDown}
+          onPointerDown={handleInputPointerDown}
+          spellCheck={false}
+        />
+      ) : (
+        <span className={styles.label} onDoubleClick={handleDoubleClick}>{tab.label}</span>
+      )}
+      {tab.closable && !editing && (
         <span
           className={styles.close}
           onClick={handleClose}

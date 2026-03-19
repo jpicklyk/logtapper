@@ -3,7 +3,7 @@ import { FileText } from 'lucide-react';
 import { LogViewer } from '../LogViewer';
 import { ProcessorDashboard } from '../ProcessorDashboard';
 import { AnalysisReader } from '../AnalysisReader';
-import { ScratchPad } from '../ScratchPad';
+import { EditorTab } from '../EditorTab';
 import { StreamFilterBar } from '../StreamFilterBar';
 import { BookmarkCreateDialog } from '../BookmarkPanel';
 import type { BookmarkCreateRequest } from '../BookmarkPanel';
@@ -14,7 +14,7 @@ import styles from './PaneContent.module.css';
 
 export interface PaneTab {
   id: string;
-  type: 'logviewer' | 'dashboard' | 'scratch' | 'editor' | 'analysis';
+  type: 'logviewer' | 'dashboard' | 'editor' | 'analysis';
 }
 
 export interface Pane {
@@ -235,11 +235,10 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
         </>
       );
 
-    case 'scratch':
     case 'editor':
       return (
         <>
-          <ScratchPad tabId={activeTab.id} />
+          <EditorTab tabId={activeTab.id} />
           {bookmarkDialog}
         </>
       );

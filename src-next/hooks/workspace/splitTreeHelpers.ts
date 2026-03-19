@@ -106,6 +106,22 @@ export function findTabAcrossTree(tree: SplitNode, tabId: string): { pane: Cente
   return null;
 }
 
+/** Compute the next auto-name for an editor tab ("Untitled 1", "Untitled 2", ...). */
+export function nextEditorLabel(tree: SplitNode): string {
+  const pattern = /^Untitled (\d+)$/;
+  let max = 0;
+  for (const pane of allPanes(tree)) {
+    for (const tab of pane.tabs) {
+      if (tab.type === 'editor') {
+        const m = pattern.exec(tab.label);
+        if (m) max = Math.max(max, parseInt(m[1], 10));
+        // Renamed tabs don't occupy a numbered slot.
+      }
+    }
+  }
+  return `Untitled ${max + 1}`;
+}
+
 /** Find an existing tab by type across all panes. */
 export function findTabByType(tree: SplitNode, type: CenterTabType): { pane: CenterPane; tab: Tab } | null {
   for (const pane of allPanes(tree)) {

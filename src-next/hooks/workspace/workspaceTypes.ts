@@ -2,7 +2,7 @@
 // Types
 // ---------------------------------------------------------------------------
 
-export type CenterTabType = 'logviewer' | 'dashboard' | 'scratch' | 'editor' | 'analysis';
+export type CenterTabType = 'logviewer' | 'dashboard' | 'editor' | 'analysis';
 export type BottomTabType = 'timeline' | 'correlations' | 'search-results' | 'watches' | 'filter-results';
 export type LeftPaneTab = 'info' | 'state' | 'bookmarks' | 'analysis';
 export type RightPaneTab = 'processors' | 'marketplace';
@@ -97,7 +97,7 @@ export const COMPACT_LEFT_WIDTH = 40;
 
 export const STORAGE_KEY = 'logtapper_workspace_v1';
 
-export const VALID_CENTER_TYPES = new Set<string>(['logviewer', 'dashboard', 'scratch', 'editor', 'analysis']);
+export const VALID_CENTER_TYPES = new Set<string>(['logviewer', 'dashboard', 'editor', 'analysis']);
 export const VALID_BOTTOM_TYPES = new Set<string>(['timeline', 'correlations', 'search-results', 'watches', 'filter-results']);
 export const VALID_LEFT_TABS = new Set<string>(['info', 'state', 'bookmarks', 'analysis']);
 export const VALID_RIGHT_TABS = new Set<string>(['processors', 'marketplace']);
@@ -105,7 +105,6 @@ export const VALID_RIGHT_TABS = new Set<string>(['processors', 'marketplace']);
 export const TAB_LABELS: Record<CenterTabType, string> = {
   logviewer: 'Log',
   dashboard: 'Dashboard',
-  scratch: 'Scratch',
-  editor: 'Editor',
+  editor: 'Untitled',
   analysis: 'Analysis',
 };

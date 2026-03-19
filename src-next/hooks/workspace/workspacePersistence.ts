@@ -36,6 +36,8 @@ export function sanitizeTree(node: SplitNode): SplitNode | null {
   if (node.type === 'leaf') {
     if (!node.pane || !Array.isArray(node.pane.tabs)) return null;
     const tabs = node.pane.tabs
+      // Migrate legacy 'scratch' tabs to 'editor'
+      .map((t) => (t.type as string) === 'scratch' ? { ...t, type: 'editor' as const } : t)
       .filter((t) => VALID_CENTER_TYPES.has(t.type))
       .map((t) => ({ ...t, closable: true }));
     // Empty panes are valid (the default state is an empty leaf)

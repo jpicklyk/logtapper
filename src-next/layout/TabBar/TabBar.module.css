@@ -162,6 +162,19 @@
   max-width: 140px;
 }
 
+.labelInput {
+  font: inherit;
+  font-size: inherit;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--accent);
+  outline: none;
+  padding: 0;
+  max-width: 140px;
+  width: 100%;
+}
+
 .close {
   display: flex;
   align-items: center;

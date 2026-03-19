@@ -1,0 +1,43 @@
+.root {
+  display: inline-flex;
+  align-items: center;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1px;
+  gap: 1px;
+}
+
+.button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: calc(var(--radius-sm) - 1px);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.button:hover {
+  background: var(--bg-overlay);
+  color: var(--text);
+}
+
+.button.active {
+  background: var(--bg-raised);
+  color: var(--text);
+}
+
+/* Size variants */
+
+.sm .button {
+  width: 24px;
+  height: 22px;
+}
+
+.md .button {
+  width: 28px;
+  height: 26px;
+}

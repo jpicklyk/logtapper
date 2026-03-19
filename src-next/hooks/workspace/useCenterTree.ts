@@ -4,6 +4,7 @@ import type { CenterTabType, BottomTabType, CenterPane, DropZone, SplitNode, Tab
 import { TAB_LABELS } from './workspaceTypes';
 import {
   makeTab,
+  nextEditorLabel,
   clamp,
   findLeafByPaneId,
   updateLeaf,
@@ -160,7 +161,8 @@ export function useCenterTree(
   const addCenterTab = useCallback((paneId: string, type: CenterTabType, label?: string) => {
     updateTree((tree) =>
       updateLeaf(tree, paneId, (pane) => {
-        const tab = makeTab(type, label);
+        const effectiveLabel = label ?? (type === 'editor' ? nextEditorLabel(tree) : undefined);
+        const tab = makeTab(type, effectiveLabel);
         return { ...pane, tabs: [...pane.tabs, tab], activeTabId: tab.id };
       }),
     );

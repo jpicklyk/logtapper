@@ -8,4 +8,6 @@ export { Spinner } from './Spinner/Spinner';
 export { Icon } from './Icon/Icon';
 export { Toast } from './Toast/Toast';
 export type { ToastItem } from './Toast/Toast';
+export { SegmentedControl } from './SegmentedControl/SegmentedControl';
+export type { SegmentedOption } from './SegmentedControl/SegmentedControl';
 export { PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY } from './processorBadgeTypes';
