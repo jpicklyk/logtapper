@@ -67,7 +67,7 @@
   color: color-mix(in srgb, var(--accent) 60%, transparent);
   letter-spacing: 0.025em;
   flex-shrink: 0;
-  transition: background var(--transition-normal), color 100ms ease;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 .navTop {

@@ -56,14 +56,8 @@
 }
 
 .jumpTarget {
-  animation: flashHighlight 1.8s ease-out forwards;
+  animation: flash-highlight 1.8s ease-out forwards;
   border-left-color: color-mix(in srgb, var(--accent) 65%, transparent);
-}
-
-@keyframes flashHighlight {
-  0%   { background-color: color-mix(in srgb, var(--accent) 35%, transparent); }
-  40%  { background-color: color-mix(in srgb, var(--accent) 22%, transparent); }
-  100% { background-color: color-mix(in srgb, var(--accent) 12%, transparent); }
 }
 
 .jumpTarget .lineNum {

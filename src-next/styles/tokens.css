@@ -107,7 +107,7 @@
   --level-warning:    #d29922;
   --level-error:      #f47067;
   --level-fatal:      #ff6e6e;
-  --level-warning-bg: rgba(26, 19, 0, 0.03);
+  --level-warning-bg: rgba(26, 19, 0, 0.06);
   --level-error-bg:   #2d1117;
   --level-fatal-bg:   #3d1118;
 
@@ -240,7 +240,7 @@
   --level-warning:    #9a6700;
   --level-error:      #cf222e;
   --level-fatal:      #a40e26;
-  --level-warning-bg: rgba(154, 103, 0, 0.05);
+  --level-warning-bg: rgba(154, 103, 0, 0.08);
   --level-error-bg:   rgba(207, 34, 46, 0.05);
   --level-fatal-bg:   rgba(164, 14, 38, 0.06);
 

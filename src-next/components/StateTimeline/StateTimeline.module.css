@@ -134,6 +134,7 @@
   border: 1px solid var(--bg-base);
   cursor: pointer;
   z-index: 1;
+  transition: transform var(--transition-fast);
 }
 
 .tick:hover {
@@ -220,7 +221,7 @@
 .rulerAxisLabel {
   font-size: 9px;
   color: var(--text-dimmed);
-  opacity: 0.5;
+  opacity: 0.7;
 }
 
 .rulerBody {
