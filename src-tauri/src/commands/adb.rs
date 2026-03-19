@@ -190,19 +190,13 @@ pub async fn start_adb_stream(
     session.add_stream_source(source_id.clone(), device_label.clone(), temp_dir);
 
     {
-        let mut sessions = state
-            .sessions
-            .lock()
-            .map_err(|_| "Session lock poisoned")?;
+        let mut sessions = lock_or_err(&state.sessions, "sessions")?;
         sessions.insert(session_id.clone(), session);
     }
 
     // ── Initialize continuous processor states ────────────────────────────────
     if !active_processor_ids.is_empty() {
-        let procs = state
-            .processors
-            .lock()
-            .map_err(|_| "Processor lock poisoned")?;
+        let procs = lock_or_err(&state.processors, "processors")?;
 
         let mut proc_states: HashMap<String, ContinuousRunState> = HashMap::new();
         for proc_id in &active_processor_ids {
@@ -213,20 +207,14 @@ pub async fn start_adb_stream(
         }
         drop(procs);
 
-        let mut sp_state = state
-            .stream_processor_state
-            .lock()
-            .map_err(|_| "Stream processor state lock poisoned")?;
+        let mut sp_state = lock_or_err(&state.stream_processor_state, "stream_processor_state")?;
         sp_state.insert(session_id.clone(), proc_states);
     }
 
     // ── Cancellation channel ──────────────────────────────────────────────────
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
     {
-        let mut tasks = state
-            .stream_tasks
-            .lock()
-            .map_err(|_| "Stream tasks lock poisoned")?;
+        let mut tasks = lock_or_err(&state.stream_tasks, "stream_tasks")?;
         tasks.insert(session_id.clone(), cancel_tx);
     }
 
@@ -278,10 +266,7 @@ pub async fn stop_adb_stream(
 ) -> Result<(), String> {
     // Send cancellation signal
     let sender = {
-        let mut tasks = state
-            .stream_tasks
-            .lock()
-            .map_err(|_| "Stream tasks lock poisoned")?;
+        let mut tasks = lock_or_err(&state.stream_tasks, "stream_tasks")?;
         tasks.remove(&session_id)
     };
 
@@ -301,37 +286,25 @@ pub async fn stop_adb_stream(
 
     // Clean up continuous processor state (session data remains for search/pipeline)
     {
-        let mut sp_state = state
-            .stream_processor_state
-            .lock()
-            .map_err(|_| "Stream processor state lock poisoned")?;
+        let mut sp_state = lock_or_err(&state.stream_processor_state, "stream_processor_state")?;
         sp_state.remove(&session_id);
     }
 
     // Clean up stream anonymizer
     {
-        let mut sa = state
-            .stream_anonymizers
-            .lock()
-            .map_err(|_| "Stream anonymizer lock poisoned")?;
+        let mut sa = lock_or_err(&state.stream_anonymizers, "stream_anonymizers")?;
         sa.remove(&session_id);
     }
 
     // Clean up stream transformer state
     {
-        let mut st = state
-            .stream_transformer_state
-            .lock()
-            .map_err(|_| "Stream transformer state lock poisoned")?;
+        let mut st = lock_or_err(&state.stream_transformer_state, "stream_transformer_state")?;
         st.remove(&session_id);
     }
 
     // Clean up stream tracker state
     {
-        let mut st = state
-            .stream_tracker_state
-            .lock()
-            .map_err(|_| "Stream tracker state lock poisoned")?;
+        let mut st = lock_or_err(&state.stream_tracker_state, "stream_tracker_state")?;
         st.remove(&session_id);
     }
 
@@ -367,16 +340,9 @@ pub async fn set_stream_anonymize(
     session_id: String,
     enabled: bool,
 ) -> Result<(), String> {
-    let mut sa = state
-        .stream_anonymizers
-        .lock()
-        .map_err(|_| "Stream anonymizer lock poisoned")?;
+    let mut sa = lock_or_err(&state.stream_anonymizers, "stream_anonymizers")?;
     if enabled {
-        let config = state
-            .anonymizer_config
-            .lock()
-            .map_err(|_| "Anonymizer config lock poisoned")?
-            .clone();
+        let config = lock_or_err(&state.anonymizer_config, "anonymizer_config")?.clone();
         sa.insert(session_id, LogAnonymizer::from_config(&config));
     } else {
         sa.remove(&session_id);
@@ -400,10 +366,7 @@ pub async fn update_stream_processors(
 ) -> Result<(), String> {
     // Get the current total_lines so new processors are seeded from the right position.
     let current_total = {
-        let sessions = state
-            .sessions
-            .lock()
-            .map_err(|_| "Session lock poisoned")?;
+        let sessions = lock_or_err(&state.sessions, "sessions")?;
         sessions
             .get(&session_id)
             .and_then(|s| s.primary_source())
@@ -412,20 +375,14 @@ pub async fn update_stream_processors(
 
     // Clone the defs we need for any new processors.
     let new_proc_defs: HashMap<String, ReporterDef> = {
-        let procs = state
-            .processors
-            .lock()
-            .map_err(|_| "Processor lock poisoned")?;
+        let procs = lock_or_err(&state.processors, "processors")?;
         processor_ids
             .iter()
             .filter_map(|id| procs.get(id).and_then(|p| p.as_reporter()).map(|d| (id.clone(), d.clone())))
             .collect()
     };
 
-    let mut sp_state = state
-        .stream_processor_state
-        .lock()
-        .map_err(|_| "Stream processor state lock poisoned")?;
+    let mut sp_state = lock_or_err(&state.stream_processor_state, "stream_processor_state")?;
 
     let inner = sp_state.entry(session_id).or_default();
 

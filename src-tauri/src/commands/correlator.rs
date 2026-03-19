@@ -1,6 +1,6 @@
 use tauri::State;
 
-use crate::commands::AppState;
+use crate::commands::{lock_or_err, AppState};
 use crate::processors::correlator::engine::CorrelatorResult;
 
 /// Return correlation events and guidance for a specific correlator in a session.
@@ -10,10 +10,7 @@ pub async fn get_correlator_events(
     session_id: String,
     correlator_id: String,
 ) -> Result<CorrelatorResult, String> {
-    let results = state
-        .correlator_results
-        .lock()
-        .map_err(|_| "Correlator results lock poisoned")?;
+    let results = lock_or_err(&state.correlator_results, "correlator_results")?;
 
     let result = results
         .get(&session_id)

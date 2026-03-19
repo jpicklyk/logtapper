@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use tauri::State;
-use crate::commands::AppState;
+use crate::commands::{lock_or_err, AppState};
 use crate::processors::state_tracker::types::{StateSnapshot, StateTransition};
 
 // ---------------------------------------------------------------------------
@@ -53,8 +53,7 @@ pub async fn get_state_at_line(
     let pos = transitions.partition_point(|t| t.line_num <= line_num);
 
     // Replay transitions up to pos against the tracker's declared defaults.
-    let processors = state.processors.lock()
-        .map_err(|_| "Processor lock poisoned")?;
+    let processors = lock_or_err(&state.processors, "processors")?;
     let processor = processors.get(&tracker_id)
         .ok_or_else(|| format!("Processor {tracker_id} not found"))?;
     let tracker_def = processor.as_state_tracker()
@@ -108,8 +107,7 @@ pub async fn get_all_transition_lines(
 
     // Collect from pipeline results.
     {
-        let results = state.state_tracker_results.lock()
-            .map_err(|_| "State tracker results lock poisoned")?;
+        let results = lock_or_err(&state.state_tracker_results, "state_tracker_results")?;
         if let Some(session_map) = results.get(&session_id) {
             for (tracker_id, result) in session_map {
                 let lines: Vec<usize> = result.transitions.iter().map(|t| t.line_num).collect();
@@ -120,8 +118,7 @@ pub async fn get_all_transition_lines(
 
     // Merge in streaming state (adds trackers not already present from pipeline results).
     {
-        let stream = state.stream_tracker_state.lock()
-            .map_err(|_| "Stream tracker state lock poisoned")?;
+        let stream = lock_or_err(&state.stream_tracker_state, "stream_tracker_state")?;
         if let Some(session_map) = stream.get(&session_id) {
             for (tracker_id, cont) in session_map {
                 let lines: Vec<usize> = cont.transitions.iter().map(|t| t.line_num).collect();

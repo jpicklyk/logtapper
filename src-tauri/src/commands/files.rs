@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::commands::AppState;
+use crate::commands::{lock_or_err, AppState};
 use crate::core::line::{
     HighlightKind, HighlightSpan, LineRequest, LineWindow, LogLevel, SearchQuery,
     SearchSummary, ViewLine, ViewMode,
@@ -99,10 +99,7 @@ pub async fn load_log_file(
     // Close any existing session for the same file path (e.g. stale session from a
     // frontend reload). Scan first under a short-lived lock, then close without holding it.
     let stale_id = {
-        let sessions = state
-            .sessions
-            .lock()
-            .map_err(|_| "State lock poisoned".to_string())?;
+        let sessions = lock_or_err(&state.sessions, "sessions")?;
         sessions
             .values()
             .find(|s| s.file_path.as_deref() == Some(&path))
@@ -143,10 +140,7 @@ pub async fn load_log_file(
     };
 
     {
-        let mut sessions = state
-            .sessions
-            .lock()
-            .map_err(|_| "State lock poisoned".to_string())?;
+        let mut sessions = lock_or_err(&state.sessions, "sessions")?;
         sessions.insert(session_id.clone(), session);
     }
 
@@ -154,10 +148,7 @@ pub async fn load_log_file(
     if is_indexing {
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
         {
-            let mut tasks = state
-                .indexing_tasks
-                .lock()
-                .map_err(|_| "State lock poisoned".to_string())?;
+            let mut tasks = lock_or_err(&state.indexing_tasks, "indexing_tasks")?;
             tasks.insert(session_id.clone(), cancel_tx);
         }
         let app_clone = app;
@@ -184,56 +175,44 @@ pub async fn load_log_file(
 #[tauri::command]
 fn close_session_inner(state: &AppState, session_id: &str) -> Result<(), String> {
     // 1. Cancel active ADB stream (if any)
-    if let Some(cancel_tx) = state.stream_tasks.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(session_id) {
+    if let Some(cancel_tx) = lock_or_err(&state.stream_tasks, "stream_tasks")?.remove(session_id) {
         let _ = cancel_tx.send(());
     }
 
     // 2. Cancel active background indexing (if any)
-    if let Some(cancel_tx) = state.indexing_tasks.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(session_id) {
+    if let Some(cancel_tx) = lock_or_err(&state.indexing_tasks, "indexing_tasks")?.remove(session_id) {
         let _ = cancel_tx.send(());
     }
 
     // 3. Remove session (drops mmap / stream data)
-    state.sessions.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(session_id);
+    lock_or_err(&state.sessions, "sessions")?.remove(session_id);
 
     // 4. Remove pipeline results
-    state.pipeline_results.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(session_id);
+    lock_or_err(&state.pipeline_results, "pipeline_results")?.remove(session_id);
 
     // 5. Remove state tracker results
-    state.state_tracker_results.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(session_id);
+    lock_or_err(&state.state_tracker_results, "state_tracker_results")?.remove(session_id);
 
     // 6. Remove correlator results
-    state.correlator_results.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(session_id);
+    lock_or_err(&state.correlator_results, "correlator_results")?.remove(session_id);
 
     // 7. Remove streaming processor state
-    state.stream_processor_state.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(session_id);
+    lock_or_err(&state.stream_processor_state, "stream_processor_state")?.remove(session_id);
 
     // 8. Remove streaming tracker state
-    state.stream_tracker_state.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(session_id);
+    lock_or_err(&state.stream_tracker_state, "stream_tracker_state")?.remove(session_id);
 
     // 9. Remove streaming transformer state
-    state.stream_transformer_state.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(session_id);
+    lock_or_err(&state.stream_transformer_state, "stream_transformer_state")?.remove(session_id);
 
     // 10. Remove PII mappings
-    state.pii_mappings.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(session_id);
+    lock_or_err(&state.pii_mappings, "pii_mappings")?.remove(session_id);
 
     // 11. Remove stream anonymizer
-    state.stream_anonymizers.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(session_id);
+    lock_or_err(&state.stream_anonymizers, "stream_anonymizers")?.remove(session_id);
 
     // 12. Remove MCP anonymizer
-    state.mcp_anonymizers.lock()
-        .map_err(|_| "lock poisoned".to_string())?.remove(session_id);
+    lock_or_err(&state.mcp_anonymizers, "mcp_anonymizers")?.remove(session_id);
 
     Ok(())
 }
@@ -385,10 +364,7 @@ pub async fn get_lines(
     state: State<'_, AppState>,
     request: LineRequest,
 ) -> Result<LineWindow, String> {
-    let sessions = state
-        .sessions
-        .lock()
-        .map_err(|_| "State lock poisoned".to_string())?;
+    let sessions = lock_or_err(&state.sessions, "sessions")?;
 
     let session = sessions
         .get(&request.session_id)
@@ -466,10 +442,7 @@ pub async fn get_lines(
 
             // Get the matched line numbers from the last pipeline run.
             let matched: Vec<usize> = {
-                let pr = state
-                    .pipeline_results
-                    .lock()
-                    .map_err(|_| "Pipeline results lock poisoned")?;
+                let pr = lock_or_err(&state.pipeline_results, "pipeline_results")?;
                 pr.get(&request.session_id)
                     .and_then(|s| s.get(proc_id))
                     .map(|r| r.matched_line_nums.clone())
@@ -586,10 +559,7 @@ pub async fn get_lines(
             // Recurse with Full mode for the sub-window
             drop(sessions); // release lock before recursive call
             let state_ref: &AppState = &state;
-            let inner_sessions = state_ref
-                .sessions
-                .lock()
-                .map_err(|_| "State lock poisoned".to_string())?;
+            let inner_sessions = lock_or_err(&state_ref.sessions, "sessions")?;
             let inner_session = inner_sessions
                 .get(&sub_req.session_id)
                 .ok_or("Session not found")?;
@@ -698,10 +668,7 @@ pub async fn search_logs(
 ) -> Result<SearchSummary, String> {
     // Acquire the lock briefly to read total_lines and validate the session exists.
     let total_lines = {
-        let sessions = state
-            .sessions
-            .lock()
-            .map_err(|_| "State lock poisoned".to_string())?;
+        let sessions = lock_or_err(&state.sessions, "sessions")?;
         let session = sessions
             .get(&session_id)
             .ok_or_else(|| format!("Session '{session_id}' not found"))?;
@@ -740,10 +707,7 @@ pub async fn search_logs(
 
         // Acquire lock briefly to read this chunk of lines
         {
-            let sessions = state
-                .sessions
-                .lock()
-                .map_err(|_| "State lock poisoned".to_string())?;
+            let sessions = lock_or_err(&state.sessions, "sessions")?;
             let session = sessions
                 .get(&session_id)
                 .ok_or_else(|| format!("Session '{session_id}' not found"))?;
@@ -862,10 +826,7 @@ pub async fn get_dumpstate_metadata(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<DumpstateMetadata, String> {
-    let sessions = state
-        .sessions
-        .lock()
-        .map_err(|_| "State lock poisoned".to_string())?;
+    let sessions = lock_or_err(&state.sessions, "sessions")?;
 
     let session = sessions
         .get(&session_id)
@@ -1003,10 +964,7 @@ pub async fn get_sections(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<Vec<SectionInfo>, String> {
-    let sessions = state
-        .sessions
-        .lock()
-        .map_err(|_| "State lock poisoned".to_string())?;
+    let sessions = lock_or_err(&state.sessions, "sessions")?;
     let session = sessions
         .get(&session_id)
         .ok_or_else(|| format!("Session '{session_id}' not found"))?;

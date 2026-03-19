@@ -111,9 +111,6 @@ pub async fn get_pii_mappings(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<HashMap<String, String>, String> {
-    let mappings = state
-        .pii_mappings
-        .lock()
-        .map_err(|_| "lock poisoned")?;
+    let mappings = lock_or_err(&state.pii_mappings, "pii_mappings")?;
     Ok(mappings.get(&session_id).cloned().unwrap_or_default())
 }

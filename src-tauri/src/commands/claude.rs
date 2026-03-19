@@ -3,7 +3,7 @@ use tauri::{AppHandle, State};
 use crate::claude::analysis::build_analysis_context;
 use crate::claude::client::ClaudeClient;
 use crate::claude::generator::{build_generator_prompt, extract_yaml};
-use crate::commands::AppState;
+use crate::commands::{lock_or_err, AppState};
 use crate::processors::AnyProcessor;
 use crate::scripting::sandbox::validate_for_install;
 
@@ -16,10 +16,7 @@ pub async fn set_claude_api_key(
     state: State<'_, AppState>,
     api_key: String,
 ) -> Result<(), String> {
-    let mut key = state
-        .api_key
-        .lock()
-        .map_err(|_| "API key store lock poisoned")?;
+    let mut key = lock_or_err(&state.api_key, "api_key")?;
     *key = if api_key.trim().is_empty() {
         None
     } else {
@@ -43,27 +40,18 @@ pub async fn claude_analyze(
     user_message: String,
 ) -> Result<(), String> {
     let api_key = {
-        let k = state
-            .api_key
-            .lock()
-            .map_err(|_| "API key store lock poisoned")?;
+        let k = lock_or_err(&state.api_key, "api_key")?;
         k.clone().ok_or("Claude API key not set. Please configure your API key in settings.")?
     };
 
     // Build context — lock sessions briefly, then release.
     let (system, messages) = {
-        let sessions = state
-            .sessions
-            .lock()
-            .map_err(|_| "Session store lock poisoned")?;
+        let sessions = lock_or_err(&state.sessions, "sessions")?;
         let session = sessions
             .get(&session_id)
             .ok_or_else(|| format!("Session '{session_id}' not found"))?;
 
-        let pipeline_results = state
-            .pipeline_results
-            .lock()
-            .map_err(|_| "Pipeline results lock poisoned")?;
+        let pipeline_results = lock_or_err(&state.pipeline_results, "pipeline_results")?;
 
         let ctx = build_analysis_context(
             session,
@@ -93,10 +81,7 @@ pub async fn claude_generate_processor(
     sample_lines: Vec<String>,
 ) -> Result<String, String> {
     let api_key = {
-        let k = state
-            .api_key
-            .lock()
-            .map_err(|_| "API key store lock poisoned")?;
+        let k = lock_or_err(&state.api_key, "api_key")?;
         k.clone().ok_or("Claude API key not set. Please configure your API key in settings.")?
     };
 

@@ -225,8 +225,7 @@ pub fn execute_pipeline(
     let parser = parser_for(&source_type);
 
     // ── Snapshot anonymizer config ───────────────────────────────────────────
-    let anonymizer_config = state.anonymizer_config.lock()
-        .map_err(|_| "Anonymizer config lock poisoned")?
+    let anonymizer_config = lock_or_err(&state.anonymizer_config, "anonymizer_config")?
         .clone();
 
     // ── Build PipelineCore ──────────────────────────────────────────────────
@@ -377,8 +376,7 @@ pub fn execute_pipeline(
     }
 
     {
-        let mut pr = state.pipeline_results.lock()
-            .map_err(|_| "Pipeline results lock poisoned")?;
+        let mut pr = lock_or_err(&state.pipeline_results, "pipeline_results")?;
         pr.insert(session_id.to_string(), session_pipeline_results);
     }
 

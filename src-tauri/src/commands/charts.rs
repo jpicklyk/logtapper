@@ -2,7 +2,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::charts::builder::{build_charts, ChartData};
-use crate::commands::AppState;
+use crate::commands::{lock_or_err, AppState};
 use crate::processors::schema::PipelineStage;
 
 // ---------------------------------------------------------------------------
@@ -17,10 +17,7 @@ pub async fn get_chart_data(
 ) -> Result<Vec<ChartData>, String> {
     // Get the processor definition
     let def = {
-        let procs = state
-            .processors
-            .lock()
-            .map_err(|_| "Processor store lock poisoned")?;
+        let procs = lock_or_err(&state.processors, "processors")?;
         procs
             .get(&processor_id)
             .cloned()
@@ -29,10 +26,7 @@ pub async fn get_chart_data(
 
     // Get the pipeline run result
     let (emissions, vars) = {
-        let pr = state
-            .pipeline_results
-            .lock()
-            .map_err(|_| "Pipeline results lock poisoned")?;
+        let pr = lock_or_err(&state.pipeline_results, "pipeline_results")?;
         let session_results = pr
             .get(&session_id)
             .ok_or_else(|| format!("No pipeline results for session '{session_id}'"))?;
@@ -143,10 +137,7 @@ pub async fn get_timeline_data(
     for pid in &processor_ids {
         // Get the processor definition
         let def = {
-            let procs = state
-                .processors
-                .lock()
-                .map_err(|_| "Processor store lock poisoned")?;
+            let procs = lock_or_err(&state.processors, "processors")?;
             let Some(d) = procs.get(pid) else {
                 continue;
             };
@@ -177,10 +168,7 @@ pub async fn get_timeline_data(
 
         // Get emissions for this processor
         let emissions = {
-            let pr = state
-                .pipeline_results
-                .lock()
-                .map_err(|_| "Pipeline results lock poisoned")?;
+            let pr = lock_or_err(&state.pipeline_results, "pipeline_results")?;
             match pr.get(&session_id).and_then(|sr| sr.get(pid)) {
                 Some(result) => result.emissions.clone(),
                 None => continue,
