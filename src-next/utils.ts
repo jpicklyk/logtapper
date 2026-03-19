@@ -7,6 +7,11 @@ export function clamp(val: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, val));
 }
 
+/** Extract the filename from a path (handles both / and \ separators). */
+export function basename(path: string): string {
+  return path.split(/[\\/]/).pop() || path;
+}
+
 // ---------------------------------------------------------------------------
 // localStorage helpers — wrap try/catch so callers don't need to
 // ---------------------------------------------------------------------------

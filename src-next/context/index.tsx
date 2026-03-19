@@ -3,6 +3,7 @@ import { open, save } from '@tauri-apps/plugin-dialog';
 import { SessionProvider } from './SessionContext';
 import { useSessionContext } from './SessionContext';
 import { saveLiveCapture } from '../bridge/commands';
+import { basename } from '../utils';
 import { ViewerProvider } from './ViewerContext';
 
 export { ThemeProvider, useTheme } from './ThemeContext';
@@ -65,7 +66,7 @@ function HookWiring({ children }: { children: ReactNode }) {
       ],
     });
     if (typeof selected === 'string') {
-      const filename = selected.split(/[\\/]/).pop() || selected;
+      const filename = basename(selected);
       bus.emit('layout:open-tab', { type: 'editor', label: filename, filePath: selected });
     }
   }, []);

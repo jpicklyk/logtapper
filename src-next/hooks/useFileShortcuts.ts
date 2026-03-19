@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 interface FileShortcutActions {
   openFileDialog: () => void;
@@ -8,7 +8,10 @@ interface FileShortcutActions {
 }
 
 export function useFileShortcuts(actions: FileShortcutActions): void {
-  const { openFileDialog, openInEditorDialog, saveFile, saveFileAs } = actions;
+  // Store actions in a ref so the keydown listener is registered once
+  // and always calls the latest callbacks without re-subscribing.
+  const actionsRef = useRef(actions);
+  actionsRef.current = actions;
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -16,23 +19,24 @@ export function useFileShortcuts(actions: FileShortcutActions): void {
       if (!(e.ctrlKey || e.metaKey)) return;
 
       const key = e.key.toLowerCase();
+      const a = actionsRef.current;
 
       if (key === 'o' && !e.shiftKey) {
         e.preventDefault();
-        openFileDialog();
+        a.openFileDialog();
       } else if (key === 'o' && e.shiftKey) {
         e.preventDefault();
-        openInEditorDialog();
+        a.openInEditorDialog();
       } else if (key === 's' && !e.shiftKey) {
         e.preventDefault();
-        saveFile();
+        a.saveFile();
       } else if (key === 's' && e.shiftKey) {
         e.preventDefault();
-        saveFileAs();
+        a.saveFileAs();
       }
     };
 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [openFileDialog, openInEditorDialog, saveFile, saveFileAs]);
+  }, []);
 }

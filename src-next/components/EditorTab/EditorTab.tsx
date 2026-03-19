@@ -3,7 +3,7 @@ import { save } from '@tauri-apps/plugin-dialog';
 import TextEditor from '../../viewport/TextEditor';
 import { EditorToolbar } from './EditorToolbar';
 import { MarkdownPreview } from './MarkdownPreview';
-import { storageGet, storageSet } from '../../utils';
+import { storageGet, storageSet, basename } from '../../utils';
 import { writeTextFile, readTextFile } from '../../bridge/commands';
 import { bus } from '../../events';
 import styles from './EditorTab.module.css';
@@ -11,7 +11,8 @@ import styles from './EditorTab.module.css';
 const LS_CONTENT_PREFIX = 'logtapper_scratchpad_';
 const LS_MODE_PREFIX = 'logtapper_editor_mode_';
 const LS_WRAP_PREFIX = 'logtapper_editor_wrap_';
-const LS_FILEPATH_PREFIX = 'logtapper_editor_filepath_';
+/** Exported so useCenterTree can pre-seed the file path before the tab mounts. */
+export const LS_FILEPATH_PREFIX = 'logtapper_editor_filepath_';
 
 export type EditorViewMode = 'editor' | 'split' | 'preview';
 
@@ -134,7 +135,7 @@ const EditorTab = React.memo(function EditorTab({
       storageSet(LS_FILEPATH_PREFIX + tabId, path);
       setIsDirty(false);
       // Update tab name to reflect the saved filename.
-      const filename = path.split(/[\\/]/).pop() || path;
+      const filename = basename(path);
       onFilePathChanged?.(tabId, filename);
     }
   }, [tabId, onFilePathChanged]);

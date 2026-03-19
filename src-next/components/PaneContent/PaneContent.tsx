@@ -8,24 +8,13 @@ import { StreamFilterBar } from '../StreamFilterBar';
 import { BookmarkCreateDialog } from '../BookmarkPanel';
 import type { BookmarkCreateRequest } from '../BookmarkPanel';
 import { useSessionForPane, useIsLoadingForPane, useViewerActions, useStreamFilter, useFocusedSession, useIsFocusedPane } from '../../context';
+import type { CenterPane } from '../../hooks/workspace/workspaceTypes';
 import { useLogViewerActions } from './useLogViewerActions';
 import { bus } from '../../events';
 import styles from './PaneContent.module.css';
 
-export interface PaneTab {
-  id: string;
-  type: 'logviewer' | 'dashboard' | 'editor' | 'analysis';
-  label?: string;
-}
-
-export interface Pane {
-  id: string;
-  tabs: PaneTab[];
-  activeTabId: string;
-}
-
 interface Props {
-  pane: Pane;
+  pane: CenterPane;
   onDirtyChanged?: (tabId: string, isDirty: boolean) => void;
   onFilePathChanged?: (tabId: string, newLabel: string) => void;
 }

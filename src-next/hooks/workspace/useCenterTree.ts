@@ -15,6 +15,8 @@ import {
   findTabAcrossTree,
   findTabByType,
 } from './splitTreeHelpers';
+import { LS_FILEPATH_PREFIX } from '../../components/EditorTab';
+import { storageSet } from '../../utils';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -234,9 +236,7 @@ export function useCenterTree(
 
       // Pre-seed localStorage with the file path so EditorTab picks it up on mount.
       if (filePath) {
-        try {
-          localStorage.setItem('logtapper_editor_filepath_' + tab.id, filePath);
-        } catch { /* quota exceeded — EditorTab will start empty */ }
+        storageSet(LS_FILEPATH_PREFIX + tab.id, filePath);
       }
 
       return updateLeaf(tree, target.pane.id, (pane) => ({
