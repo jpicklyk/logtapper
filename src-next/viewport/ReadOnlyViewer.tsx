@@ -61,10 +61,11 @@ export default function ReadOnlyViewer({
   const charWidthRef = useRef(7.2);
   const gutterWidthRef = useRef(0);
 
-  // ── Caret position ──────────────────────────────────────────────────────
-  // Tracks a blinking text caret on plain click/drag (no modifier keys).
-  // Cleared when line/box selection activates.
-  const [caret, setCaret] = useState<{ line: number; col: number } | null>(null);
+  // ── Caret position (imperative to avoid re-renders during drag) ─────────
+  // Positioned via direct DOM style writes — no React state, no reconciliation
+  // overhead at 60-120 Hz pointer move frequency.
+  const caretRef = useRef<{ line: number; col: number } | null>(null);
+  const caretDivRef = useRef<HTMLDivElement>(null);
   const caretDragging = useRef(false);
 
   // ── Cache version counter ────────────────────────────────────────────────
@@ -93,6 +94,27 @@ export default function ReadOnlyViewer({
     [gutterColumns],
   );
   useEffect(() => { gutterWidthRef.current = gutterWidth; }, [gutterWidth]);
+
+  // ── Imperative caret positioning ───────────────────────────────────────
+  const updateCaretDom = useCallback((pos: { line: number; col: number } | null) => {
+    caretRef.current = pos;
+    const el = caretDivRef.current;
+    if (!el) return;
+    if (!pos) {
+      el.style.display = 'none';
+      return;
+    }
+    const vb = virtualBaseRef.current;
+    const relLine = pos.line - vb;
+    // Hide if outside the current virtual window
+    if (relLine < 0 || relLine >= MAX_VIRTUAL_LINES) {
+      el.style.display = 'none';
+      return;
+    }
+    el.style.display = '';
+    el.style.top = `${relLine * LINE_HEIGHT}px`;
+    el.style.left = `${gutterWidthRef.current + pos.col * charWidthRef.current}px`;
+  }, []);
 
   // ── Scroll controls ──────────────────────────────────────────────────────
   const {
@@ -136,8 +158,8 @@ export default function ReadOnlyViewer({
   // Clear selection and caret when the data source changes (new session).
   useEffect(() => {
     clearSelection();
-    setCaret(null);
-  }, [dataSource.sourceId, clearSelection]);
+    updateCaretDom(null);
+  }, [dataSource.sourceId, clearSelection, updateCaretDom]);
 
   // Notify parent of selection changes (read-only).
   useEffect(() => {
@@ -311,6 +333,12 @@ export default function ReadOnlyViewer({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [virtualBase]);
 
+  // Reposition caret when virtualBase shifts (large-file navigation).
+  useEffect(() => {
+    updateCaretDom(caretRef.current);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [virtualBase]);
+
   // ── Coordinate conversion for pointer events ─────────────────────────────
   const getLineColFromPointer = useCallback((clientX: number, clientY: number) => {
     const el = parentRef.current!;
@@ -324,8 +352,6 @@ export default function ReadOnlyViewer({
 
   // ── Caret positioning helper ─────────────────────────────────────────────
   const caretFromPointer = useCallback((clientX: number, clientY: number) => {
-    const el = parentRef.current;
-    if (!el) return null;
     const { lineNum, col } = getLineColFromPointer(clientX, clientY);
     const lineText = dataSource.getLine(lineNum)?.raw ?? '';
     return { line: lineNum, col: Math.min(col, lineText.length) };
@@ -347,10 +373,10 @@ export default function ReadOnlyViewer({
 
       // Caret is already tracked by pointer events — just clear on modifier clicks.
       if (e.shiftKey || e.ctrlKey || e.metaKey) {
-        setCaret(null);
+        updateCaretDom(null);
       }
     },
-    [selHandleLineClick, onLineClick],
+    [selHandleLineClick, onLineClick, updateCaretDom],
   );
 
   if (liveTotalLines === 0) {
@@ -397,12 +423,11 @@ export default function ReadOnlyViewer({
           handlePointerDown(lineNum, col, e);
           if (e.altKey) {
             e.currentTarget.classList.add(styles.dragging);
-            setCaret(null);
+            updateCaretDom(null);
           } else if (e.button === 0 && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
             // Start caret tracking on plain left-click
             caretDragging.current = true;
-            const pos = caretFromPointer(e.clientX, e.clientY);
-            if (pos) setCaret(pos);
+            updateCaretDom(caretFromPointer(e.clientX, e.clientY));
           }
         }}
         onPointerMove={(e) => {
@@ -410,8 +435,7 @@ export default function ReadOnlyViewer({
           handlePointerMove(lineNum, col, e);
           // Update caret position during normal drag
           if (caretDragging.current && e.buttons === 1) {
-            const pos = caretFromPointer(e.clientX, e.clientY);
-            if (pos) setCaret(pos);
+            updateCaretDom(caretFromPointer(e.clientX, e.clientY));
           }
         }}
         onPointerUp={(e) => {
@@ -481,17 +505,15 @@ export default function ReadOnlyViewer({
               }}
             />
           )}
-          {caret && caret.line >= virtualBase && caret.line < virtualBase + effectiveCount && (
-            <div
-              className={styles.caret}
-              style={{
-                position: 'absolute',
-                top: (caret.line - virtualBase) * LINE_HEIGHT,
-                left: gutterWidth + caret.col * charWidthRef.current,
-                height: LINE_HEIGHT,
-              }}
-            />
-          )}
+          <div
+            ref={caretDivRef}
+            className={styles.caret}
+            style={{
+              position: 'absolute',
+              display: 'none',
+              height: LINE_HEIGHT,
+            }}
+          />
         </div>
       </div>
       {hasMoreBelow && (
