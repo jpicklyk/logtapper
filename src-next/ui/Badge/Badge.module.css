@@ -12,28 +12,28 @@
 
 /* Colors */
 .blue {
-  background: rgba(52, 152, 219, 0.2);
-  color: #5dade2;
+  background: var(--badge-blue-bg);
+  color: var(--badge-blue);
 }
 
 .green {
-  background: rgba(39, 174, 96, 0.2);
-  color: #58d68d;
+  background: var(--badge-green-bg);
+  color: var(--badge-green);
 }
 
 .red {
-  background: rgba(192, 57, 43, 0.2);
-  color: #ec7063;
+  background: var(--badge-red-bg);
+  color: var(--badge-red);
 }
 
 .yellow {
-  background: rgba(241, 196, 15, 0.2);
-  color: #f4d03f;
+  background: var(--badge-yellow-bg);
+  color: var(--badge-yellow);
 }
 
 .gray {
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.5);
+  background: var(--badge-gray-bg);
+  color: var(--badge-gray);
 }
 
 /* Pulse animation */

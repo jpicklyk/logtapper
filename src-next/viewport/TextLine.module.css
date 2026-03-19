@@ -39,12 +39,12 @@
 /* ── Level classes ────────────────────────────────────────────────────── */
 /* Declared before .selected so selection background always takes precedence */
 
-.levelV { color: #6e7681; }
-.levelD { color: #9ca3af; }
+.levelV { color: var(--level-verbose); }
+.levelD { color: var(--level-debug); }
 .levelI { color: var(--text); }
-.levelW { color: #d29922; background: rgba(26, 19, 0, 0.03); }
-.levelE { color: #f47067; background: #2d1117; }
-.levelF { color: #ff6e6e; background: #3d1118; font-weight: 600; }
+.levelW { color: var(--level-warning); background: var(--level-warning-bg); }
+.levelE { color: var(--level-error);   background: var(--level-error-bg); }
+.levelF { color: var(--level-fatal);   background: var(--level-fatal-bg); font-weight: 600; }
 
 .selected {
   background: rgba(255, 200, 50, 0.12);

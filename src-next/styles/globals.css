@@ -19,8 +19,8 @@
   font-family: var(--font-ui);
   font-size: 14px;
   line-height: 1.5;
-  color: #e2e8f0;
-  background-color: #0f1117;
+  color: var(--text);
+  background-color: var(--bg-base);
   color-scheme: dark;
 }
 

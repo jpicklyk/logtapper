@@ -39,4 +39,48 @@
 
   /* Brand */
   --android: #FF6128;
+
+  /* Processor types */
+  --proc-reporter:    #58a6ff;
+  --proc-tracker:     #60a5fa;
+  --proc-correlator:  #c084fc;
+  --proc-transformer: #2dd4bf;
+  --proc-annotator:   #fb923c;
+
+  /* Badges */
+  --badge-blue:      #5dade2;
+  --badge-green:     #58d68d;
+  --badge-red:       #ec7063;
+  --badge-yellow:    #f4d03f;
+  --badge-gray:      rgba(255, 255, 255, 0.5);
+  --badge-blue-bg:   rgba(52, 152, 219, 0.2);
+  --badge-green-bg:  rgba(39, 174, 96, 0.2);
+  --badge-red-bg:    rgba(192, 57, 43, 0.2);
+  --badge-yellow-bg: rgba(241, 196, 15, 0.2);
+  --badge-gray-bg:   rgba(255, 255, 255, 0.08);
+
+  /* Animation colors */
+  --flash-warning-hi:  rgba(255, 185, 0, 0.40);
+  --flash-warning-mid: rgba(255, 185, 0, 0.30);
+  --flash-warning-lo:  rgba(255, 185, 0, 0.10);
+  --flash-tracker-hi:  #1a3a6044;
+  --flash-tracker-mid: #1a3a6022;
+  --flash-tracker-border-hi:  #2a5ea0;
+  --flash-tracker-border-mid: #1e4a80;
+  --flash-field-hi:    #1e4a8055;
+
+  /* Highlights */
+  --hl-search:        #bb800066;
+  --hl-search-active: #d29922cc;
+  --hl-pii:           #5a1e1e88;
+
+  /* Log levels */
+  --level-verbose:    #6e7681;
+  --level-debug:      #9ca3af;
+  --level-warning:    #d29922;
+  --level-error:      #f47067;
+  --level-fatal:      #ff6e6e;
+  --level-warning-bg: rgba(26, 19, 0, 0.03);
+  --level-error-bg:   #2d1117;
+  --level-fatal-bg:   #3d1118;
 }

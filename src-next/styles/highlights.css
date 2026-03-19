@@ -9,8 +9,8 @@ mark {
   background: transparent;
 }
 
-.hl-search { background: #bb800066; border-radius: 2px; }
-.hl-search-active { background: #d29922cc; border-radius: 2px; }
+.hl-search { background: var(--hl-search); border-radius: 2px; }
+.hl-search-active { background: var(--hl-search-active); border-radius: 2px; }
 .hl-processor { border-bottom: 2px solid currentColor; }
 .hl-field { text-decoration: underline; text-underline-offset: 2px; }
-.hl-pii { background: #5a1e1e88; border-radius: 2px; }
+.hl-pii { background: var(--hl-pii); border-radius: 2px; }
