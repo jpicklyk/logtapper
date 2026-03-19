@@ -32,6 +32,22 @@
   z-index: 1;
 }
 
+/* ── Text caret ──────────────────────────────────────────────────────── */
+
+.caret {
+  width: 1.5px;
+  background: var(--text);
+  pointer-events: none;
+  z-index: 2;
+  animation: caretBlink 1s step-end infinite;
+  opacity: 0.85;
+}
+
+@keyframes caretBlink {
+  0%, 100% { opacity: 0.85; }
+  50%      { opacity: 0; }
+}
+
 /* ── Large-file navigation bands ──────────────────────────────────────── */
 /* Full-width strips that mark the boundaries of the current virtual window.
    They live in the flex column above/below the .viewer — no overlap.       */

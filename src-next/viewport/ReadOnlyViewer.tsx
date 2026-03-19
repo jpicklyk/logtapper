@@ -61,6 +61,12 @@ export default function ReadOnlyViewer({
   const charWidthRef = useRef(7.2);
   const gutterWidthRef = useRef(0);
 
+  // ── Caret position ──────────────────────────────────────────────────────
+  // Tracks a blinking text caret on plain click/drag (no modifier keys).
+  // Cleared when line/box selection activates.
+  const [caret, setCaret] = useState<{ line: number; col: number } | null>(null);
+  const caretDragging = useRef(false);
+
   // ── Cache version counter ────────────────────────────────────────────────
   // Bumped after every fetch completion or streaming append to trigger
   // a re-render so the virtualizer re-evaluates dataSource.getLine().
@@ -127,9 +133,10 @@ export default function ReadOnlyViewer({
     clear: clearSelection,
   } = useSelectionManager((n) => dataSource.getLine(n)?.raw);
 
-  // Clear selection when the data source changes (new session).
+  // Clear selection and caret when the data source changes (new session).
   useEffect(() => {
     clearSelection();
+    setCaret(null);
   }, [dataSource.sourceId, clearSelection]);
 
   // Notify parent of selection changes (read-only).
@@ -315,6 +322,15 @@ export default function ReadOnlyViewer({
     return { lineNum, col };
   }, []);
 
+  // ── Caret positioning helper ─────────────────────────────────────────────
+  const caretFromPointer = useCallback((clientX: number, clientY: number) => {
+    const el = parentRef.current;
+    if (!el) return null;
+    const { lineNum, col } = getLineColFromPointer(clientX, clientY);
+    const lineText = dataSource.getLine(lineNum)?.raw ?? '';
+    return { line: lineNum, col: Math.min(col, lineText.length) };
+  }, [getLineColFromPointer, dataSource]);
+
   // ── Line click wrapper ────────────────────────────────────────────────────
   const handleLineClick = useCallback(
     (lineNum: number, e: React.MouseEvent) => {
@@ -328,6 +344,11 @@ export default function ReadOnlyViewer({
       window.getSelection()?.removeAllRanges();
       selHandleLineClick(lineNum, e);
       onLineClick?.(lineNum);
+
+      // Caret is already tracked by pointer events — just clear on modifier clicks.
+      if (e.shiftKey || e.ctrlKey || e.metaKey) {
+        setCaret(null);
+      }
     },
     [selHandleLineClick, onLineClick],
   );
@@ -374,18 +395,33 @@ export default function ReadOnlyViewer({
         onPointerDown={(e) => {
           const { lineNum, col } = getLineColFromPointer(e.clientX, e.clientY);
           handlePointerDown(lineNum, col, e);
-          if (e.altKey) e.currentTarget.classList.add(styles.dragging);
+          if (e.altKey) {
+            e.currentTarget.classList.add(styles.dragging);
+            setCaret(null);
+          } else if (e.button === 0 && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+            // Start caret tracking on plain left-click
+            caretDragging.current = true;
+            const pos = caretFromPointer(e.clientX, e.clientY);
+            if (pos) setCaret(pos);
+          }
         }}
         onPointerMove={(e) => {
           const { lineNum, col } = getLineColFromPointer(e.clientX, e.clientY);
           handlePointerMove(lineNum, col, e);
+          // Update caret position during normal drag
+          if (caretDragging.current && e.buttons === 1) {
+            const pos = caretFromPointer(e.clientX, e.clientY);
+            if (pos) setCaret(pos);
+          }
         }}
         onPointerUp={(e) => {
           handlePointerUp();
+          caretDragging.current = false;
           e.currentTarget.classList.remove(styles.dragging);
         }}
         onPointerCancel={(e) => {
           handlePointerUp();
+          caretDragging.current = false;
           e.currentTarget.classList.remove(styles.dragging);
         }}
       >
@@ -442,6 +478,17 @@ export default function ReadOnlyViewer({
                 height: (selection.box.endLine - selection.box.startLine + 1) * LINE_HEIGHT,
                 left: gutterWidthRef.current + selection.box.startCol * charWidthRef.current,
                 width: (selection.box.endCol - selection.box.startCol) * charWidthRef.current,
+              }}
+            />
+          )}
+          {caret && caret.line >= virtualBase && caret.line < virtualBase + effectiveCount && (
+            <div
+              className={styles.caret}
+              style={{
+                position: 'absolute',
+                top: (caret.line - virtualBase) * LINE_HEIGHT,
+                left: gutterWidth + caret.col * charWidthRef.current,
+                height: LINE_HEIGHT,
               }}
             />
           )}
