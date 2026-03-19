@@ -61,7 +61,7 @@ const TextEditor = React.memo(function TextEditor({
       crosshairCursor(),
       ...(enableLineWrapping ? [EditorView.lineWrapping] : []),
       keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
-      themeCompartment.current.of(createEditorTheme(resolvedTheme === 'dark')),
+      themeCompartment.current.of(editorTheme),
       readOnlyCompartment.current.of(EditorState.readOnly.of(readOnly)),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
@@ -118,8 +118,10 @@ const TextEditor = React.memo(function TextEditor({
     lastEmittedRef.current = value;
   }, [value]);
 
-  // Sync theme when resolvedTheme changes
+  // Sync theme when resolvedTheme changes (skip initial mount — compartment already seeded)
+  const themeInitRef = useRef(true);
   useEffect(() => {
+    if (themeInitRef.current) { themeInitRef.current = false; return; }
     const view = viewRef.current;
     if (!view) return;
 

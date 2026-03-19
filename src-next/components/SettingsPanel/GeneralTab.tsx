@@ -235,7 +235,7 @@ function AddCategoryButton({ onAdd, existingIds }: {
   const [adding, setAdding] = useState(false);
   const [newId, setNewId] = useState('');
   const [newLabel, setNewLabel] = useState('');
-  const [newColor, setNewColor] = useState('#8b949e');
+  const [newColor, setNewColor] = useState('var(--text-muted)');
 
   const handleSubmit = useCallback(() => {
     const id = newId.trim().toLowerCase().replace(/\s+/g, '-');
@@ -243,7 +243,7 @@ function AddCategoryButton({ onAdd, existingIds }: {
     onAdd({ id, label: newLabel.trim() || id, color: newColor });
     setNewId('');
     setNewLabel('');
-    setNewColor('#8b949e');
+    setNewColor('var(--text-muted)');
     setAdding(false);
   }, [newId, newLabel, newColor, existingIds, onAdd]);
 

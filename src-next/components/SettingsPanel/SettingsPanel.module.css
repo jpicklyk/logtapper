@@ -204,17 +204,17 @@
 }
 
 .fpBadgeTier1 {
-  background: rgba(63, 185, 80, 0.15);
+  background: color-mix(in srgb, var(--success) 15%, transparent);
   color: var(--success);
 }
 
 .fpBadgeTier2 {
-  background: rgba(210, 153, 34, 0.15);
+  background: color-mix(in srgb, var(--warning) 15%, transparent);
   color: var(--warning);
 }
 
 .fpBadgeTier3 {
-  background: rgba(248, 81, 73, 0.15);
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
   color: var(--danger);
 }
 
