@@ -26,7 +26,7 @@
 
 .filePath {
   font-family: var(--font-mono, monospace);
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--text);
   max-width: 600px;
   overflow: hidden;

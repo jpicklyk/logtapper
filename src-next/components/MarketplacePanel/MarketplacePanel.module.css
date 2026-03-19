@@ -203,6 +203,10 @@
   border-bottom: none;
 }
 
+.entryRow:hover {
+  background: var(--bg-overlay);
+}
+
 .entryInfo {
   flex: 1;
   min-width: 0;
@@ -448,6 +452,10 @@
 
 .updateRow:last-child {
   border-bottom: none;
+}
+
+.updateRow:hover {
+  background: var(--bg-overlay);
 }
 
 .updateInfo {

@@ -191,7 +191,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   margin-bottom: 4px;
-  background: var(--bg-base);
+  background: var(--bg-raised);
   overflow: hidden;
 }
 
