@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FileText } from 'lucide-react';
 import { LogViewer } from '../LogViewer';
 import { ProcessorDashboard } from '../ProcessorDashboard';
@@ -91,6 +91,27 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
     setBookmarkRequest(null);
   }, []);
 
+  // ── Inline pane notice (auto-dismissing banner) ─────────────────────────
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const handler = ({ paneId, message }: { paneId: string; message: string }) => {
+      if (paneId !== pane.id) return;
+      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+      setNotice(message);
+      noticeTimerRef.current = setTimeout(() => {
+        setNotice(null);
+        noticeTimerRef.current = null;
+      }, 4000);
+    };
+    bus.on('pane:notice', handler);
+    return () => {
+      bus.off('pane:notice', handler);
+      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    };
+  }, [pane.id]);
+
   const effectiveLineNums = useMemo(() => {
     if (!filteredLineNums && !sectionFilteredLineNums) return null;
     if (!filteredLineNums) return sectionFilteredLineNums;
@@ -154,6 +175,11 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
                 parseError={filterParseError}
                 scanning={filterScanning}
               />
+            )}
+            {notice && (
+              <div className={styles.paneNotice}>
+                {notice}
+              </div>
             )}
             <LogViewer
               paneId={pane.id}

@@ -59,3 +59,28 @@
   color: var(--text-dimmed);
   font-size: 13px;
 }
+
+/* ── Inline pane notice (full-width, auto-dismissing) ──────────────────── */
+
+.paneNotice {
+  flex-shrink: 0;
+  width: 100%;
+  padding: 6px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--warning-text, #e2c08d);
+  background: color-mix(in srgb, var(--warning, #e2c08d) 10%, var(--bg-secondary, #1a1a2e));
+  border-bottom: 1px solid color-mix(in srgb, var(--warning, #e2c08d) 25%, transparent);
+  animation: noticeSlideIn 200ms ease-out both;
+}
+
+@keyframes noticeSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

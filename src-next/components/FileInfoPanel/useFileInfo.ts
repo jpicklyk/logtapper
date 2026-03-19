@@ -296,10 +296,12 @@ export function useFileInfo(paneId: string | null): FileInfoData {
           if (filtered[mid] < line) lo = mid + 1; else hi = mid - 1;
         }
         if (!found) {
-          bus.emit('toast:show', {
-            title: 'Section not visible',
-            message: 'That section is outside the active section filter.',
-          });
+          if (paneId) {
+            bus.emit('pane:notice', {
+              paneId,
+              message: 'That section is outside the active section filter.',
+            });
+          }
           return;
         }
       }
