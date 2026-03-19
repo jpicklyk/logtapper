@@ -9,6 +9,15 @@ use super::bridge::BridgeInput;
 /// Emission fields as returned by script execution (Vec of key-value pairs).
 pub type EmissionFields = Vec<(String, serde_json::Value)>;
 
+/// Result of a script execution: updated vars, new emissions, and field enrichments.
+pub struct ScriptResult {
+    pub updated_vars: Dynamic,
+    pub emissions: Vec<EmissionFields>,
+    /// New or changed fields from the script (delta only).
+    /// Empty when the script didn't modify `fields`.
+    pub field_enrichments: Vec<(String, serde_json::Value)>,
+}
+
 // ---------------------------------------------------------------------------
 // ScriptEngine
 // ---------------------------------------------------------------------------
@@ -117,8 +126,8 @@ impl ScriptEngine {
         &mut self,
         src: &str,
         input: &BridgeInput<'_>,
-    ) -> Result<(Dynamic, Vec<EmissionFields>), String> {
-        use crate::scripting::bridge::{build_scope, update_scope, drain_emissions};
+    ) -> Result<ScriptResult, String> {
+        use crate::scripting::bridge::{build_scope, update_scope, drain_emissions, drain_fields};
 
         let ast = self.compile(src)?;
 
@@ -158,8 +167,9 @@ impl ScriptEngine {
             .unwrap_or(Dynamic::UNIT);
 
         let emissions = drain_emissions(scope);
+        let field_enrichments = drain_fields(scope, input.fields);
 
-        Ok((updated_vars, emissions))
+        Ok(ScriptResult { updated_vars, emissions, field_enrichments })
     }
 }
 

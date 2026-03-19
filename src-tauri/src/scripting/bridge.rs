@@ -58,7 +58,7 @@ fn build_fields_map(fields: &[(String, JsonValue)]) -> RhaiMap {
 /// | Name    | Type            | Access     |
 /// |---------|-----------------|------------|
 /// | line    | map             | read-only  |
-/// | fields  | map             | read-only  |
+/// | fields  | map             | read/write |
 /// | vars    | map             | read/write |
 /// | _emits  | array           | internal — scripts never touch this directly |
 ///
@@ -123,6 +123,53 @@ pub fn drain_emissions(scope: &mut Scope<'_>) -> Vec<Vec<(String, JsonValue)>> {
             })
         })
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// drain_fields — extract script-enriched fields back into FieldVec
+// ---------------------------------------------------------------------------
+
+/// After script execution, read the `fields` map from the scope and return any
+/// entries that were added or changed relative to the original extracted fields.
+///
+/// This enables scripts to enrich the field set (e.g., `fields.burst_key = key`)
+/// and have those enrichments flow to downstream pipeline stages (Aggregate).
+///
+/// Returns only the delta (new or changed entries) to avoid unnecessary work
+/// when scripts don't modify fields.
+pub fn drain_fields(
+    scope: &Scope<'_>,
+    original: &[(String, JsonValue)],
+) -> Vec<(String, JsonValue)> {
+    let Some(rhai_fields) = scope.get_value::<RhaiMap>("fields") else {
+        return Vec::new();
+    };
+
+    // Fast path: if the map size hasn't changed and all keys match originals,
+    // the script didn't touch fields.
+    if rhai_fields.len() == original.len() {
+        let all_same = rhai_fields.iter().all(|(k, v)| {
+            original.iter().any(|(ok, ov)| ok == k.as_str() && *ov == dynamic_to_json(v))
+        });
+        if all_same {
+            return Vec::new();
+        }
+    }
+
+    // Collect only new or changed entries.
+    let mut delta = Vec::new();
+    for (k, v) in &rhai_fields {
+        let key = k.to_string();
+        let val = dynamic_to_json(v);
+        let is_new_or_changed = original
+            .iter()
+            .find(|(ok, _)| *ok == key)
+            .map_or(true, |(_, ov)| *ov != val);
+        if is_new_or_changed {
+            delta.push((key, val));
+        }
+    }
+    delta
 }
 
 // ---------------------------------------------------------------------------

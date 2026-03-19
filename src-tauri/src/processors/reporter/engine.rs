@@ -156,11 +156,20 @@ impl<'a> ProcessorRun<'a> {
                         pipeline_ctx,
                     };
                     match engine.run_script(&ss.src, &input) {
-                        Ok((new_vars, new_emissions)) => {
+                        Ok(result) => {
                             // Merge var updates
-                            self.vars.update_from_rhai(&new_vars);
+                            self.vars.update_from_rhai(&result.updated_vars);
+                            // Merge script-enriched fields into the pipeline FieldVec
+                            // so downstream stages (Aggregate) can see them.
+                            for (k, v) in result.field_enrichments {
+                                if let Some(existing) = fields.iter_mut().find(|(ek, _)| *ek == k) {
+                                    existing.1 = v;
+                                } else {
+                                    fields.push((k, v));
+                                }
+                            }
                             // Collect emissions — auto-inject timestamp so time series charts work
-                            for mut e in new_emissions {
+                            for mut e in result.emissions {
                                 if !e.iter().any(|(k, _)| k == "timestamp") {
                                     e.push(("timestamp".to_string(), JsonValue::Number(line.timestamp.into())));
                                 }

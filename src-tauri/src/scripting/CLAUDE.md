@@ -7,7 +7,7 @@ Scripts receive a Rhai scope built once via `bridge.rs:build_scope()` and update
 | Variable | Rhai type | Access | Contents |
 |---|---|---|---|
 | `line` | map | read-only | `raw`, `timestamp` (i64 nanos), `level` (string), `tag`, `pid` (i64), `tid` (i64), `message`, `source_id`, `source_type` (string), `section` (string, "" if none), `line_number` (i64), `is_streaming` (bool), `source_name` (string) |
-| `fields` | map | read-only | Capture groups from upstream Extract stages (keys = field names, values = typed per `cast:`) |
+| `fields` | map | read/write | Capture groups from upstream Extract stages (keys = field names, values = typed per `cast:`). Scripts can add/modify fields; enrichments are merged back into the pipeline FieldVec for downstream stages (Aggregate). |
 | `vars` | map | read/write | Processor-declared variables; persists across all lines |
 | `history` | array of maps | read-only | Up to 1,000 preceding lines; each map has same keys as `line` |
 
