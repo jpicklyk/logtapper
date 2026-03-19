@@ -8,7 +8,7 @@ use tokio::process::Command;
 use tokio_stream::{wrappers::ReceiverStream, StreamExt as _};
 
 use crate::anonymizer::LogAnonymizer;
-use crate::commands::AppState;
+use crate::commands::{lock_or_err, AppState};
 use crate::commands::files::LoadResult;
 use crate::commands::pipeline_core::{ContinuousStates, PartitionedDefs, PipelineCore};
 use crate::core::line::{LineContext, LineMeta, LogLevel, ParsedLineMeta, PipelineContext, ViewLine};
@@ -458,21 +458,20 @@ pub async fn update_stream_trackers(
     tracker_ids: Vec<String>,
 ) -> Result<(), String> {
     let current_total = {
-        let sessions = state.sessions.lock().map_err(|_| "Session lock poisoned")?;
+        let sessions = lock_or_err(&state.sessions, "sessions")?;
         sessions.get(&session_id)
             .and_then(|s| s.primary_source())
             .map_or(0, super::super::core::log_source::LogSource::total_lines)
     };
 
     let tracker_defs: HashMap<String, crate::processors::state_tracker::schema::StateTrackerDef> = {
-        let procs = state.processors.lock().map_err(|_| "Processor lock poisoned")?;
+        let procs = lock_or_err(&state.processors, "processors")?;
         tracker_ids.iter()
             .filter_map(|id| procs.get(id).and_then(|p| p.as_state_tracker()).map(|d| (id.clone(), d.clone())))
             .collect()
     };
 
-    let mut st = state.stream_tracker_state.lock()
-        .map_err(|_| "Stream tracker state lock poisoned")?;
+    let mut st = lock_or_err(&state.stream_tracker_state, "stream_tracker_state")?;
     let inner = st.entry(session_id).or_default();
     inner.retain(|id, _| tracker_ids.contains(id));
     for t_id in &tracker_ids {
@@ -504,14 +503,13 @@ pub async fn update_stream_transformers(
     transformer_ids: Vec<String>,
 ) -> Result<(), String> {
     let current_total = {
-        let sessions = state.sessions.lock().map_err(|_| "Session lock poisoned")?;
+        let sessions = lock_or_err(&state.sessions, "sessions")?;
         sessions.get(&session_id)
             .and_then(|s| s.primary_source())
             .map_or(0, super::super::core::log_source::LogSource::total_lines)
     };
 
-    let mut st = state.stream_transformer_state.lock()
-        .map_err(|_| "Stream transformer state lock poisoned")?;
+    let mut st = lock_or_err(&state.stream_transformer_state, "stream_transformer_state")?;
     let inner = st.entry(session_id).or_default();
     inner.retain(|id, _| transformer_ids.contains(id));
     for t_id in &transformer_ids {
@@ -1224,7 +1222,7 @@ pub fn save_live_capture(
 ) -> Result<u32, String> {
     use std::io::Write;
 
-    let sessions = state.sessions.lock().map_err(|_| "lock poisoned")?;
+    let sessions = lock_or_err(&state.sessions, "sessions")?;
     let session = sessions
         .get(&session_id)
         .ok_or_else(|| format!("Session not found: {session_id}"))?;

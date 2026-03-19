@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
-use crate::commands::AppState;
+use crate::commands::{lock_or_err, AppState};
 use crate::processors::marketplace::{self, MarketplaceEntry, Source};
 use crate::processors::registry;
 use crate::processors::{AnyProcessor, ProcessorSummary};
@@ -81,7 +81,7 @@ impl From<MarketplaceEntry> for MarketplaceEntryDto {
 
 #[tauri::command]
 pub async fn list_sources(state: State<'_, AppState>) -> Result<Vec<Source>, String> {
-    let sources = state.sources.lock().map_err(|_| "Sources lock poisoned")?;
+    let sources = lock_or_err(&state.sources, "sources")?;
     Ok(sources.clone())
 }
 
@@ -91,7 +91,7 @@ pub async fn add_source(
     app: AppHandle,
     source: Source,
 ) -> Result<(), String> {
-    let mut sources = state.sources.lock().map_err(|_| "Sources lock poisoned")?;
+    let mut sources = lock_or_err(&state.sources, "sources")?;
     if sources.iter().any(|s| s.name == source.name) {
         return Err(format!("A source named '{}' already exists", source.name));
     }
@@ -105,7 +105,7 @@ pub async fn remove_source(
     app: AppHandle,
     source_name: String,
 ) -> Result<(), String> {
-    let mut sources = state.sources.lock().map_err(|_| "Sources lock poisoned")?;
+    let mut sources = lock_or_err(&state.sources, "sources")?;
     let before = sources.len();
     sources.retain(|s| s.name != source_name);
     if sources.len() == before {
@@ -120,7 +120,7 @@ pub async fn fetch_marketplace_for_source(
     source_name: String,
 ) -> Result<Vec<MarketplaceEntryDto>, String> {
     let source = {
-        let sources = state.sources.lock().map_err(|_| "Sources lock poisoned")?;
+        let sources = lock_or_err(&state.sources, "sources")?;
         sources
             .iter()
             .find(|s| s.name == source_name)
@@ -207,12 +207,12 @@ pub async fn check_updates(
 ) -> Result<UpdateCheckResult, String> {
     // Snapshot sources and installed processors (release locks before network I/O).
     let sources: Vec<Source> = {
-        let s = state.sources.lock().map_err(|_| "Sources lock poisoned")?;
+        let s = lock_or_err(&state.sources, "sources")?;
         s.iter().filter(|s| s.enabled).cloned().collect()
     };
     // HashMap<qualified_id, (bare_id, installed_version)> for O(1) lookups per marketplace entry.
     let installed: HashMap<String, (String, String)> = {
-        let procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
+        let procs = lock_or_err(&state.processors, "processors")?;
         procs.iter()
             .filter_map(|(qid, proc)| {
                 proc.source.as_ref().map(|_src| {
@@ -285,7 +285,7 @@ pub async fn update_processor(
 
     // Find the source config.
     let source = {
-        let srcs = state.sources.lock().map_err(|_| "Sources lock poisoned")?;
+        let srcs = lock_or_err(&state.sources, "sources")?;
         srcs.iter()
             .find(|s| s.name == source_name)
             .cloned()
@@ -310,7 +310,7 @@ pub async fn update_processor(
 
     // Get current installed version.
     let old_version = {
-        let procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
+        let procs = lock_or_err(&state.processors, "processors")?;
         procs.get(&processor_id).map_or_else(|| "unknown".to_string(), |p| p.meta.version.clone())
     };
 
@@ -335,7 +335,7 @@ pub async fn update_all_from_source(
 ) -> Result<Vec<UpdateResult>, String> {
     // Find the source config.
     let source = {
-        let srcs = state.sources.lock().map_err(|_| "Sources lock poisoned")?;
+        let srcs = lock_or_err(&state.sources, "sources")?;
         srcs.iter()
             .find(|s| s.name == source_name)
             .cloned()
@@ -347,7 +347,7 @@ pub async fn update_all_from_source(
 
     // Snapshot installed processors from this source.
     let installed: Vec<(String, String)> = {
-        let procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
+        let procs = lock_or_err(&state.processors, "processors")?;
         procs.iter()
             .filter_map(|(qid, p)| {
                 if p.source.as_deref() == Some(&source_name) {
@@ -412,7 +412,7 @@ pub async fn save_sources_to_disk(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
-    let sources = state.sources.lock().map_err(|_| "Sources lock poisoned")?;
+    let sources = lock_or_err(&state.sources, "sources")?;
     save_sources(&app, &sources)
 }
 
@@ -422,7 +422,7 @@ pub async fn save_sources_to_disk(
 pub async fn get_pending_updates(
     state: State<'_, AppState>,
 ) -> Result<Vec<UpdateAvailable>, String> {
-    let mut pending = state.pending_updates.lock().map_err(|_| "Pending updates lock poisoned")?;
+    let mut pending = lock_or_err(&state.pending_updates, "pending_updates")?;
     let result = pending.clone();
     pending.clear();
     Ok(result)
@@ -462,7 +462,7 @@ async fn download_and_install_processor(
 
     // 6. Insert into state.
     {
-        let mut procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
+        let mut procs = lock_or_err(&state.processors, "processors")?;
         procs.insert(qualified_id.to_string(), def.clone());
     }
 
@@ -485,7 +485,7 @@ pub async fn install_from_marketplace(
 ) -> Result<ProcessorSummary, String> {
     // Look up the source.
     let source = {
-        let srcs = state.sources.lock().map_err(|_| "Sources lock poisoned")?;
+        let srcs = lock_or_err(&state.sources, "sources")?;
         srcs.iter()
             .find(|s| s.name == source_name)
             .cloned()

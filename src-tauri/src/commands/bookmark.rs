@@ -1,7 +1,7 @@
 use tauri::State;
 use uuid::Uuid;
 
-use crate::commands::AppState;
+use crate::commands::{lock_or_err, AppState};
 use crate::core::bookmark::{Bookmark, BookmarkUpdateEvent, CreatedBy};
 
 /// Create a new bookmark on a specific line.
@@ -22,7 +22,7 @@ pub fn create_bookmark(
 ) -> Result<Bookmark, String> {
     // Verify session exists
     {
-        let sessions = state.sessions.lock().map_err(|_| "lock poisoned")?;
+        let sessions = lock_or_err(&state.sessions, "sessions")?;
         if !sessions.contains_key(&session_id) {
             return Err(format!("Session not found: {session_id}"));
         }
@@ -46,7 +46,7 @@ pub fn create_bookmark(
     };
 
     {
-        let mut bookmarks = state.bookmarks.lock().map_err(|_| "lock poisoned")?;
+        let mut bookmarks = lock_or_err(&state.bookmarks, "bookmarks")?;
         bookmarks
             .entry(session_id.clone())
             .or_default()
@@ -72,7 +72,7 @@ pub fn list_bookmarks(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<Vec<Bookmark>, String> {
-    let bookmarks = state.bookmarks.lock().map_err(|_| "lock poisoned")?;
+    let bookmarks = lock_or_err(&state.bookmarks, "bookmarks")?;
     Ok(bookmarks.get(&session_id).cloned().unwrap_or_default())
 }
 
@@ -89,7 +89,7 @@ pub fn update_bookmark(
     category: Option<String>,
     tags: Option<Vec<String>>,
 ) -> Result<Bookmark, String> {
-    let mut bookmarks = state.bookmarks.lock().map_err(|_| "lock poisoned")?;
+    let mut bookmarks = lock_or_err(&state.bookmarks, "bookmarks")?;
     let list = bookmarks
         .get_mut(&session_id)
         .ok_or_else(|| format!("No bookmarks for session: {session_id}"))?;
@@ -136,7 +136,7 @@ pub fn delete_bookmark(
     session_id: String,
     bookmark_id: String,
 ) -> Result<(), String> {
-    let mut bookmarks = state.bookmarks.lock().map_err(|_| "lock poisoned")?;
+    let mut bookmarks = lock_or_err(&state.bookmarks, "bookmarks")?;
     let list = bookmarks
         .get_mut(&session_id)
         .ok_or_else(|| format!("No bookmarks for session: {session_id}"))?;

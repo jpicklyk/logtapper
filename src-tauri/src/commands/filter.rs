@@ -4,7 +4,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::commands::AppState;
+use crate::commands::{lock_or_err, AppState};
 use crate::core::filter::{
     line_matches_criteria, FilterCriteria, FilterSession, FilterStatus,
 };
@@ -67,7 +67,7 @@ pub async fn create_filter(
 ) -> Result<FilterCreateResult, String> {
     // Validate session exists and get total lines
     let total_lines = {
-        let sessions = state.sessions.lock().map_err(|_| "lock poisoned")?;
+        let sessions = lock_or_err(&state.sessions, "sessions")?;
         let session = sessions
             .get(&session_id)
             .ok_or_else(|| format!("Session '{session_id}' not found"))?;
@@ -85,7 +85,7 @@ pub async fn create_filter(
 
     // Store in AppState
     {
-        let mut filters = state.active_filters.lock().map_err(|_| "lock poisoned")?;
+        let mut filters = lock_or_err(&state.active_filters, "active_filters")?;
         filters.insert(filter_id.clone(), Arc::clone(&filter));
     }
 
@@ -224,7 +224,7 @@ pub async fn get_filtered_lines(
     count: usize,
 ) -> Result<FilteredLinesResult, String> {
     let filter = {
-        let filters = state.active_filters.lock().map_err(|_| "lock poisoned")?;
+        let filters = lock_or_err(&state.active_filters, "active_filters")?;
         filters
             .get(&filter_id)
             .cloned()
@@ -237,7 +237,7 @@ pub async fn get_filtered_lines(
 
     // Build ViewLines from the matched line numbers
     let lines: Vec<ViewLine> = {
-        let sessions = state.sessions.lock().map_err(|_| "lock poisoned")?;
+        let sessions = lock_or_err(&state.sessions, "sessions")?;
         let Some(session) = sessions.get(&filter.session_id) else {
             return Err(format!("Session '{}' not found", filter.session_id));
         };
@@ -315,7 +315,7 @@ pub fn cancel_filter(
     state: State<'_, AppState>,
     filter_id: String,
 ) -> Result<(), String> {
-    let filters = state.active_filters.lock().map_err(|_| "lock poisoned")?;
+    let filters = lock_or_err(&state.active_filters, "active_filters")?;
     if let Some(filter) = filters.get(&filter_id) {
         filter.cancel();
         Ok(())
@@ -333,7 +333,7 @@ pub fn get_filter_info(
     state: State<'_, AppState>,
     filter_id: String,
 ) -> Result<FilterInfo, String> {
-    let filters = state.active_filters.lock().map_err(|_| "lock poisoned")?;
+    let filters = lock_or_err(&state.active_filters, "active_filters")?;
     let filter = filters
         .get(&filter_id)
         .ok_or_else(|| format!("Filter '{filter_id}' not found"))?;
@@ -363,7 +363,7 @@ pub fn close_filter(
     state: State<'_, AppState>,
     filter_id: String,
 ) -> Result<(), String> {
-    let mut filters = state.active_filters.lock().map_err(|_| "lock poisoned")?;
+    let mut filters = lock_or_err(&state.active_filters, "active_filters")?;
     if let Some(filter) = filters.remove(&filter_id) {
         filter.cancel(); // Stop scanning if still running
     }

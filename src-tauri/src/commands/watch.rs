@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tauri::State;
 use uuid::Uuid;
 
-use crate::commands::AppState;
+use crate::commands::{lock_or_err, AppState};
 use crate::core::filter::FilterCriteria;
 use crate::core::watch::{WatchInfo, WatchSession};
 
@@ -18,7 +18,7 @@ pub fn create_watch(
 ) -> Result<WatchInfo, String> {
     // Verify session exists
     {
-        let sessions = state.sessions.lock().map_err(|_| "lock poisoned")?;
+        let sessions = lock_or_err(&state.sessions, "sessions")?;
         if !sessions.contains_key(&session_id) {
             return Err(format!("Session not found: {session_id}"));
         }
@@ -40,7 +40,7 @@ pub fn create_watch(
     };
 
     {
-        let mut watches = state.active_watches.lock().map_err(|_| "lock poisoned")?;
+        let mut watches = lock_or_err(&state.active_watches, "active_watches")?;
         watches
             .entry(session_id)
             .or_default()
@@ -57,7 +57,7 @@ pub fn cancel_watch(
     session_id: String,
     watch_id: String,
 ) -> Result<(), String> {
-    let watches = state.active_watches.lock().map_err(|_| "lock poisoned")?;
+    let watches = lock_or_err(&state.active_watches, "active_watches")?;
     if let Some(list) = watches.get(&session_id) {
         if let Some(w) = list.iter().find(|w| w.watch_id == watch_id) {
             w.cancel();
@@ -73,7 +73,7 @@ pub fn list_watches(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<Vec<WatchInfo>, String> {
-    let watches = state.active_watches.lock().map_err(|_| "lock poisoned")?;
+    let watches = lock_or_err(&state.active_watches, "active_watches")?;
     let list = watches.get(&session_id);
     Ok(list
         .map(|ws| {

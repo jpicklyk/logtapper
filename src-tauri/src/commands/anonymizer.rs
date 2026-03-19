@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use tauri::{AppHandle, Manager, State};
 
 use crate::anonymizer::{config::AnonymizerConfig, LogAnonymizer};
-use crate::commands::AppState;
+use crate::commands::{lock_or_err, AppState};
 
 // ---------------------------------------------------------------------------
 // Test result types
@@ -34,10 +34,7 @@ pub struct AnonymizerTestResult {
 pub async fn get_anonymizer_config(
     state: State<'_, AppState>,
 ) -> Result<AnonymizerConfig, String> {
-    let config = state
-        .anonymizer_config
-        .lock()
-        .map_err(|_| "lock poisoned")?;
+    let config = lock_or_err(&state.anonymizer_config, "anonymizer_config")?;
     Ok(config.clone())
 }
 
@@ -60,10 +57,7 @@ pub async fn set_anonymizer_config(
     config: AnonymizerConfig,
 ) -> Result<(), String> {
     persist_anonymizer_config(&app, &config)?;
-    let mut stored = state
-        .anonymizer_config
-        .lock()
-        .map_err(|_| "lock poisoned")?;
+    let mut stored = lock_or_err(&state.anonymizer_config, "anonymizer_config")?;
     *stored = config;
     Ok(())
 }
@@ -78,7 +72,7 @@ pub async fn test_anonymizer(
     text: String,
 ) -> Result<AnonymizerTestResult, String> {
     let config = {
-        let c = state.anonymizer_config.lock().map_err(|_| "lock poisoned")?;
+        let c = lock_or_err(&state.anonymizer_config, "anonymizer_config")?;
         c.clone()
     };
 

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::Serialize;
 use tauri::State;
 
-use crate::commands::AppState;
+use crate::commands::{lock_or_err, AppState};
 use crate::mcp_bridge::PORT as MCP_PORT;
 
 #[derive(Serialize)]
@@ -78,7 +78,7 @@ pub fn get_session_metadata(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<SessionMetadata, String> {
-    let sessions = state.sessions.lock().map_err(|_| "lock poisoned")?;
+    let sessions = lock_or_err(&state.sessions, "sessions")?;
     let session = sessions
         .get(&session_id)
         .ok_or_else(|| format!("Session '{session_id}' not found"))?;

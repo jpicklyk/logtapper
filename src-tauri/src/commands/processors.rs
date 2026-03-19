@@ -2,7 +2,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use tauri::{AppHandle, Manager, State};
 
-use crate::commands::AppState;
+use crate::commands::{lock_or_err, AppState};
 use crate::processors::marketplace;
 use crate::processors::{AnyProcessor, ProcessorSummary};
 
@@ -92,7 +92,7 @@ fn validate_and_install(
     validate_processor(&processor)?;
     persist_processor(app, &processor.meta.id, yaml)?;
     let summary = ProcessorSummary::from(&processor);
-    let mut procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
+    let mut procs = lock_or_err(&state.processors, "processors")?;
     procs.insert(processor.meta.id.clone(), processor);
     Ok(summary)
 }
@@ -110,7 +110,7 @@ fn delete_processor_file(app: &AppHandle, id: &str) {
 pub async fn list_processors(
     state: State<'_, AppState>,
 ) -> Result<Vec<ProcessorSummary>, String> {
-    let procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
+    let procs = lock_or_err(&state.processors, "processors")?;
     let mut out: Vec<ProcessorSummary> = procs.iter().map(|(key, p)| {
         let mut summary = ProcessorSummary::from(p);
         // Use the map key (qualified ID for marketplace processors) instead of bare meta.id.
@@ -148,7 +148,7 @@ pub async fn get_processor_vars(
     session_id: String,
     processor_id: String,
 ) -> Result<HashMap<String, serde_json::Value>, String> {
-    let pr = state.pipeline_results.lock().map_err(|_| "Pipeline results lock poisoned")?;
+    let pr = lock_or_err(&state.pipeline_results, "pipeline_results")?;
     let session_results = pr.get(&session_id)
         .ok_or_else(|| format!("No pipeline results for session '{session_id}'" ))?;
     let result = session_results.get(&processor_id)
@@ -171,7 +171,7 @@ pub async fn get_matched_lines(
 ) -> Result<Vec<MatchedLineInfo>, String> {
     // 1. Reporter pipeline results
     let line_nums: Vec<usize> = {
-        let pr = state.pipeline_results.lock().map_err(|_| "Pipeline results lock poisoned")?;
+        let pr = lock_or_err(&state.pipeline_results, "pipeline_results")?;
         if let Some(nums) = pr.get(&session_id)
             .and_then(|s| s.get(&processor_id))
             .map(|r| r.matched_line_nums.clone())
@@ -180,7 +180,7 @@ pub async fn get_matched_lines(
         } else {
             drop(pr);
             // 2. State tracker transition lines
-            let str_lock = state.state_tracker_results.lock().map_err(|_| "State tracker results lock poisoned")?;
+            let str_lock = lock_or_err(&state.state_tracker_results, "state_tracker_results")?;
             if let Some(nums) = str_lock.get(&session_id)
                 .and_then(|s| s.get(&processor_id))
                 .map(|r| r.transitions.iter().map(|t| t.line_num).collect::<Vec<_>>())
@@ -189,7 +189,7 @@ pub async fn get_matched_lines(
             } else {
                 drop(str_lock);
                 // 3. Correlator event trigger lines
-                let cr_lock = state.correlator_results.lock().map_err(|_| "Correlator results lock poisoned")?;
+                let cr_lock = lock_or_err(&state.correlator_results, "correlator_results")?;
                 cr_lock.get(&session_id)
                     .and_then(|s| s.get(&processor_id))
                     .map(|r| r.events.iter().map(|e| e.trigger_line_num).collect::<Vec<_>>())
@@ -200,7 +200,7 @@ pub async fn get_matched_lines(
     let mut line_nums = line_nums;
     line_nums.sort_unstable();
 
-    let sessions = state.sessions.lock().map_err(|_| "Session lock poisoned")?;
+    let sessions = lock_or_err(&state.sessions, "sessions")?;
     let session = sessions.get(&session_id)
         .ok_or_else(|| format!("Session '{session_id}' not found"))?;
     let src = session.primary_source().ok_or("No sources in session")?;
@@ -220,7 +220,7 @@ pub async fn uninstall_processor(
     if processor_id.starts_with("__") {
         return Err("Built-in processors cannot be uninstalled".to_string());
     }
-    let mut procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
+    let mut procs = lock_or_err(&state.processors, "processors")?;
     if procs.remove(&processor_id).is_none() {
         return Err(format!("Processor '{processor_id}' not found"));
     }

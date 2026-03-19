@@ -1,7 +1,7 @@
 use tauri::State;
 use uuid::Uuid;
 
-use crate::commands::AppState;
+use crate::commands::{lock_or_err, AppState};
 use crate::core::analysis::{AnalysisArtifact, AnalysisSection, AnalysisUpdateEvent};
 
 /// Publish a new analysis artifact for a session.
@@ -15,7 +15,7 @@ pub fn publish_analysis(
 ) -> Result<AnalysisArtifact, String> {
     // Verify session exists
     {
-        let sessions = state.sessions.lock().map_err(|_| "lock poisoned")?;
+        let sessions = lock_or_err(&state.sessions, "sessions")?;
         if !sessions.contains_key(&session_id) {
             return Err(format!("Session not found: {session_id}"));
         }
@@ -33,7 +33,7 @@ pub fn publish_analysis(
     };
 
     {
-        let mut analyses = state.analyses.lock().map_err(|_| "lock poisoned")?;
+        let mut analyses = lock_or_err(&state.analyses, "analyses")?;
         analyses
             .entry(session_id.clone())
             .or_default()
@@ -63,7 +63,7 @@ pub fn update_analysis(
     title: Option<String>,
     sections: Option<Vec<AnalysisSection>>,
 ) -> Result<AnalysisArtifact, String> {
-    let mut analyses = state.analyses.lock().map_err(|_| "lock poisoned")?;
+    let mut analyses = lock_or_err(&state.analyses, "analyses")?;
     let list = analyses
         .get_mut(&session_id)
         .ok_or_else(|| format!("No analyses for session: {session_id}"))?;
@@ -102,7 +102,7 @@ pub fn list_analyses(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<Vec<AnalysisArtifact>, String> {
-    let analyses = state.analyses.lock().map_err(|_| "lock poisoned")?;
+    let analyses = lock_or_err(&state.analyses, "analyses")?;
     Ok(analyses.get(&session_id).cloned().unwrap_or_default())
 }
 
@@ -113,7 +113,7 @@ pub fn get_analysis(
     session_id: String,
     artifact_id: String,
 ) -> Result<AnalysisArtifact, String> {
-    let analyses = state.analyses.lock().map_err(|_| "lock poisoned")?;
+    let analyses = lock_or_err(&state.analyses, "analyses")?;
     let list = analyses
         .get(&session_id)
         .ok_or_else(|| format!("No analyses for session: {session_id}"))?;
@@ -132,7 +132,7 @@ pub fn delete_analysis(
     session_id: String,
     artifact_id: String,
 ) -> Result<(), String> {
-    let mut analyses = state.analyses.lock().map_err(|_| "lock poisoned")?;
+    let mut analyses = lock_or_err(&state.analyses, "analyses")?;
     let list = analyses
         .get_mut(&session_id)
         .ok_or_else(|| format!("No analyses for session: {session_id}"))?;

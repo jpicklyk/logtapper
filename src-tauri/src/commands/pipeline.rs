@@ -5,7 +5,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
-use crate::commands::AppState;
+use crate::commands::{lock_or_err, AppState};
 use crate::commands::pipeline_core::{
     excluded_by_source_type, PartitionedDefs, PipelineCore,
 };
@@ -146,7 +146,7 @@ pub fn execute_pipeline(
         correlator_defs: Vec::new(),
     };
     {
-        let procs = state.processors.lock().map_err(|_| "Processor store lock poisoned")?;
+        let procs = lock_or_err(&state.processors, "processors")?;
         for id in processor_ids {
             let resolved = resolve_processor_id(&procs, id)
                 .unwrap_or_else(|| id.clone());
@@ -164,7 +164,7 @@ pub fn execute_pipeline(
 
     // ── Snapshot source data ─────────────────────────────────────────────────
     let (source_snapshot, source_id, source_type, src_sections) = {
-        let sessions = state.sessions.lock().map_err(|_| "Session lock poisoned")?;
+        let sessions = lock_or_err(&state.sessions, "sessions")?;
         let session = sessions.get(session_id)
             .ok_or_else(|| format!("Session '{session_id}' not found"))?;
         let src = session.primary_source().ok_or("No sources in session")?;

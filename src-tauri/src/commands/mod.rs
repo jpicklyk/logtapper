@@ -100,6 +100,14 @@ impl Default for AppState {
     }
 }
 
+/// Acquire a Mutex lock, mapping poison errors to a consistent `String` error.
+pub fn lock_or_err<'a, T>(
+    mutex: &'a std::sync::Mutex<T>,
+    name: &str,
+) -> Result<std::sync::MutexGuard<'a, T>, String> {
+    mutex.lock().map_err(|_| format!("{name} lock poisoned"))
+}
+
 impl AppState {
     pub fn new() -> Self {
         Self {

@@ -8,7 +8,7 @@ Every public function in this directory is a `#[tauri::command]` registered in `
 
 1. **Never hold a lock across an `.await` point.** Acquire, use, drop before any async call.
 2. **Never hold `sessions` while trying to acquire `pipeline_results`** (or vice versa) — that lock ordering is undefined and could deadlock.
-3. Lock with `state.foo.lock().map_err(|_| "lock poisoned")?` — propagate poison as a command error.
+3. Lock with `lock_or_err(&state.foo, "foo")?` (defined in `mod.rs`) — propagate poison as a consistent `"foo lock poisoned"` error. Never use raw `.lock().map_err(|_| "...")` inline.
 
 ### Source snapshot pattern in `pipeline.rs`
 
