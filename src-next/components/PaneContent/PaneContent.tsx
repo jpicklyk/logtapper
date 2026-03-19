@@ -15,6 +15,7 @@ import styles from './PaneContent.module.css';
 export interface PaneTab {
   id: string;
   type: 'logviewer' | 'dashboard' | 'editor' | 'analysis';
+  label?: string;
 }
 
 export interface Pane {
@@ -243,6 +244,7 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
         <>
           <EditorTab
             tabId={activeTab.id}
+            tabLabel={activeTab.label}
             isFocused={isFocusedPane}
             onDirtyChanged={onDirtyChanged}
             onFilePathChanged={onFilePathChanged}

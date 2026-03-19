@@ -17,6 +17,7 @@ export type EditorViewMode = 'editor' | 'split' | 'preview';
 
 interface EditorTabProps {
   tabId: string;
+  tabLabel?: string;
   isFocused?: boolean;
   onDirtyChanged?: (tabId: string, isDirty: boolean) => void;
   onFilePathChanged?: (tabId: string, newLabel: string) => void;
@@ -24,6 +25,7 @@ interface EditorTabProps {
 
 const EditorTab = React.memo(function EditorTab({
   tabId,
+  tabLabel = 'Untitled',
   isFocused = false,
   onDirtyChanged,
   onFilePathChanged,
@@ -110,8 +112,15 @@ const EditorTab = React.memo(function EditorTab({
     onDirtyChanged?.(tabId, isDirty);
   }, [tabId, isDirty, onDirtyChanged]);
 
+  // Use a ref so handleSaveAs always reads the latest label without re-creating the callback.
+  const tabLabelRef = useRef(tabLabel);
+  tabLabelRef.current = tabLabel;
+
   const handleSaveAs = useCallback(async () => {
+    // Default to current file path; fall back to tab label as filename suggestion.
+    const defaultPath = filePathRef.current || tabLabelRef.current;
     const path = await save({
+      defaultPath,
       filters: [
         { name: 'Text Files', extensions: ['yaml', 'yml', 'md', 'txt'] },
         { name: 'All Files', extensions: ['*'] },
@@ -124,6 +133,7 @@ const EditorTab = React.memo(function EditorTab({
       filePathRef.current = path;
       storageSet(LS_FILEPATH_PREFIX + tabId, path);
       setIsDirty(false);
+      // Update tab name to reflect the saved filename.
       const filename = path.split(/[\\/]/).pop() || path;
       onFilePathChanged?.(tabId, filename);
     }
