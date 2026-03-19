@@ -241,6 +241,7 @@ export function useWorkspaceLayout() {
     addCenterTab: centerTree.addCenterTab,
     resizeSplit: centerTree.resizeSplit,
     renameTab: centerTree.renameTab,
+    setTabUnsaved: centerTree.setTabUnsaved,
     openCenterTab: centerTree.openCenterTab,
     dropTabOnPane: centerTree.dropTabOnPane,
 

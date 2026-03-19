@@ -15,6 +15,7 @@ export interface Tab {
   label: string;
   closable: boolean;
   readOnly?: boolean;
+  unsaved?: boolean;
 }
 
 export interface CenterPane {
@@ -42,6 +43,7 @@ export interface WorkspaceLayoutState {
   addCenterTab: (paneId: string, type: CenterTabType, label?: string) => void;
   resizeSplit: (splitNodeId: string, ratio: number) => void;
   renameTab: (tabId: string, label: string) => void;
+  setTabUnsaved: (tabId: string, isDirty: boolean) => void;
   openCenterTab: (type: CenterTabType, label?: string) => void;
   dropTabOnPane: (tabId: string, fromPaneId: string, toPaneId: string, zone: DropZone) => void;
 

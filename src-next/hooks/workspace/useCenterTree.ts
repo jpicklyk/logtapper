@@ -35,6 +35,7 @@ export interface CenterTreeHandle {
   addCenterTab: (paneId: string, type: CenterTabType, label?: string) => void;
   resizeSplit: (splitNodeId: string, ratio: number) => void;
   renameTab: (tabId: string, label: string) => void;
+  setTabUnsaved: (tabId: string, isDirty: boolean) => void;
   openCenterTab: (type: CenterTabType, label?: string) => void;
   dropTabOnPane: (tabId: string, fromPaneId: string, toPaneId: string, zone: DropZone) => void;
 }
@@ -194,6 +195,20 @@ export function useCenterTree(
       return updateLeaf(tree, found.pane.id, (pane) => ({
         ...pane,
         tabs: pane.tabs.map((t) => (t.id === tabId ? { ...t, label } : t)),
+      }));
+    });
+  }, [updateTree]);
+
+  const setTabUnsaved = useCallback((tabId: string, isDirty: boolean) => {
+    updateTree((tree) => {
+      const found = findTabAcrossTree(tree, tabId);
+      if (!found) return tree;
+      const currentTab = found.pane.tabs.find((t) => t.id === tabId);
+      // Bail out early if value unchanged — avoid unnecessary renders
+      if (currentTab?.unsaved === isDirty) return tree;
+      return updateLeaf(tree, found.pane.id, (pane) => ({
+        ...pane,
+        tabs: pane.tabs.map((t) => (t.id === tabId ? { ...t, unsaved: isDirty } : t)),
       }));
     });
   }, [updateTree]);
@@ -545,6 +560,7 @@ export function useCenterTree(
     addCenterTab,
     resizeSplit,
     renameTab,
+    setTabUnsaved,
     openCenterTab,
     dropTabOnPane,
   };

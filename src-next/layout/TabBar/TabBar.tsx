@@ -11,6 +11,7 @@ interface TabBarTab {
   closable?: boolean;
   type?: string;
   readOnly?: boolean;
+  unsaved?: boolean;
 }
 
 const TAB_COLORS: Record<string, string> = {
@@ -63,6 +64,7 @@ export const TabBar = React.memo(function TabBar({
           onClose={onClose}
           onRename={RENAMABLE_TYPES.has(tab.type ?? '') ? onRename : undefined}
           readOnly={tab.readOnly}
+          unsaved={tab.unsaved}
         />
       ))}
       {onAdd && (
@@ -84,6 +86,7 @@ interface SortableTabButtonProps {
   onClose?: (tabId: string) => void;
   onRename?: (tabId: string, newLabel: string) => void;
   readOnly?: boolean;
+  unsaved?: boolean;
 }
 
 const SortableTabButton = React.memo(function SortableTabButton({
@@ -96,6 +99,7 @@ const SortableTabButton = React.memo(function SortableTabButton({
   onClose,
   onRename,
   readOnly,
+  unsaved,
 }: SortableTabButtonProps) {
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
@@ -212,6 +216,9 @@ const SortableTabButton = React.memo(function SortableTabButton({
             </span>
           )}
           <span className={styles.label} onDoubleClick={handleDoubleClick}>{tab.label}</span>
+          {unsaved && !editing && (
+            <span className={styles.unsavedDot} title="Unsaved changes" />
+          )}
         </>
       )}
       {tab.closable && !editing && (

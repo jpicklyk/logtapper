@@ -240,3 +240,15 @@
   flex-shrink: 0;
   margin-right: 2px;
 }
+
+/* ── Unsaved changes indicator (dirty dot) ───────────────────────────────── */
+
+.unsavedDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warning);
+  flex-shrink: 0;
+  display: inline-block;
+  margin-left: 4px;
+}

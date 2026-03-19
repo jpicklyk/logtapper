@@ -211,6 +211,20 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
     [workspace.renameTab],
   );
 
+  const handleDirtyChanged = useCallback(
+    (tabId: string, isDirty: boolean) => {
+      workspace.setTabUnsaved(tabId, isDirty);
+    },
+    [workspace.setTabUnsaved],
+  );
+
+  const handleFilePathChanged = useCallback(
+    (tabId: string, newLabel: string) => {
+      workspace.renameTab(tabId, newLabel);
+    },
+    [workspace.renameTab],
+  );
+
   const handleTabReorder = useCallback(
     (paneId: string, fromIndex: number, toIndex: number) => {
       workspace.reorderTab(paneId, fromIndex, toIndex);
@@ -348,7 +362,15 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
       {currentPanes.map((pane) => {
         const container = contentRefsRef.current.get(pane.id);
         if (!container) return null;
-        return createPortal(<PaneContent pane={pane} />, container, pane.id);
+        return createPortal(
+          <PaneContent
+            pane={pane}
+            onDirtyChanged={handleDirtyChanged}
+            onFilePathChanged={handleFilePathChanged}
+          />,
+          container,
+          pane.id,
+        );
       })}
 
       {/* Toast notifications (e.g. MCP-published analyses) */}
