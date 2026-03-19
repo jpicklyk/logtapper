@@ -7,6 +7,7 @@ import styles from './EditorTab.module.css';
 
 const LS_CONTENT_PREFIX = 'logtapper_scratchpad_';
 const LS_MODE_PREFIX = 'logtapper_editor_mode_';
+const LS_WRAP_PREFIX = 'logtapper_editor_wrap_';
 
 export type EditorViewMode = 'editor' | 'split' | 'preview';
 
@@ -18,6 +19,9 @@ const EditorTab = React.memo(function EditorTab({ tabId }: EditorTabProps) {
   const [value, setValue] = useState(() => storageGet(LS_CONTENT_PREFIX + tabId));
   const [viewMode, setViewMode] = useState<EditorViewMode>(
     () => (storageGet(LS_MODE_PREFIX + tabId) as EditorViewMode) || 'editor',
+  );
+  const [wordWrap, setWordWrap] = useState(
+    () => storageGet(LS_WRAP_PREFIX + tabId) === 'true',
   );
   const valueRef = useRef(value);
   valueRef.current = value;
@@ -31,6 +35,7 @@ const EditorTab = React.memo(function EditorTab({ tabId }: EditorTabProps) {
     prevTabIdRef.current = tabId;
     setValue(storageGet(LS_CONTENT_PREFIX + tabId));
     setViewMode((storageGet(LS_MODE_PREFIX + tabId) as EditorViewMode) || 'editor');
+    setWordWrap(storageGet(LS_WRAP_PREFIX + tabId) === 'true');
   }, [tabId]);
 
   const handleChange = useCallback((next: string) => {
@@ -40,6 +45,14 @@ const EditorTab = React.memo(function EditorTab({ tabId }: EditorTabProps) {
   const handleModeChange = useCallback((mode: EditorViewMode) => {
     setViewMode(mode);
     storageSet(LS_MODE_PREFIX + tabId, mode);
+  }, [tabId]);
+
+  const handleWordWrapToggle = useCallback(() => {
+    setWordWrap((prev) => {
+      const next = !prev;
+      storageSet(LS_WRAP_PREFIX + tabId, String(next));
+      return next;
+    });
   }, [tabId]);
 
   // Persist content to localStorage on change (debounced).
@@ -52,7 +65,7 @@ const EditorTab = React.memo(function EditorTab({ tabId }: EditorTabProps) {
 
   return (
     <div className={styles.root}>
-      <EditorToolbar viewMode={viewMode} onModeChange={handleModeChange} />
+      <EditorToolbar viewMode={viewMode} onModeChange={handleModeChange} wordWrap={wordWrap} onWordWrapToggle={handleWordWrapToggle} />
       <div className={styles.content} data-mode={viewMode}>
         {/* Keep TextEditor mounted (hidden) in preview mode to preserve CodeMirror
             undo history and avoid expensive reinit on mode switch. */}
@@ -62,7 +75,7 @@ const EditorTab = React.memo(function EditorTab({ tabId }: EditorTabProps) {
             onChange={handleChange}
             placeholder="Start typing..."
             className={styles.editor}
-            lineWrapping
+            lineWrapping={wordWrap}
           />
         </div>
         {viewMode !== 'editor' && (

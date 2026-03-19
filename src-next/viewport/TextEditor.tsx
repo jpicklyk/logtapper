@@ -42,6 +42,7 @@ const TextEditor = React.memo(function TextEditor({
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const readOnlyCompartment = useRef(new Compartment());
+  const lineWrappingCompartment = useRef(new Compartment());
   const themeCompartment = useRef(new Compartment());
   // Tracks the last value emitted by the editor via onChange. When the parent
   // feeds this value back as the `value` prop, the sync effect can skip the
@@ -59,7 +60,7 @@ const TextEditor = React.memo(function TextEditor({
       history(),
       rectangularSelection(),
       crosshairCursor(),
-      ...(enableLineWrapping ? [EditorView.lineWrapping] : []),
+      lineWrappingCompartment.current.of(enableLineWrapping ? EditorView.lineWrapping : []),
       keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
       themeCompartment.current.of(editorTheme),
       readOnlyCompartment.current.of(EditorState.readOnly.of(readOnly)),
@@ -141,6 +142,18 @@ const TextEditor = React.memo(function TextEditor({
       ),
     });
   }, [readOnly]);
+
+  // Sync lineWrapping prop
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+
+    view.dispatch({
+      effects: lineWrappingCompartment.current.reconfigure(
+        enableLineWrapping ? EditorView.lineWrapping : []
+      ),
+    });
+  }, [enableLineWrapping]);
 
   return (
     <div

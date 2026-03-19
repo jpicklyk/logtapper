@@ -2,7 +2,7 @@ import React from 'react';
 import styles from './IconButton.module.css';
 
 interface IconButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  icon: React.ComponentType<{ size?: number }>;
+  icon: React.ComponentType<{ size?: number | string }>;
   size?: number;
   active?: boolean;
   title?: string;
