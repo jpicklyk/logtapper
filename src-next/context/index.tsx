@@ -49,6 +49,19 @@ function HookWiring({ children }: { children: ReactNode }) {
     }
   }, [logViewer.loadFile]);
 
+  const openBugreportDialog = useCallback(async () => {
+    const selected = await open({
+      multiple: false,
+      filters: [
+        { name: 'Bugreport Files', extensions: ['zip', 'txt'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+    if (typeof selected === 'string') {
+      await logViewer.loadFile(selected);
+    }
+  }, [logViewer.loadFile]);
+
   // All focus changes go through the bus so SessionContext and WorkspaceLayout
   // both update from a single emission point.
   // Empty dep array — reads paneSessionMap via ref so the callback never needs
@@ -61,6 +74,7 @@ function HookWiring({ children }: { children: ReactNode }) {
   const actions = useMemo<Partial<ActionsContextValue>>(() => ({
     loadFile: logViewer.loadFile,
     openFileDialog,
+    openBugreportDialog,
     startStream: (deviceId?: string) => logViewer.startStream(
       deviceId, undefined, undefined, settingsRef.current.streamBackendLineMax,
     ),
@@ -74,7 +88,7 @@ function HookWiring({ children }: { children: ReactNode }) {
     openTab: (type: string) => { bus.emit('layout:open-tab', { type }); },
     setFocusedPane,
     setEffectiveLineNums: logViewer.setEffectiveLineNums,
-  }), [logViewer.loadFile, openFileDialog, logViewer.startStream, logViewer.stopStream,
+  }), [logViewer.loadFile, openFileDialog, openBugreportDialog, logViewer.startStream, logViewer.stopStream,
        logViewer.closeSession, logViewer.jumpToLine, logViewer.jumpToMatch,
        logViewer.handleSearch, logViewer.setStreamFilter, logViewer.cancelStreamFilter,
        logViewer.setEffectiveLineNums]);

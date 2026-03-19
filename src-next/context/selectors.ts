@@ -187,10 +187,10 @@ export function useTrackerTransitions(): {
 // ---------------------------------------------------------------------------
 
 export function useViewerActions() {
-  const { loadFile, openFileDialog, startStream, stopStream, closeSession,
+  const { loadFile, openFileDialog, openBugreportDialog, startStream, stopStream, closeSession,
           jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
           openTab, setFocusedPane, setEffectiveLineNums } = useActionsContext();
-  return { loadFile, openFileDialog, startStream, stopStream, closeSession,
+  return { loadFile, openFileDialog, openBugreportDialog, startStream, stopStream, closeSession,
            jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
            openTab, setFocusedPane, setEffectiveLineNums };
 }
