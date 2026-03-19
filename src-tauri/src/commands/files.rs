@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tempfile::NamedTempFile;
 
 use crate::commands::{lock_or_err, AppState};
 use crate::core::line::{
@@ -12,6 +13,49 @@ use crate::core::line::{
     SearchSummary, ViewLine, ViewMode,
 };
 use crate::core::session::{AnalysisSession, SectionInfo, parser_for};
+
+// ---------------------------------------------------------------------------
+// Zip extraction for bugreport .zip files
+// ---------------------------------------------------------------------------
+
+/// Extract the dumpstate/bugreport .txt from a bugreport .zip to a temp file.
+/// Picks the largest `.txt` file in the archive (the main dumpstate dump).
+/// Returns a `NamedTempFile` that must be kept alive for the session duration.
+fn extract_bugreport_from_zip(zip_path: &Path) -> Result<NamedTempFile, String> {
+    let file = std::fs::File::open(zip_path)
+        .map_err(|e| format!("Cannot open zip '{}': {e}", zip_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| format!("Invalid zip archive '{}': {e}", zip_path.display()))?;
+
+    // Find the largest .txt entry (the main bugreport/dumpstate text).
+    let best_index = (0..archive.len())
+        .filter_map(|i| {
+            let entry = archive.by_index(i).ok()?;
+            let name = entry.name().to_string();
+            if name.ends_with('/') { return None; } // skip directories
+            if name.to_lowercase().ends_with(".txt") {
+                Some((i, entry.size()))
+            } else {
+                None
+            }
+        })
+        .max_by_key(|&(_, size)| size)
+        .map(|(i, _)| i);
+
+    let index = best_index.ok_or_else(|| {
+        format!("No .txt file found in zip '{}'", zip_path.display())
+    })?;
+
+    let mut entry = archive.by_index(index)
+        .map_err(|e| format!("Failed to read zip entry: {e}"))?;
+
+    let mut temp = NamedTempFile::new()
+        .map_err(|e| format!("Failed to create temp file: {e}"))?;
+    std::io::copy(&mut entry, &mut temp)
+        .map_err(|e| format!("Failed to extract bugreport: {e}"))?;
+
+    Ok(temp)
+}
 
 // ---------------------------------------------------------------------------
 // DumpstateMetadata
@@ -84,11 +128,22 @@ pub async fn load_log_file(
 ) -> Result<LoadResult, String> {
     let path_obj = Path::new(&path);
 
-    let file_size = std::fs::metadata(path_obj)
+    // If the file is a .zip, extract the dumpstate/bugreport .txt to a temp file
+    // and load that instead. The temp file persists for the session lifetime.
+    let (effective_path, _temp_file) = if path_obj.extension().and_then(|e| e.to_str()) == Some("zip") {
+        let extracted = extract_bugreport_from_zip(path_obj)?;
+        let p = extracted.path().to_string_lossy().to_string();
+        (p, Some(extracted))
+    } else {
+        (path.clone(), None)
+    };
+    let effective_path_obj = Path::new(&effective_path);
+
+    let file_size = std::fs::metadata(effective_path_obj)
         .map(|m| m.len())
         .unwrap_or(0);
 
-    // Derive stable IDs from the path
+    // Derive stable IDs from the original path (not the temp extraction)
     let session_id = uuid::Uuid::new_v4().to_string();
     let source_id = path_obj
         .file_stem()
@@ -113,8 +168,10 @@ pub async fn load_log_file(
 
     let mut session = AnalysisSession::new(session_id.clone());
     session.file_path = Some(path.clone());
+    // Hold the temp file handle in the session so it persists (deleted on drop).
+    session.temp_file = _temp_file;
     let (mmap_arc, total_bytes, bytes_consumed) =
-        session.add_source_partial(path_obj, source_id.clone(), INITIAL_BYTES)?;
+        session.add_source_partial(effective_path_obj, source_id.clone(), INITIAL_BYTES)?;
 
     let source = session.primary_source().ok_or("No source after partial load")?;
     let total_lines = source.total_lines();

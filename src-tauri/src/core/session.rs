@@ -141,6 +141,9 @@ pub struct AnalysisSession {
     pub tag_interner: TagInterner,
     /// Absolute path of the loaded file, if this is a file-backed session.
     pub file_path: Option<String>,
+    /// Holds the extracted temp file for zip-backed sessions. The temp file is
+    /// deleted when the session is dropped. Must outlive the mmap.
+    pub temp_file: Option<tempfile::NamedTempFile>,
 }
 
 impl AnalysisSession {
@@ -152,6 +155,7 @@ impl AnalysisSession {
             index: CrossSourceIndex::build(&[]),
             tag_interner: TagInterner::new(),
             file_path: None,
+            temp_file: None,
         }
     }
 
