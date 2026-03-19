@@ -415,6 +415,9 @@ pub fn run() {
             commands::sources::save_sources_to_disk,
             commands::sources::get_pending_updates,
             commands::sources::install_from_marketplace,
+            // Export commands (T4 + T5)
+            commands::export::get_export_session_info,
+            commands::export::export_session,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -36,6 +36,8 @@ import type {
   UpdateCheckResult,
   UpdateResult,
   UpdateAvailable,
+  ExportSessionInfo,
+  ExportOptions,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -515,4 +517,16 @@ export function saveLiveCapture(
   outputPath: string,
 ): Promise<number> {
   return invoke('save_live_capture', { sessionId, outputPath });
+}
+
+// ---------------------------------------------------------------------------
+// Export commands (T4 + T5)
+// ---------------------------------------------------------------------------
+
+export function getExportSessionInfo(sessionId: string): Promise<ExportSessionInfo> {
+  return invoke('get_export_session_info', { sessionId });
+}
+
+export function exportSession(sessionId: string, options: ExportOptions): Promise<void> {
+  return invoke('export_session', { sessionId, options });
 }

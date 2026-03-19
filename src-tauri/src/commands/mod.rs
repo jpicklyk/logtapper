@@ -23,6 +23,7 @@ pub mod bookmark;
 pub mod charts;
 pub mod claude;
 pub mod correlator;
+pub mod export;
 pub mod files;
 pub mod filter;
 pub mod pipeline;
