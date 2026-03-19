@@ -14,6 +14,7 @@ export interface Tab {
   type: CenterTabType;
   label: string;
   closable: boolean;
+  readOnly?: boolean;
 }
 
 export interface CenterPane {

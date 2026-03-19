@@ -122,6 +122,7 @@ export function useFileSession(
         tabId,
         isNewTab,
         previousSessionId,
+        readOnly: isBugreportLike(result.sourceType) ? true : undefined,
       });
 
       if (isBugreportLike(result.sourceType)) {

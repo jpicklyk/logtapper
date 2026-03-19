@@ -229,3 +229,14 @@
   box-shadow: var(--shadow-focus);
   outline: none;
 }
+
+/* ── Read-only badge (lock icon for bugreport/dumpstate tabs) ──────────────── */
+
+.readOnlyBadge {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  opacity: 0.7;
+  flex-shrink: 0;
+  margin-right: 2px;
+}

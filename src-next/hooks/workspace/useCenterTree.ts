@@ -331,7 +331,7 @@ export function useCenterTree(
 
   useEffect(() => {
     const onSessionLoaded = (e: { sourceName: string; paneId: string; sourceType: string; sessionId: string;
-                                   tabId: string; isNewTab?: boolean; previousSessionId?: string }) => {
+                                   tabId: string; isNewTab?: boolean; previousSessionId?: string; readOnly?: boolean }) => {
       // Pre-compute which bus events to emit based on the CURRENT tree before
       // calling setCenterTree. React StrictMode calls state updater functions twice
       // to detect side effects — any bus.emit inside an updater would double-fire,
@@ -381,7 +381,7 @@ export function useCenterTree(
             const next = updateLeaf(prev, e.paneId, (pane) => ({
               ...pane,
               tabs: pane.tabs.map((t) =>
-                t.id === e.tabId ? { ...t, label: e.sourceName } : t,
+                t.id === e.tabId ? { ...t, label: e.sourceName, readOnly: e.readOnly } : t,
               ),
             }));
             treeRef.current = next;
@@ -392,7 +392,7 @@ export function useCenterTree(
 
           if (e.isNewTab && existingLogviewerTab && e.previousSessionId) {
             // A second file is opening alongside an existing one — add new tab.
-            const newTab: Tab = { id: e.tabId, type: 'logviewer', label: e.sourceName, closable: true };
+            const newTab: Tab = { id: e.tabId, type: 'logviewer', label: e.sourceName, closable: true, readOnly: e.readOnly };
             const next = updateLeaf(prev, e.paneId, (pane) => ({
               ...pane,
               tabs: [...pane.tabs, newTab],
@@ -407,7 +407,7 @@ export function useCenterTree(
             const next = updateLeaf(prev, e.paneId, (pane) => ({
               ...pane,
               tabs: pane.tabs.map((t) =>
-                t.id === existingLogviewerTab.id ? { ...t, id: e.tabId, label: e.sourceName } : t,
+                t.id === existingLogviewerTab.id ? { ...t, id: e.tabId, label: e.sourceName, readOnly: e.readOnly } : t,
               ),
               activeTabId: e.tabId,
             }));
@@ -416,7 +416,7 @@ export function useCenterTree(
           }
 
           // Pane exists but has no logviewer tab yet — add one.
-          const tab: Tab = { id: e.tabId, type: 'logviewer', label: e.sourceName, closable: true };
+          const tab: Tab = { id: e.tabId, type: 'logviewer', label: e.sourceName, closable: true, readOnly: e.readOnly };
           const next = updateLeaf(prev, e.paneId, (pane) => ({
             ...pane,
             tabs: [...pane.tabs, tab],
@@ -436,7 +436,7 @@ export function useCenterTree(
           const next = updateLeaf(prev, existing.pane.id, (pane) => ({
             ...pane,
             tabs: pane.tabs.map((t) =>
-              t.id === existing.tab.id ? { ...t, id: e.tabId, label: e.sourceName } : t,
+              t.id === existing.tab.id ? { ...t, id: e.tabId, label: e.sourceName, readOnly: e.readOnly } : t,
             ),
             activeTabId: e.tabId,
           }));
@@ -444,7 +444,7 @@ export function useCenterTree(
           return next;
         }
         const target = firstLeaf(prev);
-        const tab: Tab = { id: e.tabId, type: 'logviewer', label: e.sourceName, closable: true };
+        const tab: Tab = { id: e.tabId, type: 'logviewer', label: e.sourceName, closable: true, readOnly: e.readOnly };
         const next = updateLeaf(prev, target.pane.id, (pane) => ({
           ...pane,
           tabs: [...pane.tabs, tab],
