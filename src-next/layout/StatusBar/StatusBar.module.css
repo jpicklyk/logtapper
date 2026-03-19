@@ -45,7 +45,7 @@
 .dot {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   background: var(--success);
   animation: pulse 1.5s ease-in-out infinite;
 }

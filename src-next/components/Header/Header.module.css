@@ -110,7 +110,7 @@
 .streamDot {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   background: var(--success);
   flex-shrink: 0;
   animation: streamPulse 1.2s ease-in-out infinite;
@@ -176,7 +176,7 @@
 .deviceState {
   font-size: 10px;
   padding: 2px 6px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(--bg-raised);
   color: var(--text-muted);
   flex-shrink: 0;

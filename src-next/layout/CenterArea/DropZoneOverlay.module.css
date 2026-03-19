@@ -24,7 +24,7 @@
   position: absolute;
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   border: 2px solid var(--accent);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   pointer-events: none;
   z-index: 51;
 }

@@ -26,7 +26,7 @@
   background: transparent;
   border: 1px solid transparent;
   border-bottom: none;
-  border-radius: 6px 6px 0 0;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
   color: var(--text-muted);
   font-size: 12px;
   font-family: var(--font-ui);
@@ -54,7 +54,7 @@
   justify-content: center;
   cursor: grab;
   touch-action: none;
-  border-radius: 5px 0 0 0;
+  border-radius: var(--radius-sm) 0 0 0;
   /* Subtle background tint on the handle zone on hover */
   transition: background var(--transition-fast);
 }

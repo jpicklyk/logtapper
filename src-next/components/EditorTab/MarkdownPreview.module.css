@@ -50,7 +50,7 @@
 .prose code {
   background: var(--bg-overlay);
   padding: 0.15em 0.35em;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   font-family: var(--font-mono);
   font-size: 0.9em;
 }
