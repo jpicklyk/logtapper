@@ -196,11 +196,11 @@ export function useViewerActions() {
   const { loadFile, openFileDialog, openInEditorDialog, startStream, stopStream, closeSession,
           jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
           openTab, setFocusedPane, setEffectiveLineNums,
-          saveFile, saveFileAs } = useActionsContext();
+          saveFile, saveFileAs, exportSession } = useActionsContext();
   return { loadFile, openFileDialog, openInEditorDialog, startStream, stopStream, closeSession,
            jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
            openTab, setFocusedPane, setEffectiveLineNums,
-           saveFile, saveFileAs };
+           saveFile, saveFileAs, exportSession };
 }
 
 export function usePipelineActions() {

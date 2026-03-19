@@ -1,6 +1,6 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import clsx from 'clsx';
-import { FolderOpen, FileEdit, Menu, Radio, Square, Smartphone } from 'lucide-react';
+import { FolderOpen, FileEdit, Menu, Radio, Square, Smartphone, Download } from 'lucide-react';
 import { useSession, useIsStreaming, useViewerActions } from '../../context';
 import { listAdbDevices } from '../../bridge/commands';
 import type { AdbDevice } from '../../bridge/types';
@@ -8,6 +8,8 @@ import { Modal } from '../../ui/Modal/Modal';
 import { DropdownMenu } from '../../ui';
 import type { MenuItem } from '../../ui';
 import { SearchBar } from '../SearchBar';
+import { ExportModal } from '../ExportModal';
+import { bus } from '../../events';
 import styles from './Header.module.css';
 
 export const Header = React.memo(function Header() {
@@ -16,6 +18,7 @@ export const Header = React.memo(function Header() {
   const { openFileDialog, openInEditorDialog, startStream, stopStream, saveFile, saveFileAs } = useViewerActions();
 
   const [fileMenuOpen, setFileMenuOpen] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
 
   const [devices, setDevices] = useState<AdbDevice[]>([]);
   const [showPicker, setShowPicker] = useState(false);
@@ -67,7 +70,9 @@ export const Header = React.memo(function Header() {
     { separator: true },
     { id: 'save', label: isStreaming ? 'Save Capture' : 'Save', shortcut: 'Ctrl+S' },
     { id: 'save-as', label: 'Save As...', shortcut: 'Ctrl+Shift+S' },
-  ], [isStreaming]);
+    { separator: true },
+    { id: 'export-session', label: 'Export Session...', icon: Download, shortcut: 'Ctrl+Shift+E', disabled: !session },
+  ], [isStreaming, session]);
 
   const handleFileMenuSelect = useCallback((id: string) => {
     switch (id) {
@@ -75,8 +80,15 @@ export const Header = React.memo(function Header() {
       case 'open-editor': openInEditorDialog(); break;
       case 'save': saveFile(); break;
       case 'save-as': saveFileAs(); break;
+      case 'export-session': setShowExportModal(true); break;
     }
   }, [openFileDialog, openInEditorDialog, saveFile, saveFileAs]);
+
+  useEffect(() => {
+    const handler = () => { setShowExportModal(true); };
+    bus.on('layout:export-session-requested', handler);
+    return () => { bus.off('layout:export-session-requested', handler); };
+  }, []);
 
   return (
     <header className={styles.header}>
@@ -159,6 +171,11 @@ export const Header = React.memo(function Header() {
           </ul>
         )}
       </Modal>
+
+      <ExportModal
+        open={showExportModal}
+        onClose={() => setShowExportModal(false)}
+      />
     </header>
   );
 });

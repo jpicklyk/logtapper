@@ -5,6 +5,7 @@ interface FileShortcutActions {
   openInEditorDialog: () => void;
   saveFile: () => void;
   saveFileAs: () => void;
+  exportSession: () => void;
 }
 
 export function useFileShortcuts(actions: FileShortcutActions): void {
@@ -33,6 +34,9 @@ export function useFileShortcuts(actions: FileShortcutActions): void {
       } else if (key === 's' && e.shiftKey) {
         e.preventDefault();
         a.saveFileAs();
+      } else if (key === 'e' && e.shiftKey) {
+        e.preventDefault();
+        a.exportSession();
       }
     };
 

@@ -99,4 +99,6 @@ export type AppEvents = {
   'file:save-request':    undefined;
   /** Emitted when user triggers Save As. Focused EditorTab should handle. */
   'file:save-as-request': undefined;
+  /** Fired when Export Session is requested (menu or shortcut). Header shows the export modal. */
+  'layout:export-session-requested': undefined;
 };

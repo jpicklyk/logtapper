@@ -101,6 +101,10 @@ function HookWiring({ children }: { children: ReactNode }) {
     bus.emit('file:save-as-request', undefined);
   }, []);
 
+  const exportSession = useCallback(() => {
+    bus.emit('layout:export-session-requested', undefined);
+  }, []);
+
   const actions = useMemo<Partial<ActionsContextValue>>(() => ({
     loadFile: logViewer.loadFile,
     openFileDialog,
@@ -120,10 +124,11 @@ function HookWiring({ children }: { children: ReactNode }) {
     setEffectiveLineNums: logViewer.setEffectiveLineNums,
     saveFile,
     saveFileAs,
+    exportSession,
   }), [logViewer.loadFile, openFileDialog, openInEditorDialog, logViewer.startStream, logViewer.stopStream,
        logViewer.closeSession, logViewer.jumpToLine, logViewer.jumpToMatch,
        logViewer.handleSearch, logViewer.setStreamFilter, logViewer.cancelStreamFilter,
-       logViewer.setEffectiveLineNums, saveFile, saveFileAs]);
+       logViewer.setEffectiveLineNums, saveFile, saveFileAs, exportSession]);
 
   return (
     <ActionsProvider actions={actions}>

@@ -29,6 +29,7 @@ export interface ActionsContextValue {
   setEffectiveLineNums: (lineNums: number[] | null) => void;
   saveFile: () => Promise<void>;
   saveFileAs: () => Promise<void>;
+  exportSession: () => void;
 }
 
 const noop = () => { /* stub */ };
@@ -57,6 +58,7 @@ const DEFAULT_ACTIONS: ActionsContextValue = {
   setEffectiveLineNums: (_lineNums: number[] | null) => noop(),
   saveFile: () => noopAsync(),
   saveFileAs: () => noopAsync(),
+  exportSession: noop,
 };
 
 const ActionsContext = createContext<ActionsContextValue | null>(null);
