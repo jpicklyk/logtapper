@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { storageGet, storageSet } from '../utils';
 
 export type ThemeMode = 'dark' | 'light' | 'system';
 export type ResolvedTheme = 'dark' | 'light';
@@ -12,69 +13,53 @@ interface ThemeContextValue {
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 const STORAGE_KEY = 'logtapper-theme';
+const systemQuery = window.matchMedia('(prefers-color-scheme: dark)');
 
 function getSystemPreference(): ResolvedTheme {
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-}
-
-function resolveTheme(mode: ThemeMode): ResolvedTheme {
-  if (mode === 'system') return getSystemPreference();
-  return mode;
+  return systemQuery.matches ? 'dark' : 'light';
 }
 
 function applyTheme(resolved: ResolvedTheme): void {
   document.documentElement.setAttribute('data-theme', resolved);
 }
 
+function isValidTheme(v: string): v is ThemeMode {
+  return v === 'dark' || v === 'light' || v === 'system';
+}
+
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<ThemeMode>(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored === 'dark' || stored === 'light' || stored === 'system') return stored;
-    return 'dark';
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    const stored = storageGet(STORAGE_KEY, 'dark');
+    return isValidTheme(stored) ? stored : 'dark';
   });
 
-  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() =>
-    resolveTheme(theme),
-  );
+  // Track system preference changes (only matters when mode is 'system')
+  const [systemPref, setSystemPref] = useState<ResolvedTheme>(getSystemPreference);
 
-  // Apply theme attribute and persist on theme change
+  // Derive resolved theme — no separate state needed
+  const resolvedTheme: ResolvedTheme = theme === 'system' ? systemPref : theme;
+
+  // Apply theme attribute and persist on change
   useEffect(() => {
-    const resolved = resolveTheme(theme);
-    setResolvedTheme(resolved);
-    applyTheme(resolved);
-    localStorage.setItem(STORAGE_KEY, theme);
-  }, [theme]);
+    applyTheme(resolvedTheme);
+    storageSet(STORAGE_KEY, theme);
+  }, [theme, resolvedTheme]);
 
-  // Listen for system preference changes when mode is 'system'
-  // Uses the CLAUDE.md async listener pattern to be safe with StrictMode
+  // Listen for system preference changes
   useEffect(() => {
     if (theme !== 'system') return;
 
-    let cancelled = false;
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-
     const handleChange = (e: MediaQueryListEvent) => {
-      if (cancelled) return;
-      const resolved: ResolvedTheme = e.matches ? 'dark' : 'light';
-      setResolvedTheme(resolved);
-      applyTheme(resolved);
+      setSystemPref(e.matches ? 'dark' : 'light');
     };
 
-    mediaQuery.addEventListener('change', handleChange);
-
-    return () => {
-      cancelled = true;
-      mediaQuery.removeEventListener('change', handleChange);
-    };
+    systemQuery.addEventListener('change', handleChange);
+    return () => systemQuery.removeEventListener('change', handleChange);
   }, [theme]);
-
-  const setTheme = useCallback((mode: ThemeMode) => {
-    setThemeState(mode);
-  }, []);
 
   const value = useMemo<ThemeContextValue>(
     () => ({ theme, setTheme, resolvedTheme }),
-    [theme, setTheme, resolvedTheme],
+    [theme, resolvedTheme],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

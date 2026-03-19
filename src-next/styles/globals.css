@@ -21,12 +21,10 @@
   line-height: 1.5;
   color: var(--text);
   background-color: var(--bg-base);
-  color-scheme: dark;
 }
 
-[data-theme="light"] {
-  color-scheme: light;
-}
+[data-theme="dark"]  { color-scheme: dark; }
+[data-theme="light"] { color-scheme: light; }
 
 body {
   min-height: 100vh;

@@ -2,7 +2,6 @@
 
 /* Non-color tokens (shared, no theme dependency) */
 :root {
-  --focus-ring: rgba(88, 166, 255, 0.4);
   --radius-sm: 3px;
   --radius-md: 6px;
   --transition-fast: 80ms ease;

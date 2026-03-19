@@ -378,7 +378,7 @@
   font-size: 11px;
   color: var(--danger);
   padding: 4px 8px;
-  background: rgba(255, 100, 100, 0.08);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
   border-radius: 4px;
 }
 
