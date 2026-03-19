@@ -250,22 +250,18 @@ fn close_session_inner(state: &AppState, app: Option<&tauri::AppHandle>, session
         tasks.remove(session_id); // dropping the sender cancels the pending task
     }
 
-    // Snapshot file_path, bookmarks, analyses under brief locks.
-    // ALL locks must be dropped before the file I/O calls below.
-    let save_data: Option<(String, Vec<crate::core::bookmark::Bookmark>, Vec<crate::core::analysis::AnalysisArtifact>)> = {
+    // Snapshot file_path under sessions lock, then drop it before acquiring
+    // bookmarks/analyses locks. Never hold sessions + bookmarks simultaneously
+    // (undefined lock ordering — see CLAUDE.md).
+    let file_path: Option<String> = {
         let sessions = lock_or_err(&state.sessions, "sessions")?;
-        sessions.get(session_id).and_then(|s| {
-            let fp = s.file_path.as_ref()?.clone();
-            let bm = state.bookmarks.lock().ok()
-                .and_then(|b| b.get(session_id).cloned())
-                .unwrap_or_default();
-            let an = state.analyses.lock().ok()
-                .and_then(|a| a.get(session_id).cloned())
-                .unwrap_or_default();
-            Some((fp, bm, an))
-        })
+        sessions.get(session_id).and_then(|s| s.file_path.clone())
     };
-    // All locks dropped here — safe to do file I/O.
+    let save_data = file_path.map(|fp| {
+        let bm = crate::commands::workspace_sync::snapshot_bookmarks(state, session_id);
+        let an = crate::commands::workspace_sync::snapshot_analyses(state, session_id);
+        (fp, bm, an)
+    });
 
     if let (Some(app), Some((file_path, bookmarks, analyses))) = (app, save_data) {
         if let Ok(ws_path) = crate::workspace::workspace_path_for(app, &file_path) {
