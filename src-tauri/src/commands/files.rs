@@ -161,7 +161,7 @@ pub async fn load_log_file(
             .map(|s| s.id.clone())
     };
     if let Some(stale_id) = stale_id {
-        close_session_inner(&state, &stale_id)?;
+        close_session_inner(&state, Some(&app), &stale_id)?;
     }
 
     const INITIAL_BYTES: usize = 1_000_000; // 1 MB initial chunk
@@ -229,8 +229,7 @@ pub async fn load_log_file(
     Ok(result)
 }
 
-#[tauri::command]
-fn close_session_inner(state: &AppState, session_id: &str) -> Result<(), String> {
+fn close_session_inner(state: &AppState, app: Option<&tauri::AppHandle>, session_id: &str) -> Result<(), String> {
     // 1. Cancel active ADB stream (if any)
     if let Some(cancel_tx) = lock_or_err(&state.stream_tasks, "stream_tasks")?.remove(session_id) {
         let _ = cancel_tx.send(());
@@ -239,6 +238,40 @@ fn close_session_inner(state: &AppState, session_id: &str) -> Result<(), String>
     // 2. Cancel active background indexing (if any)
     if let Some(cancel_tx) = lock_or_err(&state.indexing_tasks, "indexing_tasks")?.remove(session_id) {
         let _ = cancel_tx.send(());
+    }
+
+    // ── Workspace save (before session removal) ──────────────────────────────
+    // Cancel any pending debounced save for this session.
+    if let Ok(mut tasks) = state.workspace_save_tasks.lock() {
+        tasks.remove(session_id); // dropping the sender cancels the pending task
+    }
+
+    // Snapshot file_path, bookmarks, analyses under brief locks.
+    // ALL locks must be dropped before the file I/O calls below.
+    let save_data: Option<(String, Vec<crate::core::bookmark::Bookmark>, Vec<crate::core::analysis::AnalysisArtifact>)> = {
+        let sessions = lock_or_err(&state.sessions, "sessions")?;
+        sessions.get(session_id).and_then(|s| {
+            let fp = s.file_path.as_ref()?.clone();
+            let bm = state.bookmarks.lock().ok()
+                .and_then(|b| b.get(session_id).cloned())
+                .unwrap_or_default();
+            let an = state.analyses.lock().ok()
+                .and_then(|a| a.get(session_id).cloned())
+                .unwrap_or_default();
+            Some((fp, bm, an))
+        })
+    };
+    // All locks dropped here — safe to do file I/O.
+
+    if let (Some(app), Some((file_path, bookmarks, analyses))) = (app, save_data) {
+        if let Ok(ws_path) = crate::workspace::workspace_path_for(app, &file_path) {
+            let meta = crate::workspace::SessionMeta::default();
+            if let Err(e) = crate::workspace::save_workspace(&ws_path, &file_path, &bookmarks, &analyses, &meta) {
+                log::warn!("Workspace save failed for session {session_id}: {e}");
+            } else if let Ok(dir) = crate::workspace::workspace_dir(app) {
+                crate::workspace::evict_old_workspaces(&dir, 20);
+            }
+        }
     }
 
     // 3. Remove session (drops mmap / stream data)
@@ -271,15 +304,24 @@ fn close_session_inner(state: &AppState, session_id: &str) -> Result<(), String>
     // 12. Remove MCP anonymizer
     lock_or_err(&state.mcp_anonymizers, "mcp_anonymizers")?.remove(session_id);
 
+    // 13. Clean up bookmarks and analyses (previously leaked in memory).
+    if let Ok(mut bookmarks) = state.bookmarks.lock() {
+        bookmarks.remove(session_id);
+    }
+    if let Ok(mut analyses) = state.analyses.lock() {
+        analyses.remove(session_id);
+    }
+
     Ok(())
 }
 
 #[tauri::command]
 pub async fn close_session(
     state: State<'_, AppState>,
+    app: tauri::AppHandle,
     session_id: String,
 ) -> Result<(), String> {
-    close_session_inner(&state, &session_id)
+    close_session_inner(&state, Some(&app), &session_id)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1131,7 +1173,7 @@ mod tests {
         insert_session(&state, "sess-1", None);
         assert!(state.sessions.lock().unwrap().contains_key("sess-1"));
 
-        close_session_inner(&state, "sess-1").unwrap();
+        close_session_inner(&state, None, "sess-1").unwrap();
 
         assert!(!state.sessions.lock().unwrap().contains_key("sess-1"),
             "session must be removed after close");
@@ -1144,7 +1186,7 @@ mod tests {
         let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
         state.indexing_tasks.lock().unwrap().insert("sess-2".to_string(), cancel_tx);
 
-        close_session_inner(&state, "sess-2").unwrap();
+        close_session_inner(&state, None, "sess-2").unwrap();
 
         // The sender was consumed and the cancellation signal delivered
         assert!(cancel_rx.try_recv().is_ok(),
@@ -1158,7 +1200,7 @@ mod tests {
         state.pipeline_results.lock().unwrap()
             .insert("sess-3".to_string(), HashMap::new());
 
-        close_session_inner(&state, "sess-3").unwrap();
+        close_session_inner(&state, None, "sess-3").unwrap();
 
         assert!(!state.pipeline_results.lock().unwrap().contains_key("sess-3"),
             "pipeline results must be cleared on close");
@@ -1168,7 +1210,7 @@ mod tests {
     fn close_session_inner_is_noop_on_unknown_id() {
         let state = make_state();
         // Must not panic or error when the session doesn't exist
-        assert!(close_session_inner(&state, "nonexistent").is_ok());
+        assert!(close_session_inner(&state, None, "nonexistent").is_ok());
     }
 
     // -------------------------------------------------------------------------
@@ -1194,7 +1236,7 @@ mod tests {
         assert_eq!(stale_id.as_deref(), Some("stale-id"),
             "must find the stale session by file path");
 
-        close_session_inner(&state, stale_id.unwrap().as_str()).unwrap();
+        close_session_inner(&state, None, stale_id.unwrap().as_str()).unwrap();
 
         assert!(!state.sessions.lock().unwrap().contains_key("stale-id"),
             "stale session must be removed");
@@ -1235,5 +1277,51 @@ mod tests {
 
         assert!(stale_id.is_none(),
             "stream sessions with no file_path must not be matched");
+    }
+
+    // -------------------------------------------------------------------------
+    // Bookmarks and analyses cleanup
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn close_session_inner_removes_bookmarks_and_analyses() {
+        use crate::core::bookmark::{Bookmark, CreatedBy};
+        use crate::core::analysis::AnalysisArtifact;
+
+        let state = make_state();
+        insert_session(&state, "sess-bm", None);
+
+        // Populate bookmarks for the session.
+        let bm = Bookmark {
+            id: "bm-1".to_string(),
+            session_id: "sess-bm".to_string(),
+            line_number: 42,
+            line_number_end: None,
+            snippet: None,
+            category: None,
+            tags: None,
+            label: "Test".to_string(),
+            note: String::new(),
+            created_by: CreatedBy::User,
+            created_at: 1000,
+        };
+        state.bookmarks.lock().unwrap().insert("sess-bm".to_string(), vec![bm]);
+
+        // Populate analyses for the session.
+        let artifact = AnalysisArtifact {
+            id: "art-1".to_string(),
+            session_id: "sess-bm".to_string(),
+            title: "Test".to_string(),
+            created_at: 2000,
+            sections: vec![],
+        };
+        state.analyses.lock().unwrap().insert("sess-bm".to_string(), vec![artifact]);
+
+        close_session_inner(&state, None, "sess-bm").unwrap();
+
+        assert!(!state.bookmarks.lock().unwrap().contains_key("sess-bm"),
+            "bookmarks must be removed on close");
+        assert!(!state.analyses.lock().unwrap().contains_key("sess-bm"),
+            "analyses must be removed on close");
     }
 }
