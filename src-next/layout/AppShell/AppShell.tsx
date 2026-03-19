@@ -211,20 +211,6 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
     [workspace.renameTab],
   );
 
-  const handleDirtyChanged = useCallback(
-    (tabId: string, isDirty: boolean) => {
-      workspace.setTabUnsaved(tabId, isDirty);
-    },
-    [workspace.setTabUnsaved],
-  );
-
-  const handleFilePathChanged = useCallback(
-    (tabId: string, newLabel: string) => {
-      workspace.renameTab(tabId, newLabel);
-    },
-    [workspace.renameTab],
-  );
-
   const handleTabReorder = useCallback(
     (paneId: string, fromIndex: number, toIndex: number) => {
       workspace.reorderTab(paneId, fromIndex, toIndex);
@@ -365,8 +351,8 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
         return createPortal(
           <PaneContent
             pane={pane}
-            onDirtyChanged={handleDirtyChanged}
-            onFilePathChanged={handleFilePathChanged}
+            onDirtyChanged={workspace.setTabUnsaved}
+            onFilePathChanged={workspace.renameTab}
           />,
           container,
           pane.id,

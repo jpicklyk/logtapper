@@ -1,5 +1,5 @@
 .triggerWrapper {
-  display: contents;
+  display: inline-flex;
 }
 
 .panel {

@@ -33,6 +33,12 @@ export function useFocusedPaneId(): string | null {
   return useSessionContext().focusedPaneId;
 }
 
+/** Returns true only for the pane that is currently focused — avoids
+ *  re-rendering sibling PaneContent instances when focus changes. */
+export function useIsFocusedPane(paneId: string): boolean {
+  return useSessionContext().focusedPaneId === paneId;
+}
+
 export function useIndexingProgress(sessionId: string | null): IndexingProgress | null {
   const { indexingProgressBySession } = useSessionContext();
   if (!sessionId) return null;

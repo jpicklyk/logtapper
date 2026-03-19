@@ -7,7 +7,7 @@ import { EditorTab } from '../EditorTab';
 import { StreamFilterBar } from '../StreamFilterBar';
 import { BookmarkCreateDialog } from '../BookmarkPanel';
 import type { BookmarkCreateRequest } from '../BookmarkPanel';
-import { useSessionForPane, useIsLoadingForPane, useViewerActions, useStreamFilter, useFocusedSession, useFocusedPaneId } from '../../context';
+import { useSessionForPane, useIsLoadingForPane, useViewerActions, useStreamFilter, useFocusedSession, useIsFocusedPane } from '../../context';
 import { useLogViewerActions } from './useLogViewerActions';
 import { bus } from '../../events';
 import styles from './PaneContent.module.css';
@@ -73,8 +73,7 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
   // Use the pane's own session, not the global focused session.
   const session = useSessionForPane(pane.id);
   const focusedSession = useFocusedSession();
-  const focusedPaneId = useFocusedPaneId();
-  const isFocusedPane = pane.id === focusedPaneId;
+  const isFocusedPane = useIsFocusedPane(pane.id);
   const isLoading = useIsLoadingForPane(pane.id);
   const { setFocusedPane, setStreamFilter, cancelStreamFilter, setEffectiveLineNums } = useViewerActions();
   const { fetchLines } = useLogViewerActions(pane.id);

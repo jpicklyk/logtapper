@@ -41,32 +41,28 @@ function HookWiring({ children }: { children: ReactNode }) {
   const sessionCtxRef = useRef(sessionCtx);
   sessionCtxRef.current = sessionCtx;
 
-  const openFileDialog = useCallback(async () => {
-    const selected = await open({
-      multiple: false,
-      filters: [
-        { name: 'Log Files', extensions: ['log', 'txt', 'gz'] },
-        { name: 'All Files', extensions: ['*'] },
-      ],
-    });
+  const openWithFilters = useCallback(async (filters: { name: string; extensions: string[] }[]) => {
+    const selected = await open({ multiple: false, filters });
     if (typeof selected === 'string') {
-      // loadFile reads focusedPaneId internally; no need to pass it explicitly here
       await logViewer.loadFile(selected);
     }
   }, [logViewer.loadFile]);
 
-  const openBugreportDialog = useCallback(async () => {
-    const selected = await open({
-      multiple: false,
-      filters: [
-        { name: 'Bugreport Files', extensions: ['zip', 'txt'] },
-        { name: 'All Files', extensions: ['*'] },
-      ],
-    });
-    if (typeof selected === 'string') {
-      await logViewer.loadFile(selected);
-    }
-  }, [logViewer.loadFile]);
+  const openFileDialog = useCallback(
+    () => openWithFilters([
+      { name: 'Log Files', extensions: ['log', 'txt', 'gz'] },
+      { name: 'All Files', extensions: ['*'] },
+    ]),
+    [openWithFilters],
+  );
+
+  const openBugreportDialog = useCallback(
+    () => openWithFilters([
+      { name: 'Bugreport Files', extensions: ['zip', 'txt'] },
+      { name: 'All Files', extensions: ['*'] },
+    ]),
+    [openWithFilters],
+  );
 
   // All focus changes go through the bus so SessionContext and WorkspaceLayout
   // both update from a single emission point.
@@ -153,6 +149,7 @@ export {
   useFocusedSession,
   useSessionForPane,
   useFocusedPaneId,
+  useIsFocusedPane,
   useIndexingProgress,
   useIsStreaming,
   useIsStreamingForPane,

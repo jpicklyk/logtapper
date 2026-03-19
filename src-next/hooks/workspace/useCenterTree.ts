@@ -200,17 +200,17 @@ export function useCenterTree(
   }, [updateTree]);
 
   const setTabUnsaved = useCallback((tabId: string, isDirty: boolean) => {
-    updateTree((tree) => {
-      const found = findTabAcrossTree(tree, tabId);
-      if (!found) return tree;
-      const currentTab = found.pane.tabs.find((t) => t.id === tabId);
-      // Bail out early if value unchanged — avoid unnecessary renders
-      if (currentTab?.unsaved === isDirty) return tree;
-      return updateLeaf(tree, found.pane.id, (pane) => ({
+    // Bail before setState to avoid a tree walk inside the updater on every call.
+    const found = findTabAcrossTree(treeRef.current, tabId);
+    if (!found) return;
+    const currentTab = found.pane.tabs.find((t) => t.id === tabId);
+    if (currentTab?.unsaved === isDirty) return;
+    updateTree((tree) =>
+      updateLeaf(tree, found.pane.id, (pane) => ({
         ...pane,
         tabs: pane.tabs.map((t) => (t.id === tabId ? { ...t, unsaved: isDirty } : t)),
-      }));
-    });
+      })),
+    );
   }, [updateTree]);
 
   const openCenterTab = useCallback((type: CenterTabType, label?: string) => {

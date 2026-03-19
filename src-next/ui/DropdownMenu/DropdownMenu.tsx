@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { LucideIcon } from 'lucide-react';
 import styles from './DropdownMenu.module.css';
@@ -24,16 +24,29 @@ export const DropdownMenu = React.memo<DropdownMenuProps>(function DropdownMenu(
 }) {
   const triggerRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const [panelStyle, setPanelStyle] = useState<React.CSSProperties | null>(null);
 
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
+  // Capture trigger rect once when menu opens (useLayoutEffect avoids flicker).
+  useLayoutEffect(() => {
+    if (open && triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      setPanelStyle({
+        position: 'fixed',
+        top: rect.bottom + 4,
+        left: rect.left,
+        zIndex: 1050,
+      });
+    } else {
+      setPanelStyle(null);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onOpenChange(false);
-    },
-    [onOpenChange]
-  );
-
-  const handleMouseDown = useCallback(
-    (e: MouseEvent) => {
+    };
+    const handleMouseDown = (e: MouseEvent) => {
       const target = e.target as Node;
       if (
         !panelRef.current?.contains(target) &&
@@ -41,39 +54,21 @@ export const DropdownMenu = React.memo<DropdownMenuProps>(function DropdownMenu(
       ) {
         onOpenChange(false);
       }
-    },
-    [onOpenChange]
-  );
-
-  useEffect(() => {
-    if (!open) return;
+    };
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('mousedown', handleMouseDown);
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('mousedown', handleMouseDown);
     };
-  }, [open, handleKeyDown, handleMouseDown]);
-
-  const triggerRect = open && triggerRef.current
-    ? triggerRef.current.getBoundingClientRect()
-    : null;
-
-  const panelStyle: React.CSSProperties | undefined = triggerRect
-    ? {
-        position: 'fixed',
-        top: triggerRect.bottom + 4,
-        left: triggerRect.left,
-        zIndex: 1050,
-      }
-    : undefined;
+  }, [open, onOpenChange]);
 
   return (
     <>
       <div ref={triggerRef} className={styles.triggerWrapper}>
         {trigger}
       </div>
-      {open && panelStyle &&
+      {open && panelStyle != null &&
         createPortal(
           <div
             ref={panelRef}

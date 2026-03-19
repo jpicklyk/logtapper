@@ -49,7 +49,7 @@ const EditorTab = React.memo(function EditorTab({
 
   // On mount, load from disk if a file path was persisted (overrides stale localStorage).
   useEffect(() => {
-    const fp = storageGet(LS_FILEPATH_PREFIX + tabId);
+    const fp = filePathRef.current;
     if (fp) {
       readTextFile(fp).then(content => {
         setValue(content);
@@ -59,8 +59,7 @@ const EditorTab = React.memo(function EditorTab({
         // File may have been moved or deleted — fall back to localStorage content.
       });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // intentionally runs once on mount only
+  }, [tabId]);
 
   // When the active editor tab switches, flush the outgoing tab's content
   // synchronously and load the new tab's content.
@@ -141,17 +140,23 @@ const EditorTab = React.memo(function EditorTab({
   }, [handleSaveAs]);
 
   // Subscribe to bus save events only when this pane is focused.
+  // Use refs so the effect only re-subscribes when isFocused flips (not on every keystroke).
+  const handleSaveRef = useRef(handleSave);
+  handleSaveRef.current = handleSave;
+  const handleSaveAsRef = useRef(handleSaveAs);
+  handleSaveAsRef.current = handleSaveAs;
+
   useEffect(() => {
     if (!isFocused) return;
-    const onSave = () => { void handleSave(); };
-    const onSaveAs = () => { void handleSaveAs(); };
+    const onSave = () => { void handleSaveRef.current(); };
+    const onSaveAs = () => { void handleSaveAsRef.current(); };
     bus.on('file:save-request', onSave);
     bus.on('file:save-as-request', onSaveAs);
     return () => {
       bus.off('file:save-request', onSave);
       bus.off('file:save-as-request', onSaveAs);
     };
-  }, [isFocused, handleSave, handleSaveAs]);
+  }, [isFocused]);
 
   return (
     <div className={styles.root}>
