@@ -112,43 +112,41 @@ export const GeneralTab = memo(function GeneralTab({ settings, onUpdate }: Gener
 
       <div className={css.section}>
         <div className={css.sectionTitle}>Bookmark Categories</div>
-        <div className={css.row} style={{ flexDirection: 'column', gap: 6 }}>
-          <span className={css.labelHint}>
-            Categories used to classify bookmarks. Each has a display label and color.
-          </span>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, width: '100%' }}>
-            {settings.bookmarkCategories.map((cat, i) => (
-              <CategoryRow
-                key={cat.id}
-                cat={cat}
-                onUpdate={(updated) => {
-                  const next = [...settings.bookmarkCategories];
-                  next[i] = updated;
-                  onUpdate('bookmarkCategories', next);
-                }}
-                onDelete={() => {
-                  const next = settings.bookmarkCategories.filter((_, j) => j !== i);
-                  onUpdate('bookmarkCategories', next);
-                }}
-                canDelete={settings.bookmarkCategories.length > 1}
-              />
-            ))}
-          </div>
-          <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-            <AddCategoryButton
-              onAdd={(cat) => {
-                onUpdate('bookmarkCategories', [...settings.bookmarkCategories, cat]);
+        <span className={css.labelHint}>
+          Categories used to classify bookmarks. Click the color swatch to change, edit labels inline.
+        </span>
+        <div className={css.catList}>
+          {settings.bookmarkCategories.map((cat, i) => (
+            <CategoryRow
+              key={cat.id}
+              cat={cat}
+              onUpdate={(updated) => {
+                const next = [...settings.bookmarkCategories];
+                next[i] = updated;
+                onUpdate('bookmarkCategories', next);
               }}
-              existingIds={settings.bookmarkCategories.map((c) => c.id)}
+              onDelete={() => {
+                const next = settings.bookmarkCategories.filter((_, j) => j !== i);
+                onUpdate('bookmarkCategories', next);
+              }}
+              canDelete={settings.bookmarkCategories.length > 1}
             />
-            <button
-              className={css.linkBtn}
-              type="button"
-              onClick={() => onUpdate('bookmarkCategories', DEFAULT_BOOKMARK_CATEGORIES)}
-            >
-              Reset to defaults
-            </button>
-          </div>
+          ))}
+        </div>
+        <div className={css.catActions}>
+          <AddCategoryButton
+            onAdd={(cat) => {
+              onUpdate('bookmarkCategories', [...settings.bookmarkCategories, cat]);
+            }}
+            existingIds={settings.bookmarkCategories.map((c) => c.id)}
+          />
+          <button
+            className={css.linkBtn}
+            type="button"
+            onClick={() => onUpdate('bookmarkCategories', DEFAULT_BOOKMARK_CATEGORIES)}
+          >
+            Reset to defaults
+          </button>
         </div>
       </div>
     </>
@@ -164,31 +162,32 @@ function CategoryRow({ cat, onUpdate, onDelete, canDelete }: {
   canDelete: boolean;
 }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-      <input
-        type="color"
-        value={cat.color}
-        onChange={(e) => onUpdate({ ...cat, color: e.target.value })}
-        title="Category color"
-        style={{ width: 24, height: 24, border: 'none', padding: 0, cursor: 'pointer', background: 'transparent' }}
-      />
-      <input
-        type="text"
-        className={css.input}
-        value={cat.label}
-        onChange={(e) => onUpdate({ ...cat, label: e.target.value })}
-        style={{ flex: 1, minWidth: 0 }}
-        placeholder="Label"
-      />
-      <span style={{ fontSize: 10, color: 'var(--text-dimmed)', fontFamily: 'var(--font-mono)', minWidth: 60 }}>
-        {cat.id}
-      </span>
+    <div className={css.catRow}>
+      <div className={css.catSwatch} style={{ background: cat.color }}>
+        <input
+          type="color"
+          className={css.catColorInput}
+          value={cat.color}
+          onChange={(e) => onUpdate({ ...cat, color: e.target.value })}
+          title="Pick category color"
+        />
+      </div>
+      <div className={css.catLabel}>
+        <input
+          type="text"
+          className={css.catLabelInput}
+          value={cat.label}
+          onChange={(e) => onUpdate({ ...cat, label: e.target.value })}
+          placeholder="Label"
+        />
+      </div>
+      <span className={css.catId}>{cat.id}</span>
       {canDelete && (
         <button
           type="button"
+          className={css.catDeleteBtn}
           onClick={onDelete}
           title="Remove category"
-          style={{ background: 'none', border: 'none', color: 'var(--text-dimmed)', cursor: 'pointer', padding: 2 }}
         >
           <Trash2 size={12} />
         </button>
@@ -204,47 +203,51 @@ function AddCategoryButton({ onAdd, existingIds }: {
   const [adding, setAdding] = useState(false);
   const [newId, setNewId] = useState('');
   const [newLabel, setNewLabel] = useState('');
+  const [newColor, setNewColor] = useState('#8b949e');
 
   const handleSubmit = useCallback(() => {
     const id = newId.trim().toLowerCase().replace(/\s+/g, '-');
     if (!id || existingIds.includes(id)) return;
-    onAdd({ id, label: newLabel.trim() || id, color: '#8b949e' });
+    onAdd({ id, label: newLabel.trim() || id, color: newColor });
     setNewId('');
     setNewLabel('');
+    setNewColor('#8b949e');
     setAdding(false);
-  }, [newId, newLabel, existingIds, onAdd]);
+  }, [newId, newLabel, newColor, existingIds, onAdd]);
 
   if (!adding) {
     return (
-      <button
-        className={css.linkBtn}
-        type="button"
-        onClick={() => setAdding(true)}
-      >
+      <button className={css.linkBtn} type="button" onClick={() => setAdding(true)}>
         <Plus size={12} /> Add category
       </button>
     );
   }
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+    <div className={css.catAddForm}>
+      <div className={css.catSwatch} style={{ background: newColor, width: 16, height: 16 }}>
+        <input
+          type="color"
+          className={css.catColorInput}
+          value={newColor}
+          onChange={(e) => setNewColor(e.target.value)}
+        />
+      </div>
       <input
         type="text"
-        className={css.input}
+        className={css.catAddInput}
         value={newId}
         onChange={(e) => setNewId(e.target.value)}
         placeholder="id (e.g. network)"
-        style={{ width: 100 }}
         autoFocus
         onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit(); if (e.key === 'Escape') setAdding(false); }}
       />
       <input
         type="text"
-        className={css.input}
+        className={css.catAddInput}
         value={newLabel}
         onChange={(e) => setNewLabel(e.target.value)}
-        placeholder="Label (e.g. Network)"
-        style={{ width: 120 }}
+        placeholder="Display label"
         onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit(); if (e.key === 'Escape') setAdding(false); }}
       />
       <button className={css.linkBtn} type="button" onClick={handleSubmit}>Add</button>

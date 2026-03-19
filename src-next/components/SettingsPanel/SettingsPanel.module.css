@@ -440,6 +440,8 @@
   border-color: var(--accent);
 }
 
+/* ── Link-style buttons ──────────────────────────────────────────────────── */
+
 .linkBtn {
   display: inline-flex;
   align-items: center;
@@ -454,4 +456,155 @@
 
 .linkBtn:hover {
   text-decoration: underline;
+}
+
+/* ── Bookmark category editor ────────────────────────────────────────────── */
+
+.catList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  width: 100%;
+}
+
+.catRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--bg-base);
+  transition: background 120ms ease;
+}
+
+.catRow:hover {
+  background: var(--bg-overlay);
+}
+
+.catSwatch {
+  position: relative;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1.5px solid rgba(255, 255, 255, 0.1);
+  transition: border-color 120ms ease;
+}
+
+.catSwatch:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.catColorInput {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  width: 100%;
+  height: 100%;
+}
+
+.catLabel {
+  flex: 1;
+  min-width: 0;
+}
+
+.catLabelInput {
+  width: 100%;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-family: var(--font-ui);
+  outline: none;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.catLabelInput:hover {
+  border-color: var(--border);
+  background: var(--bg-raised);
+}
+
+.catLabelInput:focus {
+  border-color: var(--accent);
+  background: var(--bg-raised);
+}
+
+.catId {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: var(--text-dimmed);
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+  padding: 2px 5px;
+  background: var(--bg-overlay);
+  border-radius: 3px;
+}
+
+.catDeleteBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-dimmed);
+  padding: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+
+.catRow:hover .catDeleteBtn {
+  opacity: 1;
+}
+
+.catDeleteBtn:hover {
+  color: var(--error, #f85149);
+}
+
+.catActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.catAddForm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.catAddInput {
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-raised);
+  color: var(--text);
+  font-size: 11px;
+  font-family: var(--font-ui);
+  outline: none;
+  flex: 1;
+  min-width: 0;
+}
+
+.catAddInput:focus {
+  border-color: var(--accent);
+}
+
+.catAddSwatch {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
