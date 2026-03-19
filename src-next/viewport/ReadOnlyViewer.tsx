@@ -5,6 +5,7 @@ import type { GutterColumnDef } from './GutterColumn';
 import type { LineDecoratorDef } from './LineDecorator';
 import type { Selection } from './SelectionManager';
 import { useSelectionManager } from './SelectionManager';
+import { buildCopyText } from './copyText';
 import { useVirtualBase } from './useVirtualBase';
 import { useScrollControls } from './useScrollControls';
 import { useFetchScheduler } from './useFetchScheduler';
@@ -256,21 +257,8 @@ export default function ReadOnlyViewer({
       // let the browser handle the copy — don't intercept.
       if (window.getSelection()?.toString()) return;
       e.preventDefault();
-      if (selection.mode === 'box' && selection.box) {
-        const { startLine, endLine, startCol, endCol } = selection.box;
-        const rows: string[] = [];
-        for (let i = startLine; i <= endLine; i++) {
-          rows.push((dataSource.getLine(i)?.raw ?? '').slice(startCol, endCol));
-        }
-        writeClipboard(rows.join('\n'));
-      } else if (selection.selected.size > 0) {
-        const sorted = Array.from(selection.selected).sort((a, b) => a - b);
-        const text = sorted
-          .map((n) => dataSource.getLine(n)?.raw)
-          .filter(Boolean)
-          .join('\n');
-        writeClipboard(text as string);
-      }
+      const text = buildCopyText(selection, (n) => dataSource.getLine(n)?.raw);
+      if (text != null) writeClipboard(text);
     };
 
     window.addEventListener('keydown', handleCopy);

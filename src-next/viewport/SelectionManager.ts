@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
+import { buildCopyText } from './copyText';
 
 export interface Selection {
   anchor: number | null;
@@ -93,26 +94,8 @@ export function useSelectionManager(getLineText: (lineNum: number) => string | u
   }, []);
 
   const handleCopy = useCallback(() => {
-    if (selection.selected.size === 0) return;
-
-    if (selection.mode === 'box' && selection.box) {
-      // Box mode: column-aligned rectangle
-      const { startLine, endLine, startCol, endCol } = selection.box;
-      const rows: string[] = [];
-      for (let i = startLine; i <= endLine; i++) {
-        const text = getLineText(i) ?? '';
-        rows.push(text.slice(startCol, endCol));
-      }
-      navigator.clipboard.writeText(rows.join('\n'));
-    } else {
-      // Line mode: sorted line texts joined by newline
-      const sorted = Array.from(selection.selected).sort((a, b) => a - b);
-      const text = sorted
-        .map((n) => getLineText(n))
-        .filter((t): t is string => t != null)
-        .join('\n');
-      navigator.clipboard.writeText(text);
-    }
+    const text = buildCopyText(selection, getLineText);
+    if (text != null) navigator.clipboard.writeText(text);
   }, [selection, getLineText]);
 
   const clear = useCallback(() => {
