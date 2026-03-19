@@ -27,13 +27,23 @@ export const DropdownMenu = React.memo<DropdownMenuProps>(function DropdownMenu(
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties | null>(null);
 
   // Capture trigger rect once when menu opens (useLayoutEffect avoids flicker).
+  // Clamp position so the panel stays within the viewport.
   useLayoutEffect(() => {
     if (open && triggerRef.current) {
       const rect = triggerRef.current.getBoundingClientRect();
+      const top = rect.bottom + 4;
+      // Align left edge to trigger; if it would overflow the right edge, flip to right-align.
+      const panelWidth = 220; // min-width from CSS + padding buffer
+      let left = rect.left;
+      if (left + panelWidth > window.innerWidth) {
+        left = rect.right - panelWidth;
+      }
+      // Clamp so it never goes off-screen left either.
+      if (left < 4) left = 4;
       setPanelStyle({
         position: 'fixed',
-        top: rect.bottom + 4,
-        left: rect.left,
+        top,
+        left,
         zIndex: 1050,
       });
     } else {
