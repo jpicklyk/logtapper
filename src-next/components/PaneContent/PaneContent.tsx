@@ -63,6 +63,10 @@ function EmptyDropZone() {
   );
 }
 
+/** Must match the CSS animation duration for noticeSlideOut. */
+const NOTICE_EXIT_MS = 400;
+const NOTICE_VISIBLE_MS = 4000;
+
 const PaneContent = React.memo(function PaneContent({ pane }: Props) {
   // Use the pane's own session, not the global focused session.
   const session = useSessionForPane(pane.id);
@@ -91,24 +95,35 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
     setBookmarkRequest(null);
   }, []);
 
-  // ── Inline pane notice (auto-dismissing banner) ─────────────────────────
-  const [notice, setNotice] = useState<string | null>(null);
-  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // ── Inline pane notice (auto-dismissing banner with enter/exit animation) ──
+  const [noticeText, setNoticeText] = useState<string | null>(null);
+  const [noticePhase, setNoticePhase] = useState<'entering' | 'exiting' | null>(null);
+  const noticeDismissRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const noticeExitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const handler = ({ paneId, message }: { paneId: string; message: string }) => {
       if (paneId !== pane.id) return;
-      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
-      setNotice(message);
-      noticeTimerRef.current = setTimeout(() => {
-        setNotice(null);
-        noticeTimerRef.current = null;
-      }, 4000);
+      // Clear any pending timers from a previous notice.
+      if (noticeDismissRef.current) clearTimeout(noticeDismissRef.current);
+      if (noticeExitRef.current) clearTimeout(noticeExitRef.current);
+      setNoticeText(message);
+      setNoticePhase('entering');
+      // After the visible duration, start the exit animation.
+      noticeDismissRef.current = setTimeout(() => {
+        setNoticePhase('exiting');
+        // After the exit animation completes, unmount.
+        noticeExitRef.current = setTimeout(() => {
+          setNoticeText(null);
+          setNoticePhase(null);
+        }, NOTICE_EXIT_MS);
+      }, NOTICE_VISIBLE_MS);
     };
     bus.on('pane:notice', handler);
     return () => {
       bus.off('pane:notice', handler);
-      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+      if (noticeDismissRef.current) clearTimeout(noticeDismissRef.current);
+      if (noticeExitRef.current) clearTimeout(noticeExitRef.current);
     };
   }, [pane.id]);
 
@@ -176,9 +191,9 @@ const PaneContent = React.memo(function PaneContent({ pane }: Props) {
                 scanning={filterScanning}
               />
             )}
-            {notice && (
-              <div className={styles.paneNotice}>
-                {notice}
+            {noticeText && (
+              <div className={`${styles.paneNotice} ${noticePhase === 'exiting' ? styles.paneNoticeExit : ''}`}>
+                {noticeText}
               </div>
             )}
             <LogViewer

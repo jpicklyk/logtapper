@@ -71,7 +71,11 @@
   color: var(--warning-text, #e2c08d);
   background: color-mix(in srgb, var(--warning, #e2c08d) 10%, var(--bg-secondary, #1a1a2e));
   border-bottom: 1px solid color-mix(in srgb, var(--warning, #e2c08d) 25%, transparent);
-  animation: noticeSlideIn 200ms ease-out both;
+  animation: noticeSlideIn 400ms ease-out both;
+}
+
+.paneNoticeExit {
+  animation: noticeSlideOut 400ms ease-in both;
 }
 
 @keyframes noticeSlideIn {
@@ -82,5 +86,16 @@
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes noticeSlideOut {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-100%);
   }
 }

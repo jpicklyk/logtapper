@@ -6,6 +6,7 @@ import { isBugreportLike } from '../../bridge/types';
 import type { DumpstateMetadata } from '../../bridge/types';
 import type { AppEvents } from '../../events/events';
 import { bus } from '../../events';
+import { absoluteLineToFilteredIndex } from '../LogViewer/scrollMapping';
 import type { SectionEntry } from './FileInfoPanel';
 
 export interface FileInfoData {
@@ -288,14 +289,8 @@ export function useFileInfo(paneId: string | null): FileInfoData {
     (line: number) => {
       const filtered = sectionFilterRef.current;
       if (filtered) {
-        // Binary search — filtered is sorted.
-        let lo = 0, hi = filtered.length - 1, found = false;
-        while (lo <= hi) {
-          const mid = (lo + hi) >>> 1;
-          if (filtered[mid] === line) { found = true; break; }
-          if (filtered[mid] < line) lo = mid + 1; else hi = mid - 1;
-        }
-        if (!found) {
+        const idx = absoluteLineToFilteredIndex(line, filtered);
+        if (idx === null || filtered[idx] !== line) {
           if (paneId) {
             bus.emit('pane:notice', {
               paneId,
