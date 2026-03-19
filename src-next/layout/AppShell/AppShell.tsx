@@ -22,7 +22,7 @@ import { RightPane } from '../../components/RightPane';
 import { BottomPane } from '../../components/BottomPane';
 import { PaneContent } from '../../components/PaneContent';
 import { SettingsPanel } from '../../components/SettingsPanel';
-import { useSettings, useAnonymizerConfig, useToast, useAnalysisToast, useFileShortcuts } from '../../hooks';
+import { useSettings, useAnonymizerConfig, useToast, useAnalysisToast, useWorkspaceRestoreToast, useFileShortcuts } from '../../hooks';
 import { useCacheManager } from '../../cache';
 import { Toast } from '../../ui';
 import { findTabAcrossTree, allPanes } from '../../hooks/workspace/splitTreeHelpers';
@@ -64,6 +64,7 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   const cacheManager = useCacheManager();
   const { toasts, addToast, dismissToast } = useToast();
   useAnalysisToast(addToast);
+  useWorkspaceRestoreToast(addToast);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const updateBadgeCount = usePendingUpdateCount();
   const { openFileDialog, openInEditorDialog, saveFile, saveFileAs } = useViewerActions();
