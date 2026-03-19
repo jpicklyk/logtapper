@@ -251,6 +251,10 @@ async fn load_lts_file_inner(
     // 1. Read the .lts zip (all I/O, no locks)
     let lts = crate::workspace::lts::read_lts(path_obj)?;
 
+    // Extract processor fields before lts is partially consumed by moves below.
+    let processor_manifest = lts.processor_manifest.clone();
+    let processor_yamls = lts.processor_yamls.clone();
+
     // 2. Create session
     let session_id = uuid::Uuid::new_v4().to_string();
     let source_id = path_obj
@@ -319,6 +323,15 @@ async fn load_lts_file_inner(
             an_map.insert(session_id.clone(), analyses);
         }
     }
+
+    // 6.5. Resolve bundled processors (install missing / hash-mismatched processors globally).
+    // processor_manifest and processor_yamls were cloned before the partial moves above.
+    let _resolved = crate::commands::export::resolve_lts_processors_raw(
+        state,
+        app,
+        &processor_manifest,
+        &processor_yamls,
+    );
 
     // 7. Emit restore event
     let bm_count = state.bookmarks.lock().ok()

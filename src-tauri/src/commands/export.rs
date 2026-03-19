@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager, State};
 
 use crate::commands::{lock_or_err, AppState};
 use crate::core::log_source::{FileLogSource, ZipLogSource};
+use crate::workspace::lts::{LtsData, LtsProcessorManifest};
 
 // ---------------------------------------------------------------------------
 // T4 — Processor YAML reader helper
@@ -190,4 +192,79 @@ pub async fn export_session(
     )?;
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// T7 — Resolve processors from imported .lts file
+// ---------------------------------------------------------------------------
+
+/// Resolve processors from an imported .lts file.
+///
+/// For each processor in the .lts manifest:
+/// - If already installed locally with matching content hash → skip
+/// - If missing or hash mismatch → install from the bundled YAML (global install for v1)
+///
+/// Returns the list of processor IDs that were installed or already present.
+///
+/// TODO: Future versions should use session-namespaced IDs to avoid overwriting
+/// the user's globally installed processor with the session's version.
+pub fn resolve_lts_processors(
+    state: &AppState,
+    app: &tauri::AppHandle,
+    lts: &LtsData,
+) -> Vec<String> {
+    resolve_lts_processors_raw(state, app, &lts.processor_manifest, &lts.processor_yamls)
+}
+
+/// Low-level variant that accepts the processor manifest and YAML map directly.
+/// Used by `load_lts_file_inner` where `LtsData` has been partially consumed.
+pub fn resolve_lts_processors_raw(
+    state: &AppState,
+    app: &tauri::AppHandle,
+    processor_manifest: &LtsProcessorManifest,
+    processor_yamls: &std::collections::HashMap<String, String>,
+) -> Vec<String> {
+    let mut resolved_ids = Vec::new();
+
+    for entry in &processor_manifest.processors {
+        let Some(bundled_yaml) = processor_yamls.get(&entry.id) else {
+            continue; // YAML not actually bundled — skip
+        };
+
+        // Check if processor exists locally and compute its content hash.
+        let local_yaml = read_processor_yaml(app, &entry.id);
+        let needs_install = match &local_yaml {
+            Some(local) => {
+                let mut hasher = Sha256::new();
+                hasher.update(local.as_bytes());
+                let local_hash = hex::encode(hasher.finalize());
+                local_hash != entry.sha256
+            }
+            None => true, // Not installed locally
+        };
+
+        if needs_install {
+            // Install the bundled processor globally (v1 — no session namespacing).
+            match crate::processors::AnyProcessor::from_yaml(bundled_yaml) {
+                Ok(proc) => {
+                    let id = proc.meta.id.clone();
+                    if let Ok(mut procs) = state.processors.lock() {
+                        procs.insert(id.clone(), proc);
+                    }
+                    // Persist to disk.
+                    if let Err(e) = crate::commands::processors::persist_processor(app, &id, bundled_yaml) {
+                        log::warn!("Failed to persist processor {id} from .lts: {e}");
+                    }
+                    resolved_ids.push(id);
+                }
+                Err(e) => {
+                    log::warn!("Failed to parse processor {} from .lts: {e}", entry.id);
+                }
+            }
+        } else {
+            resolved_ids.push(entry.id.clone());
+        }
+    }
+
+    resolved_ids
 }
