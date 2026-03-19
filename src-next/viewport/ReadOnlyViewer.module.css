@@ -25,8 +25,8 @@
 }
 
 .boxOverlay {
-  background: rgba(80, 140, 255, 0.18);
-  border: 1px solid rgba(100, 160, 255, 0.45);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
   pointer-events: none;
   border-radius: 1px;
   z-index: 1;
@@ -63,31 +63,31 @@
   font-family: var(--font-mono);
   cursor: pointer;
   border: none;
-  color: rgba(88, 166, 255, 0.6);
+  color: color-mix(in srgb, var(--accent) 60%, transparent);
   letter-spacing: 0.025em;
   flex-shrink: 0;
   transition: background 120ms ease, color 100ms ease;
 }
 
 .navTop {
-  background: linear-gradient(180deg, rgba(88, 166, 255, 0.09) 0%, rgba(88, 166, 255, 0.02) 100%);
-  border-bottom: 1px solid rgba(88, 166, 255, 0.16);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 9%, transparent) 0%, color-mix(in srgb, var(--accent) 2%, transparent) 100%);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
   animation: navFadeIn 0.2s ease-out;
 }
 
 .navBottom {
-  background: linear-gradient(0deg, rgba(88, 166, 255, 0.09) 0%, rgba(88, 166, 255, 0.02) 100%);
-  border-top: 1px solid rgba(88, 166, 255, 0.16);
+  background: linear-gradient(0deg, color-mix(in srgb, var(--accent) 9%, transparent) 0%, color-mix(in srgb, var(--accent) 2%, transparent) 100%);
+  border-top: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
   animation: navFadeIn 0.2s ease-out;
 }
 
 .navButton:hover {
-  background: rgba(88, 166, 255, 0.13);
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
   color: var(--accent);
 }
 
 .navButton:active {
-  background: rgba(88, 166, 255, 0.20);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 .navArrow {

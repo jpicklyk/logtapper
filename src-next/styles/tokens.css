@@ -12,10 +12,11 @@
   --border-subtle: #2d3d4e;
 
   /* Text */
-  --text-dimmed:  #484f58;
-  --text-muted:   #8b949e;
-  --text-subtle:  #9faab4;
-  --text:         #b8c4ce;
+  --text-dimmed:     #484f58;
+  --text-muted:      #8b949e;
+  --text-subtle:     #9faab4;
+  --text:            #b8c4ce;
+  --text-on-accent:  #fff;
 
   /* Accent (blue) */
   --accent:      #58a6ff;
