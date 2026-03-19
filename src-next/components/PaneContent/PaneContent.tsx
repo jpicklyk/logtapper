@@ -242,13 +242,16 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
     case 'editor':
       return (
         <>
-          <EditorTab
-            tabId={activeTab.id}
-            tabLabel={activeTab.label}
-            isFocused={isFocusedPane}
-            onDirtyChanged={onDirtyChanged}
-            onFilePathChanged={onFilePathChanged}
-          />
+          {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
+          <div onClick={handlePaneFocus} onFocus={handlePaneFocus} style={{ height: '100%' }}>
+            <EditorTab
+              tabId={activeTab.id}
+              tabLabel={activeTab.label}
+              isFocused={isFocusedPane}
+              onDirtyChanged={onDirtyChanged}
+              onFilePathChanged={onFilePathChanged}
+            />
+          </div>
           {bookmarkDialog}
         </>
       );

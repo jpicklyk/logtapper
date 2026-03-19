@@ -149,24 +149,25 @@ const EditorTab = React.memo(function EditorTab({
     }
   }, [handleSaveAs]);
 
-  // Subscribe to bus save events only when this pane is focused.
-  // Use refs so the effect only re-subscribes when isFocused flips (not on every keystroke).
+  // Subscribe to bus save events. All editor tabs subscribe; only the focused
+  // one acts. Refs keep the subscription stable (subscribed once on mount).
   const handleSaveRef = useRef(handleSave);
   handleSaveRef.current = handleSave;
   const handleSaveAsRef = useRef(handleSaveAs);
   handleSaveAsRef.current = handleSaveAs;
+  const isFocusedRef = useRef(isFocused);
+  isFocusedRef.current = isFocused;
 
   useEffect(() => {
-    if (!isFocused) return;
-    const onSave = () => { void handleSaveRef.current(); };
-    const onSaveAs = () => { void handleSaveAsRef.current(); };
+    const onSave = () => { if (isFocusedRef.current) void handleSaveRef.current(); };
+    const onSaveAs = () => { if (isFocusedRef.current) void handleSaveAsRef.current(); };
     bus.on('file:save-request', onSave);
     bus.on('file:save-as-request', onSaveAs);
     return () => {
       bus.off('file:save-request', onSave);
       bus.off('file:save-as-request', onSaveAs);
     };
-  }, [isFocused]);
+  }, []);
 
 
   return (
