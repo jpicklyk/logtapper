@@ -146,7 +146,7 @@
   left: 0;
   right: 0;
   height: 2px;
-  background: #58a6ff;
+  background: var(--accent);
   border-radius: 1px 1px 0 0;
 }
 

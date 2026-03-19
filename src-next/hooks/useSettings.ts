@@ -21,12 +21,12 @@ export interface AppSettings {
 const STORAGE_KEY = 'logtapper_settings';
 
 export const DEFAULT_BOOKMARK_CATEGORIES: BookmarkCategoryDef[] = [
-  { id: 'error',        label: 'Errors',        color: '#f85149' },
-  { id: 'warning',      label: 'Warnings',      color: '#d29922' },
-  { id: 'state-change', label: 'State Changes',  color: '#58a6ff' },
-  { id: 'timing',       label: 'Timing',         color: '#3fb950' },
-  { id: 'observation',  label: 'Observations',   color: '#8b949e' },
-  { id: 'custom',       label: 'Other',          color: '#484f58' },
+  { id: 'error',        label: 'Errors',        color: 'var(--danger)' },
+  { id: 'warning',      label: 'Warnings',      color: 'var(--level-warning)' },
+  { id: 'state-change', label: 'State Changes',  color: 'var(--accent)' },
+  { id: 'timing',       label: 'Timing',         color: 'var(--success)' },
+  { id: 'observation',  label: 'Observations',   color: 'var(--text-muted)' },
+  { id: 'custom',       label: 'Other',          color: 'var(--text-dimmed)' },
 ];
 
 export const SETTING_DEFAULTS: AppSettings = {
