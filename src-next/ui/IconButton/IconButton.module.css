@@ -12,11 +12,16 @@
 }
 
 .iconButton:hover:not(:disabled) {
-  background: var(--bg-raised);
+  background: var(--bg-overlay);
+}
+
+.iconButton:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .iconButton:disabled {
-  opacity: 0.4;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 

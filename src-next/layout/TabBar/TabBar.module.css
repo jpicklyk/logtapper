@@ -219,3 +219,13 @@
   background: var(--bg-overlay);
   color: var(--text);
 }
+
+.tab:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
+.addTab:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}

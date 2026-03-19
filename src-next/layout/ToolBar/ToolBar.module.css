@@ -52,6 +52,11 @@
   background: var(--bg-overlay);
 }
 
+.button:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 /* Active indicator — accent bar on the side closest to content */
 .left .button.active {
   color: var(--accent);
@@ -80,7 +85,7 @@
   min-width: 14px;
   height: 14px;
   padding: 0 3px;
-  border-radius: 7px;
+  border-radius: var(--radius-full);
   background: var(--accent-base);
   color: var(--text-on-accent);
   font-size: 9px;

@@ -11,6 +11,7 @@
 
 .wrapper:focus-within {
   border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
 }
 
 .error {

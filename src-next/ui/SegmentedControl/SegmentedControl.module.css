@@ -25,6 +25,11 @@
   color: var(--text);
 }
 
+.button:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .button.active {
   background: var(--bg-raised);
   color: var(--text);
