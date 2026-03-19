@@ -229,11 +229,11 @@
 
 .lineRefAnchor {
   border-color: var(--accent-base);
-  background: rgba(88, 166, 255, 0.06);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
 .lineRefAnchor:hover {
-  background: rgba(88, 166, 255, 0.12);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .lineRefNum {

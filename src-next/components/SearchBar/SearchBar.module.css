@@ -90,8 +90,8 @@
 .toggleActive {
   background: color-mix(in srgb, var(--accent) 12%, var(--bg-overlay));
   color: var(--accent);
-  border-color: rgba(88, 166, 255, 0.5);
-  box-shadow: inset 0 0 0 1px rgba(88, 166, 255, 0.15);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 15%, transparent);
 }
 
 .timeWrap {
