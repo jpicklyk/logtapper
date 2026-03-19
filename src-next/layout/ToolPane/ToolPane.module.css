@@ -1,6 +1,6 @@
 .pane {
   display: flex;
-  background: var(--bg-raised);
+  background: var(--panel-bg);
   overflow: hidden;
   transition: width 150ms ease, height 150ms ease;
 }
