@@ -2,26 +2,22 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { ChevronRight, Download } from 'lucide-react';
 import type { Bookmark } from '../../bridge/types';
 import { useFocusedSession, useViewerActions } from '../../context';
-import { useBookmarks } from '../../hooks';
+import { useBookmarks, useSettings } from '../../hooks';
+import type { BookmarkCategoryDef } from '../../hooks';
 import BookmarkItem from './BookmarkItem';
 import { exportBookmarksAsMarkdown } from './exportMarkdown';
 import styles from './BookmarkPanel.module.css';
 
-// ── Category config ────────────────────────────────────────────────────────
+// ── Category helpers ──────────────────────────────────────────────────────
 
-const CATEGORY_CONFIG: Record<string, { color: string; label: string }> = {
-  'error':       { color: 'var(--error, #f85149)',      label: 'Errors'        },
-  'warning':     { color: 'var(--warning, #d29922)',    label: 'Warnings'      },
-  'state-change':{ color: 'var(--accent, #58a6ff)',     label: 'State Changes' },
-  'timing':      { color: 'var(--success, #3fb950)',    label: 'Timing'        },
-  'observation': { color: 'var(--text-muted, #8b949e)', label: 'Observations'  },
-  'custom':      { color: 'var(--text-dimmed, #484f58)', label: 'Other'        },
-};
+const FALLBACK_CONFIG = { color: '#484f58', label: 'Other' };
 
-const CATEGORY_ORDER = ['error', 'warning', 'state-change', 'timing', 'observation', 'custom'];
-
-function getCategoryConfig(cat: string): { color: string; label: string } {
-  return CATEGORY_CONFIG[cat] ?? CATEGORY_CONFIG['custom'];
+function getCategoryConfig(
+  cat: string,
+  categories: BookmarkCategoryDef[],
+): { color: string; label: string } {
+  const def = categories.find((c) => c.id === cat);
+  return def ? { color: def.color, label: def.label } : FALLBACK_CONFIG;
 }
 
 // ── Category group ─────────────────────────────────────────────────────────
@@ -29,6 +25,7 @@ function getCategoryConfig(cat: string): { color: string; label: string } {
 interface CategoryGroupProps {
   category: string;
   bookmarks: Bookmark[];
+  categories: BookmarkCategoryDef[];
   onJump: (lineNum: number) => void;
   onEdit: (id: string, label?: string, note?: string, category?: string) => void;
   onDelete: (id: string) => void;
@@ -37,12 +34,13 @@ interface CategoryGroupProps {
 const CategoryGroup = React.memo(function CategoryGroup({
   category,
   bookmarks,
+  categories,
   onJump,
   onEdit,
   onDelete,
 }: CategoryGroupProps) {
   const [collapsed, setCollapsed] = useState(false);
-  const { color, label } = getCategoryConfig(category);
+  const { color, label } = getCategoryConfig(category, categories);
 
   const toggleCollapsed = useCallback(() => setCollapsed((c) => !c), []);
 
@@ -87,6 +85,8 @@ const BookmarkPanel = React.memo(function BookmarkPanel() {
   const sessionId = session?.sessionId ?? null;
   const { bookmarks, bookmarksLoading, editBookmark, removeBookmark } = useBookmarks(sessionId);
   const { jumpToLine } = useViewerActions();
+  const { settings } = useSettings();
+  const categories = settings.bookmarkCategories;
   const [exportLabel, setExportLabel] = useState<'export' | 'copied'>('export');
 
   // Group bookmarks by category, sorted by line number within each group
@@ -102,19 +102,19 @@ const BookmarkPanel = React.memo(function BookmarkPanel() {
     return groups;
   }, [bookmarks]);
 
-  // Ordered list of present categories
+  // Ordered list of present categories — follows settings order
   const orderedCategories = useMemo(() => {
     const present = new Set(grouped.keys());
     const ordered: string[] = [];
-    for (const cat of CATEGORY_ORDER) {
-      if (present.has(cat)) ordered.push(cat);
+    for (const cat of categories) {
+      if (present.has(cat.id)) ordered.push(cat.id);
     }
-    // Any unknown categories not in CATEGORY_ORDER come last
+    // Any unknown categories not in settings come last
     for (const cat of present) {
-      if (!CATEGORY_ORDER.includes(cat)) ordered.push(cat);
+      if (!categories.some((c) => c.id === cat)) ordered.push(cat);
     }
     return ordered;
-  }, [grouped]);
+  }, [grouped, categories]);
 
   const handleJump = useCallback((lineNum: number) => {
     jumpToLine(lineNum);
@@ -195,6 +195,7 @@ const BookmarkPanel = React.memo(function BookmarkPanel() {
               key={cat}
               category={cat}
               bookmarks={items}
+              categories={categories}
               onJump={handleJump}
               onEdit={handleEdit}
               onDelete={handleDelete}

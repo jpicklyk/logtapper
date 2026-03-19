@@ -9,7 +9,7 @@ import {
   usePipelineResults,
   useViewerActions,
 } from '../../context';
-import { useStateTracker, useBookmarks } from '../../hooks';
+import { useStateTracker, useBookmarks, useSettings } from '../../hooks';
 import { bus } from '../../events';
 import styles from './StateTimeline.module.css';
 
@@ -80,15 +80,6 @@ function SelectionCursors({
   );
 }
 
-const BOOKMARK_COLORS: Record<string, string> = {
-  'error':        '#f85149',
-  'warning':      '#d29922',
-  'state-change': '#58a6ff',
-  'timing':       '#3fb950',
-  'observation':  '#8b949e',
-  'custom':       '#484f58',
-};
-
 /** Bookmark markers overlay — positioned over the track body area (left: LABEL_W).
  *  Follows the same pattern as SelectionCursors. */
 const BookmarkMarkers = React.memo(function BookmarkMarkers({
@@ -97,12 +88,14 @@ const BookmarkMarkers = React.memo(function BookmarkMarkers({
   vpS,
   vpSpan,
   jumpToLine,
+  categoryColorMap,
 }: {
   bookmarks: Bookmark[];
   maxLine: number;
   vpS: number;
   vpSpan: number;
   jumpToLine: (lineNum: number) => void;
+  categoryColorMap: Record<string, string>;
 }) {
   if (bookmarks.length === 0 || maxLine === 0) return null;
   return (
@@ -111,7 +104,7 @@ const BookmarkMarkers = React.memo(function BookmarkMarkers({
         const norm = b.lineNumber / maxLine;
         // Skip markers outside the visible viewport (with a small margin)
         if (norm < vpS - 0.005 || norm > vpSpan + vpS + 0.005) return null;
-        const color = BOOKMARK_COLORS[b.category ?? 'custom'] ?? BOOKMARK_COLORS['custom'];
+        const color = categoryColorMap[b.category ?? 'custom'] ?? '#484f58';
         return (
           <div
             key={b.id}
@@ -166,6 +159,12 @@ const StateTimeline = React.memo(function StateTimeline() {
   const { jumpToLine } = useViewerActions();
   const stateTracker = useStateTracker();
   const { bookmarks } = useBookmarks(session?.sessionId ?? null);
+  const { settings } = useSettings();
+  const timelineCategoryColors = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const c of settings.bookmarkCategories) map[c.id] = c.color;
+    return map;
+  }, [settings.bookmarkCategories]);
 
   const [timelines, setTimelines] = useState<TrackerTimeline[]>([]);
   const [reporterTimelines, setReporterTimelines] = useState<TimelineSeriesData[]>([]);
@@ -435,6 +434,7 @@ const StateTimeline = React.memo(function StateTimeline() {
           vpS={vp[0]}
           vpSpan={Math.max(vp[1] - vp[0], 1e-9)}
           jumpToLine={jumpToLine}
+          categoryColorMap={timelineCategoryColors}
         />
       </div>
     </div>

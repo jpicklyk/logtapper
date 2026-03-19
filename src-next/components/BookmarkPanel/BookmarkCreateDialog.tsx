@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { createBookmark, getLines } from '../../bridge/commands';
+import { useSettings } from '../../hooks';
 import styles from './BookmarkCreateDialog.module.css';
 
 export interface BookmarkCreateRequest {
@@ -17,21 +18,14 @@ interface Props {
   onClose: () => void;
 }
 
-const CATEGORIES = [
-  'observation',
-  'error',
-  'warning',
-  'state-change',
-  'timing',
-  'custom',
-] as const;
-
 const BookmarkCreateDialog = React.memo(function BookmarkCreateDialog({
   request,
   onClose,
 }: Props) {
+  const { settings } = useSettings();
+  const categories = settings.bookmarkCategories;
   const [label, setLabel] = useState('');
-  const [category, setCategory] = useState<string>('observation');
+  const [category, setCategory] = useState<string>(() => categories[0]?.id ?? 'custom');
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -203,9 +197,9 @@ const BookmarkCreateDialog = React.memo(function BookmarkCreateDialog({
               value={category}
               onChange={(e) => setCategory(e.target.value)}
             >
-              {CATEGORIES.map((c) => (
-                <option key={c} value={c}>
-                  {c.charAt(0).toUpperCase() + c.slice(1).replace('-', ' ')}
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
                 </option>
               ))}
             </select>

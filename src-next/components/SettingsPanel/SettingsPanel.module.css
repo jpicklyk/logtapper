@@ -439,3 +439,19 @@
 .btnSecondary:hover {
   border-color: var(--accent);
 }
+
+.linkBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 11px;
+  padding: 2px 0;
+}
+
+.linkBtn:hover {
+  text-decoration: underline;
+}

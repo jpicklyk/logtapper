@@ -10,19 +10,10 @@ import {
   useTrackerTransitions,
   useSearchQuery,
 } from '../../context';
-import { useBookmarks, useBookmarkLines, useBookmarkLookup } from '../../hooks';
+import { useBookmarks, useBookmarkLines, useBookmarkLookup, useSettings } from '../../hooks';
 import { bus } from '../../events';
 import type { AppEvents } from '../../events';
 import styles from './LogViewer.module.css';
-
-const CATEGORY_COLORS: Record<string, string> = {
-  'error': '#f85149',
-  'warning': '#d29922',
-  'state-change': '#58a6ff',
-  'timing': '#3fb950',
-  'observation': '#8b949e',
-  'custom': '#484f58',
-};
 
 interface Props {
   paneId: string;
@@ -49,6 +40,12 @@ const LogViewer = React.memo(function LogViewer({
   const { bookmarks } = useBookmarks(sessionId);
   const bookmarkLines = useBookmarkLines(bookmarks);
   const bookmarkLookup = useBookmarkLookup(bookmarks);
+  const { settings } = useSettings();
+  const categoryColorMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const c of settings.bookmarkCategories) map[c.id] = c.color;
+    return map;
+  }, [settings.bookmarkCategories]);
   const { lineNum: scrollToLine, seq: jumpSeq, paneId: jumpPaneId } = useScrollTarget();
   // Only honour the jump if it targets this specific pane or is unfocused/global (null).
   const isJumpForThisPane = jumpPaneId === null || jumpPaneId === paneId;
@@ -190,8 +187,8 @@ const LogViewer = React.memo(function LogViewer({
           if (!bookmarkLines.has(lineNum)) return null;
           const bookmark = bookmarkLookup(lineNum);
           const color = bookmark?.category
-            ? (CATEGORY_COLORS[bookmark.category] ?? CATEGORY_COLORS['custom'])
-            : CATEGORY_COLORS['custom'];
+            ? (categoryColorMap[bookmark.category ?? 'custom'] ?? '#484f58')
+            : '#484f58';
           return (
             <span
               style={{
@@ -210,7 +207,7 @@ const LogViewer = React.memo(function LogViewer({
     }
 
     return cols;
-  }, [transitionLineNums, transitionsByLine, bookmarkLines, bookmarkLookup]);
+  }, [transitionLineNums, transitionsByLine, bookmarkLines, bookmarkLookup, categoryColorMap]);
 
   // Line decorators: level coloring
   const lineDecorators = useMemo<LineDecoratorDef[]>(
@@ -363,7 +360,7 @@ const LogViewer = React.memo(function LogViewer({
   return (
     // Wrap in a div to capture context-menu events before they bubble out.
     // onContextMenu is suppressed when there is no selection (handled in handler).
-    <div style={{ height: '100%' }} onContextMenu={handleContextMenu}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }} onContextMenu={handleContextMenu}>
       <ReadOnlyViewer
         dataSource={dataSource}
         totalLineCount={effectiveTotalLines}
