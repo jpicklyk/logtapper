@@ -54,46 +54,29 @@ body {
   overflow: hidden;
 }
 
-/* ── Scrollbar utilities ───────────────────────────────────────────────── */
+/* ── Scrollbars ────────────────────────────────────────────────────────── */
+/* App-wide thin scrollbar — applied globally so every scrollable container
+   matches the dark theme. Individual components no longer need per-class
+   scrollbar rules. */
 
-/* Thin sidebar scrollbar (5-6px, subtle thumb, no track) — for panels and lists */
-.scrollbar-thin::-webkit-scrollbar {
+*::-webkit-scrollbar {
   width: 5px;
   height: 5px;
 }
 
-.scrollbar-thin::-webkit-scrollbar-track {
+*::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.scrollbar-thin::-webkit-scrollbar-thumb {
+*::-webkit-scrollbar-thumb {
   background: var(--border-subtle);
   border-radius: 3px;
 }
 
-.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+*::-webkit-scrollbar-thumb:hover {
   background: var(--text-dimmed);
 }
 
-/* Full editor scrollbar (10px, visible track) — for code/log content areas */
-.scrollbar-editor::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-
-.scrollbar-editor::-webkit-scrollbar-track {
-  background: var(--bg-base);
-}
-
-.scrollbar-editor::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 5px;
-}
-
-.scrollbar-editor::-webkit-scrollbar-thumb:hover {
-  background: var(--text-dimmed);
-}
-
-.scrollbar-editor::-webkit-scrollbar-corner {
-  background: var(--bg-base);
+*::-webkit-scrollbar-corner {
+  background: transparent;
 }

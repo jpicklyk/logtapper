@@ -64,7 +64,6 @@
 /* ── Scrollable list area ────────────────────────────────────────────────── */
 
 .list {
-  composes: scrollbar-thin from global;
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;

@@ -9,7 +9,6 @@
 }
 
 .body {
-  composes: scrollbar-thin from global;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -345,7 +344,6 @@
 }
 
 .sectionList {
-  composes: scrollbar-thin from global;
   flex: 1;
   min-height: 0;
   display: flex;

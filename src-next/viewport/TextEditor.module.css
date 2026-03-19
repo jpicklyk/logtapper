@@ -14,28 +14,3 @@
 .editor :global(.cm-scroller) {
   overflow: auto !important;
 }
-
-/* CodeMirror manages .cm-scroller internally — we cannot add a className to it,
-   so scrollbar styling must be applied via CSS selectors rather than the global
-   .scrollbar-editor utility class. These values mirror that utility. */
-.editor :global(.cm-scroller)::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-
-.editor :global(.cm-scroller)::-webkit-scrollbar-track {
-  background: var(--bg-base);
-}
-
-.editor :global(.cm-scroller)::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 5px;
-}
-
-.editor :global(.cm-scroller)::-webkit-scrollbar-thumb:hover {
-  background: var(--text-dimmed);
-}
-
-.editor :global(.cm-scroller)::-webkit-scrollbar-corner {
-  background: var(--bg-base);
-}
