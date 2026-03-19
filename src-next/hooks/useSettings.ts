@@ -36,8 +36,43 @@ export const SETTING_DEFAULTS: AppSettings = {
   bookmarkCategories: DEFAULT_BOOKMARK_CATEGORIES,
 };
 
+/** Map of old default hex colors → new theme-aware token references.
+ *  Only migrates values that match the original defaults — custom user picks are preserved. */
+const LEGACY_COLOR_MIGRATION: Record<string, string> = {
+  '#f85149': 'var(--danger)',
+  '#d29922': 'var(--level-warning)',
+  '#58a6ff': 'var(--accent)',
+  '#3fb950': 'var(--success)',
+  '#8b949e': 'var(--text-muted)',
+  '#484f58': 'var(--text-dimmed)',
+};
+
+function migrateBookmarkColors(cats: BookmarkCategoryDef[]): BookmarkCategoryDef[] {
+  let changed = false;
+  const migrated = cats.map((cat) => {
+    const replacement = LEGACY_COLOR_MIGRATION[cat.color];
+    if (replacement) {
+      changed = true;
+      return { ...cat, color: replacement };
+    }
+    return cat;
+  });
+  return changed ? migrated : cats;
+}
+
 export function loadSettings(): AppSettings {
-  return { ...SETTING_DEFAULTS, ...storageGetJSON<Partial<AppSettings>>(STORAGE_KEY, {}) };
+  const stored = storageGetJSON<Partial<AppSettings>>(STORAGE_KEY, {});
+
+  // Migrate legacy hex bookmark colors to theme-aware tokens
+  if (stored.bookmarkCategories) {
+    const migrated = migrateBookmarkColors(stored.bookmarkCategories);
+    if (migrated !== stored.bookmarkCategories) {
+      stored.bookmarkCategories = migrated;
+      storageSetJSON(STORAGE_KEY, { ...SETTING_DEFAULTS, ...stored });
+    }
+  }
+
+  return { ...SETTING_DEFAULTS, ...stored };
 }
 
 export interface UseSettingsResult {
