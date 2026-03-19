@@ -3,12 +3,40 @@ pub mod lts;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::Manager;
+use zip::write::SimpleFileOptions;
 
 use crate::core::analysis::AnalysisArtifact;
 use crate::core::bookmark::Bookmark;
+
+/// Write a JSON-serializable value as a zip entry.
+pub(crate) fn zip_write_json<T: serde::Serialize + ?Sized>(
+    writer: &mut zip::ZipWriter<File>,
+    path: &str,
+    opts: SimpleFileOptions,
+    value: &T,
+) -> Result<(), String> {
+    writer
+        .start_file(path, opts)
+        .map_err(|e| format!("Failed to start {path} entry: {e}"))?;
+    serde_json::to_writer(writer, value)
+        .map_err(|e| format!("Failed to write {path}: {e}"))
+}
+
+/// Read and deserialize a JSON entry from a zip archive.
+pub(crate) fn zip_read_json<T: DeserializeOwned>(
+    archive: &mut zip::ZipArchive<File>,
+    path: &str,
+) -> Result<T, String> {
+    let entry = archive
+        .by_name(path)
+        .map_err(|e| format!("{path} not found in archive: {e}"))?;
+    serde_json::from_reader(entry)
+        .map_err(|e| format!("Failed to parse {path}: {e}"))
+}
 
 pub const WORKSPACE_FORMAT_VERSION: u32 = 1;
 
@@ -63,36 +91,12 @@ pub fn save_workspace(
     let out_file = File::create(zip_path)
         .map_err(|e| format!("Failed to create workspace file '{}': {e}", zip_path.display()))?;
     let mut writer = zip::ZipWriter::new(out_file);
-    let opts = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
+    let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
-    // manifest.json
-    writer
-        .start_file("manifest.json", opts)
-        .map_err(|e| format!("Failed to start manifest.json entry: {e}"))?;
-    serde_json::to_writer(&mut writer, &manifest)
-        .map_err(|e| format!("Failed to write manifest.json: {e}"))?;
-
-    // bookmarks.json
-    writer
-        .start_file("bookmarks.json", opts)
-        .map_err(|e| format!("Failed to start bookmarks.json entry: {e}"))?;
-    serde_json::to_writer(&mut writer, bookmarks)
-        .map_err(|e| format!("Failed to write bookmarks.json: {e}"))?;
-
-    // analyses.json
-    writer
-        .start_file("analyses.json", opts)
-        .map_err(|e| format!("Failed to start analyses.json entry: {e}"))?;
-    serde_json::to_writer(&mut writer, analyses)
-        .map_err(|e| format!("Failed to write analyses.json: {e}"))?;
-
-    // session-meta.json
-    writer
-        .start_file("session-meta.json", opts)
-        .map_err(|e| format!("Failed to start session-meta.json entry: {e}"))?;
-    serde_json::to_writer(&mut writer, meta)
-        .map_err(|e| format!("Failed to write session-meta.json: {e}"))?;
+    zip_write_json(&mut writer, "manifest.json", opts, &manifest)?;
+    zip_write_json(&mut writer, "bookmarks.json", opts, bookmarks)?;
+    zip_write_json(&mut writer, "analyses.json", opts, analyses)?;
+    zip_write_json(&mut writer, "session-meta.json", opts, meta)?;
 
     writer
         .finish()
@@ -108,37 +112,10 @@ pub fn load_workspace(zip_path: &Path) -> Result<WorkspaceData, String> {
     let mut archive = zip::ZipArchive::new(file)
         .map_err(|e| format!("Invalid workspace zip '{}': {e}", zip_path.display()))?;
 
-    let manifest: WorkspaceManifest = {
-        let entry = archive
-            .by_name("manifest.json")
-            .map_err(|e| format!("manifest.json not found in workspace: {e}"))?;
-        serde_json::from_reader(entry)
-            .map_err(|e| format!("Failed to parse manifest.json: {e}"))?
-    };
-
-    let bookmarks: Vec<Bookmark> = {
-        let entry = archive
-            .by_name("bookmarks.json")
-            .map_err(|e| format!("bookmarks.json not found in workspace: {e}"))?;
-        serde_json::from_reader(entry)
-            .map_err(|e| format!("Failed to parse bookmarks.json: {e}"))?
-    };
-
-    let analyses: Vec<AnalysisArtifact> = {
-        let entry = archive
-            .by_name("analyses.json")
-            .map_err(|e| format!("analyses.json not found in workspace: {e}"))?;
-        serde_json::from_reader(entry)
-            .map_err(|e| format!("Failed to parse analyses.json: {e}"))?
-    };
-
-    let session_meta: SessionMeta = {
-        let entry = archive
-            .by_name("session-meta.json")
-            .map_err(|e| format!("session-meta.json not found in workspace: {e}"))?;
-        serde_json::from_reader(entry)
-            .map_err(|e| format!("Failed to parse session-meta.json: {e}"))?
-    };
+    let manifest: WorkspaceManifest = zip_read_json(&mut archive, "manifest.json")?;
+    let bookmarks: Vec<Bookmark> = zip_read_json(&mut archive, "bookmarks.json")?;
+    let analyses: Vec<AnalysisArtifact> = zip_read_json(&mut archive, "analyses.json")?;
+    let session_meta: SessionMeta = zip_read_json(&mut archive, "session-meta.json")?;
 
     Ok(WorkspaceData {
         manifest,

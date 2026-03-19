@@ -238,7 +238,14 @@ pub fn resolve_lts_processors_raw(
                 let mut hasher = Sha256::new();
                 hasher.update(local.as_bytes());
                 let local_hash = hex::encode(hasher.finalize());
-                local_hash != entry.sha256
+                let mismatch = local_hash != entry.sha256;
+                if mismatch {
+                    log::warn!(
+                        "Overwriting locally installed processor '{}' with version from .lts session",
+                        entry.id
+                    );
+                }
+                mismatch
             }
             None => true, // Not installed locally
         };

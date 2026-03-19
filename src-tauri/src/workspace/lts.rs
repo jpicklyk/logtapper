@@ -5,6 +5,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use zip::write::SimpleFileOptions;
 
 use crate::core::analysis::AnalysisArtifact;
 use crate::core::bookmark::Bookmark;
@@ -50,7 +51,6 @@ pub struct LtsProcessorManifest {
 pub struct LtsData {
     pub manifest: LtsManifest,
     pub source_bytes: Vec<u8>,
-    pub source_filename: String,
     pub bookmarks: Vec<Bookmark>,
     pub analyses: Vec<AnalysisArtifact>,
     pub session_meta: LtsSessionMeta,
@@ -93,17 +93,14 @@ pub fn write_lts(
         .map_err(|e| format!("Failed to create .lts file '{}': {e}", dest.display()))?;
     let mut writer = zip::ZipWriter::new(out_file);
 
-    let deflate_opts = zip::write::SimpleFileOptions::default()
+    let deflate_opts = SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
-    let stored_opts = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
+    let stored_opts = SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Stored)
+        .large_file(true);
 
     // 1. manifest.json (Deflated)
-    writer
-        .start_file("manifest.json", deflate_opts)
-        .map_err(|e| format!("Failed to start manifest.json entry: {e}"))?;
-    serde_json::to_writer(&mut writer, &manifest)
-        .map_err(|e| format!("Failed to write manifest.json: {e}"))?;
+    super::zip_write_json(&mut writer, "manifest.json", deflate_opts, &manifest)?;
 
     // 2. source/<source_filename> (Stored — no compression for large files)
     let source_entry = format!("source/{source_filename}");
@@ -114,25 +111,13 @@ pub fn write_lts(
         .map_err(|e| format!("Failed to write source bytes: {e}"))?;
 
     // 3. artifacts/bookmarks.json (Deflated)
-    writer
-        .start_file("artifacts/bookmarks.json", deflate_opts)
-        .map_err(|e| format!("Failed to start artifacts/bookmarks.json entry: {e}"))?;
-    serde_json::to_writer(&mut writer, bookmarks)
-        .map_err(|e| format!("Failed to write artifacts/bookmarks.json: {e}"))?;
+    super::zip_write_json(&mut writer, "artifacts/bookmarks.json", deflate_opts, bookmarks)?;
 
     // 4. artifacts/analyses.json (Deflated)
-    writer
-        .start_file("artifacts/analyses.json", deflate_opts)
-        .map_err(|e| format!("Failed to start artifacts/analyses.json entry: {e}"))?;
-    serde_json::to_writer(&mut writer, analyses)
-        .map_err(|e| format!("Failed to write artifacts/analyses.json: {e}"))?;
+    super::zip_write_json(&mut writer, "artifacts/analyses.json", deflate_opts, analyses)?;
 
     // 5. artifacts/session-meta.json (Deflated)
-    writer
-        .start_file("artifacts/session-meta.json", deflate_opts)
-        .map_err(|e| format!("Failed to start artifacts/session-meta.json entry: {e}"))?;
-    serde_json::to_writer(&mut writer, meta)
-        .map_err(|e| format!("Failed to write artifacts/session-meta.json: {e}"))?;
+    super::zip_write_json(&mut writer, "artifacts/session-meta.json", deflate_opts, meta)?;
 
     // 6. processors/<filename>.yaml + build processor manifest (Deflated)
     let mut proc_manifest = LtsProcessorManifest {
@@ -160,13 +145,7 @@ pub fn write_lts(
     }
 
     // 7. processors/processor-manifest.json (Deflated)
-    writer
-        .start_file("processors/processor-manifest.json", deflate_opts)
-        .map_err(|e| {
-            format!("Failed to start processors/processor-manifest.json entry: {e}")
-        })?;
-    serde_json::to_writer(&mut writer, &proc_manifest)
-        .map_err(|e| format!("Failed to write processors/processor-manifest.json: {e}"))?;
+    super::zip_write_json(&mut writer, "processors/processor-manifest.json", deflate_opts, &proc_manifest)?;
 
     writer
         .finish()
@@ -183,19 +162,11 @@ pub fn read_lts(path: &Path) -> Result<LtsData, String> {
         .map_err(|e| format!("Invalid .lts zip '{}': {e}", path.display()))?;
 
     // 1. manifest.json
-    let manifest: LtsManifest = {
-        let entry = archive
-            .by_name("manifest.json")
-            .map_err(|e| format!("manifest.json not found in .lts file: {e}"))?;
-        serde_json::from_reader(entry)
-            .map_err(|e| format!("Failed to parse manifest.json: {e}"))?
-    };
-
-    let source_filename = manifest.source_filename.clone();
+    let manifest: LtsManifest = super::zip_read_json(&mut archive, "manifest.json")?;
 
     // 2. source/<manifest.source_filename>
     let source_bytes: Vec<u8> = {
-        let source_entry = format!("source/{source_filename}");
+        let source_entry = format!("source/{}", manifest.source_filename);
         let mut entry = archive
             .by_name(&source_entry)
             .map_err(|e| format!("Source entry '{source_entry}' not found in .lts file: {e}"))?;
@@ -207,22 +178,10 @@ pub fn read_lts(path: &Path) -> Result<LtsData, String> {
     };
 
     // 3. artifacts/bookmarks.json
-    let bookmarks: Vec<Bookmark> = {
-        let entry = archive
-            .by_name("artifacts/bookmarks.json")
-            .map_err(|e| format!("artifacts/bookmarks.json not found in .lts file: {e}"))?;
-        serde_json::from_reader(entry)
-            .map_err(|e| format!("Failed to parse artifacts/bookmarks.json: {e}"))?
-    };
+    let bookmarks: Vec<Bookmark> = super::zip_read_json(&mut archive, "artifacts/bookmarks.json")?;
 
     // 4. artifacts/analyses.json
-    let analyses: Vec<AnalysisArtifact> = {
-        let entry = archive
-            .by_name("artifacts/analyses.json")
-            .map_err(|e| format!("artifacts/analyses.json not found in .lts file: {e}"))?;
-        serde_json::from_reader(entry)
-            .map_err(|e| format!("Failed to parse artifacts/analyses.json: {e}"))?
-    };
+    let analyses: Vec<AnalysisArtifact> = super::zip_read_json(&mut archive, "artifacts/analyses.json")?;
 
     // 5. artifacts/session-meta.json (optional — default if missing)
     let session_meta: LtsSessionMeta = match archive.by_name("artifacts/session-meta.json") {
@@ -257,7 +216,6 @@ pub fn read_lts(path: &Path) -> Result<LtsData, String> {
     Ok(LtsData {
         manifest,
         source_bytes,
-        source_filename,
         bookmarks,
         analyses,
         session_meta,
@@ -337,9 +295,6 @@ mod tests {
         assert_eq!(loaded.manifest.source_filename, "test.log");
         assert_eq!(loaded.manifest.source_size, source_bytes.len() as u64);
         assert!(loaded.manifest.saved_at > 0);
-
-        // Source filename convenience field
-        assert_eq!(loaded.source_filename, "test.log");
 
         // Source bytes (Stored — no transformation)
         assert_eq!(loaded.source_bytes, source_bytes);

@@ -130,7 +130,7 @@ pub async fn load_log_file(
 
     // If the file is a .lts session export, use the dedicated import path.
     if path_obj.extension().and_then(|e| e.to_str()) == Some("lts") {
-        return load_lts_file_inner(&state, &app, &path).await;
+        return load_lts_file_inner(&state, &app, &path);
     }
 
     // If the file is a .zip, extract the dumpstate/bugreport .txt to a temp file
@@ -238,8 +238,7 @@ pub async fn load_log_file(
     Ok(result)
 }
 
-#[allow(clippy::unused_async)]
-async fn load_lts_file_inner(
+fn load_lts_file_inner(
     state: &AppState,
     app: &tauri::AppHandle,
     lts_path: &str,
@@ -270,7 +269,7 @@ async fn load_lts_file_inner(
     session.add_zip_source(
         lts.source_bytes,
         source_id.clone(),
-        lts.source_filename.clone(),
+        lts.manifest.source_filename.clone(),
     )?;
 
     let source = session.primary_source().ok_or("No source after zip load")?;
@@ -302,27 +301,8 @@ async fn load_lts_file_inner(
         sessions.insert(session_id.clone(), session);
     }
 
-    // 5. Restore bookmarks (rewrite session_id)
-    if !lts.bookmarks.is_empty() {
-        let mut bookmarks = lts.bookmarks;
-        for bm in &mut bookmarks {
-            bm.session_id = session_id.clone();
-        }
-        if let Ok(mut bm_map) = state.bookmarks.lock() {
-            bm_map.insert(session_id.clone(), bookmarks);
-        }
-    }
-
-    // 6. Restore analyses (rewrite session_id)
-    if !lts.analyses.is_empty() {
-        let mut analyses = lts.analyses;
-        for an in &mut analyses {
-            an.session_id = session_id.clone();
-        }
-        if let Ok(mut an_map) = state.analyses.lock() {
-            an_map.insert(session_id.clone(), analyses);
-        }
-    }
+    // 5 & 6. Restore bookmarks and analyses (rewrite session_id)
+    let (bm_count, an_count) = restore_artifacts(state, &session_id, lts.bookmarks, lts.analyses);
 
     // 6.5. Resolve bundled processors (install missing / hash-mismatched processors globally).
     // processor_manifest and processor_yamls were cloned before the partial moves above.
@@ -334,12 +314,6 @@ async fn load_lts_file_inner(
     );
 
     // 7. Emit restore event
-    let bm_count = state.bookmarks.lock().ok()
-        .and_then(|b| b.get(&session_id).map(Vec::len))
-        .unwrap_or(0);
-    let an_count = state.analyses.lock().ok()
-        .and_then(|a| a.get(&session_id).map(Vec::len))
-        .unwrap_or(0);
     if bm_count > 0 || an_count > 0 {
         let _ = app.emit("workspace-restored", serde_json::json!({
             "sessionId": session_id,
@@ -1268,6 +1242,40 @@ pub fn compute_search_highlights(raw: &str, query: &SearchQuery) -> Vec<Highligh
 }
 
 // ---------------------------------------------------------------------------
+// restore_artifacts — shared helper
+// ---------------------------------------------------------------------------
+
+/// Restore bookmarks and analyses into AppState with session ID rewritten.
+fn restore_artifacts(
+    state: &AppState,
+    session_id: &str,
+    bookmarks: Vec<crate::core::bookmark::Bookmark>,
+    analyses: Vec<crate::core::analysis::AnalysisArtifact>,
+) -> (usize, usize) {
+    let bm_count = bookmarks.len();
+    let an_count = analyses.len();
+    if !bookmarks.is_empty() {
+        let mut bm = bookmarks;
+        for b in &mut bm {
+            b.session_id = session_id.to_string();
+        }
+        if let Ok(mut map) = state.bookmarks.lock() {
+            map.insert(session_id.to_string(), bm);
+        }
+    }
+    if !analyses.is_empty() {
+        let mut an = analyses;
+        for a in &mut an {
+            a.session_id = session_id.to_string();
+        }
+        if let Ok(mut map) = state.analyses.lock() {
+            map.insert(session_id.to_string(), an);
+        }
+    }
+    (bm_count, an_count)
+}
+
+// ---------------------------------------------------------------------------
 // try_restore_workspace
 // ---------------------------------------------------------------------------
 
@@ -1298,31 +1306,8 @@ fn try_restore_workspace(
         }
     };
 
-    // 4. Rewrite session_id on all bookmarks
-    let mut bookmarks = data.bookmarks;
-    for bm in &mut bookmarks {
-        bm.session_id = session_id.to_string();
-    }
-    let bm_count = bookmarks.len();
-
-    // 5. Rewrite session_id on all analyses
-    let mut analyses = data.analyses;
-    for an in &mut analyses {
-        an.session_id = session_id.to_string();
-    }
-    let an_count = analyses.len();
-
-    // 6. Insert into AppState under brief locks
-    if !bookmarks.is_empty() {
-        if let Ok(mut bm_map) = state.bookmarks.lock() {
-            bm_map.insert(session_id.to_string(), bookmarks);
-        }
-    }
-    if !analyses.is_empty() {
-        if let Ok(mut an_map) = state.analyses.lock() {
-            an_map.insert(session_id.to_string(), analyses);
-        }
-    }
+    // 4-6. Rewrite session IDs and insert into AppState
+    let (bm_count, an_count) = restore_artifacts(state, session_id, data.bookmarks, data.analyses);
 
     // 7. Emit workspace-restored event
     if bm_count > 0 || an_count > 0 {

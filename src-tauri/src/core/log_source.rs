@@ -8,6 +8,26 @@ use std::sync::{Arc, Mutex};
 use crate::core::line::LineMeta;
 use crate::core::session::{SectionInfo, SourceType};
 
+/// Shared line extraction from indexed byte data. Used by FileLogSource and ZipLogSource.
+fn raw_line_from_bytes<'a>(data: &'a [u8], line_index: &[u64], line_num: usize) -> Option<Cow<'a, str>> {
+    if line_num + 1 >= line_index.len() {
+        return None;
+    }
+    let start = line_index[line_num] as usize;
+    let end = line_index[line_num + 1] as usize;
+    if start >= end || end > data.len() {
+        return None;
+    }
+    let mut slice_end = end;
+    if slice_end > start && data[slice_end - 1] == b'\n' {
+        slice_end -= 1;
+    }
+    if slice_end > start && data[slice_end - 1] == b'\r' {
+        slice_end -= 1;
+    }
+    std::str::from_utf8(&data[start..slice_end]).ok().map(Cow::Borrowed)
+}
+
 // ---------------------------------------------------------------------------
 // LogSource trait — the foundational abstraction for log data access
 // ---------------------------------------------------------------------------
@@ -83,25 +103,7 @@ impl LogSource for FileLogSource {
     }
 
     fn raw_line(&self, line_num: usize) -> Option<Cow<'_, str>> {
-        if line_num + 1 >= self.line_index.len() {
-            return None;
-        }
-        let start = self.line_index[line_num] as usize;
-        let end = self.line_index[line_num + 1] as usize;
-        if start >= end || end > self.mmap.len() {
-            return None;
-        }
-        // Strip trailing \n and \r\n
-        let mut slice_end = end;
-        if slice_end > start && self.mmap[slice_end - 1] == b'\n' {
-            slice_end -= 1;
-        }
-        if slice_end > start && self.mmap[slice_end - 1] == b'\r' {
-            slice_end -= 1;
-        }
-        std::str::from_utf8(&self.mmap[start..slice_end])
-            .ok()
-            .map(Cow::Borrowed)
+        raw_line_from_bytes(&self.mmap, &self.line_index, line_num)
     }
 
     fn meta_at(&self, line_num: usize) -> Option<&LineMeta> {
@@ -210,25 +212,7 @@ impl LogSource for ZipLogSource {
     }
 
     fn raw_line(&self, line_num: usize) -> Option<Cow<'_, str>> {
-        if line_num + 1 >= self.line_index.len() {
-            return None;
-        }
-        let start = self.line_index[line_num] as usize;
-        let end = self.line_index[line_num + 1] as usize;
-        if start >= end || end > self.data.len() {
-            return None;
-        }
-        // Strip trailing \n and \r\n
-        let mut slice_end = end;
-        if slice_end > start && self.data[slice_end - 1] == b'\n' {
-            slice_end -= 1;
-        }
-        if slice_end > start && self.data[slice_end - 1] == b'\r' {
-            slice_end -= 1;
-        }
-        std::str::from_utf8(&self.data[start..slice_end])
-            .ok()
-            .map(Cow::Borrowed)
+        raw_line_from_bytes(&self.data, &self.line_index, line_num)
     }
 
     fn meta_at(&self, line_num: usize) -> Option<&LineMeta> {
