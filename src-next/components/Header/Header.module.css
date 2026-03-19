@@ -86,7 +86,7 @@
 .actionBtn:hover {
   border-color: var(--accent);
   color: var(--text);
-  background: color-mix(in srgb, var(--accent) 6%, var(--bg-base));
+  background: var(--state-hover);
 }
 
 .actionBtnStreaming {
@@ -150,7 +150,7 @@
 
 .deviceItem:hover {
   border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 6%, var(--bg-base));
+  background: var(--state-hover);
 }
 
 .deviceIcon {

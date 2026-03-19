@@ -132,7 +132,7 @@
 }
 
 .chainNodeDragging {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-popover);
 }
 
 .chainNodePinned {
@@ -338,7 +338,7 @@
 }
 
 .runBtnReady:hover {
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  background: var(--state-hover);
 }
 
 .runBtnRunning {
@@ -378,7 +378,7 @@
   font-size: 11px;
   color: var(--danger);
   padding: 4px 8px;
-  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  background: var(--danger-muted);
   border-radius: 4px;
 }
 
@@ -518,7 +518,7 @@
 }
 
 .chainNodeCompact.chainNodeDragging {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-popover);
 }
 
 .chainNodeCompact.chainNodePinned {

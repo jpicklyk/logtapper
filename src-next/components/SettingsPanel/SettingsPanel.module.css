@@ -16,7 +16,7 @@
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-overlay);
   overflow: hidden;
 }
 
@@ -204,17 +204,17 @@
 }
 
 .fpBadgeTier1 {
-  background: color-mix(in srgb, var(--success) 15%, transparent);
+  background: var(--success-muted);
   color: var(--success);
 }
 
 .fpBadgeTier2 {
-  background: color-mix(in srgb, var(--warning) 15%, transparent);
+  background: var(--warning-muted-bg);
   color: var(--warning);
 }
 
 .fpBadgeTier3 {
-  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  background: var(--danger-muted);
   color: var(--danger);
 }
 
