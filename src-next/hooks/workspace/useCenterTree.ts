@@ -36,7 +36,7 @@ export interface CenterTreeHandle {
   resizeSplit: (splitNodeId: string, ratio: number) => void;
   renameTab: (tabId: string, label: string) => void;
   setTabUnsaved: (tabId: string, isDirty: boolean) => void;
-  openCenterTab: (type: CenterTabType, label?: string) => void;
+  openCenterTab: (type: CenterTabType, label?: string, filePath?: string) => void;
   dropTabOnPane: (tabId: string, fromPaneId: string, toPaneId: string, zone: DropZone) => void;
 }
 
@@ -213,22 +213,32 @@ export function useCenterTree(
     );
   }, [updateTree]);
 
-  const openCenterTab = useCallback((type: CenterTabType, label?: string) => {
+  const openCenterTab = useCallback((type: CenterTabType, label?: string, filePath?: string) => {
     updateTree((tree) => {
-      // 1. If a tab of this type already exists, activate it
-      const existing = findTabByType(tree, type);
-      if (existing) {
-        if (existing.pane.activeTabId === existing.tab.id) return tree;
-        return updateLeaf(tree, existing.pane.id, (pane) => ({
-          ...pane,
-          activeTabId: existing.tab.id,
-        }));
+      // 1. If a tab of this type already exists (and no filePath — reuse tab), activate it
+      if (!filePath) {
+        const existing = findTabByType(tree, type);
+        if (existing) {
+          if (existing.pane.activeTabId === existing.tab.id) return tree;
+          return updateLeaf(tree, existing.pane.id, (pane) => ({
+            ...pane,
+            activeTabId: existing.tab.id,
+          }));
+        }
       }
 
       // 2. Add to the focused pane (or first leaf as fallback)
       const focPaneId = focusedPaneIdRef.current;
       const target = (focPaneId ? findLeafByPaneId(tree, focPaneId) : null) ?? firstLeaf(tree);
       const tab = makeTab(type, label);
+
+      // Pre-seed localStorage with the file path so EditorTab picks it up on mount.
+      if (filePath) {
+        try {
+          localStorage.setItem('logtapper_editor_filepath_' + tab.id, filePath);
+        } catch { /* quota exceeded — EditorTab will start empty */ }
+      }
+
       return updateLeaf(tree, target.pane.id, (pane) => ({
         ...pane,
         tabs: [...pane.tabs, tab],

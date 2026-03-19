@@ -168,26 +168,6 @@ const EditorTab = React.memo(function EditorTab({
     };
   }, [isFocused]);
 
-  // Listen for "Open in Editor" file load events. Only the focused editor tab
-  // picks this up (the one just created by the layout:open-tab event).
-  useEffect(() => {
-    if (!isFocused) return;
-    const onLoadFile = ({ filePath: fp }: { filePath: string }) => {
-      readTextFile(fp).then(content => {
-        setValue(content);
-        savedContentRef.current = content;
-        setFilePath(fp);
-        filePathRef.current = fp;
-        storageSet(LS_FILEPATH_PREFIX + tabId, fp);
-        storageSet(LS_CONTENT_PREFIX + tabId, content);
-        setIsDirty(false);
-      }).catch(() => {
-        // File unreadable — leave tab empty.
-      });
-    };
-    bus.on('editor:load-file', onLoadFile);
-    return () => { bus.off('editor:load-file', onLoadFile); };
-  }, [isFocused, tabId]);
 
   return (
     <div className={styles.root}>

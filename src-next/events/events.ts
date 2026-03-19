@@ -99,7 +99,4 @@ export type AppEvents = {
   'file:save-request':    undefined;
   /** Emitted when user triggers Save As. Focused EditorTab should handle. */
   'file:save-as-request': undefined;
-  /** Emitted when "Open in Editor" loads a file — the most recently created
-   *  (focused) EditorTab should pick this up and load the file content. */
-  'editor:load-file':     { filePath: string };
 };
