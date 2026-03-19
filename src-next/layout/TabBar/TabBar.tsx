@@ -13,9 +13,10 @@ interface TabBarTab {
 }
 
 const TAB_COLORS: Record<string, string> = {
-  logviewer:  'var(--accent)',    // blue  — log viewer
-  dashboard:  'var(--success)',   // green — processor dashboard
-  editor:     'var(--warning)',   // amber — editor
+  logviewer:  'var(--tab-viewer)',
+  dashboard:  'var(--tab-dashboard)',
+  editor:     'var(--tab-editor)',
+  analysis:   'var(--tab-analysis)',
 };
 
 /** Tab types that support double-click to rename. */
