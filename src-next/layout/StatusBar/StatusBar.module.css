@@ -4,8 +4,8 @@
   align-items: center;
   justify-content: space-between;
   padding: 0 10px;
-  background: var(--bg-base);
-  border-top: 1px solid rgba(88, 166, 255, 0.12);
+  background: var(--chrome-bg);
+  border-top: 1px solid var(--border-accent);
   font-size: 11px;
   font-family: var(--font-ui);
   color: var(--text-muted);
@@ -45,7 +45,7 @@
 .dot {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   background: var(--success);
   animation: pulse 1.5s ease-in-out infinite;
 }

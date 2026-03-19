@@ -1,8 +1,9 @@
-import React, { useRef, useEffect } from 'react';
-import { EditorState, Compartment } from '@codemirror/state';
+import React, { useRef, useEffect, useMemo } from 'react';
+import { EditorState, Compartment, Extension } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightActiveLine, rectangularSelection, crosshairCursor, placeholder as cmPlaceholder } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { searchKeymap } from '@codemirror/search';
+import { useTheme } from '../context/ThemeContext';
 import styles from './TextEditor.module.css';
 
 interface TextEditorProps {
@@ -16,34 +17,17 @@ interface TextEditorProps {
   lineWrapping?: boolean;
 }
 
-const darkTheme = EditorView.theme({
-  '&': {
-    backgroundColor: 'var(--bg-base)',
-    color: 'var(--text)',
-    fontFamily: 'var(--font-mono)',
-    fontSize: '12px',
-  },
-  '.cm-content': {
-    caretColor: 'var(--accent)',
-  },
-  '.cm-cursor': {
-    borderLeftColor: 'var(--accent)',
-  },
-  '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': {
-    backgroundColor: 'rgba(88, 166, 255, 0.2)',
-  },
-  '.cm-gutters': {
-    backgroundColor: 'var(--bg-raised)',
-    color: 'var(--text-dimmed)',
-    border: 'none',
-  },
-  '.cm-activeLineGutter': {
-    backgroundColor: 'var(--bg-overlay)',
-  },
-  '.cm-activeLine': {
-    backgroundColor: 'rgba(255, 255, 255, 0.03)',
-  },
-}, { dark: true });
+function createEditorTheme(isDark: boolean): Extension {
+  return EditorView.theme({
+    '&': { backgroundColor: 'var(--editor-bg)', color: 'var(--text)', fontFamily: 'var(--font-mono)' },
+    '.cm-content': { caretColor: 'var(--accent)' },
+    '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent)' },
+    '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': { backgroundColor: 'var(--editor-selection-bg)' },
+    '.cm-gutters': { backgroundColor: 'var(--editor-gutter-bg)', color: 'var(--editor-gutter-text)', border: 'none' },
+    '.cm-activeLineGutter': { backgroundColor: 'var(--bg-overlay)' },
+    '.cm-activeLine': { backgroundColor: 'var(--editor-active-line)' },
+  }, { dark: isDark });
+}
 
 const TextEditor = React.memo(function TextEditor({
   value,
@@ -53,9 +37,12 @@ const TextEditor = React.memo(function TextEditor({
   placeholder,
   lineWrapping: enableLineWrapping = false,
 }: TextEditorProps) {
+  const { resolvedTheme } = useTheme();
+  const editorTheme = useMemo(() => createEditorTheme(resolvedTheme === 'dark'), [resolvedTheme]);
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const readOnlyCompartment = useRef(new Compartment());
+  const themeCompartment = useRef(new Compartment());
   // Tracks the last value emitted by the editor via onChange. When the parent
   // feeds this value back as the `value` prop, the sync effect can skip the
   // expensive doc.toString() comparison — the editor already has this content.
@@ -74,7 +61,7 @@ const TextEditor = React.memo(function TextEditor({
       crosshairCursor(),
       ...(enableLineWrapping ? [EditorView.lineWrapping] : []),
       keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
-      darkTheme,
+      themeCompartment.current.of(editorTheme),
       readOnlyCompartment.current.of(EditorState.readOnly.of(readOnly)),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
@@ -130,6 +117,18 @@ const TextEditor = React.memo(function TextEditor({
     }
     lastEmittedRef.current = value;
   }, [value]);
+
+  // Sync theme when resolvedTheme changes (skip initial mount — compartment already seeded)
+  const themeInitRef = useRef(true);
+  useEffect(() => {
+    if (themeInitRef.current) { themeInitRef.current = false; return; }
+    const view = viewRef.current;
+    if (!view) return;
+
+    view.dispatch({
+      effects: themeCompartment.current.reconfigure(editorTheme),
+    });
+  }, [editorTheme]);
 
   // Sync readOnly prop
   useEffect(() => {

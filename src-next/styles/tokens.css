@@ -1,6 +1,47 @@
 /* ── Design tokens ───────────────────────────────────────────────────────── */
 
+/* Non-color tokens (shared, no theme dependency) */
 :root {
+  /* Radius scale */
+  --radius-none: 0;
+  --radius-sm:   3px;
+  --radius-md:   6px;
+  --radius-lg:   8px;
+  --radius-xl:   12px;
+  --radius-full: 9999px;
+
+  /* Duration */
+  --duration-fast:   80ms;
+  --duration-normal: 150ms;
+  --duration-slow:   400ms;
+
+  /* Easing (M3 standard curves) */
+  --easing-standard: cubic-bezier(0.2, 0, 0, 1);
+  --easing-enter:    cubic-bezier(0.05, 0.7, 0.1, 1);
+  --easing-exit:     cubic-bezier(0.3, 0, 0.8, 0.15);
+
+  /* Transitions */
+  --transition-fast:   var(--duration-fast) var(--easing-standard);
+  --transition-normal: var(--duration-normal) var(--easing-standard);
+
+  --font-mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+  --font-ui: 'Geist', system-ui, -apple-system, sans-serif;
+
+  /* Brand (not theme-dependent) */
+  --android: #FF6128;
+
+  /* Processor types (not theme-dependent) */
+  --proc-reporter:    #58a6ff;
+  --proc-tracker:     #60a5fa;
+  --proc-correlator:  #c084fc;
+  --proc-transformer: #2dd4bf;
+  --proc-annotator:   #fb923c;
+}
+
+/* ── Dark theme (default) ────────────────────────────────────────────────── */
+
+:root,
+[data-theme="dark"] {
   /* Backgrounds */
   --bg-base:    #0c1014;
   --bg-input:   #0e1318;
@@ -12,31 +53,237 @@
   --border-subtle: #2d3d4e;
 
   /* Text */
-  --text-dimmed:  #484f58;
-  --text-muted:   #8b949e;
-  --text-subtle:  #9faab4;
-  --text:         #b8c4ce;
+  --text-dimmed:    #484f58;
+  --text-muted:     #8b949e;
+  --text-subtle:    #9faab4;
+  --text:           #b8c4ce;
+  --text-on-accent: #fff;
 
   /* Accent (blue) */
   --accent:      #58a6ff;
   --accent-base: #1f6feb;
 
   /* Semantic */
-  --success:       #3fb950;
-  --success-dark:  #238636;
+  --success:            #3fb950;
+  --success-dark:       #238636;
   --success-dark-hover: #2ea043;
-  --danger:        #f85149;
-  --warning:       #f0a500;
-  --warning-muted: #c9a227;
+  --danger:             #f85149;
+  --warning:            #f0a500;
+  --warning-muted:      #c9a227;
 
-  /* New tokens */
+  /* Focus ring */
   --focus-ring: rgba(88, 166, 255, 0.4);
-  --radius-sm: 3px;
-  --radius-md: 6px;
-  --transition-fast: 80ms ease;
-  --font-mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
-  --font-ui: 'Geist', system-ui, -apple-system, sans-serif;
 
-  /* Brand */
-  --android: #FF6128;
+  /* Badges */
+  --badge-blue:      #5dade2;
+  --badge-green:     #58d68d;
+  --badge-red:       #ec7063;
+  --badge-yellow:    #f4d03f;
+  --badge-gray:      rgba(255, 255, 255, 0.5);
+  --badge-blue-bg:   rgba(52, 152, 219, 0.2);
+  --badge-green-bg:  rgba(39, 174, 96, 0.2);
+  --badge-red-bg:    rgba(192, 57, 43, 0.2);
+  --badge-yellow-bg: rgba(241, 196, 15, 0.2);
+  --badge-gray-bg:   rgba(255, 255, 255, 0.08);
+
+  /* Animation colors */
+  --flash-warning-hi:       rgba(255, 185, 0, 0.40);
+  --flash-warning-mid:      rgba(255, 185, 0, 0.30);
+  --flash-warning-lo:       rgba(255, 185, 0, 0.10);
+  --flash-tracker-hi:       #1a3a6044;
+  --flash-tracker-mid:      #1a3a6022;
+  --flash-tracker-border-hi:  #2a5ea0;
+  --flash-tracker-border-mid: #1e4a80;
+  --flash-field-hi:         #1e4a8055;
+
+  /* Highlights */
+  --hl-search:        #bb800066;
+  --hl-search-active: #d29922cc;
+  --hl-pii:           #5a1e1e88;
+
+  /* Log levels */
+  --level-verbose:    #6e7681;
+  --level-debug:      #9ca3af;
+  --level-warning:    #d29922;
+  --level-error:      #f47067;
+  --level-fatal:      #ff6e6e;
+  --level-warning-bg: rgba(26, 19, 0, 0.03);
+  --level-error-bg:   #2d1117;
+  --level-fatal-bg:   #3d1118;
+
+  /* Viewer (log viewer) */
+  --viewer-bg:               var(--bg-base);
+  --viewer-gutter-bg:        transparent;
+  --viewer-gutter-text:      var(--text-dimmed);
+  --viewer-selection-bg:     rgba(255, 200, 50, 0.12);
+  --viewer-selection-border:  rgba(255, 200, 50, 0.75);
+  --viewer-search-bg:        rgba(255, 200, 50, 0.10);
+  --viewer-search-active-bg: rgba(255, 200, 50, 0.22);
+
+  /* Editor */
+  --editor-bg:             var(--bg-base);
+  --editor-gutter-bg:      var(--bg-raised);
+  --editor-gutter-text:    var(--text-dimmed);
+  --editor-active-line:    rgba(255, 255, 255, 0.03);
+  --editor-selection-bg:   rgba(88, 166, 255, 0.2);
+
+  /* Dashboard */
+  --dashboard-bg:          var(--bg-base);
+
+  /* Chrome (header, toolbar, status bar) */
+  --chrome-bg:             var(--bg-base);
+  --chrome-border:         var(--border);
+  --panel-bg:              var(--bg-raised);
+  --scrim:                 rgba(0, 0, 0, 0.5);
+  --border-accent:         color-mix(in srgb, var(--accent) 15%, transparent);
+
+  /* Tab type accents */
+  --tab-viewer:            var(--accent);
+  --tab-dashboard:         var(--success);
+  --tab-editor:            var(--warning);
+  --tab-analysis:          var(--accent);
+
+  /* Foreground pairings */
+  --on-danger:   #fff;
+  --on-success:  #fff;
+  --on-warning:  #fff;
+  --viewer-text: var(--text);
+  --editor-text: var(--text);
+
+  /* Muted / emphasis variants */
+  --danger-muted:         color-mix(in srgb, var(--danger) 12%, transparent);
+  --danger-muted-border:  color-mix(in srgb, var(--danger) 30%, transparent);
+  --success-muted:        color-mix(in srgb, var(--success) 12%, transparent);
+  --success-muted-border: color-mix(in srgb, var(--success) 30%, transparent);
+  --warning-muted-bg:     color-mix(in srgb, var(--warning) 12%, transparent);
+  --warning-muted-border: color-mix(in srgb, var(--warning) 30%, transparent);
+  --accent-muted:         color-mix(in srgb, var(--accent) 12%, transparent);
+  --accent-muted-border:  color-mix(in srgb, var(--accent) 25%, transparent);
+
+  /* State layers (accent interaction) */
+  --state-hover:    color-mix(in srgb, var(--accent) 8%, transparent);
+  --state-active:   color-mix(in srgb, var(--accent) 16%, transparent);
+  --state-selected: color-mix(in srgb, var(--accent) 6%, transparent);
+
+  /* Shadows */
+  --shadow-focus:   0 0 0 2px var(--focus-ring);
+  --shadow-popover: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-overlay: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+/* ── Light theme ─────────────────────────────────────────────────────────── */
+/* GitHub light mode aesthetic: warm whites, slate borders, blue accents     */
+
+[data-theme="light"] {
+  /* Backgrounds */
+  --bg-base:    #ffffff;
+  --bg-input:   #f6f8fa;
+  --bg-raised:  #f0f2f5;
+  --bg-overlay: #e8eaed;
+
+  /* Borders */
+  --border:        #d0d7de;
+  --border-subtle: #e0e4e8;
+
+  /* Text */
+  --text-dimmed:    #c8cdd3;
+  --text-muted:     #6e7781;
+  --text-subtle:    #57606a;
+  --text:           #1f2328;
+  --text-on-accent: #ffffff;
+
+  /* Accent (blue) */
+  --accent:      #0969da;
+  --accent-base: #0550ae;
+
+  /* Semantic */
+  --success:            #1a7f37;
+  --success-dark:       #116329;
+  --success-dark-hover: #1a7f37;
+  --danger:             #cf222e;
+  --warning:            #9a6700;
+  --warning-muted:      #7d4e00;
+
+  /* Focus ring */
+  --focus-ring: rgba(9, 105, 218, 0.35);
+
+  /* Badges */
+  --badge-blue:      #0550ae;
+  --badge-green:     #116329;
+  --badge-red:       #a40e26;
+  --badge-yellow:    #7d4e00;
+  --badge-gray:      rgba(0, 0, 0, 0.5);
+  --badge-blue-bg:   rgba(9, 105, 218, 0.12);
+  --badge-green-bg:  rgba(26, 127, 55, 0.12);
+  --badge-red-bg:    rgba(207, 34, 46, 0.12);
+  --badge-yellow-bg: rgba(154, 103, 0, 0.12);
+  --badge-gray-bg:   rgba(0, 0, 0, 0.06);
+
+  /* Animation colors */
+  --flash-warning-hi:       rgba(158, 108, 0, 0.22);
+  --flash-warning-mid:      rgba(158, 108, 0, 0.14);
+  --flash-warning-lo:       rgba(158, 108, 0, 0.06);
+  --flash-tracker-hi:       rgba(9, 105, 218, 0.14);
+  --flash-tracker-mid:      rgba(9, 105, 218, 0.07);
+  --flash-tracker-border-hi:  #0969da;
+  --flash-tracker-border-mid: #0550ae;
+  --flash-field-hi:         rgba(9, 105, 218, 0.18);
+
+  /* Highlights */
+  --hl-search:        rgba(210, 153, 34, 0.28);
+  --hl-search-active: rgba(210, 153, 34, 0.55);
+  --hl-pii:           rgba(207, 34, 46, 0.12);
+
+  /* Log levels */
+  --level-verbose:    #8c959f;
+  --level-debug:      #57606a;
+  --level-warning:    #9a6700;
+  --level-error:      #cf222e;
+  --level-fatal:      #a40e26;
+  --level-warning-bg: rgba(154, 103, 0, 0.05);
+  --level-error-bg:   rgba(207, 34, 46, 0.05);
+  --level-fatal-bg:   rgba(164, 14, 38, 0.06);
+
+  /* Viewer (log viewer) */
+  --viewer-gutter-bg:        var(--bg-input);
+  --viewer-selection-bg:     rgba(210, 153, 34, 0.14);
+  --viewer-selection-border:  rgba(154, 103, 0, 0.45);
+  --viewer-search-bg:        rgba(210, 153, 34, 0.12);
+  --viewer-search-active-bg: rgba(210, 153, 34, 0.30);
+
+  /* Editor */
+  --editor-bg:             #fafbfc;
+  --editor-gutter-bg:      var(--bg-input);
+  --editor-gutter-text:    var(--text-muted);
+  --editor-active-line:    rgba(0, 0, 0, 0.03);
+  --editor-selection-bg:   rgba(9, 105, 218, 0.2);
+
+  /* Chrome */
+  --chrome-bg:             #f6f8fa;
+  --scrim:                 rgba(0, 0, 0, 0.3);
+  --border-accent:         color-mix(in srgb, var(--accent) 12%, transparent);
+
+  /* Foreground pairings */
+  --on-danger:  #fff;
+  --on-success: #fff;
+  --on-warning: #fff;
+
+  /* Muted / emphasis variants */
+  --danger-muted:         color-mix(in srgb, var(--danger) 10%, transparent);
+  --danger-muted-border:  color-mix(in srgb, var(--danger) 25%, transparent);
+  --success-muted:        color-mix(in srgb, var(--success) 10%, transparent);
+  --success-muted-border: color-mix(in srgb, var(--success) 25%, transparent);
+  --warning-muted-bg:     color-mix(in srgb, var(--warning) 10%, transparent);
+  --warning-muted-border: color-mix(in srgb, var(--warning) 25%, transparent);
+  --accent-muted:         color-mix(in srgb, var(--accent) 10%, transparent);
+  --accent-muted-border:  color-mix(in srgb, var(--accent) 20%, transparent);
+
+  /* State layers */
+  --state-hover:    color-mix(in srgb, var(--accent) 6%, transparent);
+  --state-active:   color-mix(in srgb, var(--accent) 12%, transparent);
+  --state-selected: color-mix(in srgb, var(--accent) 5%, transparent);
+
+  /* Shadows (lighter for light theme) */
+  --shadow-popover: 0 4px 12px rgba(0, 0, 0, 0.15);
+  --shadow-overlay: 0 8px 32px rgba(0, 0, 0, 0.2);
 }

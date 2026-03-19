@@ -4,9 +4,9 @@
 /* Log viewer */
 
 @keyframes jump-flash {
-  0%   { background-color: rgba(255, 185, 0, 0.40); }
-  40%  { background-color: rgba(255, 185, 0, 0.30); }
-  100% { background-color: rgba(255, 185, 0, 0.10); }
+  0%   { background-color: var(--flash-warning-hi); }
+  40%  { background-color: var(--flash-warning-mid); }
+  100% { background-color: var(--flash-warning-lo); }
 }
 
 @keyframes skeleton-shimmer {
@@ -63,13 +63,13 @@
 /* State tracker */
 
 @keyframes state-tracker-flash {
-  0%   { background: #1a3a6044; border-color: #2a5ea0; }
-  50%  { background: #1a3a6022; border-color: #1e4a80; }
+  0%   { background: var(--flash-tracker-hi);  border-color: var(--flash-tracker-border-hi); }
+  50%  { background: var(--flash-tracker-mid); border-color: var(--flash-tracker-border-mid); }
   100% { background: transparent; border-color: var(--border); }
 }
 
 @keyframes state-field-flash {
-  0%   { background: #1e4a8055; }
+  0%   { background: var(--flash-field-hi); }
   100% { background: transparent; }
 }
 

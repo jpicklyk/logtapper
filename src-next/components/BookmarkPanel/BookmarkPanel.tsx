@@ -10,7 +10,7 @@ import styles from './BookmarkPanel.module.css';
 
 // ── Category helpers ──────────────────────────────────────────────────────
 
-const FALLBACK_CONFIG = { color: '#484f58', label: 'Other' };
+const FALLBACK_CONFIG = { color: 'var(--text-dimmed)', label: 'Other' };
 
 function getCategoryConfig(
   cat: string,

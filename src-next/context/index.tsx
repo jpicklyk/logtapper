@@ -3,6 +3,9 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { SessionProvider } from './SessionContext';
 import { useSessionContext } from './SessionContext';
 import { ViewerProvider } from './ViewerContext';
+
+export { ThemeProvider, useTheme } from './ThemeContext';
+export type { ThemeMode, ResolvedTheme } from './ThemeContext';
 import { PipelineProvider } from './PipelineContext';
 import { TrackerProvider } from './TrackerContext';
 import { ActionsProvider, type ActionsContextValue } from './ActionsContext';

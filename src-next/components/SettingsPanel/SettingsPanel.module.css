@@ -1,7 +1,7 @@
 .backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--scrim);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -15,8 +15,8 @@
   flex-direction: column;
   background: var(--bg-raised);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-overlay);
   overflow: hidden;
 }
 
@@ -41,7 +41,7 @@
   color: var(--text-dimmed);
   font-size: 16px;
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .closeBtn:hover {
@@ -66,7 +66,7 @@
   color: var(--text-dimmed);
   font-size: 12px;
   font-weight: 500;
-  transition: all 0.15s;
+  transition: all var(--transition-normal);
 }
 
 .tab:hover {
@@ -138,7 +138,7 @@
   width: 120px;
   padding: 4px 8px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg-base);
   color: var(--text);
   font-size: 12px;
@@ -177,7 +177,7 @@
 
 .detectorCard {
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   margin-bottom: 4px;
   background: var(--bg-base);
   overflow: hidden;
@@ -199,23 +199,23 @@
 .fpBadge {
   font-size: 9px;
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   font-family: var(--font-mono);
 }
 
 .fpBadgeTier1 {
-  background: rgba(63, 185, 80, 0.15);
-  color: var(--green);
+  background: var(--success-muted);
+  color: var(--success);
 }
 
 .fpBadgeTier2 {
-  background: rgba(210, 153, 34, 0.15);
-  color: var(--yellow);
+  background: var(--warning-muted-bg);
+  color: var(--warning);
 }
 
 .fpBadgeTier3 {
-  background: rgba(248, 81, 73, 0.15);
-  color: var(--red);
+  background: var(--danger-muted);
+  color: var(--danger);
 }
 
 .expandBtn {
@@ -225,7 +225,7 @@
   color: var(--text-dimmed);
   font-size: 11px;
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .expandBtn:hover {
@@ -287,7 +287,7 @@
 }
 
 .patternDelBtn:hover {
-  color: var(--red);
+  color: var(--danger);
 }
 
 /* Add pattern form */
@@ -307,7 +307,7 @@
   flex: 1;
   padding: 3px 6px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: var(--bg-raised);
   color: var(--text);
   font-size: 11px;
@@ -321,7 +321,7 @@
 .addBtn {
   padding: 3px 8px;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: var(--accent);
   color: var(--bg-base);
   font-size: 10px;
@@ -342,7 +342,7 @@
 
 .addPatternError {
   font-size: 10px;
-  color: var(--red);
+  color: var(--danger);
 }
 
 .addPatternToggle {
@@ -394,7 +394,7 @@
 }
 
 .customDelBtn:hover {
-  color: var(--red);
+  color: var(--danger);
 }
 
 .addCustomForm {
@@ -414,7 +414,7 @@
 .btnPrimary {
   padding: 6px 16px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--accent);
   color: var(--bg-base);
   font-size: 12px;
@@ -429,7 +429,7 @@
 .btnSecondary {
   padding: 6px 16px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg-raised);
   color: var(--text);
   font-size: 12px;
@@ -465,7 +465,7 @@
   flex-direction: column;
   gap: 1px;
   background: var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   overflow: hidden;
   width: 100%;
 }
@@ -476,7 +476,7 @@
   gap: 8px;
   padding: 7px 10px;
   background: var(--bg-base);
-  transition: background 120ms ease;
+  transition: background var(--transition-normal);
 }
 
 .catRow:hover {
@@ -488,10 +488,10 @@
   flex-shrink: 0;
   width: 18px;
   height: 18px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   border: 1.5px solid rgba(255, 255, 255, 0.1);
-  transition: border-color 120ms ease;
+  transition: border-color var(--transition-normal);
 }
 
 .catSwatch:hover {
@@ -516,13 +516,13 @@
   width: 100%;
   padding: 2px 6px;
   border: 1px solid transparent;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text);
   font-size: 12px;
   font-family: var(--font-ui);
   outline: none;
-  transition: border-color 120ms ease, background 120ms ease;
+  transition: border-color var(--transition-normal), background var(--transition-normal);
 }
 
 .catLabelInput:hover {
@@ -543,7 +543,7 @@
   flex-shrink: 0;
   padding: 2px 5px;
   background: var(--bg-overlay);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
 
 .catDeleteBtn {
@@ -554,7 +554,7 @@
   padding: 2px;
   flex-shrink: 0;
   opacity: 0;
-  transition: opacity 120ms ease, color 120ms ease;
+  transition: opacity var(--transition-normal), color var(--transition-normal);
 }
 
 .catRow:hover .catDeleteBtn {
@@ -562,7 +562,7 @@
 }
 
 .catDeleteBtn:hover {
-  color: var(--error, #f85149);
+  color: var(--danger);
 }
 
 .catActions {
@@ -579,7 +579,7 @@
   padding: 8px 10px;
   background: var(--bg-base);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   width: 100%;
   margin-top: 4px;
 }
@@ -587,7 +587,7 @@
 .catAddInput {
   padding: 3px 6px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: var(--bg-raised);
   color: var(--text);
   font-size: 11px;
@@ -605,6 +605,6 @@
   flex-shrink: 0;
   width: 16px;
   height: 16px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   border: 1px solid rgba(255, 255, 255, 0.1);
 }

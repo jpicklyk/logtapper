@@ -22,7 +22,7 @@
   display: inline-block;
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   background: var(--accent);
   vertical-align: middle;
 }
@@ -32,15 +32,15 @@
 }
 
 .searchMatch {
-  background-color: rgba(255, 200, 50, 0.10);
+  background-color: var(--viewer-search-bg);
 }
 
 .searchActive {
-  background-color: rgba(255, 200, 50, 0.22);
+  background-color: var(--viewer-search-active-bg);
 }
 
 .selected {
-  background-color: rgba(255, 200, 50, 0.12);
+  background-color: var(--viewer-selection-bg);
 }
 
 .jumpTarget {
@@ -48,7 +48,7 @@
 }
 
 @keyframes flashHighlight {
-  0%   { background-color: rgba(88, 166, 255, 0.35); }
-  40%  { background-color: rgba(88, 166, 255, 0.22); }
-  100% { background-color: rgba(88, 166, 255, 0.12); }
+  0%   { background-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+  40%  { background-color: color-mix(in srgb, var(--accent) 22%, transparent); }
+  100% { background-color: color-mix(in srgb, var(--accent) 12%, transparent); }
 }

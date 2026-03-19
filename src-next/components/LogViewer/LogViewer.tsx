@@ -196,8 +196,8 @@ const LogViewer = React.memo(function LogViewer({
           if (!bookmarkLines.has(lineNum)) return null;
           const bookmark = bookmarkLookup(lineNum);
           const color = bookmark?.category
-            ? (categoryColorMap[bookmark.category ?? 'custom'] ?? '#484f58')
-            : '#484f58';
+            ? (categoryColorMap[bookmark.category ?? 'custom'] ?? 'var(--text-dimmed)')
+            : 'var(--text-dimmed)';
           return (
             <span
               style={{

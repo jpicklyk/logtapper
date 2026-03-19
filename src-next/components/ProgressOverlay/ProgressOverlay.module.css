@@ -4,7 +4,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--scrim);
   z-index: 100;
 }
 
@@ -27,14 +27,14 @@
 .barWrap {
   height: 6px;
   background: var(--bg-base);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
 .barFill {
   height: 100%;
   background: var(--accent);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   transition: width 120ms ease;
 }
 

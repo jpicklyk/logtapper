@@ -105,7 +105,7 @@ const BookmarkMarkers = React.memo(function BookmarkMarkers({
         const norm = b.lineNumber / maxLine;
         // Skip markers outside the visible viewport (with a small margin)
         if (norm < vpS - 0.005 || norm > vpSpan + vpS + 0.005) return null;
-        const color = categoryColorMap[b.category ?? 'custom'] ?? '#484f58';
+        const color = categoryColorMap[b.category ?? 'custom'] ?? 'var(--text-dimmed)';
         return (
           <div
             key={b.id}
@@ -536,7 +536,7 @@ function SparklineTrack({
   const [vpS, vpE] = vp;
   const vpSpan = Math.max(vpE - vpS, 1e-9);
   const maxLine = Math.max(totalLines - 1, 1);
-  const color = series.color ?? '#58a6ff';
+  const color = series.color ?? 'var(--accent)';
   const TRACK_HEIGHT = 40;
   const PADDING_Y = 4;
   const drawH = TRACK_HEIGHT - PADDING_Y * 2;

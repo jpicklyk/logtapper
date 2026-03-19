@@ -5,7 +5,7 @@
   height: 40px;
   padding: 0;
   background: var(--bg-raised);
-  border-bottom: 1px solid rgba(88, 166, 255, 0.18);
+  border-bottom: 1px solid var(--border-accent);
   flex-shrink: 0;
   -webkit-app-region: drag;
 }
@@ -86,7 +86,7 @@
 .actionBtn:hover {
   border-color: var(--accent);
   color: var(--text);
-  background: color-mix(in srgb, var(--accent) 6%, var(--bg-base));
+  background: var(--state-hover);
 }
 
 .actionBtnStreaming {
@@ -96,9 +96,9 @@
 }
 
 .actionBtnStreaming:hover {
-  color: var(--danger, #f85149);
-  border-color: var(--danger, #f85149);
-  background: color-mix(in srgb, var(--danger, #f85149) 8%, var(--bg-base));
+  color: var(--danger);
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, var(--bg-base));
 }
 
 .actionBtnLoading {
@@ -110,7 +110,7 @@
 .streamDot {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   background: var(--success);
   flex-shrink: 0;
   animation: streamPulse 1.2s ease-in-out infinite;
@@ -150,7 +150,7 @@
 
 .deviceItem:hover {
   border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 6%, var(--bg-base));
+  background: var(--state-hover);
 }
 
 .deviceIcon {
@@ -176,7 +176,7 @@
 .deviceState {
   font-size: 10px;
   padding: 2px 6px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(--bg-raised);
   color: var(--text-muted);
   flex-shrink: 0;

@@ -123,7 +123,7 @@
   flex-shrink: 0;
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
 }
 
 .categoryLabel {
@@ -142,7 +142,7 @@
   height: 16px;
   line-height: 16px;
   text-align: center;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--bg-overlay);
   color: var(--text-dimmed);
 }
@@ -150,7 +150,7 @@
 .chevron {
   flex-shrink: 0;
   color: var(--text-dimmed);
-  transition: transform 150ms ease;
+  transition: transform var(--transition-normal);
 }
 
 .chevronOpen {
@@ -242,7 +242,7 @@
   color: var(--text);
   background: var(--bg-overlay);
   border: 1px solid var(--accent);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   padding: 1px 4px;
   font-family: var(--font-ui);
   outline: none;
@@ -266,7 +266,7 @@
 }
 
 .deleteBtn:hover {
-  color: var(--danger, #f85149);
+  color: var(--danger);
 }
 
 /* ── Meta row (line indicator) ───────────────────────────────────────────── */
@@ -295,9 +295,9 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
   padding: 1px 4px;
-  border: 1px solid var(--accent, #58a6ff);
-  border-radius: 3px;
-  color: var(--accent, #58a6ff);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  color: var(--accent);
   line-height: 1;
   opacity: 0.8;
 }
@@ -324,7 +324,7 @@
   margin-top: 4px;
   padding: 4px 6px;
   background: var(--bg-overlay);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   font-size: 11px;
   color: var(--text-muted);
   line-height: 1.4;
@@ -375,7 +375,7 @@
   min-height: 48px;
   padding: 5px 6px;
   border: 1px solid var(--accent);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: var(--bg-base);
   color: var(--text);
   font-family: var(--font-ui);
@@ -412,7 +412,7 @@
   font-weight: 500;
   padding: 1px 5px;
   border: 1px solid var(--border-subtle);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   color: var(--text-dimmed);
   line-height: 1;
 }

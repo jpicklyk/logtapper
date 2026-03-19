@@ -21,12 +21,12 @@ export interface AppSettings {
 const STORAGE_KEY = 'logtapper_settings';
 
 export const DEFAULT_BOOKMARK_CATEGORIES: BookmarkCategoryDef[] = [
-  { id: 'error',        label: 'Errors',        color: '#f85149' },
-  { id: 'warning',      label: 'Warnings',      color: '#d29922' },
-  { id: 'state-change', label: 'State Changes',  color: '#58a6ff' },
-  { id: 'timing',       label: 'Timing',         color: '#3fb950' },
-  { id: 'observation',  label: 'Observations',   color: '#8b949e' },
-  { id: 'custom',       label: 'Other',          color: '#484f58' },
+  { id: 'error',        label: 'Errors',        color: 'var(--danger)' },
+  { id: 'warning',      label: 'Warnings',      color: 'var(--level-warning)' },
+  { id: 'state-change', label: 'State Changes',  color: 'var(--accent)' },
+  { id: 'timing',       label: 'Timing',         color: 'var(--success)' },
+  { id: 'observation',  label: 'Observations',   color: 'var(--text-muted)' },
+  { id: 'custom',       label: 'Other',          color: 'var(--text-dimmed)' },
 ];
 
 export const SETTING_DEFAULTS: AppSettings = {
@@ -36,8 +36,43 @@ export const SETTING_DEFAULTS: AppSettings = {
   bookmarkCategories: DEFAULT_BOOKMARK_CATEGORIES,
 };
 
+/** Map of old default hex colors → new theme-aware token references.
+ *  Only migrates values that match the original defaults — custom user picks are preserved. */
+const LEGACY_COLOR_MIGRATION: Record<string, string> = {
+  '#f85149': 'var(--danger)',
+  '#d29922': 'var(--level-warning)',
+  '#58a6ff': 'var(--accent)',
+  '#3fb950': 'var(--success)',
+  '#8b949e': 'var(--text-muted)',
+  '#484f58': 'var(--text-dimmed)',
+};
+
+function migrateBookmarkColors(cats: BookmarkCategoryDef[]): BookmarkCategoryDef[] {
+  let changed = false;
+  const migrated = cats.map((cat) => {
+    const replacement = LEGACY_COLOR_MIGRATION[cat.color];
+    if (replacement) {
+      changed = true;
+      return { ...cat, color: replacement };
+    }
+    return cat;
+  });
+  return changed ? migrated : cats;
+}
+
 export function loadSettings(): AppSettings {
-  return { ...SETTING_DEFAULTS, ...storageGetJSON<Partial<AppSettings>>(STORAGE_KEY, {}) };
+  const stored = storageGetJSON<Partial<AppSettings>>(STORAGE_KEY, {});
+
+  // Migrate legacy hex bookmark colors to theme-aware tokens
+  if (stored.bookmarkCategories) {
+    const migrated = migrateBookmarkColors(stored.bookmarkCategories);
+    if (migrated !== stored.bookmarkCategories) {
+      stored.bookmarkCategories = migrated;
+      storageSetJSON(STORAGE_KEY, { ...SETTING_DEFAULTS, ...stored });
+    }
+  }
+
+  return { ...SETTING_DEFAULTS, ...stored };
 }
 
 export interface UseSettingsResult {

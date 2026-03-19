@@ -14,11 +14,11 @@
 }
 
 .error {
-  border-color: var(--danger, #c0392b);
+  border-color: var(--danger);
 }
 
 .error:focus-within {
-  border-color: var(--danger, #c0392b);
+  border-color: var(--danger);
 }
 
 .icon {

@@ -129,11 +129,11 @@ const PII_TYPE_META: [string, string] = [
 ];
 
 const PROC_TYPE_ACCENT: Record<string, string> = {
-  transformer: '#2dd4bf',
-  reporter: '#58a6ff',
-  state_tracker: '#60a5fa',
-  correlator: '#c084fc',
-  annotator: '#fb923c',
+  transformer: 'var(--proc-transformer)',
+  reporter: 'var(--proc-reporter)',
+  state_tracker: 'var(--proc-tracker)',
+  correlator: 'var(--proc-correlator)',
+  annotator: 'var(--proc-annotator)',
 };
 
 const PINNED_TAIL_IDS = new Set(['__pii_anonymizer']);
@@ -297,7 +297,7 @@ const ChainNode = React.memo(function ChainNode({
 }: ChainNodeProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
 
-  const accentColor = PROC_TYPE_ACCENT[processorType] ?? '#58a6ff';
+  const accentColor = PROC_TYPE_ACCENT[processorType] ?? 'var(--proc-reporter)';
 
   if (compact) {
     const style: React.CSSProperties = {
@@ -374,7 +374,7 @@ const PinnedChainNode = React.memo(function PinnedChainNode({
   onRemove,
   onToggleEnabled,
 }: ChainNodeProps) {
-  const accentColor = PROC_TYPE_ACCENT[processorType] ?? '#58a6ff';
+  const accentColor = PROC_TYPE_ACCENT[processorType] ?? 'var(--proc-reporter)';
 
   if (compact) {
     const style: React.CSSProperties = {

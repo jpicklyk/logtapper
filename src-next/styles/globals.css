@@ -19,10 +19,12 @@
   font-family: var(--font-ui);
   font-size: 14px;
   line-height: 1.5;
-  color: #e2e8f0;
-  background-color: #0f1117;
-  color-scheme: dark;
+  color: var(--text);
+  background-color: var(--bg-base);
 }
+
+[data-theme="dark"]  { color-scheme: dark; }
+[data-theme="light"] { color-scheme: light; }
 
 body {
   min-height: 100vh;

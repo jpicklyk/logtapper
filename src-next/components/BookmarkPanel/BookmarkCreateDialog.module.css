@@ -1,7 +1,7 @@
 .backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--scrim);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -15,8 +15,8 @@
   flex-direction: column;
   background: var(--bg-raised);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-overlay);
   overflow: hidden;
 }
 
@@ -42,7 +42,7 @@
   color: var(--text-dimmed);
   font-size: 16px;
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   line-height: 1;
 }
 
@@ -124,7 +124,7 @@
 .btnPrimary {
   padding: 6px 16px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--accent);
   color: var(--bg-base);
   font-size: 12px;
@@ -145,7 +145,7 @@
 .btnSecondary {
   padding: 6px 16px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg-raised);
   color: var(--text);
   font-size: 12px;
