@@ -1,0 +1,89 @@
+meta:
+  id: "crash-storm-detector"
+  name: "Crash Storm Detector"
+  version: "1.0.0"
+  author: "LogTapper"
+  description: "Detects crash storms — when the same app crashes 3+ times within 10 seconds. Matches AndroidRuntime 'Process:' lines to extract the process name and PID. Fires once per rising edge per process."
+  tags: ["crash", "fatal", "androidruntime", "storm", "burst", "android", "stability"]
+
+# Only matches logcat entries in the SYSTEM LOG section of bugreports
+sections:
+  - "SYSTEM LOG"
+
+vars:
+  - name: total_crashes
+    type: int
+    default: 0
+    display: true
+    label: "Total Crashes"
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: level_min
+        level: E
+      - type: tag_match
+        tags: ["AndroidRuntime"]
+      - type: message_contains
+        value: "Process: "
+
+  - stage: extract
+    fields:
+      - name: process_name
+        pattern: 'Process:\s*([^,]+),\s*PID:'
+      - name: pid
+        pattern: 'PID:\s*(\d+)'
+        cast: int
+
+  - stage: script
+    runtime: rhai
+    src: |
+      if !("process_name" in fields) { return; }
+
+      vars.total_crashes += 1;
+
+      let proc = fields.process_name;
+      let pid = if "pid" in fields { fields.pid } else { 0 };
+
+      _emits.push(#{
+        process_name: proc,
+        pid: pid,
+      });
+
+  - stage: aggregate
+    groups:
+      - type: burst_detector
+        field: process_name
+        window_ms: 10000
+        threshold: 3
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["burst_key", "count_in_window", "window_ms"]
+        sort: "count_in_window"
+
+schema:
+  source_types: ["logcat", "bugreport"]
+  emissions:
+    - name: burst_key
+      type: string
+      description: "Process name that triggered the crash storm"
+    - name: count_in_window
+      type: int
+      description: "Number of crashes within the detection window"
+    - name: window_ms
+      type: int
+      description: "Time window in milliseconds over which the burst was detected"
+  mcp:
+    summary:
+      template: "{{total_crashes}} total crashes seen."
+      include_vars: [total_crashes]
+    signals:
+      - name: crash_storm
+        severity: critical
+        condition: "count_in_window >= 3"
+        fields: [burst_key, count_in_window, window_ms]
+        format: "Crash storm: {{burst_key}} crashed {{count_in_window}} times in {{window_ms}}ms"
+        type: emission
