@@ -508,7 +508,7 @@
 }
 
 @keyframes section-flash {
-  0% { background-color: rgba(88, 166, 255, 0.25); }
+  0% { background-color: color-mix(in srgb, var(--accent) 25%, transparent); }
   100% { background-color: var(--bg-overlay); }
 }
 
