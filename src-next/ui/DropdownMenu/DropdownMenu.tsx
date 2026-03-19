@@ -65,7 +65,11 @@ export const DropdownMenu = React.memo<DropdownMenuProps>(function DropdownMenu(
 
   return (
     <>
-      <div ref={triggerRef} className={styles.triggerWrapper}>
+      <div
+        ref={triggerRef}
+        className={styles.triggerWrapper}
+        onClick={() => onOpenChange(!open)}
+      >
         {trigger}
       </div>
       {open && panelStyle != null &&

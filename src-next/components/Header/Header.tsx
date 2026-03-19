@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import clsx from 'clsx';
-import { FolderOpen, FileArchive, ChevronDown, Radio, Square, Smartphone } from 'lucide-react';
+import { FolderOpen, FileArchive, Menu, Radio, Square, Smartphone } from 'lucide-react';
 import { useSession, useIsStreaming, useViewerActions } from '../../context';
 import { listAdbDevices } from '../../bridge/commands';
 import type { AdbDevice } from '../../bridge/types';
@@ -94,10 +94,8 @@ export const Header = React.memo(function Header() {
       <div className={styles.actions}>
         <DropdownMenu
           trigger={
-            <button className={styles.actionBtn} title="File operations">
-              <FolderOpen size={14} />
-              <span>File</span>
-              <ChevronDown size={10} />
+            <button className={styles.actionBtn} title="Menu">
+              <Menu size={16} />
             </button>
           }
           items={fileMenuItems}
