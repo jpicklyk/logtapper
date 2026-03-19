@@ -201,6 +201,10 @@ pub async fn load_log_file(
         sessions.insert(session_id.clone(), session);
     }
 
+    // ── Workspace restore ────────────────────────────────────────────
+    // Check for a matching .ltw file and restore bookmarks/analyses.
+    let (_restored_bm, _restored_an) = try_restore_workspace(&state, &app, &session_id, &path);
+
     // Spawn background indexing task if there's more to scan.
     if is_indexing {
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
@@ -1144,6 +1148,76 @@ pub fn compute_search_highlights(raw: &str, query: &SearchQuery) -> Vec<Highligh
     }
 
     spans
+}
+
+// ---------------------------------------------------------------------------
+// try_restore_workspace
+// ---------------------------------------------------------------------------
+
+/// Attempt to restore bookmarks and analyses from a matching `.ltw` workspace.
+/// Returns (bookmark_count, analysis_count) on success, (0, 0) on failure or no workspace.
+fn try_restore_workspace(
+    state: &crate::commands::AppState,
+    app: &tauri::AppHandle,
+    session_id: &str,
+    file_path: &str,
+) -> (usize, usize) {
+    // 1. Compute workspace path
+    let Ok(ws_path) = crate::workspace::workspace_path_for(app, file_path) else {
+        return (0, 0);
+    };
+
+    // 2. Check if workspace file exists
+    if !ws_path.exists() {
+        return (0, 0);
+    }
+
+    // 3. Load workspace
+    let data = match crate::workspace::load_workspace(&ws_path) {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("Failed to load workspace for '{file_path}': {e}");
+            return (0, 0);
+        }
+    };
+
+    // 4. Rewrite session_id on all bookmarks
+    let mut bookmarks = data.bookmarks;
+    for bm in &mut bookmarks {
+        bm.session_id = session_id.to_string();
+    }
+    let bm_count = bookmarks.len();
+
+    // 5. Rewrite session_id on all analyses
+    let mut analyses = data.analyses;
+    for an in &mut analyses {
+        an.session_id = session_id.to_string();
+    }
+    let an_count = analyses.len();
+
+    // 6. Insert into AppState under brief locks
+    if !bookmarks.is_empty() {
+        if let Ok(mut bm_map) = state.bookmarks.lock() {
+            bm_map.insert(session_id.to_string(), bookmarks);
+        }
+    }
+    if !analyses.is_empty() {
+        if let Ok(mut an_map) = state.analyses.lock() {
+            an_map.insert(session_id.to_string(), analyses);
+        }
+    }
+
+    // 7. Emit workspace-restored event
+    if bm_count > 0 || an_count > 0 {
+        use tauri::Emitter;
+        let _ = app.emit("workspace-restored", serde_json::json!({
+            "sessionId": session_id,
+            "bookmarkCount": bm_count,
+            "analysisCount": an_count,
+        }));
+    }
+
+    (bm_count, an_count)
 }
 
 #[cfg(test)]
