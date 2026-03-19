@@ -1456,6 +1456,89 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
+    // restore_artifacts
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn restore_artifacts_rewrites_session_id() {
+        use crate::core::bookmark::{Bookmark, CreatedBy};
+        use crate::core::analysis::AnalysisArtifact;
+
+        let state = make_state();
+        let new_session_id = "new-session-xyz";
+
+        // Bookmarks and analyses arrive with an old session_id from the .lts file.
+        let bm = Bookmark {
+            id: "bm-1".to_string(),
+            session_id: "old-session-id".to_string(),
+            line_number: 7,
+            line_number_end: None,
+            snippet: None,
+            category: None,
+            tags: None,
+            label: "Test".to_string(),
+            note: String::new(),
+            created_by: CreatedBy::User,
+            created_at: 1000,
+        };
+        let artifact = AnalysisArtifact {
+            id: "art-1".to_string(),
+            session_id: "old-session-id".to_string(),
+            title: "Analysis".to_string(),
+            created_at: 2000,
+            sections: vec![],
+        };
+
+        let (bm_count, an_count) =
+            restore_artifacts(&state, new_session_id, vec![bm], vec![artifact]);
+
+        assert_eq!(bm_count, 1);
+        assert_eq!(an_count, 1);
+
+        // Verify session_id was rewritten on stored bookmarks.
+        let bookmarks = state.bookmarks.lock().unwrap();
+        let stored_bms = bookmarks.get(new_session_id).expect("bookmarks must be stored under new session id");
+        assert_eq!(stored_bms[0].session_id, new_session_id, "bookmark session_id must be rewritten");
+        assert_eq!(stored_bms[0].line_number, 7);
+        drop(bookmarks);
+
+        // Verify session_id was rewritten on stored analyses.
+        let analyses = state.analyses.lock().unwrap();
+        let stored_ans = analyses.get(new_session_id).expect("analyses must be stored under new session id");
+        assert_eq!(stored_ans[0].session_id, new_session_id, "analysis session_id must be rewritten");
+    }
+
+    #[test]
+    fn restore_artifacts_empty_vecs_are_noop() {
+        let state = make_state();
+        let session_id = "empty-sess";
+
+        // Calling with empty vecs must not insert anything into AppState.
+        let (bm_count, an_count) = restore_artifacts(&state, session_id, vec![], vec![]);
+
+        assert_eq!(bm_count, 0);
+        assert_eq!(an_count, 0);
+        assert!(
+            !state.bookmarks.lock().unwrap().contains_key(session_id),
+            "no bookmark entry must be created for empty input"
+        );
+        assert!(
+            !state.analyses.lock().unwrap().contains_key(session_id),
+            "no analysis entry must be created for empty input"
+        );
+    }
+
+    #[test]
+    fn close_session_inner_no_panic_with_none_app() {
+        // Passing None for app must not panic even when there is a file_path set.
+        let state = make_state();
+        insert_session(&state, "sess-no-app", Some("/logs/file.log"));
+        // Must return Ok without panicking.
+        assert!(close_session_inner(&state, None, "sess-no-app").is_ok());
+        assert!(!state.sessions.lock().unwrap().contains_key("sess-no-app"));
+    }
+
+    // -------------------------------------------------------------------------
     // Bookmarks and analyses cleanup
     // -------------------------------------------------------------------------
 

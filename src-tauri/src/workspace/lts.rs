@@ -348,6 +348,191 @@ mod tests {
         assert!(loaded.processor_yamls.is_empty());
     }
 
+    /// Source bytes written with Stored compression survive the round-trip byte-for-byte.
+    #[test]
+    fn lts_large_file_stored_compression() {
+        let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        let zip_path = tmp.path().to_path_buf();
+        drop(tmp);
+
+        // Generate a realistic-size block of source bytes (100 KB of logcat lines).
+        let mut source_bytes = Vec::with_capacity(100_000);
+        for i in 0..1000usize {
+            let line = format!(
+                "01-01 {:02}:{:02}:{:02}.000  1000  1001 I TestTag: message {}\n",
+                i / 3600,
+                (i / 60) % 60,
+                i % 60,
+                i
+            );
+            source_bytes.extend_from_slice(line.as_bytes());
+        }
+        let original_len = source_bytes.len();
+
+        let meta = LtsSessionMeta::default();
+        write_lts(&zip_path, "large.log", &source_bytes, &[], &[], &meta, &[]).expect("write_lts");
+
+        let loaded = read_lts(&zip_path).expect("read_lts");
+
+        assert_eq!(
+            loaded.source_bytes.len(), original_len,
+            "source byte count must survive round-trip"
+        );
+        assert_eq!(
+            loaded.source_bytes, source_bytes,
+            "source bytes must be bit-for-bit identical after Stored round-trip"
+        );
+    }
+
+    /// Manifest fields are populated correctly after a round-trip.
+    #[test]
+    fn lts_manifest_fields_correct() {
+        let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        let zip_path = tmp.path().to_path_buf();
+        drop(tmp);
+
+        let source_bytes = b"01-01 00:00:00.000  1000  1001 I Tag: line\n";
+        let meta = LtsSessionMeta::default();
+
+        let before_write = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+
+        write_lts(&zip_path, "myfile.log", source_bytes, &[], &[], &meta, &[]).expect("write_lts");
+
+        let after_write = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(i64::MAX);
+
+        let loaded = read_lts(&zip_path).expect("read_lts");
+
+        assert_eq!(loaded.manifest.format_version, LTS_FORMAT_VERSION);
+        assert_eq!(loaded.manifest.source_filename, "myfile.log");
+        assert_eq!(
+            loaded.manifest.source_size,
+            source_bytes.len() as u64,
+            "source_size must equal the actual byte count"
+        );
+        assert!(
+            loaded.manifest.saved_at >= before_write && loaded.manifest.saved_at <= after_write,
+            "saved_at {} must be within the write window [{}, {}]",
+            loaded.manifest.saved_at, before_write, after_write
+        );
+    }
+
+    /// read_lts handles a file without session-meta.json and processor-manifest.json gracefully.
+    #[test]
+    fn lts_missing_optional_entries() {
+        // Build a minimal .lts zip that omits session-meta.json and processor-manifest.json.
+        let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        let zip_path = tmp.path().to_path_buf();
+        drop(tmp);
+
+        // Write a minimal valid .lts by constructing the zip manually — omit the optional entries.
+        {
+            use std::fs::File;
+            use zip::write::SimpleFileOptions;
+
+            let manifest = LtsManifest {
+                format_version: LTS_FORMAT_VERSION,
+                source_filename: "minimal.log".to_string(),
+                source_size: 5,
+                saved_at: 12345,
+            };
+
+            let out_file = File::create(&zip_path).expect("create zip");
+            let mut writer = zip::ZipWriter::new(out_file);
+            let deflate = SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            let stored = SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored)
+                .large_file(true);
+
+            // manifest.json
+            writer.start_file("manifest.json", deflate).unwrap();
+            serde_json::to_writer(&mut writer, &manifest).unwrap();
+
+            // source/minimal.log
+            writer.start_file("source/minimal.log", stored).unwrap();
+            std::io::Write::write_all(&mut writer, b"hello").unwrap();
+
+            // artifacts/bookmarks.json
+            writer.start_file("artifacts/bookmarks.json", deflate).unwrap();
+            serde_json::to_writer(&mut writer, &Vec::<crate::core::bookmark::Bookmark>::new()).unwrap();
+
+            // artifacts/analyses.json
+            writer.start_file("artifacts/analyses.json", deflate).unwrap();
+            serde_json::to_writer(&mut writer, &Vec::<crate::core::analysis::AnalysisArtifact>::new()).unwrap();
+
+            // Intentionally omit session-meta.json and processor-manifest.json
+            writer.finish().unwrap();
+        }
+
+        // Must not return an error — missing optional entries must use defaults.
+        let loaded = read_lts(&zip_path).expect("read_lts must succeed with missing optional entries");
+
+        assert!(loaded.session_meta.active_processor_ids.is_empty(), "default session meta must have no active processors");
+        assert!(loaded.session_meta.disabled_processor_ids.is_empty(), "default session meta must have no disabled processors");
+        assert!(loaded.processor_manifest.processors.is_empty(), "default processor manifest must be empty");
+        assert!(loaded.processor_yamls.is_empty(), "no processor YAMLs when manifest is missing");
+        assert_eq!(loaded.source_bytes, b"hello");
+    }
+
+    /// Three processors all survive round-trip with correct hashes.
+    #[test]
+    fn lts_multiple_processors() {
+        let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        let zip_path = tmp.path().to_path_buf();
+        drop(tmp);
+
+        let yaml_a = "id: proc-a\ntype: reporter\n";
+        let yaml_b = "id: proc-b\ntype: state_tracker\n";
+        let yaml_c = "id: proc-c\ntype: transformer\n";
+
+        let proc_yamls = vec![
+            ("proc-a".to_string(), "proc-a.yaml".to_string(), yaml_a.to_string()),
+            ("proc-b".to_string(), "proc-b.yaml".to_string(), yaml_b.to_string()),
+            ("proc-c".to_string(), "proc-c.yaml".to_string(), yaml_c.to_string()),
+        ];
+
+        let meta = LtsSessionMeta::default();
+        write_lts(&zip_path, "test.log", b"data", &[], &[], &meta, &proc_yamls).expect("write_lts");
+
+        let loaded = read_lts(&zip_path).expect("read_lts");
+
+        assert_eq!(loaded.processor_manifest.processors.len(), 3);
+        assert_eq!(loaded.processor_yamls.len(), 3);
+
+        // Verify all three processors have correct YAMLs and correct hashes.
+        let expected: &[(&str, &str)] = &[
+            ("proc-a", yaml_a),
+            ("proc-b", yaml_b),
+            ("proc-c", yaml_c),
+        ];
+        for &(id, expected_yaml) in expected {
+            let yaml = loaded.processor_yamls.get(id)
+                .unwrap_or_else(|| panic!("processor '{id}' YAML missing from round-trip"));
+            assert_eq!(yaml, expected_yaml, "YAML content mismatch for '{id}'");
+
+            let entry = loaded.processor_manifest.processors.iter()
+                .find(|e| e.id == id)
+                .unwrap_or_else(|| panic!("processor '{id}' missing from manifest"));
+            let mut hasher = Sha256::new();
+            hasher.update(expected_yaml.as_bytes());
+            let expected_hash = hex::encode(hasher.finalize());
+            assert_eq!(entry.sha256, expected_hash, "SHA-256 mismatch for processor '{id}'");
+        }
+
+        // All three hashes must be distinct.
+        let hashes: Vec<&str> = loaded.processor_manifest.processors.iter()
+            .map(|e| e.sha256.as_str())
+            .collect();
+        let unique: std::collections::HashSet<&&str> = hashes.iter().collect();
+        assert_eq!(unique.len(), 3, "all three processors must have distinct hashes");
+    }
+
     /// Processor manifest stores correct SHA-256 hashes of YAML content.
     #[test]
     fn lts_processor_hashes() {

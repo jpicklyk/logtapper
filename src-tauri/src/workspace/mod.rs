@@ -343,4 +343,148 @@ mod tests {
         let count = std::fs::read_dir(dir).unwrap().count();
         assert_eq!(count, 2);
     }
+
+    /// Round-trip with realistic bookmark data (line ranges, snippets, tags) and multi-section analysis.
+    #[test]
+    fn workspace_roundtrip_with_bookmarks_and_analyses() {
+        use crate::core::analysis::{AnalysisSection, Severity, SourceReference};
+
+        let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        let zip_path = tmp.path().to_path_buf();
+        drop(tmp);
+
+        // Bookmark with all optional fields populated.
+        let bm = Bookmark {
+            id: "bm-rich".to_string(),
+            session_id: "sess-1".to_string(),
+            line_number: 100,
+            line_number_end: Some(120),
+            snippet: Some(vec!["line A".to_string(), "line B".to_string()]),
+            category: Some("crash".to_string()),
+            tags: Some(vec!["important".to_string(), "regression".to_string()]),
+            label: "Rich bookmark".to_string(),
+            note: "Detailed note here".to_string(),
+            created_by: CreatedBy::User,
+            created_at: 99999,
+        };
+
+        // Analysis with two sections and source references.
+        let artifact = AnalysisArtifact {
+            id: "art-rich".to_string(),
+            session_id: "sess-1".to_string(),
+            title: "Multi-section analysis".to_string(),
+            created_at: 88888,
+            sections: vec![
+                AnalysisSection {
+                    heading: "Root cause".to_string(),
+                    body: "The service crashed because of a null pointer.".to_string(),
+                    references: vec![
+                        SourceReference {
+                            line_number: 42,
+                            end_line: Some(45),
+                            label: "Crash site".to_string(),
+                            highlight_type: crate::core::analysis::HighlightType::Anchor,
+                        },
+                    ],
+                    severity: Some(Severity::Critical),
+                },
+                AnalysisSection {
+                    heading: "Context".to_string(),
+                    body: "The service had been running for 3 hours.".to_string(),
+                    references: vec![],
+                    severity: Some(Severity::Info),
+                },
+            ],
+        };
+
+        let meta = SessionMeta {
+            active_processor_ids: vec!["proc-x".to_string()],
+            disabled_processor_ids: vec![],
+        };
+
+        save_workspace(&zip_path, "/device/logs/crash.log", &[bm], &[artifact], &meta)
+            .expect("save_workspace");
+
+        let loaded = load_workspace(&zip_path).expect("load_workspace");
+
+        // Bookmark fields survive.
+        assert_eq!(loaded.bookmarks.len(), 1);
+        let lb = &loaded.bookmarks[0];
+        assert_eq!(lb.id, "bm-rich");
+        assert_eq!(lb.line_number, 100);
+        assert_eq!(lb.line_number_end, Some(120));
+        assert_eq!(lb.snippet.as_deref(), Some(vec!["line A".to_string(), "line B".to_string()].as_slice()));
+        assert_eq!(lb.category.as_deref(), Some("crash"));
+        assert_eq!(lb.tags.as_deref(), Some(vec!["important".to_string(), "regression".to_string()].as_slice()));
+        assert_eq!(lb.note, "Detailed note here");
+
+        // Analysis sections survive.
+        assert_eq!(loaded.analyses.len(), 1);
+        let la = &loaded.analyses[0];
+        assert_eq!(la.title, "Multi-section analysis");
+        assert_eq!(la.sections.len(), 2);
+        assert_eq!(la.sections[0].heading, "Root cause");
+        assert_eq!(la.sections[0].references.len(), 1);
+        assert_eq!(la.sections[0].references[0].line_number, 42);
+        assert_eq!(la.sections[0].references[0].end_line, Some(45));
+        assert_eq!(la.sections[1].heading, "Context");
+        assert!(la.sections[1].references.is_empty());
+    }
+
+    /// `path_to_workspace_name` with different path separators produces different names
+    /// (since it hashes the raw bytes of the string — different strings → different hashes).
+    #[test]
+    fn workspace_name_windows_vs_unix_paths() {
+        let unix_path = "/data/logs/device.log";
+        let windows_path = "C:\\data\\logs\\device.log";
+        let name_unix = path_to_workspace_name(unix_path);
+        let name_windows = path_to_workspace_name(windows_path);
+        // Different path strings must produce different names.
+        assert_ne!(
+            name_unix, name_windows,
+            "different path separator styles must hash to different names"
+        );
+        // Both must still have valid .ltw format.
+        assert!(name_unix.ends_with(".ltw"));
+        assert!(name_windows.ends_with(".ltw"));
+        assert_eq!(name_unix.len(), 20);
+        assert_eq!(name_windows.len(), 20);
+    }
+
+    /// `evict_old_workspaces` only counts .ltw files, not other files in the directory.
+    #[test]
+    fn evict_ignores_non_ltw_files() {
+        let tmp_dir = tempfile::tempdir().expect("tmpdir");
+        let dir = tmp_dir.path();
+
+        // Create 3 .ltw files.
+        for i in 0..3 {
+            std::fs::write(dir.join(format!("f{i}.ltw")), vec![b'x'; i + 1]).expect("write ltw");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        // Create 2 non-.ltw files.
+        std::fs::write(dir.join("readme.txt"), b"text file").expect("write txt");
+        std::fs::write(dir.join("other.log"), b"log file").expect("write log");
+
+        // Evict keeping only 2 .ltw files.
+        evict_old_workspaces(dir, 2);
+
+        let remaining: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+
+        // Non-.ltw files must be untouched.
+        assert!(remaining.contains(&"readme.txt".to_string()), "readme.txt must not be evicted");
+        assert!(remaining.contains(&"other.log".to_string()), "other.log must not be evicted");
+
+        // Exactly 2 .ltw files must remain.
+        let ltw_count = remaining.iter().filter(|n| n.ends_with(".ltw")).count();
+        assert_eq!(ltw_count, 2, "exactly 2 .ltw files must remain after eviction; got: {remaining:?}");
+
+        // Total file count = 2 ltw + 2 non-ltw = 4.
+        assert_eq!(remaining.len(), 4, "total file count must be 4; got: {remaining:?}");
+    }
 }

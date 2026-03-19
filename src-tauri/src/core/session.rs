@@ -2193,4 +2193,110 @@ mod tests {
         assert!(boxed.as_any().downcast_ref::<FileLogSource>().is_none());
         assert!(boxed.as_any().downcast_ref::<StreamLogSource>().is_none());
     }
+
+    #[test]
+    fn zip_source_empty_data() {
+        // Empty Vec<u8> must produce 0 lines and raw_line(0) returns None.
+        let mut session = AnalysisSession::new("s".to_string());
+        session
+            .add_zip_source(vec![], "z".to_string(), "empty.log".to_string())
+            .unwrap();
+        let source = session.primary_source().unwrap();
+        assert_eq!(source.total_lines(), 0, "empty data must produce 0 lines");
+        assert!(source.raw_line(0).is_none(), "raw_line(0) on empty source must return None");
+        assert!(source.meta_at(0).is_none(), "meta_at(0) on empty source must return None");
+    }
+
+    #[test]
+    fn zip_source_no_trailing_newline() {
+        // A single line without a trailing '\n' must still be indexed.
+        let raw = b"01-01 00:00:01.000  1000  1001 I Tag: only line";
+        let mut session = AnalysisSession::new("s".to_string());
+        session
+            .add_zip_source(raw.to_vec(), "z".to_string(), "z.log".to_string())
+            .unwrap();
+        let source = session.primary_source().unwrap();
+        assert_eq!(source.total_lines(), 1, "single line without trailing newline must be indexed");
+        let text = source.raw_line(0).unwrap();
+        assert!(text.contains("only line"), "raw_line(0) must contain the line content");
+        assert!(source.raw_line(1).is_none(), "raw_line(1) must be None for single-line source");
+    }
+
+    #[test]
+    fn zip_source_crlf_handling() {
+        // Lines terminated with \r\n must have both stripped.
+        let raw = b"01-01 00:00:01.000  1000  1001 I Tag: first\r\n\
+                    01-01 00:00:02.000  1000  1001 I Tag: second\r\n";
+        let mut session = AnalysisSession::new("s".to_string());
+        session
+            .add_zip_source(raw.to_vec(), "z".to_string(), "z.log".to_string())
+            .unwrap();
+        let source = session.primary_source().unwrap();
+        assert_eq!(source.total_lines(), 2);
+        let line0 = source.raw_line(0).unwrap();
+        assert!(!line0.contains('\r'), "\\r must be stripped from line 0");
+        assert!(!line0.contains('\n'), "\\n must be stripped from line 0");
+        assert!(line0.contains("first"), "line 0 must contain 'first'");
+        let line1 = source.raw_line(1).unwrap();
+        assert!(!line1.contains('\r'), "\\r must be stripped from line 1");
+        assert!(line1.contains("second"), "line 1 must contain 'second'");
+    }
+
+    #[test]
+    fn zip_source_sections_detected() {
+        // Bugreport-format data must get section_info populated.
+        // The section detector matches a start header line with a duration footer
+        // where the footer's single-quoted name equals the section header name.
+        //
+        // Start:  `------ KERNEL VERSION (uname -a) ------`
+        //   → tag = "KERNEL VERSION", level = Info, is_section_boundary = true
+        // Footer: `------ 0.001s was the duration of 'KERNEL VERSION' ------`
+        //   → tag = "KERNEL VERSION", level = Verbose, is_section_boundary = true
+        let raw = b"== dumpstate: 2024-01-15 10:00:00\n\
+                    ------ KERNEL VERSION (uname -a) ------\n\
+                    Linux localhost 5.15.0\n\
+                    ------ 0.001s was the duration of 'KERNEL VERSION' ------\n";
+        let mut session = AnalysisSession::new("s".to_string());
+        session
+            .add_zip_source(raw.to_vec(), "z".to_string(), "bugreport.txt".to_string())
+            .unwrap();
+        let source = session.primary_source().unwrap();
+        // The source type must be detected as Bugreport or Dumpstate.
+        let st = source.source_type();
+        assert!(
+            matches!(st, SourceType::Bugreport | SourceType::Dumpstate),
+            "source type should be Bugreport or Dumpstate, got {st:?}"
+        );
+        // Sections must be non-empty for bugreport format data.
+        assert!(
+            !source.sections().is_empty(),
+            "bugreport-format data must have sections populated"
+        );
+        // The KERNEL VERSION section must be present.
+        let has_kernel = source.sections().iter().any(|s| s.name.contains("KERNEL VERSION"));
+        assert!(has_kernel, "KERNEL VERSION section must be detected; sections: {:?}", source.sections());
+    }
+
+    #[test]
+    fn zip_source_timestamps() {
+        // first_timestamp / last_timestamp must return correct values.
+        let raw = b"01-15 08:30:00.000  1000  1001 I Tag: first\n\
+                    03-22 14:45:30.500  2000  2001 W Tag: second\n\
+                    06-01 20:00:00.000  3000  3001 E Tag: third\n";
+        let mut session = AnalysisSession::new("s".to_string());
+        session
+            .add_zip_source(raw.to_vec(), "z".to_string(), "z.log".to_string())
+            .unwrap();
+        let source = session.primary_source().unwrap();
+        assert_eq!(source.total_lines(), 3);
+        let first_ts = source.first_timestamp();
+        let last_ts = source.last_timestamp();
+        assert!(first_ts.is_some(), "first_timestamp must be Some for lines with timestamps");
+        assert!(last_ts.is_some(), "last_timestamp must be Some for lines with timestamps");
+        assert!(
+            last_ts.unwrap() > first_ts.unwrap(),
+            "last_timestamp {} must be greater than first_timestamp {}",
+            last_ts.unwrap(), first_ts.unwrap()
+        );
+    }
 }
