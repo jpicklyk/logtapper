@@ -13,6 +13,7 @@ import {
 import { useBookmarks, useBookmarkLines, useBookmarkLookup, useSettings } from '../../hooks';
 import { bus } from '../../events';
 import type { AppEvents } from '../../events';
+import { absoluteLineToFilteredIndex } from './scrollMapping';
 import styles from './LogViewer.module.css';
 
 interface Props {
@@ -49,7 +50,15 @@ const LogViewer = React.memo(function LogViewer({
   const { lineNum: scrollToLine, seq: jumpSeq, paneId: jumpPaneId } = useScrollTarget();
   // Only honour the jump if it targets this specific pane or is unfocused/global (null).
   const isJumpForThisPane = jumpPaneId === null || jumpPaneId === paneId;
-  const effectiveScrollToLine = isJumpForThisPane ? scrollToLine : null;
+  // When a line filter is active, the virtualizer operates on filtered indices
+  // (0..N-1), not absolute line numbers.  Map the absolute scrollToLine to its
+  // position in the filtered array so ReadOnlyViewer scrolls to the right row.
+  const mappedScrollToLine = useMemo(() => {
+    const abs = isJumpForThisPane ? scrollToLine : null;
+    if (abs == null || !lineNumbers) return abs;
+    return absoluteLineToFilteredIndex(abs, lineNumbers);
+  }, [isJumpForThisPane, scrollToLine, lineNumbers]);
+  const effectiveScrollToLine = mappedScrollToLine;
   const effectiveJumpSeq = isJumpForThisPane ? jumpSeq : 0;
   const { allLineNums: transitionLineNums, byLine: transitionsByLine } = useTrackerTransitions();
 
