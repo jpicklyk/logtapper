@@ -128,6 +128,11 @@ pub async fn load_log_file(
 ) -> Result<LoadResult, String> {
     let path_obj = Path::new(&path);
 
+    // If the file is a .lts session export, use the dedicated import path.
+    if path_obj.extension().and_then(|e| e.to_str()) == Some("lts") {
+        return load_lts_file_inner(&state, &app, &path).await;
+    }
+
     // If the file is a .zip, extract the dumpstate/bugreport .txt to a temp file
     // and load that instead. The temp file persists for the session lifetime.
     let (effective_path, _temp_file) = if path_obj.extension().and_then(|e| e.to_str()) == Some("zip") {
@@ -233,6 +238,106 @@ pub async fn load_log_file(
     Ok(result)
 }
 
+#[allow(clippy::unused_async)]
+async fn load_lts_file_inner(
+    state: &AppState,
+    app: &tauri::AppHandle,
+    lts_path: &str,
+) -> Result<LoadResult, String> {
+    use tauri::Emitter;
+
+    let path_obj = std::path::Path::new(lts_path);
+
+    // 1. Read the .lts zip (all I/O, no locks)
+    let lts = crate::workspace::lts::read_lts(path_obj)?;
+
+    // 2. Create session
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let source_id = path_obj
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("lts-source")
+        .to_string();
+
+    let mut session = crate::core::session::AnalysisSession::new(session_id.clone());
+    session.file_path = Some(lts_path.to_string());
+
+    // 3. Create ZipLogSource from decompressed bytes
+    session.add_zip_source(
+        lts.source_bytes,
+        source_id.clone(),
+        lts.source_filename.clone(),
+    )?;
+
+    let source = session.primary_source().ok_or("No source after zip load")?;
+    let total_lines = source.total_lines();
+    let first_ts = source.first_timestamp();
+    let last_ts = source.last_timestamp();
+    let source_type_str = source.source_type().to_string();
+    let source_name = source.name().to_string();
+
+    let file_size = path_obj.metadata().map(|m| m.len()).unwrap_or(0);
+
+    let result = LoadResult {
+        session_id: session_id.clone(),
+        source_id,
+        source_name,
+        file_path: Some(lts_path.to_string()),
+        total_lines,
+        file_size,
+        first_timestamp: first_ts,
+        last_timestamp: last_ts,
+        source_type: source_type_str,
+        is_streaming: false,
+        is_indexing: false, // ZipLogSource is fully indexed
+    };
+
+    // 4. Insert session (brief lock)
+    {
+        let mut sessions = lock_or_err(&state.sessions, "sessions")?;
+        sessions.insert(session_id.clone(), session);
+    }
+
+    // 5. Restore bookmarks (rewrite session_id)
+    if !lts.bookmarks.is_empty() {
+        let mut bookmarks = lts.bookmarks;
+        for bm in &mut bookmarks {
+            bm.session_id = session_id.clone();
+        }
+        if let Ok(mut bm_map) = state.bookmarks.lock() {
+            bm_map.insert(session_id.clone(), bookmarks);
+        }
+    }
+
+    // 6. Restore analyses (rewrite session_id)
+    if !lts.analyses.is_empty() {
+        let mut analyses = lts.analyses;
+        for an in &mut analyses {
+            an.session_id = session_id.clone();
+        }
+        if let Ok(mut an_map) = state.analyses.lock() {
+            an_map.insert(session_id.clone(), analyses);
+        }
+    }
+
+    // 7. Emit restore event
+    let bm_count = state.bookmarks.lock().ok()
+        .and_then(|b| b.get(&session_id).map(Vec::len))
+        .unwrap_or(0);
+    let an_count = state.analyses.lock().ok()
+        .and_then(|a| a.get(&session_id).map(Vec::len))
+        .unwrap_or(0);
+    if bm_count > 0 || an_count > 0 {
+        let _ = app.emit("workspace-restored", serde_json::json!({
+            "sessionId": session_id,
+            "bookmarkCount": bm_count,
+            "analysisCount": an_count,
+        }));
+    }
+
+    Ok(result)
+}
+
 fn close_session_inner(state: &AppState, app: Option<&tauri::AppHandle>, session_id: &str) -> Result<(), String> {
     // 1. Cancel active ADB stream (if any)
     if let Some(cancel_tx) = lock_or_err(&state.stream_tasks, "stream_tasks")?.remove(session_id) {
@@ -264,12 +369,15 @@ fn close_session_inner(state: &AppState, app: Option<&tauri::AppHandle>, session
     });
 
     if let (Some(app), Some((file_path, bookmarks, analyses))) = (app, save_data) {
-        if let Ok(ws_path) = crate::workspace::workspace_path_for(app, &file_path) {
-            let meta = crate::workspace::SessionMeta::default();
-            if let Err(e) = crate::workspace::save_workspace(&ws_path, &file_path, &bookmarks, &analyses, &meta) {
-                log::warn!("Workspace save failed for session {session_id}: {e}");
-            } else if let Ok(dir) = crate::workspace::workspace_dir(app) {
-                crate::workspace::evict_old_workspaces(&dir, 20);
+        // Skip workspace save for .lts sessions — they're self-contained
+        if !file_path.ends_with(".lts") {
+            if let Ok(ws_path) = crate::workspace::workspace_path_for(app, &file_path) {
+                let meta = crate::workspace::SessionMeta::default();
+                if let Err(e) = crate::workspace::save_workspace(&ws_path, &file_path, &bookmarks, &analyses, &meta) {
+                    log::warn!("Workspace save failed for session {session_id}: {e}");
+                } else if let Ok(dir) = crate::workspace::workspace_dir(app) {
+                    crate::workspace::evict_old_workspaces(&dir, 20);
+                }
             }
         }
     }
