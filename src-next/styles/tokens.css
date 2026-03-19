@@ -2,9 +2,28 @@
 
 /* Non-color tokens (shared, no theme dependency) */
 :root {
-  --radius-sm: 3px;
-  --radius-md: 6px;
-  --transition-fast: 80ms ease;
+  /* Radius scale */
+  --radius-none: 0;
+  --radius-sm:   3px;
+  --radius-md:   6px;
+  --radius-lg:   8px;
+  --radius-xl:   12px;
+  --radius-full: 9999px;
+
+  /* Duration */
+  --duration-fast:   80ms;
+  --duration-normal: 150ms;
+  --duration-slow:   400ms;
+
+  /* Easing (M3 standard curves) */
+  --easing-standard: cubic-bezier(0.2, 0, 0, 1);
+  --easing-enter:    cubic-bezier(0.05, 0.7, 0.1, 1);
+  --easing-exit:     cubic-bezier(0.3, 0, 0.8, 0.15);
+
+  /* Transitions */
+  --transition-fast:   var(--duration-fast) var(--easing-standard);
+  --transition-normal: var(--duration-normal) var(--easing-standard);
+
   --font-mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
   --font-ui: 'Geist', system-ui, -apple-system, sans-serif;
 
@@ -123,6 +142,33 @@
   --tab-dashboard:         var(--success);
   --tab-editor:            var(--warning);
   --tab-analysis:          var(--accent);
+
+  /* Foreground pairings */
+  --on-danger:   #fff;
+  --on-success:  #fff;
+  --on-warning:  #fff;
+  --viewer-text: var(--text);
+  --editor-text: var(--text);
+
+  /* Muted / emphasis variants */
+  --danger-muted:         color-mix(in srgb, var(--danger) 12%, transparent);
+  --danger-muted-border:  color-mix(in srgb, var(--danger) 30%, transparent);
+  --success-muted:        color-mix(in srgb, var(--success) 12%, transparent);
+  --success-muted-border: color-mix(in srgb, var(--success) 30%, transparent);
+  --warning-muted-bg:     color-mix(in srgb, var(--warning) 12%, transparent);
+  --warning-muted-border: color-mix(in srgb, var(--warning) 30%, transparent);
+  --accent-muted:         color-mix(in srgb, var(--accent) 12%, transparent);
+  --accent-muted-border:  color-mix(in srgb, var(--accent) 25%, transparent);
+
+  /* State layers (accent interaction) */
+  --state-hover:    color-mix(in srgb, var(--accent) 8%, transparent);
+  --state-active:   color-mix(in srgb, var(--accent) 16%, transparent);
+  --state-selected: color-mix(in srgb, var(--accent) 6%, transparent);
+
+  /* Shadows */
+  --shadow-focus:   0 0 0 2px var(--focus-ring);
+  --shadow-popover: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-overlay: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
 
 /* ── Light theme ─────────────────────────────────────────────────────────── */
@@ -216,4 +262,28 @@
   --chrome-bg:             #f6f8fa;
   --scrim:                 rgba(0, 0, 0, 0.3);
   --border-accent:         color-mix(in srgb, var(--accent) 12%, transparent);
+
+  /* Foreground pairings */
+  --on-danger:  #fff;
+  --on-success: #fff;
+  --on-warning: #fff;
+
+  /* Muted / emphasis variants */
+  --danger-muted:         color-mix(in srgb, var(--danger) 10%, transparent);
+  --danger-muted-border:  color-mix(in srgb, var(--danger) 25%, transparent);
+  --success-muted:        color-mix(in srgb, var(--success) 10%, transparent);
+  --success-muted-border: color-mix(in srgb, var(--success) 25%, transparent);
+  --warning-muted-bg:     color-mix(in srgb, var(--warning) 10%, transparent);
+  --warning-muted-border: color-mix(in srgb, var(--warning) 25%, transparent);
+  --accent-muted:         color-mix(in srgb, var(--accent) 10%, transparent);
+  --accent-muted-border:  color-mix(in srgb, var(--accent) 20%, transparent);
+
+  /* State layers */
+  --state-hover:    color-mix(in srgb, var(--accent) 6%, transparent);
+  --state-active:   color-mix(in srgb, var(--accent) 12%, transparent);
+  --state-selected: color-mix(in srgb, var(--accent) 5%, transparent);
+
+  /* Shadows (lighter for light theme) */
+  --shadow-popover: 0 4px 12px rgba(0, 0, 0, 0.15);
+  --shadow-overlay: 0 8px 32px rgba(0, 0, 0, 0.2);
 }
