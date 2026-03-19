@@ -29,10 +29,10 @@
   line-height: 1.3;
 }
 
-.prose h1 { font-size: 1.5em; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; }
-.prose h2 { font-size: 1.3em; border-bottom: 1px solid var(--border); padding-bottom: 0.2em; }
-.prose h3 { font-size: 1.15em; }
-.prose h4 { font-size: 1em; }
+.prose h1 { font-size: 20px; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; }
+.prose h2 { font-size: 17px; border-bottom: 1px solid var(--border); padding-bottom: 0.2em; }
+.prose h3 { font-size: 15px; }
+.prose h4 { font-size: 13px; }
 
 .prose p {
   margin: 0.6em 0;
@@ -49,10 +49,10 @@
 
 .prose code {
   background: var(--bg-overlay);
-  padding: 0.15em 0.35em;
+  padding: 1px 4px;
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
-  font-size: 0.9em;
+  font-size: 12px;
 }
 
 .prose pre {

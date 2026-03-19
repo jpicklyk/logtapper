@@ -114,8 +114,8 @@
 
 .sectionBody pre {
   margin: 8px 0;
-  padding: 10px 12px;
-  background: var(--bg-base);
+  padding: 12px 16px;
+  background: var(--bg-overlay);
   border-radius: var(--radius-sm);
   overflow-x: auto;
   font-size: 12px;
@@ -154,15 +154,16 @@
 }
 
 .sectionBody th {
-  background: var(--bg-overlay);
+  background: var(--bg-raised);
   font-weight: 600;
   color: var(--text);
 }
 
 .sectionBody blockquote {
   margin: 8px 0;
-  padding: 4px 12px;
-  border-left: 3px solid var(--border-subtle);
+  padding: 8px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--bg-overlay);
   color: var(--text-muted);
 }
 
@@ -175,10 +176,10 @@
   font-weight: 600;
 }
 
-.sectionBody h1 { font-size: 16px; }
-.sectionBody h2 { font-size: 14px; }
-.sectionBody h3 { font-size: 13px; }
-.sectionBody h4 { font-size: 12px; }
+.sectionBody h1 { font-size: 20px; }
+.sectionBody h2 { font-size: 17px; }
+.sectionBody h3 { font-size: 15px; }
+.sectionBody h4 { font-size: 13px; }
 
 .sectionBody a {
   color: var(--accent);

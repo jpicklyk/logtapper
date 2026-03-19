@@ -19,7 +19,7 @@ interface TextEditorProps {
 
 function createEditorTheme(isDark: boolean): Extension {
   return EditorView.theme({
-    '&': { backgroundColor: 'var(--editor-bg)', color: 'var(--text)', fontFamily: 'var(--font-mono)' },
+    '&': { backgroundColor: 'var(--editor-bg)', color: 'var(--text)', fontFamily: 'var(--font-mono)', fontSize: '12px' },
     '.cm-content': { caretColor: 'var(--accent)' },
     '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent)' },
     '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': { backgroundColor: 'var(--editor-selection-bg)' },
