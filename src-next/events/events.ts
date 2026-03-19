@@ -44,7 +44,7 @@ export type AppEvents = {
   'pipeline:library-open':  undefined;
 
   // ── Layout / navigation ───────────────────────────────────────────────────
-  'layout:open-tab':        { type: string };
+  'layout:open-tab':        { type: string; label?: string; filePath?: string };
   /** Fired when a logviewer tab is explicitly closed via the UI tab bar. */
   'layout:logviewer-tab-closed': { tabId: string; paneId: string; sessionId: string };
   /** Fired when the user switches to a logviewer tab that has its own session.
@@ -99,4 +99,7 @@ export type AppEvents = {
   'file:save-request':    undefined;
   /** Emitted when user triggers Save As. Focused EditorTab should handle. */
   'file:save-as-request': undefined;
+  /** Emitted when "Open in Editor" loads a file — the most recently created
+   *  (focused) EditorTab should pick this up and load the file content. */
+  'editor:load-file':     { filePath: string };
 };

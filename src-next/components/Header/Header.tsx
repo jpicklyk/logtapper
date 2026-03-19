@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import clsx from 'clsx';
-import { FolderOpen, FileArchive, Menu, Radio, Square, Smartphone } from 'lucide-react';
+import { FolderOpen, FileEdit, Menu, Radio, Square, Smartphone } from 'lucide-react';
 import { useSession, useIsStreaming, useViewerActions } from '../../context';
 import { listAdbDevices } from '../../bridge/commands';
 import type { AdbDevice } from '../../bridge/types';
@@ -13,7 +13,7 @@ import styles from './Header.module.css';
 export const Header = React.memo(function Header() {
   const session = useSession();
   const isStreaming = useIsStreaming();
-  const { openFileDialog, openBugreportDialog, startStream, stopStream, saveFile, saveFileAs } = useViewerActions();
+  const { openFileDialog, openInEditorDialog, startStream, stopStream, saveFile, saveFileAs } = useViewerActions();
 
   const [fileMenuOpen, setFileMenuOpen] = useState(false);
 
@@ -63,7 +63,7 @@ export const Header = React.memo(function Header() {
 
   const fileMenuItems = useMemo<MenuItem[]>(() => [
     { id: 'open-log', label: 'Open Log...', icon: FolderOpen, shortcut: 'Ctrl+O' },
-    { id: 'open-bugreport', label: 'Open Bugreport...', icon: FileArchive, shortcut: 'Ctrl+Shift+O' },
+    { id: 'open-editor', label: 'Open in Editor...', icon: FileEdit, shortcut: 'Ctrl+Shift+O' },
     { separator: true },
     { id: 'save', label: isStreaming ? 'Save Capture' : 'Save', shortcut: 'Ctrl+S' },
     { id: 'save-as', label: 'Save As...', shortcut: 'Ctrl+Shift+S' },
@@ -72,11 +72,11 @@ export const Header = React.memo(function Header() {
   const handleFileMenuSelect = useCallback((id: string) => {
     switch (id) {
       case 'open-log': openFileDialog(); break;
-      case 'open-bugreport': openBugreportDialog(); break;
+      case 'open-editor': openInEditorDialog(); break;
       case 'save': saveFile(); break;
       case 'save-as': saveFileAs(); break;
     }
-  }, [openFileDialog, openBugreportDialog, saveFile, saveFileAs]);
+  }, [openFileDialog, openInEditorDialog, saveFile, saveFileAs]);
 
   return (
     <header className={styles.header}>

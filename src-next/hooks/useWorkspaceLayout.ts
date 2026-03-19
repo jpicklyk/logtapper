@@ -196,8 +196,13 @@ export function useWorkspaceLayout() {
       }
     };
 
-    const onOpenTab = (e: { type: string }) => {
-      openCenterTabRef.current(e.type as CenterTabType);
+    const onOpenTab = (e: { type: string; label?: string; filePath?: string }) => {
+      openCenterTabRef.current(e.type as CenterTabType, e.label);
+      // If a filePath was provided (e.g. "Open in Editor"), broadcast so EditorTab can load it.
+      if (e.filePath) {
+        // Small delay to let the tab render before the event fires.
+        setTimeout(() => bus.emit('editor:load-file', { filePath: e.filePath! }), 0);
+      }
     };
 
     bus.on('session:focused', onSessionFocused);

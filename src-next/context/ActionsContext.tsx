@@ -18,7 +18,7 @@ export interface ActionsContextValue {
   setSearch: (query: SearchQuery | null) => void;
   setStreamFilter: (expr: string) => Promise<void>;
   cancelStreamFilter: () => void;
-  openBugreportDialog: () => Promise<void>;
+  openInEditorDialog: () => Promise<void>;
   openTab: (type: string) => void;
   /** Focus a specific pane, updating SessionContext and emitting session:focused. */
   setFocusedPane: (paneId: string) => void;
@@ -51,7 +51,7 @@ const DEFAULT_ACTIONS: ActionsContextValue = {
   setSearch: (_query: SearchQuery | null) => noop(),
   setStreamFilter: (_expr: string) => noopAsync(),
   cancelStreamFilter: noop,
-  openBugreportDialog: () => noopAsync(),
+  openInEditorDialog: () => noopAsync(),
   openTab: (_type: string) => noop(),
   setFocusedPane: (_paneId: string) => noop(),
   setEffectiveLineNums: (_lineNums: number[] | null) => noop(),

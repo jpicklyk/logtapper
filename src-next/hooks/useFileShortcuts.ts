@@ -2,13 +2,13 @@ import { useEffect } from 'react';
 
 interface FileShortcutActions {
   openFileDialog: () => void;
-  openBugreportDialog: () => void;
+  openInEditorDialog: () => void;
   saveFile: () => void;
   saveFileAs: () => void;
 }
 
 export function useFileShortcuts(actions: FileShortcutActions): void {
-  const { openFileDialog, openBugreportDialog, saveFile, saveFileAs } = actions;
+  const { openFileDialog, openInEditorDialog, saveFile, saveFileAs } = actions;
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -22,7 +22,7 @@ export function useFileShortcuts(actions: FileShortcutActions): void {
         openFileDialog();
       } else if (key === 'o' && e.shiftKey) {
         e.preventDefault();
-        openBugreportDialog();
+        openInEditorDialog();
       } else if (key === 's' && !e.shiftKey) {
         e.preventDefault();
         saveFile();
@@ -34,5 +34,5 @@ export function useFileShortcuts(actions: FileShortcutActions): void {
 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [openFileDialog, openBugreportDialog, saveFile, saveFileAs]);
+  }, [openFileDialog, openInEditorDialog, saveFile, saveFileAs]);
 }

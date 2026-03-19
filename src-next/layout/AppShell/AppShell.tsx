@@ -66,8 +66,8 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   useAnalysisToast(addToast);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const updateBadgeCount = usePendingUpdateCount();
-  const { openFileDialog, openBugreportDialog, saveFile, saveFileAs } = useViewerActions();
-  useFileShortcuts({ openFileDialog, openBugreportDialog, saveFile, saveFileAs });
+  const { openFileDialog, openInEditorDialog, saveFile, saveFileAs } = useViewerActions();
+  useFileShortcuts({ openFileDialog, openInEditorDialog, saveFile, saveFileAs });
 
   const rightTopItems = useMemo(
     () => [

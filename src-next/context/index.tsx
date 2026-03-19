@@ -50,19 +50,25 @@ function HookWiring({ children }: { children: ReactNode }) {
 
   const openFileDialog = useCallback(
     () => openWithFilters([
-      { name: 'Log Files', extensions: ['log', 'txt', 'gz'] },
+      { name: 'Log Files', extensions: ['log', 'txt', 'zip', 'gz'] },
       { name: 'All Files', extensions: ['*'] },
     ]),
     [openWithFilters],
   );
 
-  const openBugreportDialog = useCallback(
-    () => openWithFilters([
-      { name: 'Bugreport Files', extensions: ['zip', 'txt', 'log'] },
-      { name: 'All Files', extensions: ['*'] },
-    ]),
-    [openWithFilters],
-  );
+  const openInEditorDialog = useCallback(async () => {
+    const selected = await open({
+      multiple: false,
+      filters: [
+        { name: 'Text Files', extensions: ['yaml', 'yml', 'md', 'txt', 'json', 'log'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+    if (typeof selected === 'string') {
+      const filename = selected.split(/[\\/]/).pop() || selected;
+      bus.emit('layout:open-tab', { type: 'editor', label: filename, filePath: selected });
+    }
+  }, []);
 
   // All focus changes go through the bus so SessionContext and WorkspaceLayout
   // both update from a single emission point.
@@ -97,7 +103,7 @@ function HookWiring({ children }: { children: ReactNode }) {
   const actions = useMemo<Partial<ActionsContextValue>>(() => ({
     loadFile: logViewer.loadFile,
     openFileDialog,
-    openBugreportDialog,
+    openInEditorDialog,
     startStream: (deviceId?: string) => logViewer.startStream(
       deviceId, undefined, undefined, settingsRef.current.streamBackendLineMax,
     ),
@@ -113,7 +119,7 @@ function HookWiring({ children }: { children: ReactNode }) {
     setEffectiveLineNums: logViewer.setEffectiveLineNums,
     saveFile,
     saveFileAs,
-  }), [logViewer.loadFile, openFileDialog, openBugreportDialog, logViewer.startStream, logViewer.stopStream,
+  }), [logViewer.loadFile, openFileDialog, openInEditorDialog, logViewer.startStream, logViewer.stopStream,
        logViewer.closeSession, logViewer.jumpToLine, logViewer.jumpToMatch,
        logViewer.handleSearch, logViewer.setStreamFilter, logViewer.cancelStreamFilter,
        logViewer.setEffectiveLineNums, saveFile, saveFileAs]);
