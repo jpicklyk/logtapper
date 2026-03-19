@@ -266,7 +266,7 @@
 }
 
 .deleteBtn:hover {
-  color: var(--danger, #f85149);
+  color: var(--danger);
 }
 
 /* ── Meta row (line indicator) ───────────────────────────────────────────── */
@@ -295,9 +295,9 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
   padding: 1px 4px;
-  border: 1px solid var(--accent, #58a6ff);
+  border: 1px solid var(--accent);
   border-radius: 3px;
-  color: var(--accent, #58a6ff);
+  color: var(--accent);
   line-height: 1;
   opacity: 0.8;
 }

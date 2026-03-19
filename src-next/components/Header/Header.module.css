@@ -96,9 +96,9 @@
 }
 
 .actionBtnStreaming:hover {
-  color: var(--danger, #f85149);
-  border-color: var(--danger, #f85149);
-  background: color-mix(in srgb, var(--danger, #f85149) 8%, var(--bg-base));
+  color: var(--danger);
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, var(--bg-base));
 }
 
 .actionBtnLoading {
