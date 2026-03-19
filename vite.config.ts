@@ -5,6 +5,9 @@ const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig({
   plugins: [react()],
+  test: {
+    exclude: ['eslint-local-rules/**', '**/node_modules/**'],
+  },
   clearScreen: false,
   server: {
     port: 1420,
