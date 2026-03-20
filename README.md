@@ -2,6 +2,14 @@
 
 A desktop log analysis tool for Android developers. Load logcat, bugreport, dumpstate, and kernel (dmesg) files, or stream live from ADB — then search, filter, and run custom analysis pipelines powered by a YAML processor system with embedded Rhai scripting.
 
+## Install
+
+Download the latest release for your platform from [GitHub Releases](https://github.com/jpicklyk/logtapper/releases):
+
+- **Windows:** `.exe` (NSIS installer) or `.msi`
+- **macOS:** `.dmg` (note: you may need to right-click > Open on first launch — the app is not yet notarized)
+- **Linux:** `.deb` or `.AppImage`
+
 ## Tech Stack
 
 **Desktop shell:** [Tauri 2.x](https://v2.tauri.app/) — Rust backend + web frontend in a native window
@@ -107,6 +115,12 @@ Configure it in your Claude Code or Claude Desktop MCP settings to point at `mcp
 
 ```
 src-tauri/          Rust backend (Tauri commands, parsers, pipeline engine, MCP bridge)
-src/                Frontend source (React components, hooks, cache layer)
+src-next/           Frontend source (React components, hooks, cache layer)
 mcp-server/         MCP server (Node.js, stdio transport)
 ```
+
+## License
+
+Copyright (c) 2026 Jeff Picklyk
+
+Licensed under the [GNU General Public License v3.0](LICENSE).
