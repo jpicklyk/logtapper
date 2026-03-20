@@ -146,6 +146,14 @@ export function stopPipeline(): Promise<void> {
   return invoke('stop_pipeline');
 }
 
+export function setSessionPipelineMeta(
+  sessionId: string,
+  activeProcessorIds: string[],
+  disabledProcessorIds: string[],
+): Promise<void> {
+  return invoke('set_session_pipeline_meta', { sessionId, activeProcessorIds, disabledProcessorIds });
+}
+
 export function listProcessors(): Promise<ProcessorSummary[]> {
   return invoke('list_processors');
 }

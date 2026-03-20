@@ -78,6 +78,8 @@ export type PipelineAction =
   | { type: 'chain:remove'; id: string }
   | { type: 'chain:reorder'; fromIndex: number; toIndex: number }
   | { type: 'chain:toggle-enabled'; id: string }
+  // Workspace restore — override entire chain with saved state
+  | { type: 'chain:restore'; chain: string[]; disabledChainIds: string[] }
   // ADB streaming incremental updates
   | { type: 'adb:results-update'; sessionId: string; processorId: string; matchedLines: number; emissionCount: number }
   | { type: 'adb:run-count-bump'; sessionId: string }
@@ -230,6 +232,13 @@ function pipelineReducer(state: PipelineState, action: PipelineAction): Pipeline
       const firstPinned = state.pipelineChain.findIndex((x) => PINNED_TAIL_IDS.has(x));
       const clampedTo = firstPinned !== -1 ? Math.min(action.toIndex, firstPinned - 1) : action.toIndex;
       return withChain(state, arrayMove(state.pipelineChain, action.fromIndex, clampedTo));
+    }
+
+    case 'chain:restore': {
+      // Ensure pinned tail IDs stay at the end
+      const nonPinned = action.chain.filter((id) => !PINNED_TAIL_IDS.has(id));
+      const pinned = action.chain.filter((id) => PINNED_TAIL_IDS.has(id));
+      return withChain(state, [...nonPinned, ...pinned], action.disabledChainIds);
     }
 
     // ── ADB streaming ────────────────────────────────────────────────────────

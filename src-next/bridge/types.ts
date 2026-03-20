@@ -630,6 +630,14 @@ export interface AnalysisUpdateEvent {
   artifactId: string;
 }
 
+export interface WorkspaceRestoredPayload {
+  sessionId: string;
+  bookmarkCount: number;
+  analysisCount: number;
+  activeProcessorIds?: string[];
+  disabledProcessorIds?: string[];
+}
+
 // ---------------------------------------------------------------------------
 // Watch types (Phase 4)
 // ---------------------------------------------------------------------------

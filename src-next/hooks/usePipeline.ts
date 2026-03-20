@@ -10,10 +10,12 @@ import {
   stopPipeline,
   getProcessorVars,
   setMcpAnonymize,
+  setSessionPipelineMeta,
 } from '../bridge/commands';
 import { usePipelineContext } from '../context/PipelineContext';
 import { storageGetJSON, storageSetJSON } from '../utils';
 import { bus } from '../events/bus';
+import { useWorkspaceRestore } from './useWorkspaceRestore';
 
 const LS_KEY = 'logtapper_pipeline_chain';
 const LS_DISABLED_KEY = 'logtapper_pipeline_disabled';
@@ -51,7 +53,9 @@ export function usePipeline(): PipelineActions {
   const { processors, pipelineChain, disabledChainIds, resultsBySession, dispatch } = usePipelineContext();
 
   // Track the focused pane so session:pre-load can resolve the outgoing sessionId.
-  const { activeLogPaneId, paneSessionMap } = useSessionContext();
+  const { activeLogPaneId, paneSessionMap, sessions } = useSessionContext();
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
   const activeLogPaneIdRef = useRef(activeLogPaneId);
   activeLogPaneIdRef.current = activeLogPaneId;
   const paneSessionMapRef = useRef(paneSessionMap);
@@ -73,14 +77,39 @@ export function usePipeline(): PipelineActions {
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const adbProcUnlistenRef = useRef<UnlistenFn | null>(null);
   const chainInitializedRef = useRef(false);
+  const hasRestoredChainRef = useRef(false);
+  const metaSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Persist chain + disabled state to localStorage whenever they change
+  // Persist chain + disabled state to localStorage + backend whenever they change
   useEffect(() => {
     if (!chainInitializedRef.current) return;
     storageSetJSON(LS_KEY, pipelineChain);
     storageSetJSON(LS_DISABLED_KEY, disabledChainIds);
     bus.emit('pipeline:chain-changed', { chain: pipelineChain });
+
+    // Debounced push to backend for workspace persistence (500ms)
+    if (metaSyncTimerRef.current) clearTimeout(metaSyncTimerRef.current);
+    metaSyncTimerRef.current = setTimeout(() => {
+      metaSyncTimerRef.current = null;
+      const sessionId = paneSessionMapRef.current.get(activeLogPaneIdRef.current ?? '');
+      if (!sessionId) return;
+      setSessionPipelineMeta(sessionId, pipelineChain, disabledChainIds).catch(() => {});
+    }, 500);
   }, [pipelineChain, disabledChainIds]);
+
+  // Push chain to backend when a session becomes active (handles the case where
+  // the chain was initialized from localStorage before any session was loaded).
+  useEffect(() => {
+    if (!chainInitializedRef.current) return;
+    const sessionId = paneSessionMap.get(activeLogPaneId ?? '');
+    if (!sessionId) return;
+    setSessionPipelineMeta(sessionId, pipelineChain, disabledChainIds).catch(() => {});
+  }, [activeLogPaneId, paneSessionMap]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Cleanup debounce timer on unmount
+  useEffect(() => () => {
+    if (metaSyncTimerRef.current) clearTimeout(metaSyncTimerRef.current);
+  }, []);
 
   useEffect(() => {
     if (!chainInitializedRef.current) return;
@@ -180,17 +209,22 @@ export function usePipeline(): PipelineActions {
       const list = await listProcessors();
       if (!chainInitializedRef.current) {
         chainInitializedRef.current = true;
-        const validIds = new Set(list.map((p) => p.id));
-        const initialChain = loadChainFromStorage(validIds);
-        const initialDisabled = loadDisabledFromStorage(new Set(initialChain));
-        dispatch({ type: 'processors:loaded', processors: list, initialChain, initialDisabled });
+        if (hasRestoredChainRef.current) {
+          // Workspace restore already set the chain — don't overwrite from localStorage
+          dispatch({ type: 'processors:loaded', processors: list });
+        } else {
+          const validIds = new Set(list.map((p) => p.id));
+          const initialChain = loadChainFromStorage(validIds);
+          const initialDisabled = loadDisabledFromStorage(new Set(initialChain));
+          dispatch({ type: 'processors:loaded', processors: list, initialChain, initialDisabled });
+        }
       } else {
         dispatch({ type: 'processors:loaded', processors: list });
       }
     } catch (e) {
       dispatch({ type: 'error:set', error: String(e) });
     }
-  }, [dispatch]);
+  }, [dispatch, hasRestoredChainRef]);
 
   const installFromYaml = useCallback(async (yaml: string) => {
     dispatch({ type: 'error:clear' });
@@ -265,6 +299,13 @@ export function usePipeline(): PipelineActions {
     },
     [dispatch],
   );
+
+  // ── Workspace restore: set chain from .ltw and auto-rerun ────────────────
+  const getIsIndexing = useCallback(
+    (sessionId: string) => sessionsRef.current.get(sessionId)?.isIndexing ?? false,
+    [],
+  );
+  useWorkspaceRestore(dispatch, processors, run, getIsIndexing, hasRestoredChainRef);
 
   const clearResults = useCallback((sessionId: string) => {
     dispatch({ type: 'results:cleared', sessionId });

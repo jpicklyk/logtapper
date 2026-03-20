@@ -24,6 +24,14 @@ pub fn snapshot_analyses(state: &AppState, session_id: &str) -> Vec<AnalysisArti
     guard.get(session_id).cloned().unwrap_or_default()
 }
 
+/// Snapshot pipeline meta (chain + disabled IDs) for a session under a brief lock.
+pub fn snapshot_pipeline_meta(state: &AppState, session_id: &str) -> workspace::SessionMeta {
+    let Ok(guard) = state.session_pipeline_meta.lock() else {
+        return workspace::SessionMeta::default();
+    };
+    guard.get(session_id).cloned().unwrap_or_default()
+}
+
 // ---------------------------------------------------------------------------
 // Debounced workspace auto-save
 // ---------------------------------------------------------------------------
@@ -68,6 +76,7 @@ pub fn schedule_workspace_save(
                 let state: tauri::State<'_, AppState> = app_clone.state();
                 let bookmarks = snapshot_bookmarks(&state, &sid);
                 let analyses = snapshot_analyses(&state, &sid);
+                let meta = snapshot_pipeline_meta(&state, &sid);
 
                 let ws_path = match workspace::workspace_path_for(&app_clone, &file_path) {
                     Ok(p) => p,
@@ -76,7 +85,6 @@ pub fn schedule_workspace_save(
                         return;
                     }
                 };
-                let meta = workspace::SessionMeta::default();
                 if let Err(e) = workspace::save_workspace(&ws_path, &file_path, &bookmarks, &analyses, &meta) {
                     log::warn!("Workspace auto-save failed for {sid}: {e}");
                 } else if let Ok(dir) = workspace::workspace_dir(&app_clone) {
@@ -128,13 +136,13 @@ pub fn flush_all_workspaces_inner(state: &AppState, workspace_dir: &Path) {
             .collect()
     }; // sessions lock dropped
 
-    // 3. For each session: snapshot bookmarks/analyses, write .ltw.
+    // 3. For each session: snapshot bookmarks/analyses/meta, write .ltw.
     for (session_id, file_path) in &sessions_to_save {
         let bookmarks = snapshot_bookmarks(state, session_id);
         let analyses = snapshot_analyses(state, session_id);
+        let meta = snapshot_pipeline_meta(state, session_id);
 
         let ws_path = workspace_dir.join(workspace::path_to_workspace_name(file_path));
-        let meta = workspace::SessionMeta::default();
         if let Err(e) = workspace::save_workspace(&ws_path, file_path, &bookmarks, &analyses, &meta) {
             log::warn!("Exit flush failed for session {session_id}: {e}");
         }
@@ -238,6 +246,9 @@ mod tests {
         assert_eq!(loaded.bookmarks[0].line_number, 42);
         assert_eq!(loaded.analyses.len(), 1);
         assert_eq!(loaded.analyses[0].title, "Test");
+        // Pipeline meta defaults to empty when not set
+        assert!(loaded.session_meta.active_processor_ids.is_empty(),
+            "pipeline meta must be empty when not pushed by frontend");
     }
 
     #[test]
@@ -334,5 +345,41 @@ mod tests {
         // Unlike close_session_inner, flush must NOT remove sessions from state
         assert!(state.sessions.lock().unwrap().contains_key("sess-1"),
             "sessions must remain in state after flush (not a full teardown)");
+    }
+
+    #[test]
+    fn flush_saves_pipeline_meta() {
+        let state = make_state();
+        let tmp = tempfile::tempdir().expect("tmpdir");
+
+        insert_session(&state, "sess-1", Some("/logs/device.log"));
+
+        // Push pipeline meta (simulating what the frontend does)
+        state.session_pipeline_meta.lock().unwrap().insert(
+            "sess-1".to_string(),
+            workspace::SessionMeta {
+                active_processor_ids: vec!["proc-a".to_string(), "proc-b".to_string()],
+                disabled_processor_ids: vec!["proc-c".to_string()],
+            },
+        );
+
+        flush_all_workspaces_inner(&state, tmp.path());
+
+        let ws_name = workspace::path_to_workspace_name("/logs/device.log");
+        let ws_path = tmp.path().join(&ws_name);
+        let loaded = workspace::load_workspace(&ws_path).expect("load_workspace");
+
+        assert_eq!(loaded.session_meta.active_processor_ids, vec!["proc-a", "proc-b"],
+            "active processor IDs must be saved in .ltw");
+        assert_eq!(loaded.session_meta.disabled_processor_ids, vec!["proc-c"],
+            "disabled processor IDs must be saved in .ltw");
+    }
+
+    #[test]
+    fn snapshot_pipeline_meta_returns_default_when_absent() {
+        let state = make_state();
+        let meta = snapshot_pipeline_meta(&state, "nonexistent-session");
+        assert!(meta.active_processor_ids.is_empty());
+        assert!(meta.disabled_processor_ids.is_empty());
     }
 }

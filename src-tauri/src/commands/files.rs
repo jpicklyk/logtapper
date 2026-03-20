@@ -362,14 +362,14 @@ fn close_session_inner(state: &AppState, app: Option<&tauri::AppHandle>, session
     let save_data = file_path.map(|fp| {
         let bm = crate::commands::workspace_sync::snapshot_bookmarks(state, session_id);
         let an = crate::commands::workspace_sync::snapshot_analyses(state, session_id);
-        (fp, bm, an)
+        let meta = crate::commands::workspace_sync::snapshot_pipeline_meta(state, session_id);
+        (fp, bm, an, meta)
     });
 
-    if let (Some(app), Some((file_path, bookmarks, analyses))) = (app, save_data) {
+    if let (Some(app), Some((file_path, bookmarks, analyses, meta))) = (app, save_data) {
         // Skip workspace save for .lts sessions — they're self-contained
         if !file_path.ends_with(".lts") {
             if let Ok(ws_path) = crate::workspace::workspace_path_for(app, &file_path) {
-                let meta = crate::workspace::SessionMeta::default();
                 if let Err(e) = crate::workspace::save_workspace(&ws_path, &file_path, &bookmarks, &analyses, &meta) {
                     log::warn!("Workspace save failed for session {session_id}: {e}");
                 } else if let Ok(dir) = crate::workspace::workspace_dir(app) {
@@ -409,12 +409,15 @@ fn close_session_inner(state: &AppState, app: Option<&tauri::AppHandle>, session
     // 12. Remove MCP anonymizer
     lock_or_err(&state.mcp_anonymizers, "mcp_anonymizers")?.remove(session_id);
 
-    // 13. Clean up bookmarks and analyses (previously leaked in memory).
+    // 13. Clean up bookmarks, analyses, and pipeline meta.
     if let Ok(mut bookmarks) = state.bookmarks.lock() {
         bookmarks.remove(session_id);
     }
     if let Ok(mut analyses) = state.analyses.lock() {
         analyses.remove(session_id);
+    }
+    if let Ok(mut meta) = state.session_pipeline_meta.lock() {
+        meta.remove(session_id);
     }
 
     Ok(())
@@ -1319,13 +1322,23 @@ fn try_restore_workspace(
     // 4-6. Rewrite session IDs and insert into AppState
     let (bm_count, an_count) = restore_artifacts(state, session_id, data.bookmarks, data.analyses);
 
-    // 7. Emit workspace-restored event
-    if bm_count > 0 || an_count > 0 {
+    // 7. Store pipeline meta in AppState (so subsequent saves capture the restored chain)
+    let has_chain = !data.session_meta.active_processor_ids.is_empty();
+    if has_chain {
+        if let Ok(mut map) = state.session_pipeline_meta.lock() {
+            map.insert(session_id.to_string(), data.session_meta.clone());
+        }
+    }
+
+    // 8. Emit workspace-restored event (includes processor IDs for frontend chain restore)
+    if bm_count > 0 || an_count > 0 || has_chain {
         use tauri::Emitter;
         let _ = app.emit("workspace-restored", serde_json::json!({
             "sessionId": session_id,
             "bookmarkCount": bm_count,
             "analysisCount": an_count,
+            "activeProcessorIds": data.session_meta.active_processor_ids,
+            "disabledProcessorIds": data.session_meta.disabled_processor_ids,
         }));
     }
 
@@ -1592,6 +1605,25 @@ mod tests {
             "bookmarks must be removed on close");
         assert!(!state.analyses.lock().unwrap().contains_key("sess-bm"),
             "analyses must be removed on close");
+    }
+
+    #[test]
+    fn close_session_inner_cleans_up_pipeline_meta() {
+        let state = make_state();
+        insert_session(&state, "sess-pm", None);
+
+        state.session_pipeline_meta.lock().unwrap().insert(
+            "sess-pm".to_string(),
+            crate::workspace::SessionMeta {
+                active_processor_ids: vec!["proc-a".to_string()],
+                disabled_processor_ids: vec![],
+            },
+        );
+
+        close_session_inner(&state, None, "sess-pm").unwrap();
+
+        assert!(!state.session_pipeline_meta.lock().unwrap().contains_key("sess-pm"),
+            "pipeline meta must be removed on close");
     }
 
     // -------------------------------------------------------------------------

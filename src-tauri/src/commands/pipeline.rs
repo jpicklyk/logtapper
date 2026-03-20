@@ -423,3 +423,23 @@ pub async fn stop_pipeline(state: State<'_, AppState>) -> Result<(), String> {
     state.pipeline_cancel.store(true, Ordering::Relaxed);
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// set_session_pipeline_meta — frontend pushes chain state for workspace saves
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn set_session_pipeline_meta(
+    state: State<'_, AppState>,
+    session_id: String,
+    active_processor_ids: Vec<String>,
+    disabled_processor_ids: Vec<String>,
+) -> Result<(), String> {
+    let meta = crate::workspace::SessionMeta {
+        active_processor_ids,
+        disabled_processor_ids,
+    };
+    let mut map = lock_or_err(&state.session_pipeline_meta, "session_pipeline_meta")?;
+    map.insert(session_id, meta);
+    Ok(())
+}

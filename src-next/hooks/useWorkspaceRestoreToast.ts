@@ -2,14 +2,9 @@ import { useEffect } from 'react';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { listen } from '@tauri-apps/api/event';
 import type { ToastItem } from '../ui';
+import type { WorkspaceRestoredPayload } from '../bridge/types';
 
 let toastCounter = 0;
-
-interface WorkspaceRestoredPayload {
-  sessionId: string;
-  bookmarkCount: number;
-  analysisCount: number;
-}
 
 /**
  * Listens for `workspace-restored` Tauri events and shows a toast
@@ -22,10 +17,12 @@ export function useWorkspaceRestoreToast(addToast: (toast: ToastItem) => void) {
 
     listen<WorkspaceRestoredPayload>('workspace-restored', (event) => {
       if (cancelled) return;
-      const { bookmarkCount, analysisCount } = event.payload;
+      const { bookmarkCount, analysisCount, activeProcessorIds } = event.payload;
       const parts: string[] = [];
       if (bookmarkCount > 0) parts.push(`${bookmarkCount} bookmark${bookmarkCount !== 1 ? 's' : ''}`);
       if (analysisCount > 0) parts.push(`${analysisCount} analysis artifact${analysisCount !== 1 ? 's' : ''}`);
+      const procCount = (activeProcessorIds ?? []).length;
+      if (procCount > 0) parts.push(`pipeline (${procCount} processor${procCount !== 1 ? 's' : ''})`);
       if (parts.length === 0) return;
 
       addToast({
