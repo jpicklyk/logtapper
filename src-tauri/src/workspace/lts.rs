@@ -30,6 +30,24 @@ pub struct LtsSessionMeta {
     pub disabled_processor_ids: Vec<String>,
 }
 
+impl From<super::SessionMeta> for LtsSessionMeta {
+    fn from(m: super::SessionMeta) -> Self {
+        Self {
+            active_processor_ids: m.active_processor_ids,
+            disabled_processor_ids: m.disabled_processor_ids,
+        }
+    }
+}
+
+impl From<LtsSessionMeta> for super::SessionMeta {
+    fn from(m: LtsSessionMeta) -> Self {
+        Self {
+            active_processor_ids: m.active_processor_ids,
+            disabled_processor_ids: m.disabled_processor_ids,
+        }
+    }
+}
+
 /// One entry in the processor manifest.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

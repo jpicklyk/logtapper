@@ -304,29 +304,39 @@ fn load_lts_file_inner(
         &processor_yamls,
     );
 
-    // 6.6. Store pipeline meta in AppState (so subsequent saves capture the chain)
-    let has_chain = !lts.session_meta.active_processor_ids.is_empty();
+    // 6.6. Store pipeline meta + emit workspace-restored event
+    emit_workspace_restored(state, app, &session_id, bm_count, an_count, lts.session_meta.into());
+
+    Ok(result)
+}
+
+/// Store pipeline meta in AppState and emit `workspace-restored` event.
+/// Shared by both `.ltw` (`try_restore_workspace`) and `.lts` (`load_lts_file_inner`) paths.
+fn emit_workspace_restored(
+    state: &AppState,
+    app: &tauri::AppHandle,
+    session_id: &str,
+    bm_count: usize,
+    an_count: usize,
+    meta: crate::workspace::SessionMeta,
+) {
+    let has_chain = !meta.active_processor_ids.is_empty();
     if has_chain {
         if let Ok(mut map) = state.session_pipeline_meta.lock() {
-            map.insert(session_id.clone(), crate::workspace::SessionMeta {
-                active_processor_ids: lts.session_meta.active_processor_ids.clone(),
-                disabled_processor_ids: lts.session_meta.disabled_processor_ids.clone(),
-            });
+            map.insert(session_id.to_string(), meta.clone());
         }
     }
 
-    // 7. Emit restore event (includes processor IDs for frontend chain restore)
     if bm_count > 0 || an_count > 0 || has_chain {
+        use tauri::Emitter;
         let _ = app.emit("workspace-restored", serde_json::json!({
             "sessionId": session_id,
             "bookmarkCount": bm_count,
             "analysisCount": an_count,
-            "activeProcessorIds": lts.session_meta.active_processor_ids,
-            "disabledProcessorIds": lts.session_meta.disabled_processor_ids,
+            "activeProcessorIds": meta.active_processor_ids,
+            "disabledProcessorIds": meta.disabled_processor_ids,
         }));
     }
-
-    Ok(result)
 }
 
 /// Close **all** sessions whose `file_path` matches the given path.
@@ -1335,25 +1345,8 @@ fn try_restore_workspace(
     // 4-6. Rewrite session IDs and insert into AppState
     let (bm_count, an_count) = restore_artifacts(state, session_id, data.bookmarks, data.analyses);
 
-    // 7. Store pipeline meta in AppState (so subsequent saves capture the restored chain)
-    let has_chain = !data.session_meta.active_processor_ids.is_empty();
-    if has_chain {
-        if let Ok(mut map) = state.session_pipeline_meta.lock() {
-            map.insert(session_id.to_string(), data.session_meta.clone());
-        }
-    }
-
-    // 8. Emit workspace-restored event (includes processor IDs for frontend chain restore)
-    if bm_count > 0 || an_count > 0 || has_chain {
-        use tauri::Emitter;
-        let _ = app.emit("workspace-restored", serde_json::json!({
-            "sessionId": session_id,
-            "bookmarkCount": bm_count,
-            "analysisCount": an_count,
-            "activeProcessorIds": data.session_meta.active_processor_ids,
-            "disabledProcessorIds": data.session_meta.disabled_processor_ids,
-        }));
-    }
+    // 7-8. Store pipeline meta + emit workspace-restored event
+    emit_workspace_restored(state, app, session_id, bm_count, an_count, data.session_meta);
 
     (bm_count, an_count)
 }
