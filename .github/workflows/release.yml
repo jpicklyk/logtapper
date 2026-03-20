@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -46,15 +49,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
-      - name: Install frontend dependencies (non-Windows)
+      - name: Clear Windows-only npm overrides for cross-platform build
         if: matrix.platform != 'windows-latest'
-        run: npm install --ignore-scripts --omit=optional && npm rebuild
+        run: echo "" > .npmrc
 
-      - name: Install frontend dependencies (Windows)
-        if: matrix.platform == 'windows-latest'
-        run: npm ci
+      - name: Install frontend dependencies
+        run: npm install
 
       - name: Build and release
         uses: tauri-apps/tauri-action@v0
