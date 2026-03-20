@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FileText } from 'lucide-react';
+import { Spinner } from '../../ui';
 import { LogViewer } from '../LogViewer';
 import { ProcessorDashboard } from '../ProcessorDashboard';
 import { AnalysisReader } from '../AnalysisReader';
@@ -178,7 +179,7 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
         return (
           <>
             <div className={styles.loadingPane} onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus}>
-              <div className={styles.loadingSpinner} />
+              <Spinner size={28} />
               <span className={styles.loadingText}>Loading session{'\u2026'}</span>
             </div>
             {bookmarkDialog}
