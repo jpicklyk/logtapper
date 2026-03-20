@@ -48,12 +48,9 @@ pub fn schedule_workspace_save(
         fp
     };
 
-    // 2. Cancel any previous pending save for this session.
-    if let Ok(mut tasks) = state.workspace_save_tasks.lock() {
-        tasks.remove(session_id); // dropping the sender cancels the previous task
-    }
-
-    // 3. Create cancel token.
+    // 2. Create cancel token. Insert replaces any previous sender for this session,
+    //    which drops it and cancels the pending task. Single lock acquisition avoids
+    //    a race between concurrent calls for the same session_id.
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
     if let Ok(mut tasks) = state.workspace_save_tasks.lock() {
         tasks.insert(session_id.to_string(), cancel_tx);

@@ -1,5 +1,6 @@
+use std::sync::Arc;
+use memmap2::Mmap;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager, State};
 
 use crate::commands::{lock_or_err, AppState};
@@ -122,8 +123,12 @@ pub async fn export_session(
     session_id: String,
     options: ExportOptions,
 ) -> Result<(), String> {
-    // 1. Snapshot source data under brief lock.
-    let (source_name, source_bytes) = {
+    // 1. Snapshot source pointers under brief lock (cheap Arc clones, no data copy).
+    enum SourceRef {
+        Mmap(Arc<Mmap>),
+        Zip(Arc<Vec<u8>>),
+    }
+    let (source_name, source_ref) = {
         let sessions = lock_or_err(&state.sessions, "sessions")?;
         let session = sessions
             .get(&session_id)
@@ -132,16 +137,20 @@ pub async fn export_session(
             .primary_source()
             .ok_or("No source in session")?;
         let name = src.name().to_string();
-        let bytes = if let Some(file_src) = src.as_any().downcast_ref::<FileLogSource>() {
-            file_src.mmap().to_vec()
+        let sref = if let Some(file_src) = src.as_any().downcast_ref::<FileLogSource>() {
+            SourceRef::Mmap(Arc::clone(file_src.mmap()))
         } else if let Some(zip_src) = src.as_any().downcast_ref::<ZipLogSource>() {
-            zip_src.data().as_ref().clone()
+            SourceRef::Zip(Arc::clone(zip_src.data()))
         } else {
             return Err("Unsupported source type for export".to_string());
         };
-        (name, bytes)
+        (name, sref)
     };
-    // sessions lock dropped
+    // sessions lock dropped — data copy happens outside the lock.
+    let source_bytes = match source_ref {
+        SourceRef::Mmap(mmap) => mmap.to_vec(),
+        SourceRef::Zip(data) => data.as_ref().clone(),
+    };
 
     // 2. Snapshot bookmarks under brief lock.
     let bookmarks = if options.include_bookmarks {
@@ -262,9 +271,7 @@ pub fn resolve_lts_processors_raw(
         let local_yaml = read_processor_yaml(app, &entry.id);
         let needs_install = match &local_yaml {
             Some(local) => {
-                let mut hasher = Sha256::new();
-                hasher.update(local.as_bytes());
-                let local_hash = hex::encode(hasher.finalize());
+                let local_hash = crate::workspace::sha256_hex(local);
                 let mismatch = local_hash != entry.sha256;
                 if mismatch {
                     log::warn!(

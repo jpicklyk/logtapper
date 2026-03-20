@@ -4,7 +4,6 @@ use std::io::Read;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use zip::write::SimpleFileOptions;
 
 use crate::core::analysis::AnalysisArtifact;
@@ -77,16 +76,11 @@ pub fn write_lts(
     meta: &LtsSessionMeta,
     processor_yamls: &[(String, String, String)],
 ) -> Result<(), String> {
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
-
     let manifest = LtsManifest {
         format_version: LTS_FORMAT_VERSION,
         source_filename: source_filename.to_string(),
         source_size: source_bytes.len() as u64,
-        saved_at: now_ms,
+        saved_at: super::now_ms(),
     };
 
     let out_file = File::create(dest)
@@ -125,15 +119,10 @@ pub fn write_lts(
     };
 
     for (id, filename, yaml_content) in processor_yamls {
-        // Compute SHA-256 of the YAML content.
-        let mut hasher = Sha256::new();
-        hasher.update(yaml_content.as_bytes());
-        let hash = hex::encode(hasher.finalize());
-
         proc_manifest.processors.push(LtsProcessorEntry {
             id: id.clone(),
             filename: filename.clone(),
-            sha256: hash,
+            sha256: super::sha256_hex(yaml_content),
         });
 
         let yaml_entry = format!("processors/{filename}");
@@ -519,9 +508,7 @@ mod tests {
             let entry = loaded.processor_manifest.processors.iter()
                 .find(|e| e.id == id)
                 .unwrap_or_else(|| panic!("processor '{id}' missing from manifest"));
-            let mut hasher = Sha256::new();
-            hasher.update(expected_yaml.as_bytes());
-            let expected_hash = hex::encode(hasher.finalize());
+            let expected_hash = super::super::sha256_hex(expected_yaml);
             assert_eq!(entry.sha256, expected_hash, "SHA-256 mismatch for processor '{id}'");
         }
 
@@ -559,9 +546,7 @@ mod tests {
         // Verify SHA-256 hashes independently.
         for entry in &loaded.processor_manifest.processors {
             let expected_yaml = if entry.id == "proc-a" { yaml_a } else { yaml_b };
-            let mut hasher = Sha256::new();
-            hasher.update(expected_yaml.as_bytes());
-            let expected_hash = hex::encode(hasher.finalize());
+            let expected_hash = super::super::sha256_hex(expected_yaml);
             assert_eq!(
                 entry.sha256, expected_hash,
                 "SHA-256 mismatch for processor '{}'",

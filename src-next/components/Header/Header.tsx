@@ -64,6 +64,10 @@ export const Header = React.memo(function Header() {
     setDeviceError(null);
   }, []);
 
+  const handleCloseExportModal = useCallback(() => {
+    setShowExportModal(false);
+  }, []);
+
   const fileMenuItems = useMemo<MenuItem[]>(() => [
     { id: 'open-log', label: 'Open Log...', icon: FolderOpen, shortcut: 'Ctrl+O' },
     { id: 'open-editor', label: 'Open in Editor...', icon: FileEdit, shortcut: 'Ctrl+Shift+O' },
@@ -71,8 +75,8 @@ export const Header = React.memo(function Header() {
     { id: 'save', label: isStreaming ? 'Save Capture' : 'Save', shortcut: 'Ctrl+S' },
     { id: 'save-as', label: 'Save As...', shortcut: 'Ctrl+Shift+S' },
     { separator: true },
-    { id: 'export-session', label: 'Export Session...', icon: Download, shortcut: 'Ctrl+Shift+E', disabled: !session },
-  ], [isStreaming, session]);
+    { id: 'export-session', label: 'Export Session...', icon: Download, shortcut: 'Ctrl+Shift+E', disabled: !session?.sessionId },
+  ], [isStreaming, session?.sessionId]);
 
   const handleFileMenuSelect = useCallback((id: string) => {
     switch (id) {
@@ -174,7 +178,7 @@ export const Header = React.memo(function Header() {
 
       <ExportModal
         open={showExportModal}
-        onClose={() => setShowExportModal(false)}
+        onClose={handleCloseExportModal}
       />
     </header>
   );

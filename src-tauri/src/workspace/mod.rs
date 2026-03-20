@@ -12,6 +12,21 @@ use zip::write::SimpleFileOptions;
 use crate::core::analysis::AnalysisArtifact;
 use crate::core::bookmark::Bookmark;
 
+/// Current time as milliseconds since UNIX epoch.
+pub(crate) fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// Compute SHA-256 hex digest of a string.
+pub(crate) fn sha256_hex(content: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(content.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
 /// Write a JSON-serializable value as a zip entry.
 pub(crate) fn zip_write_json<T: serde::Serialize + ?Sized>(
     writer: &mut zip::ZipWriter<File>,
@@ -77,15 +92,10 @@ pub fn save_workspace(
     analyses: &[AnalysisArtifact],
     meta: &SessionMeta,
 ) -> Result<(), String> {
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
-
     let manifest = WorkspaceManifest {
         format_version: WORKSPACE_FORMAT_VERSION,
         source_file_path: file_path.to_string(),
-        saved_at: now_ms,
+        saved_at: now_ms(),
     };
 
     let out_file = File::create(zip_path)

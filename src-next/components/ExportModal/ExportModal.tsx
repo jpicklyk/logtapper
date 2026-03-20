@@ -24,15 +24,16 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
 
   // Fetch session info when modal opens
   useEffect(() => {
-    if (!open || !session) {
+    if (!open || !session?.sessionId) {
       setInfo(null);
       setError(null);
       setLoading(false);
       return;
     }
     let cancelled = false;
+    const sid = session.sessionId;
     setLoading(true);
-    getExportSessionInfo(session.sessionId).then(data => {
+    getExportSessionInfo(sid).then(data => {
       if (!cancelled) {
         setInfo(data);
         setLoading(false);
@@ -44,7 +45,7 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
       }
     });
     return () => { cancelled = true; };
-  }, [open, session]);
+  }, [open, session?.sessionId]);
 
   const handleExport = useCallback(async () => {
     if (!session || !info) return;

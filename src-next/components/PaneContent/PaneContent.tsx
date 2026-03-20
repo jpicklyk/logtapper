@@ -8,7 +8,7 @@ import { StreamFilterBar } from '../StreamFilterBar';
 import { BookmarkCreateDialog } from '../BookmarkPanel';
 import type { BookmarkCreateRequest } from '../BookmarkPanel';
 import { useSessionForPane, useIsLoadingForPane, useViewerActions, useStreamFilter, useFocusedSession, useIsFocusedPane } from '../../context';
-import type { CenterPane } from '../../hooks/workspace/workspaceTypes';
+import type { CenterPane } from '../../hooks';
 import { useLogViewerActions } from './useLogViewerActions';
 import { bus } from '../../events';
 import styles from './PaneContent.module.css';
