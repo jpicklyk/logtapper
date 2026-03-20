@@ -51,9 +51,9 @@ export function usePipeline(): PipelineActions {
   const { processors, pipelineChain, disabledChainIds, resultsBySession, dispatch } = usePipelineContext();
 
   // Track the focused pane so session:pre-load can resolve the outgoing sessionId.
-  const { focusedPaneId, paneSessionMap } = useSessionContext();
-  const focusedPaneIdRef = useRef(focusedPaneId);
-  focusedPaneIdRef.current = focusedPaneId;
+  const { activeLogPaneId, paneSessionMap } = useSessionContext();
+  const activeLogPaneIdRef = useRef(activeLogPaneId);
+  activeLogPaneIdRef.current = activeLogPaneId;
   const paneSessionMapRef = useRef(paneSessionMap);
   paneSessionMapRef.current = paneSessionMap;
 
@@ -144,7 +144,7 @@ export function usePipeline(): PipelineActions {
   // Subscribe to session:pre-load to auto-clear results for the outgoing session.
   useEffect(() => {
     const handlePreLoad = (e: { paneId: string }) => {
-      if (e.paneId === focusedPaneIdRef.current) {
+      if (e.paneId === activeLogPaneIdRef.current) {
         const sessionId = paneSessionMapRef.current.get(e.paneId);
         if (sessionId) {
           dispatch({ type: 'pre-load:cleared', sessionId });

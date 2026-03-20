@@ -54,16 +54,16 @@ export function useWorkspaceLayout() {
   const [leftPaneTab, setLeftPaneTabRaw] = useState<LeftPaneTab>(saved.leftPaneTab ?? 'info');
 
   // Focus tracking — synced from session:focused bus event
-  const [focusedPaneId, setFocusedPaneId] = useState<string | null>(null);
-  const focusedPaneIdRef = useRef<string | null>(focusedPaneId);
-  focusedPaneIdRef.current = focusedPaneId;
+  const [activeLogPaneId, setActiveLogPaneId] = useState<string | null>(null);
+  const activeLogPaneIdRef = useRef<string | null>(activeLogPaneId);
+  activeLogPaneIdRef.current = activeLogPaneId;
 
   // The specific logviewer tab showing the focus marker (blue underline).
   // Updated when a logviewer tab is activated or when focus moves to a new pane.
   const [focusedLogviewerTabId, setFocusedLogviewerTabId] = useState<string | null>(null);
 
   const focusLogviewerTab = useCallback((tabId: string, paneId: string) => {
-    setFocusedPaneId(paneId);
+    setActiveLogPaneId(paneId);
     setFocusedLogviewerTabId(tabId);
   }, []);
 
@@ -92,7 +92,7 @@ export function useWorkspaceLayout() {
 
   const centerTree = useCenterTree(
     {
-      focusedPaneIdRef,
+      activeLogPaneIdRef,
       paneSessionMapRef,
       activateSessionForPane,
       openBottomPane: bottomPane.open,
@@ -171,7 +171,7 @@ export function useWorkspaceLayout() {
 
   useEffect(() => {
     const onSessionFocused = (e: { paneId: string | null }) => {
-      setFocusedPaneId(e.paneId);
+      setActiveLogPaneId(e.paneId);
       // When focus moves to a pane, mark its active logviewer tab as focused.
       // Prefer the active tab; fall back to the first logviewer tab in the pane.
       if (e.paneId) {
@@ -191,7 +191,7 @@ export function useWorkspaceLayout() {
     // Left-pane side-effect of session:loaded — set info tab for Bugreport sources.
     // (Tree mutations for session:loaded are handled inside useCenterTree.)
     const onSessionLoaded = (e: { sourceType: string; paneId: string }) => {
-      if (isBugreportLike(e.sourceType) && e.paneId === focusedPaneIdRef.current) {
+      if (isBugreportLike(e.sourceType) && e.paneId === activeLogPaneIdRef.current) {
         setLeftPaneTabRaw('info');
       }
     };
@@ -223,7 +223,7 @@ export function useWorkspaceLayout() {
   // Return
   // ---------------------------------------------------------------------------
 
-  const leaf = focusedPaneId ? findLeafByPaneId(centerTree.centerTree, focusedPaneId) : null;
+  const leaf = activeLogPaneId ? findLeafByPaneId(centerTree.centerTree, activeLogPaneId) : null;
   const activeTab = leaf?.pane.tabs.find((t) => t.id === leaf.pane.activeTabId);
 
   return {
@@ -266,8 +266,8 @@ export function useWorkspaceLayout() {
     resetLayout,
 
     // Focus tracking
-    focusedPaneId,
-    setFocusedPaneId,
+    activeLogPaneId,
+    setActiveLogPaneId,
     focusLogviewerTab,
     focusedActiveTabType: activeTab?.type ?? null,
     focusedLogviewerTabId,

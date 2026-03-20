@@ -39,7 +39,8 @@ interface SessionState {
   indexingProgressBySession: Map<string, IndexingProgress | null>;
   filterStateBySession: Map<string, FilterState>;
   streamingSessionIds: Set<string>;
-  focusedPaneId: string | null;
+  activeLogPaneId: string | null;
+  activePaneId: string | null;
 }
 
 const initialState: SessionState = {
@@ -50,7 +51,8 @@ const initialState: SessionState = {
   indexingProgressBySession: new Map(),
   filterStateBySession: new Map(),
   streamingSessionIds: new Set(),
-  focusedPaneId: null,
+  activeLogPaneId: null,
+  activePaneId: null,
 };
 
 // ── Actions ───────────────────────────────────────────────────────────────────
@@ -66,6 +68,7 @@ type SessionAction =
   | { type: 'indexing:progress'; sessionId: string; progress: IndexingProgress | null }
   | { type: 'streaming:changed'; sessionId: string; streaming: boolean }
   | { type: 'pane:focused'; paneId: string | null }
+  | { type: 'pane:activated'; paneId: string }
   | { type: 'filter:updated'; sessionId: string; patch: Partial<FilterState> }
   | { type: 'filter:reset'; sessionId: string }
   | { type: 'filter:append-matches'; sessionId: string; lineNums: number[] };
@@ -175,8 +178,12 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
     }
 
     case 'pane:focused':
-      if (state.focusedPaneId === action.paneId) return state;
-      return { ...state, focusedPaneId: action.paneId };
+      if (state.activeLogPaneId === action.paneId && state.activePaneId === action.paneId) return state;
+      return { ...state, activeLogPaneId: action.paneId, activePaneId: action.paneId };
+
+    case 'pane:activated':
+      if (state.activePaneId === action.paneId) return state;
+      return { ...state, activePaneId: action.paneId };
 
     case 'filter:updated': {
       const current = state.filterStateBySession.get(action.sessionId) ?? DEFAULT_FILTER_STATE;
@@ -220,7 +227,8 @@ export interface SessionContextValue {
   indexingProgressBySession: Map<string, IndexingProgress | null>;
   filterStateBySession: Map<string, FilterState>;
   streamingSessionIds: Set<string>;
-  focusedPaneId: string | null;
+  activeLogPaneId: string | null;
+  activePaneId: string | null;
 
   // Named operations (stable refs — dispatch never changes)
   registerSession: (paneId: string, result: LoadResult) => void;
@@ -252,8 +260,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const handler = (e: { paneId: string | null }) => {
       dispatch({ type: 'pane:focused', paneId: e.paneId });
     };
+    const activatedHandler = (e: { paneId: string }) => {
+      dispatch({ type: 'pane:activated', paneId: e.paneId });
+    };
     bus.on('session:focused', handler);
-    return () => { bus.off('session:focused', handler); };
+    bus.on('pane:activated', activatedHandler);
+    return () => {
+      bus.off('session:focused', handler);
+      bus.off('pane:activated', activatedHandler);
+    };
   }, []); // dispatch is stable — no deps needed
 
   // Named operation wrappers — all stable (dispatch ref never changes)

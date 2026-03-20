@@ -36,7 +36,7 @@ export function useSessionTabManager(
   deps: TabManagerDeps,
 ): SessionTabManagerResult {
   const {
-    focusedPaneId,
+    activeLogPaneId,
     unregisterSession,
     terminateSession,
     setIndexingProgress: setIndexingProgressCtx,
@@ -63,7 +63,7 @@ export function useSessionTabManager(
   }, [setProcessorId, setSearch, setSearchSummary, setCurrentMatchIndex]);
 
   const closeSession = useCallback(async (paneId?: string, tabId?: string, sessionId?: string) => {
-    const targetPaneId = paneId ?? focusedPaneId ?? DEFAULT_PANE_ID;
+    const targetPaneId = paneId ?? activeLogPaneId ?? DEFAULT_PANE_ID;
 
     // Prefer the caller-supplied sessionId (workspace already knows it).
     // Fall back to pane map for calls that don't supply it (e.g. toolbar close button).
@@ -104,7 +104,7 @@ export function useSessionTabManager(
 
     bus.emit('session:closed', { sessionId: resolvedSessionId, paneId: targetPaneId, sourceType, tabId });
   }, [
-    focusedPaneId,
+    activeLogPaneId,
     refs.paneSessionMapRef, refs.streamingSessionIdRef, refs.sessionsRef,
     deps.stopStream, deps.resetSessionState, deps.setIndexingProgressLocal,
     setIndexingProgressCtx, unregisterSession, terminateSession, cacheManager,
@@ -164,7 +164,7 @@ export function useSessionTabManager(
       }
       // Re-focus the actual pane so useIsStreaming() and tailMode stay correct.
       // After unregisterSession removes originalPaneId from paneSessionMap,
-      // focusedPaneId would still point to originalPaneId, making the streaming
+      // activeLogPaneId would still point to originalPaneId, making the streaming
       // session invisible to focus-based selectors.
       bus.emit('session:focused', { paneId: actualPaneId, sessionId });
     };

@@ -23,7 +23,7 @@ import { storageSet } from '../../utils';
 // ---------------------------------------------------------------------------
 
 export interface UseCenterTreeOptions {
-  focusedPaneIdRef: React.RefObject<string | null>;
+  activeLogPaneIdRef: React.RefObject<string | null>;
   paneSessionMapRef: React.MutableRefObject<Map<string, string>>;
   activateSessionForPane: (paneId: string, sessionId: string) => void;
   openBottomPane: (tab: BottomTabType) => void;
@@ -50,7 +50,7 @@ export function useCenterTree(
   options: UseCenterTreeOptions,
   savedCenterTree: SplitNode,
 ): CenterTreeHandle {
-  const { focusedPaneIdRef, paneSessionMapRef, activateSessionForPane, openBottomPane } = options;
+  const { activeLogPaneIdRef, paneSessionMapRef, activateSessionForPane, openBottomPane } = options;
 
   const [centerTree, setCenterTree] = useState<SplitNode>(savedCenterTree);
   const treeRef = useRef<SplitNode>(centerTree);
@@ -230,7 +230,7 @@ export function useCenterTree(
       }
 
       // 2. Add to the focused pane (or first leaf as fallback)
-      const focPaneId = focusedPaneIdRef.current;
+      const focPaneId = activeLogPaneIdRef.current;
       const target = (focPaneId ? findLeafByPaneId(tree, focPaneId) : null) ?? firstLeaf(tree);
       const tab = makeTab(type, label);
 
@@ -245,7 +245,7 @@ export function useCenterTree(
         activeTabId: tab.id,
       }));
     });
-  }, [updateTree, focusedPaneIdRef]);
+  }, [updateTree, activeLogPaneIdRef]);
 
   const dropTabOnPane = useCallback((
     tabId: string,

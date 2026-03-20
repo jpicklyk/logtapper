@@ -11,7 +11,7 @@ import type { FilterNode } from '../../../src/filter';
 export interface SharedLogViewerRefs {
   // Synced from context on every render (orchestrator writes, all sub-hooks read)
   sessionRef: MutableRefObject<LoadResult | null>;
-  focusedPaneIdRef: MutableRefObject<string | null>;
+  activeLogPaneIdRef: MutableRefObject<string | null>;
   paneSessionMapRef: MutableRefObject<Map<string, string>>;
   sessionsRef: MutableRefObject<Map<string, LoadResult>>;
 

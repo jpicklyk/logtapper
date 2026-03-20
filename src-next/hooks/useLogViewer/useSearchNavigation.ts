@@ -131,14 +131,14 @@ export function useSearchNavigation(refs: SharedLogViewerRefs): SearchNavigation
           const len = matches.length;
           const next = (idx + direction + len) % len;
           setScrollToLine(matches[next]);
-          setJumpPaneId(refs.focusedPaneIdRef.current ?? null);
+          setJumpPaneId(refs.activeLogPaneIdRef.current ?? null);
           setJumpSeq((s) => s + 1);
           return next;
         });
         return summary;
       });
     },
-    [refs.focusedPaneIdRef, refs.effectiveLineNumsRef, setSearchSummary, setCurrentMatchIndex, setScrollToLine, setJumpPaneId, setJumpSeq],
+    [refs.activeLogPaneIdRef, refs.effectiveLineNumsRef, setSearchSummary, setCurrentMatchIndex, setScrollToLine, setJumpPaneId, setJumpSeq],
   );
 
   const jumpToLine = useCallback((lineNum: number, paneId?: string) => {

@@ -7,7 +7,7 @@ import { EditorTab } from '../EditorTab';
 import { StreamFilterBar } from '../StreamFilterBar';
 import { BookmarkCreateDialog } from '../BookmarkPanel';
 import type { BookmarkCreateRequest } from '../BookmarkPanel';
-import { useSessionForPane, useIsLoadingForPane, useViewerActions, useStreamFilter, useFocusedSession, useIsFocusedPane } from '../../context';
+import { useSessionForPane, useIsLoadingForPane, useViewerActions, useStreamFilter, useFocusedSession, useIsActivePane } from '../../context';
 import type { CenterPane } from '../../hooks';
 import { useLogViewerActions } from './useLogViewerActions';
 import { bus } from '../../events';
@@ -63,9 +63,9 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
   // Use the pane's own session, not the global focused session.
   const session = useSessionForPane(pane.id);
   const focusedSession = useFocusedSession();
-  const isFocusedPane = useIsFocusedPane(pane.id);
+  const isActivePane = useIsActivePane(pane.id);
   const isLoading = useIsLoadingForPane(pane.id);
-  const { setFocusedPane, setStreamFilter, cancelStreamFilter, setEffectiveLineNums } = useViewerActions();
+  const { setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter, setEffectiveLineNums } = useViewerActions();
   const { fetchLines } = useLogViewerActions(pane.id);
   const { value: filterValue, scanning: filterScanning, filteredLineNums, parseError: filterParseError, sectionFilteredLineNums } = useStreamFilter(pane.id);
 
@@ -132,9 +132,13 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
   // during render (ref mutation, no state change) — safe per React's ref contract.
   setEffectiveLineNums(effectiveLineNums);
 
-  const handlePaneFocus = useCallback(() => {
-    setFocusedPane(pane.id);
-  }, [pane.id, setFocusedPane]);
+  const handleLogPaneFocus = useCallback(() => {
+    setActiveLogPane(pane.id);
+  }, [pane.id, setActiveLogPane]);
+
+  const handleActivePaneFocus = useCallback(() => {
+    setActivePane(pane.id);
+  }, [pane.id, setActivePane]);
 
   const activeTab = pane.tabs.find((t) => t.id === pane.activeTabId);
 
@@ -150,7 +154,7 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
   if (!activeTab) {
     return (
       <>
-        <div onClick={handlePaneFocus} onFocus={handlePaneFocus} style={{ height: '100%' }}>
+        <div onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus} style={{ height: '100%' }}>
           <EmptyDropZone />
         </div>
         {bookmarkDialog}
@@ -163,7 +167,7 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
       if (!session && !isLoading) {
         return (
           <>
-            <div onClick={handlePaneFocus} onFocus={handlePaneFocus} style={{ height: '100%' }}>
+            <div onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus} style={{ height: '100%' }}>
               <EmptyDropZone />
             </div>
             {bookmarkDialog}
@@ -172,7 +176,7 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
       }
       return (
         <>
-          <div className={styles.logviewerPane} onClick={handlePaneFocus} onFocus={handlePaneFocus}>
+          <div className={styles.logviewerPane} onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus}>
             {session && (
               <StreamFilterBar
                 value={filterValue}
@@ -232,11 +236,11 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
       return (
         <>
           {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
-          <div onClick={handlePaneFocus} onFocus={handlePaneFocus} style={{ height: '100%' }}>
+          <div onClick={handleActivePaneFocus} onFocus={handleActivePaneFocus} style={{ height: '100%' }}>
             <EditorTab
               tabId={activeTab.id}
               tabLabel={activeTab.label}
-              isFocused={isFocusedPane}
+              isFocused={isActivePane}
               onDirtyChanged={onDirtyChanged}
               onFilePathChanged={onFilePathChanged}
             />

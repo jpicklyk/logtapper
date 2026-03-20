@@ -151,7 +151,7 @@ export function useStreamSession(
     refs.adbStoppedUnlistenRef.current?.();
     refs.adbStoppedUnlistenRef.current = null;
 
-    const targetPaneId = refs.focusedPaneIdRef.current ?? DEFAULT_PANE_ID;
+    const targetPaneId = refs.activeLogPaneIdRef.current ?? DEFAULT_PANE_ID;
     const tabId = crypto.randomUUID();
 
     // If the pane already has a session, open the stream as a new tab alongside it.
@@ -274,7 +274,7 @@ export function useStreamSession(
       setLoadingPane(targetPaneId, false);
     }
   }, [
-    refs.focusedPaneIdRef, refs.paneSessionMapRef,
+    refs.activeLogPaneIdRef, refs.paneSessionMapRef,
     refs.streamDeviceSerialRef, refs.isStreamingRef,
     refs.streamingPaneIdRef, refs.streamingSessionIdRef,
     refs.adbStoppedUnlistenRef,
@@ -305,12 +305,12 @@ export function useStreamSession(
     }
     setStreamingSession(sessionId, false);
     refs.isStreamingRef.current = false;
-    const stoppedPaneId = paneId ?? (refs.focusedPaneIdRef.current ?? DEFAULT_PANE_ID);
+    const stoppedPaneId = paneId ?? (refs.activeLogPaneIdRef.current ?? DEFAULT_PANE_ID);
     refs.streamingPaneIdRef.current = null;
     refs.streamingSessionIdRef.current = null;
     bus.emit('stream:stopped', { sessionId, paneId: stoppedPaneId });
   }, [
-    refs.streamingSessionIdRef, refs.streamingPaneIdRef, refs.focusedPaneIdRef,
+    refs.streamingSessionIdRef, refs.streamingPaneIdRef, refs.activeLogPaneIdRef,
     refs.adbStoppedUnlistenRef, refs.isStreamingRef,
     setStreamingSession,
   ]);

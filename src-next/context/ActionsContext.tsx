@@ -20,8 +20,10 @@ export interface ActionsContextValue {
   cancelStreamFilter: () => void;
   openInEditorDialog: () => Promise<void>;
   openTab: (type: string) => void;
-  /** Focus a specific pane, updating SessionContext and emitting session:focused. */
-  setFocusedPane: (paneId: string) => void;
+  /** Focus a specific log pane, updating SessionContext and emitting session:focused. */
+  setActiveLogPane: (paneId: string) => void;
+  /** Mark any pane as the active pane for save routing (does not affect session focus). */
+  setActivePane: (paneId: string) => void;
   /**
    * Called by PaneContent on every render to keep effectiveLineNumsRef in sync.
    * Enables search navigation to scope results to the currently visible lines.
@@ -54,7 +56,8 @@ const DEFAULT_ACTIONS: ActionsContextValue = {
   cancelStreamFilter: noop,
   openInEditorDialog: () => noopAsync(),
   openTab: (_type: string) => noop(),
-  setFocusedPane: (_paneId: string) => noop(),
+  setActiveLogPane: (_paneId: string) => noop(),
+  setActivePane: (_paneId: string) => noop(),
   setEffectiveLineNums: (_lineNums: number[] | null) => noop(),
   saveFile: () => noopAsync(),
   saveFileAs: () => noopAsync(),

@@ -32,7 +32,7 @@ function HookWiring({ children }: { children: ReactNode }) {
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
-  // Keep a ref so setFocusedPane can read the current map without being
+  // Keep a ref so setActiveLogPane can read the current map without being
   // recreated every time paneSessionMap changes (which would invalidate
   // the entire ActionsContext useMemo on every session load/close).
   const paneSessionMapRef = useRef(paneSessionMap);
@@ -75,14 +75,18 @@ function HookWiring({ children }: { children: ReactNode }) {
   // both update from a single emission point.
   // Empty dep array — reads paneSessionMap via ref so the callback never needs
   // to be recreated, keeping ActionsContext stable across session changes.
-  const setFocusedPane = useCallback((paneId: string) => {
+  const setActiveLogPane = useCallback((paneId: string) => {
     const sessionId = paneSessionMapRef.current.get(paneId) ?? null;
     bus.emit('session:focused', { sessionId, paneId });
   }, []);
 
+  const setActivePane = useCallback((paneId: string) => {
+    bus.emit('pane:activated', { paneId });
+  }, []);
+
   const saveFile = useCallback(async () => {
-    const { streamingSessionIds, paneSessionMap: psMap, focusedPaneId } = sessionCtxRef.current;
-    const sessionId = focusedPaneId ? (psMap.get(focusedPaneId) ?? null) : null;
+    const { streamingSessionIds, paneSessionMap: psMap, activePaneId } = sessionCtxRef.current;
+    const sessionId = activePaneId ? (psMap.get(activePaneId) ?? null) : null;
     if (sessionId && streamingSessionIds.has(sessionId)) {
       // Streaming session: prompt for output path and save live capture
       const outputPath = await save({
@@ -120,7 +124,8 @@ function HookWiring({ children }: { children: ReactNode }) {
     setStreamFilter: logViewer.setStreamFilter,
     cancelStreamFilter: logViewer.cancelStreamFilter,
     openTab: (type: string) => { bus.emit('layout:open-tab', { type }); },
-    setFocusedPane,
+    setActiveLogPane,
+    setActivePane,
     setEffectiveLineNums: logViewer.setEffectiveLineNums,
     saveFile,
     saveFileAs,
@@ -160,8 +165,10 @@ export {
   useSession,
   useFocusedSession,
   useSessionForPane,
-  useFocusedPaneId,
-  useIsFocusedPane,
+  useActiveLogPaneId,
+  useIsActiveLogPane,
+  useActivePaneId,
+  useIsActivePane,
   useIndexingProgress,
   useIsStreaming,
   useIsStreamingForPane,

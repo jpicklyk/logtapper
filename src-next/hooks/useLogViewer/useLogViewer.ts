@@ -45,7 +45,7 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
   const {
     sessions,
     paneSessionMap,
-    focusedPaneId,
+    activeLogPaneId,
   } = useSessionContext();
 
   const {
@@ -63,7 +63,7 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
   if (!refsContainer.current) {
     refsContainer.current = {
       sessionRef:              { current: null },
-      focusedPaneIdRef:        { current: null },
+      activeLogPaneIdRef:        { current: null },
       paneSessionMapRef:       { current: new Map() },
       sessionsRef:             { current: new Map() },
       streamingPaneIdRef:      { current: null },
@@ -81,10 +81,10 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
   const refs = refsContainer.current;
 
   // Sync context-derived values into refs on every render (synchronous — no extra renders)
-  const focusedSessionId = focusedPaneId ? paneSessionMap.get(focusedPaneId) : undefined;
+  const focusedSessionId = activeLogPaneId ? paneSessionMap.get(activeLogPaneId) : undefined;
   const focusedSession: LoadResult | null = focusedSessionId ? (sessions.get(focusedSessionId) ?? null) : null;
   refs.sessionRef.current        = focusedSession;
-  refs.focusedPaneIdRef.current  = focusedPaneId;
+  refs.activeLogPaneIdRef.current  = activeLogPaneId;
   refs.paneSessionMapRef.current = paneSessionMap;
   refs.sessionsRef.current       = sessions;
 

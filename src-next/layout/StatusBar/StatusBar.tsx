@@ -4,12 +4,12 @@ import { useSessionForPane, useIsStreamingForPane } from '../../context';
 import styles from './StatusBar.module.css';
 
 interface StatusBarProps {
-  focusedPaneId: string | null;
+  activeLogPaneId: string | null;
 }
 
-export const StatusBar = React.memo(function StatusBar({ focusedPaneId }: StatusBarProps) {
-  const session = useSessionForPane(focusedPaneId);
-  const isStreaming = useIsStreamingForPane(focusedPaneId);
+export const StatusBar = React.memo(function StatusBar({ activeLogPaneId }: StatusBarProps) {
+  const session = useSessionForPane(activeLogPaneId);
+  const isStreaming = useIsStreamingForPane(activeLogPaneId);
 
   const filePath = session?.filePath ?? null;
   const lineCount = session?.totalLines ?? null;

@@ -68,10 +68,10 @@ export interface WorkspaceLayoutState {
   resetLayout: () => void;
 
   // Focus tracking — updated directly on every tab/pane activation (no bus event)
-  focusedPaneId: string | null;
-  setFocusedPaneId: (paneId: string) => void;
+  activeLogPaneId: string | null;
+  setActiveLogPaneId: (paneId: string) => void;
   /** Focus a specific logviewer tab as the active session source. Sets both
-   *  focusedPaneId and focusedLogviewerTabId in one call. */
+   *  activeLogPaneId and focusedLogviewerTabId in one call. */
   focusLogviewerTab: (tabId: string, paneId: string) => void;
   /** Active tab type in the focused pane, or null if no pane is focused. */
   focusedActiveTabType: CenterTabType | null;

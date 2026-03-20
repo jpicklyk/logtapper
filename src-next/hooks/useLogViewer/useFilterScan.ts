@@ -179,14 +179,14 @@ export function useFilterScan(cacheManager: CacheController, refs: SharedLogView
   const {
     filterStateBySession,
     paneSessionMap,
-    focusedPaneId,
+    activeLogPaneId,
     setSessionFilter,
     resetSessionFilter,
     appendSessionFilterMatches,
   } = useSessionContext();
 
   // Read the focused session's current filter state for reactive return values.
-  const focusedSessionId = focusedPaneId ? (paneSessionMap.get(focusedPaneId) ?? null) : null;
+  const focusedSessionId = activeLogPaneId ? (paneSessionMap.get(activeLogPaneId) ?? null) : null;
   const currentFilterState = focusedSessionId ? (filterStateBySession.get(focusedSessionId) ?? null) : null;
   const filterScanning = currentFilterState?.filterScanning ?? false;
   const filteredLineNums = currentFilterState?.filteredLineNums ?? null;

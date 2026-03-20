@@ -61,7 +61,7 @@ export function useFileSession(
   const hasRestoredRef = useRef(false);
 
   const loadFile = useCallback(async (path: string, paneId?: string, existingTabId?: string) => {
-    const targetPaneId = paneId ?? refs.focusedPaneIdRef.current ?? getStoredFirstPaneId() ?? DEFAULT_PANE_ID;
+    const targetPaneId = paneId ?? refs.activeLogPaneIdRef.current ?? getStoredFirstPaneId() ?? DEFAULT_PANE_ID;
 
     const gen = (loadGenRef.current.get(targetPaneId) ?? 0) + 1;
     loadGenRef.current.set(targetPaneId, gen);
@@ -150,7 +150,7 @@ export function useFileSession(
       }
     }
   }, [
-    refs.focusedPaneIdRef, refs.paneSessionMapRef,
+    refs.activeLogPaneIdRef, refs.paneSessionMapRef,
     refs.streamingPaneIdRef,
     cacheManager, registerSession, activateSessionForPane, setLoadingPane, setErrorPane,
     setIndexingProgressCtx,

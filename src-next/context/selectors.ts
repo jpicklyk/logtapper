@@ -11,11 +11,11 @@ import { useMarketplaceContext } from './MarketplaceContext';
 // Session selectors
 // ---------------------------------------------------------------------------
 
-/** Returns the session for the currently focused pane. */
+/** Returns the session for the currently focused log pane. */
 export function useFocusedSession(): LoadResult | null {
-  const { sessions, paneSessionMap, focusedPaneId } = useSessionContext();
-  if (!focusedPaneId) return null;
-  const sessionId = paneSessionMap.get(focusedPaneId);
+  const { sessions, paneSessionMap, activeLogPaneId } = useSessionContext();
+  if (!activeLogPaneId) return null;
+  const sessionId = paneSessionMap.get(activeLogPaneId);
   if (!sessionId) return null;
   return sessions.get(sessionId) ?? null;
 }
@@ -29,14 +29,22 @@ export function useSessionForPane(paneId: string | null): LoadResult | null {
   return sessions.get(sessionId) ?? null;
 }
 
-export function useFocusedPaneId(): string | null {
-  return useSessionContext().focusedPaneId;
+export function useActiveLogPaneId(): string | null {
+  return useSessionContext().activeLogPaneId;
 }
 
-/** Returns true only for the pane that is currently focused — avoids
+/** Returns true only for the pane that is the active log pane — avoids
  *  re-rendering sibling PaneContent instances when focus changes. */
-export function useIsFocusedPane(paneId: string): boolean {
-  return useSessionContext().focusedPaneId === paneId;
+export function useIsActiveLogPane(paneId: string): boolean {
+  return useSessionContext().activeLogPaneId === paneId;
+}
+
+export function useActivePaneId(): string | null {
+  return useSessionContext().activePaneId;
+}
+
+export function useIsActivePane(paneId: string): boolean {
+  return useSessionContext().activePaneId === paneId;
 }
 
 export function useIndexingProgress(sessionId: string | null): IndexingProgress | null {
@@ -51,9 +59,9 @@ export function useSession(): LoadResult | null {
 }
 
 export function useIsStreaming(): boolean {
-  const { streamingSessionIds, paneSessionMap, focusedPaneId } = useSessionContext();
-  if (!focusedPaneId) return false;
-  const sessionId = paneSessionMap.get(focusedPaneId);
+  const { streamingSessionIds, paneSessionMap, activeLogPaneId } = useSessionContext();
+  if (!activeLogPaneId) return false;
+  const sessionId = paneSessionMap.get(activeLogPaneId);
   if (!sessionId) return false;
   return streamingSessionIds.has(sessionId);
 }
@@ -67,9 +75,9 @@ export function useIsStreamingForPane(paneId: string | null): boolean {
 }
 
 export function useIsLoading(): boolean {
-  const { loadingPaneIds, focusedPaneId } = useSessionContext();
-  if (!focusedPaneId) return false;
-  return loadingPaneIds.has(focusedPaneId);
+  const { loadingPaneIds, activeLogPaneId } = useSessionContext();
+  if (!activeLogPaneId) return false;
+  return loadingPaneIds.has(activeLogPaneId);
 }
 
 /** Per-pane loading state — for use in components that render a specific pane. */
@@ -79,9 +87,9 @@ export function useIsLoadingForPane(paneId: string): boolean {
 }
 
 export function useSessionError(): string | null {
-  const { errorByPane, focusedPaneId } = useSessionContext();
-  if (!focusedPaneId) return null;
-  return errorByPane.get(focusedPaneId) ?? null;
+  const { errorByPane, activeLogPaneId } = useSessionContext();
+  if (!activeLogPaneId) return null;
+  return errorByPane.get(activeLogPaneId) ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -195,11 +203,11 @@ export function useTrackerTransitions(): {
 export function useViewerActions() {
   const { loadFile, openFileDialog, openInEditorDialog, startStream, stopStream, closeSession,
           jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
-          openTab, setFocusedPane, setEffectiveLineNums,
+          openTab, setActiveLogPane, setActivePane, setEffectiveLineNums,
           saveFile, saveFileAs, exportSession } = useActionsContext();
   return { loadFile, openFileDialog, openInEditorDialog, startStream, stopStream, closeSession,
            jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
-           openTab, setFocusedPane, setEffectiveLineNums,
+           openTab, setActiveLogPane, setActivePane, setEffectiveLineNums,
            saveFile, saveFileAs, exportSession };
 }
 

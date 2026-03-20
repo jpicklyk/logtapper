@@ -85,6 +85,10 @@ export type AppEvents = {
   /** Fired when an analysis is published externally (e.g. via MCP bridge), not by local UI. */
   'analysis:published-external': { artifactId: string; title: string; sessionId: string };
 
+  // ── Pane focus ─────────────────────────────────────────────────────────
+  /** Fired when any pane receives user interaction. Does not affect session routing. */
+  'pane:activated':                    { paneId: string };
+
   // ── Inline pane notices ──────────────────────────────────────────────────
   /** Transient full-width banner inside a specific pane. Auto-dismisses. */
   'pane:notice':                     { paneId: string; message: string };
