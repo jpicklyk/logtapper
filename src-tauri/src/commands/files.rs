@@ -156,18 +156,9 @@ pub async fn load_log_file(
         .unwrap_or("source")
         .to_string();
 
-    // Close any existing session for the same file path (e.g. stale session from a
-    // frontend reload). Scan first under a short-lived lock, then close without holding it.
-    let stale_id = {
-        let sessions = lock_or_err(&state.sessions, "sessions")?;
-        sessions
-            .values()
-            .find(|s| s.file_path.as_deref() == Some(&path))
-            .map(|s| s.id.clone())
-    };
-    if let Some(stale_id) = stale_id {
-        close_session_inner(&state, Some(&app), &stale_id)?;
-    }
+    // Close any existing sessions for the same file path (e.g. stale sessions from
+    // frontend reloads). Collects ALL matching IDs then closes each one.
+    close_stale_sessions(&state, Some(&app), &path)?;
 
     const INITIAL_BYTES: usize = 1_000_000; // 1 MB initial chunk
 
@@ -323,6 +314,25 @@ fn load_lts_file_inner(
     }
 
     Ok(result)
+}
+
+/// Close **all** sessions whose `file_path` matches the given path.
+/// Collects every matching ID under a short-lived lock, then closes each one.
+/// Previously used `.find()` which only removed one duplicate per call — the
+/// remaining stale sessions caused the MCP agent to target the wrong session ID.
+fn close_stale_sessions(state: &AppState, app: Option<&tauri::AppHandle>, path: &str) -> Result<(), String> {
+    let stale_ids: Vec<String> = {
+        let sessions = lock_or_err(&state.sessions, "sessions")?;
+        sessions
+            .values()
+            .filter(|s| s.file_path.as_deref() == Some(path))
+            .map(|s| s.id.clone())
+            .collect()
+    };
+    for stale_id in stale_ids {
+        close_session_inner(state, app, &stale_id)?;
+    }
+    Ok(())
 }
 
 fn close_session_inner(state: &AppState, app: Option<&tauri::AppHandle>, session_id: &str) -> Result<(), String> {
@@ -1582,5 +1592,82 @@ mod tests {
             "bookmarks must be removed on close");
         assert!(!state.analyses.lock().unwrap().contains_key("sess-bm"),
             "analyses must be removed on close");
+    }
+
+    // -------------------------------------------------------------------------
+    // Stale session cleanup — close_stale_sessions
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn close_stale_sessions_removes_all_duplicates() {
+        // Simulate the bug: the same file opened 3 times → 3 sessions with the
+        // same file_path but different IDs. close_stale_sessions must remove ALL
+        // of them so the MCP agent never sees stale session IDs.
+        let state = make_state();
+        let path = "/logs/device-dumpstate.log";
+        insert_session(&state, "sess-old-1", Some(path));
+        insert_session(&state, "sess-old-2", Some(path));
+        insert_session(&state, "sess-old-3", Some(path));
+
+        // Also insert an unrelated session that must NOT be touched
+        insert_session(&state, "sess-other", Some("/logs/other.log"));
+
+        close_stale_sessions(&state, None, path).unwrap();
+
+        let sessions = state.sessions.lock().unwrap();
+        assert!(!sessions.contains_key("sess-old-1"),
+            "first duplicate must be removed");
+        assert!(!sessions.contains_key("sess-old-2"),
+            "second duplicate must be removed");
+        assert!(!sessions.contains_key("sess-old-3"),
+            "third duplicate must be removed");
+        assert!(sessions.contains_key("sess-other"),
+            "unrelated session must be preserved");
+    }
+
+    #[test]
+    fn close_stale_sessions_cleans_up_analyses_for_all_duplicates() {
+        // The MCP publishes an analysis to a stale session. When the file is
+        // reloaded, close_stale_sessions must remove that analysis data too.
+        use crate::core::analysis::AnalysisArtifact;
+
+        let state = make_state();
+        let path = "/logs/device-dumpstate.log";
+        insert_session(&state, "sess-stale-a", Some(path));
+        insert_session(&state, "sess-stale-b", Some(path));
+
+        // Simulate MCP publishing an analysis to the first stale session
+        let artifact = AnalysisArtifact {
+            id: "art-mcp-1".to_string(),
+            session_id: "sess-stale-a".to_string(),
+            title: "Memory Overview".to_string(),
+            created_at: 1000,
+            sections: vec![],
+        };
+        state.analyses.lock().unwrap()
+            .insert("sess-stale-a".to_string(), vec![artifact]);
+
+        close_stale_sessions(&state, None, path).unwrap();
+
+        let sessions = state.sessions.lock().unwrap();
+        let analyses = state.analyses.lock().unwrap();
+
+        assert!(!sessions.contains_key("sess-stale-a"),
+            "stale session A must be removed");
+        assert!(!sessions.contains_key("sess-stale-b"),
+            "stale session B must be removed");
+        assert!(!analyses.contains_key("sess-stale-a"),
+            "analyses for stale session must be cleaned up");
+    }
+
+    #[test]
+    fn close_stale_sessions_is_noop_when_no_match() {
+        let state = make_state();
+        insert_session(&state, "sess-keep", Some("/logs/other.log"));
+
+        close_stale_sessions(&state, None, "/logs/no-match.log").unwrap();
+
+        assert!(state.sessions.lock().unwrap().contains_key("sess-keep"),
+            "non-matching session must not be removed");
     }
 }
