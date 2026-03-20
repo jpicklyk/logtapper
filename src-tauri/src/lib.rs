@@ -419,6 +419,11 @@ pub fn run() {
             commands::export::get_export_session_info,
             commands::export::export_session,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error building tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                commands::workspace_sync::flush_all_workspaces(app_handle);
+            }
+        });
 }
