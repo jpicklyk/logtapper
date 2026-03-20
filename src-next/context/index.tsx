@@ -1,7 +1,7 @@
 import { useMemo, useCallback, useRef, type ReactNode } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { SessionProvider } from './SessionContext';
-import { useSessionContext } from './SessionContext';
+import { useSessionCoreCtx, useSessionPaneCtx } from './SessionContext';
 import { saveLiveCapture } from '../bridge/commands';
 import { basename } from '../utils';
 import { ViewerProvider } from './ViewerContext';
@@ -25,8 +25,9 @@ import { bus } from '../events/bus';
 function HookWiring({ children }: { children: ReactNode }) {
   const cacheManager = useCacheManager();
   const registry = useDataSourceRegistry();
-  const sessionCtx = useSessionContext();
-  const { paneSessionMap } = sessionCtx;
+  const sessionCore = useSessionCoreCtx();
+  const sessionPane = useSessionPaneCtx();
+  const { paneSessionMap } = sessionCore;
   const logViewer = useLogViewer(cacheManager, registry);
   const { settings } = useSettings();
   const settingsRef = useRef(settings);
@@ -38,9 +39,11 @@ function HookWiring({ children }: { children: ReactNode }) {
   const paneSessionMapRef = useRef(paneSessionMap);
   paneSessionMapRef.current = paneSessionMap;
 
-  // Session context ref for save callbacks — avoids stale closure over session state.
-  const sessionCtxRef = useRef(sessionCtx);
-  sessionCtxRef.current = sessionCtx;
+  // Refs for save callbacks — reads from narrow contexts without subscribing to progress.
+  const sessionCoreRef = useRef(sessionCore);
+  sessionCoreRef.current = sessionCore;
+  const sessionPaneRef = useRef(sessionPane);
+  sessionPaneRef.current = sessionPane;
 
   const openWithFilters = useCallback(async (filters: { name: string; extensions: string[] }[]) => {
     const selected = await open({ multiple: false, filters });
@@ -85,7 +88,8 @@ function HookWiring({ children }: { children: ReactNode }) {
   }, []);
 
   const saveFile = useCallback(async () => {
-    const { streamingSessionIds, paneSessionMap: psMap, activePaneId } = sessionCtxRef.current;
+    const { streamingSessionIds, paneSessionMap: psMap } = sessionCoreRef.current;
+    const { activePaneId } = sessionPaneRef.current;
     const sessionId = activePaneId ? (psMap.get(activePaneId) ?? null) : null;
     if (sessionId && streamingSessionIds.has(sessionId)) {
       // Streaming session: prompt for output path and save live capture

@@ -268,13 +268,13 @@ export function useStreamFilter(paneId: string): {
   const { filterStateBySession } = useSessionProgressCtx();
   const sessionId = paneSessionMap.get(paneId);
   const state = sessionId ? filterStateBySession.get(sessionId) : undefined;
-  return {
+  return useMemo(() => ({
     value: state?.streamFilter ?? '',
     scanning: state?.filterScanning ?? false,
     filteredLineNums: state?.filteredLineNums ?? null,
     parseError: state?.filterParseError ?? null,
     sectionFilteredLineNums: state?.sectionFilteredLineNums ?? null,
-  };
+  }), [state]);
 }
 
 export function useSearchQuery(): SearchQuery | null {
