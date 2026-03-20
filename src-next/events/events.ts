@@ -11,6 +11,12 @@ export type AppEvents = {
    */
   'session:pre-load':       { paneId: string };
   /**
+   * Emitted immediately when a file load starts (before the backend invoke).
+   * Creates a placeholder tab with the filename so the user sees immediate
+   * feedback while the backend decompresses/indexes the file.
+   */
+  'session:loading':        { paneId: string; tabId: string; label: string; isNewTab: boolean };
+  /**
    * `tabId` is the pre-assigned tab ID for the logviewer tab that will be
    * created (or updated) for this session.
    *

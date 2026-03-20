@@ -93,6 +93,11 @@ export function useFileSession(
     setLoadingPane(targetPaneId, true);
     setErrorPane(targetPaneId, null);
 
+    // Create a placeholder tab immediately so the user sees feedback while the
+    // backend decompresses/indexes (especially important for large .lts files).
+    const label = path.split(/[\\/]/).pop() ?? path;
+    bus.emit('session:loading', { paneId: targetPaneId, tabId, label, isNewTab });
+
     try {
       const result = await loadLogFile(path);
 

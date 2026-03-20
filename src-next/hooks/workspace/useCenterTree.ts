@@ -548,10 +548,71 @@ export function useCenterTree(
       });
     };
 
+    // Create a placeholder tab immediately when a file load starts so the user
+    // sees feedback while the backend decompresses/indexes the file.
+    const onSessionLoading = (e: { paneId: string; tabId: string; label: string; isNewTab: boolean }) => {
+      setCenterTree((prev) => {
+        const targetLeaf = findLeafByPaneId(prev, e.paneId);
+        if (!targetLeaf) return prev;
+
+        // If a tab with this ID already exists, just update its label.
+        if (targetLeaf.pane.tabs.some((t) => t.id === e.tabId)) {
+          const next = updateLeaf(prev, e.paneId, (pane) => ({
+            ...pane,
+            tabs: pane.tabs.map((t) =>
+              t.id === e.tabId ? { ...t, label: e.label } : t,
+            ),
+            activeTabId: e.tabId,
+          }));
+          treeRef.current = next;
+          return next;
+        }
+
+        const existingLogviewerTab = targetLeaf.pane.tabs.find((t) => t.type === 'logviewer');
+
+        if (e.isNewTab && existingLogviewerTab) {
+          // Add new tab alongside existing one
+          const tab: Tab = { id: e.tabId, type: 'logviewer', label: e.label, closable: true };
+          const next = updateLeaf(prev, e.paneId, (pane) => ({
+            ...pane,
+            tabs: [...pane.tabs, tab],
+            activeTabId: e.tabId,
+          }));
+          treeRef.current = next;
+          return next;
+        }
+
+        if (existingLogviewerTab) {
+          // Replace existing logviewer tab's ID and label
+          const next = updateLeaf(prev, e.paneId, (pane) => ({
+            ...pane,
+            tabs: pane.tabs.map((t) =>
+              t.id === existingLogviewerTab.id ? { ...t, id: e.tabId, label: e.label } : t,
+            ),
+            activeTabId: e.tabId,
+          }));
+          treeRef.current = next;
+          return next;
+        }
+
+        // No logviewer tab yet — add one
+        const tab: Tab = { id: e.tabId, type: 'logviewer', label: e.label, closable: true };
+        const next = updateLeaf(prev, e.paneId, (pane) => ({
+          ...pane,
+          tabs: [...pane.tabs, tab],
+          activeTabId: e.tabId,
+        }));
+        treeRef.current = next;
+        return next;
+      });
+    };
+
+    bus.on('session:loading', onSessionLoading);
     bus.on('session:loaded', onSessionLoaded);
     bus.on('session:closed', onSessionClosed);
     bus.on('pipeline:completed', onPipelineCompleted);
     return () => {
+      bus.off('session:loading', onSessionLoading);
       bus.off('session:loaded', onSessionLoaded);
       bus.off('session:closed', onSessionClosed);
       bus.off('pipeline:completed', onPipelineCompleted);
