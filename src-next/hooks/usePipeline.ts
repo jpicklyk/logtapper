@@ -103,8 +103,8 @@ export function usePipeline(): PipelineActions {
     if (!chainInitializedRef.current) return;
     const sessionId = paneSessionMap.get(activeLogPaneId ?? '');
     if (!sessionId) return;
-    setSessionPipelineMeta(sessionId, pipelineChain, disabledChainIds).catch(() => {});
-  }, [activeLogPaneId, paneSessionMap]); // eslint-disable-line react-hooks/exhaustive-deps
+    setSessionPipelineMeta(sessionId, pipelineChainRef.current, disabledChainIdsRef.current).catch(() => {});
+  }, [activeLogPaneId, paneSessionMap]);
 
   // Cleanup debounce timer on unmount
   useEffect(() => () => {
