@@ -264,7 +264,7 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
         >
           <LeftPane
             activeTab={workspace.leftPaneTab}
-            displayPaneId={workspace.focusedActiveTabType === 'logviewer' ? workspace.activeLogPaneId : null}
+            displayPaneId={workspace.activeLogPaneId}
           />
         </ToolPane>
       </div>
@@ -333,13 +333,9 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
         </ToolPane>
       </div>
 
-      {/* Status bar: only show session info when a log-backed tab is active */}
+      {/* Status bar: always show info for the last-focused log pane */}
       <div className={styles.status}>
-        <StatusBar
-          activeLogPaneId={
-            workspace.focusedActiveTabType === 'logviewer' ? workspace.activeLogPaneId : null
-          }
-        />
+        <StatusBar activeLogPaneId={workspace.activeLogPaneId} />
       </div>
 
       {/* Pane content portals — rendered here (AppShell level) so structural
