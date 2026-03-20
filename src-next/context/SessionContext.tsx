@@ -216,40 +216,49 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
   }
 }
 
-// ── Public interface ──────────────────────────────────────────────────────────
+// ── Sub-context value types ─────────────────────────────────────────────────
 
-export interface SessionContextValue {
-  // State (read via selector hooks — see selectors.ts)
+interface SessionCoreValue {
   sessions: Map<string, LoadResult>;
   paneSessionMap: Map<string, string>;
   loadingPaneIds: Set<string>;
   errorByPane: Map<string, string | null>;
-  indexingProgressBySession: Map<string, IndexingProgress | null>;
-  filterStateBySession: Map<string, FilterState>;
   streamingSessionIds: Set<string>;
-  activeLogPaneId: string | null;
-  activePaneId: string | null;
-
-  // Named operations (stable refs — dispatch never changes)
   registerSession: (paneId: string, result: LoadResult) => void;
   unregisterSession: (paneId: string) => void;
   updateSession: (sessionId: string, updater: (prev: LoadResult) => LoadResult) => void;
-  /** Remove session data for a specific session (by ID). Use when closing a non-active logviewer tab. */
   terminateSession: (sessionId: string) => void;
   setLoadingPane: (paneId: string, loading: boolean) => void;
   setErrorPane: (paneId: string, error: string | null) => void;
-  /** Swap the active session for a pane (for logviewer tab switching). Does not register new session data. */
   activateSessionForPane: (paneId: string, sessionId: string) => void;
-  setIndexingProgress: (sessionId: string, progress: IndexingProgress | null) => void;
   setStreamingSession: (sessionId: string, streaming: boolean) => void;
+}
+
+interface SessionPaneValue {
+  activeLogPaneId: string | null;
+  activePaneId: string | null;
+}
+
+interface SessionProgressValue {
+  indexingProgressBySession: Map<string, IndexingProgress | null>;
+  filterStateBySession: Map<string, FilterState>;
+  setIndexingProgress: (sessionId: string, progress: IndexingProgress | null) => void;
   setSessionFilter: (sessionId: string, patch: Partial<FilterState>) => void;
   resetSessionFilter: (sessionId: string) => void;
   appendSessionFilterMatches: (sessionId: string, lineNums: number[]) => void;
 }
 
-// ── Provider ──────────────────────────────────────────────────────────────────
+// ── Public interface (facade) ───────────────────────────────────────────────
 
-const SessionContext = createContext<SessionContextValue | null>(null);
+export interface SessionContextValue extends SessionCoreValue, SessionPaneValue, SessionProgressValue {}
+
+// ── Three internal sub-contexts (not exported from barrel) ──────────────────
+
+const SessionCoreCtx = createContext<SessionCoreValue | null>(null);
+const SessionPaneCtx = createContext<SessionPaneValue | null>(null);
+const SessionProgressCtx = createContext<SessionProgressValue | null>(null);
+
+// ── Provider ──────────────────────────────────────────────────────────────────
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(sessionReducer, initialState);
@@ -323,9 +332,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const value = useMemo<SessionContextValue>(
+  // ── Sub-context values (each with its own useMemo) ──────────────────────
+
+  const coreValue = useMemo<SessionCoreValue>(
     () => ({
-      ...state,
+      sessions: state.sessions,
+      paneSessionMap: state.paneSessionMap,
+      loadingPaneIds: state.loadingPaneIds,
+      errorByPane: state.errorByPane,
+      streamingSessionIds: state.streamingSessionIds,
       registerSession,
       unregisterSession,
       updateSession,
@@ -333,28 +348,72 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setLoadingPane,
       setErrorPane,
       activateSessionForPane,
-      setIndexingProgress,
       setStreamingSession,
+    }),
+    // Callbacks are stable (dispatch-based). Only state fields trigger new value.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [state.sessions, state.paneSessionMap, state.loadingPaneIds, state.errorByPane, state.streamingSessionIds],
+  );
+
+  const paneValue = useMemo<SessionPaneValue>(
+    () => ({
+      activeLogPaneId: state.activeLogPaneId,
+      activePaneId: state.activePaneId,
+    }),
+    [state.activeLogPaneId, state.activePaneId],
+  );
+
+  const progressValue = useMemo<SessionProgressValue>(
+    () => ({
+      indexingProgressBySession: state.indexingProgressBySession,
+      filterStateBySession: state.filterStateBySession,
+      setIndexingProgress,
       setSessionFilter,
       resetSessionFilter,
       appendSessionFilterMatches,
     }),
-    // Named methods are stable; the only thing that triggers a new context value is state changing.
+    // Callbacks are stable (dispatch-based). Only state fields trigger new value.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state],
+    [state.indexingProgressBySession, state.filterStateBySession],
   );
 
   return (
-    <SessionContext.Provider value={value}>
-      {children}
-    </SessionContext.Provider>
+    <SessionCoreCtx.Provider value={coreValue}>
+      <SessionPaneCtx.Provider value={paneValue}>
+        <SessionProgressCtx.Provider value={progressValue}>
+          {children}
+        </SessionProgressCtx.Provider>
+      </SessionPaneCtx.Provider>
+    </SessionCoreCtx.Provider>
   );
 }
 
-export function useSessionContext(): SessionContextValue {
-  const ctx = useContext(SessionContext);
-  if (!ctx) {
-    throw new Error('useSessionContext must be used within a SessionProvider');
-  }
+// ── Narrow hooks (used by selectors.ts — not exported from barrel) ──────────
+
+export function useSessionCoreCtx(): SessionCoreValue {
+  const ctx = useContext(SessionCoreCtx);
+  if (!ctx) throw new Error('useSessionCoreCtx must be used within SessionProvider');
   return ctx;
+}
+
+export function useSessionPaneCtx(): SessionPaneValue {
+  const ctx = useContext(SessionPaneCtx);
+  if (!ctx) throw new Error('useSessionPaneCtx must be used within SessionProvider');
+  return ctx;
+}
+
+export function useSessionProgressCtx(): SessionProgressValue {
+  const ctx = useContext(SessionProgressCtx);
+  if (!ctx) throw new Error('useSessionProgressCtx must be used within SessionProvider');
+  return ctx;
+}
+
+// ── Facade — reads all 3 sub-contexts, returns combined interface ───────────
+// Used by domain hooks (useLogViewer, etc.) that need cross-context access.
+
+export function useSessionContext(): SessionContextValue {
+  const core = useSessionCoreCtx();
+  const pane = useSessionPaneCtx();
+  const progress = useSessionProgressCtx();
+  return { ...core, ...pane, ...progress };
 }

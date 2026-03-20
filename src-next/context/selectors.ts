@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { LoadResult, SearchQuery, SearchSummary, ProcessorSummary, PipelineRunSummary, Source, UpdateAvailable } from '../bridge/types';
-import { useSessionContext, type IndexingProgress } from './SessionContext';
+import { useSessionCoreCtx, useSessionPaneCtx, useSessionProgressCtx, type IndexingProgress } from './SessionContext';
 import { useSearchCtx, useScrollCtx, useProcessorViewCtx } from './ViewerContext';
 import { usePipelineContext, type SessionPipelineState } from './PipelineContext';
 import { useTrackerContext } from './TrackerContext';
@@ -13,7 +13,8 @@ import { useMarketplaceContext } from './MarketplaceContext';
 
 /** Returns the session for the currently focused log pane. */
 export function useFocusedSession(): LoadResult | null {
-  const { sessions, paneSessionMap, activeLogPaneId } = useSessionContext();
+  const { sessions, paneSessionMap } = useSessionCoreCtx();
+  const { activeLogPaneId } = useSessionPaneCtx();
   if (!activeLogPaneId) return null;
   const sessionId = paneSessionMap.get(activeLogPaneId);
   if (!sessionId) return null;
@@ -22,7 +23,7 @@ export function useFocusedSession(): LoadResult | null {
 
 /** Returns the session for a specific pane (for per-pane rendering). */
 export function useSessionForPane(paneId: string | null): LoadResult | null {
-  const { sessions, paneSessionMap } = useSessionContext();
+  const { sessions, paneSessionMap } = useSessionCoreCtx();
   if (!paneId) return null;
   const sessionId = paneSessionMap.get(paneId);
   if (!sessionId) return null;
@@ -30,25 +31,25 @@ export function useSessionForPane(paneId: string | null): LoadResult | null {
 }
 
 export function useActiveLogPaneId(): string | null {
-  return useSessionContext().activeLogPaneId;
+  return useSessionPaneCtx().activeLogPaneId;
 }
 
 /** Returns true only for the pane that is the active log pane — avoids
  *  re-rendering sibling PaneContent instances when focus changes. */
 export function useIsActiveLogPane(paneId: string): boolean {
-  return useSessionContext().activeLogPaneId === paneId;
+  return useSessionPaneCtx().activeLogPaneId === paneId;
 }
 
 export function useActivePaneId(): string | null {
-  return useSessionContext().activePaneId;
+  return useSessionPaneCtx().activePaneId;
 }
 
 export function useIsActivePane(paneId: string): boolean {
-  return useSessionContext().activePaneId === paneId;
+  return useSessionPaneCtx().activePaneId === paneId;
 }
 
 export function useIndexingProgress(sessionId: string | null): IndexingProgress | null {
-  const { indexingProgressBySession } = useSessionContext();
+  const { indexingProgressBySession } = useSessionProgressCtx();
   if (!sessionId) return null;
   return indexingProgressBySession.get(sessionId) ?? null;
 }
@@ -59,7 +60,8 @@ export function useSession(): LoadResult | null {
 }
 
 export function useIsStreaming(): boolean {
-  const { streamingSessionIds, paneSessionMap, activeLogPaneId } = useSessionContext();
+  const { streamingSessionIds, paneSessionMap } = useSessionCoreCtx();
+  const { activeLogPaneId } = useSessionPaneCtx();
   if (!activeLogPaneId) return false;
   const sessionId = paneSessionMap.get(activeLogPaneId);
   if (!sessionId) return false;
@@ -67,7 +69,7 @@ export function useIsStreaming(): boolean {
 }
 
 export function useIsStreamingForPane(paneId: string | null): boolean {
-  const { streamingSessionIds, paneSessionMap } = useSessionContext();
+  const { streamingSessionIds, paneSessionMap } = useSessionCoreCtx();
   if (!paneId) return false;
   const sessionId = paneSessionMap.get(paneId);
   if (!sessionId) return false;
@@ -75,19 +77,21 @@ export function useIsStreamingForPane(paneId: string | null): boolean {
 }
 
 export function useIsLoading(): boolean {
-  const { loadingPaneIds, activeLogPaneId } = useSessionContext();
+  const { loadingPaneIds } = useSessionCoreCtx();
+  const { activeLogPaneId } = useSessionPaneCtx();
   if (!activeLogPaneId) return false;
   return loadingPaneIds.has(activeLogPaneId);
 }
 
 /** Per-pane loading state — for use in components that render a specific pane. */
 export function useIsLoadingForPane(paneId: string): boolean {
-  const { loadingPaneIds } = useSessionContext();
+  const { loadingPaneIds } = useSessionCoreCtx();
   return loadingPaneIds.has(paneId);
 }
 
 export function useSessionError(): string | null {
-  const { errorByPane, activeLogPaneId } = useSessionContext();
+  const { errorByPane } = useSessionCoreCtx();
+  const { activeLogPaneId } = useSessionPaneCtx();
   if (!activeLogPaneId) return null;
   return errorByPane.get(activeLogPaneId) ?? null;
 }
@@ -250,7 +254,7 @@ export function useProcessorId(): string | null {
 
 /** Returns the stable `setSessionFilter` dispatch from SessionContext. */
 export function useSetSessionFilter() {
-  return useSessionContext().setSessionFilter;
+  return useSessionProgressCtx().setSessionFilter;
 }
 
 export function useStreamFilter(paneId: string): {
@@ -260,7 +264,8 @@ export function useStreamFilter(paneId: string): {
   parseError: string | null;
   sectionFilteredLineNums: number[] | null;
 } {
-  const { filterStateBySession, paneSessionMap } = useSessionContext();
+  const { paneSessionMap } = useSessionCoreCtx();
+  const { filterStateBySession } = useSessionProgressCtx();
   const sessionId = paneSessionMap.get(paneId);
   const state = sessionId ? filterStateBySession.get(sessionId) : undefined;
   return {
