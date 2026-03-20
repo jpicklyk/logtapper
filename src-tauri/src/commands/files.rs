@@ -304,12 +304,25 @@ fn load_lts_file_inner(
         &processor_yamls,
     );
 
-    // 7. Emit restore event
-    if bm_count > 0 || an_count > 0 {
+    // 6.6. Store pipeline meta in AppState (so subsequent saves capture the chain)
+    let has_chain = !lts.session_meta.active_processor_ids.is_empty();
+    if has_chain {
+        if let Ok(mut map) = state.session_pipeline_meta.lock() {
+            map.insert(session_id.clone(), crate::workspace::SessionMeta {
+                active_processor_ids: lts.session_meta.active_processor_ids.clone(),
+                disabled_processor_ids: lts.session_meta.disabled_processor_ids.clone(),
+            });
+        }
+    }
+
+    // 7. Emit restore event (includes processor IDs for frontend chain restore)
+    if bm_count > 0 || an_count > 0 || has_chain {
         let _ = app.emit("workspace-restored", serde_json::json!({
             "sessionId": session_id,
             "bookmarkCount": bm_count,
             "analysisCount": an_count,
+            "activeProcessorIds": lts.session_meta.active_processor_ids,
+            "disabledProcessorIds": lts.session_meta.disabled_processor_ids,
         }));
     }
 

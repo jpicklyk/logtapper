@@ -187,8 +187,14 @@ pub async fn export_session(
     };
     // processors lock dropped
 
-    // 5. Write .lts file (no locks held).
-    let meta = crate::workspace::lts::LtsSessionMeta::default();
+    // 5. Snapshot pipeline meta under brief lock.
+    let pipeline_meta = crate::commands::workspace_sync::snapshot_pipeline_meta(&state, &session_id);
+    let meta = crate::workspace::lts::LtsSessionMeta {
+        active_processor_ids: pipeline_meta.active_processor_ids,
+        disabled_processor_ids: pipeline_meta.disabled_processor_ids,
+    };
+
+    // 6. Write .lts file (no locks held).
     let dest = std::path::Path::new(&options.dest_path);
     crate::workspace::lts::write_lts(
         dest,

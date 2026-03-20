@@ -174,6 +174,17 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
           </>
         );
       }
+      if (!session && isLoading) {
+        return (
+          <>
+            <div className={styles.loadingPane} onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus}>
+              <div className={styles.loadingSpinner} />
+              <span className={styles.loadingText}>Loading session{'\u2026'}</span>
+            </div>
+            {bookmarkDialog}
+          </>
+        );
+      }
       return (
         <>
           <div className={styles.logviewerPane} onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus}>
