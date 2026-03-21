@@ -21,52 +21,12 @@
 .right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
 }
 
 .right {
   flex-shrink: 0;
   margin-left: auto;
-}
-
-/* ── Generic item ───────────────────────────────────────────── */
-.item {
-  white-space: nowrap;
-  line-height: 24px;
-}
-
-/* ── Monospace values (Ln, Sel, LF, UTF-8) ──────────────────── */
-.mono {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-/* ── Dimmed secondary text (Sel range) ──────────────────────── */
-.dimmed {
-  color: var(--text-dimmed);
-  font-size: 10px;
-}
-
-/* ── File path ──────────────────────────────────────────────── */
-.filePath {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* ── Interactive items (hover feedback) ─────────────────────── */
-.interactive {
-  padding: 0 4px;
-  border-radius: var(--radius-sm);
-  cursor: default;
-  transition: background var(--duration-fast) ease;
-}
-
-.interactive:hover {
-  background: var(--state-hover);
 }
 
 /* ── Micro-separator ────────────────────────────────────────── */
@@ -128,6 +88,22 @@
 .chipDimmed {
   font-weight: 500;
   opacity: 0.75;
+}
+
+/* ── Chip colors ───────────────────────────────────────────── */
+
+/* Gray — neutral metadata (file path, LF, UTF-8) */
+.chipGray {
+  background: var(--badge-gray-bg);
+  color: var(--badge-gray);
+}
+
+/* Gray path variant — allow truncation */
+.chipPath {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 /* Selection line (Ln) — yellow/gold to match viewer selection highlight */

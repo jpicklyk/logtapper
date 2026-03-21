@@ -19,8 +19,8 @@ const SOURCE_TYPE_CHIP: Record<string, { label: string; cls: string }> = {
 
 // ── Pre-computed class strings (static — never change at runtime) ────────────
 
-const CLS_FILEPATH    = [styles.item, styles.filePath].join(' ');
-const CLS_MONO_INT    = [styles.item, styles.mono, styles.interactive].join(' ');
+const CLS_CHIP_PATH   = [styles.chip, styles.chipGray, styles.chipPath].join(' ');
+const CLS_CHIP_GRAY   = [styles.chip, styles.chipGray].join(' ');
 const CLS_CHIP_LN     = [styles.chip, styles.chipSelection, styles.chipClickable].join(' ');
 const CLS_CHIP_SEC    = [styles.chip, styles.chipJumpTarget, styles.chipClickable].join(' ');
 const CLS_CHIP_SEL    = [styles.chip, styles.chipSelection, styles.chipDimmed].join(' ');
@@ -87,7 +87,7 @@ export const StatusBar = React.memo(function StatusBar({ activeLogPaneId }: Stat
         )}
 
         {filePath && (
-          <span className={CLS_FILEPATH} title={filePath}>
+          <span className={CLS_CHIP_PATH} title={filePath}>
             {filePath}
           </span>
         )}
@@ -117,11 +117,11 @@ export const StatusBar = React.memo(function StatusBar({ activeLogPaneId }: Stat
 
         {(hasAnchor || effectiveScrollTarget != null) && <span className={styles.separator} />}
 
-        <span className={CLS_MONO_INT} title="Line endings">
+        <span className={CLS_CHIP_GRAY} title="Line endings">
           LF
         </span>
 
-        <span className={CLS_MONO_INT} title="File encoding">
+        <span className={CLS_CHIP_GRAY} title="File encoding">
           UTF-8
         </span>
 
