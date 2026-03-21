@@ -1,0 +1,1 @@
+export { WatchesPanel } from './WatchesPanel';

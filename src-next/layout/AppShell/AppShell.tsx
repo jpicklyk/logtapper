@@ -21,12 +21,13 @@ import { RightPane } from '../../components/RightPane';
 import { BottomPane } from '../../components/BottomPane';
 import { PaneContent } from '../../components/PaneContent';
 import { SettingsPanel } from '../../components/SettingsPanel';
-import { useSettings, useAnonymizerConfig, useToast, useAnalysisToast, useWorkspaceRestoreToast, useFileShortcuts } from '../../hooks';
+import { useSettings, useAnonymizerConfig, useToast, useAnalysisToast, useWatchToast, useWorkspaceRestoreToast, useFileShortcuts } from '../../hooks';
 import { useCacheManager } from '../../cache';
 import { Toast } from '../../ui';
 import { findTabAcrossTree, allPanes } from '../../hooks/workspace/splitTreeHelpers';
 import { usePendingUpdateCount, useViewerActions } from '../../context';
 import { bus } from '../../events';
+import { onWatchMatch } from '../../bridge/events';
 import type {
   WorkspaceLayoutState,
   LeftPaneTab,
@@ -48,10 +49,9 @@ const LEFT_TOP_ITEMS = [
   { id: 'analysis', icon: PenLine, label: 'Analysis' },
 ];
 
-const LEFT_BOTTOM_ITEMS = [
+const LEFT_BOTTOM_ITEMS_STATIC = [
   { id: 'timeline', icon: Clock, label: 'Timeline' },
   { id: 'correlations', icon: Zap, label: 'Correlations' },
-  { id: 'watches', icon: Eye, label: 'Watches' },
 ];
 
 const RIGHT_BOTTOM_ITEMS: { id: string; icon: React.ComponentType<{ size?: number | string }>; label: string }[] = [];
@@ -62,6 +62,7 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   const cacheManager = useCacheManager();
   const { toasts, addToast, dismissToast } = useToast();
   useAnalysisToast(addToast);
+  useWatchToast(addToast);
   useWorkspaceRestoreToast(addToast);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -74,6 +75,42 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   const updateBadgeCount = usePendingUpdateCount();
   const { openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession } = useViewerActions();
   useFileShortcuts({ openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession });
+
+  // -- Watch badge (unacknowledged match count on Eye icon) --
+  const [watchBadge, setWatchBadge] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+
+    onWatchMatch((event) => {
+      if (cancelled) return;
+      setWatchBadge((prev) => prev + event.newMatches);
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  // Clear badge when watches tab is visible
+  useEffect(() => {
+    if (workspace.bottomPaneVisible && workspace.bottomPaneTab === 'watches') {
+      setWatchBadge(0);
+    }
+  }, [workspace.bottomPaneVisible, workspace.bottomPaneTab]);
+
+  const leftBottomItems = useMemo(
+    () => [
+      ...LEFT_BOTTOM_ITEMS_STATIC,
+      { id: 'watches', icon: Eye, label: 'Watches', badge: watchBadge > 0 ? watchBadge : undefined },
+    ],
+    [watchBadge],
+  );
 
   const rightTopItems = useMemo(
     () => [
@@ -250,7 +287,7 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
       <div className={styles.ltoolbar}>
         <ToolBar
           topItems={LEFT_TOP_ITEMS}
-          bottomItems={LEFT_BOTTOM_ITEMS}
+          bottomItems={leftBottomItems}
           activeTopId={workspace.leftPaneTab}
           activeBottomId={activeBottomId}
           onTopToggle={handleLeftTopToggle}
