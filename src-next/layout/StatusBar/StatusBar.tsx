@@ -118,7 +118,7 @@ export const StatusBar = React.memo(function StatusBar({ activeLogPaneId }: Stat
         {(hasAnchor || effectiveScrollTarget != null) && <span className={styles.separator} />}
 
         <span className={CLS_CHIP_GRAY} title="Line endings">
-          LF
+          Linux (LF)
         </span>
 
         <span className={CLS_CHIP_GRAY} title="File encoding">
