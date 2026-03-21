@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import clsx from 'clsx';
-import { FolderOpen, FileEdit, Menu, Radio, Square, Smartphone, Download } from 'lucide-react';
+import { FolderOpen, FileEdit, Menu, Radio, Square, Smartphone, Download, Settings } from 'lucide-react';
 import { useSession, useIsStreaming, useViewerActions } from '../../context';
 import { listAdbDevices } from '../../bridge/commands';
 import type { AdbDevice } from '../../bridge/types';
@@ -101,13 +101,6 @@ export const Header = React.memo(function Header() {
           <span className={styles.titleAndroid}>Android</span>
           {' '}Log<span className={styles.titleAccent}>Tapper</span>
         </span>
-      </div>
-
-      <div className={styles.searchArea}>
-        <SearchBar disabled={!session} />
-      </div>
-
-      <div className={styles.actions}>
         <DropdownMenu
           trigger={
             <button className={styles.actionBtn} title="Menu">
@@ -141,6 +134,20 @@ export const Header = React.memo(function Header() {
               <span>{loadingDevices ? 'Connecting…' : 'Stream'}</span>
             </>
           )}
+        </button>
+      </div>
+
+      <div className={styles.searchArea}>
+        <SearchBar disabled={!session} />
+      </div>
+
+      <div className={styles.actions}>
+        <button
+          className={styles.actionBtn}
+          onClick={() => bus.emit('layout:settings-requested')}
+          title="Settings"
+        >
+          <Settings size={16} />
         </button>
       </div>
 

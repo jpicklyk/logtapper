@@ -111,4 +111,6 @@ export type AppEvents = {
   'file:save-as-request': undefined;
   /** Fired when Export Session is requested (menu or shortcut). Header shows the export modal. */
   'layout:export-session-requested': undefined;
+  /** Fired when the user clicks the Settings button in the Header. AppShell opens the modal. */
+  'layout:settings-requested': undefined;
 };

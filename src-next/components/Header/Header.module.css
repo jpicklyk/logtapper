@@ -14,7 +14,7 @@
 /* Occupies the same horizontal space as the left toolbar (40px) + left panel.
    This pushes the search bar to start exactly where the center pane starts. */
 .brand {
-  flex: 0 0 calc(40px + var(--left-pane-width, 220px));
+  flex: 0 0 calc(40px + var(--left-pane-width, 260px));
   display: flex;
   align-items: center;
   padding: 0 10px;

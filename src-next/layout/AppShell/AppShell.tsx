@@ -10,7 +10,6 @@ import {
   Eye,
   Cpu,
   Store,
-  Settings,
 } from 'lucide-react';
 import { ToolBar } from '../ToolBar';
 import { ToolPane } from '../ToolPane';
@@ -27,6 +26,7 @@ import { useCacheManager } from '../../cache';
 import { Toast } from '../../ui';
 import { findTabAcrossTree, allPanes } from '../../hooks/workspace/splitTreeHelpers';
 import { usePendingUpdateCount, useViewerActions } from '../../context';
+import { bus } from '../../events';
 import type {
   WorkspaceLayoutState,
   LeftPaneTab,
@@ -54,9 +54,7 @@ const LEFT_BOTTOM_ITEMS = [
   { id: 'watches', icon: Eye, label: 'Watches' },
 ];
 
-const RIGHT_BOTTOM_ITEMS = [
-  { id: 'settings', icon: Settings, label: 'Settings' },
-];
+const RIGHT_BOTTOM_ITEMS: { id: string; icon: React.ComponentType<{ size?: number | string }>; label: string }[] = [];
 
 export const AppShell = React.memo(function AppShell({ workspace }: AppShellProps) {
   const settingsHook = useSettings();
@@ -66,6 +64,13 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   useAnalysisToast(addToast);
   useWorkspaceRestoreToast(addToast);
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Listen for settings-requested event from Header
+  useEffect(() => {
+    const handler = () => { setSettingsOpen(true); };
+    bus.on('layout:settings-requested', handler);
+    return () => { bus.off('layout:settings-requested', handler); };
+  }, []);
   const updateBadgeCount = usePendingUpdateCount();
   const { openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession } = useViewerActions();
   useFileShortcuts({ openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession });
@@ -136,8 +141,8 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
     [workspace.toggleRightPane],
   );
 
-  const handleRightBottomToggle = useCallback((id: string) => {
-    if (id === 'settings') setSettingsOpen(true);
+  const handleRightBottomToggle = useCallback((_id: string) => {
+    // No right-bottom items currently — settings moved to Header
   }, []);
 
   // -- Resize handlers --
