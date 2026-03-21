@@ -13,8 +13,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type { PipelineRunSummary, PipelineProgress, McpStatus } from '../../bridge/types';
-import { getMcpStatus } from '../../bridge/commands';
+import type { PipelineRunSummary, PipelineProgress } from '../../bridge/types';
 import {
   useSession,
   useIsStreaming,
@@ -26,7 +25,7 @@ import {
   usePipelineProgress,
   usePipelineError,
 } from '../../context';
-import { usePipeline } from '../../hooks';
+import { usePipeline, useMcpStatus } from '../../hooks';
 import { ProcessorLibrary } from '../ProcessorLibrary';
 import { bus } from '../../events';
 import { storageGet, storageSet } from '../../utils';
@@ -36,39 +35,8 @@ import { PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY } from '../../ui/processorBadgeTy
 
 // ── McpStatusWidget ──────────────────────────────────────────────────────────
 
-const MCP_ACTIVE_THRESHOLD_SECS = 30;
-type McpConnState = 'checking' | 'offline' | 'ready' | 'connected';
-
-function mcpConnState(status: McpStatus | null): McpConnState {
-  if (status === null) return 'checking';
-  if (!status.running) return 'offline';
-  if (status.idleSecs === null) return 'ready';
-  if (status.idleSecs <= MCP_ACTIVE_THRESHOLD_SECS) return 'connected';
-  return 'ready';
-}
-
-const MCP_CONN_LABELS: Record<McpConnState, string> = {
-  checking: '...',
-  offline: 'offline',
-  ready: 'ready',
-  connected: 'connected',
-};
-
 const McpStatusWidget = React.memo(function McpStatusWidget() {
-  const [status, setStatus] = useState<McpStatus | null>(null);
-
-  useEffect(() => {
-    const check = () =>
-      getMcpStatus()
-        .then(setStatus)
-        .catch(() => setStatus({ running: false, port: 40404, idleSecs: null }));
-    check();
-    const id = setInterval(check, 5_000);
-    return () => clearInterval(id);
-  }, []);
-
-  const connState = mcpConnState(status);
-  const running = connState !== 'offline' && connState !== 'checking';
+  const { connState, label, running, port } = useMcpStatus();
   const active = connState === 'connected';
 
   return (
@@ -76,7 +44,7 @@ const McpStatusWidget = React.memo(function McpStatusWidget() {
       <div className={styles.mcpHeader}>
         <span className={styles.mcpTitle}>MCP Bridge</span>
         <span className={`${styles.mcpPill} ${styles[`mcpPill_${connState}`]}`}>
-          {MCP_CONN_LABELS[connState]}
+          {label}
         </span>
       </div>
       <div className={styles.mcpConnRow}>
@@ -96,7 +64,7 @@ const McpStatusWidget = React.memo(function McpStatusWidget() {
           )}
         </div>
         <div className={styles.mcpAddr}>
-          {status?.running ? `127.0.0.1:${status.port}` : 'not bound'}
+          {running ? `127.0.0.1:${port}` : 'not bound'}
         </div>
       </div>
       <div className={styles.mcpReadsRow}>

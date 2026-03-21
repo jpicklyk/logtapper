@@ -42,3 +42,7 @@ export { useAnalysisToast } from './useAnalysisToast';
 export { useWorkspaceRestore } from './useWorkspaceRestore';
 export { useWorkspaceRestoreToast } from './useWorkspaceRestoreToast';
 export { useFileShortcuts } from './useFileShortcuts';
+export { useMcpStatus } from './useMcpStatus';
+export type { McpConnState, McpStatusInfo } from './useMcpStatus';
+export { useStatusBarSelection } from './useStatusBarSelection';
+export type { StatusBarSelection } from './useStatusBarSelection';
