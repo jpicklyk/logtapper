@@ -46,6 +46,7 @@ export const StatusBar = React.memo(function StatusBar({ activeLogPaneId }: Stat
   const filePath = session?.filePath ?? null;
   const sourceType = session?.sourceType ?? null;
   const sourceChip = sourceType ? SOURCE_TYPE_CHIP[sourceType] : null;
+  const lineEndingLabel = session?.hasCrlf ? 'Windows (CRLF)' : 'Unix (LF)';
 
   // Scroll target applies when the jump targeted this pane (or was global).
   const effectiveScrollTarget = (jumpPaneId === null || jumpPaneId === activeLogPaneId)
@@ -118,7 +119,7 @@ export const StatusBar = React.memo(function StatusBar({ activeLogPaneId }: Stat
         {(hasAnchor || effectiveScrollTarget != null) && <span className={styles.separator} />}
 
         <span className={CLS_CHIP_GRAY} title="Line endings">
-          Linux (LF)
+          {lineEndingLabel}
         </span>
 
         <span className={CLS_CHIP_GRAY} title="File encoding">

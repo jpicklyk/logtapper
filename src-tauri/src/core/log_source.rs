@@ -47,6 +47,9 @@ pub trait LogSource: Send + Sync {
     fn sections(&self) -> &[SectionInfo];
     fn is_indexing(&self) -> bool;
 
+    /// Whether the source uses CRLF line endings. Always false for streams.
+    fn has_crlf(&self) -> bool { false }
+
     /// Downcast support for type-specific mutable operations.
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
@@ -83,6 +86,8 @@ pub struct FileLogSource {
     pub(crate) section_info: Vec<SectionInfo>,
     /// True while background indexing is still scanning the remainder.
     pub(crate) indexing: bool,
+    /// True if the file uses CRLF (`\r\n`) line endings, false for LF (`\n`).
+    pub(crate) has_crlf: bool,
 }
 
 impl LogSource for FileLogSource {
@@ -126,6 +131,10 @@ impl LogSource for FileLogSource {
         self.indexing
     }
 
+    fn has_crlf(&self) -> bool {
+        self.has_crlf
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -133,6 +142,13 @@ impl LogSource for FileLogSource {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+}
+
+/// Detect CRLF line endings by checking the first `\n` in the data.
+pub fn detect_crlf(data: &[u8]) -> bool {
+    memchr::memchr(b'\n', data)
+        .map(|pos| pos > 0 && data[pos - 1] == b'\r')
+        .unwrap_or(false)
 }
 
 impl FileLogSource {

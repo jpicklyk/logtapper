@@ -10,7 +10,7 @@ use crate::core::bugreport_parser::BugreportParser;
 use crate::core::index::CrossSourceIndex;
 use crate::core::kernel_parser::KernelParser;
 use crate::core::line::{LineMeta, LogLevel, ParsedLineMeta};
-use crate::core::log_source::{FileLogSource, LogSource, StreamLogSource, ZipLogSource};
+use crate::core::log_source::{detect_crlf, FileLogSource, LogSource, StreamLogSource, ZipLogSource};
 use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;
 use crate::core::timeline::{Timeline, TimelineEntry};
@@ -235,6 +235,7 @@ impl AnalysisSession {
             .unwrap_or("unknown")
             .to_string();
 
+        let has_crlf = detect_crlf(mmap.as_ref());
         self.source = Some(Box::new(FileLogSource {
             source_id,
             source_name: name,
@@ -244,6 +245,7 @@ impl AnalysisSession {
             line_meta,
             section_info: sections,
             indexing: false,
+            has_crlf,
         }));
 
         self.rebuild_timeline();
@@ -326,6 +328,7 @@ impl AnalysisSession {
             .to_string();
         let is_indexing = bytes_consumed < total_bytes;
 
+        let has_crlf = detect_crlf(mmap.as_ref());
         let mmap_clone = Arc::clone(&mmap);
         self.source = Some(Box::new(FileLogSource {
             source_id,
@@ -336,6 +339,7 @@ impl AnalysisSession {
             line_meta,
             section_info: sections,
             indexing: is_indexing,
+            has_crlf,
         }));
 
         if !is_indexing {
@@ -860,6 +864,7 @@ mod tests {
         let (line_index, line_meta) = build_line_index(&mmap, &SourceType::Logcat, &mut interner);
         let sections = build_section_index(&line_meta, &SourceType::Logcat, &interner, &[], &[]);
 
+        let has_crlf = detect_crlf(mmap.as_ref());
         let src = FileLogSource {
             source_id: "file-src".into(),
             source_name: "test.log".into(),
@@ -869,6 +874,7 @@ mod tests {
             line_meta,
             section_info: sections,
             indexing: false,
+            has_crlf,
         };
         (src, mmap)
     }
@@ -1468,6 +1474,7 @@ mod tests {
             line_meta: part_meta,
             section_info: Vec::new(),
             indexing: true,
+            has_crlf: detect_crlf(mmap.as_ref()),
         }));
 
         let source = session.primary_source().unwrap();
@@ -1633,15 +1640,17 @@ mod tests {
         let mut session = AnalysisSession::new("test".into());
         session.tag_interner = interner;
         let original_count = line_count(&part_idx);
+        let mmap = Arc::new(mmap);
         session.source = Some(Box::new(FileLogSource {
             source_id: "src1".into(),
             source_name: "test.log".into(),
             source_type: SourceType::Logcat,
-            mmap: Arc::new(mmap),
+            mmap: Arc::clone(&mmap),
             line_index: part_idx.clone(),
             line_meta: part_meta,
             section_info: Vec::new(),
             indexing: true,
+            has_crlf: detect_crlf(mmap.as_ref()),
         }));
 
         let sentinel = *part_idx.last().unwrap_or(&0);

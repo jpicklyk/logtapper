@@ -250,6 +250,7 @@ pub async fn start_adb_stream(
         source_type: "Logcat".to_string(),
         is_streaming: true,
         is_indexing: false,
+        has_crlf: false, // ADB streams use LF
     })
 }
 
