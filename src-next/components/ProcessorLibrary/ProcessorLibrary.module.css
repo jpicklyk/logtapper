@@ -286,26 +286,6 @@
 
 /* ── Processor groups (installed tab) ────────────────────────────────────── */
 
-.group {
-  margin-bottom: 2px;
-}
-
-.groupHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 5px 14px;
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-dimmed);
-  position: sticky;
-  top: 0;
-  background: var(--bg-raised);
-  z-index: 1;
-}
-
 .groupCount {
   font-size: 9px;
   background: var(--bg-overlay);
@@ -423,104 +403,131 @@
   flex-shrink: 0;
 }
 
+/* ── Type icon next to processor name ────────────────────────────────────── */
+
+.typeIcon {
+  flex-shrink: 0;
+  color: var(--text-dimmed);
+  display: flex;
+  align-items: center;
+}
+
 .inChainLabel {
   font-size: 10px;
   color: var(--text-dimmed);
   font-style: italic;
 }
 
-/* ── Discover tab ────────────────────────────────────────────────────────── */
+/* ── Category sections (installed tab) ───────────────────────────────────── */
 
-.discoverItem {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border-subtle);
+.categorySection {
+  margin-bottom: 2px;
 }
 
-.discoverItem:last-child {
-  border-bottom: none;
-}
-
-.discoverAction {
-  flex-shrink: 0;
+.categoryHeader {
   display: flex;
   align-items: center;
-  padding-top: 2px;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 14px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  position: sticky;
+  top: 0;
+  background: var(--bg-raised);
+  z-index: 1;
+  transition: background var(--transition-fast);
 }
 
-.discoverItemSelected {
-  background: var(--state-selected);
-}
-
-.discoverItemSelected:hover {
-  background: var(--state-hover);
-}
-
-.discoverItemInChain {
-  opacity: 0.5;
-}
-
-.discoverCheckboxCol {
-  flex-shrink: 0;
-  width: 24px;
-  display: flex;
-  align-items: flex-start;
-  padding-top: 3px;
-}
-
-.discoverCheckboxSpacer {
-  display: inline-block;
-  width: 16px;
-  height: 16px;
-}
-
-.tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 3px;
-  margin-top: 4px;
-}
-
-.tag {
-  font-size: 9px;
-  font-weight: 500;
-  padding: 1px 5px;
-  border-radius: var(--radius-sm);
+.categoryHeader:hover {
   background: var(--bg-overlay);
-  color: var(--text-dimmed);
 }
 
-.fetchBtn {
+.chevron {
+  color: var(--text-dimmed);
+  flex-shrink: 0;
+  transition: transform var(--transition-fast);
+}
+
+.chevronCollapsed {
+  transform: rotate(-90deg);
+}
+
+.categoryLabel {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dimmed);
+  flex: 1;
+}
+
+/* ── Tag filter chips ─────────────────────────────────────────────────────── */
+
+.filterChips {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  gap: 4px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  scrollbar-width: none;
+}
+
+.filterChips::-webkit-scrollbar {
+  display: none;
+}
+
+.filterChip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 5px 10px;
+  padding: 2px 8px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-raised);
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 600;
+  border-radius: var(--radius-full);
+  background: var(--bg-overlay);
+  color: var(--text-dimmed);
+  font-size: 10px;
+  font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
+  flex-shrink: 0;
   transition: all var(--transition-fast);
 }
 
-.fetchBtn:hover:not(:disabled) {
+.filterChip:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
 
-.fetchBtn:disabled {
-  opacity: 0.5;
-  cursor: default;
+.filterChipActive {
+  border-color: var(--accent);
+  background: var(--accent-muted);
+  color: var(--accent);
 }
 
-.fetchBtnLoading {
-  color: var(--accent);
-  border-color: var(--accent);
+.filterChipClear {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--text-dimmed);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  transition: all var(--transition-fast);
+}
+
+.filterChipClear:hover {
+  color: var(--text);
+  border-color: var(--border);
 }
 
 /* ── Shared action buttons ───────────────────────────────────────────────── */

@@ -1,24 +1,19 @@
-import { memo, useState, useCallback, useRef, useMemo, useEffect } from 'react';
+import { memo, useState, useCallback, useRef, useMemo } from 'react';
 import ReactDOM from 'react-dom';
 import { open } from '@tauri-apps/plugin-dialog';
-import type { ProcessorSummary, Source, MarketplaceEntry } from '../../bridge/types';
-import { makeQualifiedId, filterMarketplaceEntries } from '../../bridge/types';
+import type { ProcessorSummary } from '../../bridge/types';
 import {
-  listSources,
-  fetchMarketplace,
-  installFromMarketplace,
   loadProcessorFromFile,
 } from '../../bridge/commands';
 import { usePipeline } from '../../hooks';
 import { useProcessors, usePipelineChain } from '../../context';
-import { bus } from '../../events/bus';
+import { getCategoryLabel, CATEGORY_ORDER } from '../../ui/categoryMeta';
+import { ProcessorTypeIcon } from '../../ui/processorTypeIcons';
 import css from './ProcessorLibrary.module.css';
 import badgeCss from '../../ui/processorBadge.module.css';
 import { PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY } from '../../ui/processorBadgeTypes';
 
-type Tab = 'installed' | 'discover' | 'yaml';
-type GroupBy = 'tag' | 'type';
-type InstallStatus = 'idle' | 'installing' | 'installed' | 'error';
+type Tab = 'installed' | 'yaml';
 
 // transformer label is overridden to 'PII' here (built-in PII anonymizer only)
 const LOCAL_LABEL_OVERRIDES: Record<string, string> = { transformer: 'PII' };
@@ -29,17 +24,6 @@ function getProcTypeLabel(type: string): string {
 
 function getProcTypeBadgeClass(type: string): string {
   return badgeCss[PROC_TYPE_CLASS_KEY[type] as keyof typeof badgeCss] ?? '';
-}
-
-function groupByKey<T>(items: T[], keyFn: (item: T) => string): Map<string, T[]> {
-  const map = new Map<string, T[]>();
-  for (const item of items) {
-    const key = keyFn(item);
-    const group = map.get(key) ?? [];
-    group.push(item);
-    map.set(key, group);
-  }
-  return map;
 }
 
 interface Props {
@@ -53,18 +37,9 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
 
   const [tab, setTab] = useState<Tab>('installed');
   const [query, setQuery] = useState('');
-  const [groupBy, setGroupBy] = useState<GroupBy>('tag');
   const [selected, setSelected] = useState<Set<string>>(new Set());
-
-  // Discover tab state (marketplace multi-source)
-  const [sources, setSources] = useState<Source[]>([]);
-  const [selectedSource, setSelectedSource] = useState<string>('');
-  const [marketplaceEntries, setMarketplaceEntries] = useState<MarketplaceEntry[]>([]);
-  const [discoverLoading, setDiscoverLoading] = useState(false);
-  const [discoverError, setDiscoverError] = useState<string | null>(null);
-  const [installStatus, setInstallStatus] = useState<Record<string, InstallStatus>>({});
-  const [installError, setInstallError] = useState<Record<string, string>>({});
-  const [discoverFilter, setDiscoverFilter] = useState('');
+  const [activeTagFilters, setActiveTagFilters] = useState<Set<string>>(new Set());
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
 
   // YAML tab state
   const [yamlInput, setYamlInput] = useState('');
@@ -100,26 +75,82 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
   // ── Installed tab ──────────────────────────────────────────────────────────
 
   const q = query.toLowerCase();
+
+  // All unique tags across all processors (for filter chips)
+  const allTags = useMemo(() => {
+    const tagSet = new Set<string>();
+    for (const p of processors) {
+      for (const t of p.tags) {
+        tagSet.add(t);
+      }
+    }
+    return Array.from(tagSet).sort();
+  }, [processors]);
+
+  const toggleTagFilter = useCallback((tag: string) => {
+    setActiveTagFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(tag)) next.delete(tag);
+      else next.add(tag);
+      return next;
+    });
+  }, []);
+
+  const clearTagFilters = useCallback(() => {
+    setActiveTagFilters(new Set());
+  }, []);
+
+  // Processors filtered by text search AND active tag filters
   const filtered: ProcessorSummary[] = useMemo(
     () =>
       processors.filter((p) => {
-        if (!q) return true;
-        return (
-          p.name.toLowerCase().includes(q) ||
-          p.description.toLowerCase().includes(q) ||
-          p.tags.some((t) => t.toLowerCase().includes(q))
-        );
+        // Text search filter
+        if (q) {
+          const matchesText =
+            p.name.toLowerCase().includes(q) ||
+            p.description.toLowerCase().includes(q) ||
+            p.tags.some((t) => t.toLowerCase().includes(q));
+          if (!matchesText) return false;
+        }
+        // Tag chip filter (AND: processor must have ALL active tags)
+        if (activeTagFilters.size > 0) {
+          for (const activeTag of activeTagFilters) {
+            if (!p.tags.includes(activeTag)) return false;
+          }
+        }
+        return true;
       }),
-    [processors, q],
+    [processors, q, activeTagFilters],
   );
 
-  const installedGroups = useMemo(
-    () =>
-      groupBy === 'tag'
-        ? groupByKey(filtered, (p) => p.tags[0] ?? 'Uncategorized')
-        : groupByKey(filtered, (p) => getProcTypeLabel(p.processorType)),
-    [filtered, groupBy],
-  );
+  // Group by category, sorted by CATEGORY_ORDER
+  const categoryGroups = useMemo(() => {
+    const groups = new Map<string, ProcessorSummary[]>();
+    for (const p of filtered) {
+      const cat = p.category ?? 'uncategorized';
+      if (!groups.has(cat)) groups.set(cat, []);
+      groups.get(cat)!.push(p);
+    }
+    const sorted = Array.from(groups.entries()).sort((a, b) => {
+      const ai = CATEGORY_ORDER.indexOf(a[0]);
+      const bi = CATEGORY_ORDER.indexOf(b[0]);
+      const aRank = ai === -1 ? 999 : ai;
+      const bRank = bi === -1 ? 999 : bi;
+      if (aRank !== bRank) return aRank - bRank;
+      // Both are unknowns: sort alphabetically
+      return a[0].localeCompare(b[0]);
+    });
+    return sorted;
+  }, [filtered]);
+
+  const toggleSection = useCallback((cat: string) => {
+    setCollapsedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat);
+      else next.add(cat);
+      return next;
+    });
+  }, []);
 
   const selectableFiltered = useMemo(
     () => filtered.filter((p) => !chainSet.has(p.id)),
@@ -135,81 +166,6 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
       setSelected(new Set(allIds));
     }
   }, [selectableFiltered, selected]);
-
-  // ── Discover tab (marketplace multi-source) ────────────────────────────────
-
-  const handleFetchMarketplace = useCallback(async (sourceName?: string) => {
-    const src = sourceName || selectedSource;
-    if (!src) return;
-    setDiscoverLoading(true);
-    setDiscoverError(null);
-    try {
-      const results = await fetchMarketplace(src);
-      setMarketplaceEntries(results);
-    } catch (e) {
-      setDiscoverError(String(e));
-    } finally {
-      setDiscoverLoading(false);
-    }
-  }, [selectedSource]);
-
-  // Load sources on first switch to Discover
-  const sourcesLoadedRef = useRef(false);
-  useEffect(() => {
-    if (tab === 'discover' && !sourcesLoadedRef.current) {
-      sourcesLoadedRef.current = true;
-      listSources().then((srcs) => {
-        setSources(srcs);
-        const enabled = srcs.filter((s) => s.enabled);
-        if (enabled.length > 0 && !selectedSource) {
-          setSelectedSource(enabled[0].name);
-          handleFetchMarketplace(enabled[0].name);
-        }
-      }).catch(() => {});
-    }
-  }, [tab, handleFetchMarketplace]);
-
-  const handleSourceChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
-    const name = e.target.value;
-    setSelectedSource(name);
-    setDiscoverFilter('');
-    handleFetchMarketplace(name);
-  }, [handleFetchMarketplace]);
-
-  const handleInstallFromMarketplace = useCallback(
-    async (entry: MarketplaceEntry) => {
-      if (!selectedSource) return;
-      setInstallStatus((s) => ({ ...s, [entry.id]: 'installing' }));
-      setInstallError((e) => {
-        const next = { ...e };
-        delete next[entry.id];
-        return next;
-      });
-      try {
-        const summary = await installFromMarketplace(selectedSource, entry);
-        await pipeline.loadProcessors();
-        setInstallStatus((s) => ({ ...s, [entry.id]: 'installed' }));
-        setSelected((prev) => new Set(prev).add(summary.id));
-        bus.emit('marketplace:processor-installed', { processorId: summary.id, sourceName: selectedSource });
-      } catch (e) {
-        setInstallStatus((s) => ({ ...s, [entry.id]: 'error' }));
-        setInstallError((err) => ({ ...err, [entry.id]: String(e) }));
-      }
-    },
-    [pipeline, selectedSource],
-  );
-
-  const discoverFiltered = useMemo(
-    () => filterMarketplaceEntries(marketplaceEntries, discoverFilter),
-    [marketplaceEntries, discoverFilter],
-  );
-
-  const installedIds = useMemo(
-    () => new Set(processors.map((p) => p.id)),
-    [processors],
-  );
-
-  const enabledSources = useMemo(() => sources.filter((s) => s.enabled), [sources]);
 
   // ── YAML tab ───────────────────────────────────────────────────────────────
 
@@ -303,13 +259,13 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
 
         {/* Tab bar */}
         <div className={css.tabs}>
-          {(['installed', 'discover', 'yaml'] as Tab[]).map((t) => (
+          {(['installed', 'yaml'] as Tab[]).map((t) => (
             <button
               key={t}
               className={`${css.tab}${tab === t ? ` ${css.tabActive}` : ''}`}
               onClick={() => switchTab(t)}
             >
-              {t === 'installed' ? 'Installed' : t === 'discover' ? 'Discover' : 'Custom YAML'}
+              {t === 'installed' ? 'Installed' : 'Custom YAML'}
               {t === 'installed' && processors.length > 0 && (
                 <span className={css.tabCount}>{processors.length}</span>
               )}
@@ -348,14 +304,6 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                     </button>
                   )}
                 </div>
-                <select
-                  className={css.groupBy}
-                  value={groupBy}
-                  onChange={(e) => setGroupBy(e.target.value as GroupBy)}
-                >
-                  <option value="tag">By tag</option>
-                  <option value="type">By type</option>
-                </select>
                 {selectableFiltered.length > 0 && (
                   <button
                     className={css.selectAll}
@@ -367,6 +315,26 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                 )}
               </div>
 
+              {/* Tag filter chips */}
+              {allTags.length > 0 && (
+                <div className={css.filterChips}>
+                  {activeTagFilters.size > 0 && (
+                    <button className={css.filterChipClear} onClick={clearTagFilters}>
+                      Clear
+                    </button>
+                  )}
+                  {allTags.map((tag) => (
+                    <button
+                      key={tag}
+                      className={`${css.filterChip}${activeTagFilters.has(tag) ? ` ${css.filterChipActive}` : ''}`}
+                      onClick={() => toggleTagFilter(tag)}
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               <div className={css.scroll}>
                 {filtered.length === 0 ? (
                   <div className={css.empty}>
@@ -374,22 +342,35 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                       <>
                         No processors installed.
                         <br />
-                        Use <strong>Discover</strong> or <strong>Custom YAML</strong> to add some.
+                        Use <strong>Custom YAML</strong> to add some.
                       </>
                     ) : (
                       'No processors match your search.'
                     )}
                   </div>
                 ) : (
-                  Array.from(installedGroups.entries())
-                    .sort(([a], [b]) => a.localeCompare(b))
-                    .map(([group, procs]) => (
-                      <div key={group} className={css.group}>
-                        <div className={css.groupHeader}>
-                          <span>{group}</span>
+                  categoryGroups.map(([cat, procs]) => {
+                    const isCollapsed = collapsedSections.has(cat);
+                    return (
+                      <div key={cat} className={css.categorySection}>
+                        <button
+                          className={css.categoryHeader}
+                          onClick={() => toggleSection(cat)}
+                          aria-expanded={!isCollapsed}
+                        >
+                          <svg
+                            className={`${css.chevron}${isCollapsed ? ` ${css.chevronCollapsed}` : ''}`}
+                            width="10"
+                            height="10"
+                            viewBox="0 0 10 10"
+                            fill="none"
+                          >
+                            <path d="M2.5 3.5L5 6l2.5-2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                          <span className={css.categoryLabel}>{getCategoryLabel(cat)}</span>
                           <span className={css.groupCount}>{procs.length}</span>
-                        </div>
-                        {procs.map((p) => {
+                        </button>
+                        {!isCollapsed && procs.map((p) => {
                           const inChain = chainSet.has(p.id);
                           const isSelected = selected.has(p.id);
                           return (
@@ -414,6 +395,9 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                                   </svg>
                                 )}
                               </span>
+                              <span className={css.typeIcon}>
+                                <ProcessorTypeIcon type={p.processorType} size={14} />
+                              </span>
                               <span className={css.itemInfo}>
                                 <span className={css.itemName}>{p.name}</span>
                                 <span className={css.itemSub}>
@@ -436,162 +420,9 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                           );
                         })}
                       </div>
-                    ))
+                    );
+                  })
                 )}
-              </div>
-            </>
-          )}
-
-          {/* Discover (Marketplace) */}
-          {tab === 'discover' && (
-            <>
-              <div className={css.toolbar}>
-                {enabledSources.length > 1 && (
-                  <select
-                    className={css.groupBy}
-                    value={selectedSource}
-                    onChange={handleSourceChange}
-                  >
-                    {enabledSources.map((s) => (
-                      <option key={s.name} value={s.name}>{s.name}</option>
-                    ))}
-                  </select>
-                )}
-                <div className={css.searchWrap}>
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 14 14"
-                    fill="none"
-                    className={css.searchIcon}
-                  >
-                    <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.3" />
-                    <path d="M9.5 9.5l3 3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-                  </svg>
-                  <input
-                    className={css.search}
-                    type="text"
-                    placeholder="Filter..."
-                    value={discoverFilter}
-                    onChange={(e) => setDiscoverFilter(e.target.value)}
-                    disabled={marketplaceEntries.length === 0}
-                  />
-                </div>
-                <button
-                  className={`${css.fetchBtn}${discoverLoading ? ` ${css.fetchBtnLoading}` : ''}`}
-                  onClick={() => handleFetchMarketplace()}
-                  disabled={discoverLoading || !selectedSource}
-                >
-                  {discoverLoading ? (
-                    <>
-                      <span className={css.spinner} /> Fetching...
-                    </>
-                  ) : marketplaceEntries.length > 0 ? (
-                    'Refresh'
-                  ) : (
-                    'Fetch'
-                  )}
-                </button>
-              </div>
-
-              {discoverError && <div className={css.errorBar}>{discoverError}</div>}
-
-              <div className={css.scroll}>
-                {marketplaceEntries.length === 0 && !discoverLoading && !discoverError && (
-                  <div className={css.empty}>
-                    {enabledSources.length === 0
-                      ? 'No sources configured. Open the Marketplace panel to add sources.'
-                      : <>Select a source and click <strong>Fetch</strong> to browse available processors.</>}
-                  </div>
-                )}
-                {discoverFiltered.map((entry) => {
-                  const status = installStatus[entry.id] ?? 'idle';
-                  const qualifiedId = selectedSource ? makeQualifiedId(entry.id, selectedSource) : entry.id;
-                  const alreadyInstalled = installedIds.has(entry.id) || installedIds.has(qualifiedId);
-                  const inChain = chainSet.has(entry.id) || chainSet.has(qualifiedId);
-                  const isInstalled = alreadyInstalled || status === 'installed';
-                  const isSelected = selected.has(qualifiedId);
-                  const isSelectable = isInstalled && !inChain;
-                  return (
-                    <div
-                      key={entry.id}
-                      className={`${css.discoverItem}${isSelected ? ` ${css.discoverItemSelected}` : ''}${inChain ? ` ${css.discoverItemInChain}` : ''}`}
-                      onClick={isSelectable ? () => toggleSelect(qualifiedId) : undefined}
-                      style={isSelectable ? { cursor: 'pointer' } : undefined}
-                    >
-                      <div className={css.discoverCheckboxCol}>
-                        {isInstalled ? (
-                          <span
-                            className={`${css.checkbox}${isSelected ? ` ${css.checkboxChecked}` : ''}${inChain ? ` ${css.checkboxChain}` : ''}`}
-                          >
-                            {(inChain || isSelected) && (
-                              <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
-                                <path
-                                  d="M2 5l2.5 2.5L8 3"
-                                  stroke="currentColor"
-                                  strokeWidth="1.5"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                />
-                              </svg>
-                            )}
-                          </span>
-                        ) : (
-                          <span className={css.discoverCheckboxSpacer} />
-                        )}
-                      </div>
-                      <div className={css.itemInfo} style={{ flex: 1 }}>
-                        <span className={css.itemName}>{entry.name}</span>
-                        <span className={css.itemSub}>
-                          <span className={css.itemVersion}>v{entry.version}</span>
-                          {entry.processorType && (
-                            <span className={`${badgeCss.typeBadge} ${getProcTypeBadgeClass(entry.processorType)}`}>
-                              {getProcTypeLabel(entry.processorType)}
-                            </span>
-                          )}
-                          {entry.description && (
-                            <span className={css.itemDesc}>{entry.description}</span>
-                          )}
-                        </span>
-                        {entry.tags.length > 0 && (
-                          <div className={css.tags}>
-                            {entry.tags.map((t) => (
-                              <span key={t} className={css.tag}>
-                                {t}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                        {installError[entry.id] && (
-                          <div className={css.errorBar} style={{ marginTop: 4 }}>
-                            {installError[entry.id]}
-                          </div>
-                        )}
-                      </div>
-                      <div className={css.discoverAction} onClick={(e) => e.stopPropagation()}>
-                        {isInstalled ? (
-                          inChain ? (
-                            <span className={css.inChainLabel}>in pipeline</span>
-                          ) : null
-                        ) : (
-                          <button
-                            className={css.actionBtn}
-                            onClick={() => handleInstallFromMarketplace(entry)}
-                            disabled={status === 'installing'}
-                          >
-                            {status === 'installing' ? (
-                              <>
-                                <span className={css.spinner} /> Installing...
-                              </>
-                            ) : (
-                              'Install'
-                            )}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
               </div>
             </>
           )}
@@ -671,8 +502,8 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
           )}
         </div>
 
-        {/* Footer (multi-select action bar) */}
-        {(tab === 'installed' || tab === 'discover') && (
+        {/* Footer (multi-select action bar) — only on installed tab */}
+        {tab === 'installed' && (
           <div className={`${css.footer}${hasSelection ? ` ${css.footerActive}` : ''}`}>
             {hasSelection ? (
               <>
