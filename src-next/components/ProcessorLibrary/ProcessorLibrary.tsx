@@ -2,7 +2,7 @@ import { memo, useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import ReactDOM from 'react-dom';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { ProcessorSummary, PackSummary } from '../../bridge/types';
-import { matchesAllTags } from '../../bridge/types';
+import { matchesAllTags, getBareId } from '../../bridge/types';
 import {
   loadProcessorFromFile,
   listPacks,
@@ -61,19 +61,27 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
     listPacks().then(setPacks).catch(() => setPacks([]));
   }, [processors]);
 
-  // Build processor lookup and pack membership set
-  const processorsById = useMemo(
-    () => new Map(processors.map((p) => [p.id, p])),
-    [processors],
-  );
+  // Build processor lookup by bare ID (packs reference bare IDs like "wifi-state",
+  // but installed processors use qualified IDs like "wifi-state@official")
+  const processorsByBareId = useMemo(() => {
+    const map = new Map<string, ProcessorSummary>();
+    for (const p of processors) {
+      map.set(getBareId(p.id), p);
+    }
+    return map;
+  }, [processors]);
 
-  const packMemberIds = useMemo(() => {
+  // Set of qualified IDs that belong to any pack (for filtering standalone processors)
+  const packMemberQualifiedIds = useMemo(() => {
     const ids = new Set<string>();
     for (const pack of packs) {
-      for (const pid of pack.processorIds) ids.add(pid);
+      for (const bareId of pack.processorIds) {
+        const proc = processorsByBareId.get(bareId);
+        if (proc) ids.add(proc.id); // qualified ID
+      }
     }
     return ids;
-  }, [packs]);
+  }, [packs, processorsByBareId]);
 
   // ── Selection ──────────────────────────────────────────────────────────────
 
@@ -95,13 +103,17 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
       // Check if this is a pack ID
       const pack = packs.find((p) => p.id === id);
       if (pack) {
-        pipeline.addPackToChain(pack.processorIds);
+        // Resolve bare IDs to qualified IDs for the pipeline chain
+        const qualifiedIds = pack.processorIds
+          .map((bareId) => processorsByBareId.get(bareId)?.id)
+          .filter(Boolean) as string[];
+        pipeline.addPackToChain(qualifiedIds);
       } else {
         pipeline.addToChain(id);
       }
     }
     onClose();
-  }, [selected, packs, pipeline, onClose]);
+  }, [selected, packs, processorsByBareId, pipeline, onClose]);
 
   const switchTab = useCallback((t: Tab) => {
     setTab(t);
@@ -141,10 +153,10 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
   const libraryEntries: LibraryEntry[] = useMemo(() => {
     const entries: LibraryEntry[] = [];
 
-    // Add packs (with their resolved processors)
+    // Add packs (resolve bare processor IDs to installed processors)
     for (const pack of packs) {
       const packProcs = pack.processorIds
-        .map((id) => processorsById.get(id))
+        .map((bareId) => processorsByBareId.get(bareId))
         .filter(Boolean) as ProcessorSummary[];
 
       // Text filter: match against pack name, description, tags, or any processor name
@@ -164,7 +176,7 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
 
     // Add standalone processors (not in any pack, not built-in PII)
     for (const p of processors) {
-      if (packMemberIds.has(p.id)) continue;
+      if (packMemberQualifiedIds.has(p.id)) continue;
       if (p.id === '__pii_anonymizer') continue;
 
       if (q) {
@@ -180,7 +192,7 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
     }
 
     return entries;
-  }, [packs, processors, processorsById, packMemberIds, q, activeTagFilters]);
+  }, [packs, processors, processorsByBareId, packMemberQualifiedIds, q, activeTagFilters]);
 
   // Check if a pack or standalone is already fully in the chain
   const isEntryInChain = useCallback((entry: LibraryEntry): boolean => {

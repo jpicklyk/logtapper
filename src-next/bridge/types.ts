@@ -401,6 +401,12 @@ export function makeQualifiedId(id: string, source: string): string {
   return `${id}@${source}`;
 }
 
+/** Extract bare ID from a potentially qualified ID (strip `@source` suffix). */
+export function getBareId(qualifiedId: string): string {
+  const at = qualifiedId.lastIndexOf('@');
+  return at > 0 ? qualifiedId.substring(0, at) : qualifiedId;
+}
+
 export interface Source {
   name: string;
   type: 'github' | 'local';
