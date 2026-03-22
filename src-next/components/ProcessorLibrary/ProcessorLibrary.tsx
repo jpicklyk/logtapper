@@ -413,17 +413,17 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                                   <ProcessorTypeIcon type={p.processorType} size={14} />
                                 </span>
                                 <span className={css.itemInfo}>
-                                  <span className={css.itemName}>{p.name}</span>
                                   <span className={css.itemSub}>
+                                    <span className={css.itemName}>{p.name}</span>
                                     <span
                                       className={`${badgeCss.typeBadge} ${getProcTypeBadgeClass(p.processorType)}`}
                                     >
                                       {getProcTypeLabel(p.processorType)}
                                     </span>
-                                    {p.description && (
-                                      <span className={css.itemDesc}>{p.description}</span>
-                                    )}
                                   </span>
+                                  {p.description && (
+                                    <span className={css.itemDesc}>{p.description}</span>
+                                  )}
                                 </span>
                                 <span className={css.itemStatus}>
                                   {inChain && (
