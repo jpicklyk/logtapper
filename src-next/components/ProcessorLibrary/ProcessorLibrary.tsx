@@ -1,14 +1,15 @@
-import { memo, useState, useCallback, useRef, useMemo } from 'react';
+import { memo, useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import ReactDOM from 'react-dom';
 import { open } from '@tauri-apps/plugin-dialog';
-import type { ProcessorSummary } from '../../bridge/types';
+import type { ProcessorSummary, PackSummary } from '../../bridge/types';
 import { matchesAllTags } from '../../bridge/types';
 import {
   loadProcessorFromFile,
+  listPacks,
 } from '../../bridge/commands';
 import { usePipeline } from '../../hooks';
 import { useProcessors, usePipelineChain } from '../../context';
-import { getCategoryLabel, CATEGORY_ORDER, ProcessorTypeIcon, PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY } from '../../ui';
+import { ProcessorTypeIcon, PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY } from '../../ui';
 import { ProcessorDetailCard } from '../ProcessorDetailCard';
 import css from './ProcessorLibrary.module.css';
 import badgeCss from '../../ui/processorBadge.module.css';
@@ -26,6 +27,11 @@ function getProcTypeBadgeClass(type: string): string {
   return badgeCss[PROC_TYPE_CLASS_KEY[type] as keyof typeof badgeCss] ?? '';
 }
 
+/** A selectable entry — either a pack or a standalone processor. */
+type LibraryEntry =
+  | { kind: 'pack'; pack: PackSummary; processors: ProcessorSummary[] }
+  | { kind: 'standalone'; processor: ProcessorSummary };
+
 interface Props {
   onClose: () => void;
 }
@@ -37,10 +43,10 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
 
   const [tab, setTab] = useState<Tab>('installed');
   const [query, setQuery] = useState('');
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(new Set()); // pack IDs or standalone processor IDs
   const [activeTagFilters, setActiveTagFilters] = useState<Set<string>>(new Set());
-  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [packs, setPacks] = useState<PackSummary[]>([]);
 
   // YAML tab state
   const [yamlInput, setYamlInput] = useState('');
@@ -49,6 +55,25 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const chainSet = useMemo(() => new Set(pipelineChain), [pipelineChain]);
+
+  // Fetch packs on mount
+  useEffect(() => {
+    listPacks().then(setPacks).catch(() => setPacks([]));
+  }, [processors]);
+
+  // Build processor lookup and pack membership set
+  const processorsById = useMemo(
+    () => new Map(processors.map((p) => [p.id, p])),
+    [processors],
+  );
+
+  const packMemberIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const pack of packs) {
+      for (const pid of pack.processorIds) ids.add(pid);
+    }
+    return ids;
+  }, [packs]);
 
   // ── Selection ──────────────────────────────────────────────────────────────
 
@@ -67,10 +92,16 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
 
   const handleAddSelected = useCallback(() => {
     for (const id of selected) {
-      pipeline.addToChain(id);
+      // Check if this is a pack ID
+      const pack = packs.find((p) => p.id === id);
+      if (pack) {
+        pipeline.addPackToChain(pack.processorIds);
+      } else {
+        pipeline.addToChain(id);
+      }
     }
     onClose();
-  }, [selected, pipeline, onClose]);
+  }, [selected, packs, pipeline, onClose]);
 
   const switchTab = useCallback((t: Tab) => {
     setTab(t);
@@ -81,16 +112,17 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
 
   const q = query.toLowerCase();
 
-  // All unique tags across all processors (for filter chips)
+  // All unique tags across all processors + packs (for filter chips)
   const allTags = useMemo(() => {
     const tagSet = new Set<string>();
     for (const p of processors) {
-      for (const t of p.tags) {
-        tagSet.add(t);
-      }
+      for (const t of p.tags) tagSet.add(t);
+    }
+    for (const pack of packs) {
+      for (const t of pack.tags) tagSet.add(t);
     }
     return Array.from(tagSet).sort();
-  }, [processors]);
+  }, [processors, packs]);
 
   const toggleTagFilter = useCallback((tag: string) => {
     setActiveTagFilters((prev) => {
@@ -105,70 +137,76 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
     setActiveTagFilters(new Set());
   }, []);
 
-  // Processors filtered by text search AND active tag filters
-  const filtered: ProcessorSummary[] = useMemo(
-    () =>
-      processors.filter((p) => {
-        // Text search filter
-        if (q) {
-          const matchesText =
-            p.name.toLowerCase().includes(q) ||
-            p.description.toLowerCase().includes(q) ||
-            p.tags.some((t) => t.toLowerCase().includes(q));
-          if (!matchesText) return false;
-        }
-        // Tag chip filter (AND: processor must have ALL active tags)
-        if (activeTagFilters.size > 0 && !matchesAllTags(p.tags, activeTagFilters)) {
-          return false;
-        }
-        return true;
-      }),
-    [processors, q, activeTagFilters],
-  );
+  // Build library entries: packs + standalone processors, filtered
+  const libraryEntries: LibraryEntry[] = useMemo(() => {
+    const entries: LibraryEntry[] = [];
 
-  // Group by category, sorted by CATEGORY_ORDER
-  const categoryGroups = useMemo(() => {
-    const groups = new Map<string, ProcessorSummary[]>();
-    for (const p of filtered) {
-      const cat = p.category ?? 'uncategorized';
-      if (!groups.has(cat)) groups.set(cat, []);
-      groups.get(cat)!.push(p);
+    // Add packs (with their resolved processors)
+    for (const pack of packs) {
+      const packProcs = pack.processorIds
+        .map((id) => processorsById.get(id))
+        .filter(Boolean) as ProcessorSummary[];
+
+      // Text filter: match against pack name, description, tags, or any processor name
+      if (q) {
+        const matchesPack =
+          pack.name.toLowerCase().includes(q) ||
+          (pack.description ?? '').toLowerCase().includes(q) ||
+          pack.tags.some((t) => t.toLowerCase().includes(q)) ||
+          packProcs.some((p) => p.name.toLowerCase().includes(q));
+        if (!matchesPack) continue;
+      }
+      // Tag filter
+      if (activeTagFilters.size > 0 && !matchesAllTags(pack.tags, activeTagFilters)) continue;
+
+      entries.push({ kind: 'pack', pack, processors: packProcs });
     }
-    const sorted = Array.from(groups.entries()).sort((a, b) => {
-      const ai = CATEGORY_ORDER.indexOf(a[0]);
-      const bi = CATEGORY_ORDER.indexOf(b[0]);
-      const aRank = ai === -1 ? 999 : ai;
-      const bRank = bi === -1 ? 999 : bi;
-      if (aRank !== bRank) return aRank - bRank;
-      // Both are unknowns: sort alphabetically
-      return a[0].localeCompare(b[0]);
-    });
-    return sorted;
-  }, [filtered]);
 
-  const toggleSection = useCallback((cat: string) => {
-    setCollapsedSections((prev) => {
-      const next = new Set(prev);
-      if (next.has(cat)) next.delete(cat);
-      else next.add(cat);
-      return next;
-    });
-  }, []);
+    // Add standalone processors (not in any pack, not built-in PII)
+    for (const p of processors) {
+      if (packMemberIds.has(p.id)) continue;
+      if (p.id === '__pii_anonymizer') continue;
 
-  const selectableFiltered = useMemo(
-    () => filtered.filter((p) => !chainSet.has(p.id)),
-    [filtered, chainSet],
+      if (q) {
+        const matchesText =
+          p.name.toLowerCase().includes(q) ||
+          p.description.toLowerCase().includes(q) ||
+          p.tags.some((t) => t.toLowerCase().includes(q));
+        if (!matchesText) continue;
+      }
+      if (activeTagFilters.size > 0 && !matchesAllTags(p.tags, activeTagFilters)) continue;
+
+      entries.push({ kind: 'standalone', processor: p });
+    }
+
+    return entries;
+  }, [packs, processors, processorsById, packMemberIds, q, activeTagFilters]);
+
+  // Check if a pack or standalone is already fully in the chain
+  const isEntryInChain = useCallback((entry: LibraryEntry): boolean => {
+    if (entry.kind === 'pack') {
+      return entry.processors.length > 0 && entry.processors.every((p) => chainSet.has(p.id));
+    }
+    return chainSet.has(entry.processor.id);
+  }, [chainSet]);
+
+  const entryId = (entry: LibraryEntry) =>
+    entry.kind === 'pack' ? entry.pack.id : entry.processor.id;
+
+  const selectableEntries = useMemo(
+    () => libraryEntries.filter((e) => !isEntryInChain(e)),
+    [libraryEntries, isEntryInChain],
   );
 
   const handleSelectAll = useCallback(() => {
-    const allIds = selectableFiltered.map((p) => p.id);
+    const allIds = selectableEntries.map(entryId);
     const allSelected = allIds.every((id) => selected.has(id));
     if (allSelected) {
       setSelected(new Set());
     } else {
       setSelected(new Set(allIds));
     }
-  }, [selectableFiltered, selected]);
+  }, [selectableEntries, selected]);
 
   // ── YAML tab ───────────────────────────────────────────────────────────────
 
@@ -215,8 +253,8 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
 
   const hasSelection = selected.size > 0;
   const allSelectableSelected =
-    selectableFiltered.length > 0 &&
-    selectableFiltered.every((p) => selected.has(p.id));
+    selectableEntries.length > 0 &&
+    selectableEntries.every((e) => selected.has(entryId(e)));
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -269,8 +307,8 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
               onClick={() => switchTab(t)}
             >
               {t === 'installed' ? 'Installed' : 'Custom YAML'}
-              {t === 'installed' && processors.length > 0 && (
-                <span className={css.tabCount}>{processors.length}</span>
+              {t === 'installed' && libraryEntries.length > 0 && (
+                <span className={css.tabCount}>{libraryEntries.length}</span>
               )}
             </button>
           ))}
@@ -307,7 +345,7 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                     </button>
                   )}
                 </div>
-                {selectableFiltered.length > 0 && (
+                {selectableEntries.length > 0 && (
                   <button
                     className={css.selectAll}
                     onClick={handleSelectAll}
@@ -339,113 +377,142 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
               )}
 
               <div className={css.scroll}>
-                {filtered.length === 0 ? (
+                {libraryEntries.length === 0 ? (
                   <div className={css.empty}>
                     {processors.length === 0 ? (
                       <>
                         No processors installed.
                         <br />
-                        Use <strong>Custom YAML</strong> to add some.
+                        Install packs from the <strong>Marketplace</strong>, or use <strong>Custom YAML</strong>.
                       </>
                     ) : (
-                      'No processors match your search.'
+                      'No items match your search.'
                     )}
                   </div>
                 ) : (
-                  categoryGroups.map(([cat, procs]) => {
-                    const isCollapsed = collapsedSections.has(cat);
+                  libraryEntries.map((entry) => {
+                    const id = entryId(entry);
+                    const inChain = isEntryInChain(entry);
+                    const isSelected = selected.has(id);
+                    const isExpanded = expandedId === id;
+
+                    if (entry.kind === 'pack') {
+                      const { pack, processors: packProcs } = entry;
+                      const partialInChain = packProcs.some((p) => chainSet.has(p.id)) && !inChain;
+                      return (
+                        <div key={id} className={css.itemWrapper}>
+                          <button
+                            className={`${css.item}${isSelected ? ` ${css.itemSelected}` : ''}${inChain ? ` ${css.itemInChain}` : ''}`}
+                            onClick={() => toggleExpand(id)}
+                          >
+                            <span
+                              className={`${css.checkbox}${isSelected ? ` ${css.checkboxChecked}` : ''}${inChain ? ` ${css.checkboxChain}` : ''}`}
+                              role="checkbox"
+                              aria-checked={isSelected || inChain}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (!inChain) toggleSelect(id);
+                              }}
+                            >
+                              {(inChain || isSelected) && (
+                                <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
+                                  <path d="M2 5l2.5 2.5L8 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                              )}
+                            </span>
+                            <span className={css.itemInfo}>
+                              <span className={css.itemSub}>
+                                <span className={css.packBadge}>Pack</span>
+                                <span className={css.itemName}>{pack.name}</span>
+                                <span className={css.packCount}>{packProcs.length} processors</span>
+                              </span>
+                              {pack.description && (
+                                <span className={css.itemDesc}>{pack.description}</span>
+                              )}
+                              {pack.tags.length > 0 && (
+                                <span className={css.itemTags}>
+                                  {pack.tags.map((t) => (
+                                    <span key={t} className={css.itemTag}>{t}</span>
+                                  ))}
+                                </span>
+                              )}
+                            </span>
+                            <span className={css.itemStatus}>
+                              {inChain && <span className={css.inChainLabel}>in pipeline</span>}
+                              {partialInChain && <span className={css.inChainLabel}>partial</span>}
+                            </span>
+                            <svg
+                              className={`${css.expandChevron}${isExpanded ? ` ${css.expandChevronOpen}` : ''}`}
+                              width="10" height="10" viewBox="0 0 10 10" fill="none"
+                            >
+                              <path d="M2.5 3.5L5 6l2.5-2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          </button>
+                          {isExpanded && (
+                            <div className={css.packProcessorList}>
+                              {packProcs.map((p) => (
+                                <div key={p.id} className={css.packProcessorItem}>
+                                  <ProcessorTypeIcon type={p.processorType} size={12} />
+                                  <span className={css.packProcessorName}>{p.name}</span>
+                                  <span className={css.packProcessorType}>
+                                    {getProcTypeLabel(p.processorType)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }
+
+                    // Standalone processor
+                    const p = entry.processor;
                     return (
-                      <div key={cat} className={css.categorySection}>
+                      <div key={id} className={css.itemWrapper}>
                         <button
-                          className={css.categoryHeader}
-                          onClick={() => toggleSection(cat)}
-                          aria-expanded={!isCollapsed}
+                          className={`${css.item}${isSelected ? ` ${css.itemSelected}` : ''}${inChain ? ` ${css.itemInChain}` : ''}`}
+                          onClick={() => toggleExpand(id)}
                         >
+                          <span
+                            className={`${css.checkbox}${isSelected ? ` ${css.checkboxChecked}` : ''}${inChain ? ` ${css.checkboxChain}` : ''}`}
+                            role="checkbox"
+                            aria-checked={isSelected || inChain}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (!inChain) toggleSelect(id);
+                            }}
+                          >
+                            {(inChain || isSelected) && (
+                              <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
+                                <path d="M2 5l2.5 2.5L8 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            )}
+                          </span>
+                          <span className={css.typeIcon}>
+                            <ProcessorTypeIcon type={p.processorType} size={14} />
+                          </span>
+                          <span className={css.itemInfo}>
+                            <span className={css.itemSub}>
+                              <span className={css.itemName}>{p.name}</span>
+                              <span className={`${badgeCss.typeBadge} ${getProcTypeBadgeClass(p.processorType)}`}>
+                                {getProcTypeLabel(p.processorType)}
+                              </span>
+                            </span>
+                            {p.description && (
+                              <span className={css.itemDesc}>{p.description}</span>
+                            )}
+                          </span>
+                          <span className={css.itemStatus}>
+                            {inChain && <span className={css.inChainLabel}>in pipeline</span>}
+                          </span>
                           <svg
-                            className={`${css.chevron}${isCollapsed ? ` ${css.chevronCollapsed}` : ''}`}
-                            width="10"
-                            height="10"
-                            viewBox="0 0 10 10"
-                            fill="none"
+                            className={`${css.expandChevron}${isExpanded ? ` ${css.expandChevronOpen}` : ''}`}
+                            width="10" height="10" viewBox="0 0 10 10" fill="none"
                           >
                             <path d="M2.5 3.5L5 6l2.5-2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
                           </svg>
-                          <span className={css.categoryLabel}>{getCategoryLabel(cat)}</span>
-                          <span className={css.groupCount}>{procs.length}</span>
                         </button>
-                        {!isCollapsed && procs.map((p) => {
-                          const inChain = chainSet.has(p.id);
-                          const isSelected = selected.has(p.id);
-                          const isExpanded = expandedId === p.id;
-                          return (
-                            <div key={p.id} className={css.itemWrapper}>
-                              <button
-                                className={`${css.item}${isSelected ? ` ${css.itemSelected}` : ''}${inChain ? ` ${css.itemInChain}` : ''}`}
-                                onClick={(e) => {
-                                  // Expand on click anywhere in the row
-                                  toggleExpand(p.id);
-                                  e.stopPropagation();
-                                }}
-                              >
-                                {/* Checkbox zone: stops propagation so it only selects */}
-                                <span
-                                  className={`${css.checkbox}${isSelected ? ` ${css.checkboxChecked}` : ''}${inChain ? ` ${css.checkboxChain}` : ''}`}
-                                  role="checkbox"
-                                  aria-checked={isSelected || inChain}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (!inChain) toggleSelect(p.id);
-                                  }}
-                                >
-                                  {(inChain || isSelected) && (
-                                    <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
-                                      <path
-                                        d="M2 5l2.5 2.5L8 3"
-                                        stroke="currentColor"
-                                        strokeWidth="1.5"
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                      />
-                                    </svg>
-                                  )}
-                                </span>
-                                <span className={css.typeIcon}>
-                                  <ProcessorTypeIcon type={p.processorType} size={14} />
-                                </span>
-                                <span className={css.itemInfo}>
-                                  <span className={css.itemSub}>
-                                    <span className={css.itemName}>{p.name}</span>
-                                    <span
-                                      className={`${badgeCss.typeBadge} ${getProcTypeBadgeClass(p.processorType)}`}
-                                    >
-                                      {getProcTypeLabel(p.processorType)}
-                                    </span>
-                                  </span>
-                                  {p.description && (
-                                    <span className={css.itemDesc}>{p.description}</span>
-                                  )}
-                                </span>
-                                <span className={css.itemStatus}>
-                                  {inChain && (
-                                    <span className={css.inChainLabel}>in pipeline</span>
-                                  )}
-                                </span>
-                                <svg
-                                  className={`${css.expandChevron}${isExpanded ? ` ${css.expandChevronOpen}` : ''}`}
-                                  width="10"
-                                  height="10"
-                                  viewBox="0 0 10 10"
-                                  fill="none"
-                                >
-                                  <path d="M2.5 3.5L5 6l2.5-2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-                                </svg>
-                              </button>
-                              {isExpanded && (
-                                <ProcessorDetailCard processor={p} />
-                              )}
-                            </div>
-                          );
-                        })}
+                        {isExpanded && <ProcessorDetailCard processor={p} />}
                       </div>
                     );
                   })

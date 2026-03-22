@@ -435,6 +435,74 @@
   white-space: nowrap;
 }
 
+/* ── Pack badge & metadata in library rows ────────────────────────────────── */
+
+.packBadge {
+  font-family: var(--font-ui);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-base);
+  color: var(--text-on-accent);
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.packCount {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--text-dimmed);
+  flex-shrink: 0;
+}
+
+.itemTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 2px;
+}
+
+.itemTag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dimmed);
+  padding: 0 4px;
+  background: var(--bg-overlay);
+  border-radius: var(--radius-sm);
+}
+
+/* ── Pack processor list (expanded in library) ────────────────────────────── */
+
+.packProcessorList {
+  padding: 4px 0 6px 38px;
+  border-top: 1px solid var(--border-subtle);
+  margin: 0 14px;
+}
+
+.packProcessorItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+
+.packProcessorName {
+  font-family: var(--font-ui);
+  color: var(--text-muted);
+  flex: 1;
+}
+
+.packProcessorType {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  color: var(--text-dimmed);
+  text-transform: capitalize;
+}
+
 /* ── Expand chevron ──────────────────────────────────────────────────────── */
 
 .expandChevron {

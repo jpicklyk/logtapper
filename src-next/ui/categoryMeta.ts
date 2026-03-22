@@ -7,12 +7,13 @@ export const CATEGORY_LABELS: Record<string, string> = {
   battery: 'Battery & Power',
   process: 'App Lifecycle',
   security: 'Security & Privacy',
+  anonymization: 'Anonymization',
 };
 
 /** Sort order for category display */
 export const CATEGORY_ORDER: string[] = [
   'network', 'telephony', 'stability', 'memory',
-  'battery', 'process', 'security',
+  'battery', 'process', 'security', 'anonymization',
 ];
 
 /** Get display label for a category, falling back to title-cased slug */
