@@ -14,6 +14,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { PipelineRunSummary, PipelineProgress, PackSummary } from '../../bridge/types';
+import { getBareId } from '../../bridge/types';
 import { listPacks } from '../../bridge/commands';
 import PackGroup from './PackGroup';
 import packGroupStyles from './PackGroup.module.css';
@@ -514,10 +515,12 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
 
   // ── Pack grouping ──
 
-  // Build pack groups from packs that have at least one processor in the sortable chain
+  // Build pack groups from packs that have at least one processor in the sortable chain.
+  // Pack manifests use bare IDs ("wifi-state") but chain uses qualified IDs ("wifi-state@official").
   const { packGroups, standaloneProcessors } = useMemo(() => {
-    const chainProcessorMap = new Map(
-      sortableProcessors.map((p) => [p.id, p]),
+    // Map bare ID → chain processor for pack resolution
+    const chainByBareId = new Map(
+      sortableProcessors.map((p) => [getBareId(p.id), p]),
     );
 
     const groups: Array<{ pack: PackSummary; processors: NonNullable<typeof processors>[0][] }> = [];
@@ -525,16 +528,15 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
 
     for (const pack of packs) {
       const packProcs = pack.processorIds
-        .filter((id) => chainProcessorMap.has(id))
-        .map((id) => chainProcessorMap.get(id)!)
-        .filter(Boolean);
+        .map((bareId) => chainByBareId.get(bareId))
+        .filter(Boolean) as NonNullable<typeof processors>[0][];
       if (packProcs.length > 0) {
         groups.push({ pack, processors: packProcs });
         packProcs.forEach((p) => usedIds.add(p.id));
       }
     }
 
-    // Standalone = in sortable chain but not belonging to any pack in the groups
+    // Standalone = in sortable chain but not belonging to any pack
     const standalone = sortableProcessors.filter((p) => !usedIds.has(p.id));
 
     return { packGroups: groups, standaloneProcessors: standalone };
