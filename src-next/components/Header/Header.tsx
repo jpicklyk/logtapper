@@ -232,8 +232,6 @@ export const Header = React.memo(function Header() {
         )}
       </Modal>
 
-      {!isMac && <WindowControls />}
-
       <ExportModal
         open={showExportModal}
         onClose={handleCloseExportModal}
