@@ -13,6 +13,7 @@ import {
   removeSource as removeSourceCmd,
   fetchMarketplace,
   installFromMarketplace,
+  uninstallProcessor as uninstallProcessorCmd,
   checkUpdates as checkUpdatesCmd,
   updateProcessor as updateProcessorCmd,
   updateAllFromSource as updateAllCmd,
@@ -37,6 +38,7 @@ export interface MarketplaceState {
   entriesError: string | null;
   fetchEntries(sourceName: string): Promise<void>;
   installEntry(sourceName: string, entry: MarketplaceEntry): Promise<ProcessorSummary>;
+  uninstallEntry(processorId: string): Promise<void>;
 
   // Updates
   pendingUpdates: UpdateAvailable[];
@@ -115,6 +117,11 @@ export function useMarketplace(): MarketplaceState {
     },
     [],
   );
+
+  const uninstallEntry = useCallback(async (processorId: string): Promise<void> => {
+    await uninstallProcessorCmd(processorId);
+    bus.emit('marketplace:processor-uninstalled', { processorId });
+  }, []);
 
   const checkUpdates = useCallback(async () => {
     dispatch({ type: 'updates:loading' });
@@ -208,6 +215,7 @@ export function useMarketplace(): MarketplaceState {
     entriesError,
     fetchEntries,
     installEntry,
+    uninstallEntry,
     pendingUpdates,
     updatesLoading,
     updateResults,

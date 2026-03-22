@@ -8,16 +8,20 @@ interface Props {
   entry: MarketplaceEntry;
   installed: boolean;
   installStatus?: 'idle' | 'installing' | 'installed' | 'error';
+  uninstallStatus?: 'idle' | 'uninstalling' | 'error';
   installError?: string;
   onInstall: () => void;
+  onUninstall?: () => void;
 }
 
 export const MarketplaceEntryRow = React.memo(function MarketplaceEntryRow({
   entry,
   installed,
   installStatus = 'idle',
+  uninstallStatus = 'idle',
   installError,
   onInstall,
+  onUninstall,
 }: Props) {
   const typeClass = entry.processorType
     ? badgeCss[PROC_TYPE_CLASS_KEY[entry.processorType] as keyof typeof badgeCss] ?? ''
@@ -53,7 +57,22 @@ export const MarketplaceEntryRow = React.memo(function MarketplaceEntryRow({
       </div>
       <div className={css.entryAction}>
         {installed || installStatus === 'installed' ? (
-          <span className={css.installedLabel}>Installed</span>
+          onUninstall ? (
+            <button
+              className={css.actionBtnSecondary}
+              onClick={onUninstall}
+              disabled={uninstallStatus === 'uninstalling'}
+              title="Uninstall this processor"
+            >
+              {uninstallStatus === 'uninstalling' ? (
+                <><span className={css.spinner} /> Removing...</>
+              ) : (
+                'Uninstall'
+              )}
+            </button>
+          ) : (
+            <span className={css.installedLabel}>Installed</span>
+          )
         ) : (
           <button
             className={css.actionBtn}

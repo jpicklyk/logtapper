@@ -100,9 +100,10 @@ export type AppEvents = {
   'pane:notice':                     { paneId: string; message: string };
 
   // ── Marketplace ─────────────────────────────────────────────────────────
-  'marketplace:processor-installed': { processorId: string; sourceName: string };
-  'marketplace:processor-updated':   { processorId: string; oldVersion: string; newVersion: string };
-  'marketplace:sources-changed':     undefined;
+  'marketplace:processor-installed':   { processorId: string; sourceName: string };
+  'marketplace:processor-updated':     { processorId: string; oldVersion: string; newVersion: string };
+  'marketplace:processor-uninstalled': { processorId: string };
+  'marketplace:sources-changed':       undefined;
 
   // ── File operations ──────────────────────────────────────────────────────
   /** Emitted when user triggers Save. Focused EditorTab should handle. */

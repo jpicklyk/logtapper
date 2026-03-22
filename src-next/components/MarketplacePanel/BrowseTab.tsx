@@ -8,6 +8,7 @@ import { MarketplaceEntryRow } from './MarketplaceEntryRow';
 import css from './MarketplacePanel.module.css';
 
 type InstallStatus = 'idle' | 'installing' | 'installed' | 'error';
+type UninstallStatus = 'idle' | 'uninstalling' | 'error';
 
 interface Props {
   marketplace: MarketplaceState;
@@ -23,16 +24,28 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
     entriesError,
     fetchEntries,
     installEntry,
+    uninstallEntry,
   } = marketplace;
 
   const pipeline = usePipeline();
   const processors = useProcessors();
   const [filter, setFilter] = useState('');
+  const [activeTagFilters, setActiveTagFilters] = useState<Set<string>>(new Set());
   const [installStatus, setInstallStatus] = useState<Record<string, InstallStatus>>({});
   const [installError, setInstallError] = useState<Record<string, string>>({});
+  const [uninstallStatus, setUninstallStatus] = useState<Record<string, UninstallStatus>>({});
 
   const enabledSources = useMemo(() => sources.filter((s) => s.enabled), [sources]);
   const installedIds = useMemo(() => new Set(processors.map((p) => p.id)), [processors]);
+
+  // All unique tags from current entries for chip filters
+  const allTags = useMemo(() => {
+    const tagSet = new Set<string>();
+    for (const entry of entries) {
+      for (const t of entry.tags) tagSet.add(t);
+    }
+    return Array.from(tagSet).sort();
+  }, [entries]);
 
   // Auto-select first source and fetch
   useEffect(() => {
@@ -42,6 +55,11 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
       fetchEntries(first);
     }
   }, [enabledSources, selectedSource, selectSource, fetchEntries]);
+
+  // Reset tag filters when entries change (source switch)
+  useEffect(() => {
+    setActiveTagFilters(new Set());
+  }, [entries]);
 
   const handleSourceChange = useCallback(
     (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -53,15 +71,27 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
     [selectSource, fetchEntries],
   );
 
+  const toggleTagFilter = useCallback((tag: string) => {
+    setActiveTagFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(tag)) next.delete(tag);
+      else next.add(tag);
+      return next;
+    });
+  }, []);
+
+  const clearTagFilters = useCallback(() => {
+    setActiveTagFilters(new Set());
+  }, []);
+
   const handleInstall = useCallback(
     async (entry: MarketplaceEntry) => {
       if (!selectedSource) return;
       setInstallStatus((s) => ({ ...s, [entry.id]: 'installing' }));
       setInstallError((e) => { const n = { ...e }; delete n[entry.id]; return n; });
       try {
-        const summary = await installEntry(selectedSource, entry);
+        await installEntry(selectedSource, entry);
         await pipeline.loadProcessors();
-        pipeline.addToChain(summary.id);
         setInstallStatus((s) => ({ ...s, [entry.id]: 'installed' }));
       } catch (e) {
         setInstallStatus((s) => ({ ...s, [entry.id]: 'error' }));
@@ -71,7 +101,33 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
     [selectedSource, installEntry, pipeline],
   );
 
-  const filtered = useMemo(() => filterMarketplaceEntries(entries, filter), [entries, filter]);
+  const handleUninstall = useCallback(
+    async (entry: MarketplaceEntry, processorId: string) => {
+      setUninstallStatus((s) => ({ ...s, [entry.id]: 'uninstalling' }));
+      try {
+        await uninstallEntry(processorId);
+        await pipeline.loadProcessors();
+        // Clear installed status so Install button reappears
+        setInstallStatus((s) => { const n = { ...s }; delete n[entry.id]; return n; });
+        setUninstallStatus((s) => ({ ...s, [entry.id]: 'idle' }));
+      } catch {
+        setUninstallStatus((s) => ({ ...s, [entry.id]: 'error' }));
+      }
+    },
+    [uninstallEntry, pipeline],
+  );
+
+  const textFiltered = useMemo(() => filterMarketplaceEntries(entries, filter), [entries, filter]);
+
+  const filtered = useMemo(() => {
+    if (activeTagFilters.size === 0) return textFiltered;
+    return textFiltered.filter((e) => {
+      for (const tag of activeTagFilters) {
+        if (!e.tags.includes(tag)) return false;
+      }
+      return true;
+    });
+  }, [textFiltered, activeTagFilters]);
 
   return (
     <>
@@ -119,6 +175,25 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
         </button>
       </div>
 
+      {allTags.length > 0 && (
+        <div className={css.tagFilterBar}>
+          {activeTagFilters.size > 0 && (
+            <button className={css.tagFilterClear} onClick={clearTagFilters}>
+              Clear
+            </button>
+          )}
+          {allTags.map((tag) => (
+            <button
+              key={tag}
+              className={`${css.tagChip}${activeTagFilters.has(tag) ? ` ${css.tagChipActive}` : ''}`}
+              onClick={() => toggleTagFilter(tag)}
+            >
+              {tag}
+            </button>
+          ))}
+        </div>
+      )}
+
       {entriesError && <div className={css.errorBar}>{entriesError}</div>}
 
       <div className={css.scroll}>
@@ -132,15 +207,20 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
         {filtered.map((entry) => {
           // Check if any installed processor matches this entry (bare or qualified id)
           const qualifiedId = selectedSource ? makeQualifiedId(entry.id, selectedSource) : entry.id;
-          const isInstalled = installedIds.has(entry.id) || installedIds.has(qualifiedId);
+          const isInstalled = installedIds.has(entry.id) || installedIds.has(qualifiedId)
+            || installStatus[entry.id] === 'installed';
+          // Resolve which processorId to uninstall (prefer qualified)
+          const installedProcId = installedIds.has(qualifiedId) ? qualifiedId : entry.id;
           return (
             <MarketplaceEntryRow
               key={entry.id}
               entry={entry}
               installed={isInstalled}
               installStatus={installStatus[entry.id]}
+              uninstallStatus={uninstallStatus[entry.id]}
               installError={installError[entry.id]}
               onInstall={() => handleInstall(entry)}
+              onUninstall={isInstalled ? () => handleUninstall(entry, installedProcId) : undefined}
             />
           );
         })}

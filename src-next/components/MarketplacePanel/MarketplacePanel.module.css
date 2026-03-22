@@ -281,6 +281,72 @@
   color: var(--text-dimmed);
 }
 
+/* ── Tag filter chips (Browse toolbar) ───────────────────────────────────── */
+
+.tagFilterBar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  overflow-x: auto;
+  flex-shrink: 0;
+  scrollbar-width: none;
+}
+
+.tagFilterBar::-webkit-scrollbar {
+  display: none;
+}
+
+.tagChip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-overlay);
+  color: var(--text-dimmed);
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.tagChip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tagChipActive {
+  background: var(--accent-muted);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tagFilterClear {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-dimmed);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.tagFilterClear:hover {
+  border-color: var(--danger-muted-border);
+  color: var(--danger);
+  background: var(--danger-muted);
+}
+
 /* ── Buttons ─────────────────────────────────────────────────────────────── */
 
 .fetchBtn {
