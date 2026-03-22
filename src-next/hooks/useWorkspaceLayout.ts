@@ -130,7 +130,7 @@ export function useWorkspaceLayout() {
   // ---------------------------------------------------------------------------
 
   const resizeRightPane = useCallback((delta: number) => {
-    setRightPaneWidth((prev) => clamp(prev - delta, MIN_RIGHT_WIDTH, MAX_RIGHT_WIDTH));
+    setRightPaneWidth((prev) => clamp(prev + delta, MIN_RIGHT_WIDTH, MAX_RIGHT_WIDTH));
   }, []);
 
   const resizeBottomPane = useCallback((delta: number) => {
