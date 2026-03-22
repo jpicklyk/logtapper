@@ -308,21 +308,48 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
           const showProcessors = expandedPackProcessors === pack.id;
           return (
             <div key={`pack-${pack.id}`} className={css.packEntry}>
-              <div
-                className={css.packHeader}
-                onClick={() => togglePackProcessors(pack.id)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePackProcessors(pack.id); } }}
-              >
-                <svg
-                  className={`${css.packChevron}${showProcessors ? ` ${css.packChevronOpen}` : ''}`}
-                  width="10" height="10" viewBox="0 0 10 10" fill="none"
+              <div className={css.packTop}>
+                <div
+                  className={css.packHeader}
+                  onClick={() => togglePackProcessors(pack.id)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePackProcessors(pack.id); } }}
                 >
-                  <path d="M3.5 2L7 5l-3.5 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                <span className={css.packBadge}>Pack</span>
-                <span className={css.packName}>{pack.name}</span>
+                  <svg
+                    className={`${css.packChevron}${showProcessors ? ` ${css.packChevronOpen}` : ''}`}
+                    width="10" height="10" viewBox="0 0 10 10" fill="none"
+                  >
+                    <path d="M3.5 2L7 5l-3.5 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <span className={css.packBadge}>Pack</span>
+                  <span className={css.packName}>{pack.name}</span>
+                </div>
+                <div className={css.packAction} onClick={(e) => e.stopPropagation()}>
+                  {isPackInstalled ? (
+                    <button
+                      className={css.packBtnUninstall}
+                      onClick={() => handleUninstallPack(pack.id)}
+                      disabled={uninstallStatus[pack.id] === 'uninstalling'}
+                    >
+                      {uninstallStatus[pack.id] === 'uninstalling' ? (
+                        <><span className={css.spinner} /> Removing</>
+                      ) : 'Uninstall'}
+                    </button>
+                  ) : (
+                    <button
+                      className={css.packBtnInstall}
+                      onClick={() => handleInstallPack(pack)}
+                      disabled={installStatus[pack.id] === 'installing'}
+                    >
+                      {installStatus[pack.id] === 'installing' ? (
+                        <><span className={css.spinner} /> Installing</>
+                      ) : 'Install'}
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className={css.packMeta}>
                 <span className={css.packCount}>{pack.processorIds.length} processors</span>
                 {pack.category && <span className={css.packCategory}>{pack.category}</span>}
               </div>
@@ -330,45 +357,23 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
                 <div className={css.packDesc}>{pack.description}</div>
               )}
               {pack.tags.length > 0 && (
-                <div className={css.tags}>
-                  {pack.tags.map((t) => <span key={t} className={css.tag}>{t}</span>)}
+                <div className={css.packTags}>
+                  {pack.tags.map((t) => <span key={t} className={css.packTag}>{t}</span>)}
                 </div>
               )}
               {installError[pack.id] && (
                 <div className={css.errorBar} style={{ marginTop: 4 }}>{installError[pack.id]}</div>
               )}
-              <div className={css.packActions} onClick={(e) => e.stopPropagation()}>
-                {isPackInstalled ? (
-                  <button
-                    className={css.actionBtnSecondary}
-                    onClick={() => handleUninstallPack(pack.id)}
-                    disabled={uninstallStatus[pack.id] === 'uninstalling'}
-                  >
-                    {uninstallStatus[pack.id] === 'uninstalling' ? (
-                      <><span className={css.spinner} /> Removing...</>
-                    ) : 'Uninstall Pack'}
-                  </button>
-                ) : (
-                  <button
-                    className={css.actionBtn}
-                    onClick={() => handleInstallPack(pack)}
-                    disabled={installStatus[pack.id] === 'installing'}
-                  >
-                    {installStatus[pack.id] === 'installing' ? (
-                      <><span className={css.spinner} /> Installing...</>
-                    ) : 'Install Pack'}
-                  </button>
-                )}
-              </div>
               {showProcessors && (
                 <div className={css.packProcessorList}>
                   {pack.processorIds.map((pid) => {
                     const matchingEntry = entries.find((e) => e.id === pid);
                     return (
                       <div key={pid} className={css.packProcessorItem}>
+                        <span className={css.packProcessorDot} />
                         <span className={css.packProcessorName}>{matchingEntry?.name ?? pid}</span>
                         {matchingEntry?.processorType && (
-                          <span className={css.packProcessorType}>{matchingEntry.processorType}</span>
+                          <span className={css.packProcessorType}>{matchingEntry.processorType.replace('_', ' ')}</span>
                         )}
                       </div>
                     );

@@ -752,26 +752,45 @@
 /* ── Pack Entries ────────────────────────────────────────────────────────── */
 
 .packEntry {
-  padding: 8px 10px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border-subtle);
+  transition: background var(--transition-fast);
+}
+
+.packEntry:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/* Row 1: chevron + badge + name ... action button */
+.packTop {
+  display: flex;
+  align-items: center;
+  gap: 0;
 }
 
 .packHeader {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
   cursor: pointer;
   user-select: none;
+  padding: 2px 0;
 }
 
-.packHeader:hover {
-  opacity: 0.85;
+.packHeader:hover .packName {
+  color: var(--accent);
 }
 
 .packChevron {
   color: var(--text-dimmed);
   flex-shrink: 0;
-  transition: transform 0.15s ease;
+  transition: transform var(--transition-normal), color var(--transition-fast);
+}
+
+.packHeader:hover .packChevron {
+  color: var(--text-muted);
 }
 
 .packChevronOpen {
@@ -779,58 +798,141 @@
 }
 
 .packBadge {
-  font-size: 10px;
-  font-weight: 600;
+  font-family: var(--font-ui);
+  font-size: 9px;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  padding: 1px 5px;
+  letter-spacing: 0.06em;
+  padding: 2px 5px;
   border-radius: var(--radius-sm);
-  background: var(--accent);
-  color: var(--bg-base);
+  background: var(--accent-base);
+  color: var(--text-on-accent);
   flex-shrink: 0;
+  line-height: 1;
 }
 
 .packName {
-  font-weight: 500;
+  font-family: var(--font-ui);
+  font-weight: 600;
   font-size: 13px;
   color: var(--text);
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  transition: color var(--transition-fast);
+  /* Allow wrapping so names are never truncated */
+}
+
+/* Action button zone */
+.packAction {
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.packBtnInstall {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--accent-base);
+  background: var(--accent-base);
+  color: var(--text-on-accent);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   white-space: nowrap;
 }
 
+.packBtnInstall:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.packBtnInstall:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.packBtnUninstall {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.packBtnUninstall:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: rgba(248, 81, 73, 0.08);
+}
+
+.packBtnUninstall:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Row 2: processor count + category */
+.packMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 0 17px; /* align with name (past chevron) */
+}
+
 .packCount {
+  font-family: var(--font-ui);
   font-size: 11px;
   color: var(--text-dimmed);
-  flex-shrink: 0;
 }
 
 .packCategory {
+  font-family: var(--font-ui);
   font-size: 10px;
   color: var(--text-dimmed);
-  padding: 1px 4px;
+  padding: 1px 6px;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  flex-shrink: 0;
+  border-radius: var(--radius-full);
 }
 
+/* Description */
 .packDesc {
   font-size: 12px;
   color: var(--text-muted);
-  margin: 4px 0 0 16px;
-  line-height: 1.4;
+  margin: 5px 0 0 17px;
+  line-height: 1.45;
 }
 
-.packActions {
-  margin-top: 6px;
-  margin-left: 16px;
+/* Tags */
+.packTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0 0 17px;
 }
 
+.packTag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dimmed);
+  padding: 1px 5px;
+  background: var(--bg-overlay);
+  border-radius: var(--radius-sm);
+}
+
+/* Expanded processor list */
 .packProcessorList {
-  margin: 6px 0 0 16px;
-  padding: 6px 0;
+  margin: 8px 0 0 17px;
+  padding: 6px 0 2px;
   border-top: 1px solid var(--border-subtle);
 }
 
@@ -842,24 +944,36 @@
   font-size: 12px;
 }
 
+.packProcessorDot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text-dimmed);
+  flex-shrink: 0;
+}
+
 .packProcessorName {
   color: var(--text-muted);
+  font-family: var(--font-ui);
 }
 
 .packProcessorType {
+  font-family: var(--font-ui);
   font-size: 10px;
   color: var(--text-dimmed);
-  padding: 0 4px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  margin-left: auto;
+  text-transform: capitalize;
 }
 
+/* Section divider between packs and standalone */
 .sectionDivider {
-  padding: 8px 10px 4px;
+  padding: 10px 12px 5px;
+  font-family: var(--font-ui);
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
   color: var(--text-dimmed);
-  border-bottom: 1px solid var(--border-subtle);
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
 }
