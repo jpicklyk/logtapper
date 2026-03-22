@@ -5,6 +5,7 @@ meta:
   author: "LogTapper"
   description: "Detects exception storms — bursts of 20+ identical errors within a 2-second window. Uses the BurstDetector aggregate to fire exactly once per rising edge. Useful for diagnosing recursive failure loops (e.g. 530 identical ServiceNotFoundExceptions/second)."
   tags: ["exception", "error", "storm", "burst", "android", "stability"]
+  category: stability
 
 # Only matches logcat entries in the SYSTEM LOG section of bugreports
 sections:

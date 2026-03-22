@@ -5,6 +5,7 @@ meta:
   author: "LogTapper"
   description: "Surfaces why mobile data setup fails on Android. Captures trySetupData failures, data-allowed gate rejections, and no-APN conditions. Extracts all data-enabled flag snapshots (isUserDataEnabled, mInternalDataEnabled, mPolicyDataEnabled, mCarrierDataEnabled, mThermalDataEnabled) so the root cause is visible immediately — e.g. isUserDataEnabled=false means the mobile data toggle is OFF."
   tags: ["cellular", "mobile-data", "dct", "telephony", "android", "samsung"]
+  category: telephony
 
 # Restrict bugreport processing to sections where DCT-C-0 and DataEnabledSettings
 # log lines appear. For pure logcat files (no sections), this is a no-op.

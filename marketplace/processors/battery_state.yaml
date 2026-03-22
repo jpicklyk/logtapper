@@ -5,6 +5,7 @@ version: 3.1.0
 author: LogTapper
 description: "Tracks battery level, charging status, and plug source from BatteryService. Each transition captures all fields at once so level + status + plugged are set atomically. Supports Samsung (level:N, status:N, ac:true/false) and AOSP (level=N, status=N, plugged=N) formats."
 tags: [battery, power, android]
+category: battery
 builtin: false
 
 group: System

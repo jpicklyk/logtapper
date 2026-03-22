@@ -5,6 +5,7 @@ meta:
   author: "LogTapper"
   description: "Finds EBADF (bad file descriptor) errors across all processes. Groups by PID and operation type. High EBADF rates often indicate FD recycling caused by an FD leak in another process."
   tags: ["ebadf", "fd", "file-descriptor", "error", "android"]
+  category: stability
 
 # Only matches logcat entries in the SYSTEM LOG section of bugreports
 sections:

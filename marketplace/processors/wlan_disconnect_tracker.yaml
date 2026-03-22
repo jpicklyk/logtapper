@@ -5,6 +5,7 @@ version: 1.5.0
 author: LogTapper
 description: "Tracks WiFi connection state with focus on disconnection events. Captures IEEE 802.11 reason codes, locally-generated flags, and BSSID from wpa_supplicant CTRL-EVENT logcat messages and WifiClientModeImpl/SemClientModeImpl state logs. Uses DUMPSYS NORMAL section filtering for bugreport NETWORK_DISCONNECTION_EVENT transitions to avoid cross-section duplication."
 tags: [wifi, network, wlan, disconnect, android]
+category: network
 
 group: Network
 

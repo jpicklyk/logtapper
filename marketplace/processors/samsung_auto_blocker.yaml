@@ -10,6 +10,7 @@ description: >-
   Note: dumpstate transitions require the pipeline bug fix (currently
   hardcoded to LogcatParser) to fire reliably.
 tags: [samsung, security, auto_blocker, usb, adb]
+category: security
 builtin: false
 
 group: Security

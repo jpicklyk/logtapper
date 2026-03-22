@@ -5,6 +5,7 @@ meta:
   author: "LogTapper"
   description: "Tracks ART GC events. Monitors heap used/max and GC duration. Classifies heap pressure as normal (<70%), stressed (70-85%), or critical (>85%). Explicit (system-forced) GCs tracked separately."
   tags: ["gc", "heap", "art", "memory", "android"]
+  category: memory
 
 # Only matches logcat entries in the SYSTEM LOG section of bugreports
 sections:

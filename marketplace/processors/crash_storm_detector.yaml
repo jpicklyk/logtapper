@@ -5,6 +5,7 @@ meta:
   author: "LogTapper"
   description: "Detects crash storms — when the same app crashes 3+ times within 10 seconds. Matches AndroidRuntime 'Process:' lines to extract the process name and PID. Fires once per rising edge per process."
   tags: ["crash", "fatal", "androidruntime", "storm", "burst", "android", "stability"]
+  category: stability
 
 # Only matches logcat entries in the SYSTEM LOG section of bugreports
 sections:

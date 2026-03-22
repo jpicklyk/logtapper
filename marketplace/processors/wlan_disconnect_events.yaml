@@ -5,6 +5,7 @@ meta:
   author: "LogTapper"
   description: "Captures WiFi disconnection events from bugreport WifiStateMachine dumps and live logcat. Extracts IEEE 802.11 reason codes, locally-generated flags, BSSID, and SSID. Section filtering restricts bugreport processing to SYSTEM LOG and DUMPSYS NORMAL; content-based dedup skips compact/metrics duplicates within those sections."
   tags: ["wifi", "network", "wlan", "disconnect", "android"]
+  category: network
 
 # Restrict bugreport processing to sections where WLAN disconnect data lives:
 # - SYSTEM LOG: logcat entries with CTRL-EVENT-DISCONNECTED (wpa_supplicant)

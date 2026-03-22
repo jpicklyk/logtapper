@@ -5,6 +5,7 @@ meta:
   author: "LogTapper"
   description: "Tracks IMS bearer setup and teardown events from logcat and bugreport. Extracts state transitions (CONNECTING → CONNECTED → DISCONNECTED), transport type (WWAN/WLAN), network type (LTE, NR), and interface name. Distinguishes 'IMS connected but no internet' situations from full connectivity loss."
   tags: ["ims", "volte", "telephony", "bearer", "rcs", "android"]
+  category: network
 
 # Restrict bugreport processing to sections where IMS/VoLTE bearer events appear.
 # SYSTEM LOG: logcat entries from PhoneStateTracker, VolteServiceModule, PdnController

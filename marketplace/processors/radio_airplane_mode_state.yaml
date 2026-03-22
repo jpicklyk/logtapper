@@ -5,6 +5,7 @@ version: 1.0.1
 author: LogTapper
 description: "Tracks airplane mode, data connection state, emergency-only mode, and SIM card state from MobileSignalController. Compound transitions capture all four fields atomically when possible; simpler fallback transitions handle partial log lines."
 tags: [telephony, radio, airplane-mode, sim, android]
+category: telephony
 builtin: false
 
 group: Telephony

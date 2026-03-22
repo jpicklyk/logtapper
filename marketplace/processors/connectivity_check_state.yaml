@@ -11,6 +11,7 @@ description: >
   ConnectivityService CONNECTED/DISCONNECTED — this tracker shows *why*
   a network isn't validating (DNS timeout, HTTP blocked, captive portal, etc.).
 tags: [network, connectivity, dns, android]
+category: network
 
 group: Network
 

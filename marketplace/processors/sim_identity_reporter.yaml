@@ -11,6 +11,7 @@ meta:
     (e.g. Sprint SIM on T-Mobile network) that cause ePDG FQDN failures and
     IMS handover issues.
   tags: [sim, plmn, mcc, mnc, carrier, telephony, android, samsung]
+  category: telephony
 
 group: Telephony
 

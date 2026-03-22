@@ -5,6 +5,7 @@ version: 3.1.1
 author: LogTapper
 description: "Tracks network connectivity state: connected/disconnected, network type (WIFI, MOBILE, etc.), and validation status. Supports Android 13+ (validation/capabilities), Android 6-12 (EVENT_NETWORK_INFO_CHANGED), and legacy (pre-6) formats."
 tags: [network, connectivity, android]
+category: network
 builtin: false
 
 group: Network

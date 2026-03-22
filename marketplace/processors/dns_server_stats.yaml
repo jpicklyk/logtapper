@@ -11,6 +11,7 @@ meta:
     DoT/DoH configuration status, and resolver tuning parameters. Works on
     dumpstate/bugreport files only.
   tags: [network, dns, android, bugreport]
+  category: network
 
 sections:
   - "DUMPSYS NORMAL"

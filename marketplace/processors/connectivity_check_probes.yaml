@@ -9,6 +9,7 @@ meta:
     as a root cause of connectivity check failures. Aggregates probe outcomes
     by type and result, and charts probe latency over time.
   tags: [network, connectivity, dns, android]
+  category: network
 
 # Only matches logcat entries in the SYSTEM LOG section of bugreports
 sections:

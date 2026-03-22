@@ -10,6 +10,7 @@ description: >
   (e.g. OUT_OF_SERVICE → NR_SA IN_SERVICE → voice IN_SERVICE → LTE)
   without manual searching through dumpstate output.
 tags: [telephony, cellular, registration, rat, android]
+category: telephony
 
 group: Telephony
 

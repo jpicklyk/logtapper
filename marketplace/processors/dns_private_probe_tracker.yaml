@@ -11,6 +11,7 @@ meta:
     servers that consistently fail DoT while public resolvers succeed.
     Works on dumpstate/bugreport files only.
   tags: [network, dns, android, bugreport, private-dns]
+  category: network
 
 sections:
   - "DUMPSYS NORMAL"

@@ -5,6 +5,7 @@ meta:
   author: "LogTapper"
   description: "Tracks exception stack traces across all tags — both fatal crashes (AndroidRuntime FATAL EXCEPTION) and non-fatal logged exceptions (Binder, system_server, etc.). Separates fatal vs non-fatal counts, shows which apps crashed and why, and groups non-fatal exceptions by source and type. System.err exceptions are attributed to the owning app package via stack frame analysis."
   tags: ["exception", "crash", "stack-trace", "android", "stability"]
+  category: stability
 
 # Only matches logcat entries in the SYSTEM LOG section of bugreports
 sections:

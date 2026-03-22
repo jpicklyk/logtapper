@@ -8,6 +8,8 @@ description: >
   precedes EBADF errors in other processes — indicating FD recycling as the
   root cause of use-after-close failures. Fires when an EBADF error is seen
   within 150,000 lines of a Watchdog FD spike.
+tags: [ebadf, fd, correlator, android, stability]
+category: stability
 
 sources:
   - id: fd_spike

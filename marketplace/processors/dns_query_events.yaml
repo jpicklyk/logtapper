@@ -11,6 +11,7 @@ meta:
     breakdowns, and latency distribution. Works on logcat streams and
     dumpstate/bugreport files.
   tags: [network, dns, android, performance]
+  category: network
 
 vars:
   - name: total_queries
