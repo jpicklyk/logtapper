@@ -233,7 +233,9 @@ pub fn run() {
                     *sources = loaded;
                 }
 
-                // Migrate legacy local official sources to GitHub
+                // In release builds only, migrate legacy local official sources to GitHub.
+                // In dev builds, local sources are intentional (pointing at project marketplace/).
+                if !cfg!(debug_assertions) {
                 if let Ok(mut sources) = state.sources.lock() {
                     let mut migrated = false;
                     for source in sources.iter_mut() {
@@ -253,6 +255,7 @@ pub fn run() {
                         }
                     }
                 }
+                } // end release-only migration
             }
 
             // Load persisted user processors from app data directory.
