@@ -378,6 +378,76 @@ mcp:
     }
 
     #[test]
+    fn parse_marketplace_index_with_packs() {
+        // Test that MarketplaceIndex correctly deserializes a JSON with both processors and packs arrays
+        let json = r#"{
+            "name": "test",
+            "version": 2,
+            "processors": [
+                {"id": "wifi-state", "name": "WiFi State", "version": "1.0.0", "path": "processors/wifi_state.yaml", "tags": ["wifi"], "sha256": "", "deprecated": false}
+            ],
+            "packs": [
+                {"id": "wifi-pack", "name": "WiFi Pack", "version": "1.0.0", "path": "packs/wifi.pack.yaml", "tags": ["wifi"], "sha256": "", "processor_ids": ["wifi-state"]}
+            ]
+        }"#;
+        let index: MarketplaceIndex = serde_json::from_str(json).expect("should parse");
+        assert_eq!(index.processors.len(), 1);
+        assert_eq!(index.packs.len(), 1);
+        assert_eq!(index.packs[0].id, "wifi-pack");
+        assert_eq!(index.packs[0].processor_ids, vec!["wifi-state"]);
+    }
+
+    #[test]
+    fn parse_marketplace_index_without_packs() {
+        // Backward compatibility: packs array is optional (serde default)
+        let json = r#"{
+            "name": "test",
+            "version": 2,
+            "processors": [
+                {"id": "wifi-state", "name": "WiFi State", "version": "1.0.0", "path": "processors/wifi_state.yaml", "tags": ["wifi"], "sha256": "", "deprecated": false}
+            ]
+        }"#;
+        let index: MarketplaceIndex = serde_json::from_str(json).expect("should parse");
+        assert_eq!(index.processors.len(), 1);
+        assert!(index.packs.is_empty());
+    }
+
+    #[test]
+    fn marketplace_pack_entry_fields() {
+        let json = r#"{
+            "id": "telephony-suite",
+            "name": "Telephony Suite",
+            "version": "1.0.0",
+            "description": "All telephony processors",
+            "path": "packs/telephony-suite.pack.yaml",
+            "tags": ["telephony", "cellular"],
+            "sha256": "",
+            "category": "telephony",
+            "processor_ids": ["cellular-reg", "radio-state", "sim-identity"]
+        }"#;
+        let entry: MarketplacePackEntry = serde_json::from_str(json).expect("should parse");
+        assert_eq!(entry.id, "telephony-suite");
+        assert_eq!(entry.category, Some("telephony".to_string()));
+        assert_eq!(entry.processor_ids.len(), 3);
+    }
+
+    #[test]
+    fn parse_bundled_marketplace_json() {
+        // Verify the actual marketplace.json in the repo is valid
+        let json = include_str!("../../../marketplace/marketplace.json");
+        let index: MarketplaceIndex = serde_json::from_str(json).expect("bundled marketplace.json should parse");
+        assert!(index.processors.len() > 0, "should have processors");
+        assert!(index.packs.len() > 0, "should have packs");
+        // Verify all pack processor_ids reference existing processor IDs
+        let proc_ids: std::collections::HashSet<&str> = index.processors.iter().map(|p| p.id.as_str()).collect();
+        for pack in &index.packs {
+            for pid in &pack.processor_ids {
+                assert!(proc_ids.contains(pid.as_str()), "pack '{}' references unknown processor '{}'", pack.id, pid);
+            }
+        }
+    }
+
+    #[test]
     fn prepare_conditions_populates_parsed_ast() {
         let yaml = r#"
 source_types: ["logcat"]

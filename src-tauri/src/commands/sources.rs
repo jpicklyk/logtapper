@@ -742,3 +742,85 @@ pub(crate) fn build_provenance_yaml(source_name: &str, version: &str, sha256: &s
         "\n_source: {source_name}\n_installed_version: {version}\n_installed_at: {now}\n_sha256: {sha256}\n"
     )
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_newer_basic() {
+        assert!(is_newer("1.0.0", "1.0.1"));
+        assert!(is_newer("1.0.0", "1.1.0"));
+        assert!(is_newer("1.0.0", "2.0.0"));
+        assert!(!is_newer("1.0.1", "1.0.0"));
+        assert!(!is_newer("1.0.0", "1.0.0"));
+    }
+
+    #[test]
+    fn is_newer_different_lengths() {
+        // Non-semver strings fall back to string inequality (installed != available).
+        // Both directions return true when strings differ.
+        assert!(is_newer("1.0", "1.0.1"));
+        assert!(is_newer("1.0.1", "1.0"));
+        // Same non-semver strings → false (equal strings, no newer version)
+        assert!(!is_newer("1.0", "1.0"));
+    }
+
+    #[test]
+    fn marketplace_entry_dto_from_entry() {
+        use crate::processors::marketplace::MarketplaceEntry;
+        let entry = MarketplaceEntry {
+            id: "wifi-state".to_string(),
+            name: "WiFi State".to_string(),
+            version: "1.4.0".to_string(),
+            description: Some("Tracks WiFi state".to_string()),
+            path: "processors/wifi_state.yaml".to_string(),
+            tags: vec!["network".to_string(), "wifi".to_string()],
+            sha256: "abc123".to_string(),
+            category: Some("network".to_string()),
+            license: Some("MIT".to_string()),
+            processor_type: Some("state_tracker".to_string()),
+            source_types: vec!["logcat".to_string()],
+            deprecated: false,
+        };
+        let dto = MarketplaceEntryDto::from(entry);
+        assert_eq!(dto.id, "wifi-state");
+        assert_eq!(dto.category, Some("network".to_string()));
+        assert_eq!(dto.processor_type, Some("state_tracker".to_string()));
+    }
+
+    #[test]
+    fn marketplace_pack_entry_dto_from_entry() {
+        use crate::processors::marketplace::MarketplacePackEntry;
+        let entry = MarketplacePackEntry {
+            id: "wifi-pack".to_string(),
+            name: "WiFi Pack".to_string(),
+            version: "1.0.0".to_string(),
+            description: Some("WiFi diagnostics".to_string()),
+            path: "packs/wifi.pack.yaml".to_string(),
+            tags: vec!["wifi".to_string()],
+            sha256: "".to_string(),
+            category: Some("network".to_string()),
+            processor_ids: vec!["wifi-state".to_string(), "wlan-disconnect".to_string()],
+        };
+        let dto = MarketplacePackEntryDto::from(entry);
+        assert_eq!(dto.id, "wifi-pack");
+        assert_eq!(dto.processor_ids, vec!["wifi-state", "wlan-disconnect"]);
+        assert_eq!(dto.category, Some("network".to_string()));
+    }
+
+    #[test]
+    fn marketplace_fetch_result_serialization() {
+        let result = MarketplaceFetchResult {
+            processors: vec![],
+            packs: vec![],
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"processors\""));
+        assert!(json.contains("\"packs\""));
+    }
+}

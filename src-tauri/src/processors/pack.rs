@@ -192,6 +192,46 @@ processors:
     }
 
     #[test]
+    fn load_packs_from_dir_reads_pack_yamls() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join("logtapper_test_packs");
+        let _ = std::fs::create_dir_all(&dir);
+
+        // Write a valid pack file
+        let mut f = std::fs::File::create(dir.join("test-pack.pack.yaml")).unwrap();
+        write!(f, "{}", VALID_YAML).unwrap();
+
+        // Write a non-pack YAML (should be ignored)
+        let mut f2 = std::fs::File::create(dir.join("not-a-pack.yaml")).unwrap();
+        write!(f2, "name: Not A Pack").unwrap();
+
+        let packs = load_packs_from_dir(&dir);
+        assert_eq!(packs.len(), 1);
+        assert_eq!(packs[0].id, "test-pack");
+        assert_eq!(packs[0].name, "Test Pack");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parse_all_marketplace_pack_yamls() {
+        let pack_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("marketplace/packs");
+        if !pack_dir.exists() {
+            return; // Skip if not in project root
+        }
+        let packs = load_packs_from_dir(&pack_dir);
+        assert!(packs.len() > 0, "should find pack YAMLs in marketplace/packs/");
+        for pack in &packs {
+            assert!(!pack.name.is_empty(), "pack '{}' has empty name", pack.id);
+            assert!(!pack.processors.is_empty(), "pack '{}' has no processors", pack.id);
+        }
+    }
+
+    #[test]
     fn summary_from_meta_roundtrip() {
         let mut meta = parse_pack_yaml(VALID_YAML).unwrap();
         meta.id = "test_pack".to_string();
