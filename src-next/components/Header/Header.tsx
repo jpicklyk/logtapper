@@ -1,9 +1,11 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import clsx from 'clsx';
-import { FolderOpen, FileEdit, Menu, Radio, Square, Smartphone, Download, Settings } from 'lucide-react';
+import { FolderOpen, FileEdit, Menu, Radio, Square, Smartphone, Download, Settings, Minus, Copy, X } from 'lucide-react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useSession, useIsStreaming, useViewerActions } from '../../context';
 import { listAdbDevices } from '../../bridge/commands';
 import type { AdbDevice } from '../../bridge/types';
+import { isMac } from '../../bridge/platform';
 import { Modal } from '../../ui/Modal/Modal';
 import { DropdownMenu } from '../../ui';
 import type { MenuItem } from '../../ui';
@@ -11,6 +13,52 @@ import { SearchBar } from '../SearchBar';
 import { ExportModal } from '../ExportModal';
 import { bus } from '../../events';
 import styles from './Header.module.css';
+
+/** Custom window control buttons for Windows/Linux (no native title bar). */
+const WindowControls = React.memo(function WindowControls() {
+  const [maximized, setMaximized] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+
+    const win = getCurrentWindow();
+    // Check initial state
+    win.isMaximized().then((m) => { if (!cancelled) setMaximized(m); });
+
+    // Track resize events to update maximize icon
+    win.onResized(() => {
+      if (cancelled) return;
+      win.isMaximized().then((m) => { if (!cancelled) setMaximized(m); });
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  const handleMinimize = useCallback(() => { getCurrentWindow().minimize(); }, []);
+  const handleMaximize = useCallback(() => { getCurrentWindow().toggleMaximize(); }, []);
+  const handleClose = useCallback(() => { getCurrentWindow().close(); }, []);
+
+  return (
+    <div className={styles.windowControls}>
+      <button className={styles.winBtn} onClick={handleMinimize} title="Minimize">
+        <Minus size={14} />
+      </button>
+      <button className={styles.winBtn} onClick={handleMaximize} title={maximized ? 'Restore' : 'Maximize'}>
+        {maximized ? <Copy size={12} /> : <Square size={12} />}
+      </button>
+      <button className={clsx(styles.winBtn, styles.winBtnClose)} onClick={handleClose} title="Close">
+        <X size={14} />
+      </button>
+    </div>
+  );
+});
 
 export const Header = React.memo(function Header() {
   const session = useSession();
@@ -96,7 +144,7 @@ export const Header = React.memo(function Header() {
 
   return (
     <header className={styles.header}>
-      <div className={styles.brand}>
+      <div className={clsx(styles.brand, isMac && styles.brandMac)}>
         <span className={styles.title}>
           <span className={styles.titleAndroid}>Android</span>
           {' '}Log<span className={styles.titleAccent}>Tapper</span>
@@ -150,6 +198,8 @@ export const Header = React.memo(function Header() {
           <Settings size={16} />
         </button>
       </div>
+
+      {!isMac && <WindowControls />}
 
       <Modal
         open={showPicker}

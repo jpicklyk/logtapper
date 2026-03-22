@@ -43,14 +43,16 @@
 }
 
 /* ── Search area ────────────────────────────────────────────────────────── */
-/* Starts where the center pane starts; fills all remaining space */
+/* Starts where the center pane starts; fills all remaining space.
+   The search area itself is draggable — the SearchBar input inside it
+   sets no-drag on its own interactive elements. This keeps the empty
+   space around the search bar usable as a drag handle. */
 .searchArea {
   flex: 1;
   display: flex;
   align-items: center;
   min-width: 0;
   height: 100%;
-  -webkit-app-region: no-drag;
 }
 
 /* ── Action buttons ─────────────────────────────────────────────────────── */
@@ -119,6 +121,46 @@
 @keyframes streamPulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.45; transform: scale(0.65); }
+}
+
+/* ── macOS traffic light padding ────────────────────────────────────────── */
+/* When macOS titleBarStyle is 'overlay', the native traffic lights float
+   over the left side of the header. Add padding so brand content clears them. */
+.brandMac {
+  padding-left: 70px;
+}
+
+/* ── Window controls (Windows / Linux) ─────────────────────────────────── */
+/* Custom minimize / maximize / close buttons. Flush against the right edge
+   for proper edge-of-screen targeting on maximized windows. */
+.windowControls {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+
+.winBtn {
+  width: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.winBtn:hover {
+  background: var(--state-hover);
+  color: var(--text);
+}
+
+.winBtnClose:hover {
+  background: var(--danger);
+  color: white;
 }
 
 /* ── Device picker (inside Modal) ───────────────────────────────────────── */
