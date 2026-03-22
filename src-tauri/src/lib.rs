@@ -226,6 +226,21 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            // Configure window decorations per platform.
+            // Windows/Linux: remove native title bar — the frontend renders custom controls.
+            // macOS: overlay traffic lights over our content.
+            if let Some(window) = app.get_webview_window("main") {
+                #[cfg(target_os = "macos")]
+                {
+                    use tauri::TitleBarStyle;
+                    let _ = window.set_title_bar_style(TitleBarStyle::Overlay);
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let _ = window.set_decorations(false);
+                }
+            }
+
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
