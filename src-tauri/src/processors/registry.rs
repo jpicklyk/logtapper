@@ -81,7 +81,7 @@ pub async fn fetch_marketplace(
 ) -> Result<MarketplaceIndex, String> {
     match &source.source_type {
         SourceType::Github { repo, git_ref } => {
-            let url = github_raw_url(repo, git_ref, "marketplace.json");
+            let url = github_raw_url(repo, git_ref, "marketplace/marketplace.json");
             fetch_marketplace_from_url(client, &url).await
         }
         SourceType::Local { path } => {
@@ -147,7 +147,8 @@ pub async fn download_processor_from_source(
 ) -> Result<String, String> {
     match &source.source_type {
         SourceType::Github { repo, git_ref } => {
-            let url = github_raw_url(repo, git_ref, &entry.path);
+            let full_path = format!("marketplace/{}", entry.path);
+            let url = github_raw_url(repo, git_ref, &full_path);
             let response = client
                 .get(&url)
                 .header("User-Agent", "LogTapper/1.0")

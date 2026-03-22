@@ -570,7 +570,8 @@ async fn download_text_from_source(
     use crate::processors::marketplace::SourceType;
     match &source.source_type {
         SourceType::Github { repo, git_ref } => {
-            let url = registry::github_raw_url(repo, git_ref, path);
+            let full_path = format!("marketplace/{path}");
+            let url = registry::github_raw_url(repo, git_ref, &full_path);
             let resp = client
                 .get(&url)
                 .header("User-Agent", "LogTapper/1.0")
