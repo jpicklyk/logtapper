@@ -252,10 +252,25 @@ fn persist_pack(app: &AppHandle, id: &str, yaml: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to persist pack: {e}"))
 }
 
+/// Public alias for pack manifest persistence — used by marketplace pack install.
+pub(crate) fn persist_pack_yaml(app: &AppHandle, id: &str, yaml: &str) -> Result<(), String> {
+    persist_pack(app, id, yaml)
+}
+
 fn delete_pack_file(app: &AppHandle, id: &str) {
     if let Ok(data_dir) = app.path().app_data_dir() {
         let _ = std::fs::remove_file(data_dir.join("packs").join(format!("{id}.pack.yaml")));
     }
+}
+
+/// Public alias for pack file deletion — used by marketplace pack uninstall.
+pub(crate) fn delete_pack_file_by_id(app: &AppHandle, id: &str) {
+    delete_pack_file(app, id);
+}
+
+/// Public alias for processor file deletion — used by marketplace pack uninstall.
+pub(crate) fn delete_processor_file_by_id(app: &AppHandle, id: &str) {
+    delete_processor_file(app, id);
 }
 
 #[tauri::command]

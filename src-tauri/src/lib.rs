@@ -429,6 +429,8 @@ pub fn run() {
             commands::sources::save_sources_to_disk,
             commands::sources::get_pending_updates,
             commands::sources::install_from_marketplace,
+            commands::sources::install_pack_from_marketplace,
+            commands::sources::uninstall_pack_from_marketplace,
             // Pipeline meta (workspace persistence)
             commands::pipeline::set_session_pipeline_meta,
             // Export commands (T4 + T5)

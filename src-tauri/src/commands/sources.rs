@@ -4,8 +4,9 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::commands::{lock_or_err, AppState};
 use crate::processors::marketplace::{self, MarketplaceEntry, Source};
+use crate::processors::pack::{parse_pack_yaml, validate_pack};
 use crate::processors::registry;
-use crate::processors::{AnyProcessor, ProcessorSummary};
+use crate::processors::{AnyProcessor, PackMeta, PackSummary, ProcessorSummary};
 
 // ---------------------------------------------------------------------------
 // Source persistence helpers
@@ -518,6 +519,173 @@ pub async fn install_from_marketplace(
     summary.id = qualified_id;
 
     Ok(summary)
+}
+
+// ---------------------------------------------------------------------------
+// Pack marketplace commands
+// ---------------------------------------------------------------------------
+
+/// Download text (pack manifest YAML or any file) from a source using a relative path.
+async fn download_text_from_source(
+    client: &reqwest::Client,
+    source: &Source,
+    path: &str,
+) -> Result<String, String> {
+    use crate::processors::marketplace::SourceType;
+    match &source.source_type {
+        SourceType::Github { repo, git_ref } => {
+            let url = registry::github_raw_url(repo, git_ref, path);
+            let resp = client
+                .get(&url)
+                .header("User-Agent", "LogTapper/1.0")
+                .send()
+                .await
+                .map_err(|e| format!("Failed to download '{path}': {e}"))?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                return Err(format!("Download of '{path}' returned HTTP {status}"));
+            }
+            resp.text().await.map_err(|e| format!("Failed to read response for '{path}': {e}"))
+        }
+        SourceType::Local { path: base } => {
+            let full = std::path::Path::new(base).join(path);
+            std::fs::read_to_string(&full)
+                .map_err(|e| format!("Failed to read local file '{}': {e}", full.display()))
+        }
+    }
+}
+
+/// Install a processor pack from a named marketplace source.
+///
+/// For each processor ID listed in the pack, the corresponding processor entry is located
+/// in the marketplace index and installed (skipping any that are already installed).
+/// Finally, the pack manifest YAML is fetched and stored.
+#[tauri::command]
+pub async fn install_pack_from_marketplace(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    source_name: String,
+    pack_entry: marketplace::MarketplacePackEntry,
+) -> Result<PackSummary, String> {
+    // Look up the source (release lock before any network I/O).
+    let source = {
+        let srcs = lock_or_err(&state.sources, "sources")?;
+        srcs.iter()
+            .find(|s| s.name == source_name)
+            .cloned()
+            .ok_or_else(|| format!("Source '{source_name}' not found"))?
+    };
+
+    // Fetch the full marketplace index to look up processors by ID.
+    let index = registry::fetch_marketplace(&state.http_client, &source).await?;
+
+    // Build a map of processor entries for O(1) lookup.
+    let proc_map: std::collections::HashMap<&str, &MarketplaceEntry> = index
+        .processors
+        .iter()
+        .map(|e| (e.id.as_str(), e))
+        .collect();
+
+    // Install each processor in the pack (skip already-installed ones).
+    for proc_id in &pack_entry.processor_ids {
+        let qualified_id = marketplace::qualified_id(proc_id, &source_name);
+
+        // Skip if already installed.
+        {
+            let procs = lock_or_err(&state.processors, "processors")?;
+            if procs.contains_key(&qualified_id) {
+                continue;
+            }
+        }
+
+        let entry = proc_map
+            .get(proc_id.as_str())
+            .ok_or_else(|| format!("Processor '{proc_id}' not found in marketplace index for source '{source_name}'"))?;
+
+        download_and_install_processor(&state, &app, &source, entry, &qualified_id).await?;
+    }
+
+    // Download and install the pack manifest.
+    let pack_yaml = download_text_from_source(&state.http_client, &source, &pack_entry.path).await?;
+    let mut pack_meta: PackMeta = parse_pack_yaml(&pack_yaml)
+        .map_err(|e| format!("Failed to parse pack manifest: {e}"))?;
+    pack_meta.id = pack_entry.id.clone();
+    validate_pack(&pack_meta)?;
+
+    // Persist the pack manifest.
+    super::processors::persist_pack_yaml(&app, &pack_meta.id, &pack_yaml)?;
+
+    let summary = PackSummary::from(&pack_meta);
+
+    // Upsert into in-memory pack store.
+    {
+        let mut packs = lock_or_err(&state.packs, "packs")?;
+        if let Some(existing) = packs.iter_mut().find(|p| p.id == pack_meta.id) {
+            *existing = pack_meta;
+        } else {
+            packs.push(pack_meta);
+        }
+    }
+
+    Ok(summary)
+}
+
+/// Uninstall a processor pack from a named marketplace source.
+///
+/// Processors belonging to this pack are removed only if they are not referenced by any
+/// other installed pack. The pack manifest is removed unconditionally.
+#[tauri::command]
+pub async fn uninstall_pack_from_marketplace(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    source_name: String,
+    pack_id: String,
+) -> Result<(), String> {
+    // Find the pack and get its processor list.
+    let processor_ids: Vec<String> = {
+        let packs = lock_or_err(&state.packs, "packs")?;
+        packs
+            .iter()
+            .find(|p| p.id == pack_id)
+            .ok_or_else(|| format!("Pack '{pack_id}' not found"))?
+            .processors
+            .iter()
+            .map(|id| marketplace::qualified_id(id, &source_name))
+            .collect()
+    };
+
+    // Determine which other packs (excluding the one being removed) reference each processor.
+    let other_pack_proc_ids: std::collections::HashSet<String> = {
+        let packs = lock_or_err(&state.packs, "packs")?;
+        packs
+            .iter()
+            .filter(|p| p.id != pack_id)
+            .flat_map(|p| p.processors.iter().map(|id| marketplace::qualified_id(id, &source_name)))
+            .collect()
+    };
+
+    // Remove processors that are not referenced by any other pack.
+    for qid in &processor_ids {
+        if other_pack_proc_ids.contains(qid) {
+            continue;
+        }
+        {
+            let mut procs = lock_or_err(&state.processors, "processors")?;
+            procs.remove(qid);
+        }
+        super::processors::delete_processor_file_by_id(&app, qid);
+    }
+
+    // Remove the pack from in-memory store.
+    {
+        let mut packs = lock_or_err(&state.packs, "packs")?;
+        packs.retain(|p| p.id != pack_id);
+    }
+
+    // Delete the pack manifest file.
+    super::processors::delete_pack_file_by_id(&app, &pack_id);
+
+    Ok(())
 }
 
 /// Simple ISO 8601 timestamp (no chrono dependency — use std).

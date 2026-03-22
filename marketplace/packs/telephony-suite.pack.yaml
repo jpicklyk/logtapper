@@ -1,0 +1,13 @@
+name: Telephony Suite
+version: 1.0.0
+description: Cellular registration, data calls, radio state, SIM identity, and VoLTE/IMS monitoring
+author: LogTapper
+tags: [telephony, cellular, radio, android]
+category: telephony
+processors:
+  - cellular-registration-state
+  - cellular-data-failure-reporter
+  - radio-airplane-mode-state
+  - radio-data-call-reporter
+  - sim-identity-reporter
+  - ims-volte-reporter

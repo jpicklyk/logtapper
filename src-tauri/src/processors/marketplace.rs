@@ -51,6 +51,25 @@ pub struct MarketplaceIndex {
     #[serde(default)]
     pub owner: Option<MarketplaceOwner>,
     pub processors: Vec<MarketplaceEntry>,
+    #[serde(default)]
+    pub packs: Vec<MarketplacePackEntry>,
+}
+
+/// Marketplace index entry for a processor pack.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MarketplacePackEntry {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub path: String,
+    pub tags: Vec<String>,
+    pub sha256: String,
+    #[serde(default)]
+    pub category: Option<String>,
+    /// Processor IDs that belong to this pack.
+    pub processor_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

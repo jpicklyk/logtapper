@@ -1,0 +1,11 @@
+name: WiFi Diagnostics
+version: 1.0.0
+description: Full WiFi connection analysis — state tracking, disconnect events, and probe monitoring
+author: LogTapper
+tags: [network, wifi, android]
+category: network
+processors:
+  - wifi-state
+  - wlan-disconnect-events
+  - wlan-disconnect-tracker
+  - connectivity-check-probes

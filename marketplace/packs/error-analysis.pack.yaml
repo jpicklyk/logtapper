@@ -1,0 +1,9 @@
+name: Error Analysis
+version: 1.0.0
+description: EBADF error tracking and file descriptor correlation analysis
+author: LogTapper
+tags: [stability, errors, fd, android]
+category: stability
+processors:
+  - ebadf-error-tracker
+  - fd-ebadf-correlator

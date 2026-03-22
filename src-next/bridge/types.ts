@@ -249,6 +249,25 @@ export interface ProcessorSummary {
   hasSchema: boolean;
   /** Marketplace source name (e.g. "official"), if installed from a source. */
   source?: string;
+  /** Pack this processor belongs to, if any. */
+  packId?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Pack types
+// ---------------------------------------------------------------------------
+
+export interface PackSummary {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  tags: string[];
+  category?: string;
+  license?: string;
+  repository?: string;
+  deprecated: boolean;
+  processorIds: string[];
 }
 
 // ---------------------------------------------------------------------------

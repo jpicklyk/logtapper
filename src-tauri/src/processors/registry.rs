@@ -67,7 +67,7 @@ impl From<RegistryEntry> for MarketplaceEntry {
 // ---------------------------------------------------------------------------
 
 /// Build the raw content URL for a GitHub source.
-fn github_raw_url(repo: &str, git_ref: &str, path: &str) -> String {
+pub fn github_raw_url(repo: &str, git_ref: &str, path: &str) -> String {
     format!(
         "https://raw.githubusercontent.com/{repo}/{git_ref}/{path}"
     )
@@ -131,6 +131,7 @@ pub fn parse_marketplace_json(json: &str, source_name: &str) -> Result<Marketpla
             version: 1,
             owner: None,
             processors: v1.processors.into_iter().map(MarketplaceEntry::from).collect(),
+            packs: Vec::new(),
         })
     } else {
         // v2 format

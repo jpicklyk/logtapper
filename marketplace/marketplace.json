@@ -381,5 +381,73 @@
       "source_types": ["logcat", "bugreport"],
       "deprecated": false
     }
+  ],
+  "packs": [
+    {
+      "id": "wifi-diagnostics",
+      "name": "WiFi Diagnostics",
+      "version": "1.0.0",
+      "description": "Full WiFi connection analysis — state tracking, disconnect events, and probe monitoring",
+      "path": "packs/wifi-diagnostics.pack.yaml",
+      "tags": ["network", "wifi", "android"],
+      "category": "network",
+      "processor_ids": ["wifi-state", "wlan-disconnect-events", "wlan-disconnect-tracker", "connectivity-check-probes"],
+      "sha256": ""
+    },
+    {
+      "id": "network-connectivity",
+      "name": "Network Connectivity",
+      "version": "1.0.0",
+      "description": "Network connectivity state tracking, DNS resolution analysis, and connectivity check monitoring",
+      "path": "packs/network-connectivity.pack.yaml",
+      "tags": ["network", "connectivity", "dns", "android"],
+      "category": "network",
+      "processor_ids": ["network-connectivity", "connectivity-check-state", "dns-query-events", "dns-server-stats", "dns-private-probe-tracker"],
+      "sha256": ""
+    },
+    {
+      "id": "telephony-suite",
+      "name": "Telephony Suite",
+      "version": "1.0.0",
+      "description": "Cellular registration, data calls, radio state, SIM identity, and VoLTE/IMS monitoring",
+      "path": "packs/telephony-suite.pack.yaml",
+      "tags": ["telephony", "cellular", "radio", "android"],
+      "category": "telephony",
+      "processor_ids": ["cellular-registration-state", "cellular-data-failure-reporter", "radio-airplane-mode-state", "radio-data-call-reporter", "sim-identity-reporter", "ims-volte-reporter"],
+      "sha256": ""
+    },
+    {
+      "id": "stability-monitor",
+      "name": "Stability Monitor",
+      "version": "1.0.0",
+      "description": "Crash detection, exception tracking, and process kill storm analysis",
+      "path": "packs/stability-monitor.pack.yaml",
+      "tags": ["stability", "crashes", "exceptions", "android"],
+      "category": "stability",
+      "processor_ids": ["crash-storm-detector", "exception-stack-tracker", "exception-storm-detector", "process-kill-storm"],
+      "sha256": ""
+    },
+    {
+      "id": "system-health",
+      "name": "System Health",
+      "version": "1.0.0",
+      "description": "Memory monitoring, file descriptor tracking, battery state, and app lifecycle",
+      "path": "packs/system-health.pack.yaml",
+      "tags": ["memory", "battery", "system", "android"],
+      "category": "memory",
+      "processor_ids": ["gc-pressure-monitor", "system-server-fd-monitor", "system-server-heap", "battery-state", "app-lifecycle"],
+      "sha256": ""
+    },
+    {
+      "id": "error-analysis",
+      "name": "Error Analysis",
+      "version": "1.0.0",
+      "description": "EBADF error tracking and file descriptor correlation analysis",
+      "path": "packs/error-analysis.pack.yaml",
+      "tags": ["stability", "errors", "fd", "android"],
+      "category": "stability",
+      "processor_ids": ["ebadf-error-tracker", "fd-ebadf-correlator"],
+      "sha256": ""
+    }
   ]
 }

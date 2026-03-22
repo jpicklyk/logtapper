@@ -1,0 +1,12 @@
+name: System Health
+version: 1.0.0
+description: Memory monitoring, file descriptor tracking, battery state, and app lifecycle
+author: LogTapper
+tags: [memory, battery, system, android]
+category: memory
+processors:
+  - gc-pressure-monitor
+  - system-server-fd-monitor
+  - system-server-heap
+  - battery-state
+  - app-lifecycle

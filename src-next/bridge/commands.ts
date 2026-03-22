@@ -6,6 +6,7 @@ import type {
   SearchQuery,
   SearchSummary,
   ProcessorSummary,
+  PackSummary,
   PipelineRunSummary,
   MatchedLine,
   ChartData,
@@ -537,4 +538,40 @@ export function getExportSessionInfo(sessionId: string): Promise<ExportSessionIn
 
 export function exportSession(sessionId: string, options: ExportOptions): Promise<void> {
   return invoke('export_session', { sessionId, options });
+}
+
+// ---------------------------------------------------------------------------
+// Pack commands
+// ---------------------------------------------------------------------------
+
+export function listPacks(): Promise<PackSummary[]> {
+  return invoke('list_packs');
+}
+
+export function installPackFromMarketplace(
+  sourceName: string,
+  packEntry: {
+    id: string;
+    name: string;
+    version: string;
+    description?: string;
+    path: string;
+    tags: string[];
+    sha256: string;
+    category?: string;
+    processor_ids: string[];
+  },
+): Promise<PackSummary> {
+  return invoke('install_pack_from_marketplace', { sourceName, packEntry });
+}
+
+export function uninstallPackFromMarketplace(
+  sourceName: string,
+  packId: string,
+): Promise<void> {
+  return invoke('uninstall_pack_from_marketplace', { sourceName, packId });
+}
+
+export function uninstallPack(packId: string): Promise<void> {
+  return invoke('uninstall_pack', { packId });
 }
