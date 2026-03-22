@@ -425,6 +425,23 @@ export interface MarketplaceEntry {
   deprecated: boolean;
 }
 
+export interface MarketplacePackEntry {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  path: string;
+  tags: string[];
+  sha256: string;
+  category?: string;
+  processorIds: string[];
+}
+
+export interface MarketplaceFetchResult {
+  processors: MarketplaceEntry[];
+  packs: MarketplacePackEntry[];
+}
+
 /** Filter marketplace entries by search query (matches name, description, tags) */
 export function filterMarketplaceEntries(entries: MarketplaceEntry[], query: string): MarketplaceEntry[] {
   if (!query) return entries;

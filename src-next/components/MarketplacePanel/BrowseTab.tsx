@@ -1,7 +1,9 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import type { MarketplaceEntry } from '../../bridge/types';
+import type { MarketplaceEntry, MarketplacePackEntry } from '../../bridge/types';
 import { makeQualifiedId, filterMarketplaceEntries } from '../../bridge/types';
 import type { MarketplaceState } from '../../hooks/useMarketplace';
+import { listPacks } from '../../bridge/commands';
+import type { PackSummary } from '../../bridge/types';
 import { usePipeline } from '../../hooks';
 import { useProcessors } from '../../context';
 import { MarketplaceEntryRow } from './MarketplaceEntryRow';
@@ -21,11 +23,14 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
     selectedSource,
     selectSource,
     entries,
+    packEntries,
     entriesLoading,
     entriesError,
     fetchEntries,
     installEntry,
     uninstallEntry,
+    installPack,
+    uninstallPack,
   } = marketplace;
 
   const pipeline = usePipeline();
@@ -33,21 +38,32 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
   const [filter, setFilter] = useState('');
   const [activeTagFilters, setActiveTagFilters] = useState<Set<string>>(new Set());
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandedPackProcessors, setExpandedPackProcessors] = useState<string | null>(null);
   const [installStatus, setInstallStatus] = useState<Record<string, InstallStatus>>({});
   const [installError, setInstallError] = useState<Record<string, string>>({});
   const [uninstallStatus, setUninstallStatus] = useState<Record<string, UninstallStatus>>({});
+  const [installedPacks, setInstalledPacks] = useState<PackSummary[]>([]);
 
   const enabledSources = useMemo(() => sources.filter((s) => s.enabled), [sources]);
   const installedIds = useMemo(() => new Set(processors.map((p) => p.id)), [processors]);
+  const installedPackIds = useMemo(() => new Set(installedPacks.map((p) => p.id)), [installedPacks]);
 
-  // All unique tags from current entries for chip filters
+  // Fetch installed packs on mount and after install/uninstall
+  useEffect(() => {
+    listPacks().then(setInstalledPacks).catch(() => setInstalledPacks([]));
+  }, [processors]); // re-check when processor list changes
+
+  // All unique tags from current entries + packs for chip filters
   const allTags = useMemo(() => {
     const tagSet = new Set<string>();
     for (const entry of entries) {
       for (const t of entry.tags) tagSet.add(t);
     }
+    for (const pack of packEntries) {
+      for (const t of pack.tags) tagSet.add(t);
+    }
     return Array.from(tagSet).sort();
-  }, [entries]);
+  }, [entries, packEntries]);
 
   // Auto-select first source and fetch
   useEffect(() => {
@@ -123,6 +139,43 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
     [uninstallEntry, pipeline],
   );
 
+  const handleInstallPack = useCallback(
+    async (packEntry: MarketplacePackEntry) => {
+      if (!selectedSource) return;
+      setInstallStatus((s) => ({ ...s, [packEntry.id]: 'installing' }));
+      setInstallError((e) => { const n = { ...e }; delete n[packEntry.id]; return n; });
+      try {
+        await installPack(selectedSource, packEntry);
+        await pipeline.loadProcessors();
+        setInstallStatus((s) => ({ ...s, [packEntry.id]: 'installed' }));
+      } catch (e) {
+        setInstallStatus((s) => ({ ...s, [packEntry.id]: 'error' }));
+        setInstallError((err) => ({ ...err, [packEntry.id]: String(e) }));
+      }
+    },
+    [selectedSource, installPack, pipeline],
+  );
+
+  const handleUninstallPack = useCallback(
+    async (packId: string) => {
+      if (!selectedSource) return;
+      setUninstallStatus((s) => ({ ...s, [packId]: 'uninstalling' }));
+      try {
+        await uninstallPack(selectedSource, packId);
+        await pipeline.loadProcessors();
+        setInstallStatus((s) => { const n = { ...s }; delete n[packId]; return n; });
+        setUninstallStatus((s) => ({ ...s, [packId]: 'idle' }));
+      } catch {
+        setUninstallStatus((s) => ({ ...s, [packId]: 'error' }));
+      }
+    },
+    [selectedSource, uninstallPack, pipeline],
+  );
+
+  const togglePackProcessors = useCallback((packId: string) => {
+    setExpandedPackProcessors((prev) => (prev === packId ? null : packId));
+  }, []);
+
   const textFiltered = useMemo(() => filterMarketplaceEntries(entries, filter), [entries, filter]);
 
   const filtered = useMemo(() => {
@@ -134,6 +187,29 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
       return true;
     });
   }, [textFiltered, activeTagFilters]);
+
+  // Filter packs by text search and tag filters
+  const filteredPacks = useMemo(() => {
+    let result = packEntries;
+    if (filter) {
+      const q = filter.toLowerCase();
+      result = result.filter(
+        (p) =>
+          p.name.toLowerCase().includes(q) ||
+          (p.description ?? '').toLowerCase().includes(q) ||
+          p.tags.some((t) => t.toLowerCase().includes(q)),
+      );
+    }
+    if (activeTagFilters.size > 0) {
+      result = result.filter((p) => {
+        for (const tag of activeTagFilters) {
+          if (!p.tags.includes(tag)) return false;
+        }
+        return true;
+      });
+    }
+    return result;
+  }, [packEntries, filter, activeTagFilters]);
 
   return (
     <>
@@ -203,13 +279,95 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
       {entriesError && <div className={css.errorBar}>{entriesError}</div>}
 
       <div className={css.scroll}>
-        {entries.length === 0 && !entriesLoading && !entriesError && (
+        {entries.length === 0 && packEntries.length === 0 && !entriesLoading && !entriesError && (
           <div className={css.empty}>
             {enabledSources.length === 0
               ? 'No sources configured. Add a source in the Sources tab.'
               : 'Select a source and click Fetch to browse available processors.'}
           </div>
         )}
+
+        {/* Pack entries */}
+        {filteredPacks.map((pack) => {
+          const isPackInstalled = installedPackIds.has(pack.id) || installStatus[pack.id] === 'installed';
+          const showProcessors = expandedPackProcessors === pack.id;
+          return (
+            <div key={`pack-${pack.id}`} className={css.packEntry}>
+              <div
+                className={css.packHeader}
+                onClick={() => togglePackProcessors(pack.id)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePackProcessors(pack.id); } }}
+              >
+                <svg
+                  className={`${css.packChevron}${showProcessors ? ` ${css.packChevronOpen}` : ''}`}
+                  width="10" height="10" viewBox="0 0 10 10" fill="none"
+                >
+                  <path d="M3.5 2L7 5l-3.5 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span className={css.packBadge}>Pack</span>
+                <span className={css.packName}>{pack.name}</span>
+                <span className={css.packCount}>{pack.processorIds.length} processors</span>
+                {pack.category && <span className={css.packCategory}>{pack.category}</span>}
+              </div>
+              {pack.description && (
+                <div className={css.packDesc}>{pack.description}</div>
+              )}
+              {pack.tags.length > 0 && (
+                <div className={css.tags}>
+                  {pack.tags.map((t) => <span key={t} className={css.tag}>{t}</span>)}
+                </div>
+              )}
+              {installError[pack.id] && (
+                <div className={css.errorBar} style={{ marginTop: 4 }}>{installError[pack.id]}</div>
+              )}
+              <div className={css.packActions} onClick={(e) => e.stopPropagation()}>
+                {isPackInstalled ? (
+                  <button
+                    className={css.actionBtnSecondary}
+                    onClick={() => handleUninstallPack(pack.id)}
+                    disabled={uninstallStatus[pack.id] === 'uninstalling'}
+                  >
+                    {uninstallStatus[pack.id] === 'uninstalling' ? (
+                      <><span className={css.spinner} /> Removing...</>
+                    ) : 'Uninstall Pack'}
+                  </button>
+                ) : (
+                  <button
+                    className={css.actionBtn}
+                    onClick={() => handleInstallPack(pack)}
+                    disabled={installStatus[pack.id] === 'installing'}
+                  >
+                    {installStatus[pack.id] === 'installing' ? (
+                      <><span className={css.spinner} /> Installing...</>
+                    ) : 'Install Pack'}
+                  </button>
+                )}
+              </div>
+              {showProcessors && (
+                <div className={css.packProcessorList}>
+                  {pack.processorIds.map((pid) => {
+                    const matchingEntry = entries.find((e) => e.id === pid);
+                    return (
+                      <div key={pid} className={css.packProcessorItem}>
+                        <span className={css.packProcessorName}>{matchingEntry?.name ?? pid}</span>
+                        {matchingEntry?.processorType && (
+                          <span className={css.packProcessorType}>{matchingEntry.processorType}</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {filteredPacks.length > 0 && filtered.length > 0 && (
+          <div className={css.sectionDivider}>Individual Processors</div>
+        )}
+
         {filtered.map((entry) => {
           // Check if any installed processor matches this entry (bare or qualified id)
           const qualifiedId = selectedSource ? makeQualifiedId(entry.id, selectedSource) : entry.id;

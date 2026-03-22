@@ -33,7 +33,7 @@ import type {
   WatchInfo,
   SectionInfo,
   Source,
-  MarketplaceEntry,
+  MarketplaceFetchResult,
   UpdateCheckResult,
   UpdateResult,
   UpdateAvailable,
@@ -458,7 +458,7 @@ export function removeSource(sourceName: string): Promise<void> {
   return invoke('remove_source', { sourceName });
 }
 
-export function fetchMarketplace(sourceName: string): Promise<MarketplaceEntry[]> {
+export function fetchMarketplace(sourceName: string): Promise<MarketplaceFetchResult> {
   return invoke('fetch_marketplace_for_source', { sourceName });
 }
 

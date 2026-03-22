@@ -2,10 +2,12 @@ import { useState, useCallback, useRef } from 'react';
 import type {
   Source,
   MarketplaceEntry,
+  MarketplacePackEntry,
   UpdateAvailable,
   UpdateCheckResult,
   UpdateResult,
   ProcessorSummary,
+  PackSummary,
 } from '../bridge/types';
 import {
   listSources,
@@ -13,6 +15,8 @@ import {
   removeSource as removeSourceCmd,
   fetchMarketplace,
   installFromMarketplace,
+  installPackFromMarketplace as installPackCmd,
+  uninstallPackFromMarketplace as uninstallPackCmd,
   uninstallProcessor as uninstallProcessorCmd,
   checkUpdates as checkUpdatesCmd,
   updateProcessor as updateProcessorCmd,
@@ -34,11 +38,14 @@ export interface MarketplaceState {
   selectedSource: string | null;
   selectSource(name: string | null): void;
   entries: MarketplaceEntry[];
+  packEntries: MarketplacePackEntry[];
   entriesLoading: boolean;
   entriesError: string | null;
   fetchEntries(sourceName: string): Promise<void>;
   installEntry(sourceName: string, entry: MarketplaceEntry): Promise<ProcessorSummary>;
   uninstallEntry(processorId: string): Promise<void>;
+  installPack(sourceName: string, packEntry: MarketplacePackEntry): Promise<PackSummary>;
+  uninstallPack(sourceName: string, packId: string): Promise<void>;
 
   // Updates
   pendingUpdates: UpdateAvailable[];
@@ -57,6 +64,7 @@ export function useMarketplace(): MarketplaceState {
   // Browse (local — only needed while MarketplacePanel is mounted)
   const [selectedSource, setSelectedSource] = useState<string | null>(null);
   const [entries, setEntries] = useState<MarketplaceEntry[]>([]);
+  const [packEntries, setPackEntries] = useState<MarketplacePackEntry[]>([]);
   const [entriesLoading, setEntriesLoading] = useState(false);
   const [entriesError, setEntriesError] = useState<string | null>(null);
 
@@ -100,10 +108,12 @@ export function useMarketplace(): MarketplaceState {
     setEntriesError(null);
     try {
       const result = await fetchMarketplace(sourceName);
-      setEntries(result);
+      setEntries(result.processors);
+      setPackEntries(result.packs);
     } catch (e) {
       setEntriesError(String(e));
       setEntries([]);
+      setPackEntries([]);
     } finally {
       setEntriesLoading(false);
     }
@@ -121,6 +131,30 @@ export function useMarketplace(): MarketplaceState {
   const uninstallEntry = useCallback(async (processorId: string): Promise<void> => {
     await uninstallProcessorCmd(processorId);
     bus.emit('marketplace:processor-uninstalled', { processorId });
+  }, []);
+
+  const installPack = useCallback(
+    async (sourceName: string, packEntry: MarketplacePackEntry): Promise<PackSummary> => {
+      const summary = await installPackCmd(sourceName, {
+        id: packEntry.id,
+        name: packEntry.name,
+        version: packEntry.version,
+        description: packEntry.description,
+        path: packEntry.path,
+        tags: packEntry.tags,
+        sha256: packEntry.sha256,
+        category: packEntry.category,
+        processor_ids: packEntry.processorIds,
+      });
+      bus.emit('marketplace:processor-installed', { processorId: summary.id, sourceName });
+      return summary;
+    },
+    [],
+  );
+
+  const uninstallPack = useCallback(async (sourceName: string, packId: string): Promise<void> => {
+    await uninstallPackCmd(sourceName, packId);
+    bus.emit('marketplace:processor-uninstalled', { processorId: packId });
   }, []);
 
   const checkUpdates = useCallback(async () => {
@@ -211,11 +245,14 @@ export function useMarketplace(): MarketplaceState {
     selectedSource,
     selectSource,
     entries,
+    packEntries,
     entriesLoading,
     entriesError,
     fetchEntries,
     installEntry,
     uninstallEntry,
+    installPack,
+    uninstallPack,
     pendingUpdates,
     updatesLoading,
     updateResults,

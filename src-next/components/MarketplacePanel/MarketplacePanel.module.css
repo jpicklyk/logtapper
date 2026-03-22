@@ -748,3 +748,118 @@
   display: flex;
   gap: 6px;
 }
+
+/* ── Pack Entries ────────────────────────────────────────────────────────── */
+
+.packEntry {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.packHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.packHeader:hover {
+  opacity: 0.85;
+}
+
+.packChevron {
+  color: var(--text-dimmed);
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.packChevronOpen {
+  transform: rotate(90deg);
+}
+
+.packBadge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--bg-base);
+  flex-shrink: 0;
+}
+
+.packName {
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.packCount {
+  font-size: 11px;
+  color: var(--text-dimmed);
+  flex-shrink: 0;
+}
+
+.packCategory {
+  font-size: 10px;
+  color: var(--text-dimmed);
+  padding: 1px 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+
+.packDesc {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 4px 0 0 16px;
+  line-height: 1.4;
+}
+
+.packActions {
+  margin-top: 6px;
+  margin-left: 16px;
+}
+
+.packProcessorList {
+  margin: 6px 0 0 16px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.packProcessorItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+
+.packProcessorName {
+  color: var(--text-muted);
+}
+
+.packProcessorType {
+  font-size: 10px;
+  color: var(--text-dimmed);
+  padding: 0 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.sectionDivider {
+  padding: 8px 10px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dimmed);
+  border-bottom: 1px solid var(--border-subtle);
+}

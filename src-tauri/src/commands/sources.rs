@@ -76,6 +76,43 @@ impl From<MarketplaceEntry> for MarketplaceEntryDto {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketplacePackEntryDto {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub description: Option<String>,
+    pub path: String,
+    pub tags: Vec<String>,
+    pub sha256: String,
+    pub category: Option<String>,
+    pub processor_ids: Vec<String>,
+}
+
+impl From<marketplace::MarketplacePackEntry> for MarketplacePackEntryDto {
+    fn from(e: marketplace::MarketplacePackEntry) -> Self {
+        Self {
+            id: e.id,
+            name: e.name,
+            version: e.version,
+            description: e.description,
+            path: e.path,
+            tags: e.tags,
+            sha256: e.sha256,
+            category: e.category,
+            processor_ids: e.processor_ids,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketplaceFetchResult {
+    pub processors: Vec<MarketplaceEntryDto>,
+    pub packs: Vec<MarketplacePackEntryDto>,
+}
+
 // ---------------------------------------------------------------------------
 // Tauri commands
 // ---------------------------------------------------------------------------
@@ -119,7 +156,7 @@ pub async fn remove_source(
 pub async fn fetch_marketplace_for_source(
     state: State<'_, AppState>,
     source_name: String,
-) -> Result<Vec<MarketplaceEntryDto>, String> {
+) -> Result<MarketplaceFetchResult, String> {
     let source = {
         let sources = lock_or_err(&state.sources, "sources")?;
         sources
@@ -130,11 +167,10 @@ pub async fn fetch_marketplace_for_source(
     };
     // Lock released before await
     let index = registry::fetch_marketplace(&state.http_client, &source).await?;
-    Ok(index
-        .processors
-        .into_iter()
-        .map(MarketplaceEntryDto::from)
-        .collect())
+    Ok(MarketplaceFetchResult {
+        processors: index.processors.into_iter().map(MarketplaceEntryDto::from).collect(),
+        packs: index.packs.into_iter().map(MarketplacePackEntryDto::from).collect(),
+    })
 }
 
 // ---------------------------------------------------------------------------
