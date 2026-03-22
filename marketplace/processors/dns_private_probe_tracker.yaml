@@ -1,7 +1,7 @@
 meta:
   id: dns-private-probe-tracker
   name: DNS Private Probe Tracker
-  version: 1.0.2
+  version: 1.0.4
   author: LogTapper
   description: >
     Parses the PrivateDnsLog from the Android dnsresolver service dump to build

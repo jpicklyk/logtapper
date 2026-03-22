@@ -1,7 +1,7 @@
 meta:
   id: "system-server-heap"
   name: "System Server Heap Monitor"
-  version: "1.1.1"
+  version: "1.1.2"
   author: "LogTapper"
   description: "Monitors Android system_server Java heap pressure via Watchdog !@Sync messages. Tracks heap used/max and pressure level over time. Critical heap pressure often precedes system_server restart or device reboot."
   tags: ["memory", "heap", "system_server", "watchdog", "oom", "android"]

@@ -1,7 +1,7 @@
 meta:
   id: "exception-storm-detector"
   name: "Exception Storm Detector"
-  version: "1.1.1"
+  version: "1.1.2"
   author: "LogTapper"
   description: "Detects exception storms — bursts of 20+ identical errors within a 2-second window. Uses the BurstDetector aggregate to fire exactly once per rising edge. Useful for diagnosing recursive failure loops (e.g. 530 identical ServiceNotFoundExceptions/second)."
   tags: ["exception", "error", "storm", "burst", "android", "stability"]

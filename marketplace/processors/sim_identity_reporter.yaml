@@ -1,7 +1,7 @@
 meta:
   id: "sim-identity-reporter"
   name: "SIM Identity Reporter"
-  version: "1.0.0"
+  version: "1.0.1"
   author: "LogTapper"
   description: >
     Extracts SIM card identity and subscription details from SubscriptionController

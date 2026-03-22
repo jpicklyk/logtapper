@@ -1,7 +1,7 @@
 type: state_tracker
 id: wifi-state
 name: WiFi State
-version: 1.4.0
+version: 1.4.1
 author: LogTapper
 description: "Tracks WiFi connection state throughout the log: enabled/disabled, SSID, signal strength, and IP address. Supports AOSP (WifiStateMachine) and Samsung (SemWifiApAdvancedAutohotspotService) devices."
 tags: [network, wifi, android]

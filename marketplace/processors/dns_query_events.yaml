@@ -1,7 +1,7 @@
 meta:
   id: dns-query-events
   name: DNS Query Events
-  version: 1.0.6
+  version: 1.0.8
   author: LogTapper
   description: >
     Tracks per-query DNS resolution events from NetdEventListenerService logcat.

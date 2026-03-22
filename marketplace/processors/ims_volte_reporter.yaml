@@ -1,7 +1,7 @@
 meta:
   id: "ims-volte-reporter"
   name: "IMS / VoLTE Bearer Reporter"
-  version: "1.0.0"
+  version: "1.0.1"
   author: "LogTapper"
   description: "Tracks IMS bearer setup and teardown events from logcat and bugreport. Extracts state transitions (CONNECTING → CONNECTED → DISCONNECTED), transport type (WWAN/WLAN), network type (LTE, NR), and interface name. Distinguishes 'IMS connected but no internet' situations from full connectivity loss."
   tags: ["ims", "volte", "telephony", "bearer", "rcs", "android"]

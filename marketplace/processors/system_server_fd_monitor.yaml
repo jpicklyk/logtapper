@@ -1,7 +1,7 @@
 meta:
   id: "system-server-fd-monitor"
   name: "System Server FD Monitor"
-  version: "1.1.1"
+  version: "1.1.2"
   author: "LogTapper"
   description: "Extracts Samsung Watchdog FD telemetry from system_server. Tracks FD count over time, classifies into normal/elevated/critical states, and detects the boot FD spike pattern."
   tags: ["fd", "file-descriptor", "system_server", "watchdog", "leak", "android"]

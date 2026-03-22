@@ -1,384 +1,619 @@
 {
   "name": "official",
   "version": 4,
-  "owner": { "name": "LogTapper" },
+  "owner": {
+    "name": "LogTapper"
+  },
   "processors": [
     {
       "id": "wifi-state",
       "name": "WiFi State",
-      "version": "1.4.0",
+      "version": "1.4.1",
       "description": "Tracks WiFi connection state throughout the log: enabled/disabled, SSID, signal strength, and IP address. Supports AOSP (WifiStateMachine) and Samsung (SemWifiApAdvancedAutohotspotService) devices.",
       "path": "processors/wifi_state.yaml",
-      "tags": ["network", "wifi", "android"],
+      "tags": [
+        "network",
+        "wifi",
+        "android"
+      ],
       "sha256": "",
       "category": "network",
       "license": null,
       "processor_type": "state_tracker",
-      "source_types": ["logcat", "bugreport"],
+      "source_types": [
+        "logcat",
+        "bugreport"
+      ],
       "deprecated": false
     },
     {
       "id": "battery-state",
       "name": "Battery State",
-      "version": "3.1.0",
+      "version": "3.1.2",
       "description": "Tracks battery level, charging status, and plug source from BatteryService. Supports Samsung and AOSP formats.",
       "path": "processors/battery_state.yaml",
-      "tags": ["battery", "power", "android"],
+      "tags": [
+        "battery",
+        "power",
+        "android"
+      ],
       "sha256": "",
       "category": "battery",
       "license": null,
       "processor_type": "state_tracker",
-      "source_types": ["logcat", "bugreport"],
+      "source_types": [
+        "logcat",
+        "bugreport"
+      ],
       "deprecated": false
     },
     {
       "id": "app-lifecycle",
       "name": "App Lifecycle",
-      "version": "1.1.0",
+      "version": "1.1.2",
       "description": "Tracks foreground app changes, activity launches, and crashes via ActivityManager.",
       "path": "processors/app_lifecycle.yaml",
-      "tags": ["app", "lifecycle", "android"],
+      "tags": [
+        "app",
+        "lifecycle",
+        "android"
+      ],
       "sha256": "",
       "category": "process",
       "license": null,
       "processor_type": "state_tracker",
-      "source_types": ["logcat", "bugreport"],
+      "source_types": [
+        "logcat",
+        "bugreport"
+      ],
       "deprecated": false
     },
     {
       "id": "network-connectivity",
       "name": "Network Connectivity",
-      "version": "3.1.1",
+      "version": "3.1.2",
       "description": "Tracks network connectivity state: connected/disconnected, network type (WIFI, MOBILE, etc.), and validation status.",
       "path": "processors/network_connectivity.yaml",
-      "tags": ["network", "connectivity", "android"],
+      "tags": [
+        "network",
+        "connectivity",
+        "android"
+      ],
       "sha256": "",
       "category": "network",
       "license": null,
       "processor_type": "state_tracker",
-      "source_types": ["logcat", "bugreport"],
+      "source_types": [
+        "logcat",
+        "bugreport"
+      ],
       "deprecated": false
     },
     {
       "id": "samsung-auto-blocker",
       "name": "Auto Blocker",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "description": "Tracks Samsung Auto Blocker state. When enabled, blocks USB debugging, ADB commands, app sideloading, and developer certificates.",
       "path": "processors/samsung_auto_blocker.yaml",
-      "tags": ["samsung", "security", "auto_blocker", "usb", "adb"],
+      "tags": [
+        "samsung",
+        "security",
+        "auto_blocker",
+        "usb",
+        "adb"
+      ],
       "sha256": "",
       "category": "security",
       "license": null,
       "processor_type": "state_tracker",
-      "source_types": ["logcat", "dumpstate"],
+      "source_types": [
+        "logcat",
+        "dumpstate"
+      ],
       "deprecated": false
     },
     {
       "id": "connectivity-check-probes",
       "name": "Connectivity Check Probes",
-      "version": "1.1.1",
+      "version": "1.1.3",
       "description": "Captures every Android NetworkMonitor probe (DNS, HTTP, HTTPS, FALLBACK) with timing, result, and failure details. Highlights DNS resolution failures as a root cause of connectivity check failures.",
       "path": "processors/connectivity_check_probes.yaml",
-      "tags": ["network", "connectivity", "dns", "android"],
+      "tags": [
+        "network",
+        "connectivity",
+        "dns",
+        "android"
+      ],
       "sha256": "",
       "category": "network",
       "license": null,
       "processor_type": "reporter",
-      "source_types": ["logcat"],
+      "source_types": [
+        "logcat"
+      ],
       "deprecated": false
     },
     {
       "id": "connectivity-check-state",
       "name": "Connectivity Check State",
-      "version": "1.1.1",
+      "version": "1.1.3",
       "description": "Tracks Android NetworkMonitor validation lifecycle per network. Monitors probe-level DNS failures, HTTP/HTTPS probe outcomes, and the final isCaptivePortal verdict.",
       "path": "processors/connectivity_check_state.yaml",
-      "tags": ["network", "connectivity", "dns", "android"],
+      "tags": [
+        "network",
+        "connectivity",
+        "dns",
+        "android"
+      ],
       "sha256": "",
       "category": "network",
       "license": null,
       "processor_type": "state_tracker",
-      "source_types": ["logcat", "bugreport"],
+      "source_types": [
+        "logcat",
+        "bugreport"
+      ],
       "deprecated": false
     },
     {
       "id": "ebadf-error-tracker",
       "name": "EBADF Error Tracker",
-      "version": "1.1.1",
+      "version": "1.1.3",
       "description": "Finds EBADF (bad file descriptor) errors across all processes. Groups by PID and operation type. High EBADF rates often indicate FD recycling caused by an FD leak in another process.",
       "path": "processors/ebadf_error_tracker.yaml",
-      "tags": ["ebadf", "fd", "file-descriptor", "error", "android"],
+      "tags": [
+        "ebadf",
+        "fd",
+        "file-descriptor",
+        "error",
+        "android"
+      ],
       "sha256": "",
       "category": "stability",
       "license": null,
       "processor_type": "reporter",
-      "source_types": ["logcat"],
+      "source_types": [
+        "logcat"
+      ],
       "deprecated": false
     },
     {
       "id": "exception-storm-detector",
       "name": "Exception Storm Detector",
-      "version": "1.1.1",
-      "description": "Detects exception storms — bursts of 20+ identical errors within a 2-second window. Uses the BurstDetector aggregate to fire exactly once per rising edge.",
+      "version": "1.1.2",
+      "description": "Detects exception storms \u2014 bursts of 20+ identical errors within a 2-second window. Uses the BurstDetector aggregate to fire exactly once per rising edge.",
       "path": "processors/exception_storm_detector.yaml",
-      "tags": ["exception", "error", "storm", "burst", "android", "stability"],
+      "tags": [
+        "exception",
+        "error",
+        "storm",
+        "burst",
+        "android",
+        "stability"
+      ],
       "sha256": "",
       "category": "stability",
       "license": null,
       "processor_type": "reporter",
-      "source_types": ["logcat"],
+      "source_types": [
+        "logcat"
+      ],
       "deprecated": false
     },
     {
       "id": "fd-ebadf-correlator",
-      "name": "FD Exhaustion → EBADF Correlator",
-      "version": "1.0.0",
-      "description": "Detects when a system_server FD spike (>900 FDs per Watchdog telemetry) precedes EBADF errors in other processes — indicating FD recycling as the root cause.",
+      "name": "FD Exhaustion \u2192 EBADF Correlator",
+      "version": "1.0.1",
+      "description": "Detects when a system_server FD spike (>900 FDs per Watchdog telemetry) precedes EBADF errors in other processes \u2014 indicating FD recycling as the root cause.",
       "path": "processors/fd_ebadf_correlator.yaml",
-      "tags": ["fd", "ebadf", "correlator", "system_server", "android"],
+      "tags": [
+        "fd",
+        "ebadf",
+        "correlator",
+        "system_server",
+        "android"
+      ],
       "sha256": "",
       "category": "stability",
       "license": null,
       "processor_type": "correlator",
-      "source_types": ["logcat"],
+      "source_types": [
+        "logcat"
+      ],
       "deprecated": false
     },
     {
       "id": "gc-pressure-monitor",
       "name": "GC Pressure Monitor",
-      "version": "1.1.1",
+      "version": "1.1.2",
       "description": "Tracks ART GC events. Monitors heap used/max and GC duration. Classifies heap pressure as normal (<70%), stressed (70-85%), or critical (>85%).",
       "path": "processors/gc_pressure_monitor.yaml",
-      "tags": ["gc", "heap", "art", "memory", "android"],
+      "tags": [
+        "gc",
+        "heap",
+        "art",
+        "memory",
+        "android"
+      ],
       "sha256": "",
       "category": "memory",
       "license": null,
       "processor_type": "reporter",
-      "source_types": ["logcat"],
+      "source_types": [
+        "logcat"
+      ],
       "deprecated": false
     },
     {
       "id": "process-kill-storm",
       "name": "Process Kill Storm",
-      "version": "1.1.1",
+      "version": "1.1.2",
       "description": "Captures ActivityManager process kills. Tracks kill rate, RSS freed per kill, and groups kills by reason. Useful for diagnosing memory pressure kill storms.",
       "path": "processors/process_kill_storm.yaml",
-      "tags": ["am", "activitymanager", "kill", "oom", "memory", "android"],
+      "tags": [
+        "am",
+        "activitymanager",
+        "kill",
+        "oom",
+        "memory",
+        "android"
+      ],
       "sha256": "",
       "category": "memory",
       "license": null,
       "processor_type": "reporter",
-      "source_types": ["logcat"],
+      "source_types": [
+        "logcat"
+      ],
       "deprecated": false
     },
     {
       "id": "system-server-fd-monitor",
       "name": "System Server FD Monitor",
-      "version": "1.1.1",
+      "version": "1.1.2",
       "description": "Extracts Samsung Watchdog FD telemetry from system_server. Tracks FD count over time, classifies into normal/elevated/critical states, and detects the boot FD spike pattern.",
       "path": "processors/system_server_fd_monitor.yaml",
-      "tags": ["fd", "file-descriptor", "system_server", "watchdog", "leak", "android"],
+      "tags": [
+        "fd",
+        "file-descriptor",
+        "system_server",
+        "watchdog",
+        "leak",
+        "android"
+      ],
       "sha256": "",
       "category": "stability",
       "license": null,
       "processor_type": "reporter",
-      "source_types": ["logcat", "bugreport"],
+      "source_types": [
+        "logcat",
+        "bugreport"
+      ],
       "deprecated": false
     },
     {
       "id": "system-server-heap",
       "name": "System Server Heap Monitor",
-      "version": "1.1.1",
+      "version": "1.1.2",
       "description": "Monitors Android system_server Java heap pressure via Watchdog !@Sync messages. Tracks heap used/max and pressure level over time.",
       "path": "processors/system_server_heap.yaml",
-      "tags": ["memory", "heap", "system_server", "watchdog", "oom", "android"],
+      "tags": [
+        "memory",
+        "heap",
+        "system_server",
+        "watchdog",
+        "oom",
+        "android"
+      ],
       "sha256": "",
       "category": "memory",
       "license": null,
       "processor_type": "reporter",
-      "source_types": ["logcat", "bugreport"],
+      "source_types": [
+        "logcat",
+        "bugreport"
+      ],
       "deprecated": false
     },
     {
       "id": "wlan-disconnect-events",
       "name": "WLAN Disconnect Events",
-      "version": "1.5.1",
+      "version": "1.5.2",
       "description": "Captures WiFi disconnection events from bugreport WifiStateMachine dumps and live logcat. Extracts IEEE 802.11 reason codes, locally-generated flags, BSSID, and SSID. Content-based dedup avoids bugreport cross-section duplication.",
       "path": "processors/wlan_disconnect_events.yaml",
-      "tags": ["wifi", "network", "wlan", "disconnect", "android"],
+      "tags": [
+        "wifi",
+        "network",
+        "wlan",
+        "disconnect",
+        "android"
+      ],
       "sha256": "",
       "category": "network",
       "license": null,
       "processor_type": "reporter",
-      "source_types": ["logcat", "bugreport"],
+      "source_types": [
+        "logcat",
+        "bugreport"
+      ],
       "deprecated": false
     },
     {
       "id": "exception-stack-tracker",
       "name": "Exception Stack Tracker",
-      "version": "1.3.4",
-      "description": "Tracks exception stack traces across all tags — both fatal crashes (AndroidRuntime FATAL EXCEPTION) and non-fatal logged exceptions (Binder, system_server, etc.). Separates fatal vs non-fatal counts, shows which apps crashed and why, and groups non-fatal exceptions by source and type. System.err exceptions are attributed to the owning app package via stack frame analysis.",
+      "version": "1.3.5",
+      "description": "Tracks exception stack traces across all tags \u2014 both fatal crashes (AndroidRuntime FATAL EXCEPTION) and non-fatal logged exceptions (Binder, system_server, etc.). Separates fatal vs non-fatal counts, shows which apps crashed and why, and groups non-fatal exceptions by source and type. System.err exceptions are attributed to the owning app package via stack frame analysis.",
       "path": "processors/exception_stack_tracker.yaml",
-      "tags": ["exception", "crash", "stack-trace", "android", "stability"],
+      "tags": [
+        "exception",
+        "crash",
+        "stack-trace",
+        "android",
+        "stability"
+      ],
       "sha256": "",
       "category": "stability",
       "license": null,
       "processor_type": "reporter",
-      "source_types": ["logcat", "bugreport"],
+      "source_types": [
+        "logcat",
+        "bugreport"
+      ],
       "deprecated": false
     },
     {
       "id": "wlan-disconnect-tracker",
       "name": "WLAN Disconnect Tracker",
-      "version": "1.5.0",
+      "version": "1.5.1",
       "description": "Tracks WiFi connection state with focus on disconnection events. Captures IEEE 802.11 reason codes, locally-generated flags, and BSSID from wpa_supplicant CTRL-EVENT messages. Uses DUMPSYS NORMAL section filtering to avoid bugreport cross-section duplication.",
       "path": "processors/wlan_disconnect_tracker.yaml",
-      "tags": ["wifi", "network", "wlan", "disconnect", "android"],
+      "tags": [
+        "wifi",
+        "network",
+        "wlan",
+        "disconnect",
+        "android"
+      ],
       "sha256": "",
       "category": "network",
       "license": null,
       "processor_type": "state_tracker",
-      "source_types": ["logcat", "bugreport"],
+      "source_types": [
+        "logcat",
+        "bugreport"
+      ],
       "deprecated": false
     },
     {
       "id": "dns-server-stats",
       "name": "DNS Server Stats",
-      "version": "1.0.7",
+      "version": "1.0.9",
       "description": "Parses the Android dnsresolver service dump to extract per-server DNS statistics: query totals, success/error/timeout counts, RTT averages per protocol (UDP, DoH, DoT/TLS, TCP), rcode distributions, server reliability scores, and Private DNS mode.",
       "path": "processors/dns_server_stats.yaml",
-      "tags": ["network", "dns", "android", "bugreport"],
+      "tags": [
+        "network",
+        "dns",
+        "android",
+        "bugreport"
+      ],
       "sha256": "",
       "category": "network",
       "license": null,
       "processor_type": "reporter",
-      "source_types": ["bugreport"],
+      "source_types": [
+        "bugreport"
+      ],
       "deprecated": false
     },
     {
       "id": "dns-private-probe-tracker",
       "name": "DNS Private Probe Tracker",
-      "version": "1.0.2",
+      "version": "1.0.4",
       "description": "Parses PrivateDnsLog from the dnsresolver dump to build a timeline of DoT/DoH connection probe events. Computes per-probe latency, tracks repeated server failures, and surfaces the pattern of local DHCP servers that fail DoT while public resolvers succeed.",
       "path": "processors/dns_private_probe_tracker.yaml",
-      "tags": ["network", "dns", "android", "bugreport", "private-dns"],
+      "tags": [
+        "network",
+        "dns",
+        "android",
+        "bugreport",
+        "private-dns"
+      ],
       "sha256": "",
       "category": "network",
       "license": null,
       "processor_type": "reporter",
-      "source_types": ["bugreport"],
+      "source_types": [
+        "bugreport"
+      ],
       "deprecated": false
     },
     {
       "id": "dns-query-events",
       "name": "DNS Query Events",
-      "version": "1.0.6",
+      "version": "1.0.8",
       "description": "Tracks per-query DNS resolution events from NetdEventListenerService logcat. Shows requesting app, network ID, result (SUCCESS/FAIL/SKIPPED), and latency. Aggregates total/answered/failed/skipped counts with per-app and per-network breakdowns.",
       "path": "processors/dns_query_events.yaml",
-      "tags": ["network", "dns", "android", "performance"],
+      "tags": [
+        "network",
+        "dns",
+        "android",
+        "performance"
+      ],
       "sha256": "",
       "category": "network",
       "license": null,
       "processor_type": "reporter",
-      "source_types": ["logcat", "bugreport"],
+      "source_types": [
+        "logcat",
+        "bugreport"
+      ],
       "deprecated": false
     },
     {
       "id": "cellular-registration-state",
       "name": "Cellular Registration State",
-      "version": "1.1.0",
+      "version": "1.1.2",
       "description": "Tracks cellular voice and data registration state, RAT (NR_SA, LTE, etc.), and operator name. Reconstructs the cellular registration timeline from PhoneStateTracker, VolteServiceModule, SST, and DefaultPhoneNotifier logs. Captures reject causes and NR state from the RADIO LOG.",
       "path": "processors/cellular_registration_state.yaml",
-      "tags": ["telephony", "cellular", "registration", "rat", "android"],
+      "tags": [
+        "telephony",
+        "cellular",
+        "registration",
+        "rat",
+        "android"
+      ],
       "sha256": "",
       "category": "telephony",
       "license": null,
       "processor_type": "state_tracker",
-      "source_types": ["logcat", "bugreport"],
+      "source_types": [
+        "logcat",
+        "bugreport"
+      ],
       "deprecated": false
     },
     {
       "id": "cellular-data-failure-reporter",
       "name": "Cellular Data Failure Reporter",
-      "version": "1.0.0",
+      "version": "1.0.2",
       "description": "Surfaces why mobile data setup fails on Android. Captures trySetupData failures, data-allowed gate rejections, and no-APN conditions from DCT-C-0 and DataEnabledSettings tags. Extracts all data-enabled flag snapshots so the root cause (e.g. isUserDataEnabled=false) is immediately visible.",
       "path": "processors/cellular_data_failure_reporter.yaml",
-      "tags": ["cellular", "mobile-data", "dct", "telephony", "android", "samsung"],
+      "tags": [
+        "cellular",
+        "mobile-data",
+        "dct",
+        "telephony",
+        "android",
+        "samsung"
+      ],
       "sha256": "",
       "category": "network",
       "license": null,
       "processor_type": "reporter",
-      "source_types": ["logcat", "bugreport"],
+      "source_types": [
+        "logcat",
+        "bugreport"
+      ],
       "deprecated": false
     },
     {
       "id": "radio-data-call-reporter",
       "name": "Radio Data Call Reporter",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Tracks RIL-level data call setup and teardown from RILJ, DSM-C-0, DCT-C-0, and SST. Captures SETUP_DATA_CALL and DEACTIVATE_DATA_CALL commands, DATA_REGISTRATION_STATE polls, and pollStateDone transitions.",
       "path": "processors/radio_data_call_reporter.yaml",
-      "tags": ["telephony", "ril", "data-call", "cellular", "android", "radio"],
+      "tags": [
+        "telephony",
+        "ril",
+        "data-call",
+        "cellular",
+        "android",
+        "radio"
+      ],
       "sha256": "",
       "category": "telephony",
       "license": null,
       "processor_type": "reporter",
-      "source_types": ["logcat", "bugreport"],
+      "source_types": [
+        "logcat",
+        "bugreport"
+      ],
       "deprecated": false
     },
     {
       "id": "radio-airplane-mode-state",
       "name": "Radio / Airplane Mode State",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Tracks airplane mode, data connection state, emergency-only mode, and SIM card state from MobileSignalController. Compound transitions capture all four fields atomically when possible.",
       "path": "processors/radio_airplane_mode_state.yaml",
-      "tags": ["telephony", "radio", "airplane-mode", "sim", "android"],
+      "tags": [
+        "telephony",
+        "radio",
+        "airplane-mode",
+        "sim",
+        "android"
+      ],
       "sha256": "",
       "category": "telephony",
       "license": null,
       "processor_type": "state_tracker",
-      "source_types": ["logcat", "bugreport"],
+      "source_types": [
+        "logcat",
+        "bugreport"
+      ],
       "deprecated": false
     },
     {
       "id": "ims-volte-reporter",
       "name": "IMS / VoLTE Bearer Reporter",
-      "version": "1.0.0",
-      "description": "Tracks IMS bearer setup and teardown events from logcat and bugreport. Extracts state transitions (CONNECTING → CONNECTED → DISCONNECTED), transport type (WWAN/WLAN), network type (LTE, NR), and interface name. Distinguishes 'IMS connected but no internet' situations from full connectivity loss.",
+      "version": "1.0.1",
+      "description": "Tracks IMS bearer setup and teardown events from logcat and bugreport. Extracts state transitions (CONNECTING \u2192 CONNECTED \u2192 DISCONNECTED), transport type (WWAN/WLAN), network type (LTE, NR), and interface name. Distinguishes 'IMS connected but no internet' situations from full connectivity loss.",
       "path": "processors/ims_volte_reporter.yaml",
-      "tags": ["ims", "volte", "telephony", "bearer", "rcs", "android"],
+      "tags": [
+        "ims",
+        "volte",
+        "telephony",
+        "bearer",
+        "rcs",
+        "android"
+      ],
       "sha256": "",
       "category": "telephony",
       "license": null,
       "processor_type": "reporter",
-      "source_types": ["logcat", "bugreport"],
+      "source_types": [
+        "logcat",
+        "bugreport"
+      ],
       "deprecated": false
     },
     {
       "id": "crash-storm-detector",
       "name": "Crash Storm Detector",
-      "version": "1.0.0",
-      "description": "Detects crash storms — when the same app crashes 3+ times within 10 seconds. Fires once per rising edge per process.",
+      "version": "1.0.2",
+      "description": "Detects crash storms \u2014 when the same app crashes 3+ times within 10 seconds. Fires once per rising edge per process.",
       "path": "processors/crash_storm_detector.yaml",
-      "tags": ["crash", "fatal", "androidruntime", "storm", "burst", "android", "stability"],
+      "tags": [
+        "crash",
+        "fatal",
+        "androidruntime",
+        "storm",
+        "burst",
+        "android",
+        "stability"
+      ],
       "sha256": "",
       "category": "stability",
       "license": null,
       "processor_type": "reporter",
-      "source_types": ["logcat", "bugreport"],
+      "source_types": [
+        "logcat",
+        "bugreport"
+      ],
       "deprecated": false
     },
     {
       "id": "sim-identity-reporter",
       "name": "SIM Identity Reporter",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Extracts SIM card identity and subscription details. Surfaces SIM PLMN vs network PLMN mismatches (e.g. Sprint SIM on T-Mobile), ePDG FQDN DNS failures, EHPLMN/HPLMN lists, eSIM status, and carrier ID. Detects configuration issues that cause WiFi Calling and IMS handover failures.",
       "path": "processors/sim_identity_reporter.yaml",
-      "tags": ["sim", "plmn", "carrier", "telephony", "android", "samsung"],
+      "tags": [
+        "sim",
+        "plmn",
+        "carrier",
+        "telephony",
+        "android",
+        "samsung"
+      ],
       "sha256": "",
       "category": "telephony",
       "license": null,
       "processor_type": "reporter",
-      "source_types": ["logcat", "bugreport"],
+      "source_types": [
+        "logcat",
+        "bugreport"
+      ],
       "deprecated": false
     }
   ],
@@ -387,11 +622,20 @@
       "id": "wifi-diagnostics",
       "name": "WiFi Diagnostics",
       "version": "1.0.0",
-      "description": "Full WiFi connection analysis — state tracking, disconnect events, and probe monitoring",
+      "description": "Full WiFi connection analysis \u2014 state tracking, disconnect events, and probe monitoring",
       "path": "packs/wifi-diagnostics.pack.yaml",
-      "tags": ["network", "wifi", "android"],
+      "tags": [
+        "network",
+        "wifi",
+        "android"
+      ],
       "category": "network",
-      "processor_ids": ["wifi-state", "wlan-disconnect-events", "wlan-disconnect-tracker", "connectivity-check-probes"],
+      "processor_ids": [
+        "wifi-state",
+        "wlan-disconnect-events",
+        "wlan-disconnect-tracker",
+        "connectivity-check-probes"
+      ],
       "sha256": ""
     },
     {
@@ -400,9 +644,20 @@
       "version": "1.0.0",
       "description": "Network connectivity state tracking, DNS resolution analysis, and connectivity check monitoring",
       "path": "packs/network-connectivity.pack.yaml",
-      "tags": ["network", "connectivity", "dns", "android"],
+      "tags": [
+        "network",
+        "connectivity",
+        "dns",
+        "android"
+      ],
       "category": "network",
-      "processor_ids": ["network-connectivity", "connectivity-check-state", "dns-query-events", "dns-server-stats", "dns-private-probe-tracker"],
+      "processor_ids": [
+        "network-connectivity",
+        "connectivity-check-state",
+        "dns-query-events",
+        "dns-server-stats",
+        "dns-private-probe-tracker"
+      ],
       "sha256": ""
     },
     {
@@ -411,9 +666,21 @@
       "version": "1.0.0",
       "description": "Cellular registration, data calls, radio state, SIM identity, and VoLTE/IMS monitoring",
       "path": "packs/telephony-suite.pack.yaml",
-      "tags": ["telephony", "cellular", "radio", "android"],
+      "tags": [
+        "telephony",
+        "cellular",
+        "radio",
+        "android"
+      ],
       "category": "telephony",
-      "processor_ids": ["cellular-registration-state", "cellular-data-failure-reporter", "radio-airplane-mode-state", "radio-data-call-reporter", "sim-identity-reporter", "ims-volte-reporter"],
+      "processor_ids": [
+        "cellular-registration-state",
+        "cellular-data-failure-reporter",
+        "radio-airplane-mode-state",
+        "radio-data-call-reporter",
+        "sim-identity-reporter",
+        "ims-volte-reporter"
+      ],
       "sha256": ""
     },
     {
@@ -422,9 +689,19 @@
       "version": "1.0.0",
       "description": "Crash detection, exception tracking, and process kill storm analysis",
       "path": "packs/stability-monitor.pack.yaml",
-      "tags": ["stability", "crashes", "exceptions", "android"],
+      "tags": [
+        "stability",
+        "crashes",
+        "exceptions",
+        "android"
+      ],
       "category": "stability",
-      "processor_ids": ["crash-storm-detector", "exception-stack-tracker", "exception-storm-detector", "process-kill-storm"],
+      "processor_ids": [
+        "crash-storm-detector",
+        "exception-stack-tracker",
+        "exception-storm-detector",
+        "process-kill-storm"
+      ],
       "sha256": ""
     },
     {
@@ -433,9 +710,20 @@
       "version": "1.0.0",
       "description": "Memory monitoring, file descriptor tracking, battery state, and app lifecycle",
       "path": "packs/system-health.pack.yaml",
-      "tags": ["memory", "battery", "system", "android"],
+      "tags": [
+        "memory",
+        "battery",
+        "system",
+        "android"
+      ],
       "category": "memory",
-      "processor_ids": ["gc-pressure-monitor", "system-server-fd-monitor", "system-server-heap", "battery-state", "app-lifecycle"],
+      "processor_ids": [
+        "gc-pressure-monitor",
+        "system-server-fd-monitor",
+        "system-server-heap",
+        "battery-state",
+        "app-lifecycle"
+      ],
       "sha256": ""
     },
     {
@@ -444,9 +732,17 @@
       "version": "1.0.0",
       "description": "EBADF error tracking and file descriptor correlation analysis",
       "path": "packs/error-analysis.pack.yaml",
-      "tags": ["stability", "errors", "fd", "android"],
+      "tags": [
+        "stability",
+        "errors",
+        "fd",
+        "android"
+      ],
       "category": "stability",
-      "processor_ids": ["ebadf-error-tracker", "fd-ebadf-correlator"],
+      "processor_ids": [
+        "ebadf-error-tracker",
+        "fd-ebadf-correlator"
+      ],
       "sha256": ""
     }
   ]

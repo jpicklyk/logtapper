@@ -1,7 +1,7 @@
 meta:
   id: "crash-storm-detector"
   name: "Crash Storm Detector"
-  version: "1.0.0"
+  version: "1.0.2"
   author: "LogTapper"
   description: "Detects crash storms — when the same app crashes 3+ times within 10 seconds. Matches AndroidRuntime 'Process:' lines to extract the process name and PID. Fires once per rising edge per process."
   tags: ["crash", "fatal", "androidruntime", "storm", "burst", "android", "stability"]

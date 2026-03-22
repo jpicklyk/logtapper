@@ -1,7 +1,7 @@
 meta:
   id: "radio-data-call-reporter"
   name: "Radio Data Call Reporter"
-  version: "1.0.0"
+  version: "1.0.1"
   author: "LogTapper"
   description: "Tracks RIL-level data call setup and teardown from RILJ, DSM-C-0, DCT-C-0, and SST. Captures SETUP_DATA_CALL and DEACTIVATE_DATA_CALL commands, DATA_REGISTRATION_STATE polls, and pollStateDone transitions. Complements the higher-level Cellular Data Failure Reporter with raw RIL visibility."
   tags: ["telephony", "ril", "data-call", "cellular", "android", "radio"]

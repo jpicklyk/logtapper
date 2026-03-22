@@ -1,7 +1,7 @@
 meta:
   id: "wlan-disconnect-events"
   name: "WLAN Disconnect Events"
-  version: "1.5.1"
+  version: "1.5.2"
   author: "LogTapper"
   description: "Captures WiFi disconnection events from bugreport WifiStateMachine dumps and live logcat. Extracts IEEE 802.11 reason codes, locally-generated flags, BSSID, and SSID. Section filtering restricts bugreport processing to SYSTEM LOG and DUMPSYS NORMAL; content-based dedup skips compact/metrics duplicates within those sections."
   tags: ["wifi", "network", "wlan", "disconnect", "android"]

@@ -1,7 +1,7 @@
 meta:
   id: "exception-stack-tracker"
   name: "Exception Stack Tracker"
-  version: "1.3.4"
+  version: "1.3.5"
   author: "LogTapper"
   description: "Tracks exception stack traces across all tags — both fatal crashes (AndroidRuntime FATAL EXCEPTION) and non-fatal logged exceptions (Binder, system_server, etc.). Separates fatal vs non-fatal counts, shows which apps crashed and why, and groups non-fatal exceptions by source and type. System.err exceptions are attributed to the owning app package via stack frame analysis."
   tags: ["exception", "crash", "stack-trace", "android", "stability"]

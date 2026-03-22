@@ -1,7 +1,7 @@
 type: correlator
 id: fd-ebadf-correlator
 name: "FD Exhaustion → EBADF Correlator"
-version: 1.0.0
+version: 1.0.1
 author: LogTapper
 description: >
   Detects when a system_server FD spike (>900 FDs per Watchdog telemetry)
