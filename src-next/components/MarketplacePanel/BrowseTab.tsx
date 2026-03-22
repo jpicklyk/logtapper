@@ -176,7 +176,22 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
     setExpandedPackProcessors((prev) => (prev === packId ? null : packId));
   }, []);
 
-  const textFiltered = useMemo(() => filterMarketplaceEntries(entries, filter), [entries, filter]);
+  // IDs of processors that belong to a pack — these are hidden from the individual list
+  const packMemberIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const pack of packEntries) {
+      for (const pid of pack.processorIds) ids.add(pid);
+    }
+    return ids;
+  }, [packEntries]);
+
+  // Only show processors that don't belong to any pack as standalone entries
+  const standaloneEntries = useMemo(
+    () => entries.filter((e) => !packMemberIds.has(e.id)),
+    [entries, packMemberIds],
+  );
+
+  const textFiltered = useMemo(() => filterMarketplaceEntries(standaloneEntries, filter), [standaloneEntries, filter]);
 
   const filtered = useMemo(() => {
     if (activeTagFilters.size === 0) return textFiltered;
@@ -365,7 +380,7 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
         })}
 
         {filteredPacks.length > 0 && filtered.length > 0 && (
-          <div className={css.sectionDivider}>Individual Processors</div>
+          <div className={css.sectionDivider}>Standalone Processors</div>
         )}
 
         {filtered.map((entry) => {
