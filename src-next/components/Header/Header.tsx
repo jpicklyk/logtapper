@@ -160,6 +160,13 @@ export const Header = React.memo(function Header() {
           open={fileMenuOpen}
           onOpenChange={setFileMenuOpen}
         />
+      </div>
+
+      <div className={styles.searchArea}>
+        <SearchBar disabled={!session} />
+      </div>
+
+      <div className={styles.actions}>
         <button
           className={clsx(
             styles.actionBtn,
@@ -183,13 +190,6 @@ export const Header = React.memo(function Header() {
             </>
           )}
         </button>
-      </div>
-
-      <div className={styles.searchArea}>
-        <SearchBar disabled={!session} />
-      </div>
-
-      <div className={styles.actions}>
         <button
           className={styles.actionBtn}
           onClick={() => bus.emit('layout:settings-requested')}
