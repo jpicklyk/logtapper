@@ -2,17 +2,16 @@ import { memo, useState, useCallback, useRef, useMemo } from 'react';
 import ReactDOM from 'react-dom';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { ProcessorSummary } from '../../bridge/types';
+import { matchesAllTags } from '../../bridge/types';
 import {
   loadProcessorFromFile,
 } from '../../bridge/commands';
 import { usePipeline } from '../../hooks';
 import { useProcessors, usePipelineChain } from '../../context';
-import { getCategoryLabel, CATEGORY_ORDER } from '../../ui/categoryMeta';
-import { ProcessorTypeIcon } from '../../ui/processorTypeIcons';
+import { getCategoryLabel, CATEGORY_ORDER, ProcessorTypeIcon, PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY } from '../../ui';
 import { ProcessorDetailCard } from '../ProcessorDetailCard';
 import css from './ProcessorLibrary.module.css';
 import badgeCss from '../../ui/processorBadge.module.css';
-import { PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY } from '../../ui/processorBadgeTypes';
 
 type Tab = 'installed' | 'yaml';
 
@@ -119,10 +118,8 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
           if (!matchesText) return false;
         }
         // Tag chip filter (AND: processor must have ALL active tags)
-        if (activeTagFilters.size > 0) {
-          for (const activeTag of activeTagFilters) {
-            if (!p.tags.includes(activeTag)) return false;
-          }
+        if (activeTagFilters.size > 0 && !matchesAllTags(p.tags, activeTagFilters)) {
+          return false;
         }
         return true;
       }),

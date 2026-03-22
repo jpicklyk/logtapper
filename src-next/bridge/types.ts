@@ -444,6 +444,14 @@ export interface MarketplaceFetchResult {
   packs: MarketplacePackEntry[];
 }
 
+/** Check if all active filter tags are present in the item's tags. */
+export function matchesAllTags(tags: string[], activeFilters: Set<string>): boolean {
+  for (const tag of activeFilters) {
+    if (!tags.includes(tag)) return false;
+  }
+  return true;
+}
+
 /** Filter marketplace entries by search query (matches name, description, tags) */
 export function filterMarketplaceEntries(entries: MarketplaceEntry[], query: string): MarketplaceEntry[] {
   if (!query) return entries;

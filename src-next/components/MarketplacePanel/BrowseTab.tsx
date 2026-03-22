@@ -1,11 +1,12 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import type { MarketplaceEntry, MarketplacePackEntry } from '../../bridge/types';
-import { makeQualifiedId, filterMarketplaceEntries } from '../../bridge/types';
+import { makeQualifiedId, filterMarketplaceEntries, matchesAllTags } from '../../bridge/types';
 import type { MarketplaceState } from '../../hooks/useMarketplace';
 import { listPacks } from '../../bridge/commands';
 import type { PackSummary } from '../../bridge/types';
 import { usePipeline } from '../../hooks';
 import { useProcessors } from '../../context';
+import { PROC_TYPE_LABELS } from '../../ui';
 import { MarketplaceEntryRow } from './MarketplaceEntryRow';
 import { ProcessorDetailCard } from '../ProcessorDetailCard';
 import css from './MarketplacePanel.module.css';
@@ -47,6 +48,10 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
   const enabledSources = useMemo(() => sources.filter((s) => s.enabled), [sources]);
   const installedIds = useMemo(() => new Set(processors.map((p) => p.id)), [processors]);
   const installedPackIds = useMemo(() => new Set(installedPacks.map((p) => p.id)), [installedPacks]);
+  const entriesById = useMemo(
+    () => new Map(entries.map((e) => [e.id, e])),
+    [entries],
+  );
 
   // Fetch installed packs on mount and after install/uninstall
   useEffect(() => {
@@ -195,12 +200,7 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
 
   const filtered = useMemo(() => {
     if (activeTagFilters.size === 0) return textFiltered;
-    return textFiltered.filter((e) => {
-      for (const tag of activeTagFilters) {
-        if (!e.tags.includes(tag)) return false;
-      }
-      return true;
-    });
+    return textFiltered.filter((e) => matchesAllTags(e.tags, activeTagFilters));
   }, [textFiltered, activeTagFilters]);
 
   // Filter packs by text search and tag filters
@@ -216,12 +216,7 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
       );
     }
     if (activeTagFilters.size > 0) {
-      result = result.filter((p) => {
-        for (const tag of activeTagFilters) {
-          if (!p.tags.includes(tag)) return false;
-        }
-        return true;
-      });
+      result = result.filter((p) => matchesAllTags(p.tags, activeTagFilters));
     }
     return result;
   }, [packEntries, filter, activeTagFilters]);
@@ -367,13 +362,13 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
               {showProcessors && (
                 <div className={css.packProcessorList}>
                   {pack.processorIds.map((pid) => {
-                    const matchingEntry = entries.find((e) => e.id === pid);
+                    const matchingEntry = entriesById.get(pid);
                     return (
                       <div key={pid} className={css.packProcessorItem}>
                         <span className={css.packProcessorDot} />
                         <span className={css.packProcessorName}>{matchingEntry?.name ?? pid}</span>
                         {matchingEntry?.processorType && (
-                          <span className={css.packProcessorType}>{matchingEntry.processorType.replace('_', ' ')}</span>
+                          <span className={css.packProcessorType}>{PROC_TYPE_LABELS[matchingEntry.processorType] ?? matchingEntry.processorType}</span>
                         )}
                       </div>
                     );

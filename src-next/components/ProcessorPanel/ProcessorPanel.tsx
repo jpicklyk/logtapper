@@ -34,32 +34,23 @@ import { bus } from '../../events';
 import { storageGet, storageSet } from '../../utils';
 import styles from './ProcessorPanel.module.css';
 import badgeCss from '../../ui/processorBadge.module.css';
-import { PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY } from '../../ui/processorBadgeTypes';
+import { PROC_TYPE_ACCENT, getProcTypeMeta as _getProcTypeMeta } from '../../ui';
+import { PINNED_TAIL_IDS } from '../../context/PipelineContext';
 
 // ── Type metadata ────────────────────────────────────────────────────────────
 
+/** Resolves [label, cssClass] — wraps the shared helper with CSS module lookup. */
 function getProcTypeMeta(type: string): [string, string] {
-  const label = PROC_TYPE_LABELS[type] ?? type;
-  const cls = badgeCss[PROC_TYPE_CLASS_KEY[type] as keyof typeof badgeCss] ?? '';
-  return [label, cls];
+  const [label, classKey] = _getProcTypeMeta(type);
+  return [label, badgeCss[classKey as keyof typeof badgeCss] ?? ''];
 }
 
 // PII anonymizer is the only transformer — show a dedicated badge instead
 // of the generic "Transformer" label.
 const PII_TYPE_META: [string, string] = [
   'PII',
-  badgeCss[PROC_TYPE_CLASS_KEY['transformer'] as keyof typeof badgeCss] ?? '',
+  badgeCss['typeTransformer' as keyof typeof badgeCss] ?? '',
 ];
-
-const PROC_TYPE_ACCENT: Record<string, string> = {
-  transformer: 'var(--proc-transformer)',
-  reporter: 'var(--proc-reporter)',
-  state_tracker: 'var(--proc-tracker)',
-  correlator: 'var(--proc-correlator)',
-  annotator: 'var(--proc-annotator)',
-};
-
-const PINNED_TAIL_IDS = new Set(['__pii_anonymizer']);
 
 const LS_COMPACT_KEY = 'logtapper_pipeline_compact';
 const LS_EXPANDED_PACKS_KEY = 'logtapper_pipeline_expanded_packs';
@@ -492,12 +483,17 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
     [lastResults],
   );
 
+  const processorsById = useMemo(
+    () => new Map(processors.map((p) => [p.id, p])),
+    [processors],
+  );
+
   const allChainProcessors = useMemo(
     () =>
       pipelineChain
-        .map((id) => processors.find((p) => p.id === id))
+        .map((id) => processorsById.get(id))
         .filter(Boolean) as NonNullable<(typeof processors)[0]>[],
-    [pipelineChain, processors],
+    [pipelineChain, processorsById],
   );
 
   const sortableProcessors = useMemo(
@@ -542,7 +538,7 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
     const standalone = sortableProcessors.filter((p) => !usedIds.has(p.id));
 
     return { packGroups: groups, standaloneProcessors: standalone };
-  }, [sortableProcessors, packs, processors]);
+  }, [sortableProcessors, packs]);
 
   // Pack-level handlers
   const handleTogglePackEnabled = useCallback(

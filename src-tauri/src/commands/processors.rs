@@ -122,9 +122,13 @@ pub async fn list_processors(
 
     // Cross-reference packs to annotate each summary with its pack_id.
     let packs = lock_or_err(&state.packs, "packs")?;
+    let proc_to_pack: HashMap<&str, &str> = packs
+        .iter()
+        .flat_map(|pk| pk.processors.iter().map(move |pid| (pid.as_str(), pk.id.as_str())))
+        .collect();
     for summary in &mut out {
-        if let Some(pack) = packs.iter().find(|pk| pk.processors.contains(&summary.id)) {
-            summary.pack_id = Some(pack.id.clone());
+        if let Some(pack_id) = proc_to_pack.get(summary.id.as_str()) {
+            summary.pack_id = Some(pack_id.to_string());
         }
     }
     drop(packs);

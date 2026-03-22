@@ -31,3 +31,20 @@ export const PROC_TYPE_DESCRIPTIONS: Record<string, string> = {
   transformer: 'Filters or transforms log lines before analysis',
   annotator: 'Adds metadata annotations to log lines',
 };
+
+/** CSS variable accent color for each processor type. */
+export const PROC_TYPE_ACCENT: Record<string, string> = {
+  reporter: 'var(--proc-reporter)',
+  state_tracker: 'var(--proc-tracker)',
+  correlator: 'var(--proc-correlator)',
+  transformer: 'var(--proc-transformer)',
+  annotator: 'var(--proc-annotator)',
+};
+
+/** Returns [displayLabel, cssClassKey] for a given processor type. */
+export function getProcTypeMeta(type: string): [string, string] {
+  return [
+    PROC_TYPE_LABELS[type] ?? type,
+    PROC_TYPE_CLASS_KEY[type] ?? '',
+  ];
+}

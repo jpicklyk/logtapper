@@ -3,7 +3,8 @@ import type { ProcessorSummary, PipelineRunSummary } from '../../bridge/types';
 import styles from './PackGroup.module.css';
 import ppStyles from './ProcessorPanel.module.css';
 import badgeCss from '../../ui/processorBadge.module.css';
-import { PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY } from '../../ui/processorBadgeTypes';
+import { PROC_TYPE_ACCENT, getProcTypeMeta as _getProcTypeMeta } from '../../ui';
+import { PINNED_TAIL_IDS } from '../../context/PipelineContext';
 
 // ── SVG Icons (local copies to keep PackGroup self-contained) ─────────────────
 
@@ -43,24 +44,14 @@ const EyePartialSvg = (
 
 // ── Helper ────────────────────────────────────────────────────────────────────
 
-const PROC_TYPE_ACCENT: Record<string, string> = {
-  transformer: 'var(--proc-transformer)',
-  reporter: 'var(--proc-reporter)',
-  state_tracker: 'var(--proc-tracker)',
-  correlator: 'var(--proc-correlator)',
-  annotator: 'var(--proc-annotator)',
-};
-
-const PINNED_TAIL_IDS = new Set(['__pii_anonymizer']);
 const PII_TYPE_META: [string, string] = [
   'PII',
-  badgeCss[PROC_TYPE_CLASS_KEY['transformer'] as keyof typeof badgeCss] ?? '',
+  badgeCss['typeTransformer' as keyof typeof badgeCss] ?? '',
 ];
 
 function getProcTypeMeta(type: string): [string, string] {
-  const label = PROC_TYPE_LABELS[type] ?? type;
-  const cls = badgeCss[PROC_TYPE_CLASS_KEY[type] as keyof typeof badgeCss] ?? '';
-  return [label, cls];
+  const [label, classKey] = _getProcTypeMeta(type);
+  return [label, badgeCss[classKey as keyof typeof badgeCss] ?? ''];
 }
 
 // ── ProcessorRow ──────────────────────────────────────────────────────────────

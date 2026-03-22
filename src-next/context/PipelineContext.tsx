@@ -3,7 +3,7 @@ import { arrayMove } from '@dnd-kit/sortable';
 import type { ProcessorSummary, PipelineRunSummary } from '../bridge/types';
 
 /** Processor IDs that must always remain at the tail of the chain. */
-const PINNED_TAIL_IDS = new Set(['__pii_anonymizer']);
+export const PINNED_TAIL_IDS = new Set(['__pii_anonymizer']);
 
 // ── Per-session pipeline state ──────────────────────────────────────────────
 
