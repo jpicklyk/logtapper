@@ -75,6 +75,7 @@ export type PipelineAction =
   | { type: 'processor:removed'; id: string }
   // Chain management (PINNED_TAIL_IDS logic lives in the reducer, not at call sites)
   | { type: 'chain:add'; id: string }
+  | { type: 'chain:add-pack'; processorIds: string[] }
   | { type: 'chain:remove'; id: string }
   | { type: 'chain:reorder'; fromIndex: number; toIndex: number }
   | { type: 'chain:toggle-enabled'; id: string }
@@ -212,6 +213,27 @@ function pipelineReducer(state: PipelineState, action: PipelineAction): Pipeline
           : [...state.pipelineChain, action.id];
       }
       return withChain(state, chain);
+    }
+
+    case 'chain:add-pack': {
+      // Add all processor IDs not already in the chain, respecting PINNED_TAIL_IDS position
+      const newIds = action.processorIds.filter(
+        (id) => !state.pipelineChain.includes(id) && !PINNED_TAIL_IDS.has(id),
+      );
+      // Also handle any pinned IDs in the pack (unlikely, but safe)
+      const newPinned = action.processorIds.filter(
+        (id) => !state.pipelineChain.includes(id) && PINNED_TAIL_IDS.has(id),
+      );
+      if (newIds.length === 0 && newPinned.length === 0) return state;
+      const firstPinned = state.pipelineChain.findIndex((id) => PINNED_TAIL_IDS.has(id));
+      const insertAt = firstPinned >= 0 ? firstPinned : state.pipelineChain.length;
+      const newChain = [
+        ...state.pipelineChain.slice(0, insertAt),
+        ...newIds,
+        ...state.pipelineChain.slice(insertAt),
+        ...newPinned,
+      ];
+      return withChain(state, newChain);
     }
 
     case 'chain:remove': {

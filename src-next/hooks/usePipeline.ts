@@ -38,6 +38,7 @@ export interface PipelineActions {
   installFromYaml: (yaml: string) => Promise<void>;
   removeProcessor: (id: string) => Promise<void>;
   addToChain: (id: string) => void;
+  addPackToChain: (processorIds: string[]) => void;
   removeFromChain: (id: string) => void;
   reorderChain: (fromIndex: number, toIndex: number) => void;
   toggleChainEnabled: (id: string) => void;
@@ -250,6 +251,10 @@ export function usePipeline(): PipelineActions {
     dispatch({ type: 'chain:add', id });
   }, [dispatch]);
 
+  const addPackToChain = useCallback((processorIds: string[]) => {
+    dispatch({ type: 'chain:add-pack', processorIds });
+  }, [dispatch]);
+
   const removeFromChain = useCallback((id: string) => {
     dispatch({ type: 'chain:remove', id });
   }, [dispatch]);
@@ -333,6 +338,7 @@ export function usePipeline(): PipelineActions {
     installFromYaml,
     removeProcessor,
     addToChain,
+    addPackToChain,
     removeFromChain,
     reorderChain,
     toggleChainEnabled,

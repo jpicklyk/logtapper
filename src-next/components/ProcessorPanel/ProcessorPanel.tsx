@@ -13,8 +13,10 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type { PipelineRunSummary, PipelineProgress, McpStatus } from '../../bridge/types';
-import { getMcpStatus } from '../../bridge/commands';
+import type { PipelineRunSummary, PipelineProgress, McpStatus, PackSummary } from '../../bridge/types';
+import { getMcpStatus, listPacks } from '../../bridge/commands';
+import PackGroup from './PackGroup';
+import packGroupStyles from './PackGroup.module.css';
 import {
   useSession,
   useIsStreaming,
@@ -139,6 +141,7 @@ const PROC_TYPE_ACCENT: Record<string, string> = {
 const PINNED_TAIL_IDS = new Set(['__pii_anonymizer']);
 
 const LS_COMPACT_KEY = 'logtapper_pipeline_compact';
+const LS_EXPANDED_PACKS_KEY = 'logtapper_pipeline_expanded_packs';
 
 // ── SVG Icons ────────────────────────────────────────────────────────────────
 
@@ -460,6 +463,58 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
     });
   }, []);
 
+  // ── Pack grouping state ──
+  const [packs, setPacks] = useState<PackSummary[]>([]);
+
+  // Load packs on mount and when processor list changes
+  useEffect(() => {
+    listPacks().then(setPacks).catch(() => setPacks([]));
+  }, [processors]);
+
+  // Refresh packs when marketplace events fire
+  useEffect(() => {
+    const refresh = () => { listPacks().then(setPacks).catch(() => {}); };
+    bus.on('marketplace:processor-installed', refresh);
+    bus.on('marketplace:processor-updated', refresh);
+    return () => {
+      bus.off('marketplace:processor-installed', refresh);
+      bus.off('marketplace:processor-updated', refresh);
+    };
+  }, []);
+
+  // Expanded packs state (persisted to localStorage)
+  const [expandedPacks, setExpandedPacks] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(LS_EXPANDED_PACKS_KEY);
+      if (raw) return new Set<string>(JSON.parse(raw));
+    } catch { /* ignore */ }
+    // Default: all expanded
+    return new Set<string>();
+  });
+
+  // After packs load, auto-expand all if expandedPacks is empty (first visit)
+  const [expandedPacksInitialized, setExpandedPacksInitialized] = useState(false);
+  useEffect(() => {
+    if (!expandedPacksInitialized && packs.length > 0) {
+      setExpandedPacksInitialized(true);
+      setExpandedPacks((prev) => {
+        if (prev.size > 0) return prev;
+        // All packs expanded by default
+        return new Set(packs.map((p) => p.id));
+      });
+    }
+  }, [packs, expandedPacksInitialized]);
+
+  const handleTogglePackExpand = useCallback((packId: string) => {
+    setExpandedPacks((prev) => {
+      const next = new Set(prev);
+      if (next.has(packId)) next.delete(packId);
+      else next.add(packId);
+      try { localStorage.setItem(LS_EXPANDED_PACKS_KEY, JSON.stringify([...next])); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+
   // ── Chain filter (local ephemeral state) ──
   const [chainFilter, setChainFilter] = useState('');
 
@@ -533,25 +588,95 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
     [allChainProcessors],
   );
 
-  // ── Filtered lists for search ──
-  const filteredSortable = useMemo(() => {
-    if (!chainFilter) return sortableProcessors;
-    const q = chainFilter.toLowerCase();
-    return sortableProcessors.filter((p) => p.name.toLowerCase().includes(q));
-  }, [sortableProcessors, chainFilter]);
-
+  // ── Filtered pinned processors (chain filter for pinned tail nodes) ──
   const filteredPinned = useMemo(() => {
     if (!chainFilter) return pinnedProcessors;
     const q = chainFilter.toLowerCase();
     return pinnedProcessors.filter((p) => p.name.toLowerCase().includes(q));
   }, [pinnedProcessors, chainFilter]);
 
-  const filteredSortableIds = useMemo(
-    () => filteredSortable.map((p) => p.id),
-    [filteredSortable],
+  // ── Pack grouping ──
+
+  // Build pack groups from packs that have at least one processor in the sortable chain
+  const { packGroups, standaloneProcessors } = useMemo(() => {
+    const chainProcessorMap = new Map(
+      sortableProcessors.map((p) => [p.id, p]),
+    );
+
+    const groups: Array<{ pack: PackSummary; processors: NonNullable<typeof processors>[0][] }> = [];
+    const usedIds = new Set<string>();
+
+    for (const pack of packs) {
+      const packProcs = pack.processorIds
+        .filter((id) => chainProcessorMap.has(id))
+        .map((id) => chainProcessorMap.get(id)!)
+        .filter(Boolean);
+      if (packProcs.length > 0) {
+        groups.push({ pack, processors: packProcs });
+        packProcs.forEach((p) => usedIds.add(p.id));
+      }
+    }
+
+    // Standalone = in sortable chain but not belonging to any pack in the groups
+    const standalone = sortableProcessors.filter((p) => !usedIds.has(p.id));
+
+    return { packGroups: groups, standaloneProcessors: standalone };
+  }, [sortableProcessors, packs, processors]);
+
+  // Pack-level handlers
+  const handleTogglePackEnabled = useCallback(
+    (packProcessorIds: string[]) => {
+      // If all are enabled, disable all; otherwise enable all
+      const allEnabled = packProcessorIds.every((id) => !disabledSet.has(id));
+      for (const id of packProcessorIds) {
+        const isDisabled = disabledSet.has(id);
+        if (allEnabled && !isDisabled) {
+          pipeline.toggleChainEnabled(id);
+        } else if (!allEnabled && isDisabled) {
+          pipeline.toggleChainEnabled(id);
+        }
+      }
+    },
+    [disabledSet, pipeline],
   );
 
-  const filteredTotal = filteredSortable.length + filteredPinned.length;
+  const handleRemovePack = useCallback(
+    (packProcessorIds: string[]) => {
+      for (const id of packProcessorIds) {
+        pipeline.removeFromChain(id);
+      }
+    },
+    [pipeline],
+  );
+
+  // Filtered pack groups and standalone (apply chainFilter when active)
+  const { filteredPackGroups, filteredStandalone } = useMemo(() => {
+    if (!chainFilter) {
+      return { filteredPackGroups: packGroups, filteredStandalone: standaloneProcessors };
+    }
+    const q = chainFilter.toLowerCase();
+    const filteredGroups = packGroups
+      .map((g) => ({
+        ...g,
+        processors: g.processors.filter((p) => p.name.toLowerCase().includes(q)),
+      }))
+      .filter((g) => g.processors.length > 0);
+    const filteredStandaloneArr = standaloneProcessors.filter((p) =>
+      p.name.toLowerCase().includes(q),
+    );
+    return { filteredPackGroups: filteredGroups, filteredStandalone: filteredStandaloneArr };
+  }, [packGroups, standaloneProcessors, chainFilter]);
+
+  const filteredStandaloneIds = useMemo(
+    () => filteredStandalone.map((p) => p.id),
+    [filteredStandalone],
+  );
+
+  // Total filtered count for chain filter display
+  const filteredTotal = useMemo(() => {
+    const packCount = filteredPackGroups.reduce((sum, g) => sum + g.processors.length, 0);
+    return packCount + filteredStandalone.length + filteredPinned.length;
+  }, [filteredPackGroups, filteredStandalone, filteredPinned]);
 
   const isActive = running || isStreaming;
   const sessionId = session?.sessionId ?? null;
@@ -661,13 +786,51 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
             </div>
             <ChainConnector isActive={false} compact={compact} />
           </div>
-        ) : chainFilter && filteredTotal === 0 ? (
+        ) : chainFilter && filteredPackGroups.length === 0 && filteredStandalone.length === 0 && filteredPinned.length === 0 ? (
           <div className={styles.chainFilterEmpty}>No matches</div>
         ) : (
           <>
+            {/* Pack groups */}
+            {filteredPackGroups.map((g) => {
+              const packIds = g.processors.map((p) => p.id);
+              const allEnabled = packIds.every((id) => !disabledSet.has(id));
+              const someDisabled = !allEnabled && packIds.some((id) => disabledSet.has(id));
+              return (
+                <Fragment key={g.pack.id}>
+                  <ChainConnector isActive={isActive} compact={compact} />
+                  <PackGroup
+                    packId={g.pack.id}
+                    packName={g.pack.name}
+                    processors={g.processors}
+                    expanded={expandedPacks.has(g.pack.id)}
+                    onToggleExpand={() => handleTogglePackExpand(g.pack.id)}
+                    allEnabled={allEnabled}
+                    someDisabled={someDisabled}
+                    onTogglePackEnabled={() => handleTogglePackEnabled(packIds)}
+                    onRemovePack={() => handleRemovePack(packIds)}
+                    onToggleProcessor={pipeline.toggleChainEnabled}
+                    onRemoveProcessor={pipeline.removeFromChain}
+                    disabledIds={disabledSet}
+                    resultsByProcessor={resultMap}
+                    pipelineRunning={running}
+                  />
+                </Fragment>
+              );
+            })}
+
+            {/* Separator between packs and standalone processors */}
+            {filteredPackGroups.length > 0 && filteredStandalone.length > 0 && (
+              <div className={packGroupStyles.packStandaloneSep}>
+                <div className={packGroupStyles.packStandaloneSepLine} />
+                <span className={packGroupStyles.packStandaloneSepLabel}>standalone</span>
+                <div className={packGroupStyles.packStandaloneSepLine} />
+              </div>
+            )}
+
+            {/* Standalone processors (DnD-enabled) */}
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-              <SortableContext items={filteredSortableIds} strategy={verticalListSortingStrategy}>
-                {filteredSortable.map((proc) => (
+              <SortableContext items={filteredStandaloneIds} strategy={verticalListSortingStrategy}>
+                {filteredStandalone.map((proc) => (
                   <Fragment key={proc.id}>
                     <ChainConnector isActive={isActive} compact={compact} />
                     <ChainNode
@@ -687,6 +850,8 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
                 ))}
               </SortableContext>
             </DndContext>
+
+            {/* Pinned tail nodes */}
             {filteredPinned.map((proc) => (
               <Fragment key={proc.id}>
                 <ChainConnector isActive={isActive} compact={compact} />

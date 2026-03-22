@@ -1,0 +1,238 @@
+.packGroup {
+  margin: 2px 0;
+  width: 100%;
+}
+
+.packHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  user-select: none;
+  position: relative;
+}
+
+.packHeader:hover {
+  background: var(--state-hover);
+  border-color: var(--accent);
+}
+
+.packHeader:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.chevron {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted, var(--text-dimmed));
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+
+.chevronExpanded {
+  transform: rotate(90deg);
+}
+
+.packName {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.packCount {
+  font-size: 10px;
+  color: var(--text-dimmed);
+  background: var(--bg-overlay);
+  border-radius: var(--radius-lg);
+  padding: 0 5px;
+  flex-shrink: 0;
+}
+
+/* Eye toggle for whole pack */
+.packEyeBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  background: none;
+  border: none;
+  color: var(--text-dimmed);
+  cursor: pointer;
+  border-radius: 2px;
+  flex-shrink: 0;
+  padding: 0;
+  opacity: 0;
+  transition: opacity var(--transition-normal, 0.12s);
+}
+
+.packHeader:hover .packEyeBtn {
+  opacity: 0.6;
+}
+
+.packEyeBtn:hover {
+  opacity: 1 !important;
+  color: var(--accent);
+}
+
+.packEyeBtnOff {
+  opacity: 0.6 !important;
+  color: var(--text-dimmed);
+}
+
+.packEyeBtnOff:hover {
+  color: var(--accent) !important;
+  opacity: 1 !important;
+}
+
+/* Remove button for whole pack */
+.packRemoveBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  background: none;
+  border: none;
+  color: var(--text-dimmed);
+  cursor: pointer;
+  border-radius: 2px;
+  flex-shrink: 0;
+  padding: 0;
+  opacity: 0;
+  transition: opacity var(--transition-normal, 0.12s);
+}
+
+.packHeader:hover .packRemoveBtn {
+  opacity: 1;
+}
+
+.packRemoveBtn:hover {
+  color: var(--danger);
+  background: var(--bg-overlay);
+}
+
+/* Expanded processor list */
+.packProcessors {
+  padding-left: 18px;
+  margin-top: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Individual processor row inside a pack */
+.procRow {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base, var(--bg-overlay));
+  position: relative;
+  overflow: hidden;
+}
+
+.procRowDisabled {
+  opacity: 0.35;
+}
+
+.procRowDisabled .procAccent {
+  background: var(--border) !important;
+}
+
+.procAccent {
+  width: 3px;
+  flex-shrink: 0;
+  background: var(--proc-accent, var(--accent));
+}
+
+.procBody {
+  flex: 1;
+  padding: 4px 8px;
+  min-width: 0;
+}
+
+.procName {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+.procMeta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 1px;
+}
+
+.procActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--transition-normal, 0.12s);
+}
+
+.procRow:hover .procActions {
+  opacity: 1;
+}
+
+.procRemove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  background: none;
+  border: none;
+  color: var(--text-dimmed);
+  cursor: pointer;
+  border-radius: 2px;
+  padding: 0;
+}
+
+.procRemove:hover {
+  color: var(--danger);
+  background: var(--bg-overlay);
+}
+
+/* Pack group separator */
+.packStandaloneSep {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.packStandaloneSepLine {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+  opacity: 0.5;
+}
+
+.packStandaloneSepLabel {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dimmed);
+  opacity: 0.5;
+  white-space: nowrap;
+}
