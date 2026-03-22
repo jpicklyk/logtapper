@@ -12,6 +12,10 @@ interface Props {
   installError?: string;
   onInstall: () => void;
   onUninstall?: () => void;
+  /** Called when user clicks the row (not the action buttons) to toggle details. */
+  onRowClick?: () => void;
+  /** Whether the detail card is currently expanded. */
+  expanded?: boolean;
 }
 
 export const MarketplaceEntryRow = React.memo(function MarketplaceEntryRow({
@@ -22,6 +26,8 @@ export const MarketplaceEntryRow = React.memo(function MarketplaceEntryRow({
   installError,
   onInstall,
   onUninstall,
+  onRowClick,
+  expanded = false,
 }: Props) {
   const typeClass = entry.processorType
     ? badgeCss[PROC_TYPE_CLASS_KEY[entry.processorType] as keyof typeof badgeCss] ?? ''
@@ -31,7 +37,13 @@ export const MarketplaceEntryRow = React.memo(function MarketplaceEntryRow({
     : '';
 
   return (
-    <div className={css.entryRow}>
+    <div
+      className={`${css.entryRow}${onRowClick ? ` ${css.entryRowClickable}` : ''}`}
+      onClick={onRowClick}
+      role={onRowClick ? 'button' : undefined}
+      tabIndex={onRowClick ? 0 : undefined}
+      onKeyDown={onRowClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRowClick(); } } : undefined}
+    >
       <div className={css.entryInfo}>
         <div className={css.entryHeader}>
           <span className={css.entryName}>{entry.name}</span>
@@ -40,6 +52,17 @@ export const MarketplaceEntryRow = React.memo(function MarketplaceEntryRow({
             <span className={`${badgeCss.typeBadge} ${typeClass}`}>{typeLabel}</span>
           )}
           {entry.deprecated && <span className={css.deprecatedBadge}>deprecated</span>}
+          {onRowClick && (
+            <svg
+              className={`${css.entryExpandChevron}${expanded ? ` ${css.entryExpandChevronOpen}` : ''}`}
+              width="10"
+              height="10"
+              viewBox="0 0 10 10"
+              fill="none"
+            >
+              <path d="M2.5 3.5L5 6l2.5-2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
         </div>
         {entry.description && (
           <div className={css.entryDesc}>{entry.description}</div>
@@ -55,7 +78,10 @@ export const MarketplaceEntryRow = React.memo(function MarketplaceEntryRow({
           <div className={css.errorBar} style={{ marginTop: 4 }}>{installError}</div>
         )}
       </div>
-      <div className={css.entryAction}>
+      <div
+        className={css.entryAction}
+        onClick={(e) => e.stopPropagation()}
+      >
         {installed || installStatus === 'installed' ? (
           onUninstall ? (
             <button

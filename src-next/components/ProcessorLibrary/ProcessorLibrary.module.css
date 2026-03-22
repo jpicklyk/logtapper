@@ -294,6 +294,13 @@
   padding: 1px 5px;
 }
 
+/* ── Processor item wrapper (row + optional detail card) ─────────────────── */
+
+.itemWrapper {
+  display: flex;
+  flex-direction: column;
+}
+
 /* ── Processor item row ──────────────────────────────────────────────────── */
 
 .item {
@@ -416,6 +423,20 @@
   font-size: 10px;
   color: var(--text-dimmed);
   font-style: italic;
+}
+
+/* ── Expand chevron ──────────────────────────────────────────────────────── */
+
+.expandChevron {
+  flex-shrink: 0;
+  color: var(--text-dimmed);
+  transition: transform var(--transition-fast);
+  margin-left: 2px;
+  transform: rotate(-90deg); /* points right = collapsed */
+}
+
+.expandChevronOpen {
+  transform: rotate(0deg); /* points down = expanded */
 }
 
 /* ── Category sections (installed tab) ───────────────────────────────────── */

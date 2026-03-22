@@ -1,0 +1,174 @@
+/* ── ProcessorDetailCard ─────────────────────────────────────────────────── */
+
+.card {
+  background: var(--bg-base);
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 10px 14px 10px 38px; /* left indent aligns with name (past checkbox + icon) */
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  animation: slideDown 120ms var(--easing-enter);
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── Type + Category row ─────────────────────────────────────────────────── */
+
+.typeCategoryRow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.typeIconSmall {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.typeLabel {
+  font-weight: 500;
+}
+
+.separator {
+  color: var(--text-dimmed);
+}
+
+.categoryLabel {
+  color: var(--text-muted);
+}
+
+/* ── Type description ────────────────────────────────────────────────────── */
+
+.typeDesc {
+  font-size: 11px;
+  color: var(--text-dimmed);
+  font-style: italic;
+  line-height: 1.4;
+}
+
+/* ── Meta row ────────────────────────────────────────────────────────────── */
+
+.metaRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 10px;
+}
+
+.versionBadge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dimmed);
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1px 5px;
+}
+
+.metaSep {
+  color: var(--text-dimmed);
+}
+
+.metaItem {
+  color: var(--text-dimmed);
+}
+
+.schemaBadge {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-dimmed);
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 1px 5px;
+}
+
+/* ── Full description ────────────────────────────────────────────────────── */
+
+.description {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+/* ── Tags ────────────────────────────────────────────────────────────────── */
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--bg-overlay);
+  color: var(--text-dimmed);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+/* ── Variables section ───────────────────────────────────────────────────── */
+
+.varsSection {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sectionHeader {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dimmed);
+}
+
+.varsList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.varRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.varName {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.varType {
+  font-size: 9px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-dimmed);
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 0 4px;
+}

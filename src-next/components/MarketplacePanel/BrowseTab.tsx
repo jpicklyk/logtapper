@@ -5,6 +5,7 @@ import type { MarketplaceState } from '../../hooks/useMarketplace';
 import { usePipeline } from '../../hooks';
 import { useProcessors } from '../../context';
 import { MarketplaceEntryRow } from './MarketplaceEntryRow';
+import { ProcessorDetailCard } from '../ProcessorDetailCard';
 import css from './MarketplacePanel.module.css';
 
 type InstallStatus = 'idle' | 'installing' | 'installed' | 'error';
@@ -31,6 +32,7 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
   const processors = useProcessors();
   const [filter, setFilter] = useState('');
   const [activeTagFilters, setActiveTagFilters] = useState<Set<string>>(new Set());
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [installStatus, setInstallStatus] = useState<Record<string, InstallStatus>>({});
   const [installError, setInstallError] = useState<Record<string, string>>({});
   const [uninstallStatus, setUninstallStatus] = useState<Record<string, UninstallStatus>>({});
@@ -82,6 +84,10 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
 
   const clearTagFilters = useCallback(() => {
     setActiveTagFilters(new Set());
+  }, []);
+
+  const toggleExpand = useCallback((id: string) => {
+    setExpandedId((prev) => (prev === id ? null : id));
   }, []);
 
   const handleInstall = useCallback(
@@ -211,17 +217,42 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
             || installStatus[entry.id] === 'installed';
           // Resolve which processorId to uninstall (prefer qualified)
           const installedProcId = installedIds.has(qualifiedId) ? qualifiedId : entry.id;
+          const isExpanded = expandedId === entry.id;
+          // Build a partial ProcessorSummary-compatible shape for ProcessorDetailCard
+          const detailProxy = {
+            id: entry.id,
+            name: entry.name,
+            version: entry.version,
+            description: entry.description ?? '',
+            tags: entry.tags,
+            builtin: false,
+            processorType: (entry.processorType ?? 'reporter') as 'reporter' | 'state_tracker' | 'correlator' | 'transformer' | 'annotator',
+            group: null,
+            varsMeta: [],
+            license: entry.license,
+            category: entry.category,
+            deprecated: entry.deprecated,
+            hasSchema: false,
+            source: selectedSource ?? undefined,
+          };
           return (
-            <MarketplaceEntryRow
-              key={entry.id}
-              entry={entry}
-              installed={isInstalled}
-              installStatus={installStatus[entry.id]}
-              uninstallStatus={uninstallStatus[entry.id]}
-              installError={installError[entry.id]}
-              onInstall={() => handleInstall(entry)}
-              onUninstall={isInstalled ? () => handleUninstall(entry, installedProcId) : undefined}
-            />
+            <React.Fragment key={entry.id}>
+              <MarketplaceEntryRow
+                entry={entry}
+                installed={isInstalled}
+                installStatus={installStatus[entry.id]}
+                uninstallStatus={uninstallStatus[entry.id]}
+                installError={installError[entry.id]}
+                onInstall={() => handleInstall(entry)}
+                onUninstall={isInstalled ? () => handleUninstall(entry, installedProcId) : undefined}
+                onRowClick={() => toggleExpand(entry.id)}
+                expanded={isExpanded}
+              />
+              {isExpanded && (
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                <ProcessorDetailCard processor={detailProxy as any} />
+              )}
+            </React.Fragment>
           );
         })}
       </div>

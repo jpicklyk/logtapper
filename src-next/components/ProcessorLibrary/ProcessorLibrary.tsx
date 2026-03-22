@@ -9,6 +9,7 @@ import { usePipeline } from '../../hooks';
 import { useProcessors, usePipelineChain } from '../../context';
 import { getCategoryLabel, CATEGORY_ORDER } from '../../ui/categoryMeta';
 import { ProcessorTypeIcon } from '../../ui/processorTypeIcons';
+import { ProcessorDetailCard } from '../ProcessorDetailCard';
 import css from './ProcessorLibrary.module.css';
 import badgeCss from '../../ui/processorBadge.module.css';
 import { PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY } from '../../ui/processorBadgeTypes';
@@ -40,6 +41,7 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [activeTagFilters, setActiveTagFilters] = useState<Set<string>>(new Set());
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   // YAML tab state
   const [yamlInput, setYamlInput] = useState('');
@@ -58,6 +60,10 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
       else next.add(id);
       return next;
     });
+  }, []);
+
+  const toggleExpand = useCallback((id: string) => {
+    setExpandedId((prev) => (prev === id ? null : id));
   }, []);
 
   const handleAddSelected = useCallback(() => {
@@ -373,50 +379,74 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                         {!isCollapsed && procs.map((p) => {
                           const inChain = chainSet.has(p.id);
                           const isSelected = selected.has(p.id);
+                          const isExpanded = expandedId === p.id;
                           return (
-                            <button
-                              key={p.id}
-                              className={`${css.item}${isSelected ? ` ${css.itemSelected}` : ''}${inChain ? ` ${css.itemInChain}` : ''}`}
-                              onClick={() => !inChain && toggleSelect(p.id)}
-                              disabled={inChain}
-                            >
-                              <span
-                                className={`${css.checkbox}${isSelected ? ` ${css.checkboxChecked}` : ''}${inChain ? ` ${css.checkboxChain}` : ''}`}
+                            <div key={p.id} className={css.itemWrapper}>
+                              <button
+                                className={`${css.item}${isSelected ? ` ${css.itemSelected}` : ''}${inChain ? ` ${css.itemInChain}` : ''}`}
+                                onClick={(e) => {
+                                  // Expand on click anywhere in the row
+                                  toggleExpand(p.id);
+                                  e.stopPropagation();
+                                }}
                               >
-                                {(inChain || isSelected) && (
-                                  <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
-                                    <path
-                                      d="M2 5l2.5 2.5L8 3"
-                                      stroke="currentColor"
-                                      strokeWidth="1.5"
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                    />
-                                  </svg>
-                                )}
-                              </span>
-                              <span className={css.typeIcon}>
-                                <ProcessorTypeIcon type={p.processorType} size={14} />
-                              </span>
-                              <span className={css.itemInfo}>
-                                <span className={css.itemName}>{p.name}</span>
-                                <span className={css.itemSub}>
-                                  <span
-                                    className={`${badgeCss.typeBadge} ${getProcTypeBadgeClass(p.processorType)}`}
-                                  >
-                                    {getProcTypeLabel(p.processorType)}
-                                  </span>
-                                  {p.description && (
-                                    <span className={css.itemDesc}>{p.description}</span>
+                                {/* Checkbox zone: stops propagation so it only selects */}
+                                <span
+                                  className={`${css.checkbox}${isSelected ? ` ${css.checkboxChecked}` : ''}${inChain ? ` ${css.checkboxChain}` : ''}`}
+                                  role="checkbox"
+                                  aria-checked={isSelected || inChain}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!inChain) toggleSelect(p.id);
+                                  }}
+                                >
+                                  {(inChain || isSelected) && (
+                                    <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
+                                      <path
+                                        d="M2 5l2.5 2.5L8 3"
+                                        stroke="currentColor"
+                                        strokeWidth="1.5"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                      />
+                                    </svg>
                                   )}
                                 </span>
-                              </span>
-                              <span className={css.itemStatus}>
-                                {inChain && (
-                                  <span className={css.inChainLabel}>in pipeline</span>
-                                )}
-                              </span>
-                            </button>
+                                <span className={css.typeIcon}>
+                                  <ProcessorTypeIcon type={p.processorType} size={14} />
+                                </span>
+                                <span className={css.itemInfo}>
+                                  <span className={css.itemName}>{p.name}</span>
+                                  <span className={css.itemSub}>
+                                    <span
+                                      className={`${badgeCss.typeBadge} ${getProcTypeBadgeClass(p.processorType)}`}
+                                    >
+                                      {getProcTypeLabel(p.processorType)}
+                                    </span>
+                                    {p.description && (
+                                      <span className={css.itemDesc}>{p.description}</span>
+                                    )}
+                                  </span>
+                                </span>
+                                <span className={css.itemStatus}>
+                                  {inChain && (
+                                    <span className={css.inChainLabel}>in pipeline</span>
+                                  )}
+                                </span>
+                                <svg
+                                  className={`${css.expandChevron}${isExpanded ? ` ${css.expandChevronOpen}` : ''}`}
+                                  width="10"
+                                  height="10"
+                                  viewBox="0 0 10 10"
+                                  fill="none"
+                                >
+                                  <path d="M2.5 3.5L5 6l2.5-2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                              </button>
+                              {isExpanded && (
+                                <ProcessorDetailCard processor={p} />
+                              )}
+                            </div>
                           );
                         })}
                       </div>

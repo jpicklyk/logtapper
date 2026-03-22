@@ -207,6 +207,22 @@
   background: var(--bg-overlay);
 }
 
+.entryRowClickable {
+  cursor: pointer;
+}
+
+.entryExpandChevron {
+  flex-shrink: 0;
+  color: var(--text-dimmed);
+  transition: transform var(--transition-fast);
+  margin-left: auto;
+  transform: rotate(-90deg); /* collapsed → points right */
+}
+
+.entryExpandChevronOpen {
+  transform: rotate(0deg); /* expanded → points down */
+}
+
 .entryInfo {
   flex: 1;
   min-width: 0;
