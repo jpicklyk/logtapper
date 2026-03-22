@@ -125,6 +125,7 @@ export interface PackGroupProps {
   packName: string;
   processors: ProcessorSummary[];
   expanded: boolean;
+  compact: boolean;
   onToggleExpand: () => void;
   allEnabled: boolean;
   someDisabled: boolean;
@@ -141,6 +142,7 @@ const PackGroup = React.memo(function PackGroup({
   packName,
   processors,
   expanded,
+  compact,
   onToggleExpand,
   allEnabled,
   someDisabled,
@@ -170,13 +172,15 @@ const PackGroup = React.memo(function PackGroup({
       : 'Enable all in pack';
 
   return (
-    <div className={styles.packGroup}>
+    <div className={`${styles.packGroup}${compact ? ` ${styles.packGroupCompact}` : ''}`}>
       {/* Pack header */}
       <div className={styles.packHeader} onClick={onToggleExpand} role="button" tabIndex={0}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggleExpand(); } }}>
-        <span className={`${styles.chevron}${expanded ? ` ${styles.chevronExpanded}` : ''}`}>
-          {ChevronSvg}
-        </span>
+        {!compact && (
+          <span className={`${styles.chevron}${expanded ? ` ${styles.chevronExpanded}` : ''}`}>
+            {ChevronSvg}
+          </span>
+        )}
         <span className={styles.packName}>{packName}</span>
         <span className={styles.packCount}>{processors.length}</span>
         <button
@@ -186,17 +190,19 @@ const PackGroup = React.memo(function PackGroup({
         >
           {eyeIcon}
         </button>
-        <button
-          className={styles.packRemoveBtn}
-          title="Remove pack from chain"
-          onClick={handleRemovePack}
-        >
-          {RemoveSvg}
-        </button>
+        {!compact && (
+          <button
+            className={styles.packRemoveBtn}
+            title="Remove pack from chain"
+            onClick={handleRemovePack}
+          >
+            {RemoveSvg}
+          </button>
+        )}
       </div>
 
-      {/* Expanded processor list */}
-      {expanded && (
+      {/* Expanded processor list — only in detailed mode */}
+      {!compact && expanded && (
         <div className={styles.packProcessors}>
           {processors.map((proc) => (
             <ProcessorRow

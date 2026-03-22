@@ -236,3 +236,29 @@
   opacity: 0.5;
   white-space: nowrap;
 }
+
+/* ── Compact mode ────────────────────────────────────────────────────────── */
+
+.packGroupCompact {
+  margin: 1px 0;
+}
+
+.packGroupCompact .packHeader {
+  padding: 3px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+}
+
+.packGroupCompact .packHeader:hover {
+  background: var(--state-hover);
+  border: none;
+}
+
+.packGroupCompact .packName {
+  font-size: 11px;
+}
+
+.packGroupCompact .packCount {
+  font-size: 9px;
+}

@@ -722,6 +722,7 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
                     packName={g.pack.name}
                     processors={g.processors}
                     expanded={expandedPacks.has(g.pack.id)}
+                    compact={compact}
                     onToggleExpand={() => handleTogglePackExpand(g.pack.id)}
                     allEnabled={allEnabled}
                     someDisabled={someDisabled}
