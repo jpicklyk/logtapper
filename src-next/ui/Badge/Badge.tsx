@@ -1,9 +1,11 @@
 import React from 'react';
 import styles from './Badge.module.css';
 
+export type BadgeColor = 'blue' | 'green' | 'red' | 'yellow' | 'gray';
+
 interface BadgeProps {
   label: string;
-  color?: 'blue' | 'green' | 'red' | 'yellow' | 'gray';
+  color?: BadgeColor;
   pulse?: boolean;
 }
 

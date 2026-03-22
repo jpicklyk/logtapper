@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import clsx from 'clsx';
-import { FolderOpen, FileEdit, Menu, Radio, Square, Smartphone, Download, Minus, Copy, X } from 'lucide-react';
+import { FolderOpen, FileEdit, Menu, Radio, Square, Smartphone, Download, Settings, Minus, Copy, X } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useSession, useIsStreaming, useViewerActions } from '../../context';
 import { listAdbDevices } from '../../bridge/commands';
@@ -24,6 +24,7 @@ const WindowControls = React.memo(function WindowControls() {
 
     const win = getCurrentWindow();
     win.isMaximized().then((m) => { if (!cancelled) setMaximized(m); });
+
 
     win.onResized(() => {
       if (cancelled) return;
@@ -142,18 +143,11 @@ export const Header = React.memo(function Header() {
 
   return (
     <header className={styles.header}>
-      <div className={styles.brand}>
+      <div className={clsx(styles.brand, isMac && styles.brandMac)}>
         <span className={styles.title}>
           <span className={styles.titleAndroid}>Android</span>
           {' '}Log<span className={styles.titleAccent}>Tapper</span>
         </span>
-      </div>
-
-      <div className={styles.searchArea}>
-        <SearchBar disabled={!session} />
-      </div>
-
-      <div className={styles.actions}>
         <DropdownMenu
           trigger={
             <button className={styles.actionBtn} title="Menu">
@@ -165,6 +159,13 @@ export const Header = React.memo(function Header() {
           open={fileMenuOpen}
           onOpenChange={setFileMenuOpen}
         />
+      </div>
+
+      <div className={styles.searchArea}>
+        <SearchBar disabled={!session} />
+      </div>
+
+      <div className={styles.actions}>
         <button
           className={clsx(
             styles.actionBtn,
@@ -188,7 +189,16 @@ export const Header = React.memo(function Header() {
             </>
           )}
         </button>
+        <button
+          className={styles.actionBtn}
+          onClick={() => bus.emit('layout:settings-requested')}
+          title="Settings"
+        >
+          <Settings size={16} />
+        </button>
       </div>
+
+      {!isMac && <WindowControls />}
 
       <Modal
         open={showPicker}

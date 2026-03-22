@@ -1,4 +1,6 @@
+/* ── Bar shell ──────────────────────────────────────────────── */
 .bar {
+  width: 100%;
   height: 24px;
   display: flex;
   align-items: center;
@@ -11,34 +13,38 @@
   color: var(--text-muted);
   user-select: none;
   flex-shrink: 0;
+  box-sizing: border-box;
 }
 
+/* ── Zones ──────────────────────────────────────────────────── */
 .left,
 .right {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 6px;
 }
 
-.item {
-  white-space: nowrap;
+.right {
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
-.filePath {
-  font-family: var(--font-mono, monospace);
-  font-size: 11px;
-  color: var(--text);
-  max-width: 600px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* ── Micro-separator ────────────────────────────────────────── */
+.separator {
+  width: 1px;
+  height: 12px;
+  background: var(--border-subtle);
+  flex-shrink: 0;
 }
 
+/* ── LIVE streaming indicator ───────────────────────────────── */
 .streaming {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 5px;
   color: var(--success);
   font-weight: 600;
+  font-size: 10px;
   letter-spacing: 0.04em;
 }
 
@@ -55,10 +61,77 @@
   50% { opacity: 0.4; }
 }
 
-.connected {
+/* ── Chips (colored pill indicators) ───────────────────────── */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+/* Clickable chips — pointer cursor + hover brightening */
+.chipClickable {
+  cursor: pointer;
+  transition: filter var(--duration-fast) ease;
+}
+
+.chipClickable:hover {
+  filter: brightness(1.3);
+}
+
+/* Dimmed variant for secondary chips (Sel range) */
+.chipDimmed {
+  font-weight: 500;
+  opacity: 0.75;
+}
+
+/* ── Chip colors ───────────────────────────────────────────── */
+
+/* Gray — neutral metadata (file path, LF, UTF-8) */
+.chipGray {
+  background: var(--badge-gray-bg);
+  color: var(--badge-gray);
+}
+
+/* Gray path variant — allow truncation */
+.chipPath {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+/* Selection line (Ln) — yellow/gold to match viewer selection highlight */
+.chipSelection {
+  background: var(--viewer-selection-bg);
+  color: var(--viewer-selection-border);
+}
+
+/* Jump target / section line (Sec) — blue to match viewer jump highlight */
+.chipJumpTarget {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+}
+
+/* Source type: Logcat — green */
+.chipLogcat {
+  background: color-mix(in srgb, var(--success) 20%, transparent);
   color: var(--success);
 }
 
-.disconnected {
-  color: var(--text-dimmed);
+/* Source type: Bugreport / Dumpstate — orange to match tab accent */
+.chipBugreport {
+  background: color-mix(in srgb, var(--warning) 20%, transparent);
+  color: var(--warning);
+}
+
+/* Source type: Kernel — android orange-red */
+.chipKernel {
+  background: color-mix(in srgb, var(--android) 20%, transparent);
+  color: var(--android);
 }

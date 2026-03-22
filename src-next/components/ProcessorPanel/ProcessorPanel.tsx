@@ -13,8 +13,8 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type { PipelineRunSummary, PipelineProgress, McpStatus, PackSummary } from '../../bridge/types';
-import { getMcpStatus, listPacks } from '../../bridge/commands';
+import type { PipelineRunSummary, PipelineProgress, PackSummary } from '../../bridge/types';
+import { listPacks } from '../../bridge/commands';
 import PackGroup from './PackGroup';
 import packGroupStyles from './PackGroup.module.css';
 import {
@@ -35,85 +35,6 @@ import { storageGet, storageSet } from '../../utils';
 import styles from './ProcessorPanel.module.css';
 import badgeCss from '../../ui/processorBadge.module.css';
 import { PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY } from '../../ui/processorBadgeTypes';
-
-// ── McpStatusWidget ──────────────────────────────────────────────────────────
-
-const MCP_ACTIVE_THRESHOLD_SECS = 30;
-type McpConnState = 'checking' | 'offline' | 'ready' | 'connected';
-
-function mcpConnState(status: McpStatus | null): McpConnState {
-  if (status === null) return 'checking';
-  if (!status.running) return 'offline';
-  if (status.idleSecs === null) return 'ready';
-  if (status.idleSecs <= MCP_ACTIVE_THRESHOLD_SECS) return 'connected';
-  return 'ready';
-}
-
-const MCP_CONN_LABELS: Record<McpConnState, string> = {
-  checking: '...',
-  offline: 'offline',
-  ready: 'ready',
-  connected: 'connected',
-};
-
-const McpStatusWidget = React.memo(function McpStatusWidget() {
-  const [status, setStatus] = useState<McpStatus | null>(null);
-
-  useEffect(() => {
-    const check = () =>
-      getMcpStatus()
-        .then(setStatus)
-        .catch(() => setStatus({ running: false, port: 40404, idleSecs: null }));
-    check();
-    const id = setInterval(check, 5_000);
-    return () => clearInterval(id);
-  }, []);
-
-  const connState = mcpConnState(status);
-  const running = connState !== 'offline' && connState !== 'checking';
-  const active = connState === 'connected';
-
-  return (
-    <div className={styles.mcpWidget}>
-      <div className={styles.mcpHeader}>
-        <span className={styles.mcpTitle}>MCP Bridge</span>
-        <span className={`${styles.mcpPill} ${styles[`mcpPill_${connState}`]}`}>
-          {MCP_CONN_LABELS[connState]}
-        </span>
-      </div>
-      <div className={styles.mcpConnRow}>
-        <div className={`${styles.mcpNode} ${running ? styles.mcpNodeOn : ''}`}>
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <rect x="1" y="3" width="12" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
-            <path d="M4 3V2M7 3V1.5M10 3V2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-          </svg>
-        </div>
-        <div className={styles.mcpLine}>
-          {active && (
-            <>
-              <div className={styles.mcpPacket} style={{ animationDelay: '0s' }} />
-              <div className={styles.mcpPacket} style={{ animationDelay: '1.1s' }} />
-              <div className={styles.mcpPacket} style={{ animationDelay: '2.2s' }} />
-            </>
-          )}
-        </div>
-        <div className={styles.mcpAddr}>
-          {status?.running ? `127.0.0.1:${status.port}` : 'not bound'}
-        </div>
-      </div>
-      <div className={styles.mcpReadsRow}>
-        <span className={styles.mcpReadsLabel}>reads</span>
-        <div className={styles.mcpReadsCaps}>
-          <span className={styles.mcpCap}>Sessions</span>
-          <span className={styles.mcpCapSep}>.</span>
-          <span className={styles.mcpCap}>Pipeline</span>
-          <span className={styles.mcpCapSep}>.</span>
-          <span className={styles.mcpCap}>Events</span>
-        </div>
-      </div>
-    </div>
-  );
-});
 
 // ── Type metadata ────────────────────────────────────────────────────────────
 
@@ -884,9 +805,7 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
           LOG STREAM OUT
         </div>
 
-        <div className={styles.postChain}>
-          <McpStatusWidget />
-        </div>
+        <div className={styles.postChain} />
       </div>
 
       {/* Run row */}

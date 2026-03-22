@@ -1,0 +1,411 @@
+/* ── Root layout ──────────────────────────────────────────────────────────── */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.headerLeft {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.headerLabel {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dimmed);
+}
+
+.watchCount {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg-overlay);
+  padding: 1px 5px;
+  border-radius: var(--radius-full);
+}
+
+.addBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.addBtn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--state-hover);
+}
+
+.content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* ── Empty state ─────────────────────────────────────────────────────────── */
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 4px;
+  color: var(--text-dimmed);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  text-align: center;
+  padding: 16px;
+}
+
+.emptySub {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+/* ── Watch row ───────────────────────────────────────────────────────────── */
+
+.watchRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  transition: background var(--transition-fast);
+}
+
+.watchRow:hover {
+  background: var(--bg-overlay);
+}
+
+.watchRow:hover .cancelBtn {
+  opacity: 1;
+}
+
+.watchRowCancelled {
+  opacity: 0.45;
+}
+
+.statusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+}
+
+.statusDotActive {
+  background: var(--success);
+  box-shadow: 0 0 4px 1px color-mix(in srgb, var(--success) 40%, transparent);
+  animation: pulseDot 2s ease-in-out infinite;
+}
+
+.statusDotCancelled {
+  background: var(--text-dimmed);
+}
+
+.matchCount {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+  min-width: 48px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.matchCountFlash {
+  animation: countFlash 600ms ease-out;
+}
+
+.cancelBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dimmed);
+  cursor: pointer;
+  opacity: 0;
+  flex-shrink: 0;
+  transition: opacity var(--transition-fast), color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.cancelBtn:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+/* ── Criteria chips ──────────────────────────────────────────────────────── */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.chipLabel {
+  color: var(--text-dimmed);
+}
+
+.chipDanger {
+  color: var(--danger);
+}
+
+.chipWarning {
+  color: var(--warning);
+}
+
+.chipAccent {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.chipDimmed {
+  color: var(--text-dimmed);
+  border-color: var(--border-subtle);
+}
+
+.levelChar {
+  font-weight: 600;
+}
+
+/* ── Section divider ─────────────────────────────────────────────────────── */
+
+.sectionLabel {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  color: var(--text-dimmed);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 8px 12px 4px;
+}
+
+/* ── Create watch form ───────────────────────────────────────────────────── */
+
+.createForm {
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  padding: 8px 12px;
+  margin: 8px;
+}
+
+.formRow {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.formRow:last-child {
+  margin-bottom: 0;
+}
+
+.formRowActions {
+  justify-content: space-between;
+}
+
+.formInput {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+
+.formInput::placeholder {
+  color: var(--text-dimmed);
+}
+
+.formInput:focus {
+  border-color: var(--accent);
+}
+
+.formInputSmall {
+  flex: 0 1 100px;
+  min-width: 60px;
+}
+
+.formInputTiny {
+  flex: 0 1 60px;
+  min-width: 40px;
+}
+
+/* Level toggles */
+.levelGroup {
+  display: flex;
+  gap: 2px;
+}
+
+.levelToggle {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dimmed);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.levelToggle:hover {
+  border-color: var(--text-muted);
+  color: var(--text-muted);
+}
+
+.levelToggleActive {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.levelToggleDanger {
+  border-color: color-mix(in srgb, var(--danger) 50%, transparent);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+.levelToggleWarning {
+  border-color: color-mix(in srgb, var(--warning) 50%, transparent);
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+}
+
+/* Combine toggles */
+.combineGroup {
+  display: flex;
+  gap: 2px;
+}
+
+.combineToggle {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dimmed);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.combineToggle:hover {
+  color: var(--text-muted);
+}
+
+.combineToggleActive {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Form actions */
+.formActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.formCancelLink {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.formCancelLink:hover {
+  color: var(--text);
+}
+
+.formError {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--danger);
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Animations ──────────────────────────────────────────────────────────── */
+
+@keyframes countFlash {
+  0% {
+    color: var(--accent);
+    text-shadow: 0 0 8px color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+  100% {
+    color: var(--text);
+    text-shadow: none;
+  }
+}
+
+@keyframes pulseDot {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 4px 1px color-mix(in srgb, var(--success) 40%, transparent);
+  }
+  50% {
+    opacity: 0.6;
+    box-shadow: 0 0 8px 2px color-mix(in srgb, var(--success) 20%, transparent);
+  }
+}

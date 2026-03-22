@@ -1,0 +1,48 @@
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  height: 18px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-overlay);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  cursor: default;
+  transition: background var(--duration-fast) ease;
+}
+
+.pill:hover {
+  background: var(--state-hover);
+}
+
+.mcpLabel {
+  color: var(--text-dimmed);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.dot {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+  transition: background var(--duration-normal) ease, opacity var(--duration-normal) ease;
+}
+
+.dotConnected {
+  background: var(--success);
+}
+
+.dotReady {
+  background: var(--accent);
+}
+
+.dotOffline {
+  background: var(--text-dimmed);
+  opacity: 0.4;
+}
+
+.stateLabel {
+  color: var(--text-muted);
+}

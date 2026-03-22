@@ -4,6 +4,7 @@ export { Input } from './Input/Input';
 export { Tooltip } from './Tooltip/Tooltip';
 export { Modal } from './Modal/Modal';
 export { Badge } from './Badge/Badge';
+export type { BadgeColor } from './Badge/Badge';
 export { Spinner } from './Spinner/Spinner';
 export { Icon } from './Icon/Icon';
 export { Toast } from './Toast/Toast';

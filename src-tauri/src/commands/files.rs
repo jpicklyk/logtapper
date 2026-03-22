@@ -98,6 +98,8 @@ pub struct LoadResult {
     pub is_streaming: bool,
     /// True while background indexing is still in progress for this session.
     pub is_indexing: bool,
+    /// True if the file uses CRLF (`\r\n`) line endings. Always false for streams.
+    pub has_crlf: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -176,6 +178,7 @@ pub async fn load_log_file(
     let source_type_str = source.source_type().to_string();
     let source_name = source.name().to_string();
     let is_indexing = source.is_indexing();
+    let has_crlf = source.has_crlf();
     let source_type = source.source_type().clone();
 
     let result = LoadResult {
@@ -190,6 +193,7 @@ pub async fn load_log_file(
         source_type: source_type_str,
         is_streaming: false,
         is_indexing,
+        has_crlf,
     };
 
     {
@@ -282,6 +286,7 @@ fn load_lts_file_inner(
         source_type: source_type_str,
         is_streaming: false,
         is_indexing: false, // ZipLogSource is fully indexed
+        has_crlf: source.has_crlf(),
     };
 
     // 4. Insert session (brief lock)

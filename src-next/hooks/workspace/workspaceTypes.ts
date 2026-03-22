@@ -84,9 +84,9 @@ export interface WorkspaceLayoutState {
 // Constants
 // ---------------------------------------------------------------------------
 
-export const MIN_LEFT_WIDTH = 140;
+export const MIN_LEFT_WIDTH = 260;
 export const MAX_LEFT_WIDTH = 420;
-export const DEFAULT_LEFT_WIDTH = 220;
+export const DEFAULT_LEFT_WIDTH = 260;
 
 export const MIN_RIGHT_WIDTH = 220;
 export const MAX_RIGHT_WIDTH = 600;

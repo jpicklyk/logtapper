@@ -103,6 +103,8 @@ export interface LoadResult {
   isStreaming: boolean;
   /** True while background file indexing is still in progress. */
   isIndexing: boolean;
+  /** True if the file uses CRLF line endings. Always false for streams. */
+  hasCrlf: boolean;
 }
 
 // ---------------------------------------------------------------------------
