@@ -194,3 +194,36 @@
   text-align: center;
   padding: 8px 0;
 }
+
+/* ── Window Controls (Windows/Linux) ──────────────────────────────────── */
+
+.windowControls {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  -webkit-app-region: no-drag;
+}
+
+.winBtn {
+  width: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.winBtn:hover {
+  background: var(--state-hover);
+  color: var(--text);
+}
+
+.winBtnClose:hover {
+  background: var(--danger);
+  color: white;
+}
