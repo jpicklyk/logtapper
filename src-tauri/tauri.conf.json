@@ -44,7 +44,18 @@
       "../marketplace/processors/system_server_fd_monitor.yaml": "marketplace/processors/system_server_fd_monitor.yaml",
       "../marketplace/processors/system_server_heap.yaml": "marketplace/processors/system_server_heap.yaml",
       "../marketplace/processors/wlan_disconnect_events.yaml": "marketplace/processors/wlan_disconnect_events.yaml",
-      "../marketplace/processors/wlan_disconnect_tracker.yaml": "marketplace/processors/wlan_disconnect_tracker.yaml"
+      "../marketplace/processors/wlan_disconnect_tracker.yaml": "marketplace/processors/wlan_disconnect_tracker.yaml",
+      "../marketplace/processors/exception_stack_tracker.yaml": "marketplace/processors/exception_stack_tracker.yaml",
+      "../marketplace/processors/dns_server_stats.yaml": "marketplace/processors/dns_server_stats.yaml",
+      "../marketplace/processors/dns_private_probe_tracker.yaml": "marketplace/processors/dns_private_probe_tracker.yaml",
+      "../marketplace/processors/dns_query_events.yaml": "marketplace/processors/dns_query_events.yaml",
+      "../marketplace/processors/cellular_registration_state.yaml": "marketplace/processors/cellular_registration_state.yaml",
+      "../marketplace/processors/cellular_data_failure_reporter.yaml": "marketplace/processors/cellular_data_failure_reporter.yaml",
+      "../marketplace/processors/radio_data_call_reporter.yaml": "marketplace/processors/radio_data_call_reporter.yaml",
+      "../marketplace/processors/radio_airplane_mode_state.yaml": "marketplace/processors/radio_airplane_mode_state.yaml",
+      "../marketplace/processors/ims_volte_reporter.yaml": "marketplace/processors/ims_volte_reporter.yaml",
+      "../marketplace/processors/crash_storm_detector.yaml": "marketplace/processors/crash_storm_detector.yaml",
+      "../marketplace/processors/sim_identity_reporter.yaml": "marketplace/processors/sim_identity_reporter.yaml"
     },
 "windows": {
       "nsis": {

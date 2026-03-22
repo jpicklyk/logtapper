@@ -66,6 +66,17 @@ const BUILTIN_YAMLS: &[(&str, &str)] = &[
     ("processors/system_server_heap.yaml",      include_str!("../../marketplace/processors/system_server_heap.yaml")),
     ("processors/wlan_disconnect_events.yaml",  include_str!("../../marketplace/processors/wlan_disconnect_events.yaml")),
     ("processors/wlan_disconnect_tracker.yaml", include_str!("../../marketplace/processors/wlan_disconnect_tracker.yaml")),
+    ("processors/exception_stack_tracker.yaml", include_str!("../../marketplace/processors/exception_stack_tracker.yaml")),
+    ("processors/dns_server_stats.yaml",        include_str!("../../marketplace/processors/dns_server_stats.yaml")),
+    ("processors/dns_private_probe_tracker.yaml", include_str!("../../marketplace/processors/dns_private_probe_tracker.yaml")),
+    ("processors/dns_query_events.yaml",        include_str!("../../marketplace/processors/dns_query_events.yaml")),
+    ("processors/cellular_registration_state.yaml", include_str!("../../marketplace/processors/cellular_registration_state.yaml")),
+    ("processors/cellular_data_failure_reporter.yaml", include_str!("../../marketplace/processors/cellular_data_failure_reporter.yaml")),
+    ("processors/radio_data_call_reporter.yaml", include_str!("../../marketplace/processors/radio_data_call_reporter.yaml")),
+    ("processors/radio_airplane_mode_state.yaml", include_str!("../../marketplace/processors/radio_airplane_mode_state.yaml")),
+    ("processors/ims_volte_reporter.yaml",      include_str!("../../marketplace/processors/ims_volte_reporter.yaml")),
+    ("processors/crash_storm_detector.yaml",    include_str!("../../marketplace/processors/crash_storm_detector.yaml")),
+    ("processors/sim_identity_reporter.yaml",   include_str!("../../marketplace/processors/sim_identity_reporter.yaml")),
 ];
 
 /// Install the 5 state-tracker processors from the bundled snapshot as marketplace processors
