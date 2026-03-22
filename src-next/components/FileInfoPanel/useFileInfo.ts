@@ -119,6 +119,29 @@ export function useFileInfo(paneId: string | null): FileInfoData {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
+  // Re-fetch dumpstate metadata after indexing completes. The initial fetch fires
+  // immediately on session load, but for large files the SYSTEM PROPERTIES section
+  // may not be indexed yet — so device_model and manufacturer come back null.
+  useEffect(() => {
+    if (!sessionId || !session || !isBugreportLike(session.sourceType)) return;
+    if (indexingProgress !== null) return; // Still indexing — wait
+
+    // Skip if cache already has model populated.
+    const c = metadataCache.get(sessionId);
+    if (c?.dumpstateMetadata?.deviceModel) {
+      setDumpstateMetadata(c.dumpstateMetadata);
+      return;
+    }
+
+    let cancelled = false;
+    getDumpstateMetadata(sessionId)
+      .then((meta) => { if (!cancelled) setDumpstateMetadata(meta); })
+      .catch(() => {});
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, session?.sourceType, indexingProgress]);
+
   // Fetch sections from backend — Bugreport and Dumpstate files only.
   //
   // Gated on `indexingProgress === null` — the backend only populates sections after full
