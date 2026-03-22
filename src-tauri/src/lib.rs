@@ -192,19 +192,28 @@ pub fn run() {
 
             // Resolve the marketplace directory path.
             // In dev mode, resource_dir() points to src-tauri/ so ../marketplace
-            // reaches the project root's marketplace/. In production builds,
-            // Tauri bundles marketplace/ into the resource directory.
-            let marketplace_path = app.path().resource_dir().map_or_else(|_| std::path::PathBuf::from("marketplace"), |d| d.join("marketplace"));
-
             // Load or initialize sources
             let first_run = !sources_path.exists();
             if first_run {
-                // Create the official source on first run
+                // In debug builds, use local marketplace directory for instant iteration.
+                // In release builds, use GitHub so users always get the latest.
+                let official_source_type = if cfg!(debug_assertions) {
+                    // In dev, resolve from the project root's marketplace/ directory.
+                    // Cargo sets CARGO_MANIFEST_DIR at compile time to src-tauri/.
+                    let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap_or(std::path::Path::new("."));
+                    let marketplace_dir = project_root.join("marketplace");
+                    SourceType::Local {
+                        path: marketplace_dir.to_string_lossy().to_string(),
+                    }
+                } else {
+                    SourceType::Github {
+                        repo: "jpicklyk/logtapper".to_string(),
+                        git_ref: "main".to_string(),
+                    }
+                };
                 let official = Source {
                     name: "official".to_string(),
-                    source_type: SourceType::Local {
-                        path: marketplace_path.to_string_lossy().to_string(),
-                    },
+                    source_type: official_source_type,
                     enabled: true,
                     auto_update: false,
                     last_checked: None,
@@ -224,13 +233,16 @@ pub fn run() {
                     *sources = loaded;
                 }
 
-                // Migrate legacy "__bundled__" paths to the real marketplace directory
+                // Migrate legacy local official sources to GitHub
                 if let Ok(mut sources) = state.sources.lock() {
                     let mut migrated = false;
                     for source in sources.iter_mut() {
-                        if let SourceType::Local { ref mut path } = source.source_type {
-                            if path == "__bundled__" {
-                                *path = marketplace_path.to_string_lossy().to_string();
+                        if source.name == "official" {
+                            if let SourceType::Local { .. } = source.source_type {
+                                source.source_type = SourceType::Github {
+                                    repo: "jpicklyk/logtapper".to_string(),
+                                    git_ref: "main".to_string(),
+                                };
                                 migrated = true;
                             }
                         }
