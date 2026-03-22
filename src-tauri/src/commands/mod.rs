@@ -6,7 +6,7 @@ use crate::anonymizer::config::AnonymizerConfig;
 use crate::anonymizer::LogAnonymizer;
 use crate::core::session::AnalysisSession;
 use crate::processors::marketplace::Source;
-use crate::processors::AnyProcessor;
+use crate::processors::{AnyProcessor, PackMeta};
 use crate::processors::interpreter::{ContinuousRunState, RunResult};
 use crate::processors::state_tracker::types::{StateTrackerResult, ContinuousTrackerState};
 use crate::processors::transformer::types::ContinuousTransformerState;
@@ -99,6 +99,8 @@ pub struct AppState {
     /// Pipeline chain per session, pushed by the frontend via set_session_pipeline_meta.
     /// Used by workspace save sites to persist SessionMeta with the actual chain state.
     pub session_pipeline_meta: Mutex<HashMap<String, crate::workspace::SessionMeta>>,
+    /// Installed processor packs (packId -> PackMeta).
+    pub packs: Mutex<Vec<PackMeta>>,
 }
 
 impl Default for AppState {
@@ -150,6 +152,7 @@ impl AppState {
             pending_updates: Mutex::new(Vec::new()),
             workspace_save_tasks: Mutex::new(HashMap::new()),
             session_pipeline_meta: Mutex::new(HashMap::new()),
+            packs: Mutex::new(Vec::new()),
         }
     }
 }

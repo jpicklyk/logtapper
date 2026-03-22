@@ -4,7 +4,8 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::commands::{lock_or_err, AppState};
 use crate::processors::marketplace;
-use crate::processors::{AnyProcessor, ProcessorSummary};
+use crate::processors::pack::{parse_pack_yaml, validate_pack};
+use crate::processors::{AnyProcessor, PackMeta, PackSummary, ProcessorSummary};
 
 pub(crate) fn persist_processor(app: &AppHandle, id: &str, yaml: &str) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -117,6 +118,17 @@ pub async fn list_processors(
         summary.id = key.clone();
         summary
     }).collect();
+    drop(procs);
+
+    // Cross-reference packs to annotate each summary with its pack_id.
+    let packs = lock_or_err(&state.packs, "packs")?;
+    for summary in &mut out {
+        if let Some(pack) = packs.iter().find(|pk| pk.processors.contains(&summary.id)) {
+            summary.pack_id = Some(pack.id.clone());
+        }
+    }
+    drop(packs);
+
     out.sort_by(|a, b| b.builtin.cmp(&a.builtin).then(a.name.cmp(&b.name)));
     Ok(out)
 }
@@ -226,6 +238,96 @@ pub async fn uninstall_processor(
     }
     delete_processor_file(&app, &processor_id);
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Pack commands
+// ---------------------------------------------------------------------------
+
+fn persist_pack(app: &AppHandle, id: &str, yaml: &str) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let packs_dir = data_dir.join("packs");
+    std::fs::create_dir_all(&packs_dir).map_err(|e| e.to_string())?;
+    std::fs::write(packs_dir.join(format!("{id}.pack.yaml")), yaml)
+        .map_err(|e| format!("Failed to persist pack: {e}"))
+}
+
+fn delete_pack_file(app: &AppHandle, id: &str) {
+    if let Ok(data_dir) = app.path().app_data_dir() {
+        let _ = std::fs::remove_file(data_dir.join("packs").join(format!("{id}.pack.yaml")));
+    }
+}
+
+#[tauri::command]
+pub async fn list_packs(state: State<'_, AppState>) -> Result<Vec<PackSummary>, String> {
+    let packs = lock_or_err(&state.packs, "packs")?;
+    Ok(packs.iter().map(PackSummary::from).collect())
+}
+
+#[tauri::command]
+pub async fn install_pack_from_yaml(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    pack_id: String,
+    yaml: String,
+) -> Result<PackSummary, String> {
+    if pack_id.trim().is_empty() {
+        return Err("pack_id must not be empty".to_string());
+    }
+    let mut pack = parse_pack_yaml(&yaml)?;
+    pack.id = pack_id;
+    validate_pack(&pack)?;
+    persist_pack(&app, &pack.id, &yaml)?;
+    let summary = PackSummary::from(&pack);
+    let mut packs = lock_or_err(&state.packs, "packs")?;
+    // Replace if already present, otherwise push.
+    if let Some(existing) = packs.iter_mut().find(|p| p.id == pack.id) {
+        *existing = pack;
+    } else {
+        packs.push(pack);
+    }
+    Ok(summary)
+}
+
+#[tauri::command]
+pub async fn uninstall_pack(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    pack_id: String,
+) -> Result<(), String> {
+    let mut packs = lock_or_err(&state.packs, "packs")?;
+    let before = packs.len();
+    packs.retain(|p| p.id != pack_id);
+    if packs.len() == before {
+        return Err(format!("Pack '{pack_id}' not found"));
+    }
+    drop(packs);
+    delete_pack_file(&app, &pack_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn load_pack_from_file(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    path: String,
+) -> Result<PackSummary, String> {
+    let yaml = std::fs::read_to_string(&path).map_err(|e| format!("Cannot read file: {e}"))?;
+    let file_path = std::path::Path::new(&path);
+    let id = crate::processors::pack::pack_id_from_path(file_path)
+        .ok_or_else(|| "File must have a '.pack.yaml' extension to be loaded as a pack".to_string())?;
+    let mut pack: PackMeta = parse_pack_yaml(&yaml)?;
+    pack.id = id;
+    validate_pack(&pack)?;
+    persist_pack(&app, &pack.id, &yaml)?;
+    let summary = PackSummary::from(&pack);
+    let mut packs = lock_or_err(&state.packs, "packs")?;
+    if let Some(existing) = packs.iter_mut().find(|p| p.id == pack.id) {
+        *existing = pack;
+    } else {
+        packs.push(pack);
+    }
+    Ok(summary)
 }
 
 // ---------------------------------------------------------------------------

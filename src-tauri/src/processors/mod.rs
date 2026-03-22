@@ -2,6 +2,7 @@ pub mod annotator;
 pub mod correlator;
 pub mod filter;
 pub mod marketplace;
+pub mod pack;
 pub mod registry;
 pub mod reporter;
 pub mod signals;
@@ -11,6 +12,7 @@ pub mod transformer;
 use serde::{Deserialize, Serialize};
 
 pub use marketplace::SchemaContract;
+pub use pack::{PackMeta, PackSummary};
 
 use reporter::schema::{ReporterDef, DisplayAs};
 use transformer::schema::TransformerDef;
@@ -343,6 +345,9 @@ pub struct ProcessorSummary {
     /// Marketplace source name (e.g. "official", "my-team"), if installed from a source.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    /// Pack ID this processor belongs to, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pack_id: Option<String>,
 }
 
 fn snake_to_title(s: &str) -> String {
@@ -390,6 +395,7 @@ impl From<&AnyProcessor> for ProcessorSummary {
             deprecated: p.meta.deprecated,
             has_schema: p.schema.is_some(),
             source: p.source.clone(),
+            pack_id: None,
         }
     }
 }

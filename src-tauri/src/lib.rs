@@ -236,6 +236,7 @@ pub fn run() {
 
             let data_dir = app.path().app_data_dir()?;
             let proc_dir = data_dir.join("processors");
+            let packs_dir = data_dir.join("packs");
             let sources_path = data_dir.join("sources.json");
             let state = app.state::<AppState>();
 
@@ -307,6 +308,15 @@ pub fn run() {
                 load_persisted_processors(&state, &proc_dir);
             }
 
+            // Load persisted packs from app data directory.
+            let _ = std::fs::create_dir_all(&packs_dir);
+            {
+                let loaded_packs = processors::pack::load_packs_from_dir(&packs_dir);
+                if let Ok(mut packs) = state.packs.lock() {
+                    *packs = loaded_packs;
+                }
+            }
+
             // On first run, install the snapshot processors (that aren't already on disk).
             if first_run {
                 install_snapshot_processors(&state, app.handle());
@@ -364,6 +374,10 @@ pub fn run() {
             commands::processors::get_processor_vars,
             commands::processors::get_matched_lines,
             commands::processors::uninstall_processor,
+            commands::processors::list_packs,
+            commands::processors::install_pack_from_yaml,
+            commands::processors::uninstall_pack,
+            commands::processors::load_pack_from_file,
             commands::charts::get_chart_data,
             commands::charts::get_timeline_data,
             commands::claude::set_claude_api_key,

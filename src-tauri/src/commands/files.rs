@@ -234,8 +234,6 @@ fn load_lts_file_inner(
     app: &tauri::AppHandle,
     lts_path: &str,
 ) -> Result<LoadResult, String> {
-    use tauri::Emitter;
-
     let path_obj = std::path::Path::new(lts_path);
 
     // 1. Read the .lts zip (all I/O, no locks)
@@ -328,7 +326,6 @@ fn emit_workspace_restored(
     }
 
     if bm_count > 0 || an_count > 0 || has_chain {
-        use tauri::Emitter;
         let _ = app.emit("workspace-restored", serde_json::json!({
             "sessionId": session_id,
             "bookmarkCount": bm_count,
