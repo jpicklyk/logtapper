@@ -9,7 +9,7 @@ pub mod scripting;
 pub mod workspace;
 
 use commands::AppState;
-use processors::marketplace::{qualified_id, Source, SourceType};
+use processors::marketplace::{Source, SourceType};
 use processors::registry;
 use processors::AnyProcessor;
 use tauri::Manager;
@@ -48,92 +48,6 @@ fn load_persisted_processors(state: &AppState, proc_dir: &std::path::Path) {
     }
 }
 
-/// Bundled marketplace YAML content indexed by path suffix (matches marketplace.json `path`).
-const BUILTIN_YAMLS: &[(&str, &str)] = &[
-    ("processors/wifi_state.yaml",              include_str!("../../marketplace/processors/wifi_state.yaml")),
-    ("processors/battery_state.yaml",           include_str!("../../marketplace/processors/battery_state.yaml")),
-    ("processors/app_lifecycle.yaml",           include_str!("../../marketplace/processors/app_lifecycle.yaml")),
-    ("processors/network_connectivity.yaml",    include_str!("../../marketplace/processors/network_connectivity.yaml")),
-    ("processors/samsung_auto_blocker.yaml",    include_str!("../../marketplace/processors/samsung_auto_blocker.yaml")),
-    ("processors/connectivity_check_probes.yaml", include_str!("../../marketplace/processors/connectivity_check_probes.yaml")),
-    ("processors/connectivity_check_state.yaml",  include_str!("../../marketplace/processors/connectivity_check_state.yaml")),
-    ("processors/ebadf_error_tracker.yaml",     include_str!("../../marketplace/processors/ebadf_error_tracker.yaml")),
-    ("processors/exception_storm_detector.yaml", include_str!("../../marketplace/processors/exception_storm_detector.yaml")),
-    ("processors/fd_ebadf_correlator.yaml",     include_str!("../../marketplace/processors/fd_ebadf_correlator.yaml")),
-    ("processors/gc_pressure_monitor.yaml",     include_str!("../../marketplace/processors/gc_pressure_monitor.yaml")),
-    ("processors/process_kill_storm.yaml",      include_str!("../../marketplace/processors/process_kill_storm.yaml")),
-    ("processors/system_server_fd_monitor.yaml", include_str!("../../marketplace/processors/system_server_fd_monitor.yaml")),
-    ("processors/system_server_heap.yaml",      include_str!("../../marketplace/processors/system_server_heap.yaml")),
-    ("processors/wlan_disconnect_events.yaml",  include_str!("../../marketplace/processors/wlan_disconnect_events.yaml")),
-    ("processors/wlan_disconnect_tracker.yaml", include_str!("../../marketplace/processors/wlan_disconnect_tracker.yaml")),
-    ("processors/exception_stack_tracker.yaml", include_str!("../../marketplace/processors/exception_stack_tracker.yaml")),
-    ("processors/dns_server_stats.yaml",        include_str!("../../marketplace/processors/dns_server_stats.yaml")),
-    ("processors/dns_private_probe_tracker.yaml", include_str!("../../marketplace/processors/dns_private_probe_tracker.yaml")),
-    ("processors/dns_query_events.yaml",        include_str!("../../marketplace/processors/dns_query_events.yaml")),
-    ("processors/cellular_registration_state.yaml", include_str!("../../marketplace/processors/cellular_registration_state.yaml")),
-    ("processors/cellular_data_failure_reporter.yaml", include_str!("../../marketplace/processors/cellular_data_failure_reporter.yaml")),
-    ("processors/radio_data_call_reporter.yaml", include_str!("../../marketplace/processors/radio_data_call_reporter.yaml")),
-    ("processors/radio_airplane_mode_state.yaml", include_str!("../../marketplace/processors/radio_airplane_mode_state.yaml")),
-    ("processors/ims_volte_reporter.yaml",      include_str!("../../marketplace/processors/ims_volte_reporter.yaml")),
-    ("processors/crash_storm_detector.yaml",    include_str!("../../marketplace/processors/crash_storm_detector.yaml")),
-    ("processors/sim_identity_reporter.yaml",   include_str!("../../marketplace/processors/sim_identity_reporter.yaml")),
-];
-
-/// Install the 5 state-tracker processors from the bundled snapshot as marketplace processors
-/// under the "official" source. Each gets a qualified ID (`id@official`) and provenance metadata.
-fn install_snapshot_processors(state: &AppState, app: &tauri::AppHandle) {
-    let snapshot_json = include_str!("../../marketplace/marketplace.json");
-    let index: processors::marketplace::MarketplaceIndex = match serde_json::from_str(snapshot_json) {
-        Ok(idx) => idx,
-        Err(e) => {
-            eprintln!("Failed to parse builtin marketplace snapshot: {e}");
-            return;
-        }
-    };
-
-    let Ok(data_dir) = app.path().app_data_dir() else { return };
-    let proc_dir = data_dir.join("processors");
-    let _ = std::fs::create_dir_all(&proc_dir);
-
-    // Parse all processors and write to disk WITHOUT holding the lock.
-    // Collect (qualified_id, parsed_def, final_yaml) for all that succeed.
-    let parsed: Vec<(String, AnyProcessor, String)> = index.processors.iter().filter_map(|entry| {
-        let raw_yaml = BUILTIN_YAMLS.iter().find(|(p, _)| *p == entry.path).map(|(_, c)| *c)?;
-
-        // Attach provenance metadata (use a static placeholder; exact timestamp not critical)
-        let provenance_suffix = format!(
-            "\n_source: official\n_installed_version: {}\n_installed_at: 2000-01-01T00:00:00Z\n_sha256: \"\"\n",
-            entry.version
-        );
-        let final_yaml = format!("{raw_yaml}{provenance_suffix}");
-
-        match AnyProcessor::from_yaml(&final_yaml) {
-            Ok(mut def) => {
-                def.source = Some("official".to_string());
-                let qid = qualified_id(&def.meta.id, "official");
-
-                // Persist to disk (outside the lock).
-                let filename = processors::marketplace::id_to_filename(&qid);
-                let dest = proc_dir.join(format!("{filename}.yaml"));
-                if let Err(e) = std::fs::write(&dest, &final_yaml) {
-                    eprintln!("Failed to persist '{qid}': {e}");
-                }
-
-                Some((qid, def, final_yaml))
-            }
-            Err(e) => {
-                eprintln!("Failed to parse snapshot processor '{}': {e}", entry.id);
-                None
-            }
-        }
-    }).collect();
-
-    // Acquire the lock once to batch-insert all parsed processors.
-    let Ok(mut procs) = state.processors.lock() else { return };
-    for (qid, def, _yaml) in parsed {
-        procs.insert(qid, def);
-    }
-}
 
 /// Background startup update check.
 /// Fetches marketplace indices for enabled sources, compares versions,
@@ -341,11 +255,6 @@ pub fn run() {
                 if let Ok(mut packs) = state.packs.lock() {
                     *packs = loaded_packs;
                 }
-            }
-
-            // On first run, install the snapshot processors (that aren't already on disk).
-            if first_run {
-                install_snapshot_processors(&state, app.handle());
             }
 
             // Load the true built-in: pii_anonymizer (always present, id starts with __).
