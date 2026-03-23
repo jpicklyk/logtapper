@@ -18,4 +18,3 @@
 .typeTracker     { color: var(--proc-tracker); }
 .typeCorrelator  { color: var(--proc-correlator); }
 .typeTransformer { color: var(--proc-transformer); }
-.typeAnnotator   { color: var(--proc-annotator); }

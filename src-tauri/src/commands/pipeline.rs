@@ -182,7 +182,6 @@ pub fn execute_pipeline(
                     ProcessorKind::Reporter(d) => defs.reporter_defs.push((resolved, d.clone())),
                     ProcessorKind::StateTracker(d) => defs.tracker_defs.push((resolved, d.clone())),
                     ProcessorKind::Correlator(d) => defs.correlator_defs.push((resolved, d.clone())),
-                    _ => {} // Annotator: schema stub, no engine yet
                 }
             }
         }

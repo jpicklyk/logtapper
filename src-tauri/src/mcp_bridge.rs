@@ -1533,7 +1533,7 @@ async fn h_processor_defs_single(
             obj.insert("withinMs".to_string(), json!(def.correlate.within_ms));
             obj.insert("guidance".to_string(), json!(def.correlate.guidance));
         }
-        ProcessorKind::Transformer(_) | ProcessorKind::Annotator(_) => {
+        ProcessorKind::Transformer(_) => {
             // Minimal info already in base result
         }
     }

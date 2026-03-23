@@ -7,7 +7,6 @@ export const PROC_TYPE_LABELS: Record<string, string> = {
   state_tracker: 'StateTracker',
   correlator: 'Correlator',
   transformer: 'Transformer',
-  annotator: 'Annotator',
 };
 
 /**
@@ -20,7 +19,6 @@ export const PROC_TYPE_CLASS_KEY: Record<string, string> = {
   state_tracker: 'typeTracker',
   correlator: 'typeCorrelator',
   transformer: 'typeTransformer',
-  annotator: 'typeAnnotator',
 };
 
 /** Human-readable descriptions for each processor type. */
@@ -29,7 +27,6 @@ export const PROC_TYPE_DESCRIPTIONS: Record<string, string> = {
   state_tracker: 'Tracks state transitions over time',
   correlator: 'Correlates events across log sources',
   transformer: 'Filters or transforms log lines before analysis',
-  annotator: 'Adds metadata annotations to log lines',
 };
 
 /** CSS variable accent color for each processor type. */
@@ -38,7 +35,6 @@ export const PROC_TYPE_ACCENT: Record<string, string> = {
   state_tracker: 'var(--proc-tracker)',
   correlator: 'var(--proc-correlator)',
   transformer: 'var(--proc-transformer)',
-  annotator: 'var(--proc-annotator)',
 };
 
 /** Returns [displayLabel, cssClassKey] for a given processor type. */

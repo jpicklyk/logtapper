@@ -19,13 +19,6 @@ pub(crate) fn persist_processor(app: &AppHandle, id: &str, yaml: &str) -> Result
 /// Pure validation checks for an `AnyProcessor` — no I/O, no AppHandle needed.
 /// Returns `Ok(())` if all checks pass, or an error string describing the problem.
 pub(crate) fn validate_processor(processor: &AnyProcessor) -> Result<(), String> {
-    use crate::processors::ProcessorKind;
-
-    // Reject processor kinds with no engine implementation.
-    if matches!(processor.kind, ProcessorKind::Annotator(_)) {
-        return Err("Annotator processors are not yet supported".to_string());
-    }
-
     // Reject transformer AddField ops that have a non-empty script — the script
     // is never evaluated (AddField only inserts an empty string placeholder).
     if let Some(transformer_def) = processor.as_transformer() {
@@ -357,7 +350,6 @@ pub async fn load_pack_from_file(
 mod tests {
     use super::validate_processor;
     use crate::processors::{AnyProcessor, ProcessorKind, ProcessorMeta};
-    use crate::processors::annotator::schema::AnnotatorDef;
     use crate::processors::transformer::schema::{TransformerDef, TransformOp};
     use crate::processors::reporter::schema::{
         ReporterDef, AggType, AggregateGroup, AggregateStage, PipelineStage,
@@ -406,23 +398,7 @@ pipeline:
         }
     }
 
-    // ── 4a. Rejects annotator ─────────────────────────────────────────────────
-
-    #[test]
-    fn rejects_annotator_processor() {
-        let proc = AnyProcessor {
-            meta: make_meta("test_annotator"),
-            kind: ProcessorKind::Annotator(AnnotatorDef { phases: vec![] }),
-            schema: None,
-            source: None,
-        };
-        let result = validate_processor(&proc);
-        assert!(result.is_err(), "Expected annotator to be rejected");
-        let msg = result.unwrap_err();
-        assert!(msg.contains("not yet supported"), "Error should mention 'not yet supported', got: {msg}");
-    }
-
-    // ── 4b. Rejects AddField with non-empty script ────────────────────────────
+    // ── 4a. Rejects AddField with non-empty script ──────────────────────────
 
     #[test]
     fn rejects_addfield_with_script() {

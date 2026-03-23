@@ -399,7 +399,7 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
             description: entry.description ?? '',
             tags: entry.tags,
             builtin: false,
-            processorType: (entry.processorType ?? 'reporter') as 'reporter' | 'state_tracker' | 'correlator' | 'transformer' | 'annotator',
+            processorType: (entry.processorType ?? 'reporter') as 'reporter' | 'state_tracker' | 'correlator' | 'transformer',
             group: null,
             varsMeta: [],
             license: entry.license,

@@ -56,7 +56,7 @@ impl std::fmt::Display for LogLevel {
 
 
 // ---------------------------------------------------------------------------
-// Annotation -- applied by Annotator processors
+// Annotation — metadata label attached to a line (used by analysis highlights)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -128,7 +128,7 @@ pub struct LineContext {
     pub source_line_num: usize,
     /// Fields extracted by upstream pipeline stages.
     pub fields: HashMap<String, serde_json::Value>,
-    /// Annotations applied by Annotator processors.
+    /// Annotations attached to this line (analysis highlights, etc.).
     #[serde(default)]
     pub annotations: Vec<Annotation>,
 }

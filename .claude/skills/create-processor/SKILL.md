@@ -22,7 +22,7 @@ Ask the user what they want to detect. Map their intent to a type:
 | "Track state over time", "monitor transitions" | **state_tracker** | State machine with typed fields; produces timeline events |
 | "Correlate event A with event B" | **correlator** | Cross-source lookback matching with emit templates |
 
-**Do not create transformers or annotators** — transformers are built-in only (`__pii_anonymizer`), and annotators have no engine yet. If the user asks for one of these, explain the limitation.
+**Do not create transformers** — transformers are built-in only (`__pii_anonymizer`). If the user asks for one, explain the limitation.
 
 ## Before Writing YAML
 

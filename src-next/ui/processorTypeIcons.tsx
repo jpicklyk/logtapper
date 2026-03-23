@@ -37,14 +37,6 @@ export const TransformerIcon: React.FC<IconProps> = ({ size = 14, className }) =
   </svg>
 );
 
-// Annotator — tag/label (annotates lines)
-export const AnnotatorIcon: React.FC<IconProps> = ({ size = 14, className }) => (
-  <svg width={size} height={size} viewBox="0 0 16 16" fill="none" className={className}>
-    <path d="M2 2h7l5 6-5 6H2V2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-    <circle cx="5.5" cy="8" r="1" fill="currentColor" />
-  </svg>
-);
-
 // Unified component that selects icon by type string
 export const ProcessorTypeIcon: React.FC<IconProps & { type: string }> = ({ type, ...props }) => {
   switch (type) {
@@ -52,7 +44,6 @@ export const ProcessorTypeIcon: React.FC<IconProps & { type: string }> = ({ type
     case 'state_tracker': return <StateTrackerIcon {...props} />;
     case 'correlator': return <CorrelatorIcon {...props} />;
     case 'transformer': return <TransformerIcon {...props} />;
-    case 'annotator': return <AnnotatorIcon {...props} />;
     default: return null;
   }
 };

@@ -65,7 +65,7 @@ Tauri 2.x desktop app: React 18/TypeScript frontend + Rust backend. All IPC goes
 ```
 src-tauri/src/commands/   ← #[tauri::command] handlers; AppState defined in mod.rs
 src-tauri/src/core/       ← LogSource trait, parsers, AnalysisSession, LineContext
-src-tauri/src/processors/ ← AnyProcessor registry; reporter, transformer, state_tracker, correlator, annotator sub-modules
+src-tauri/src/processors/ ← AnyProcessor registry; reporter, transformer, state_tracker, correlator sub-modules
 src-tauri/src/scripting/  ← Rhai sandbox, scope builder, emit() bridge
 src-tauri/src/anonymizer/ ← PII detection + token mapping
 src-tauri/src/charts/     ← chart data building from emissions/vars
@@ -141,7 +141,6 @@ Axum HTTP server bound to `127.0.0.1:40404` (`src-tauri/src/mcp_bridge.rs`). MCP
 - **TransformerDef**: optional filter + transforms or `builtin: pii_anonymizer`
 - **StateTrackerDef**: group, state fields, transitions (filter → set/clear), output
 - **CorrelatorDef**: cross-source event correlation with time/line windows
-- **AnnotatorDef**: schema stub — no engine yet
 
 Built-in processors have IDs starting with `__` (e.g. `__pii_anonymizer`), loaded via `include_str!`, cannot be uninstalled.
 

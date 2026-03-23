@@ -8,7 +8,6 @@ The unified registry uses `AnyProcessor { meta: ProcessorMeta, kind: ProcessorKi
 - `transformer/` — line mutation (field replace/add/set/drop) or `builtin: pii_anonymizer`
 - `state_tracker/` — state machine with typed fields and transitions
 - `correlator/` — cross-source event correlation with time/line windows
-- `annotator/` — schema stub only, no engine yet
 
 This file covers the **reporter** subsystem in detail. Other types are documented in their respective sub-directories.
 

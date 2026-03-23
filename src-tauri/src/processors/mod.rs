@@ -1,4 +1,3 @@
-pub mod annotator;
 pub mod correlator;
 pub mod filter;
 pub mod marketplace;
@@ -18,8 +17,6 @@ use reporter::schema::{ReporterDef, DisplayAs};
 use transformer::schema::TransformerDef;
 use state_tracker::schema::StateTrackerDef;
 use correlator::schema::CorrelatorDef;
-use annotator::schema::AnnotatorDef;
-
 // Re-export for backward compatibility with existing callers
 pub use reporter::schema::ReporterDef as ProcessorDef;
 pub use reporter::engine::ProcessorRun;
@@ -67,7 +64,6 @@ pub enum ProcessorKind {
     Transformer(TransformerDef),
     StateTracker(StateTrackerDef),
     Correlator(CorrelatorDef),
-    Annotator(AnnotatorDef),
 }
 
 #[derive(Debug, Clone)]
@@ -87,7 +83,6 @@ impl AnyProcessor {
             ProcessorKind::Transformer(_) => "transformer",
             ProcessorKind::StateTracker(_) => "state_tracker",
             ProcessorKind::Correlator(_) => "correlator",
-            ProcessorKind::Annotator(_) => "annotator",
         }
     }
 
@@ -161,7 +156,7 @@ impl AnyProcessor {
                     check_rules(&stage.rules, &self.meta.id, "transformer")?;
                 }
             }
-            _ => {} // Reporter, StateTracker, Annotator — all supported
+            _ => {} // Reporter, StateTracker — all filter rules supported
         }
         Ok(())
     }
@@ -293,11 +288,6 @@ impl AnyProcessor {
                     .map_err(|e| format!("Correlator YAML parse error: {e}"))?;
                 def.prepare_tag_sets();
                 ProcessorKind::Correlator(def)
-            }
-            "annotator" => {
-                let def: AnnotatorDef = serde_yaml::from_str(yaml)
-                    .map_err(|e| format!("Annotator YAML parse error: {e}"))?;
-                ProcessorKind::Annotator(def)
             }
             other => return Err(format!("Unknown processor type: '{other}'")),
         };
