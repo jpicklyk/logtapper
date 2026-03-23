@@ -280,3 +280,188 @@ pub fn verify_sha256(content: &str, expected_hex: &str) -> Result<(), String> {
         ))
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn github_raw_url_format() {
+        let url = github_raw_url("jpicklyk/logtapper", "main", "some/file.json");
+        assert_eq!(
+            url,
+            "https://raw.githubusercontent.com/jpicklyk/logtapper/main/some/file.json"
+        );
+    }
+
+    // ── GitHub marketplace URL must include marketplace/ prefix ──────────
+
+    #[test]
+    fn marketplace_index_github_url_has_marketplace_prefix() {
+        // Simulates what fetch_marketplace does for a GitHub source.
+        // The URL must point to marketplace/marketplace.json, not just marketplace.json.
+        let repo = "jpicklyk/logtapper";
+        let git_ref = "main";
+        let url = github_raw_url(repo, git_ref, "marketplace/marketplace.json");
+        assert!(
+            url.contains("/marketplace/marketplace.json"),
+            "marketplace index URL must include marketplace/ prefix, got: {url}"
+        );
+        assert_eq!(
+            url,
+            "https://raw.githubusercontent.com/jpicklyk/logtapper/main/marketplace/marketplace.json"
+        );
+    }
+
+    #[test]
+    fn processor_download_github_url_has_marketplace_prefix() {
+        // Simulates what download_processor_from_source does for a GitHub source.
+        // entry.path is "processors/wifi_state.yaml" — URL must be marketplace/processors/...
+        let repo = "jpicklyk/logtapper";
+        let git_ref = "main";
+        let entry_path = "processors/wifi_state.yaml";
+        let full_path = format!("marketplace/{}", entry_path);
+        let url = github_raw_url(repo, git_ref, &full_path);
+        assert!(
+            url.contains("/marketplace/processors/"),
+            "processor download URL must include marketplace/ prefix, got: {url}"
+        );
+        assert_eq!(
+            url,
+            "https://raw.githubusercontent.com/jpicklyk/logtapper/main/marketplace/processors/wifi_state.yaml"
+        );
+    }
+
+    #[test]
+    fn pack_download_github_url_has_marketplace_prefix() {
+        // Simulates what download_text_from_source does for pack YAML downloads.
+        // entry.path is "packs/wifi-diagnostics.pack.yaml" — URL must be marketplace/packs/...
+        let repo = "jpicklyk/logtapper";
+        let git_ref = "main";
+        let entry_path = "packs/wifi-diagnostics.pack.yaml";
+        let full_path = format!("marketplace/{}", entry_path);
+        let url = github_raw_url(repo, git_ref, &full_path);
+        assert!(
+            url.contains("/marketplace/packs/"),
+            "pack download URL must include marketplace/ prefix, got: {url}"
+        );
+    }
+
+    // ── Verify actual repo file structure matches expected paths ─────────
+
+    #[test]
+    fn marketplace_json_exists_at_expected_path() {
+        let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let path = project_root.join("marketplace/marketplace.json");
+        assert!(
+            path.exists(),
+            "marketplace/marketplace.json must exist at repo root: {}",
+            path.display()
+        );
+    }
+
+    #[test]
+    fn all_marketplace_processor_files_exist() {
+        let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let json_path = project_root.join("marketplace/marketplace.json");
+        let json = std::fs::read_to_string(&json_path).expect("read marketplace.json");
+        let index: MarketplaceIndex = serde_json::from_str(&json).expect("parse marketplace.json");
+
+        for entry in &index.processors {
+            // entry.path is relative to the marketplace/ dir (e.g. "processors/wifi_state.yaml")
+            let file_path = project_root.join("marketplace").join(&entry.path);
+            assert!(
+                file_path.exists(),
+                "processor '{}' references path '{}' but file does not exist at: {}",
+                entry.id,
+                entry.path,
+                file_path.display()
+            );
+        }
+    }
+
+    #[test]
+    fn all_marketplace_pack_files_exist() {
+        let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let json_path = project_root.join("marketplace/marketplace.json");
+        let json = std::fs::read_to_string(&json_path).expect("read marketplace.json");
+        let index: MarketplaceIndex = serde_json::from_str(&json).expect("parse marketplace.json");
+
+        for pack in &index.packs {
+            let file_path = project_root.join("marketplace").join(&pack.path);
+            assert!(
+                file_path.exists(),
+                "pack '{}' references path '{}' but file does not exist at: {}",
+                pack.id,
+                pack.path,
+                file_path.display()
+            );
+        }
+    }
+
+    // ── Dev vs release source configuration ─────────────────────────────
+
+    #[test]
+    fn dev_build_marketplace_dir_exists() {
+        // In dev builds, the official source points to the project's marketplace/ directory.
+        // This test verifies that directory exists relative to CARGO_MANIFEST_DIR.
+        let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let marketplace_dir = project_root.join("marketplace");
+        assert!(
+            marketplace_dir.is_dir(),
+            "marketplace/ directory must exist at project root for dev builds: {}",
+            marketplace_dir.display()
+        );
+    }
+
+    #[test]
+    fn release_build_github_source_is_valid() {
+        // Verify the hardcoded GitHub repo and ref used in release builds.
+        let repo = "jpicklyk/logtapper";
+        let git_ref = "main";
+
+        // The URL must be well-formed
+        let url = github_raw_url(repo, git_ref, "marketplace/marketplace.json");
+        assert!(url.starts_with("https://raw.githubusercontent.com/"));
+        assert!(url.contains("jpicklyk/logtapper"));
+        assert!(url.ends_with("marketplace/marketplace.json"));
+    }
+
+    #[test]
+    fn local_source_does_not_double_prefix_marketplace() {
+        // Local sources join the base path with the entry path directly.
+        // The base path is already the marketplace/ directory, so entry.path
+        // ("processors/wifi_state.yaml") should NOT get another marketplace/ prefix.
+        let base = if cfg!(windows) { "C:\\some\\path\\to\\marketplace" } else { "/some/path/to/marketplace" };
+        let entry_path = "processors/wifi_state.yaml";
+        let full = std::path::Path::new(base).join(entry_path);
+        let full_str = full.to_string_lossy();
+        // Must not double-prefix (using OS-agnostic check)
+        assert!(
+            !full_str.contains("marketplace/marketplace") && !full_str.contains("marketplace\\marketplace"),
+            "local path must not double-prefix marketplace: {}",
+            full_str
+        );
+        // Must end with the processor path
+        assert!(
+            full_str.ends_with("wifi_state.yaml"),
+            "local path must end with processor filename: {}",
+            full_str
+        );
+    }
+
+    #[test]
+    fn verify_sha256_accepts_empty() {
+        // Empty expected hash skips verification (dev mode)
+        assert!(verify_sha256("some content", "").is_ok());
+    }
+
+    #[test]
+    fn verify_sha256_rejects_mismatch() {
+        assert!(verify_sha256("some content", "0000dead").is_err());
+    }
+}

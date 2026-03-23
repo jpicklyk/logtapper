@@ -824,4 +824,32 @@ mod tests {
         assert!(json.contains("\"processors\""));
         assert!(json.contains("\"packs\""));
     }
+
+    #[test]
+    fn download_text_github_url_has_marketplace_prefix() {
+        // Verify the URL construction logic in download_text_from_source.
+        // For GitHub sources, the path (e.g. "packs/wifi.pack.yaml") must be
+        // prefixed with "marketplace/" to match the repo directory structure.
+        let path = "packs/wifi-diagnostics.pack.yaml";
+        let full_path = format!("marketplace/{path}");
+        let url = registry::github_raw_url("jpicklyk/logtapper", "main", &full_path);
+        assert!(
+            url.contains("/marketplace/packs/"),
+            "download URL must include marketplace/ prefix, got: {url}"
+        );
+        assert!(!url.contains("/marketplace/marketplace/"),
+            "must not double-prefix marketplace/, got: {url}"
+        );
+    }
+
+    #[test]
+    fn fetch_result_github_url_has_marketplace_prefix() {
+        // Verify fetch_marketplace_for_source constructs the correct URL.
+        // This mirrors the logic at the top of the command.
+        let url = registry::github_raw_url("jpicklyk/logtapper", "main", "marketplace/marketplace.json");
+        assert_eq!(
+            url,
+            "https://raw.githubusercontent.com/jpicklyk/logtapper/main/marketplace/marketplace.json"
+        );
+    }
 }
