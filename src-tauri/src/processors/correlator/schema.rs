@@ -86,3 +86,101 @@ pub struct CorrelatorOutput {
     #[serde(default)]
     pub annotate: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MINIMAL_YAML: &str = r#"
+sources:
+  - id: src_a
+    filter:
+      - type: tag_match
+        tags: [TagA]
+  - id: src_b
+    filter:
+      - type: tag_match
+        tags: [TagB]
+correlate:
+  trigger: src_b
+  within_lines: 100
+  emit: "A correlated with B"
+"#;
+
+    #[test]
+    fn parse_minimal_correlator_yaml() {
+        let def: CorrelatorDef = serde_yaml::from_str(MINIMAL_YAML).unwrap();
+        assert_eq!(def.sources.len(), 2);
+        assert_eq!(def.sources[0].id, "src_a");
+        assert_eq!(def.sources[1].id, "src_b");
+        assert_eq!(def.correlate.trigger, "src_b");
+        assert_eq!(def.correlate.within_lines, Some(100));
+        assert_eq!(def.correlate.emit, "A correlated with B");
+        assert!(def.correlate.within_ms.is_none());
+        assert!(def.correlate.guidance.is_none());
+    }
+
+    #[test]
+    fn parse_correlator_with_within_ms() {
+        let yaml = r#"
+sources:
+  - id: src_a
+    filter:
+      - type: tag_match
+        tags: [TagA]
+  - id: src_b
+    filter:
+      - type: tag_match
+        tags: [TagB]
+correlate:
+  trigger: src_b
+  within_ms: 5000
+  emit: "time-based correlation"
+"#;
+        let def: CorrelatorDef = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(def.correlate.within_ms, Some(5000u64));
+        assert!(def.correlate.within_lines.is_none());
+    }
+
+    #[test]
+    fn parse_correlator_with_guidance() {
+        let yaml = r#"
+sources:
+  - id: src_a
+    filter:
+      - type: tag_match
+        tags: [FdTracker]
+  - id: src_b
+    filter:
+      - type: tag_match
+        tags: [Binder]
+correlate:
+  trigger: src_b
+  within_lines: 200
+  emit: "FD spike before Binder failure"
+  guidance: "Investigate file descriptor leaks in the suspect process."
+"#;
+        let def: CorrelatorDef = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            def.correlate.guidance.as_deref(),
+            Some("Investigate file descriptor leaks in the suspect process.")
+        );
+    }
+
+    #[test]
+    fn prepare_tag_sets_populates_hash_set() {
+        let mut def: CorrelatorDef = serde_yaml::from_str(MINIMAL_YAML).unwrap();
+        // Before prepare_tag_sets, tag_set is empty (serde skips it)
+        if let FilterRule::TagMatch { tag_set, .. } = &def.sources[0].filter[0] {
+            assert!(tag_set.is_empty(), "tag_set should be empty before prepare");
+        }
+        def.prepare_tag_sets();
+        // After prepare_tag_sets, tag_set should be populated
+        if let FilterRule::TagMatch { tags, tag_set } = &def.sources[0].filter[0] {
+            assert!(!tag_set.is_empty(), "tag_set should be populated after prepare");
+            assert_eq!(tag_set, tags);
+        } else {
+            panic!("Expected TagMatch rule");
+        }
+    }
+}

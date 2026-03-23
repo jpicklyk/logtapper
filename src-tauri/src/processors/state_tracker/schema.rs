@@ -125,3 +125,92 @@ pub struct StateTrackerOutput {
     #[serde(default)]
     pub annotate: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MINIMAL_YAML: &str = r#"
+group: Network
+state:
+  - name: status
+    type: string
+    default: unknown
+transitions:
+  - name: connected
+    filter:
+      message_contains: "connected"
+    set:
+      status: connected
+"#;
+
+    #[test]
+    fn parse_minimal_state_tracker_yaml() {
+        let def: StateTrackerDef = serde_yaml::from_str(MINIMAL_YAML).unwrap();
+        assert_eq!(def.group, "Network");
+        assert_eq!(def.state.len(), 1);
+        assert_eq!(def.state[0].name, "status");
+        assert_eq!(def.transitions.len(), 1);
+        assert_eq!(def.transitions[0].name, "connected");
+        assert_eq!(
+            def.transitions[0].filter.message_contains.as_deref(),
+            Some("connected")
+        );
+        assert_eq!(
+            def.transitions[0].set.get("status").and_then(|v| v.as_str()),
+            Some("connected")
+        );
+    }
+
+    #[test]
+    fn parse_state_tracker_with_clear_transition() {
+        let yaml = r#"
+state:
+  - name: active
+    type: bool
+    default: false
+transitions:
+  - name: reset
+    filter:
+      message_contains: "reset"
+    clear:
+      - active
+"#;
+        let def: StateTrackerDef = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(def.transitions.len(), 1);
+        assert_eq!(def.transitions[0].clear, vec!["active"]);
+        assert!(def.transitions[0].set.is_empty());
+    }
+
+    #[test]
+    fn parse_state_tracker_with_group() {
+        let yaml = r#"
+group: WiFi
+state:
+  - name: conn
+    type: string
+    default: disconnected
+transitions:
+  - name: up
+    filter:
+      tag: WifiStateMachine
+    set:
+      conn: connected
+"#;
+        let def: StateTrackerDef = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(def.group, "WiFi");
+        assert_eq!(def.transitions[0].filter.tag.as_deref(), Some("WifiStateMachine"));
+    }
+
+    #[test]
+    fn compile_filter_rules_populates_filter_rules() {
+        let mut def: StateTrackerDef = serde_yaml::from_str(MINIMAL_YAML).unwrap();
+        // Before compile, filter_rules is empty (serde skips it)
+        assert!(def.transitions[0].filter_rules.is_empty());
+        def.compile_filter_rules();
+        // After compile, filter_rules should have the MessageContains rule
+        assert!(!def.transitions[0].filter_rules.is_empty());
+        let rule = &def.transitions[0].filter_rules[0];
+        assert!(matches!(rule, crate::processors::reporter::schema::FilterRule::MessageContains { value } if value == "connected"));
+    }
+}

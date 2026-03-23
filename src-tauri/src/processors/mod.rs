@@ -420,3 +420,186 @@ pub mod interpreter {
 pub mod vars {
     pub use crate::processors::reporter::vars::*;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MINIMAL_REPORTER: &str = r#"
+meta:
+  id: test-reporter
+  name: Test Reporter
+  version: 1.0.0
+"#;
+
+    const MINIMAL_STATE_TRACKER: &str = r#"
+type: state_tracker
+id: test-tracker
+name: Test Tracker
+version: 1.0.0
+group: Test
+state:
+  - name: status
+    type: string
+    default: unknown
+transitions:
+  - name: active
+    filter:
+      message_contains: started
+    set:
+      status: active
+"#;
+
+    const MINIMAL_CORRELATOR: &str = r#"
+type: correlator
+id: test-correlator
+name: Test Correlator
+version: 1.0.0
+sources:
+  - id: src_a
+    filter:
+      - type: tag_match
+        tags: [TagA]
+  - id: src_b
+    filter:
+      - type: tag_match
+        tags: [TagB]
+correlate:
+  trigger: src_b
+  within_lines: 100
+  emit: "A correlated with B"
+"#;
+
+    const MINIMAL_TRANSFORMER: &str = r#"
+type: transformer
+id: __test-transformer
+name: Test Transformer
+version: 1.0.0
+transforms:
+  - op: replace_field
+    field: message
+    regex: "secret"
+    replacement: "***"
+"#;
+
+    #[test]
+    fn from_yaml_parses_reporter() {
+        let p = AnyProcessor::from_yaml(MINIMAL_REPORTER).unwrap();
+        assert_eq!(p.processor_type(), "reporter");
+        assert_eq!(p.meta.id, "test-reporter");
+        assert_eq!(p.meta.name, "Test Reporter");
+    }
+
+    #[test]
+    fn from_yaml_parses_state_tracker() {
+        let p = AnyProcessor::from_yaml(MINIMAL_STATE_TRACKER).unwrap();
+        assert_eq!(p.processor_type(), "state_tracker");
+        assert_eq!(p.meta.id, "test-tracker");
+    }
+
+    #[test]
+    fn from_yaml_parses_correlator() {
+        let p = AnyProcessor::from_yaml(MINIMAL_CORRELATOR).unwrap();
+        assert_eq!(p.processor_type(), "correlator");
+        assert_eq!(p.meta.id, "test-correlator");
+    }
+
+    #[test]
+    fn from_yaml_parses_transformer() {
+        let p = AnyProcessor::from_yaml(MINIMAL_TRANSFORMER).unwrap();
+        assert_eq!(p.processor_type(), "transformer");
+        assert_eq!(p.meta.id, "__test-transformer");
+    }
+
+    #[test]
+    fn from_yaml_rejects_invalid_yaml() {
+        let result = AnyProcessor::from_yaml("<<<not yaml>>>");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_yaml_defaults_to_reporter() {
+        // YAML without a `type:` field should default to reporter
+        let yaml = r#"
+meta:
+  id: implicit-reporter
+  name: Implicit Reporter
+"#;
+        let p = AnyProcessor::from_yaml(yaml).unwrap();
+        assert_eq!(p.processor_type(), "reporter");
+    }
+
+    #[test]
+    fn from_yaml_rejects_unknown_type() {
+        let yaml = r#"
+type: foobar
+meta:
+  id: bad-proc
+  name: Bad Processor
+"#;
+        let result = AnyProcessor::from_yaml(yaml);
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(msg.contains("foobar"), "error should mention the unknown type: {msg}");
+    }
+
+    #[test]
+    fn processor_summary_from_any_processor() {
+        let p = AnyProcessor::from_yaml(MINIMAL_REPORTER).unwrap();
+        let summary = ProcessorSummary::from(&p);
+        assert_eq!(summary.id, "test-reporter");
+        assert_eq!(summary.name, "Test Reporter");
+        assert_eq!(summary.version, "1.0.0");
+        assert_eq!(summary.processor_type, "reporter");
+        assert!(!summary.builtin);
+        assert!(!summary.deprecated);
+        assert!(!summary.has_schema);
+    }
+
+    #[test]
+    fn validate_filter_rules_accepts_valid_regex() {
+        // A reporter with message_regex is valid — validate_filter_rules only
+        // checks for SourceTypeIs/SectionIs in correlator/transformer types.
+        let yaml = r#"
+meta:
+  id: regex-reporter
+  name: Regex Reporter
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_regex
+        pattern: "foo.*bar"
+"#;
+        let p = AnyProcessor::from_yaml(yaml).unwrap();
+        assert!(p.validate_filter_rules().is_ok());
+    }
+
+    #[test]
+    fn validate_filter_rules_rejects_source_type_is_in_correlator() {
+        // Correlators must not use SourceTypeIs — this is what validate_filter_rules
+        // actually checks. Invalid regex silently passes per design (see CLAUDE.md).
+        let yaml = r#"
+type: correlator
+id: bad-correlator
+name: Bad Correlator
+sources:
+  - id: src_a
+    filter:
+      - type: source_type_is
+        source_type: Logcat
+  - id: src_b
+    filter:
+      - type: tag_match
+        tags: [TagB]
+correlate:
+  trigger: src_b
+  within_lines: 100
+  emit: "test"
+"#;
+        let p = AnyProcessor::from_yaml(yaml).unwrap();
+        let result = p.validate_filter_rules();
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(msg.contains("source_type_is"), "error should mention the rule: {msg}");
+    }
+}
