@@ -470,17 +470,6 @@ Add an entry to the `packs` array (or update `processor_ids` if adding to an exi
 
 Rebuild (`npx tauri dev` or `cargo build`) — Tauri copies marketplace resources at build time. Or manually copy to `src-tauri/target/debug/marketplace/`.
 
-### Existing packs
-
-| Pack | Category | Domain |
-|------|----------|--------|
-| `wifi-diagnostics` | network | WiFi state, disconnects, probes |
-| `network-connectivity` | network | Connectivity state, DNS |
-| `telephony-suite` | telephony | Cellular, radio, SIM, IMS |
-| `stability-monitor` | stability | Crashes, exceptions, kill storms |
-| `system-health` | memory | GC, FD, heap, battery, lifecycle |
-| `error-analysis` | stability | EBADF errors, FD correlation |
-
 **ID conventions:** Use kebab-case (`wifi-state`, `fd-monitor`). Processor IDs must be unique within a source. Marketplace-installed processors get qualified IDs at install time: `{id}@{source_name}`. Pack manifests reference bare IDs only.
 
 ## Validation Checklist
