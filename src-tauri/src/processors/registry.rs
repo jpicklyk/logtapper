@@ -464,4 +464,212 @@ mod tests {
     fn verify_sha256_rejects_mismatch() {
         assert!(verify_sha256("some content", "0000dead").is_err());
     }
+
+    // ── Malformed / edge-case marketplace JSON ──────────────────────────
+
+    #[test]
+    fn parse_marketplace_rejects_invalid_json() {
+        let result = parse_marketplace_json("not json at all", "test");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_marketplace_rejects_empty_json() {
+        let result = parse_marketplace_json("{}", "test");
+        // Missing required "processors" field
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_marketplace_handles_empty_processors_array() {
+        let json = r#"{"name": "test", "version": 2, "processors": []}"#;
+        let index = parse_marketplace_json(json, "test").expect("should parse");
+        assert!(index.processors.is_empty());
+        assert!(index.packs.is_empty());
+    }
+
+    #[test]
+    fn parse_marketplace_handles_empty_packs_array() {
+        let json = r#"{"name": "test", "version": 2, "processors": [], "packs": []}"#;
+        let index = parse_marketplace_json(json, "test").expect("should parse");
+        assert!(index.packs.is_empty());
+    }
+
+    // ── v1 → v2 format migration ────────────────────────────────────────
+
+    #[test]
+    fn parse_marketplace_v1_format_converts_to_v2() {
+        let json = r#"{
+            "version": 1,
+            "processors": [
+                {"id": "test-proc", "name": "Test", "version": "1.0.0",
+                 "description": "A test", "path": "test.yaml",
+                 "tags": ["test"], "sha256": "abc123"}
+            ]
+        }"#;
+        let index = parse_marketplace_json(json, "my-source").expect("should parse v1");
+        assert_eq!(index.version, 1);
+        assert_eq!(index.processors.len(), 1);
+        assert_eq!(index.processors[0].id, "test-proc");
+        // v1 has no packs
+        assert!(index.packs.is_empty());
+        // Source name propagated
+        assert_eq!(index.name, "my-source");
+    }
+
+    #[test]
+    fn parse_marketplace_v0_treated_as_v1() {
+        // version: 0 or missing should be treated as v1
+        let json = r#"{
+            "version": 0,
+            "processors": [
+                {"id": "x", "name": "X", "version": "1.0.0",
+                 "path": "x.yaml", "tags": [], "sha256": ""}
+            ]
+        }"#;
+        let index = parse_marketplace_json(json, "test").expect("should parse as v1");
+        assert_eq!(index.processors.len(), 1);
+    }
+
+    // ── Duplicate IDs ────────────────────────────────────────────────────
+
+    #[test]
+    fn bundled_marketplace_has_no_duplicate_processor_ids() {
+        let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let json = std::fs::read_to_string(project_root.join("marketplace/marketplace.json")).unwrap();
+        let index: MarketplaceIndex = serde_json::from_str(&json).unwrap();
+
+        let mut seen = std::collections::HashSet::new();
+        for proc in &index.processors {
+            assert!(
+                seen.insert(&proc.id),
+                "duplicate processor ID in marketplace.json: '{}'",
+                proc.id
+            );
+        }
+    }
+
+    #[test]
+    fn bundled_marketplace_has_no_duplicate_pack_ids() {
+        let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let json = std::fs::read_to_string(project_root.join("marketplace/marketplace.json")).unwrap();
+        let index: MarketplaceIndex = serde_json::from_str(&json).unwrap();
+
+        let mut seen = std::collections::HashSet::new();
+        for pack in &index.packs {
+            assert!(
+                seen.insert(&pack.id),
+                "duplicate pack ID in marketplace.json: '{}'",
+                pack.id
+            );
+        }
+    }
+
+    // ── Path traversal safety ────────────────────────────────────────────
+
+    #[test]
+    fn processor_paths_do_not_escape_marketplace_dir() {
+        let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let json = std::fs::read_to_string(project_root.join("marketplace/marketplace.json")).unwrap();
+        let index: MarketplaceIndex = serde_json::from_str(&json).unwrap();
+
+        for entry in &index.processors {
+            assert!(
+                !entry.path.contains(".."),
+                "processor '{}' path must not contain '..': '{}'",
+                entry.id, entry.path
+            );
+            assert!(
+                !entry.path.starts_with('/') && !entry.path.starts_with('\\'),
+                "processor '{}' path must be relative: '{}'",
+                entry.id, entry.path
+            );
+        }
+        for pack in &index.packs {
+            assert!(
+                !pack.path.contains(".."),
+                "pack '{}' path must not contain '..': '{}'",
+                pack.id, pack.path
+            );
+            assert!(
+                !pack.path.starts_with('/') && !pack.path.starts_with('\\'),
+                "pack '{}' path must be relative: '{}'",
+                pack.id, pack.path
+            );
+        }
+    }
+
+    // ── Pack forward compatibility ───────────────────────────────────────
+
+    #[test]
+    fn pack_yaml_ignores_unknown_fields() {
+        use crate::processors::pack::parse_pack_yaml;
+        let yaml = r#"
+name: Future Pack
+version: 2.0.0
+description: Has extra fields
+processors:
+  - some-proc
+future_field: this should be ignored
+another_new_thing:
+  nested: value
+"#;
+        let result = parse_pack_yaml(yaml);
+        assert!(result.is_ok(), "unknown fields should be silently ignored: {:?}", result.err());
+        let meta = result.unwrap();
+        assert_eq!(meta.name, "Future Pack");
+        assert_eq!(meta.processors, vec!["some-proc"]);
+    }
+
+    // ── Corrupted YAML on disk ───────────────────────────────────────────
+
+    #[test]
+    fn corrupted_pack_yaml_returns_error() {
+        use crate::processors::pack::parse_pack_yaml;
+        let bad_yaml = "{{{{ not yaml at all ::::";
+        assert!(parse_pack_yaml(bad_yaml).is_err());
+    }
+
+    #[test]
+    fn load_packs_from_dir_skips_corrupt_files() {
+        use crate::processors::pack::load_packs_from_dir;
+        let dir = std::env::temp_dir().join("logtapper_test_corrupt_packs");
+        let _ = std::fs::create_dir_all(&dir);
+
+        // Write a valid pack
+        std::fs::write(dir.join("good.pack.yaml"), "name: Good\nversion: 1.0.0\nprocessors:\n  - a\n").unwrap();
+        // Write a corrupted pack
+        std::fs::write(dir.join("bad.pack.yaml"), "{{{{ not yaml").unwrap();
+        // Write a non-pack file (should be ignored)
+        std::fs::write(dir.join("readme.txt"), "not a pack").unwrap();
+
+        let packs = load_packs_from_dir(&dir);
+        // Should load the good one and skip the bad one
+        assert_eq!(packs.len(), 1);
+        assert_eq!(packs[0].name, "Good");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── All bundled processor YAMLs actually parse ──────────────────────
+
+    #[test]
+    fn all_marketplace_processor_yamls_parse_successfully() {
+        use crate::processors::AnyProcessor;
+        let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let json = std::fs::read_to_string(project_root.join("marketplace/marketplace.json")).unwrap();
+        let index: MarketplaceIndex = serde_json::from_str(&json).unwrap();
+
+        for entry in &index.processors {
+            let yaml_path = project_root.join("marketplace").join(&entry.path);
+            let yaml = std::fs::read_to_string(&yaml_path)
+                .unwrap_or_else(|e| panic!("read '{}': {e}", yaml_path.display()));
+            let result = AnyProcessor::from_yaml(&yaml);
+            assert!(
+                result.is_ok(),
+                "processor '{}' at '{}' failed to parse: {:?}",
+                entry.id, entry.path, result.err()
+            );
+        }
+    }
 }

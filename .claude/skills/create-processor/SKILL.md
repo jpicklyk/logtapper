@@ -30,7 +30,7 @@ Ask the user what they want to detect. Map their intent to a type:
 
 2. **Identify the source type.** Is this logcat (live or from bugreport), bugreport-specific (dumpsys sections), or kernel? This determines whether you need `sections:` filtering and which `source_types` to declare in the schema.
 
-3. **Check existing processors.** Search `marketplace/processors/` for similar processors. Reuse proven filter patterns rather than inventing new ones.
+3. **Check existing processors and packs.** Search `marketplace/processors/` for similar processors and `marketplace/packs/` for related packs. Reuse proven filter patterns rather than inventing new ones. New processors should typically belong to an existing or new pack.
 
 ## Reporter Processors
 
@@ -392,14 +392,96 @@ schema:
 
 ## Marketplace Publishing
 
-To publish a processor to the marketplace:
+Processors are organized into **packs** — logical groupings of related processors that users install as a unit. Every marketplace processor should belong to a pack.
 
-1. Save the YAML file to `marketplace/processors/{id}.yaml`
-2. Add an entry to `marketplace/marketplace.json` with matching id, version, and metadata
-3. Set `sha256: ""` during development (verification is skipped)
-4. Rebuild or manually copy to `src-tauri/target/debug/marketplace/`
+### Step 1: Save the processor YAML
 
-**ID conventions:** Use kebab-case (`wifi-state`, `fd-monitor`). IDs must be unique within a source. Marketplace-installed processors get qualified IDs: `{id}@{source_name}`.
+Save to `marketplace/processors/{id}.yaml` (filename uses underscores: `wifi_state.yaml`).
+
+### Step 2: Add the processor to `marketplace/marketplace.json`
+
+Add an entry to the `processors` array:
+
+```json
+{
+  "id": "my-processor",
+  "name": "My Processor",
+  "version": "1.0.0",
+  "description": "What it does",
+  "path": "processors/my_processor.yaml",
+  "tags": ["domain", "tags"],
+  "sha256": "",
+  "category": "network",
+  "license": null,
+  "processor_type": "reporter",
+  "source_types": ["logcat"],
+  "deprecated": false
+}
+```
+
+- `processor_type`: one of `reporter`, `state_tracker`, `correlator`
+- `sha256`: leave `""` during development (verification is skipped)
+- `category`: should match the pack's category
+
+### Step 3: Create or update a pack manifest
+
+If this processor fits an existing pack in `marketplace/packs/`, add its ID to that pack's `processors` list. Otherwise, create a new pack manifest at `marketplace/packs/{pack-id}.pack.yaml`:
+
+```yaml
+name: My Pack Name
+version: 1.0.0
+description: What this collection of processors analyzes
+author: LogTapper
+tags: [domain, tags, android]
+category: network
+processors:
+  - my-processor
+  - my-other-processor
+```
+
+Pack fields:
+- `name`, `version`, `description`, `author`, `tags`, `category` — pack metadata
+- `processors` — list of bare processor IDs (must match IDs in `marketplace.json` processors array)
+- `license`, `repository` — optional
+- The pack **id** is derived from the filename (stripping `.pack.yaml`), not stored in the YAML
+
+### Step 4: Add or update the pack in `marketplace/marketplace.json`
+
+Add an entry to the `packs` array (or update `processor_ids` if adding to an existing pack):
+
+```json
+{
+  "id": "my-pack",
+  "name": "My Pack Name",
+  "version": "1.0.0",
+  "description": "What this collection analyzes",
+  "path": "packs/my-pack.pack.yaml",
+  "tags": ["domain", "tags"],
+  "category": "network",
+  "processor_ids": ["my-processor", "my-other-processor"],
+  "sha256": ""
+}
+```
+
+- `processor_ids` must list every ID from the pack manifest's `processors` field
+- `id` must match the pack manifest filename (minus `.pack.yaml`)
+
+### Step 5: Build or copy
+
+Rebuild (`npx tauri dev` or `cargo build`) — Tauri copies marketplace resources at build time. Or manually copy to `src-tauri/target/debug/marketplace/`.
+
+### Existing packs
+
+| Pack | Category | Domain |
+|------|----------|--------|
+| `wifi-diagnostics` | network | WiFi state, disconnects, probes |
+| `network-connectivity` | network | Connectivity state, DNS |
+| `telephony-suite` | telephony | Cellular, radio, SIM, IMS |
+| `stability-monitor` | stability | Crashes, exceptions, kill storms |
+| `system-health` | memory | GC, FD, heap, battery, lifecycle |
+| `error-analysis` | stability | EBADF errors, FD correlation |
+
+**ID conventions:** Use kebab-case (`wifi-state`, `fd-monitor`). Processor IDs must be unique within a source. Marketplace-installed processors get qualified IDs at install time: `{id}@{source_name}`. Pack manifests reference bare IDs only.
 
 ## Validation Checklist
 
