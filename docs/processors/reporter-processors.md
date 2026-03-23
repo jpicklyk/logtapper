@@ -130,7 +130,7 @@ The filter stage selects which lines enter the rest of the pipeline. Multiple ru
       values: ["ANR in", "Application Not Responding"]
 ```
 
-See [Filter Reference](filter-reference.md) for the complete list of rule types including `level_min`, `message_regex`, `source_id_match`, and others.
+See [Filter Reference](filter-reference.md) for the complete list of rule types including `level_min`, `message_regex`, `tag_regex`, and others.
 
 ### Extract
 

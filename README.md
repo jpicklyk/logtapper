@@ -117,7 +117,13 @@ Configure it in your Claude Code or Claude Desktop MCP settings to point at `mcp
 src-tauri/          Rust backend (Tauri commands, parsers, pipeline engine, MCP bridge)
 src-next/           Frontend source (React components, hooks, cache layer)
 mcp-server/         MCP server (Node.js, stdio transport)
+marketplace/        Processor marketplace (YAML definitions + pack manifests)
+docs/               Documentation
 ```
+
+## Documentation
+
+LogTapper uses a YAML-based processor system with embedded [Rhai](https://rhai.rs/) scripting for custom log analysis. See the **[Processor Authoring Guide](docs/processors/README.md)** to create your own analysis rules — reporters for extracting metrics, state trackers for monitoring transitions, and correlators for linking related events.
 
 ## License
 
