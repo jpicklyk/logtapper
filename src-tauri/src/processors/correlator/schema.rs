@@ -171,8 +171,11 @@ correlate:
     fn prepare_tag_sets_populates_hash_set() {
         let mut def: CorrelatorDef = serde_yaml::from_str(MINIMAL_YAML).unwrap();
         // Before prepare_tag_sets, tag_set is empty (serde skips it)
-        if let FilterRule::TagMatch { tag_set, .. } = &def.sources[0].filter[0] {
-            assert!(tag_set.is_empty(), "tag_set should be empty before prepare");
+        match &def.sources[0].filter[0] {
+            FilterRule::TagMatch { tag_set, .. } => {
+                assert!(tag_set.is_empty(), "tag_set should be empty before prepare");
+            }
+            other => panic!("Expected TagMatch rule, got {:?}", other),
         }
         def.prepare_tag_sets();
         // After prepare_tag_sets, tag_set should be populated
