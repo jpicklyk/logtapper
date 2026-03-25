@@ -1129,4 +1129,195 @@ pipeline:
         // The AC pattern should be collected
         assert!(desc.ac_patterns.contains(&"ERROR".to_string()), "AC patterns should contain the message_contains value");
     }
+
+    // ── Streaming tracker via PipelineCore ────────────────────────────────
+
+    fn make_line(source_line_num: usize, tag: &str, message: &str) -> LineContext {
+        use crate::core::line::LogLevel;
+        LineContext {
+            source_line_num,
+            tag: Arc::from(tag),
+            message: Arc::from(message),
+            raw: Arc::from(format!("{} {}", tag, message).as_str()),
+            pid: 0,
+            tid: 0,
+            timestamp: source_line_num as i64 * 1000,
+            level: LogLevel::Info,
+            source_id: Arc::from("test"),
+            fields: Default::default(),
+            annotations: vec![],
+        }
+    }
+
+    fn load_battery_health_def() -> crate::processors::state_tracker::schema::StateTrackerDef {
+        let yaml = include_str!("../../../marketplace/processors/battery_health.yaml");
+        let proc = crate::processors::AnyProcessor::from_yaml(yaml)
+            .expect("battery_health.yaml parses");
+        match proc.kind {
+            crate::processors::ProcessorKind::StateTracker(def) => def,
+            _ => panic!("expected StateTracker kind"),
+        }
+    }
+
+    /// Verify that PipelineCore processes state trackers in streaming mode
+    /// (from_continuous_state path). This is the exact path flush_batch uses.
+    #[test]
+    fn streaming_pipeline_core_runs_state_tracker() {
+        let tracker_def = load_battery_health_def();
+        let tracker_id = "battery-health".to_string();
+
+        let defs = PartitionedDefs {
+            transformer_defs: Vec::new(),
+            reporter_defs: Vec::new(),
+            tracker_defs: vec![(tracker_id.clone(), tracker_def.clone())],
+            correlator_defs: Vec::new(),
+        };
+
+        // Simulate initial state (as update_stream_trackers would create)
+        let initial_state: HashMap<String, serde_json::Value> = tracker_def.state.iter()
+            .map(|f| (f.name.clone(), f.default.clone()))
+            .collect();
+        let cont_state = ContinuousTrackerState {
+            current_state: initial_state,
+            transitions: Vec::new(),
+            last_processed_line: 0,
+        };
+
+        let mut tracker_states = HashMap::new();
+        tracker_states.insert(tracker_id.clone(), cont_state);
+
+        let continuous = ContinuousStates {
+            reporter_states: HashMap::new(),
+            tracker_states,
+            transformer_states: HashMap::new(),
+            correlator_states: HashMap::new(),
+        };
+
+        let pipeline_ctx = crate::core::line::PipelineContext {
+            source_type: crate::core::session::SourceType::Logcat,
+            source_name: Arc::from("test"),
+            is_streaming: true,
+            sections: Arc::from([]),
+        };
+
+        let mut core = PipelineCore::from_continuous_state(&defs, pipeline_ctx, continuous);
+
+        // Feed a line that matches "Health Update" transition (tag=PowerUI, BATTERY_HEALTH_CHECK)
+        let line = make_line(1, "PowerUI", "BATTERY_HEALTH_CHECK extraHealth=2 mBatteryMiscEvent=65536");
+        core.run_layer2_parallel(&[line], &HashMap::new());
+
+        // Extract continuous state and verify the tracker recorded a transition
+        let final_state = core.into_continuous_state(2);
+        let tracker_cont = final_state.tracker_states.get("battery-health")
+            .expect("tracker state should be present after processing");
+        assert!(!tracker_cont.transitions.is_empty(),
+            "Battery Health tracker should record a transition for BATTERY_HEALTH_CHECK line");
+        assert_eq!(tracker_cont.current_state["health"], serde_json::json!("2"));
+    }
+
+    /// Verify that PipelineCore with empty tracker_states produces no tracker
+    /// results — simulating the bug where trackers were never registered.
+    #[test]
+    fn streaming_pipeline_core_no_trackers_means_no_results() {
+        let defs = PartitionedDefs {
+            transformer_defs: Vec::new(),
+            reporter_defs: Vec::new(),
+            tracker_defs: Vec::new(), // no trackers registered
+            correlator_defs: Vec::new(),
+        };
+
+        let continuous = ContinuousStates {
+            reporter_states: HashMap::new(),
+            tracker_states: HashMap::new(),
+            transformer_states: HashMap::new(),
+            correlator_states: HashMap::new(),
+        };
+
+        let pipeline_ctx = crate::core::line::PipelineContext {
+            source_type: crate::core::session::SourceType::Logcat,
+            source_name: Arc::from("test"),
+            is_streaming: true,
+            sections: Arc::from([]),
+        };
+
+        let mut core = PipelineCore::from_continuous_state(&defs, pipeline_ctx, continuous);
+
+        // Feed a matching line — but no tracker is registered to capture it
+        let line = make_line(1, "PowerUI", "BATTERY_HEALTH_CHECK extraHealth=2 mBatteryMiscEvent=65536");
+        core.run_layer2_parallel(&[line], &HashMap::new());
+
+        let final_state = core.into_continuous_state(2);
+        assert!(final_state.tracker_states.is_empty(),
+            "No trackers should appear in results when none are registered");
+    }
+
+    /// Verify that continuous state properly seeds a tracker across multiple batches.
+    /// Simulates what flush_batch does: process batch 1, extract state, then
+    /// re-seed for batch 2 and verify accumulated transitions.
+    #[test]
+    fn streaming_tracker_accumulates_across_batches() {
+        let tracker_def = load_battery_health_def();
+        let tracker_id = "battery-health".to_string();
+
+        let defs = PartitionedDefs {
+            transformer_defs: Vec::new(),
+            reporter_defs: Vec::new(),
+            tracker_defs: vec![(tracker_id.clone(), tracker_def.clone())],
+            correlator_defs: Vec::new(),
+        };
+
+        let initial_state: HashMap<String, serde_json::Value> = tracker_def.state.iter()
+            .map(|f| (f.name.clone(), f.default.clone()))
+            .collect();
+
+        let pipeline_ctx = crate::core::line::PipelineContext {
+            source_type: crate::core::session::SourceType::Logcat,
+            source_name: Arc::from("test"),
+            is_streaming: true,
+            sections: Arc::from([]),
+        };
+
+        // ── Batch 1: health=2 ────────────────────────────────────────────────
+        let cont1 = ContinuousStates {
+            reporter_states: HashMap::new(),
+            tracker_states: {
+                let mut m = HashMap::new();
+                m.insert(tracker_id.clone(), ContinuousTrackerState {
+                    current_state: initial_state.clone(),
+                    transitions: Vec::new(),
+                    last_processed_line: 0,
+                });
+                m
+            },
+            transformer_states: HashMap::new(),
+            correlator_states: HashMap::new(),
+        };
+
+        let mut core1 = PipelineCore::from_continuous_state(&defs, pipeline_ctx.clone(), cont1);
+        let line1 = make_line(1, "PowerUI", "BATTERY_HEALTH_CHECK extraHealth=2 mBatteryMiscEvent=65536");
+        core1.run_layer2_parallel(&[line1], &HashMap::new());
+        let state_after_batch1 = core1.into_continuous_state(2);
+
+        // ── Batch 2: protect_mode=true ───────────────────────────────────────
+        let cont2 = ContinuousStates {
+            reporter_states: HashMap::new(),
+            tracker_states: state_after_batch1.tracker_states,
+            transformer_states: HashMap::new(),
+            correlator_states: HashMap::new(),
+        };
+
+        let mut core2 = PipelineCore::from_continuous_state(&defs, pipeline_ctx, cont2);
+        let line2 = make_line(2, "AODBatteryManager", "saveBatteryData : AOD BatteryData [mBatteryLevel=54, mBatteryProtectMode=true, mBatteryChargerType=NORMAL, mBatterySwellingMode=NONE]");
+        core2.run_layer2_parallel(&[line2], &HashMap::new());
+        let final_state = core2.into_continuous_state(3);
+
+        let tracker = final_state.tracker_states.get("battery-health").unwrap();
+        // Should have transitions from both batches
+        assert!(tracker.transitions.len() >= 2,
+            "Tracker should accumulate transitions across batches, got {}",
+            tracker.transitions.len());
+        // State should reflect both updates
+        assert_eq!(tracker.current_state["health"], serde_json::json!("2"));
+        assert_eq!(tracker.current_state["protect_mode"], serde_json::json!(true));
+    }
 }

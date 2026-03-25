@@ -200,16 +200,45 @@ pub async fn start_adb_stream(
         let procs = lock_or_err(&state.processors, "processors")?;
 
         let mut proc_states: HashMap<String, ContinuousRunState> = HashMap::new();
+        let mut tracker_states: HashMap<String, crate::processors::state_tracker::types::ContinuousTrackerState> = HashMap::new();
+        let mut transformer_states: HashMap<String, crate::processors::transformer::types::ContinuousTransformerState> = HashMap::new();
+
         for proc_id in &active_processor_ids {
-            if let Some(def) = procs.get(proc_id).and_then(|p| p.as_reporter()) {
-                let run = ProcessorRun::new(def);
-                proc_states.insert(proc_id.clone(), run.into_continuous_state(0, false));
+            if let Some(any_proc) = procs.get(proc_id) {
+                if let Some(def) = any_proc.as_reporter() {
+                    let run = ProcessorRun::new(def);
+                    proc_states.insert(proc_id.clone(), run.into_continuous_state(0, false));
+                } else if let Some(def) = any_proc.as_state_tracker() {
+                    let current_state: HashMap<String, serde_json::Value> = def.state.iter()
+                        .map(|f| (f.name.clone(), f.default.clone()))
+                        .collect();
+                    tracker_states.insert(proc_id.clone(), crate::processors::state_tracker::types::ContinuousTrackerState {
+                        current_state,
+                        transitions: Vec::new(),
+                        last_processed_line: 0,
+                    });
+                } else if any_proc.as_transformer().is_some() {
+                    transformer_states.insert(proc_id.clone(), crate::processors::transformer::types::ContinuousTransformerState {
+                        last_processed_line: 0,
+                        pii_mappings: None,
+                    });
+                }
             }
         }
         drop(procs);
 
-        let mut sp_state = lock_or_err(&state.stream_processor_state, "stream_processor_state")?;
-        sp_state.insert(session_id.clone(), proc_states);
+        if !proc_states.is_empty() {
+            let mut sp_state = lock_or_err(&state.stream_processor_state, "stream_processor_state")?;
+            sp_state.insert(session_id.clone(), proc_states);
+        }
+        if !tracker_states.is_empty() {
+            let mut st = lock_or_err(&state.stream_tracker_state, "stream_tracker_state")?;
+            st.insert(session_id.clone(), tracker_states);
+        }
+        if !transformer_states.is_empty() {
+            let mut st = lock_or_err(&state.stream_transformer_state, "stream_transformer_state")?;
+            st.insert(session_id.clone(), transformer_states);
+        }
     }
 
     // ── Cancellation channel ──────────────────────────────────────────────────
@@ -1274,5 +1303,95 @@ mod tests {
         let batch = stream.next().await.unwrap();
         assert_eq!(batch, vec!["a", "b"]);
         assert!(stream.next().await.is_none());
+    }
+
+    // ── Processor type classification tests ──────────────────────────────
+
+    /// Verify that AnyProcessor correctly identifies battery_health as a
+    /// state_tracker, not a reporter. This was the root cause of the bug:
+    /// start_adb_stream only called as_reporter(), so state trackers were
+    /// never registered for streaming sessions.
+    #[test]
+    fn battery_health_is_state_tracker_not_reporter() {
+        let yaml = include_str!("../../../marketplace/processors/battery_health.yaml");
+        let proc = crate::processors::AnyProcessor::from_yaml(yaml)
+            .expect("battery_health.yaml should parse");
+
+        assert!(proc.as_state_tracker().is_some(),
+            "battery_health should be classified as a state_tracker");
+        assert!(proc.as_reporter().is_none(),
+            "battery_health should NOT be classified as a reporter");
+    }
+
+    /// Verify the processor init logic in start_adb_stream handles all types.
+    /// Simulates what start_adb_stream does when initializing processor states.
+    #[test]
+    fn init_stream_processors_handles_all_types() {
+        use std::collections::HashMap;
+
+        // Load processors of each type
+        let battery_health_yaml = include_str!("../../../marketplace/processors/battery_health.yaml");
+        let battery_health = crate::processors::AnyProcessor::from_yaml(battery_health_yaml).unwrap();
+
+        let battery_state_yaml = include_str!("../../../marketplace/processors/battery_state.yaml");
+        let battery_state = crate::processors::AnyProcessor::from_yaml(battery_state_yaml).unwrap();
+
+        // Simulate a processor registry (as AppState::processors would hold)
+        let mut registry: HashMap<String, crate::processors::AnyProcessor> = HashMap::new();
+        registry.insert("battery-health".to_string(), battery_health);
+        registry.insert("__battery_state".to_string(), battery_state);
+
+        let active_ids = vec!["battery-health".to_string(), "__battery_state".to_string()];
+
+        // Simulate the start_adb_stream init logic (post-fix)
+        let mut reporter_count = 0;
+        let mut tracker_count = 0;
+        let mut transformer_count = 0;
+
+        for proc_id in &active_ids {
+            if let Some(any_proc) = registry.get(proc_id) {
+                if any_proc.as_reporter().is_some() {
+                    reporter_count += 1;
+                } else if any_proc.as_state_tracker().is_some() {
+                    tracker_count += 1;
+                } else if any_proc.as_transformer().is_some() {
+                    transformer_count += 1;
+                }
+            }
+        }
+
+        // Both battery_health and battery_state are state_trackers
+        assert_eq!(tracker_count, 2,
+            "Both battery_health and battery_state should be detected as state trackers");
+        assert_eq!(reporter_count, 0,
+            "No reporters should be detected in this set");
+        assert_eq!(transformer_count, 0,
+            "No transformers should be detected in this set");
+    }
+
+    /// Verify that update_stream_trackers' init pattern produces a valid
+    /// ContinuousTrackerState with correct default values.
+    #[test]
+    fn tracker_init_produces_correct_defaults() {
+        let yaml = include_str!("../../../marketplace/processors/battery_health.yaml");
+        let proc = crate::processors::AnyProcessor::from_yaml(yaml).unwrap();
+        let def = proc.as_state_tracker().unwrap();
+
+        let current_state: HashMap<String, serde_json::Value> = def.state.iter()
+            .map(|f| (f.name.clone(), f.default.clone()))
+            .collect();
+        let cont = crate::processors::state_tracker::types::ContinuousTrackerState {
+            current_state: current_state.clone(),
+            transitions: Vec::new(),
+            last_processed_line: 0,
+        };
+
+        // Verify all four state fields are present with correct defaults
+        assert_eq!(cont.current_state.len(), 4, "battery_health has 4 state fields");
+        assert_eq!(cont.current_state["swelling_mode"], serde_json::json!("NONE"));
+        assert_eq!(cont.current_state["charger_type"], serde_json::json!("NORMAL"));
+        // health and protect_mode have no explicit default → serde default (null)
+        assert!(cont.transitions.is_empty());
+        assert_eq!(cont.last_processed_line, 0);
     }
 }

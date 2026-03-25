@@ -111,6 +111,19 @@ export function usePipeline(): PipelineActions {
     if (metaSyncTimerRef.current) clearTimeout(metaSyncTimerRef.current);
   }, []);
 
+  // When a new stream starts, re-emit pipeline:chain-changed so that
+  // useSessionTabManager registers trackers/transformers/reporters for the new
+  // session. Without this, if the chain hasn't changed since load (common case),
+  // the chain-changed effect never fires and the new session has no processors.
+  useEffect(() => {
+    const handleStreamStarted = () => {
+      if (!chainInitializedRef.current) return;
+      bus.emit('pipeline:chain-changed', { chain: pipelineChainRef.current });
+    };
+    bus.on('stream:started', handleStreamStarted);
+    return () => { bus.off('stream:started', handleStreamStarted); };
+  }, []);
+
   useEffect(() => {
     if (!chainInitializedRef.current) return;
     setMcpAnonymize(pipelineChain.includes('__pii_anonymizer')).catch(() => {});
