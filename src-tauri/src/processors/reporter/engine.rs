@@ -402,7 +402,7 @@ impl<'a> ProcessorRun<'a> {
 // RunResult
 // ---------------------------------------------------------------------------
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct RunResult {
     /// All emitted rows from emit() calls during the run.
     pub emissions: Vec<Emission>,
@@ -414,6 +414,21 @@ pub struct RunResult {
     pub script_errors: u32,
     /// First script error message (for user-facing diagnostics).
     pub first_script_error: Option<String>,
+}
+
+impl RunResult {
+    /// Merge a batch's results into this accumulated result.
+    /// Emissions and matched lines are appended; vars are replaced (latest wins);
+    /// script errors are summed; first error is preserved.
+    pub fn merge(&mut self, batch: RunResult) {
+        self.emissions.extend(batch.emissions);
+        self.matched_line_nums.extend(batch.matched_line_nums);
+        self.vars = batch.vars;
+        self.script_errors += batch.script_errors;
+        if self.first_script_error.is_none() {
+            self.first_script_error = batch.first_script_error;
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1899,5 +1914,162 @@ pipeline:
         let result = run.finish();
         assert_eq!(result.script_errors, 0, "Expected no script errors for working script");
         assert!(result.first_script_error.is_none(), "Expected first_script_error to be None");
+    }
+
+    // ── Streaming multi-batch accumulation tests ────────────────────────────
+    // These simulate the flush_batch pattern: process lines, snapshot via
+    // current_result(), drain via into_continuous_state(drain=true), seed next
+    // batch via new_seeded(). The key invariant is that each batch's snapshot
+    // contains ONLY that batch's emissions/matches (not accumulated), because
+    // drain clears them. The caller (adb.rs) must merge snapshots externally.
+
+    #[test]
+    fn streaming_snapshot_contains_only_current_batch() {
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: script
+    runtime: rhai
+    src: |
+      _emits.push(#{ value: 1 });
+"#);
+        // Batch 1: process 3 lines
+        let mut run = ProcessorRun::new(&d);
+        for i in 0..3 {
+            run.process_line(&make_line("T", "msg", LogLevel::Info, i), &PipelineContext::test_default());
+        }
+        let snap1 = run.current_result();
+        assert_eq!(snap1.emissions.len(), 3);
+        assert_eq!(snap1.matched_line_nums.len(), 3);
+
+        // Drain and seed batch 2
+        let state = run.into_continuous_state(3, true);
+        let mut run2 = ProcessorRun::new_seeded(&d, state);
+
+        // Batch 2: process 2 more lines
+        for i in 3..5 {
+            run2.process_line(&make_line("T", "msg", LogLevel::Info, i), &PipelineContext::test_default());
+        }
+        let snap2 = run2.current_result();
+
+        // Snapshot 2 must contain ONLY batch 2's results (not accumulated)
+        assert_eq!(snap2.emissions.len(), 2, "snapshot must contain only current batch emissions");
+        assert_eq!(snap2.matched_line_nums.len(), 2, "snapshot must contain only current batch matches");
+        assert_eq!(snap2.matched_line_nums, vec![3, 4]);
+    }
+
+    #[test]
+    fn streaming_vars_accumulate_across_batches() {
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+vars:
+  - name: count
+    type: int
+    default: 0
+pipeline:
+  - stage: script
+    runtime: rhai
+    src: |
+      vars.count += 1;
+      _emits.push(#{ count: vars.count });
+"#);
+        // Batch 1
+        let mut run = ProcessorRun::new(&d);
+        for i in 0..3 {
+            run.process_line(&make_line("T", "msg", LogLevel::Info, i), &PipelineContext::test_default());
+        }
+        let snap1 = run.current_result();
+        assert_eq!(snap1.vars["count"], serde_json::json!(3));
+
+        // Drain and seed batch 2
+        let state = run.into_continuous_state(3, true);
+        let mut run2 = ProcessorRun::new_seeded(&d, state);
+        for i in 3..5 {
+            run2.process_line(&make_line("T", "msg", LogLevel::Info, i), &PipelineContext::test_default());
+        }
+        let snap2 = run2.current_result();
+
+        // Vars must carry forward (3 + 2 = 5)
+        assert_eq!(snap2.vars["count"], serde_json::json!(5), "vars must accumulate across batches");
+        // But emissions are only from batch 2
+        assert_eq!(snap2.emissions.len(), 2, "emissions must be batch-only after drain");
+    }
+
+    #[test]
+    fn streaming_external_merge_accumulates_results() {
+        // Simulate what adb.rs must do: merge each batch's snapshot into an
+        // accumulated RunResult. This is the pattern that prevents the
+        // "matched lines appear then vanish" bug.
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: script
+    runtime: rhai
+    src: |
+      _emits.push(#{ value: 1 });
+"#);
+        let mut accumulated = RunResult::default();
+
+        // Batch 1
+        let mut run = ProcessorRun::new(&d);
+        for i in 0..3 {
+            run.process_line(&make_line("T", "msg", LogLevel::Info, i), &PipelineContext::test_default());
+        }
+        accumulated.merge(run.current_result());
+        let state = run.into_continuous_state(3, true);
+
+        // Batch 2
+        let mut run2 = ProcessorRun::new_seeded(&d, state);
+        for i in 3..5 {
+            run2.process_line(&make_line("T", "msg", LogLevel::Info, i), &PipelineContext::test_default());
+        }
+        accumulated.merge(run2.current_result());
+
+        assert_eq!(accumulated.emissions.len(), 5, "must accumulate emissions across batches");
+        assert_eq!(accumulated.matched_line_nums.len(), 5, "must accumulate matched lines across batches");
+        assert_eq!(accumulated.matched_line_nums, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn streaming_replace_instead_of_merge_loses_data() {
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: script
+    runtime: rhai
+    src: |
+      _emits.push(#{ value: 1 });
+"#);
+        // Batch 1
+        let mut run = ProcessorRun::new(&d);
+        for i in 0..3 {
+            run.process_line(&make_line("T", "msg", LogLevel::Info, i), &PipelineContext::test_default());
+        }
+        let snap1 = run.current_result();
+        let state = run.into_continuous_state(3, true);
+
+        // Batch 2
+        let mut run2 = ProcessorRun::new_seeded(&d, state);
+        for i in 3..5 {
+            run2.process_line(&make_line("T", "msg", LogLevel::Info, i), &PipelineContext::test_default());
+        }
+        let snap2 = run2.current_result();
+
+        // Replace loses batch 1
+        assert_eq!(snap2.emissions.len(), 2, "replace loses batch 1 emissions");
+
+        // Merge preserves all
+        let mut merged = snap1;
+        merged.merge(snap2);
+        assert_eq!(merged.emissions.len(), 5, "merge preserves all emissions");
+        assert_eq!(merged.matched_line_nums.len(), 5, "merge preserves all matches");
     }
 }

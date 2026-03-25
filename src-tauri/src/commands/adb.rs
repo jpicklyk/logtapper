@@ -11,6 +11,7 @@ use crate::anonymizer::LogAnonymizer;
 use crate::commands::{lock_or_err, AppState};
 use crate::commands::files::LoadResult;
 use crate::commands::pipeline_core::{ContinuousStates, PartitionedDefs, PipelineCore};
+use crate::processors::reporter::engine::RunResult;
 use crate::core::line::{LineContext, LineMeta, LogLevel, ParsedLineMeta, PipelineContext, ViewLine};
 use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;
@@ -1047,18 +1048,20 @@ fn flush_batch(
                 // Snapshot results for event emission
                 let snapshot = core.current_results();
 
-                // Store reporter results in pipeline_results
+                // Merge reporter results into pipeline_results (accumulate across batches).
                 if !snapshot.reporter_results.is_empty() {
                     if let Ok(mut pr) = state.pipeline_results.lock() {
                         let session_results = pr.entry(session_id.to_string()).or_default();
-                        for (proc_id, result) in &snapshot.reporter_results {
+                        for (proc_id, batch_result) in snapshot.reporter_results {
+                            let existing = session_results.entry(proc_id.clone()).or_default();
+                            existing.merge(batch_result);
+
                             proc_updates.push(AdbProcessorUpdate {
                                 session_id: session_id.to_string(),
-                                processor_id: proc_id.clone(),
-                                matched_lines: result.matched_line_nums.len(),
-                                emission_count: result.emissions.len(),
+                                processor_id: proc_id,
+                                matched_lines: existing.matched_line_nums.len(),
+                                emission_count: existing.emissions.len(),
                             });
-                            session_results.insert(proc_id.clone(), result.clone());
                         }
                     }
                 }

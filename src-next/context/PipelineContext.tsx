@@ -29,7 +29,7 @@ function getOrDefault(map: Map<string, SessionPipelineState>, sessionId: string 
   return map.get(sessionId) ?? DEFAULT_SESSION_STATE;
 }
 
-/** Merge a single processor result into a session state (accumulates counts). */
+/** Set processor result counts (backend sends accumulated totals during streaming). */
 function mergeProcessorResult(
   s: SessionPipelineState,
   processorId: string,
@@ -37,11 +37,7 @@ function mergeProcessorResult(
   emissionCount: number,
 ): SessionPipelineState {
   const idx = s.results.findIndex((r) => r.processorId === processorId);
-  const updated = {
-    processorId,
-    matchedLines: (idx >= 0 ? s.results[idx].matchedLines : 0) + matchedLines,
-    emissionCount: (idx >= 0 ? s.results[idx].emissionCount : 0) + emissionCount,
-  };
+  const updated = { processorId, matchedLines, emissionCount };
   const results = idx >= 0
     ? s.results.map((r, i) => i === idx ? updated : r)
     : [...s.results, updated];
