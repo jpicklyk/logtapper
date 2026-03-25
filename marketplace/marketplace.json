@@ -29,8 +29,8 @@
     {
       "id": "battery-state",
       "name": "Battery State",
-      "version": "4.0.0",
-      "description": "Tracks battery level, charging status, plug source, voltage, temperature, current draw, and cycle count from BatteryService ACTION_BATTERY_CHANGED broadcasts.",
+      "version": "4.1.0",
+      "description": "Tracks battery level, charging status, plug source, voltage, temperature, and current draw from BatteryService ACTION_BATTERY_CHANGED broadcasts.",
       "path": "processors/battery_state.yaml",
       "tags": [
         "battery",
@@ -71,8 +71,8 @@
     {
       "id": "battery-health",
       "name": "Battery Health",
-      "version": "1.0.0",
-      "description": "Tracks Samsung battery health signals: swelling mode, protection mode, charger type, health status from AODBatteryManager and PowerUI.",
+      "version": "1.1.0",
+      "description": "Tracks Samsung battery health, swelling mode, protection mode, and charger type from PowerUI and AODBatteryManager.",
       "path": "processors/battery_health.yaml",
       "tags": [
         "battery",
@@ -93,7 +93,7 @@
     {
       "id": "charging-state",
       "name": "Charging State",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "description": "Tracks how power is delivered: charge source (AC/USB/wireless/pogo), charge type, charger type, max current/voltage, and high-voltage charging.",
       "path": "processors/charging_state.yaml",
       "tags": [

@@ -1,9 +1,9 @@
 type: state_tracker
 id: charging-state
 name: Charging State
-version: 1.0.0
+version: 1.1.0
 author: LogTapper
-description: "Tracks how power is being delivered to the device: charge source (AC, USB, wireless, pogo), charge type, charger type, max charging current/voltage, and high-voltage charging (HVC) status. Complements battery-state which tracks what the battery is doing."
+description: "Tracks how power is being delivered to the device: charge source (AC, USB, wireless, pogo), charge type, charger type, and high-voltage charging (HVC) status. Each transition captures all fields atomically from a single ACTION_BATTERY_CHANGED line."
 tags: [battery, charging, power, android]
 category: battery
 builtin: false
@@ -18,55 +18,59 @@ state:
     type: int
   - name: charger_type
     type: int
-  - name: max_charging_current
-    type: int
-  - name: max_charging_voltage
-    type: int
   - name: hvc
     type: bool
 
 transitions:
-  # ── Charging via AC ─────────────────────────────────────────────────────
+  # Each transition captures charge_type ($1), charger_type ($2) alongside the
+  # plug source discriminator. HVC is handled by separate non-competing transitions
+  # on the same line format since ps/hvc appear after charger_type.
+  #
+  # Field order in ACTION_BATTERY_CHANGED:
+  #   ...ac:B, usb:B, wireless:B, pogo:B, ..., charge_type:N, charger_type:N,
+  #   ..., ps:B, hvc:B, ...
+
   - name: Charging via AC
     filter:
       tag: BatteryService
-      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*ac:true.*charge_type:(\d+).*charger_type:(\d+)'
+      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*ac:true.*charge_type:(\d+).*charger_type:(\d+).*hvc:(true|false)'
     set:
       charge_source: ac
       charge_type: "$1"
       charger_type: "$2"
+      hvc: "$3"
 
-  # ── Charging via USB ────────────────────────────────────────────────────
   - name: Charging via USB
     filter:
       tag: BatteryService
-      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*usb:true.*charge_type:(\d+).*charger_type:(\d+)'
+      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*usb:true.*charge_type:(\d+).*charger_type:(\d+).*hvc:(true|false)'
     set:
       charge_source: usb
       charge_type: "$1"
       charger_type: "$2"
+      hvc: "$3"
 
-  # ── Charging via Wireless ───────────────────────────────────────────────
   - name: Charging via Wireless
     filter:
       tag: BatteryService
-      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*wireless:true.*charge_type:(\d+).*charger_type:(\d+)'
+      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*wireless:true.*charge_type:(\d+).*charger_type:(\d+).*hvc:(true|false)'
     set:
       charge_source: wireless
       charge_type: "$1"
       charger_type: "$2"
+      hvc: "$3"
 
-  # ── Charging via Pogo ───────────────────────────────────────────────────
   - name: Charging via Pogo
     filter:
       tag: BatteryService
-      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*pogo:true.*charge_type:(\d+).*charger_type:(\d+)'
+      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*pogo:true.*charge_type:(\d+).*charger_type:(\d+).*hvc:(true|false)'
     set:
       charge_source: pogo
       charge_type: "$1"
       charger_type: "$2"
+      hvc: "$3"
 
-  # ── Not charging (all sources false) ────────────────────────────────────
+  # ── Not charging (all sources false) ──────────────────────────────────────
   - name: Not Charging
     filter:
       tag: BatteryService
@@ -75,30 +79,16 @@ transitions:
       charge_source: none
       charge_type: 0
       charger_type: 0
-
-  # ── Max charging current/voltage extraction ─────────────────────────────
-  - name: Max Charging Current
-    filter:
-      tag: BatteryService
-      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*mcc:(\d+).*mcv:(\d+)'
-    set:
-      max_charging_current: "$1"
-      max_charging_voltage: "$2"
-
-  # ── High Voltage Charging flag ──────────────────────────────────────────
-  - name: HVC Enabled
-    filter:
-      tag: BatteryService
-      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*hvc:true'
-    set:
-      hvc: true
-
-  - name: HVC Disabled
-    filter:
-      tag: BatteryService
-      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*hvc:false'
-    set:
       hvc: false
+
+  # ── Fallback: capture charge_type/charger_type without hvc ────────────────
+  - name: Charging Update (no HVC field)
+    filter:
+      tag: BatteryService
+      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*charge_type:(\d+).*charger_type:(\d+)'
+    set:
+      charge_type: "$1"
+      charger_type: "$2"
 
 output:
   timeline: true
@@ -109,6 +99,6 @@ schema:
   emissions: []
   mcp:
     summary:
-      template: "Charging: source={{charge_source}}, charge_type={{charge_type}}, charger_type={{charger_type}}, mcc={{max_charging_current}}, mcv={{max_charging_voltage}}, hvc={{hvc}}."
-      include_vars: [charge_source, charge_type, charger_type, max_charging_current, max_charging_voltage, hvc]
+      template: "Charging: source={{charge_source}}, charge_type={{charge_type}}, charger_type={{charger_type}}, hvc={{hvc}}."
+      include_vars: [charge_source, charge_type, charger_type, hvc]
     signals: []

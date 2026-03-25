@@ -1,9 +1,9 @@
 type: state_tracker
 id: battery-health
 name: Battery Health
-version: 1.0.0
+version: 1.1.0
 author: LogTapper
-description: "Tracks Samsung battery health signals: swelling mode, battery protection mode, charger type classification, health status, direct power mode, and USB restriction. Sources data from AODBatteryManager saveBatteryData and PowerUI swelling events. Samsung-specific — produces no output on AOSP devices."
+description: "Tracks Samsung battery health signals: health status, swelling mode, battery protection mode, and charger type. Sources health from PowerUI BATTERY_HEALTH_CHECK, swelling/protect/charger from AODBatteryManager saveBatteryData, and swelling changes from PowerUI swelling mode events. Samsung-specific — produces no output on AOSP devices."
 tags: [battery, health, samsung, power, android]
 category: battery
 builtin: false
@@ -18,47 +18,39 @@ state:
     default: "NONE"
   - name: protect_mode
     type: bool
-  - name: protect_mode_type
-    type: int
   - name: charger_type
     type: string
     default: "NORMAL"
-  - name: direct_power_mode
-    type: bool
-  - name: usb_restriction
-    type: bool
 
 transitions:
-  # ── AODBatteryManager: saveBatteryData (comprehensive state snapshot) ────
-  # Line: AODBatteryManager: saveBatteryData : AOD BatteryData [mBatteryLevel=18,
-  #   mBatteryStatus=DISCHARGING, mBatteryPlugType=NOT_DEFINED,
-  #   mBatteryPlugged=false, mRemainingChargeTime=0, mBatteryChargingType=0,
-  #   mBatteryChargerType=NORMAL, mBatteryOnline=NONE,
-  #   mBatterySwellingMode=NONE, mBatteryProtectMode=false,
-  #   mBatteryProtectModeType=0, ...mBatteryHealth=2,
-  #   mIsDirectPowerMode=false, mIsUsbRestriction=false]
+  # ── PowerUI: BATTERY_HEALTH_CHECK (reliable health source in live logcat) ──
+  # Line: PowerUI : BATTERY_HEALTH_CHECK extraHealth=2 mBatteryMiscEvent=65536
+  # Health codes: 1=unknown, 2=good, 3=overheat, 4=dead, 5=over_voltage, 6=failure, 7=cold
 
   - name: Health Update
     filter:
-      tag: AODBatteryManager
-      message_regex: 'saveBatteryData.*mBatteryHealth=(\d+)'
+      tag: "PowerUI"
+      message_regex: 'BATTERY_HEALTH_CHECK extraHealth=(\d+)'
     set:
       health: "$1"
 
-  - name: Swelling Active
-    filter:
-      tag: AODBatteryManager
-      message_regex: 'saveBatteryData.*mBatterySwellingMode=([A-Z_]+[A-Z])'
-    set:
-      swelling_mode: "$1"
+  # ── AODBatteryManager: saveBatteryData (captures multiple fields at once) ──
+  # Line: AODBatteryManager: saveBatteryData : AOD BatteryData [mBatteryLevel=54,
+  #   mBatteryStatus=CHARGING, mBatteryPlugType=USB, mBatteryPlugged=true,
+  #   mRemainingChargeTime=10511000, mBatteryChargingType=1,
+  #   mBatteryChargerType=NORMAL, mBatteryOnline=USB,
+  #   mBatterySwellingMode=NONE, mBatteryProtectMode=false]
+  #
+  # Note: live logcat truncates after mBatteryProtectMode — fields like
+  # mBatteryHealth, mIsDirectPowerMode, mIsUsbRestriction appear only in
+  # bugreport SYSTEM LOG (longer format). We capture what's reliably present.
 
   - name: Protect Mode On
     filter:
       tag: AODBatteryManager
-      message_regex: 'saveBatteryData.*mBatteryProtectMode=true.*mBatteryProtectModeType=(\d+)'
+      message_regex: 'saveBatteryData.*mBatteryProtectMode=true'
     set:
       protect_mode: true
-      protect_mode_type: "$1"
 
   - name: Protect Mode Off
     filter:
@@ -70,48 +62,38 @@ transitions:
   - name: Charger Type Update
     filter:
       tag: AODBatteryManager
-      message_regex: 'saveBatteryData.*mBatteryChargerType=([A-Z_]+[A-Z])'
+      message_regex: 'saveBatteryData.*mBatteryChargerType=([A-Z_]+)'
     set:
       charger_type: "$1"
 
-  - name: Direct Power Mode On
+  - name: Swelling Mode (AOD)
     filter:
       tag: AODBatteryManager
-      message_regex: 'saveBatteryData.*mIsDirectPowerMode=true'
-    set:
-      direct_power_mode: true
-
-  - name: Direct Power Mode Off
-    filter:
-      tag: AODBatteryManager
-      message_regex: 'saveBatteryData.*mIsDirectPowerMode=false'
-    set:
-      direct_power_mode: false
-
-  - name: USB Restriction On
-    filter:
-      tag: AODBatteryManager
-      message_regex: 'saveBatteryData.*mIsUsbRestriction=true'
-    set:
-      usb_restriction: true
-
-  - name: USB Restriction Off
-    filter:
-      tag: AODBatteryManager
-      message_regex: 'saveBatteryData.*mIsUsbRestriction=false'
-    set:
-      usb_restriction: false
-
-  # ── PowerUI: Battery swelling mode changes ──────────────────────────────
-  # Line: PowerUI : Battery swelling mode - priorBatterySwellingMode = 0
-  #   mBatterySwellingMode = 0 mBatteryStatus = 3
-
-  - name: Swelling Mode Change (PowerUI)
-    filter:
-      tag: "PowerUI"
-      message_regex: 'Battery swelling mode.*mBatterySwellingMode = (\d+)'
+      message_regex: 'saveBatteryData.*mBatterySwellingMode=([A-Z_]+)'
     set:
       swelling_mode: "$1"
+
+  # ── PowerUI: Battery swelling mode changes ─────────────────────────────────
+  # Line: PowerUI : Battery swelling mode - priorBatterySwellingMode = 0
+  #   mBatterySwellingMode = 0 mBatteryStatus = 2
+  #
+  # PowerUI uses numeric codes: 0=NONE, 1=SWELLING, 2=ABNORMAL.
+  # Normalize to string names to match AODBatteryManager format and avoid
+  # oscillation between "0" and "NONE" on every battery broadcast.
+
+  - name: Swelling Normal (PowerUI)
+    filter:
+      tag: "PowerUI"
+      message_regex: 'Battery swelling mode.*mBatterySwellingMode = 0\b'
+    set:
+      swelling_mode: "NONE"
+
+  - name: Swelling Active (PowerUI)
+    filter:
+      tag: "PowerUI"
+      message_regex: 'Battery swelling mode.*mBatterySwellingMode = ([1-9]\d*)'
+    set:
+      swelling_mode: "SWELLING"
 
 output:
   timeline: true
@@ -122,6 +104,6 @@ schema:
   emissions: []
   mcp:
     summary:
-      template: "Battery health={{health}}, swelling={{swelling_mode}}, protect={{protect_mode}}, charger_type={{charger_type}}, direct_power={{direct_power_mode}}, usb_restriction={{usb_restriction}}."
-      include_vars: [health, swelling_mode, protect_mode, charger_type, direct_power_mode, usb_restriction]
+      template: "Battery health={{health}}, swelling={{swelling_mode}}, protect={{protect_mode}}, charger_type={{charger_type}}."
+      include_vars: [health, swelling_mode, protect_mode, charger_type]
     signals: []
