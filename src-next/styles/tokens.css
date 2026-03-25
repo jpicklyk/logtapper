@@ -176,19 +176,19 @@
 [data-theme="light"] {
   /* Backgrounds */
   --bg-base:    #ffffff;
-  --bg-input:   #f6f8fa;
-  --bg-raised:  #f0f2f5;
-  --bg-overlay: #e8eaed;
+  --bg-input:   #f2f4f7;
+  --bg-raised:  #e9ecf0;
+  --bg-overlay: #dce0e6;
 
   /* Borders */
-  --border:        #d0d7de;
-  --border-subtle: #e0e4e8;
+  --border:        #c2cad4;
+  --border-subtle: #d4dae0;
 
   /* Text */
-  --text-dimmed:    #c8cdd3;
-  --text-muted:     #6e7781;
-  --text-subtle:    #57606a;
-  --text:           #1f2328;
+  --text-dimmed:    #8b95a1;
+  --text-muted:     #5d6672;
+  --text-subtle:    #4b5563;
+  --text:           #1a1f26;
   --text-on-accent: #ffffff;
 
   /* Accent (blue) */
@@ -211,12 +211,12 @@
   --badge-green:     #116329;
   --badge-red:       #a40e26;
   --badge-yellow:    #7d4e00;
-  --badge-gray:      rgba(0, 0, 0, 0.5);
+  --badge-gray:      rgba(0, 0, 0, 0.58);
   --badge-blue-bg:   rgba(9, 105, 218, 0.12);
   --badge-green-bg:  rgba(26, 127, 55, 0.12);
   --badge-red-bg:    rgba(207, 34, 46, 0.12);
   --badge-yellow-bg: rgba(154, 103, 0, 0.12);
-  --badge-gray-bg:   rgba(0, 0, 0, 0.06);
+  --badge-gray-bg:   rgba(0, 0, 0, 0.07);
 
   /* Animation colors */
   --flash-warning-hi:       rgba(158, 108, 0, 0.22);
@@ -245,6 +245,7 @@
 
   /* Viewer (log viewer) */
   --viewer-gutter-bg:        var(--bg-input);
+  --viewer-gutter-text:      #7a8491;
   --viewer-selection-bg:     rgba(210, 153, 34, 0.14);
   --viewer-selection-border:  rgba(154, 103, 0, 0.45);
   --viewer-search-bg:        rgba(210, 153, 34, 0.12);
@@ -258,9 +259,9 @@
   --editor-selection-bg:   rgba(9, 105, 218, 0.2);
 
   /* Chrome */
-  --chrome-bg:             #f6f8fa;
+  --chrome-bg:             #edf0f3;
   --scrim:                 rgba(0, 0, 0, 0.3);
-  --border-accent:         color-mix(in srgb, var(--accent) 12%, transparent);
+  --border-accent:         color-mix(in srgb, var(--accent) 20%, transparent);
 
   /* Foreground pairings */
   --on-danger:  #fff;
@@ -282,7 +283,7 @@
   --state-active:   color-mix(in srgb, var(--accent) 12%, transparent);
   --state-selected: color-mix(in srgb, var(--accent) 5%, transparent);
 
-  /* Shadows (lighter for light theme) */
-  --shadow-popover: 0 4px 12px rgba(0, 0, 0, 0.15);
-  --shadow-overlay: 0 8px 32px rgba(0, 0, 0, 0.2);
+  /* Shadows (layered for light theme) */
+  --shadow-popover: 0 4px 12px rgba(0, 0, 0, 0.10), 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-overlay: 0 8px 32px rgba(0, 0, 0, 0.14), 0 2px 8px rgba(0, 0, 0, 0.06);
 }

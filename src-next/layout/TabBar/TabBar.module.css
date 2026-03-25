@@ -154,6 +154,29 @@
   cursor: grabbing;
 }
 
+/* ── Light theme tab fixes ──────────────────────────────────────────────── */
+/* In light mode the tab bar sits on --chrome-bg so inactive tabs need a
+   visible border, and the active tab should be white (matching content)
+   to visually connect to the pane below. */
+
+:global([data-theme="light"]) .bar {
+  background: var(--chrome-bg);
+}
+
+:global([data-theme="light"]) .tab {
+  border-color: var(--border-subtle);
+}
+
+:global([data-theme="light"]) .tab:hover {
+  background: var(--bg-base);
+  border-color: var(--border);
+}
+
+:global([data-theme="light"]) .tab.active {
+  background: var(--bg-base);
+  border-color: var(--border);
+}
+
 /* ── Label & close ───────────────────────────────────────────────────────── */
 
 .label {
