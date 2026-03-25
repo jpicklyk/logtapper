@@ -1,0 +1,203 @@
+meta:
+  id: "battery-events"
+  name: "Battery Events"
+  version: "1.0.0"
+  author: "LogTapper"
+  description: "Emits a record for every BatteryService ACTION_BATTERY_CHANGED broadcast. Tracks level, voltage, temperature, and current draw over time. Aggregates min/max voltage, min/max temperature, and peak drain current for trend analysis."
+  tags: ["battery", "power", "android"]
+  category: battery
+
+sections:
+  - "SYSTEM LOG"
+
+vars:
+  - name: event_count
+    type: int
+    default: 0
+    display: true
+    label: "Battery Events"
+
+  - name: min_voltage
+    type: int
+    default: 999999
+    display: true
+    label: "Min Voltage (mV)"
+
+  - name: max_voltage
+    type: int
+    default: 0
+    display: true
+    label: "Max Voltage (mV)"
+
+  - name: min_temp
+    type: int
+    default: 999999
+    display: true
+    label: "Min Temperature (x0.1C)"
+
+  - name: max_temp
+    type: int
+    default: 0
+    display: true
+    label: "Max Temperature (x0.1C)"
+
+  - name: peak_drain_current
+    type: int
+    default: 0
+    display: true
+    label: "Peak Drain Current (mA)"
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: tag_match
+        tags: ["BatteryService"]
+      - type: message_contains
+        value: "Sending ACTION_BATTERY_CHANGED"
+
+  - stage: extract
+    fields:
+      - name: level
+        pattern: 'level:(\d+)'
+        cast: int
+      - name: status
+        pattern: 'status:(\d+)'
+        cast: int
+      - name: health
+        pattern: 'health:(\d+)'
+        cast: int
+      - name: voltage
+        pattern: 'voltage:(\d+)'
+        cast: int
+      - name: temperature
+        pattern: 'temperature:(\d+)'
+        cast: int
+      - name: current_avg
+        pattern: 'current_avg:(-?\d+)'
+        cast: int
+      - name: cycle_count
+        pattern: 'cycle_count:(\d+)'
+        cast: int
+
+  - stage: script
+    runtime: rhai
+    src: |
+      if !("level" in fields) {
+        return;
+      }
+
+      vars.event_count += 1;
+
+      let voltage = if "voltage" in fields { fields.voltage } else { 0 };
+      let temp = if "temperature" in fields { fields.temperature } else { 0 };
+      let current = if "current_avg" in fields { fields.current_avg } else { 0 };
+
+      if voltage > 0 {
+        if voltage < vars.min_voltage { vars.min_voltage = voltage; }
+        if voltage > vars.max_voltage { vars.max_voltage = voltage; }
+      }
+
+      if temp > 0 {
+        if temp < vars.min_temp { vars.min_temp = temp; }
+        if temp > vars.max_temp { vars.max_temp = temp; }
+      }
+
+      // Track peak drain (most negative current = highest drain)
+      if current < 0 {
+        let drain = -current;
+        if drain > vars.peak_drain_current {
+          vars.peak_drain_current = drain;
+        }
+      }
+
+      let status_str = "unknown";
+      if "status" in fields {
+        if fields.status == 2 { status_str = "charging"; }
+        else if fields.status == 3 { status_str = "discharging"; }
+        else if fields.status == 4 { status_str = "not_charging"; }
+        else if fields.status == 5 { status_str = "full"; }
+        else if fields.status == 1 { status_str = "unknown"; }
+      }
+
+      _emits.push(#{
+        level: fields.level,
+        status: status_str,
+        voltage: voltage,
+        temperature: temp,
+        current_avg: current,
+        cycle_count: if "cycle_count" in fields { fields.cycle_count } else { 0 },
+      });
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["level", "status", "voltage", "temperature", "current_avg"]
+        sort: "level"
+      - type: summary
+        source: vars
+        template: |
+          {{event_count}} battery events. Voltage: {{min_voltage}}-{{max_voltage}} mV. Temp: {{min_temp}}-{{max_temp}} (x0.1C). Peak drain: {{peak_drain_current}} mA.
+
+    charts:
+      - id: battery_level_timeline
+        type: time_series
+        title: "Battery Level Over Time"
+        source: emissions
+        x: { field: timestamp, label: "Time" }
+        y: { field: level, label: "Level %" }
+        timeline: { field: level, color: "#3fb950", label: "Battery %" }
+
+      - id: battery_temp_timeline
+        type: time_series
+        title: "Battery Temperature Over Time"
+        source: emissions
+        x: { field: timestamp, label: "Time" }
+        y: { field: temperature, label: "Temp (x0.1C)" }
+        timeline: { field: temperature, color: "#d29922", label: "Temp" }
+
+      - id: battery_voltage_timeline
+        type: time_series
+        title: "Battery Voltage Over Time"
+        source: emissions
+        x: { field: timestamp, label: "Time" }
+        y: { field: voltage, label: "Voltage (mV)" }
+
+schema:
+  source_types: ["logcat", "bugreport"]
+  emissions:
+    - name: level
+      type: int
+      description: "Battery level percentage (0-100)"
+    - name: status
+      type: string
+      description: "Battery status (charging, discharging, not_charging, full, unknown)"
+    - name: voltage
+      type: int
+      description: "Battery voltage in millivolts"
+    - name: temperature
+      type: int
+      description: "Battery temperature in tenths of a degree Celsius"
+    - name: current_avg
+      type: int
+      description: "Average current draw in milliamps (negative = discharging)"
+    - name: cycle_count
+      type: int
+      description: "Battery charge cycle count"
+  mcp:
+    summary:
+      template: "{{event_count}} battery events. Voltage range: {{min_voltage}}-{{max_voltage}} mV. Temp range: {{min_temp}}-{{max_temp}}. Peak drain: {{peak_drain_current}} mA."
+      include_vars: [event_count, min_voltage, max_voltage, min_temp, max_temp, peak_drain_current]
+    signals:
+      - name: high_temperature
+        severity: warning
+        condition: "temperature >= 450"
+        fields: [level, temperature, voltage, current_avg]
+        format: "High battery temperature: {{temperature}} (x0.1C) at {{level}}%"
+        type: emission
+      - name: critical_temperature
+        severity: critical
+        condition: "temperature >= 550"
+        fields: [level, temperature, voltage, current_avg]
+        format: "Critical battery temperature: {{temperature}} (x0.1C) at {{level}}%"
+        type: emission

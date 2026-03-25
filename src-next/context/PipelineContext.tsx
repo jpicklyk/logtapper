@@ -29,6 +29,25 @@ function getOrDefault(map: Map<string, SessionPipelineState>, sessionId: string 
   return map.get(sessionId) ?? DEFAULT_SESSION_STATE;
 }
 
+/** Merge a single processor result into a session state (accumulates counts). */
+function mergeProcessorResult(
+  s: SessionPipelineState,
+  processorId: string,
+  matchedLines: number,
+  emissionCount: number,
+): SessionPipelineState {
+  const idx = s.results.findIndex((r) => r.processorId === processorId);
+  const updated = {
+    processorId,
+    matchedLines: (idx >= 0 ? s.results[idx].matchedLines : 0) + matchedLines,
+    emissionCount: (idx >= 0 ? s.results[idx].emissionCount : 0) + emissionCount,
+  };
+  const results = idx >= 0
+    ? s.results.map((r, i) => i === idx ? updated : r)
+    : [...s.results, updated];
+  return { ...s, results };
+}
+
 /** Returns a new Map with the session entry updated. */
 function withSessionState(
   map: Map<string, SessionPipelineState>,
@@ -83,6 +102,7 @@ export type PipelineAction =
   | { type: 'chain:restore'; chain: string[]; disabledChainIds: string[] }
   // ADB streaming incremental updates
   | { type: 'adb:results-update'; sessionId: string; processorId: string; matchedLines: number; emissionCount: number }
+  | { type: 'adb:results-batch'; updates: Array<{ sessionId: string; processorId: string; matchedLines: number; emissionCount: number }> }
   | { type: 'adb:run-count-bump'; sessionId: string }
   // Error management
   | { type: 'error:set'; error: string }
@@ -268,20 +288,29 @@ function pipelineReducer(state: PipelineState, action: PipelineAction): Pipeline
       const { sessionId, processorId, matchedLines, emissionCount } = action;
       return {
         ...state,
-        resultsBySession: withSessionState(state.resultsBySession, sessionId, (s) => {
-          const idx = s.results.findIndex((r) => r.processorId === processorId);
-          const updated = {
-            processorId,
-            matchedLines: (idx >= 0 ? s.results[idx].matchedLines : 0) + matchedLines,
-            emissionCount: (idx >= 0 ? s.results[idx].emissionCount : 0) + emissionCount,
-          };
-          // Preserve array ordering: update in-place if exists, else append
-          const results = idx >= 0
-            ? s.results.map((r, i) => i === idx ? updated : r)
-            : [...s.results, updated];
-          return { ...s, results };
-        }),
+        resultsBySession: withSessionState(state.resultsBySession, sessionId, (s) =>
+          mergeProcessorResult(s, processorId, matchedLines, emissionCount),
+        ),
       };
+    }
+
+    case 'adb:results-batch': {
+      // Group by sessionId so we clone the outer Map at most once per session.
+      const grouped = new Map<string, typeof action.updates>();
+      for (const u of action.updates) {
+        const arr = grouped.get(u.sessionId);
+        if (arr) arr.push(u);
+        else grouped.set(u.sessionId, [u]);
+      }
+      const map = new Map(state.resultsBySession);
+      for (const [sessionId, updates] of grouped) {
+        let session = getOrDefault(map, sessionId);
+        for (const { processorId, matchedLines, emissionCount } of updates) {
+          session = mergeProcessorResult(session, processorId, matchedLines, emissionCount);
+        }
+        map.set(sessionId, session);
+      }
+      return { ...state, resultsBySession: map };
     }
 
     case 'adb:run-count-bump':

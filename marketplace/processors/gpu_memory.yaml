@@ -1,0 +1,162 @@
+meta:
+  id: "gpu-memory"
+  name: "GPU Memory"
+  version: "1.0.0"
+  author: "LogTapper"
+  description: "Extracts GPU memory usage per process and driver identification from the dumpstate gpu dumpsys section. Reports global GPU memory total, per-process allocations in MB, and GPU driver/API versions."
+  tags: ["gpu", "memory", "graphics", "android"]
+  category: system
+
+sections:
+  - "gpu"
+
+vars:
+  - name: global_total_mb
+    type: int
+    default: 0
+    display: true
+    label: "Global GPU Memory (MB)"
+
+  - name: process_count
+    type: int
+    default: 0
+    display: true
+    label: "GPU Processes"
+
+  - name: driver_package
+    type: string
+    default: ""
+    display: true
+    label: "Driver Package"
+
+  - name: gles_version
+    type: int
+    default: 0
+    display: true
+    label: "GLES Version Code"
+
+  - name: vulkan_version
+    type: int
+    default: 0
+    display: true
+    label: "Vulkan Version Code"
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains_any
+        values:
+          - "Global total:"
+          - "Proc "
+          - "driverPackageName"
+          - "vulkanVersion"
+          - "glesVersion"
+
+  - stage: extract
+    fields:
+      # Global total: 250286080
+      - name: global_total
+        pattern: 'Global total:\s*(\d+)'
+        cast: int
+      # Proc 1211 total: 111337472
+      - name: proc_pid
+        pattern: 'Proc\s+(\d+)\s+total:'
+        cast: int
+      - name: proc_total
+        pattern: 'Proc\s+\d+\s+total:\s*(\d+)'
+        cast: int
+      # driverPackageName = system
+      - name: driver_pkg
+        pattern: 'driverPackageName\s*=\s*(\S+)'
+      # vulkanVersion = 4198400
+      - name: vulkan_ver
+        pattern: 'vulkanVersion\s*=\s*(\d+)'
+        cast: int
+      # glesVersion = 196610
+      - name: gles_ver
+        pattern: 'glesVersion\s*=\s*(\d+)'
+        cast: int
+
+  - stage: script
+    runtime: rhai
+    src: |
+      // Global GPU memory total
+      if "global_total" in fields {
+        let mb = fields.global_total / (1024 * 1024);
+        vars.global_total_mb = mb;
+        _emits.push(#{
+          type: "global",
+          gpu_memory_mb: mb,
+          gpu_memory_bytes: fields.global_total,
+        });
+        return;
+      }
+
+      // Per-process GPU memory
+      if "proc_pid" in fields {
+        vars.process_count += 1;
+        let mb = fields.proc_total / (1024 * 1024);
+        _emits.push(#{
+          type: "process",
+          pid: fields.proc_pid,
+          gpu_memory_mb: mb,
+          gpu_memory_bytes: fields.proc_total,
+        });
+        return;
+      }
+
+      // Driver identification
+      if "driver_pkg" in fields {
+        vars.driver_package = fields.driver_pkg;
+        return;
+      }
+
+      // API versions
+      if "vulkan_ver" in fields {
+        vars.vulkan_version = fields.vulkan_ver;
+        return;
+      }
+      if "gles_ver" in fields {
+        vars.gles_version = fields.gles_ver;
+        return;
+      }
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["type", "pid", "gpu_memory_mb"]
+        sort: "gpu_memory_mb"
+      - type: summary
+        source: vars
+        template: |
+          GPU total: {{global_total_mb}} MB across {{process_count}} processes. Driver: {{driver_package}}. GLES: {{gles_version}}. Vulkan: {{vulkan_version}}.
+
+    charts:
+      - id: gpu_memory_bar
+        type: bar
+        title: "GPU Memory by Process"
+        source: emissions
+        x: { field: pid, label: "PID" }
+        y: { field: gpu_memory_mb, label: "GPU Memory (MB)" }
+
+schema:
+  source_types: ["bugreport", "dumpstate"]
+  emissions:
+    - name: type
+      type: string
+      description: "Record type: global or process"
+    - name: pid
+      type: int
+      description: "Process ID"
+    - name: gpu_memory_mb
+      type: int
+      description: "GPU memory allocation in megabytes"
+    - name: gpu_memory_bytes
+      type: int
+      description: "GPU memory allocation in bytes"
+  mcp:
+    summary:
+      template: "GPU total: {{global_total_mb}} MB, {{process_count}} processes. Driver: {{driver_package}}. GLES: {{gles_version}}, Vulkan: {{vulkan_version}}."
+      include_vars: [global_total_mb, process_count, driver_package, gles_version, vulkan_version]
+    signals: []

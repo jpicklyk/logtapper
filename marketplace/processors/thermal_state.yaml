@@ -1,0 +1,129 @@
+type: state_tracker
+id: thermal-state
+name: Thermal State
+version: 1.0.0
+author: LogTapper
+description: "Tracks device thermal state from Android's thermalservice dumpsys output and ThermalEngine logcat events. Captures cached temperature readings per thermal zone (AP, SKIN, BAT, PA, USB, PATHM) and the overall thermal status level."
+tags: [thermal, temperature, hardware, android]
+category: system
+builtin: false
+
+group: System
+
+sections:
+  - "SYSTEM LOG"
+  - "DUMPSYS NORMAL"
+
+state:
+  - name: thermal_status
+    type: int
+  - name: temp_ap
+    type: string
+    default: "unknown"
+  - name: temp_skin
+    type: string
+    default: "unknown"
+  - name: temp_bat
+    type: string
+    default: "unknown"
+  - name: temp_pa
+    type: string
+    default: "unknown"
+  - name: temp_usb
+    type: string
+    default: "unknown"
+  - name: temp_pathm
+    type: string
+    default: "unknown"
+  - name: num_cpus
+    type: int
+  - name: num_gpus
+    type: int
+
+transitions:
+  # ── Dumpsys thermalservice: overall thermal status ──────────────────────
+  # Line: Thermal Status: 0
+
+  - name: Thermal Status
+    filter:
+      section: "thermalservice"
+      message_regex: 'Thermal Status:\s*(\d+)'
+    set:
+      thermal_status: "$1"
+
+  # ── Dumpsys thermalservice: cached temperature readings ─────────────────
+  # Line: Temperature{mValue=32.4, mType=0, mName=AP, mStatus=0}
+  # Each zone matched separately for clean state field mapping.
+
+  - name: AP Temperature
+    filter:
+      section: "thermalservice"
+      message_regex: 'Temperature\{mValue=([0-9.]+).*mName=AP'
+    set:
+      temp_ap: "$1"
+
+  - name: SKIN Temperature
+    filter:
+      section: "thermalservice"
+      message_regex: 'Temperature\{mValue=([0-9.]+).*mName=SKIN'
+    set:
+      temp_skin: "$1"
+
+  - name: BAT Temperature
+    filter:
+      section: "thermalservice"
+      message_regex: 'Temperature\{mValue=([0-9.]+).*mName=BAT'
+    set:
+      temp_bat: "$1"
+
+  - name: PA Temperature
+    filter:
+      section: "thermalservice"
+      message_regex: 'Temperature\{mValue=([0-9.]+).*mName=PA'
+    set:
+      temp_pa: "$1"
+
+  - name: USB Temperature
+    filter:
+      section: "thermalservice"
+      message_regex: 'Temperature\{mValue=([0-9.]+).*mName=USB'
+    set:
+      temp_usb: "$1"
+
+  - name: PATHM Temperature
+    filter:
+      section: "thermalservice"
+      message_regex: 'Temperature\{mValue=([0-9.]+).*mName=PATHM'
+    set:
+      temp_pathm: "$1"
+
+  # ── Logcat ThermalEngine: device topology ───────────────────────────────
+  # Line: ThermalEngine: Number of cpus :8
+  # Line: ThermalEngine: Number of gpus :1
+
+  - name: CPU Count
+    filter:
+      tag: ThermalEngine
+      message_regex: 'Number of cpus\s*:(\d+)'
+    set:
+      num_cpus: "$1"
+
+  - name: GPU Count
+    filter:
+      tag: ThermalEngine
+      message_regex: 'Number of gpus\s*:(\d+)'
+    set:
+      num_gpus: "$1"
+
+output:
+  timeline: true
+  annotate: true
+
+schema:
+  source_types: ["logcat", "bugreport", "dumpstate"]
+  emissions: []
+  mcp:
+    summary:
+      template: "Thermal status={{thermal_status}}. AP={{temp_ap}}C, SKIN={{temp_skin}}C, BAT={{temp_bat}}C, PA={{temp_pa}}C. CPUs={{num_cpus}}, GPUs={{num_gpus}}."
+      include_vars: [thermal_status, temp_ap, temp_skin, temp_bat, temp_pa, num_cpus, num_gpus]
+    signals: []

@@ -751,6 +751,7 @@ pub(crate) fn build_provenance_yaml(source_name: &str, version: &str, sha256: &s
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::processors::marketplace::SourceType;
 
     #[test]
     fn is_newer_basic() {
@@ -851,5 +852,259 @@ mod tests {
             url,
             "https://raw.githubusercontent.com/jpicklyk/logtapper/main/marketplace/marketplace.json"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
+
+    fn project_root() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("CARGO_MANIFEST_DIR should have a parent")
+            .to_path_buf()
+    }
+
+    fn load_marketplace_index() -> (std::path::PathBuf, marketplace::MarketplaceIndex) {
+        let dir = project_root().join("marketplace");
+        let json = std::fs::read_to_string(dir.join("marketplace.json"))
+            .expect("should read marketplace.json");
+        let index: marketplace::MarketplaceIndex = serde_json::from_str(&json)
+            .expect("should parse marketplace.json");
+        (dir, index)
+    }
+
+    // -----------------------------------------------------------------------
+    // Marketplace index integrity
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn local_source_reads_marketplace_index() {
+        let (dir, index) = load_marketplace_index();
+        assert!(dir.join("marketplace.json").exists());
+        assert!(!index.processors.is_empty());
+        assert!(!index.packs.is_empty());
+        assert!(index.version >= 1);
+    }
+
+    #[test]
+    fn local_source_processor_yamls_exist() {
+        let (dir, index) = load_marketplace_index();
+        for entry in &index.processors {
+            let yaml_path = dir.join(&entry.path);
+            assert!(yaml_path.exists(), "Processor YAML missing: {} (id: {})", yaml_path.display(), entry.id);
+        }
+    }
+
+    #[test]
+    fn local_source_pack_yamls_exist() {
+        let (dir, index) = load_marketplace_index();
+        for pack in &index.packs {
+            let pack_path = dir.join(&pack.path);
+            assert!(pack_path.exists(), "Pack YAML missing: {} (id: {})", pack_path.display(), pack.id);
+        }
+    }
+
+    #[test]
+    fn pack_processor_ids_exist_in_index() {
+        let (_dir, index) = load_marketplace_index();
+        let proc_ids: std::collections::HashSet<&str> =
+            index.processors.iter().map(|p| p.id.as_str()).collect();
+        for pack in &index.packs {
+            for proc_id in &pack.processor_ids {
+                assert!(
+                    proc_ids.contains(proc_id.as_str()),
+                    "Pack '{}' references processor '{}' which is not in the index",
+                    pack.id, proc_id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn processor_yaml_versions_match_index() {
+        let (dir, index) = load_marketplace_index();
+        for entry in &index.processors {
+            let yaml_str = match std::fs::read_to_string(dir.join(&entry.path)) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let yaml: serde_yaml::Value = match serde_yaml::from_str(&yaml_str) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let yaml_version = yaml
+                .get("version")
+                .or_else(|| yaml.get("meta").and_then(|m| m.get("version")))
+                .and_then(|v| v.as_str());
+            if let Some(yaml_ver) = yaml_version {
+                assert_eq!(
+                    yaml_ver, entry.version,
+                    "Version mismatch for '{}': YAML='{}', index='{}'",
+                    entry.id, yaml_ver, entry.version
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn all_processor_yamls_parse_successfully() {
+        use crate::processors::AnyProcessor;
+        let (dir, index) = load_marketplace_index();
+        for entry in &index.processors {
+            let yaml_str = match std::fs::read_to_string(dir.join(&entry.path)) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let result = AnyProcessor::from_yaml(&yaml_str);
+            assert!(result.is_ok(), "Processor '{}' failed to parse: {}", entry.id, result.unwrap_err());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Update detection
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn update_detection_finds_newer_version() {
+        assert!(is_newer("1.0.0", "2.0.0"));
+        assert!(is_newer("3.1.2", "4.0.0"));
+    }
+
+    #[test]
+    fn update_detection_ignores_same_version() {
+        assert!(!is_newer("1.0.0", "1.0.0"));
+        assert!(!is_newer("4.0.0", "4.0.0"));
+    }
+
+    #[test]
+    fn update_detection_ignores_older_version() {
+        assert!(!is_newer("2.0.0", "1.0.0"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Source serialization
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn source_serialization_roundtrip_local() {
+        let source = Source {
+            name: "official".to_string(),
+            source_type: SourceType::Local { path: "/some/path/marketplace".to_string() },
+            enabled: true, auto_update: false, last_checked: None,
+        };
+        let json = serde_json::to_string_pretty(&source).expect("serialize");
+        let parsed: Source = serde_json::from_str(&json).expect("deserialize");
+        assert!(matches!(&parsed.source_type, SourceType::Local { path } if path == "/some/path/marketplace"));
+    }
+
+    #[test]
+    fn source_serialization_roundtrip_github() {
+        let source = Source {
+            name: "official".to_string(),
+            source_type: SourceType::Github { repo: "jpicklyk/logtapper".to_string(), git_ref: "main".to_string() },
+            enabled: true, auto_update: false, last_checked: Some("12345Z".to_string()),
+        };
+        let json = serde_json::to_string_pretty(&source).expect("serialize");
+        let parsed: Source = serde_json::from_str(&json).expect("deserialize");
+        assert!(matches!(&parsed.source_type, SourceType::Github { repo, git_ref } if repo == "jpicklyk/logtapper" && git_ref == "main"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Dev source resolution and auto-correction
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn simplified_path_strips_unc_prefix() {
+        use crate::simplified_path;
+        let marketplace_dir = project_root().join("marketplace");
+        let result = simplified_path(&marketplace_dir);
+        let result_str = result.to_string_lossy();
+        assert!(!result_str.starts_with(r"\\?\"), "should strip \\\\?\\ prefix, got: {result_str}");
+        assert!(result_str.contains("marketplace"));
+    }
+
+    // These tests are debug-only because resolve_dev_marketplace_path is #[cfg(debug_assertions)].
+    // They will be silently skipped in `cargo test --release`.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn resolve_dev_marketplace_path_is_valid() {
+        let path = crate::resolve_dev_marketplace_path();
+        let p = std::path::Path::new(&path);
+        assert!(!path.starts_with(r"\\?\"), "should not have \\\\?\\ prefix: {path}");
+        assert!(p.join("marketplace.json").exists(), "should contain marketplace.json: {path}");
+        assert!(p.join("processors").is_dir(), "should contain processors/: {path}");
+        assert!(p.join("packs").is_dir(), "should contain packs/: {path}");
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn resolve_dev_marketplace_path_prefers_project_root_over_target() {
+        let path = crate::resolve_dev_marketplace_path();
+        let p = std::path::Path::new(&path);
+        let has_target = p.components().any(|c| c.as_os_str() == "target");
+        assert!(!has_target, "should not be inside target/: {path}");
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn needs_source_correction_detects_github() {
+        use crate::needs_source_correction;
+        let github = SourceType::Github { repo: "r".to_string(), git_ref: "main".to_string() };
+        assert!(needs_source_correction(&github, "/any/path"));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn needs_source_correction_detects_stale_local() {
+        use crate::needs_source_correction;
+        let local = SourceType::Local { path: "/old/path".to_string() };
+        assert!(needs_source_correction(&local, "/correct/path"));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn needs_source_correction_skips_correct_local() {
+        use crate::needs_source_correction;
+        let local = SourceType::Local { path: "/correct/path".to_string() };
+        assert!(!needs_source_correction(&local, "/correct/path"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Release migration
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn release_migration_local_to_github() {
+        let source_type = SourceType::Local { path: "/some/dev/path".to_string() };
+        assert!(matches!(source_type, SourceType::Local { .. }), "should detect Local for migration");
+    }
+
+    #[test]
+    fn release_migration_skips_github() {
+        let source_type = SourceType::Github { repo: "r".to_string(), git_ref: "main".to_string() };
+        assert!(!matches!(source_type, SourceType::Local { .. }), "should not migrate Github");
+    }
+
+    // -----------------------------------------------------------------------
+    // GitHub URL construction
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn github_source_constructs_correct_index_url() {
+        let url = registry::github_raw_url("jpicklyk/logtapper", "main", "marketplace/marketplace.json");
+        assert_eq!(url, "https://raw.githubusercontent.com/jpicklyk/logtapper/main/marketplace/marketplace.json");
+    }
+
+    #[test]
+    fn github_source_constructs_correct_processor_url() {
+        let url = registry::github_raw_url("jpicklyk/logtapper", "main", "marketplace/processors/battery_state.yaml");
+        assert_eq!(url, "https://raw.githubusercontent.com/jpicklyk/logtapper/main/marketplace/processors/battery_state.yaml");
+    }
+
+    #[test]
+    fn github_source_constructs_correct_pack_url() {
+        let url = registry::github_raw_url("jpicklyk/logtapper", "main", "marketplace/packs/device-health.pack.yaml");
+        assert_eq!(url, "https://raw.githubusercontent.com/jpicklyk/logtapper/main/marketplace/packs/device-health.pack.yaml");
     }
 }

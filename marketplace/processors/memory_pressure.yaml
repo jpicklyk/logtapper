@@ -1,0 +1,63 @@
+type: state_tracker
+id: memory-pressure
+name: Memory Pressure
+version: 1.0.0
+author: LogTapper
+description: "Tracks system-wide memory pressure from Samsung's Chimera memory manager. Monitors available memory vs target free memory, release targets, and LMKD-triggered kill decisions. Complements gc-pressure-monitor (per-process heap) and system-server-heap (system_server) with the system-wide memory picture. Samsung-specific — AOSP uses lmkd directly."
+tags: [memory, lmkd, pressure, samsung, android]
+category: memory
+builtin: false
+
+group: System
+
+state:
+  - name: mem_available
+    type: int
+  - name: mem_free_target
+    type: int
+  - name: release_target
+    type: int
+  - name: protected_lru_count
+    type: int
+  - name: trigger_source
+    type: string
+    default: "UNKNOWN"
+
+transitions:
+  # ── ChimeraAggressivePolicyHandler: memory pressure event ───────────────
+  # Line: ChimeraAggressivePolicyHandler: memAvailable: 684708,
+  #   memFreeTarget: 716800, releaseTarget:32092, protectedLruCount: 9
+
+  - name: Memory Pressure Event
+    filter:
+      tag: ChimeraAggressivePolicyHandler
+      message_regex: 'memAvailable:\s*(\d+).*memFreeTarget:\s*(\d+).*releaseTarget:(\d+).*protectedLruCount:\s*(\d+)'
+    set:
+      mem_available: "$1"
+      mem_free_target: "$2"
+      release_target: "$3"
+      protected_lru_count: "$4"
+
+  # ── Trigger source identification ───────────────────────────────────────
+  # Line: ChimeraAggressivePolicyHandler: executePolicy() -
+  #   triggerSource: TRIGGER_SOURCE_LMKD
+
+  - name: LMKD Trigger
+    filter:
+      tag: ChimeraAggressivePolicyHandler
+      message_regex: 'executePolicy.*triggerSource:\s*(\S+)'
+    set:
+      trigger_source: "$1"
+
+output:
+  timeline: true
+  annotate: true
+
+schema:
+  source_types: ["logcat", "bugreport"]
+  emissions: []
+  mcp:
+    summary:
+      template: "Memory pressure: available={{mem_available}} kB, target={{mem_free_target}} kB, release_needed={{release_target}} kB, trigger={{trigger_source}}, protected_apps={{protected_lru_count}}."
+      include_vars: [mem_available, mem_free_target, release_target, trigger_source, protected_lru_count]
+    signals: []

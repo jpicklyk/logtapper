@@ -14,6 +14,72 @@ use processors::registry;
 use processors::AnyProcessor;
 use tauri::{Emitter, Manager};
 
+/// Returns true if the official source needs correction to point to `correct_path`.
+/// In dev builds, the official source must always be `Local` with the right path.
+#[cfg(debug_assertions)]
+pub(crate) fn needs_source_correction(source_type: &SourceType, correct_path: &str) -> bool {
+    match source_type {
+        SourceType::Local { ref path } => path != correct_path,
+        SourceType::Github { .. } => true,
+    }
+}
+
+/// Resolve the dev marketplace directory path relative to the running executable.
+///
+/// Walks up from the executable's directory until it finds a parent containing
+/// `marketplace/marketplace.json`. Skips matches inside `target/` (build output
+/// copies) to prefer the project root's source-of-truth `marketplace/` directory.
+///
+/// Uses `simplified_path` to strip the Windows `\\?\` UNC prefix that `canonicalize()`
+/// produces, which breaks string comparisons and some file read APIs.
+#[cfg(debug_assertions)]
+pub(crate) fn resolve_dev_marketplace_path() -> String {
+    let exe_path = std::env::current_exe().unwrap_or_default();
+    let mut dir = exe_path.parent();
+    let mut build_output_fallback: Option<std::path::PathBuf> = None;
+
+    for _ in 0..10 {
+        let Some(d) = dir else { break };
+        if d.join("marketplace").join("marketplace.json").exists() {
+            let is_build_output = d.components().any(|c| c.as_os_str() == "target");
+            if !is_build_output {
+                return simplified_path(&d.join("marketplace")).to_string_lossy().to_string();
+            }
+            if build_output_fallback.is_none() {
+                build_output_fallback = Some(d.join("marketplace"));
+            }
+        }
+        dir = d.parent();
+    }
+
+    if let Some(p) = build_output_fallback {
+        return simplified_path(&p).to_string_lossy().to_string();
+    }
+
+    let exe_dir = exe_path.parent().unwrap_or(std::path::Path::new("."));
+    let fallback = exe_dir.join("..").join("..").join("..").join("marketplace");
+    log::warn!("[marketplace] Could not find marketplace/ by walking up from exe");
+    fallback.to_string_lossy().to_string()
+}
+
+/// Canonicalize a path, stripping the Windows `\\?\` extended-length prefix if present.
+/// Falls back to the original path if canonicalization fails.
+fn simplified_path(p: &std::path::Path) -> std::path::PathBuf {
+    match p.canonicalize() {
+        Ok(canonical) => {
+            // On Windows, canonicalize() produces \\?\C:\... — strip the prefix
+            // so the path works consistently in string comparisons and file reads.
+            let s = canonical.to_string_lossy();
+            if let Some(stripped) = s.strip_prefix(r"\\?\") {
+                std::path::PathBuf::from(stripped)
+            } else {
+                canonical
+            }
+        }
+        Err(_) => p.to_path_buf(),
+    }
+}
+
 fn load_persisted_processors(state: &AppState, proc_dir: &std::path::Path) {
     let mut yamls: Vec<(std::path::PathBuf, String)> = Vec::new();
     if let Ok(entries) = std::fs::read_dir(proc_dir) {
@@ -203,19 +269,18 @@ pub fn run() {
             }
 
             // Resolve the marketplace directory path.
-            // In dev mode, resource_dir() points to src-tauri/ so ../marketplace
+            // In dev builds, resolve relative to the running executable so the path
+            // is machine-independent. The exe lives at src-tauri/target/debug/ so
+            // ../../../marketplace reaches the project root's marketplace/ directory.
             // Load or initialize sources
             let first_run = !sources_path.exists();
             if first_run {
                 // In debug builds, use local marketplace directory for instant iteration.
                 // In release builds, use GitHub so users always get the latest.
                 let official_source_type = if cfg!(debug_assertions) {
-                    // In dev, resolve from the project root's marketplace/ directory.
-                    // Cargo sets CARGO_MANIFEST_DIR at compile time to src-tauri/.
-                    let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap_or(std::path::Path::new("."));
-                    let marketplace_dir = project_root.join("marketplace");
+                    let marketplace_path = resolve_dev_marketplace_path();
                     SourceType::Local {
-                        path: marketplace_dir.to_string_lossy().to_string(),
+                        path: marketplace_path,
                     }
                 } else {
                     SourceType::Github {
@@ -230,14 +295,13 @@ pub fn run() {
                     auto_update: false,
                     last_checked: None,
                 };
-                if let Ok(mut sources) = state.sources.lock() {
+                let json_to_write = {
+                    let mut sources = state.sources.lock().unwrap();
                     sources.push(official);
-                }
-                // Persist sources.json
-                if let Ok(sources) = state.sources.lock() {
-                    if let Ok(json) = serde_json::to_string_pretty(&*sources) {
-                        let _ = std::fs::write(&sources_path, json);
-                    }
+                    serde_json::to_string_pretty(&*sources).ok()
+                };
+                if let Some(json) = json_to_write {
+                    let _ = std::fs::write(&sources_path, json);
                 }
             } else {
                 let loaded = commands::sources::load_sources(app.handle());
@@ -245,29 +309,51 @@ pub fn run() {
                     *sources = loaded;
                 }
 
-                // In release builds only, migrate legacy local official sources to GitHub.
-                // In dev builds, local sources are intentional (pointing at project marketplace/).
-                if !cfg!(debug_assertions) {
-                if let Ok(mut sources) = state.sources.lock() {
-                    let mut migrated = false;
-                    for source in sources.iter_mut() {
-                        if source.name == "official" {
-                            if let SourceType::Local { .. } = source.source_type {
-                                source.source_type = SourceType::Github {
-                                    repo: "jpicklyk/logtapper".to_string(),
-                                    git_ref: "main".to_string(),
-                                };
-                                migrated = true;
+                // Dev: force official source to Local pointing at project root marketplace/.
+                // Handles stale paths and Github sources left by release builds.
+                if cfg!(debug_assertions) {
+                    let correct_path = resolve_dev_marketplace_path();
+                    let json_to_write = if let Ok(mut sources) = state.sources.lock() {
+                        let mut fixed = false;
+                        for source in sources.iter_mut() {
+                            if source.name == "official" && needs_source_correction(&source.source_type, &correct_path) {
+                                log::info!("[marketplace] Auto-correcting official source to Local: {correct_path}");
+                                source.source_type = SourceType::Local { path: correct_path.clone() };
+                                fixed = true;
                             }
                         }
-                    }
-                    if migrated {
-                        if let Ok(json) = serde_json::to_string_pretty(&*sources) {
-                            let _ = std::fs::write(&sources_path, json);
-                        }
+                        if fixed { serde_json::to_string_pretty(&*sources).ok() } else { None }
+                    } else {
+                        None
+                    };
+                    if let Some(json) = json_to_write {
+                        let _ = std::fs::write(&sources_path, json);
                     }
                 }
-                } // end release-only migration
+
+                // Release: migrate legacy local official sources to GitHub.
+                if !cfg!(debug_assertions) {
+                    let json_to_write = if let Ok(mut sources) = state.sources.lock() {
+                        let mut migrated = false;
+                        for source in sources.iter_mut() {
+                            if source.name == "official" {
+                                if let SourceType::Local { .. } = source.source_type {
+                                    source.source_type = SourceType::Github {
+                                        repo: "jpicklyk/logtapper".to_string(),
+                                        git_ref: "main".to_string(),
+                                    };
+                                    migrated = true;
+                                }
+                            }
+                        }
+                        if migrated { serde_json::to_string_pretty(&*sources).ok() } else { None }
+                    } else {
+                        None
+                    };
+                    if let Some(json) = json_to_write {
+                        let _ = std::fs::write(&sources_path, json);
+                    }
+                }
             }
 
             // Load persisted user processors from app data directory.

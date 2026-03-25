@@ -1,0 +1,127 @@
+type: state_tracker
+id: battery-health
+name: Battery Health
+version: 1.0.0
+author: LogTapper
+description: "Tracks Samsung battery health signals: swelling mode, battery protection mode, charger type classification, health status, direct power mode, and USB restriction. Sources data from AODBatteryManager saveBatteryData and PowerUI swelling events. Samsung-specific — produces no output on AOSP devices."
+tags: [battery, health, samsung, power, android]
+category: battery
+builtin: false
+
+group: System
+
+state:
+  - name: health
+    type: int
+  - name: swelling_mode
+    type: string
+    default: "NONE"
+  - name: protect_mode
+    type: bool
+  - name: protect_mode_type
+    type: int
+  - name: charger_type
+    type: string
+    default: "NORMAL"
+  - name: direct_power_mode
+    type: bool
+  - name: usb_restriction
+    type: bool
+
+transitions:
+  # ── AODBatteryManager: saveBatteryData (comprehensive state snapshot) ────
+  # Line: AODBatteryManager: saveBatteryData : AOD BatteryData [mBatteryLevel=18,
+  #   mBatteryStatus=DISCHARGING, mBatteryPlugType=NOT_DEFINED,
+  #   mBatteryPlugged=false, mRemainingChargeTime=0, mBatteryChargingType=0,
+  #   mBatteryChargerType=NORMAL, mBatteryOnline=NONE,
+  #   mBatterySwellingMode=NONE, mBatteryProtectMode=false,
+  #   mBatteryProtectModeType=0, ...mBatteryHealth=2,
+  #   mIsDirectPowerMode=false, mIsUsbRestriction=false]
+
+  - name: Health Update
+    filter:
+      tag: AODBatteryManager
+      message_regex: 'saveBatteryData.*mBatteryHealth=(\d+)'
+    set:
+      health: "$1"
+
+  - name: Swelling Active
+    filter:
+      tag: AODBatteryManager
+      message_regex: 'saveBatteryData.*mBatterySwellingMode=([A-Z_]+[A-Z])'
+    set:
+      swelling_mode: "$1"
+
+  - name: Protect Mode On
+    filter:
+      tag: AODBatteryManager
+      message_regex: 'saveBatteryData.*mBatteryProtectMode=true.*mBatteryProtectModeType=(\d+)'
+    set:
+      protect_mode: true
+      protect_mode_type: "$1"
+
+  - name: Protect Mode Off
+    filter:
+      tag: AODBatteryManager
+      message_regex: 'saveBatteryData.*mBatteryProtectMode=false'
+    set:
+      protect_mode: false
+
+  - name: Charger Type Update
+    filter:
+      tag: AODBatteryManager
+      message_regex: 'saveBatteryData.*mBatteryChargerType=([A-Z_]+[A-Z])'
+    set:
+      charger_type: "$1"
+
+  - name: Direct Power Mode On
+    filter:
+      tag: AODBatteryManager
+      message_regex: 'saveBatteryData.*mIsDirectPowerMode=true'
+    set:
+      direct_power_mode: true
+
+  - name: Direct Power Mode Off
+    filter:
+      tag: AODBatteryManager
+      message_regex: 'saveBatteryData.*mIsDirectPowerMode=false'
+    set:
+      direct_power_mode: false
+
+  - name: USB Restriction On
+    filter:
+      tag: AODBatteryManager
+      message_regex: 'saveBatteryData.*mIsUsbRestriction=true'
+    set:
+      usb_restriction: true
+
+  - name: USB Restriction Off
+    filter:
+      tag: AODBatteryManager
+      message_regex: 'saveBatteryData.*mIsUsbRestriction=false'
+    set:
+      usb_restriction: false
+
+  # ── PowerUI: Battery swelling mode changes ──────────────────────────────
+  # Line: PowerUI : Battery swelling mode - priorBatterySwellingMode = 0
+  #   mBatterySwellingMode = 0 mBatteryStatus = 3
+
+  - name: Swelling Mode Change (PowerUI)
+    filter:
+      tag: "PowerUI"
+      message_regex: 'Battery swelling mode.*mBatterySwellingMode = (\d+)'
+    set:
+      swelling_mode: "$1"
+
+output:
+  timeline: true
+  annotate: true
+
+schema:
+  source_types: ["logcat", "bugreport"]
+  emissions: []
+  mcp:
+    summary:
+      template: "Battery health={{health}}, swelling={{swelling_mode}}, protect={{protect_mode}}, charger_type={{charger_type}}, direct_power={{direct_power_mode}}, usb_restriction={{usb_restriction}}."
+      include_vars: [health, swelling_mode, protect_mode, charger_type, direct_power_mode, usb_restriction]
+    signals: []

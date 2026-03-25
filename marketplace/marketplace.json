@@ -1,6 +1,6 @@
 {
   "name": "official",
-  "version": 4,
+  "version": 5,
   "owner": {
     "name": "LogTapper"
   },
@@ -29,8 +29,8 @@
     {
       "id": "battery-state",
       "name": "Battery State",
-      "version": "3.1.2",
-      "description": "Tracks battery level, charging status, and plug source from BatteryService. Supports Samsung and AOSP formats.",
+      "version": "4.0.0",
+      "description": "Tracks battery level, charging status, plug source, voltage, temperature, current draw, and cycle count from BatteryService ACTION_BATTERY_CHANGED broadcasts.",
       "path": "processors/battery_state.yaml",
       "tags": [
         "battery",
@@ -44,6 +44,161 @@
       "source_types": [
         "logcat",
         "bugreport"
+      ],
+      "deprecated": false
+    },
+    {
+      "id": "battery-events",
+      "name": "Battery Events",
+      "version": "1.0.0",
+      "description": "Emits per-change records from BatteryService ACTION_BATTERY_CHANGED. Tracks level, voltage, temperature, and current trends with min/max aggregation.",
+      "path": "processors/battery_events.yaml",
+      "tags": [
+        "battery",
+        "power",
+        "android"
+      ],
+      "sha256": "",
+      "category": "battery",
+      "license": null,
+      "processor_type": "reporter",
+      "source_types": [
+        "logcat",
+        "bugreport"
+      ],
+      "deprecated": false
+    },
+    {
+      "id": "battery-health",
+      "name": "Battery Health",
+      "version": "1.0.0",
+      "description": "Tracks Samsung battery health signals: swelling mode, protection mode, charger type, health status from AODBatteryManager and PowerUI.",
+      "path": "processors/battery_health.yaml",
+      "tags": [
+        "battery",
+        "health",
+        "samsung",
+        "android"
+      ],
+      "sha256": "",
+      "category": "battery",
+      "license": null,
+      "processor_type": "state_tracker",
+      "source_types": [
+        "logcat",
+        "bugreport"
+      ],
+      "deprecated": false
+    },
+    {
+      "id": "charging-state",
+      "name": "Charging State",
+      "version": "1.0.0",
+      "description": "Tracks how power is delivered: charge source (AC/USB/wireless/pogo), charge type, charger type, max current/voltage, and high-voltage charging.",
+      "path": "processors/charging_state.yaml",
+      "tags": [
+        "battery",
+        "charging",
+        "power",
+        "android"
+      ],
+      "sha256": "",
+      "category": "battery",
+      "license": null,
+      "processor_type": "state_tracker",
+      "source_types": [
+        "logcat",
+        "bugreport"
+      ],
+      "deprecated": false
+    },
+    {
+      "id": "memory-pressure",
+      "name": "Memory Pressure",
+      "version": "1.0.0",
+      "description": "Tracks system-wide memory pressure from Samsung Chimera memory manager. Monitors available memory vs target, release targets, and LMKD triggers.",
+      "path": "processors/memory_pressure.yaml",
+      "tags": [
+        "memory",
+        "lmkd",
+        "pressure",
+        "samsung",
+        "android"
+      ],
+      "sha256": "",
+      "category": "memory",
+      "license": null,
+      "processor_type": "state_tracker",
+      "source_types": [
+        "logcat",
+        "bugreport"
+      ],
+      "deprecated": false
+    },
+    {
+      "id": "thermal-state",
+      "name": "Thermal State",
+      "version": "1.0.0",
+      "description": "Tracks device thermal state from thermalservice dumpsys and ThermalEngine logcat. Captures per-zone temperatures (AP, SKIN, BAT, PA) and thermal status.",
+      "path": "processors/thermal_state.yaml",
+      "tags": [
+        "thermal",
+        "temperature",
+        "hardware",
+        "android"
+      ],
+      "sha256": "",
+      "category": "system",
+      "license": null,
+      "processor_type": "state_tracker",
+      "source_types": [
+        "logcat",
+        "bugreport",
+        "dumpstate"
+      ],
+      "deprecated": false
+    },
+    {
+      "id": "cpu-load",
+      "name": "CPU Load",
+      "version": "1.0.0",
+      "description": "Extracts CPU load averages and top consumers from dumpstate cpuinfo. Reports 1/5/15m load, user/sys/idle/iowait breakdown, and per-process usage.",
+      "path": "processors/cpu_load.yaml",
+      "tags": [
+        "cpu",
+        "load",
+        "performance",
+        "android"
+      ],
+      "sha256": "",
+      "category": "system",
+      "license": null,
+      "processor_type": "reporter",
+      "source_types": [
+        "bugreport",
+        "dumpstate"
+      ],
+      "deprecated": false
+    },
+    {
+      "id": "gpu-memory",
+      "name": "GPU Memory",
+      "version": "1.0.0",
+      "description": "Extracts per-process GPU memory usage and driver info from dumpstate gpu dumpsys. Reports global total, per-process allocations, and Vulkan/GLES versions.",
+      "path": "processors/gpu_memory.yaml",
+      "tags": [
+        "gpu",
+        "memory",
+        "graphics",
+        "android"
+      ],
+      "sha256": "",
+      "category": "system",
+      "license": null,
+      "processor_type": "reporter",
+      "source_types": [
+        "bugreport",
+        "dumpstate"
       ],
       "deprecated": false
     },
@@ -705,24 +860,32 @@
       "sha256": ""
     },
     {
-      "id": "system-health",
-      "name": "System Health",
+      "id": "device-health",
+      "name": "Device Health",
       "version": "1.0.0",
-      "description": "Memory monitoring, file descriptor tracking, battery state, and app lifecycle",
-      "path": "packs/system-health.pack.yaml",
+      "description": "Battery, charging, thermal, CPU, GPU, and memory pressure monitoring",
+      "path": "packs/device-health.pack.yaml",
       "tags": [
-        "memory",
         "battery",
+        "thermal",
+        "cpu",
+        "gpu",
+        "memory",
         "system",
         "android"
       ],
-      "category": "memory",
+      "category": "system",
       "processor_ids": [
-        "gc-pressure-monitor",
-        "system-server-fd-monitor",
-        "system-server-heap",
         "battery-state",
-        "app-lifecycle"
+        "battery-events",
+        "battery-health",
+        "charging-state",
+        "memory-pressure",
+        "thermal-state",
+        "cpu-load",
+        "gpu-memory",
+        "gc-pressure-monitor",
+        "system-server-heap"
       ],
       "sha256": ""
     },

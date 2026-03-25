@@ -1,6 +1,6 @@
 import { useCallback, useRef, useEffect } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { PipelineProgress, AdbProcessorUpdate } from '../bridge/types';
+import type { AdbProcessorUpdate, PipelineProgress } from '../bridge/types';
 import { useSessionContext } from '../context/SessionContext';
 import {
   listProcessors,
@@ -76,7 +76,6 @@ export function usePipeline(): PipelineActions {
   resultsBySessionRef.current = resultsBySession;
 
   const unlistenRef = useRef<UnlistenFn | null>(null);
-  const adbProcUnlistenRef = useRef<UnlistenFn | null>(null);
   const chainInitializedRef = useRef(false);
   const hasRestoredChainRef = useRef(false);
   const metaSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -134,19 +133,16 @@ export function usePipeline(): PipelineActions {
     };
   }, [dispatch]);
 
-  // Subscribe to adb-processor-update events.
-  // Results are updated immediately; runCount is throttled to at most once per 2s.
+  // Subscribe to batched streaming processor updates (forwarded from Channel by useStreamSession).
+  // One dispatch per batch instead of N. runCount is throttled to at most once per 2s.
   const streamRunCountTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingRunCountBumpRef = useRef<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    listen<AdbProcessorUpdate>('adb-processor-update', (event) => {
-      if (cancelled) return;
-      const { sessionId, processorId, matchedLines, emissionCount } = event.payload;
-      dispatch({ type: 'adb:results-update', sessionId, processorId, matchedLines, emissionCount });
-      // Throttle runCount bump to at most once per 2s
-      pendingRunCountBumpRef.current = sessionId;
+    const handler = (updates: AdbProcessorUpdate[]) => {
+      if (updates.length === 0) return;
+      dispatch({ type: 'adb:results-batch', updates });
+      pendingRunCountBumpRef.current = updates[0].sessionId;
       if (!streamRunCountTimerRef.current) {
         streamRunCountTimerRef.current = setTimeout(() => {
           streamRunCountTimerRef.current = null;
@@ -157,13 +153,10 @@ export function usePipeline(): PipelineActions {
           }
         }, 2000);
       }
-    }).then((fn) => {
-      if (cancelled) fn();
-      else adbProcUnlistenRef.current = fn;
-    });
+    };
+    bus.on('pipeline:adb-processor-batch', handler);
     return () => {
-      cancelled = true;
-      adbProcUnlistenRef.current?.();
+      bus.off('pipeline:adb-processor-batch', handler);
       if (streamRunCountTimerRef.current) {
         clearTimeout(streamRunCountTimerRef.current);
         streamRunCountTimerRef.current = null;

@@ -8,7 +8,7 @@ import { ViewerProvider } from './ViewerContext';
 
 export { ThemeProvider, useTheme } from './ThemeContext';
 export type { ThemeMode, ResolvedTheme } from './ThemeContext';
-import { PipelineProvider } from './PipelineContext';
+import { PipelineProvider, usePipelineContext } from './PipelineContext';
 import { TrackerProvider } from './TrackerContext';
 import { ActionsProvider, type ActionsContextValue } from './ActionsContext';
 import { MarketplaceProvider } from './MarketplaceContext';
@@ -32,6 +32,10 @@ function HookWiring({ children }: { children: ReactNode }) {
   const { settings } = useSettings();
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+
+  const { activeProcessorIds } = usePipelineContext();
+  const activeProcessorIdsRef = useRef(activeProcessorIds);
+  activeProcessorIdsRef.current = activeProcessorIds;
 
   // Keep a ref so setActiveLogPane can read the current map without being
   // recreated every time paneSessionMap changes (which would invalidate
@@ -118,7 +122,7 @@ function HookWiring({ children }: { children: ReactNode }) {
     openFileDialog,
     openInEditorDialog,
     startStream: (deviceId?: string) => logViewer.startStream(
-      deviceId, undefined, undefined, settingsRef.current.streamBackendLineMax,
+      deviceId, undefined, activeProcessorIdsRef.current, settingsRef.current.streamBackendLineMax,
     ),
     stopStream: logViewer.stopStream,
     closeSession: logViewer.closeSession,

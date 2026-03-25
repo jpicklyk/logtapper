@@ -1,5 +1,5 @@
 import { useCallback, useRef, useEffect } from 'react';
-import type { AdbBatchPayload, AdbStreamEvent, SourceType } from '../../bridge/types';
+import type { AdbBatchPayload, AdbProcessorUpdate, AdbStreamEvent, SourceType } from '../../bridge/types';
 import { matchesFilter } from '../../../src/filter';
 import { startAdbStream, stopAdbStream } from '../../bridge/commands';
 import { onAdbStreamStopped } from '../../bridge/events';
@@ -143,7 +143,19 @@ export function useStreamSession(
       clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
     }
-    // Record params for potential reconnect and mark start time.
+
+    // Stop the previous stream if one is still running.
+    const prevSessionId = refs.streamingSessionIdRef.current;
+    if (prevSessionId) {
+      channelActiveRef.current = false;
+      refs.adbStoppedUnlistenRef.current?.();
+      refs.adbStoppedUnlistenRef.current = null;
+      try { await stopAdbStream(prevSessionId); } catch { /* best-effort */ }
+      setStreamingSession(prevSessionId, false);
+      refs.isStreamingRef.current = false;
+      refs.streamingSessionIdRef.current = null;
+    }
+
     lastStreamParamsRef.current = { deviceId, packageFilter, activeProcessorIds, maxRawLines };
     streamStartedAtRef.current = Date.now();
 
@@ -169,7 +181,19 @@ export function useStreamSession(
 
     refs.streamDeviceSerialRef.current = deviceId ?? null;
 
-    // Channel event handler — receives Batch, ProcessorUpdate, StreamStopped.
+    // Accumulate processor updates and flush as a single bus event per microtask,
+    // so all updates from the same batch produce one dispatch instead of N.
+    let pendingProcessorUpdates: AdbProcessorUpdate[] = [];
+    let flushScheduled = false;
+
+    const flushProcessorUpdates = () => {
+      flushScheduled = false;
+      if (pendingProcessorUpdates.length > 0) {
+        bus.emit('pipeline:adb-processor-batch', pendingProcessorUpdates);
+        pendingProcessorUpdates = [];
+      }
+    };
+
     // The channelActiveRef guard prevents late-arriving messages from being
     // processed after the stream is stopped or detached.
     const handleChannelEvent = (msg: AdbStreamEvent) => {
@@ -181,7 +205,6 @@ export function useStreamSession(
         if (payload.sessionId !== refs.streamingSessionIdRef.current) return;
         console.debug('[useStreamSession] streamStopped via channel', { sessionId: payload.sessionId, reason: payload.reason });
         channelActiveRef.current = false;
-        // Clean up the fallback broadcast listener — it's no longer needed.
         refs.adbStoppedUnlistenRef.current?.();
         refs.adbStoppedUnlistenRef.current = null;
         setStreamingSession(payload.sessionId, false);
@@ -190,7 +213,6 @@ export function useStreamSession(
         refs.streamingPaneIdRef.current = null;
         refs.streamingSessionIdRef.current = null;
         bus.emit('stream:stopped', { sessionId: payload.sessionId, paneId: stoppedPaneId });
-        // Auto-reconnect on EOF (e.g. screen unlock USB reset).
         if (payload.reason === 'eof' && lastStreamParamsRef.current) {
           const elapsed = streamStartedAtRef.current ? Date.now() - streamStartedAtRef.current : 0;
           if (elapsed < QUICK_FAILURE_MS) {
@@ -200,13 +222,16 @@ export function useStreamSession(
           }
           scheduleReconnectRef.current?.(lastStreamParamsRef.current);
         }
+      } else if (msg.event === 'processorUpdate') {
+        pendingProcessorUpdates.push(msg.data);
+        if (!flushScheduled) {
+          flushScheduled = true;
+          // Use setTimeout(0) instead of queueMicrotask — Channel messages may
+          // arrive in separate microtask cycles, so a macrotask gives a wider
+          // batching window to collect all updates from one flush_batch call.
+          setTimeout(flushProcessorUpdates, 0);
+        }
       }
-      // TODO: processorUpdate must drive PipelineContext (adb:results-update +
-      // throttled adb:run-count-bump) so ProcessorDashboard, CorrelationsView,
-      // StatePanel, and StateTimeline refresh during streaming. The old path was
-      // listen('adb-processor-update') in usePipeline.ts — that broadcast is
-      // now dead. Fix: emit a bus event here (e.g. pipeline:adb-processor-update)
-      // and consume it in usePipeline.
     };
 
     try {

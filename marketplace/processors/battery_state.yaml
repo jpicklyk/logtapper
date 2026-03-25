@@ -1,9 +1,9 @@
 type: state_tracker
 id: battery-state
 name: Battery State
-version: 3.1.2
+version: 4.0.0
 author: LogTapper
-description: "Tracks battery level, charging status, and plug source from BatteryService. Each transition captures all fields at once so level + status + plugged are set atomically. Supports Samsung (level:N, status:N, ac:true/false) and AOSP (level=N, status=N, plugged=N) formats."
+description: "Tracks battery level, charging status, plug source, voltage, temperature, current draw, and cycle count from BatteryService ACTION_BATTERY_CHANGED broadcasts. Supports Samsung (named booleans: ac:true/false) and AOSP (plugged=N) formats."
 tags: [battery, power, android]
 category: battery
 builtin: false
@@ -13,21 +13,31 @@ group: System
 state:
   - name: level
     type: int
+  - name: status
+    type: string
   - name: charging
     type: bool
   - name: plugged
     type: string
-  - name: status
-    type: string
+  - name: voltage
+    type: int
+  - name: temperature
+    type: int
+  - name: current_avg
+    type: int
+  - name: cycle_count
+    type: int
 
 transitions:
-  # ── Samsung format: status=2 + named plug boolean ─────────────────────────
-  # Captures level ($1) and sets charging/status/plugged atomically.
+  # ── Samsung format: Sending ACTION_BATTERY_CHANGED with named booleans ───
+  # Line: BatteryService: Sending ACTION_BATTERY_CHANGED: level:18, status:3,
+  #   health:2, ...ac:false, usb:true, wireless:false, pogo:false, ...
+  #   voltage:3515, temperature:248, ...current_avg:-1136, ...cycle_count:0
 
   - name: Charging via AC
     filter:
       tag: BatteryService
-      message_regex: 'level[=:](\d+).*?status[=:]2[,\s].*?ac:true'
+      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*level:(\d+).*status:(\d+).*ac:true'
     set:
       level: "$1"
       charging: true
@@ -37,7 +47,7 @@ transitions:
   - name: Charging via USB
     filter:
       tag: BatteryService
-      message_regex: 'level[=:](\d+).*?status[=:]2[,\s].*?usb:true'
+      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*level:(\d+).*status:(\d+).*usb:true'
     set:
       level: "$1"
       charging: true
@@ -47,7 +57,7 @@ transitions:
   - name: Charging via Wireless
     filter:
       tag: BatteryService
-      message_regex: 'level[=:](\d+).*?status[=:]2[,\s].*?wireless:true'
+      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*level:(\d+).*status:(\d+).*wireless:true'
     set:
       level: "$1"
       charging: true
@@ -57,86 +67,80 @@ transitions:
   - name: Charging via Pogo
     filter:
       tag: BatteryService
-      message_regex: 'level[=:](\d+).*?status[=:]2[,\s].*?pogo:true'
+      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*level:(\d+).*status:(\d+).*pogo:true'
     set:
       level: "$1"
       charging: true
       status: charging
       plugged: pogo
 
-  # ── AOSP format: status=2 + numeric plugged code ──────────────────────────
-
-  - name: AC Plugged (AOSP)
-    filter:
-      tag: BatteryService
-      message_regex: 'level=(\d+).*?status=2.*?plugged=1[\s,]'
-    set:
-      level: "$1"
-      charging: true
-      status: charging
-      plugged: ac
-
-  - name: USB Plugged (AOSP)
-    filter:
-      tag: BatteryService
-      message_regex: 'level=(\d+).*?status=2.*?plugged=2[\s,]'
-    set:
-      level: "$1"
-      charging: true
-      status: charging
-      plugged: usb
-
-  - name: Wireless Charging (AOSP)
-    filter:
-      tag: BatteryService
-      message_regex: 'level=(\d+).*?status=2.*?plugged=4[\s,]'
-    set:
-      level: "$1"
-      charging: true
-      status: charging
-      plugged: wireless
-
-  # ── Status 3 — Discharging (both formats) ─────────────────────────────────
-
+  # ── Status 3 — Discharging ──────────────────────────────────────────────
   - name: Discharging
     filter:
       tag: BatteryService
-      message_regex: 'level[=:](\d+).*?status[=:]3[,\s]'
+      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*level:(\d+).*status:3[,\s]'
     set:
       level: "$1"
       charging: false
       status: discharging
       plugged: none
 
-  # ── Status 4 — Not Charging (plugged but not charging) ────────────────────
-
+  # ── Status 4 — Not Charging (plugged but not charging) ──────────────────
   - name: Not Charging
     filter:
       tag: BatteryService
-      message_regex: 'level[=:](\d+).*?status[=:]4[,\s]'
+      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*level:(\d+).*status:4[,\s]'
     set:
       level: "$1"
       charging: false
       status: not_charging
-      plugged: none
 
-  # ── Status 5 — Full ───────────────────────────────────────────────────────
-
+  # ── Status 5 — Full ─────────────────────────────────────────────────────
   - name: Battery Full
     filter:
       tag: BatteryService
-      message_regex: 'level[=:](\d+).*?status[=:]5[,\s]'
+      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*level:(\d+).*status:5[,\s]'
     set:
       level: "$1"
       charging: false
       status: full
 
-  # ── Level-only fallback (level present but no recognized status) ──────────
+  # ── Voltage / Temperature / Current / Cycle Count extraction ────────────
+  # These fire on every ACTION_BATTERY_CHANGED regardless of status.
 
-  - name: Battery Level
+  - name: Voltage Update
     filter:
       tag: BatteryService
-      message_regex: 'level[=:](\d+)'
+      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*voltage:(\d+)'
+    set:
+      voltage: "$1"
+
+  - name: Temperature Update
+    filter:
+      tag: BatteryService
+      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*temperature:(\d+)'
+    set:
+      temperature: "$1"
+
+  - name: Current Average Update
+    filter:
+      tag: BatteryService
+      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*current_avg:(-?\d+)'
+    set:
+      current_avg: "$1"
+
+  - name: Cycle Count Update
+    filter:
+      tag: BatteryService
+      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*cycle_count:(\d+)'
+    set:
+      cycle_count: "$1"
+
+  # ── Fallback: processValuesLocked (older format / AOSP) ─────────────────
+  - name: Battery Level (fallback)
+    filter:
+      tag: BatteryService
+      message_regex: '\[processValuesLocked\]batteryLevel:(\d+)'
     set:
       level: "$1"
 
@@ -149,6 +153,6 @@ schema:
   emissions: []
   mcp:
     summary:
-      template: "Battery state tracker: monitors level, charging status, and plug source from BatteryService across Samsung and AOSP formats."
-      include_vars: []
+      template: "Battery: level={{level}}%, status={{status}}, plugged={{plugged}}, voltage={{voltage}}mV, temp={{temperature}} (x0.1C), current={{current_avg}}mA, cycles={{cycle_count}}."
+      include_vars: [level, status, plugged, voltage, temperature, current_avg, cycle_count]
     signals: []

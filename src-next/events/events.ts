@@ -1,4 +1,4 @@
-import type { SourceType } from '../bridge/types';
+import type { AdbProcessorUpdate, SourceType } from '../bridge/types';
 
 /** Typed event map for the internal application event bus. */
 export type AppEvents = {
@@ -48,6 +48,9 @@ export type AppEvents = {
   'pipeline:cleared':       undefined;
   'pipeline:chain-changed': { chain: string[] };
   'pipeline:library-open':  undefined;
+  /** Forwarded from Channel<AdbStreamEvent> processorUpdate — drives PipelineContext
+   *  so ProcessorDashboard/StatePanel/CorrelationsView refresh during streaming. */
+  'pipeline:adb-processor-batch': AdbProcessorUpdate[];
 
   // ── Layout / navigation ───────────────────────────────────────────────────
   'layout:open-tab':        { type: string; label?: string; filePath?: string };

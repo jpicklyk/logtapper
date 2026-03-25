@@ -1,0 +1,210 @@
+meta:
+  id: "cpu-load"
+  name: "CPU Load"
+  version: "1.0.0"
+  author: "LogTapper"
+  description: "Extracts CPU load averages and top CPU-consuming processes from the dumpstate cpuinfo section. Reports 1/5/15 minute load averages, overall CPU utilization breakdown (user/system/idle/iowait), and per-process CPU usage."
+  tags: ["cpu", "load", "performance", "android"]
+  category: system
+
+sections:
+  - "cpuinfo"
+  - "CPU INFO"
+
+vars:
+  - name: load_1m
+    type: string
+    default: ""
+    display: true
+    label: "Load 1m"
+
+  - name: load_5m
+    type: string
+    default: ""
+    display: true
+    label: "Load 5m"
+
+  - name: load_15m
+    type: string
+    default: ""
+    display: true
+    label: "Load 15m"
+
+  - name: cpu_user_pct
+    type: int
+    default: 0
+    display: true
+    label: "CPU User %"
+
+  - name: cpu_sys_pct
+    type: int
+    default: 0
+    display: true
+    label: "CPU Sys %"
+
+  - name: cpu_idle_pct
+    type: int
+    default: 0
+    display: true
+    label: "CPU Idle %"
+
+  - name: cpu_iow_pct
+    type: int
+    default: 0
+    display: true
+    label: "CPU IOWait %"
+
+  - name: process_count
+    type: int
+    default: 0
+    display: true
+    label: "Processes Reported"
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains_any
+        values:
+          - "Load:"
+          - "%cpu"
+          - "% user +"
+
+  - stage: extract
+    fields:
+      # Load averages: "Load: 4.61 / 3.26 / 2.48"
+      - name: load_1m
+        pattern: 'Load:\s*([0-9.]+)'
+      - name: load_5m
+        pattern: 'Load:\s*[0-9.]+\s*/\s*([0-9.]+)'
+      - name: load_15m
+        pattern: 'Load:\s*[0-9.]+\s*/\s*[0-9.]+\s*/\s*([0-9.]+)'
+      # Overall CPU: "800%cpu 205%user 21%nice 282%sys 265%idle 11%iow"
+      - name: cpu_total
+        pattern: '(\d+)%cpu'
+        cast: int
+      - name: cpu_user
+        pattern: '(\d+)%user'
+        cast: int
+      - name: cpu_sys
+        pattern: '(\d+)%sys'
+        cast: int
+      - name: cpu_idle
+        pattern: '(\d+)%idle'
+        cast: int
+      - name: cpu_iow
+        pattern: '(\d+)%iow'
+        cast: int
+      # Per-process: "  34% 1611/system_server: 19% user + 15% kernel"
+      - name: proc_cpu
+        pattern: '^\s*([0-9.]+)%\s+\d+/'
+      - name: proc_pid
+        pattern: '^\s*[0-9.]+%\s+(\d+)/'
+        cast: int
+      - name: proc_name
+        pattern: '^\s*[0-9.]+%\s+\d+/([^:]+):'
+      - name: proc_user
+        pattern: '([0-9.]+)% user'
+      - name: proc_kernel
+        pattern: '([0-9.]+)% kernel'
+
+  - stage: script
+    runtime: rhai
+    src: |
+      // Load averages line
+      if "load_1m" in fields {
+        vars.load_1m = fields.load_1m;
+        vars.load_5m = if "load_5m" in fields { fields.load_5m } else { "" };
+        vars.load_15m = if "load_15m" in fields { fields.load_15m } else { "" };
+
+        _emits.push(#{
+          type: "load_avg",
+          load_1m: fields.load_1m,
+          load_5m: vars.load_5m,
+          load_15m: vars.load_15m,
+        });
+        return;
+      }
+
+      // Overall CPU breakdown line
+      if "cpu_total" in fields {
+        vars.cpu_user_pct = fields.cpu_user;
+        vars.cpu_sys_pct = fields.cpu_sys;
+        vars.cpu_idle_pct = fields.cpu_idle;
+        vars.cpu_iow_pct = if "cpu_iow" in fields { fields.cpu_iow } else { 0 };
+
+        _emits.push(#{
+          type: "cpu_summary",
+          cpu_user: fields.cpu_user,
+          cpu_sys: fields.cpu_sys,
+          cpu_idle: fields.cpu_idle,
+          cpu_iow: vars.cpu_iow_pct,
+        });
+        return;
+      }
+
+      // Per-process CPU line
+      if "proc_name" in fields {
+        vars.process_count += 1;
+
+        _emits.push(#{
+          type: "process",
+          process: fields.proc_name,
+          pid: if "proc_pid" in fields { fields.proc_pid } else { 0 },
+          cpu_pct: fields.proc_cpu,
+          user_pct: if "proc_user" in fields { fields.proc_user } else { "0" },
+          kernel_pct: if "proc_kernel" in fields { fields.proc_kernel } else { "0" },
+        });
+      }
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["type", "process", "cpu_pct", "user_pct", "kernel_pct", "load_1m"]
+        sort: "cpu_pct"
+      - type: summary
+        source: vars
+        template: |
+          Load: {{load_1m}} / {{load_5m}} / {{load_15m}}. CPU: {{cpu_user_pct}}% user, {{cpu_sys_pct}}% sys, {{cpu_idle_pct}}% idle, {{cpu_iow_pct}}% iow. {{process_count}} processes.
+
+schema:
+  source_types: ["bugreport", "dumpstate"]
+  emissions:
+    - name: type
+      type: string
+      description: "Record type: load_avg, cpu_summary, or process"
+    - name: load_1m
+      type: string
+      description: "1-minute load average"
+    - name: load_5m
+      type: string
+      description: "5-minute load average"
+    - name: load_15m
+      type: string
+      description: "15-minute load average"
+    - name: cpu_user
+      type: int
+      description: "Total CPU user percentage"
+    - name: cpu_sys
+      type: int
+      description: "Total CPU system percentage"
+    - name: cpu_idle
+      type: int
+      description: "Total CPU idle percentage"
+    - name: process
+      type: string
+      description: "Process name"
+    - name: cpu_pct
+      type: string
+      description: "Process CPU usage percentage"
+  mcp:
+    summary:
+      template: "Load: {{load_1m}}/{{load_5m}}/{{load_15m}}. CPU: {{cpu_user_pct}}% user, {{cpu_sys_pct}}% sys, {{cpu_idle_pct}}% idle. {{process_count}} processes."
+      include_vars: [load_1m, load_5m, load_15m, cpu_user_pct, cpu_sys_pct, cpu_idle_pct, cpu_iow_pct, process_count]
+    signals:
+      - name: high_cpu_iowait
+        severity: warning
+        condition: "cpu_iow >= 20"
+        fields: [cpu_user, cpu_sys, cpu_idle, cpu_iow]
+        format: "High I/O wait: {{cpu_iow}}% (user={{cpu_user}}%, sys={{cpu_sys}}%, idle={{cpu_idle}}%)"
+        type: emission

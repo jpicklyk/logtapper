@@ -1,0 +1,17 @@
+name: Device Health
+version: 1.0.0
+description: Battery state/events/health, charging, thermal, CPU load, GPU memory, memory pressure, GC pressure, and system server heap monitoring
+author: LogTapper
+tags: [battery, thermal, cpu, gpu, memory, system, android]
+category: system
+processors:
+  - battery-state
+  - battery-events
+  - battery-health
+  - charging-state
+  - memory-pressure
+  - thermal-state
+  - cpu-load
+  - gpu-memory
+  - gc-pressure-monitor
+  - system-server-heap
