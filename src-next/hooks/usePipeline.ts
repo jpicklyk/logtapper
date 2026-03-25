@@ -139,24 +139,37 @@ export function usePipeline(): PipelineActions {
   const pendingRunCountBumpRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const handler = (updates: AdbProcessorUpdate[]) => {
-      if (updates.length === 0) return;
-      dispatch({ type: 'adb:results-batch', updates });
-      pendingRunCountBumpRef.current = updates[0].sessionId;
+    // Shared trailing-throttle for runCount bumps — coalesces processor and tracker
+    // updates into one dispatch per 2s window.
+    const scheduleRunCountBump = (sessionId: string) => {
+      pendingRunCountBumpRef.current = sessionId;
       if (!streamRunCountTimerRef.current) {
         streamRunCountTimerRef.current = setTimeout(() => {
           streamRunCountTimerRef.current = null;
-          const pendingSessionId = pendingRunCountBumpRef.current;
-          if (pendingSessionId) {
+          const pending = pendingRunCountBumpRef.current;
+          if (pending) {
             pendingRunCountBumpRef.current = null;
-            dispatch({ type: 'adb:run-count-bump', sessionId: pendingSessionId });
+            dispatch({ type: 'adb:run-count-bump', sessionId: pending });
           }
         }, 2000);
       }
     };
-    bus.on('pipeline:adb-processor-batch', handler);
+
+    const processorHandler = (updates: AdbProcessorUpdate[]) => {
+      if (updates.length === 0) return;
+      dispatch({ type: 'adb:results-batch', updates });
+      scheduleRunCountBump(updates[0].sessionId);
+    };
+
+    const trackerHandler = (payload: { sessionId: string }) => {
+      scheduleRunCountBump(payload.sessionId);
+    };
+
+    bus.on('pipeline:adb-processor-batch', processorHandler);
+    bus.on('pipeline:adb-tracker-update', trackerHandler);
     return () => {
-      bus.off('pipeline:adb-processor-batch', handler);
+      bus.off('pipeline:adb-processor-batch', processorHandler);
+      bus.off('pipeline:adb-tracker-update', trackerHandler);
       if (streamRunCountTimerRef.current) {
         clearTimeout(streamRunCountTimerRef.current);
         streamRunCountTimerRef.current = null;

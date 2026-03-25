@@ -30,7 +30,8 @@ export function useStateTracker(): StateTrackerActions {
   const unlistenRef = useRef<UnlistenFn | null>(null);
 
   // Subscribe to adb-tracker-update events (StrictMode-safe).
-  // Updates the streaming session's update counts.
+  // Updates the streaming session's update counts and forwards to bus
+  // so usePipeline can bump runCount for dashboard rendering.
   useEffect(() => {
     let cancelled = false;
     listen<AdbTrackerUpdate>('adb-tracker-update', (event) => {
@@ -40,6 +41,7 @@ export function useStateTracker(): StateTrackerActions {
         ...prev,
         [trackerId]: transitionCount,
       }));
+      bus.emit('pipeline:adb-tracker-update', { sessionId, trackerId, transitionCount });
     }).then((fn) => {
       if (cancelled) fn();
       else unlistenRef.current = fn;
@@ -75,11 +77,13 @@ export function useStateTracker(): StateTrackerActions {
     }
   }, [setSessionTransitionData]);
 
+  // Throttled transition line refresh for streaming — at most once per 3s.
+  const transitionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingTransitionRefreshRef = useRef<string | null>(null);
+
   // Subscribe to bus events
   useEffect(() => {
     const handlePreLoad = (e: { paneId: string }) => {
-      // Clear the session being replaced. Use paneSessionMapRef to find the outgoing
-      // sessionId — at pre-load time the map still holds the outgoing session.
       const outgoingSessionId = paneSessionMapRef.current.get(e.paneId);
       if (outgoingSessionId) {
         clearSessionData(outgoingSessionId);
@@ -87,7 +91,6 @@ export function useStateTracker(): StateTrackerActions {
     };
 
     const handlePipelineCompleted = (data: { sessionId: string; hasTrackers: boolean }) => {
-      // Store data for any sessionId (background pane results persist correctly).
       if (data.hasTrackers) {
         refreshTransitionLines(data.sessionId);
       }
@@ -97,14 +100,35 @@ export function useStateTracker(): StateTrackerActions {
       clearSessionData(e.sessionId);
     };
 
+    // Throttled refresh during streaming so timeline updates without flooding.
+    const handleTrackerUpdate = (e: { sessionId: string }) => {
+      pendingTransitionRefreshRef.current = e.sessionId;
+      if (!transitionRefreshTimerRef.current) {
+        transitionRefreshTimerRef.current = setTimeout(() => {
+          transitionRefreshTimerRef.current = null;
+          const sid = pendingTransitionRefreshRef.current;
+          if (sid) {
+            pendingTransitionRefreshRef.current = null;
+            refreshTransitionLines(sid);
+          }
+        }, 3000);
+      }
+    };
+
     bus.on('session:pre-load', handlePreLoad);
     bus.on('pipeline:completed', handlePipelineCompleted);
     bus.on('session:closed', handleSessionClosed);
+    bus.on('pipeline:adb-tracker-update', handleTrackerUpdate);
 
     return () => {
       bus.off('session:pre-load', handlePreLoad);
       bus.off('pipeline:completed', handlePipelineCompleted);
       bus.off('session:closed', handleSessionClosed);
+      bus.off('pipeline:adb-tracker-update', handleTrackerUpdate);
+      if (transitionRefreshTimerRef.current) {
+        clearTimeout(transitionRefreshTimerRef.current);
+        transitionRefreshTimerRef.current = null;
+      }
     };
   }, [clearSessionData, refreshTransitionLines]);
 

@@ -1,4 +1,4 @@
-import type { AdbProcessorUpdate, SourceType } from '../bridge/types';
+import type { AdbProcessorUpdate, AdbTrackerUpdate, SourceType } from '../bridge/types';
 
 /** Typed event map for the internal application event bus. */
 export type AppEvents = {
@@ -51,6 +51,9 @@ export type AppEvents = {
   /** Forwarded from Channel<AdbStreamEvent> processorUpdate — drives PipelineContext
    *  so ProcessorDashboard/StatePanel/CorrelationsView refresh during streaming. */
   'pipeline:adb-processor-batch': AdbProcessorUpdate[];
+  /** Forwarded from Tauri adb-tracker-update broadcast — triggers runCount bump
+   *  and transition line refresh so dashboard/timeline update during streaming. */
+  'pipeline:adb-tracker-update': AdbTrackerUpdate;
 
   // ── Layout / navigation ───────────────────────────────────────────────────
   'layout:open-tab':        { type: string; label?: string; filePath?: string };
