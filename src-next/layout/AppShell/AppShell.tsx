@@ -21,7 +21,7 @@ import { RightPane } from '../../components/RightPane';
 import { BottomPane } from '../../components/BottomPane';
 import { PaneContent } from '../../components/PaneContent';
 import { SettingsPanel } from '../../components/SettingsPanel';
-import { useSettings, useAnonymizerConfig, useToast, useAnalysisToast, useWatchToast, useWorkspaceRestoreToast, useFileShortcuts } from '../../hooks';
+import { useSettings, useAnonymizerConfig, useToast, useAnalysisToast, useWatchToast, useWorkspaceRestoreToast, useFileShortcuts, useStartupFile } from '../../hooks';
 import { useCacheManager } from '../../cache';
 import { Toast } from '../../ui';
 import { findTabAcrossTree, allPanes } from '../../hooks/workspace/splitTreeHelpers';
@@ -75,6 +75,7 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   const updateBadgeCount = usePendingUpdateCount();
   const { openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession } = useViewerActions();
   useFileShortcuts({ openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession });
+  useStartupFile();
 
   // -- Watch badge (unacknowledged match count on Eye icon) --
   const [watchBadge, setWatchBadge] = useState(0);

@@ -56,8 +56,15 @@ semver = "1"
 # Phase 2: Bookmarks + Analysis
 uuid = { version = "1", features = ["v4"] }
 
+# Single instance enforcement (second launch redirects to existing window)
+tauri-plugin-single-instance = "2"
+
 # Window state persistence (saves position/size across restarts)
 tauri-plugin-window-state = "2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg = "0.52"
+windows-sys = { version = "0.59", features = ["Win32_UI_Shell"] }
 
 [lints.clippy]
 # === Deny (safety-critical, zero tolerance) ===

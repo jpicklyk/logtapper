@@ -1202,6 +1202,16 @@ pub fn write_text_file(path: String, content: String) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
+// get_startup_file
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn get_startup_file(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let mut sp = lock_or_err(&state.startup_file_path, "startup_file_path")?;
+    Ok(sp.take())
+}
+
+// ---------------------------------------------------------------------------
 // get_sections
 // ---------------------------------------------------------------------------
 

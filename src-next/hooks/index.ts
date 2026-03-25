@@ -47,3 +47,4 @@ export { useMcpStatus } from './useMcpStatus';
 export type { McpConnState, McpStatusInfo } from './useMcpStatus';
 export { useStatusBarSelection } from './useStatusBarSelection';
 export type { StatusBarSelection } from './useStatusBarSelection';
+export { useStartupFile } from './useStartupFile';

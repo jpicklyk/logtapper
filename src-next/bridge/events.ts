@@ -127,3 +127,13 @@ export function onWatchMatch(
   return listen<WatchMatchEvent>('watch-match', (e) => cb(e.payload));
 }
 
+// ---------------------------------------------------------------------------
+// File open events (file association / single-instance)
+// ---------------------------------------------------------------------------
+
+export function onOpenFile(
+  cb: (path: string) => void,
+): Promise<UnlistenFn> {
+  return listen<string>('open-file', (e) => cb(e.payload));
+}
+

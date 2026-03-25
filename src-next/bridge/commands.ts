@@ -39,6 +39,7 @@ import type {
   UpdateAvailable,
   ExportSessionInfo,
   ExportOptions,
+  FileAssocEntry,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -515,6 +516,26 @@ export function readTextFile(path: string): Promise<string> {
 
 export function writeTextFile(path: string, content: string): Promise<void> {
   return invoke('write_text_file', { path, content });
+}
+
+// ---------------------------------------------------------------------------
+// File associations
+// ---------------------------------------------------------------------------
+
+export function getFileAssociationStatus(): Promise<FileAssocEntry[]> {
+  return invoke('get_file_association_status');
+}
+
+export function setFileAssociation(ext: string, enabled: boolean): Promise<void> {
+  return invoke('set_file_association', { ext, enabled });
+}
+
+export function openDefaultAppsSettings(): Promise<void> {
+  return invoke('open_default_apps_settings');
+}
+
+export function getStartupFile(): Promise<string | null> {
+  return invoke('get_startup_file');
 }
 
 // ---------------------------------------------------------------------------

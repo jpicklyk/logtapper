@@ -763,3 +763,14 @@ export interface ExportOptions {
   includeBookmarks: boolean;
   includeAnalyses: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// File associations
+// ---------------------------------------------------------------------------
+
+export interface FileAssocEntry {
+  ext: string;
+  label: string;
+  registered: boolean;
+  isDefault: boolean;
+}

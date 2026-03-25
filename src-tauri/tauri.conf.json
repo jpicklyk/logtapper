@@ -36,6 +36,20 @@
         "installMode": "both"
       }
     },
+    "fileAssociations": [
+      {
+        "ext": ["lts"],
+        "name": "LogTapper Session",
+        "description": "LogTapper session file",
+        "role": "Editor"
+      },
+      {
+        "ext": ["ltw"],
+        "name": "LogTapper Workspace",
+        "description": "LogTapper workspace file",
+        "role": "Editor"
+      }
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

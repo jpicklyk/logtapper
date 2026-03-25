@@ -24,6 +24,7 @@ pub mod charts;
 pub mod claude;
 pub mod correlator;
 pub mod export;
+pub mod file_associations;
 pub mod files;
 pub mod filter;
 pub mod pipeline;
@@ -101,6 +102,8 @@ pub struct AppState {
     pub session_pipeline_meta: Mutex<HashMap<String, crate::workspace::SessionMeta>>,
     /// Installed processor packs (packId -> PackMeta).
     pub packs: Mutex<Vec<PackMeta>>,
+    /// Path passed via CLI args at launch (double-click file association).
+    pub startup_file_path: Mutex<Option<String>>,
 }
 
 impl Default for AppState {
@@ -153,6 +156,7 @@ impl AppState {
             workspace_save_tasks: Mutex::new(HashMap::new()),
             session_pipeline_meta: Mutex::new(HashMap::new()),
             packs: Mutex::new(Vec::new()),
+            startup_file_path: Mutex::new(None),
         }
     }
 }

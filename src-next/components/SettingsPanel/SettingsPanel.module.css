@@ -452,6 +452,100 @@
   border-color: var(--accent);
 }
 
+/* ── File association status badges ──────────────────────────────────────── */
+
+.assocBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.assocBadge::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.assocBadgeDefault {
+  background: var(--success-muted);
+  color: var(--success);
+}
+
+.assocBadgeDefault::before {
+  background: var(--success);
+}
+
+.assocBadgeAvailable {
+  background: var(--warning-muted-bg);
+  color: var(--warning);
+}
+
+.assocBadgeAvailable::before {
+  background: var(--warning);
+}
+
+.assocStatic {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin-bottom: 4px;
+}
+
+.assocStaticExt {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text);
+  min-width: 32px;
+}
+
+.assocStaticDesc {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-dimmed);
+}
+
+.assocStaticBadge {
+  font-size: 9px;
+  color: var(--text-dimmed);
+  padding: 1px 6px;
+  background: var(--bg-overlay);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.assocOpenSettings {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-base);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.assocOpenSettings:hover {
+  border-color: var(--accent);
+  background: var(--bg-overlay);
+}
+
 /* ── Link-style buttons ──────────────────────────────────────────────────── */
 
 .linkBtn {

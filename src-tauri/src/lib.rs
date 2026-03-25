@@ -12,7 +12,7 @@ use commands::AppState;
 use processors::marketplace::{Source, SourceType};
 use processors::registry;
 use processors::AnyProcessor;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 fn load_persisted_processors(state: &AppState, proc_dir: &std::path::Path) {
     let mut yamls: Vec<(std::path::PathBuf, String)> = Vec::new();
@@ -148,6 +148,18 @@ async fn startup_update_check(handle: tauri::AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::new())
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // Focus the existing window.
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+
+            // Extract file path from args (skip binary name, skip flags).
+            if let Some(path) = args.iter().skip(1).find(|a| !a.starts_with('-')) {
+                let _ = app.emit("open-file", path.to_string());
+            }
+        }))
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -296,6 +308,16 @@ pub fn run() {
                 tauri::async_runtime::spawn(startup_update_check(update_handle));
             }
 
+            // Capture file path passed via CLI args (e.g. double-click file association).
+            let startup_path: Option<String> = std::env::args()
+                .skip(1)
+                .find(|a| !a.starts_with('-'));
+            if let Some(path) = startup_path {
+                if let Ok(mut sp) = state.startup_file_path.lock() {
+                    *sp = Some(path);
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -316,6 +338,11 @@ pub fn run() {
             commands::files::close_session,
             commands::files::read_text_file,
             commands::files::write_text_file,
+            commands::files::get_startup_file,
+            // File association management (Windows registry)
+            commands::file_associations::get_file_association_status,
+            commands::file_associations::set_file_association,
+            commands::file_associations::open_default_apps_settings,
             commands::pipeline::run_pipeline,
             commands::pipeline::stop_pipeline,
             commands::processors::list_processors,
@@ -390,8 +417,22 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error building tauri application")
         .run(|app_handle, event| {
-            if let tauri::RunEvent::Exit = event {
-                commands::workspace_sync::flush_all_workspaces(app_handle);
+            match event {
+                tauri::RunEvent::Exit => {
+                    commands::workspace_sync::flush_all_workspaces(app_handle);
+                }
+                #[cfg(target_os = "macos")]
+                tauri::RunEvent::Opened { urls } => {
+                    // macOS sends file paths as file:// URLs via this event.
+                    for url in urls {
+                        if let Ok(path) = url.to_file_path() {
+                            if let Some(path_str) = path.to_str() {
+                                let _ = app_handle.emit("open-file", path_str.to_string());
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
         });
 }

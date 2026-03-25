@@ -1,11 +1,13 @@
-import { memo, useCallback, useState } from 'react';
-import { Moon, Monitor, Plus, Sun, Trash2 } from 'lucide-react';
+import { memo, useCallback, useEffect, useState } from 'react';
+import { ExternalLink, Moon, Monitor, Plus, Sun, Trash2 } from 'lucide-react';
 import type { AppSettings, UseSettingsResult, BookmarkCategoryDef } from '../../hooks';
 import { SETTING_DEFAULTS, DEFAULT_BOOKMARK_CATEGORIES } from '../../hooks';
 import { useTheme } from '../../context';
 import { SegmentedControl } from '../../ui';
 import type { SegmentedOption } from '../../ui';
 import type { ThemeMode } from '../../context';
+import { getFileAssociationStatus, setFileAssociation, openDefaultAppsSettings } from '../../bridge/commands';
+import type { FileAssocEntry } from '../../bridge/types';
 import css from './SettingsPanel.module.css';
 
 function formatNumber(n: number): string {
@@ -141,6 +143,8 @@ export const GeneralTab = memo(function GeneralTab({ settings, onUpdate }: Gener
           </div>
         </div>
       </div>
+
+      <FileAssociationsSection />
 
       <div className={css.section}>
         <div className={css.sectionTitle}>Bookmark Categories</div>
@@ -284,6 +288,102 @@ function AddCategoryButton({ onAdd, existingIds }: {
       />
       <button className={css.linkBtn} type="button" onClick={handleSubmit}>Add</button>
       <button className={css.linkBtn} type="button" onClick={() => setAdding(false)}>Cancel</button>
+    </div>
+  );
+}
+
+// -- File association settings (Windows 10/11) --------------------------------
+
+const STATIC_ASSOCS = [
+  { ext: '.lts', desc: 'LogTapper session' },
+  { ext: '.ltw', desc: 'LogTapper workspace' },
+];
+
+function FileAssociationsSection() {
+  const [entries, setEntries] = useState<FileAssocEntry[]>([]);
+  const [pending, setPending] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  const refresh = useCallback(() => {
+    getFileAssociationStatus()
+      .then((e) => { setEntries(e); setLoaded(true); })
+      .catch(() => { setLoaded(true); });
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const handleToggle = useCallback(async (ext: string, enabled: boolean) => {
+    setPending(ext);
+    try {
+      await setFileAssociation(ext, enabled);
+      refresh();
+    } catch {
+      // Failed — leave unchanged
+    } finally {
+      setPending(null);
+    }
+  }, [refresh]);
+
+  const handleOpenDefaults = useCallback(() => {
+    openDefaultAppsSettings().catch(() => {});
+  }, []);
+
+  const isWindows = loaded && entries.length > 0;
+
+  return (
+    <div className={css.section}>
+      <div className={css.sectionTitle}>File Associations</div>
+
+      <span className={css.labelHint}>
+        Registered automatically when LogTapper is installed.
+      </span>
+      {STATIC_ASSOCS.map(({ ext, desc }) => (
+        <div className={css.assocStatic} key={ext}>
+          <span className={css.assocStaticExt}>{ext}</span>
+          <span className={css.assocStaticDesc}>{desc}</span>
+          <span className={css.assocStaticBadge}>installed</span>
+        </div>
+      ))}
+
+      {isWindows && (
+        <>
+          <span className={css.labelHint} style={{ marginTop: 12 }}>
+            Enable additional file types to open with LogTapper. Once enabled, set
+            LogTapper as the default handler in Windows Settings.
+          </span>
+          {entries.map(({ ext, label, registered, isDefault }) => (
+            <div className={css.row} key={ext}>
+              <div className={css.label}>
+                <span className={css.labelText}>{label} (.{ext})</span>
+                {registered && (
+                  <span
+                    className={`${css.assocBadge} ${isDefault ? css.assocBadgeDefault : css.assocBadgeAvailable}`}
+                    style={{ marginTop: 2 }}
+                  >
+                    {isDefault ? 'Default handler' : 'Available in Open With'}
+                  </span>
+                )}
+              </div>
+              <div className={css.control}>
+                <input
+                  type="checkbox"
+                  checked={registered}
+                  disabled={pending === ext}
+                  onChange={(e) => handleToggle(ext, e.target.checked)}
+                />
+              </div>
+            </div>
+          ))}
+          <button
+            className={css.assocOpenSettings}
+            type="button"
+            onClick={handleOpenDefaults}
+          >
+            <ExternalLink size={11} />
+            Windows Default Apps
+          </button>
+        </>
+      )}
     </div>
   );
 }
