@@ -154,11 +154,16 @@
   cursor: grabbing;
 }
 
-/* ── Light theme tab fixes ──────────────────────────────────────────────── */
-/* In light mode the tab bar sits on --chrome-bg so inactive tabs need a
-   visible border, and the active tab should be white (matching content)
-   to visually connect to the pane below. */
+/* ── Theme-specific tab fixes ────────────────────────────────────────────── */
+/* Both themes: give inactive tabs a visible border so they don't vanish
+   against the bar background. Active tab pops forward with a distinct bg. */
 
+/* — Dark — */
+:global([data-theme="dark"]) .tab {
+  border-color: color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+/* — Light — */
 :global([data-theme="light"]) .bar {
   background: var(--chrome-bg);
 }
