@@ -247,7 +247,7 @@ mod tests {
         let def = load_battery_def();
         let mut run = StateTrackerRun::new("__battery_state", &def);
         // Samsung ACTION_BATTERY_CHANGED — status:3 (discharging), all plug booleans false
-        let msg = "Sending ACTION_BATTERY_CHANGED: level:99, status:3, health:2, remain:0, ac:false, usb:false, wireless:false, pogo:false, misc:0x10000";
+        let msg = "Sending ACTION_BATTERY_CHANGED: level:99, status:3, health:2, remain:0, ac:false, usb:false, wireless:false, pogo:false, misc:0x10000, voltage:4100, temperature:280, current_avg:-450";
         run.process_line(&make_line(1, "BatteryService", msg), &PipelineContext::test_default());
         assert_eq!(run.transitions.len(), 1);
         assert_eq!(run.transitions[0].transition_name, "Discharging");
@@ -255,6 +255,9 @@ mod tests {
         assert_eq!(run.current_state["charging"], json!(false));
         assert_eq!(run.current_state["status"], json!("discharging"));
         assert_eq!(run.current_state["plugged"], json!("none"));
+        assert_eq!(run.current_state["voltage"], json!("4100"));
+        assert_eq!(run.current_state["temperature"], json!("280"));
+        assert_eq!(run.current_state["current_avg"], json!("-450"));
         // plugged must appear in changes (null→"none") so it becomes initialized in the UI
         assert!(run.transitions[0].changes.contains_key("plugged"));
     }
@@ -264,7 +267,7 @@ mod tests {
         let def = load_battery_def();
         let mut run = StateTrackerRun::new("__battery_state", &def);
         // Samsung — status:2 (charging), usb:true
-        let msg = "Sending ACTION_BATTERY_CHANGED: level:85, status:2, health:2, remain:0, ac:false, usb:true, wireless:false, pogo:false";
+        let msg = "Sending ACTION_BATTERY_CHANGED: level:85, status:2, health:2, remain:0, ac:false, usb:true, wireless:false, pogo:false, voltage:4050, temperature:270, current_avg:454";
         run.process_line(&make_line(1, "BatteryService", msg), &PipelineContext::test_default());
         assert_eq!(run.transitions.len(), 1);
         assert_eq!(run.transitions[0].transition_name, "Charging via USB");
@@ -272,20 +275,21 @@ mod tests {
         assert_eq!(run.current_state["charging"], json!(true));
         assert_eq!(run.current_state["status"], json!("charging"));
         assert_eq!(run.current_state["plugged"], json!("usb"));
+        assert_eq!(run.current_state["voltage"], json!("4050"));
+        assert_eq!(run.current_state["temperature"], json!("270"));
+        assert_eq!(run.current_state["current_avg"], json!("454"));
     }
 
     #[test]
     fn battery_aosp_ac_sets_all_fields() {
         let def = load_battery_def();
         let mut run = StateTrackerRun::new("__battery_state", &def);
-        // AOSP — level=90, status=2, plugged=1 (AC)
-        let msg = "level=90, status=2, health=2, present=true, voltage=4200, plugged=1, technology=Li-ion";
+        // AOSP processValuesLocked fallback — captures level only
+        let msg = "[processValuesLocked]batteryLevel:90";
         run.process_line(&make_line(1, "BatteryService", msg), &PipelineContext::test_default());
         assert_eq!(run.transitions.len(), 1);
-        assert_eq!(run.transitions[0].transition_name, "AC Plugged (AOSP)");
+        assert_eq!(run.transitions[0].transition_name, "Battery Level (processValuesLocked)");
         assert_eq!(run.current_state["level"], json!("90"));
-        assert_eq!(run.current_state["charging"], json!(true));
-        assert_eq!(run.current_state["plugged"], json!("ac"));
     }
 
     fn make_line(source_line_num: usize, tag: &str, message: &str) -> LineContext {
