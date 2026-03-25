@@ -118,7 +118,8 @@ export function useFileSession(
 
       const tabPathsSave = readTabPaths(); tabPathsSave[tabId] = path; saveTabPaths(tabPathsSave);
 
-      bus.emit('session:focused', { sessionId: result.sessionId, paneId: targetPaneId });
+      // Emit session:loaded BEFORE session:focused so the tree has the new tab
+      // when onSessionFocused looks up the active tab for the focus marker.
       bus.emit('session:loaded', {
         sourceName: result.sourceName,
         sourceType: result.sourceType as SourceType,
@@ -129,6 +130,7 @@ export function useFileSession(
         previousSessionId,
         readOnly: isBugreportLike(result.sourceType) ? true : undefined,
       });
+      bus.emit('session:focused', { sessionId: result.sessionId, paneId: targetPaneId });
 
       if (isBugreportLike(result.sourceType)) {
         bus.emit('session:dumpstate:opened', {

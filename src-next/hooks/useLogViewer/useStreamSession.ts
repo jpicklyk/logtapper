@@ -265,10 +265,8 @@ export function useStreamSession(
 
       setLoadingPane(targetPaneId, false);
 
-      bus.emit('session:focused', { sessionId: result.sessionId, paneId: targetPaneId });
-
-      // Emit session:loaded so the workspace layout creates a dedicated tab with
-      // the device name. This is the same event file sessions emit for tab management.
+      // Emit session:loaded BEFORE session:focused so the tree has the new tab
+      // when onSessionFocused looks up the active tab for the focus marker.
       bus.emit('session:loaded', {
         sourceName: result.sourceName,
         sourceType: result.sourceType as SourceType,
@@ -278,6 +276,8 @@ export function useStreamSession(
         isNewTab,
         previousSessionId,
       });
+
+      bus.emit('session:focused', { sessionId: result.sessionId, paneId: targetPaneId });
 
       bus.emit('stream:started', {
         sessionId: result.sessionId,

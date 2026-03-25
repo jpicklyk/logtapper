@@ -374,8 +374,9 @@ export function useCenterTree(
           // Adding a second tab alongside an existing one. The existing tab keeps
           // its ID and mapping; only the new tab needs to be activated.
           emitTabActivated = { tabId: e.tabId, paneId: e.paneId, sessionId: e.sessionId };
-        } else if (existingLogviewerTab) {
+        } else if (existingLogviewerTab && existingLogviewerTab.id !== e.tabId) {
           // Replacing (or renaming) the existing logviewer tab — clean up old mapping.
+          // Skip when the tab already has e.tabId (session:loading renamed it early).
           tabIdToDelete = existingLogviewerTab.id;
         }
         // else: no existing logviewer tab — just insert, no old mapping to delete.
@@ -386,7 +387,8 @@ export function useCenterTree(
             emitPaneRemap = { originalPaneId: e.paneId, actualPaneId: existing.pane.id, sessionId: e.sessionId };
           }
           // Reusing an unoccupied logviewer tab — its old mapping is stale.
-          tabIdToDelete = existing.tab.id;
+          // Skip when the tab already has e.tabId (session:loading renamed it early).
+          if (existing.tab.id !== e.tabId) tabIdToDelete = existing.tab.id;
         } else {
           const target = firstLeaf(preTree);
           if (target.pane.id !== e.paneId) {
