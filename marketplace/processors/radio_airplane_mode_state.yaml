@@ -1,7 +1,7 @@
 type: state_tracker
 id: radio-airplane-mode-state
 name: Radio / Airplane Mode State
-version: 1.0.2
+version: 1.0.3
 author: LogTapper
 description: "Tracks airplane mode, data connection state, emergency-only mode, and SIM card state from MobileSignalController. Compound transitions capture all four fields atomically when possible; simpler fallback transitions handle partial log lines."
 tags: [telephony, radio, airplane-mode, sim, android]
@@ -62,7 +62,27 @@ transitions:
       emergency_only: "$1"
       sim_card_state: $2
 
-  # ── Fallback simpler transitions — one field at a time ───────────────────
+  # ── Fallback transitions — partial lines missing dataConnected/simCard ─────
+  # Capture emergencyOnly alongside airplane mode to avoid first-match-wins
+  # masking the emergency field.
+
+  - name: Airplane On + Emergency (partial)
+    filter:
+      tag_regex: MobileSignalController
+      message_regex: 'airplaneMode=true.*emergencyOnly=(true|false)'
+    set:
+      airplane_mode: true
+      emergency_only: "$1"
+
+  - name: Airplane Off + Emergency (partial)
+    filter:
+      tag_regex: MobileSignalController
+      message_regex: 'airplaneMode=false.*emergencyOnly=(true|false)'
+    set:
+      airplane_mode: false
+      emergency_only: "$1"
+
+  # ── Last-resort: airplane mode only (no emergencyOnly in line) ────────────
 
   - name: Airplane Mode On (simple)
     filter:
@@ -77,20 +97,6 @@ transitions:
       message_contains: "airplaneMode=false"
     set:
       airplane_mode: false
-
-  - name: Emergency Only On
-    filter:
-      tag_regex: MobileSignalController
-      message_contains: "emergencyOnly=true"
-    set:
-      emergency_only: true
-
-  - name: Emergency Only Off
-    filter:
-      tag_regex: MobileSignalController
-      message_contains: "emergencyOnly=false"
-    set:
-      emergency_only: false
 
 output:
   timeline: true

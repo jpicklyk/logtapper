@@ -1,7 +1,7 @@
 type: state_tracker
 id: thermal-state
 name: Thermal State
-version: 1.0.0
+version: 1.0.1
 author: LogTapper
 description: "Tracks device thermal state from Android's thermalservice dumpsys output and ThermalEngine logcat events. Captures cached temperature readings per thermal zone (AP, SKIN, BAT, PA, USB, PATHM) and the overall thermal status level."
 tags: [thermal, temperature, hardware, android]
@@ -76,10 +76,17 @@ transitions:
     set:
       temp_bat: "$1"
 
+  - name: PATHM Temperature
+    filter:
+      section: "thermalservice"
+      message_regex: 'Temperature\{mValue=([0-9.]+).*mName=PATHM'
+    set:
+      temp_pathm: "$1"
+
   - name: PA Temperature
     filter:
       section: "thermalservice"
-      message_regex: 'Temperature\{mValue=([0-9.]+).*mName=PA'
+      message_regex: 'Temperature\{mValue=([0-9.]+).*mName=PA[,\}]'
     set:
       temp_pa: "$1"
 
@@ -89,13 +96,6 @@ transitions:
       message_regex: 'Temperature\{mValue=([0-9.]+).*mName=USB'
     set:
       temp_usb: "$1"
-
-  - name: PATHM Temperature
-    filter:
-      section: "thermalservice"
-      message_regex: 'Temperature\{mValue=([0-9.]+).*mName=PATHM'
-    set:
-      temp_pathm: "$1"
 
   # ── Logcat ThermalEngine: device topology ───────────────────────────────
   # Line: ThermalEngine: Number of cpus :8

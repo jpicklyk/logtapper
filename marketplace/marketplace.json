@@ -138,7 +138,7 @@
     {
       "id": "thermal-state",
       "name": "Thermal State",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Tracks device thermal state from thermalservice dumpsys and ThermalEngine logcat. Captures per-zone temperatures (AP, SKIN, BAT, PA) and thermal status.",
       "path": "processors/thermal_state.yaml",
       "tags": [
@@ -678,7 +678,7 @@
     {
       "id": "radio-airplane-mode-state",
       "name": "Radio / Airplane Mode State",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "description": "Tracks airplane mode, data connection state, emergency-only mode, and SIM card state from MobileSignalController. Compound transitions capture all four fields atomically when possible.",
       "path": "processors/radio_airplane_mode_state.yaml",
       "tags": [
