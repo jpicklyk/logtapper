@@ -8,212 +8,51 @@
  * wrong, `activateSessionForPane` is not called and the pane continues showing
  * the wrong session.
  *
- * These tests exercise the pure logic extracted from the `session:loading` and
- * `session:loaded` event handlers without React or Tauri dependencies.
+ * These tests call the production pure functions (applySessionLoading,
+ * applySessionLoaded) from sessionTreeOps.ts directly — one source of truth.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
-import type { CenterPane, SplitNode, Tab } from './workspaceTypes';
-import { findLeafByPaneId, findTabByType, firstLeaf, updateLeaf } from './splitTreeHelpers';
+import { describe, it, expect } from 'vitest';
+import type { SplitNode, Tab } from './workspaceTypes';
+import { findLeafByPaneId, updateLeaf } from './splitTreeHelpers';
+import {
+  applySessionLoading,
+  applySessionLoaded,
+  resolveFocusedTab,
+  type SessionLoadingEvent,
+  type SessionLoadedEvent,
+  type SessionLoadedResult,
+} from './sessionTreeOps';
 
 // ---------------------------------------------------------------------------
-// Helpers — mirror the tree mutation + map update logic from useCenterTree
+// Thin orchestrator — wires production functions with the Maps that
+// useCenterTree manages via refs. No duplicated logic.
 // ---------------------------------------------------------------------------
 
-interface SessionLoadingEvent {
-  paneId: string;
-  tabId: string;
-  label: string;
-  isNewTab: boolean;
-}
-
-interface SessionLoadedEvent {
-  sourceName: string;
-  paneId: string;
-  sourceType: string;
-  sessionId: string;
-  tabId: string;
-  isNewTab?: boolean;
-  previousSessionId?: string;
-  readOnly?: boolean;
-}
-
-interface EmittedEvents {
-  tabActivated: { tabId: string; paneId: string; sessionId: string } | null;
-  paneRemap: { originalPaneId: string; actualPaneId: string; sessionId: string } | null;
-}
-
-/**
- * Extracted state machine that mirrors useCenterTree's tab→session lifecycle.
- * Manages the tree, tabSessionMap, and paneSessionMap exactly as the hook does.
- */
 function createTabSessionLifecycle(initialTree: SplitNode) {
   let tree = initialTree;
   const tabSessionMap = new Map<string, string>();
   const paneSessionMap = new Map<string, string>();
   let focusedLogviewerTabId: string | null = null;
 
-  /** Mirrors the `session:loading` bus handler in useCenterTree. */
+  /** Apply session:loading via the production function. */
   function onSessionLoading(e: SessionLoadingEvent): void {
-    const targetLeaf = findLeafByPaneId(tree, e.paneId);
-    if (!targetLeaf) return;
-
-    // If a tab with this ID already exists, just update its label.
-    if (targetLeaf.pane.tabs.some((t) => t.id === e.tabId)) {
-      tree = updateLeaf(tree, e.paneId, (pane) => ({
-        ...pane,
-        tabs: pane.tabs.map((t) =>
-          t.id === e.tabId ? { ...t, label: e.label } : t,
-        ),
-        activeTabId: e.tabId,
-      }));
-      return;
-    }
-
-    const existingLogviewerTab = targetLeaf.pane.tabs.find((t) => t.type === 'logviewer');
-
-    if (e.isNewTab && existingLogviewerTab) {
-      // Add new tab alongside existing one
-      const tab: Tab = { id: e.tabId, type: 'logviewer', label: e.label, closable: true };
-      tree = updateLeaf(tree, e.paneId, (pane) => ({
-        ...pane,
-        tabs: [...pane.tabs, tab],
-        activeTabId: e.tabId,
-      }));
-      return;
-    }
-
-    if (existingLogviewerTab) {
-      // Replace existing logviewer tab's ID and label
-      tree = updateLeaf(tree, e.paneId, (pane) => ({
-        ...pane,
-        tabs: pane.tabs.map((t) =>
-          t.id === existingLogviewerTab.id ? { ...t, id: e.tabId, label: e.label } : t,
-        ),
-        activeTabId: e.tabId,
-      }));
-      return;
-    }
-
-    // No logviewer tab yet — add one
-    const tab: Tab = { id: e.tabId, type: 'logviewer', label: e.label, closable: true };
-    tree = updateLeaf(tree, e.paneId, (pane) => ({
-      ...pane,
-      tabs: [...pane.tabs, tab],
-      activeTabId: e.tabId,
-    }));
+    tree = applySessionLoading(tree, e);
   }
 
-  /** Mirrors the `session:loaded` bus handler in useCenterTree (pre-computation + map update). */
-  function onSessionLoaded(e: SessionLoadedEvent): EmittedEvents {
-    let tabIdToDelete: string | null = null;
-    let emitTabActivated: EmittedEvents['tabActivated'] = null;
-    let emitPaneRemap: EmittedEvents['paneRemap'] = null;
+  /** Apply session:loaded via the production function + map side effects. */
+  function onSessionLoaded(e: SessionLoadedEvent): SessionLoadedResult {
+    const result = applySessionLoaded(tree, e, paneSessionMap);
+    tree = result.tree;
 
-    // --- Pre-computation phase (reads current tree) ---
-    const preTargetLeaf = findLeafByPaneId(tree, e.paneId);
-    if (preTargetLeaf) {
-      const existingLogviewerTab = preTargetLeaf.pane.tabs.find((t) => t.type === 'logviewer');
-      if (e.isNewTab && existingLogviewerTab && e.previousSessionId) {
-        emitTabActivated = { tabId: e.tabId, paneId: e.paneId, sessionId: e.sessionId };
-      } else if (existingLogviewerTab && existingLogviewerTab.id !== e.tabId) {
-        tabIdToDelete = existingLogviewerTab.id;
-      }
-    } else {
-      const existing = findTabByType(tree, 'logviewer');
-      if (existing && !paneSessionMap.has(existing.pane.id)) {
-        if (existing.pane.id !== e.paneId) {
-          emitPaneRemap = { originalPaneId: e.paneId, actualPaneId: existing.pane.id, sessionId: e.sessionId };
-        }
-        if (existing.tab.id !== e.tabId) tabIdToDelete = existing.tab.id;
-      } else {
-        const target = firstLeaf(tree);
-        if (target.pane.id !== e.paneId) {
-          emitPaneRemap = { originalPaneId: e.paneId, actualPaneId: target.pane.id, sessionId: e.sessionId };
-        }
-      }
-    }
-
-    // --- Tree update phase ---
-    const targetLeaf = findLeafByPaneId(tree, e.paneId);
-    if (targetLeaf) {
-      const existingTabById = targetLeaf.pane.tabs.find((t) => t.id === e.tabId);
-      if (existingTabById) {
-        tree = updateLeaf(tree, e.paneId, (pane) => ({
-          ...pane,
-          tabs: pane.tabs.map((t) =>
-            t.id === e.tabId ? { ...t, label: e.sourceName, readOnly: e.readOnly } : t,
-          ),
-        }));
-      } else {
-        const existingLogviewerTab = targetLeaf.pane.tabs.find((t) => t.type === 'logviewer');
-        if (e.isNewTab && existingLogviewerTab && e.previousSessionId) {
-          const newTab: Tab = { id: e.tabId, type: 'logviewer', label: e.sourceName, closable: true, readOnly: e.readOnly };
-          tree = updateLeaf(tree, e.paneId, (pane) => ({
-            ...pane,
-            tabs: [...pane.tabs, newTab],
-            activeTabId: e.tabId,
-          }));
-        } else if (existingLogviewerTab) {
-          tree = updateLeaf(tree, e.paneId, (pane) => ({
-            ...pane,
-            tabs: pane.tabs.map((t) =>
-              t.id === existingLogviewerTab.id ? { ...t, id: e.tabId, label: e.sourceName, readOnly: e.readOnly } : t,
-            ),
-            activeTabId: e.tabId,
-          }));
-        } else {
-          const tab: Tab = { id: e.tabId, type: 'logviewer', label: e.sourceName, closable: true, readOnly: e.readOnly };
-          tree = updateLeaf(tree, e.paneId, (pane) => ({
-            ...pane,
-            tabs: [...pane.tabs, tab],
-            activeTabId: tab.id,
-          }));
-        }
-      }
-    } else {
-      // paneId not found — fallback paths
-      const existing = findTabByType(tree, 'logviewer');
-      if (existing && !paneSessionMap.has(existing.pane.id)) {
-        tree = updateLeaf(tree, existing.pane.id, (pane) => ({
-          ...pane,
-          tabs: pane.tabs.map((t) =>
-            t.id === existing.tab.id ? { ...t, id: e.tabId, label: e.sourceName, readOnly: e.readOnly } : t,
-          ),
-          activeTabId: e.tabId,
-        }));
-      } else {
-        const target = firstLeaf(tree);
-        const tab: Tab = { id: e.tabId, type: 'logviewer', label: e.sourceName, closable: true, readOnly: e.readOnly };
-        tree = updateLeaf(tree, target.pane.id, (pane) => ({
-          ...pane,
-          tabs: [...pane.tabs, tab],
-          activeTabId: tab.id,
-        }));
-      }
-    }
-
-    // --- Map update phase (the bug lives here) ---
+    // Side effects that useCenterTree performs after applySessionLoaded:
     tabSessionMap.set(e.tabId, e.sessionId);
-    if (tabIdToDelete) tabSessionMap.delete(tabIdToDelete);
+    if (result.tabIdToDelete) tabSessionMap.delete(result.tabIdToDelete);
 
-    return { tabActivated: emitTabActivated, paneRemap: emitPaneRemap };
+    return result;
   }
 
-  /**
-   * Mirrors the `onSessionFocused` handler in useWorkspaceLayout.
-   * Finds the active logviewer tab in the given pane and sets focusedLogviewerTabId.
-   */
   function onSessionFocused(paneId: string | null): void {
-    if (!paneId) { focusedLogviewerTabId = null; return; }
-    const leaf = findLeafByPaneId(tree, paneId);
-    if (!leaf) return;
-    const active = leaf.pane.tabs.find((t) => t.id === leaf.pane.activeTabId);
-    if (active?.type === 'logviewer') {
-      focusedLogviewerTabId = active.id;
-    } else {
-      const firstLogviewer = leaf.pane.tabs.find((t) => t.type === 'logviewer');
-      focusedLogviewerTabId = firstLogviewer?.id ?? null;
-    }
+    focusedLogviewerTabId = paneId ? resolveFocusedTab(tree, paneId) : null;
   }
 
   /**
@@ -231,7 +70,7 @@ function createTabSessionLifecycle(initialTree: SplitNode) {
     isNewTab: boolean;
     previousSessionId?: string;
     readOnly?: boolean;
-  }): EmittedEvents {
+  }): SessionLoadedResult {
     // Step 1: session:loading (immediate tab creation for loading feedback)
     onSessionLoading({
       paneId: opts.paneId,
@@ -247,7 +86,7 @@ function createTabSessionLifecycle(initialTree: SplitNode) {
 
     // Step 3: session:loaded (tree update + tab→session map)
     // Emitted BEFORE session:focused so the tree has the new tab when focus resolves.
-    const events = onSessionLoaded({
+    const result = onSessionLoaded({
       sourceName: opts.sourceName,
       paneId: opts.paneId,
       sourceType: opts.sourceType ?? 'Logcat',
@@ -259,17 +98,53 @@ function createTabSessionLifecycle(initialTree: SplitNode) {
     });
 
     // For isNewTab, activation happens via the emitted tabActivated event
-    if (events.tabActivated) {
-      paneSessionMap.set(events.tabActivated.paneId, events.tabActivated.sessionId);
+    if (result.emitTabActivated) {
+      paneSessionMap.set(result.emitTabActivated.paneId, result.emitTabActivated.sessionId);
     }
-    if (events.paneRemap) {
-      paneSessionMap.set(events.paneRemap.actualPaneId, events.paneRemap.sessionId);
+    if (result.emitPaneRemap) {
+      paneSessionMap.set(result.emitPaneRemap.actualPaneId, result.emitPaneRemap.sessionId);
     }
 
     // Step 4: session:focused (sets the blue underline focus marker)
     onSessionFocused(opts.paneId);
 
-    return events;
+    return result;
+  }
+
+  /**
+   * Simulate stream open flow: no session:loading (streams don't emit it),
+   * just session:loaded then session:focused. Mirrors useStreamSession.startStream.
+   */
+  function loadStream(opts: {
+    paneId: string;
+    tabId: string;
+    sessionId: string;
+    sourceName: string;
+    isNewTab: boolean;
+    previousSessionId?: string;
+  }): SessionLoadedResult {
+    // Streams call activateSessionForPane unconditionally (not just for !isNewTab)
+    paneSessionMap.set(opts.paneId, opts.sessionId);
+
+    const result = onSessionLoaded({
+      sourceName: opts.sourceName,
+      paneId: opts.paneId,
+      sourceType: 'Logcat',
+      sessionId: opts.sessionId,
+      tabId: opts.tabId,
+      isNewTab: opts.isNewTab,
+      previousSessionId: opts.previousSessionId,
+    });
+
+    if (result.emitTabActivated) {
+      paneSessionMap.set(result.emitTabActivated.paneId, result.emitTabActivated.sessionId);
+    }
+    if (result.emitPaneRemap) {
+      paneSessionMap.set(result.emitPaneRemap.actualPaneId, result.emitPaneRemap.sessionId);
+    }
+
+    onSessionFocused(opts.paneId);
+    return result;
   }
 
   /**
@@ -303,6 +178,7 @@ function createTabSessionLifecycle(initialTree: SplitNode) {
     tabSessionMap,
     paneSessionMap,
     loadFile,
+    loadStream,
     switchToTab,
     onSessionFocused,
     onSessionLoading,
@@ -335,7 +211,6 @@ describe('tabSessionMap lifecycle', () => {
 
   describe('single file load (replace existing tab)', () => {
     it('maps the new tab ID to the session after loading+loaded sequence', () => {
-      // Start with a pane that has a default logviewer tab (as the app does on startup)
       const defaultTabId = 'default-tab';
       const tree = makeTree(PANE, [makeLogviewerTab(defaultTabId)]);
       const lc = createTabSessionLifecycle(tree);
@@ -348,9 +223,7 @@ describe('tabSessionMap lifecycle', () => {
         isNewTab: false,
       });
 
-      // The tab→session mapping must exist for tab switching to work
       expect(lc.tabSessionMap.get('tab-A')).toBe('session-A');
-      // The old default tab mapping should be gone
       expect(lc.tabSessionMap.has(defaultTabId)).toBe(false);
     });
 
@@ -376,7 +249,6 @@ describe('tabSessionMap lifecycle', () => {
       const tree = makeTree(PANE, [makeLogviewerTab(defaultTabId)]);
       const lc = createTabSessionLifecycle(tree);
 
-      // First file replaces the default tab
       lc.loadFile({
         paneId: PANE,
         tabId: 'tab-A',
@@ -384,8 +256,6 @@ describe('tabSessionMap lifecycle', () => {
         sourceName: 'file-A.txt',
         isNewTab: false,
       });
-
-      // Second file opens as a new tab alongside the first
       lc.loadFile({
         paneId: PANE,
         tabId: 'tab-B',
@@ -395,7 +265,6 @@ describe('tabSessionMap lifecycle', () => {
         previousSessionId: 'session-A',
       });
 
-      // Both mappings must exist
       expect(lc.tabSessionMap.get('tab-A')).toBe('session-A');
       expect(lc.tabSessionMap.get('tab-B')).toBe('session-B');
     });
@@ -405,7 +274,6 @@ describe('tabSessionMap lifecycle', () => {
       const tree = makeTree(PANE, [makeLogviewerTab(defaultTabId)]);
       const lc = createTabSessionLifecycle(tree);
 
-      // Load two files
       lc.loadFile({
         paneId: PANE,
         tabId: 'tab-A',
@@ -422,10 +290,8 @@ describe('tabSessionMap lifecycle', () => {
         previousSessionId: 'session-A',
       });
 
-      // paneSessionMap currently points to session-B (last loaded)
       expect(lc.paneSessionMap.get(PANE)).toBe('session-B');
 
-      // Switch to tab A — must resolve to session-A
       const resolved = lc.switchToTab('tab-A', PANE);
       expect(resolved).toBe('session-A');
       expect(lc.paneSessionMap.get(PANE)).toBe('session-A');
@@ -451,7 +317,6 @@ describe('tabSessionMap lifecycle', () => {
         previousSessionId: 'session-A',
       });
 
-      // Switch A → B → A
       lc.switchToTab('tab-A', PANE);
       expect(lc.paneSessionMap.get(PANE)).toBe('session-A');
 
@@ -468,29 +333,9 @@ describe('tabSessionMap lifecycle', () => {
       const tree = makeTree(PANE, [makeLogviewerTab('default-tab')]);
       const lc = createTabSessionLifecycle(tree);
 
-      lc.loadFile({
-        paneId: PANE,
-        tabId: 'tab-A',
-        sessionId: 'session-A',
-        sourceName: 'file-A.txt',
-        isNewTab: false,
-      });
-      lc.loadFile({
-        paneId: PANE,
-        tabId: 'tab-B',
-        sessionId: 'session-B',
-        sourceName: 'file-B.txt',
-        isNewTab: true,
-        previousSessionId: 'session-A',
-      });
-      lc.loadFile({
-        paneId: PANE,
-        tabId: 'tab-C',
-        sessionId: 'session-C',
-        sourceName: 'file-C.txt',
-        isNewTab: true,
-        previousSessionId: 'session-B',
-      });
+      lc.loadFile({ paneId: PANE, tabId: 'tab-A', sessionId: 'session-A', sourceName: 'file-A.txt', isNewTab: false });
+      lc.loadFile({ paneId: PANE, tabId: 'tab-B', sessionId: 'session-B', sourceName: 'file-B.txt', isNewTab: true, previousSessionId: 'session-A' });
+      lc.loadFile({ paneId: PANE, tabId: 'tab-C', sessionId: 'session-C', sourceName: 'file-C.txt', isNewTab: true, previousSessionId: 'session-B' });
 
       expect(lc.tabSessionMap.get('tab-A')).toBe('session-A');
       expect(lc.tabSessionMap.get('tab-B')).toBe('session-B');
@@ -500,9 +345,6 @@ describe('tabSessionMap lifecycle', () => {
 
   describe('session:loaded without prior session:loading (pre-f4df2d9 path)', () => {
     it('correctly maps when session:loaded replaces an existing tab directly', () => {
-      // This tests the path where session:loading was NOT emitted (e.g., the
-      // pre-f4df2d9 code path). The existing tab has a DIFFERENT ID from e.tabId,
-      // so tabIdToDelete and e.tabId are distinct — no set+delete collision.
       const tree = makeTree(PANE, [makeLogviewerTab('old-tab')]);
       const lc = createTabSessionLifecycle(tree);
 
@@ -522,15 +364,10 @@ describe('tabSessionMap lifecycle', () => {
 
   describe('paneId not in tree — fallback path', () => {
     it('maps correctly when session:loading renamed the fallback tab', () => {
-      // The pane in the tree has a different ID than the requested paneId.
-      // This exercises the findTabByType fallback in onSessionLoaded.
       const realPaneId = 'real-pane';
       const tree = makeTree(realPaneId, [makeLogviewerTab('default-tab')]);
       const lc = createTabSessionLifecycle(tree);
 
-      // Load with a paneId that doesn't exist in the tree (e.g., 'primary'
-      // during startup restore). session:loading won't find it and won't
-      // mutate the tree. session:loaded falls back to findTabByType.
       lc.onSessionLoaded({
         sourceName: 'logcat.txt',
         paneId: 'nonexistent-pane',
@@ -561,14 +398,7 @@ describe('focus marker (focusedLogviewerTabId)', () => {
       const tree = makeTree(PANE, [makeLogviewerTab('default-tab')]);
       const lc = createTabSessionLifecycle(tree);
 
-      lc.loadFile({
-        paneId: PANE,
-        tabId: 'tab-A',
-        sessionId: 'session-A',
-        sourceName: 'logcat.log',
-        sourceType: 'Logcat',
-        isNewTab: false,
-      });
+      lc.loadFile({ paneId: PANE, tabId: 'tab-A', sessionId: 'session-A', sourceName: 'logcat.log', sourceType: 'Logcat', isNewTab: false });
 
       expect(lc.focusedLogviewerTabId).toBe('tab-A');
     });
@@ -577,26 +407,10 @@ describe('focus marker (focusedLogviewerTabId)', () => {
       const tree = makeTree(PANE, [makeLogviewerTab('default-tab')]);
       const lc = createTabSessionLifecycle(tree);
 
-      lc.loadFile({
-        paneId: PANE,
-        tabId: 'tab-A',
-        sessionId: 'session-A',
-        sourceName: 'logcat.log',
-        sourceType: 'Logcat',
-        isNewTab: false,
-      });
+      lc.loadFile({ paneId: PANE, tabId: 'tab-A', sessionId: 'session-A', sourceName: 'logcat.log', sourceType: 'Logcat', isNewTab: false });
       expect(lc.focusedLogviewerTabId).toBe('tab-A');
 
-      lc.loadFile({
-        paneId: PANE,
-        tabId: 'tab-B',
-        sessionId: 'session-B',
-        sourceName: 'kernel.log',
-        sourceType: 'Kernel',
-        isNewTab: true,
-        previousSessionId: 'session-A',
-      });
-
+      lc.loadFile({ paneId: PANE, tabId: 'tab-B', sessionId: 'session-B', sourceName: 'kernel.log', sourceType: 'Kernel', isNewTab: true, previousSessionId: 'session-A' });
       expect(lc.focusedLogviewerTabId).toBe('tab-B');
     });
   });
@@ -606,14 +420,7 @@ describe('focus marker (focusedLogviewerTabId)', () => {
       const tree = makeTree(PANE, [makeLogviewerTab('default-tab')]);
       const lc = createTabSessionLifecycle(tree);
 
-      lc.loadFile({
-        paneId: PANE,
-        tabId: 'stream-tab',
-        sessionId: 'stream-session',
-        sourceName: 'ADB: device-123',
-        sourceType: 'Logcat',
-        isNewTab: false,
-      });
+      lc.loadStream({ paneId: PANE, tabId: 'stream-tab', sessionId: 'stream-session', sourceName: 'ADB: device-123', isNewTab: false });
 
       expect(lc.focusedLogviewerTabId).toBe('stream-tab');
     });
@@ -622,29 +429,10 @@ describe('focus marker (focusedLogviewerTabId)', () => {
       const tree = makeTree(PANE, [makeLogviewerTab('default-tab')]);
       const lc = createTabSessionLifecycle(tree);
 
-      // Open a file first
-      lc.loadFile({
-        paneId: PANE,
-        tabId: 'file-tab',
-        sessionId: 'file-session',
-        sourceName: 'bugreport.txt',
-        sourceType: 'Bugreport',
-        isNewTab: false,
-        readOnly: true,
-      });
+      lc.loadFile({ paneId: PANE, tabId: 'file-tab', sessionId: 'file-session', sourceName: 'bugreport.txt', sourceType: 'Bugreport', isNewTab: false, readOnly: true });
       expect(lc.focusedLogviewerTabId).toBe('file-tab');
 
-      // Start a stream as a new tab
-      lc.loadFile({
-        paneId: PANE,
-        tabId: 'stream-tab',
-        sessionId: 'stream-session',
-        sourceName: 'ADB: pixel-7',
-        sourceType: 'Logcat',
-        isNewTab: true,
-        previousSessionId: 'file-session',
-      });
-
+      lc.loadStream({ paneId: PANE, tabId: 'stream-tab', sessionId: 'stream-session', sourceName: 'ADB: pixel-7', isNewTab: true, previousSessionId: 'file-session' });
       expect(lc.focusedLogviewerTabId).toBe('stream-tab');
     });
   });
@@ -654,14 +442,7 @@ describe('focus marker (focusedLogviewerTabId)', () => {
       const tree = makeTree(PANE, [makeLogviewerTab('default-tab')]);
       const lc = createTabSessionLifecycle(tree);
 
-      lc.loadFile({
-        paneId: PANE,
-        tabId: 'lts-tab',
-        sessionId: 'lts-session',
-        sourceName: 'capture.lts',
-        sourceType: 'Logcat',
-        isNewTab: false,
-      });
+      lc.loadFile({ paneId: PANE, tabId: 'lts-tab', sessionId: 'lts-session', sourceName: 'capture.lts', sourceType: 'Logcat', isNewTab: false });
 
       expect(lc.focusedLogviewerTabId).toBe('lts-tab');
     });
@@ -670,26 +451,8 @@ describe('focus marker (focusedLogviewerTabId)', () => {
       const tree = makeTree(PANE, [makeLogviewerTab('default-tab')]);
       const lc = createTabSessionLifecycle(tree);
 
-      // Stream first
-      lc.loadFile({
-        paneId: PANE,
-        tabId: 'stream-tab',
-        sessionId: 'stream-session',
-        sourceName: 'ADB: device',
-        sourceType: 'Logcat',
-        isNewTab: false,
-      });
-
-      // Open .lts as new tab
-      lc.loadFile({
-        paneId: PANE,
-        tabId: 'lts-tab',
-        sessionId: 'lts-session',
-        sourceName: 'capture.lts',
-        sourceType: 'Logcat',
-        isNewTab: true,
-        previousSessionId: 'stream-session',
-      });
+      lc.loadStream({ paneId: PANE, tabId: 'stream-tab', sessionId: 'stream-session', sourceName: 'ADB: device', isNewTab: false });
+      lc.loadFile({ paneId: PANE, tabId: 'lts-tab', sessionId: 'lts-session', sourceName: 'capture.lts', sourceType: 'Logcat', isNewTab: true, previousSessionId: 'stream-session' });
 
       expect(lc.focusedLogviewerTabId).toBe('lts-tab');
     });
@@ -698,25 +461,8 @@ describe('focus marker (focusedLogviewerTabId)', () => {
       const tree = makeTree(PANE, [makeLogviewerTab('default-tab')]);
       const lc = createTabSessionLifecycle(tree);
 
-      lc.loadFile({
-        paneId: PANE,
-        tabId: 'file-tab',
-        sessionId: 'file-session',
-        sourceName: 'logcat.log',
-        sourceType: 'Logcat',
-        isNewTab: false,
-      });
-
-      lc.loadFile({
-        paneId: PANE,
-        tabId: 'lts-br-tab',
-        sessionId: 'lts-br-session',
-        sourceName: 'bugreport.lts',
-        sourceType: 'Bugreport',
-        isNewTab: true,
-        previousSessionId: 'file-session',
-        readOnly: true,
-      });
+      lc.loadFile({ paneId: PANE, tabId: 'file-tab', sessionId: 'file-session', sourceName: 'logcat.log', sourceType: 'Logcat', isNewTab: false });
+      lc.loadFile({ paneId: PANE, tabId: 'lts-br-tab', sessionId: 'lts-br-session', sourceName: 'bugreport.lts', sourceType: 'Bugreport', isNewTab: true, previousSessionId: 'file-session', readOnly: true });
 
       expect(lc.focusedLogviewerTabId).toBe('lts-br-tab');
     });
@@ -727,39 +473,13 @@ describe('focus marker (focusedLogviewerTabId)', () => {
       const tree = makeTree(PANE, [makeLogviewerTab('default-tab')]);
       const lc = createTabSessionLifecycle(tree);
 
-      // File
-      lc.loadFile({
-        paneId: PANE,
-        tabId: 'tab-file',
-        sessionId: 'sess-file',
-        sourceName: 'logcat.log',
-        sourceType: 'Logcat',
-        isNewTab: false,
-      });
+      lc.loadFile({ paneId: PANE, tabId: 'tab-file', sessionId: 'sess-file', sourceName: 'logcat.log', sourceType: 'Logcat', isNewTab: false });
       expect(lc.focusedLogviewerTabId).toBe('tab-file');
 
-      // Stream
-      lc.loadFile({
-        paneId: PANE,
-        tabId: 'tab-stream',
-        sessionId: 'sess-stream',
-        sourceName: 'ADB: device',
-        sourceType: 'Logcat',
-        isNewTab: true,
-        previousSessionId: 'sess-file',
-      });
+      lc.loadStream({ paneId: PANE, tabId: 'tab-stream', sessionId: 'sess-stream', sourceName: 'ADB: device', isNewTab: true, previousSessionId: 'sess-file' });
       expect(lc.focusedLogviewerTabId).toBe('tab-stream');
 
-      // .lts zip
-      lc.loadFile({
-        paneId: PANE,
-        tabId: 'tab-lts',
-        sessionId: 'sess-lts',
-        sourceName: 'session.lts',
-        sourceType: 'Logcat',
-        isNewTab: true,
-        previousSessionId: 'sess-stream',
-      });
+      lc.loadFile({ paneId: PANE, tabId: 'tab-lts', sessionId: 'sess-lts', sourceName: 'session.lts', sourceType: 'Logcat', isNewTab: true, previousSessionId: 'sess-stream' });
       expect(lc.focusedLogviewerTabId).toBe('tab-lts');
     });
 
@@ -767,33 +487,15 @@ describe('focus marker (focusedLogviewerTabId)', () => {
       const tree = makeTree(PANE, [makeLogviewerTab('default-tab')]);
       const lc = createTabSessionLifecycle(tree);
 
-      lc.loadFile({
-        paneId: PANE,
-        tabId: 'tab-file',
-        sessionId: 'sess-file',
-        sourceName: 'logcat.log',
-        sourceType: 'Logcat',
-        isNewTab: false,
-      });
-      lc.loadFile({
-        paneId: PANE,
-        tabId: 'tab-stream',
-        sessionId: 'sess-stream',
-        sourceName: 'ADB: device',
-        sourceType: 'Logcat',
-        isNewTab: true,
-        previousSessionId: 'sess-file',
-      });
+      lc.loadFile({ paneId: PANE, tabId: 'tab-file', sessionId: 'sess-file', sourceName: 'logcat.log', sourceType: 'Logcat', isNewTab: false });
+      lc.loadStream({ paneId: PANE, tabId: 'tab-stream', sessionId: 'sess-stream', sourceName: 'ADB: device', isNewTab: true, previousSessionId: 'sess-file' });
 
-      // Focus is on the stream tab
       expect(lc.focusedLogviewerTabId).toBe('tab-stream');
 
-      // Switch to file tab — simulates user clicking tab + focus event
       lc.switchToTab('tab-file', PANE);
       lc.onSessionFocused(PANE);
       expect(lc.focusedLogviewerTabId).toBe('tab-file');
 
-      // Switch back to stream
       lc.switchToTab('tab-stream', PANE);
       lc.onSessionFocused(PANE);
       expect(lc.focusedLogviewerTabId).toBe('tab-stream');

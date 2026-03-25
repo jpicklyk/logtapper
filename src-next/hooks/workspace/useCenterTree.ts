@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { bus } from '../../events/bus';
-import type { CenterTabType, BottomTabType, CenterPane, DropZone, SplitNode, Tab } from './workspaceTypes';
+import type { CenterTabType, BottomTabType, CenterPane, DropZone, SplitNode } from './workspaceTypes';
 import { TAB_LABELS } from './workspaceTypes';
 import {
   makeTab,
@@ -17,6 +17,7 @@ import {
 } from './splitTreeHelpers';
 import { LS_FILEPATH_PREFIX } from '../../components/EditorTab';
 import { storageSet } from '../../utils';
+import { applySessionLoading, applySessionLoaded } from './sessionTreeOps';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -357,139 +358,21 @@ export function useCenterTree(
   useEffect(() => {
     const onSessionLoaded = (e: { sourceName: string; paneId: string; sourceType: string; sessionId: string;
                                    tabId: string; isNewTab?: boolean; previousSessionId?: string; readOnly?: boolean }) => {
-      // Pre-compute which bus events to emit based on the CURRENT tree before
-      // calling setCenterTree. React StrictMode calls state updater functions twice
-      // to detect side effects — any bus.emit inside an updater would double-fire,
-      // producing duplicate logviewer-tab-activated events that
-      // cascade into double state resets, double backend fetches, and apparent reloads.
-      const preTree = treeRef.current;
-      let tabIdToDelete: string | null = null;
-      let emitTabActivated: { tabId: string; paneId: string; sessionId: string } | null = null;
-      let emitPaneRemap: { originalPaneId: string; actualPaneId: string; sessionId: string } | null = null;
-
-      const preTargetLeaf = findLeafByPaneId(preTree, e.paneId);
-      if (preTargetLeaf) {
-        const existingLogviewerTab = preTargetLeaf.pane.tabs.find((t) => t.type === 'logviewer');
-        if (e.isNewTab && existingLogviewerTab && e.previousSessionId) {
-          // Adding a second tab alongside an existing one. The existing tab keeps
-          // its ID and mapping; only the new tab needs to be activated.
-          emitTabActivated = { tabId: e.tabId, paneId: e.paneId, sessionId: e.sessionId };
-        } else if (existingLogviewerTab && existingLogviewerTab.id !== e.tabId) {
-          // Replacing (or renaming) the existing logviewer tab — clean up old mapping.
-          // Skip when the tab already has e.tabId (session:loading renamed it early).
-          tabIdToDelete = existingLogviewerTab.id;
-        }
-        // else: no existing logviewer tab — just insert, no old mapping to delete.
-      } else {
-        const existing = findTabByType(preTree, 'logviewer');
-        if (existing && !paneSessionMapRef.current.has(existing.pane.id)) {
-          if (existing.pane.id !== e.paneId) {
-            emitPaneRemap = { originalPaneId: e.paneId, actualPaneId: existing.pane.id, sessionId: e.sessionId };
-          }
-          // Reusing an unoccupied logviewer tab — its old mapping is stale.
-          // Skip when the tab already has e.tabId (session:loading renamed it early).
-          if (existing.tab.id !== e.tabId) tabIdToDelete = existing.tab.id;
-        } else {
-          const target = firstLeaf(preTree);
-          if (target.pane.id !== e.paneId) {
-            emitPaneRemap = { originalPaneId: e.paneId, actualPaneId: target.pane.id, sessionId: e.sessionId };
-          }
-        }
-      }
-
-      // Pure tree updater — no side effects, safe for StrictMode double-invocation.
+      // Compute from prev inside the updater so React's bailout works when the
+      // tree is unchanged (e.g. session:loading already set up the tab).
+      let result: ReturnType<typeof applySessionLoaded> | null = null;
       setCenterTree((prev) => {
-        const targetLeaf = findLeafByPaneId(prev, e.paneId);
-        if (targetLeaf) {
-          // If a tab with this exact ID already exists (e.g. startup restore of a
-          // persisted non-active tab), just update its label — don't add a duplicate.
-          const existingTabById = targetLeaf.pane.tabs.find((t) => t.id === e.tabId);
-          if (existingTabById) {
-            const next = updateLeaf(prev, e.paneId, (pane) => ({
-              ...pane,
-              tabs: pane.tabs.map((t) =>
-                t.id === e.tabId ? { ...t, label: e.sourceName, readOnly: e.readOnly } : t,
-              ),
-            }));
-            treeRef.current = next;
-            return next;
-          }
-
-          const existingLogviewerTab = targetLeaf.pane.tabs.find((t) => t.type === 'logviewer');
-
-          if (e.isNewTab && existingLogviewerTab && e.previousSessionId) {
-            // A second file is opening alongside an existing one — add new tab.
-            const newTab: Tab = { id: e.tabId, type: 'logviewer', label: e.sourceName, closable: true, readOnly: e.readOnly };
-            const next = updateLeaf(prev, e.paneId, (pane) => ({
-              ...pane,
-              tabs: [...pane.tabs, newTab],
-              activeTabId: e.tabId,
-            }));
-            treeRef.current = next;
-            return next;
-          }
-
-          if (existingLogviewerTab) {
-            // Replacing (or renaming) the single logviewer tab — update label and ID.
-            const next = updateLeaf(prev, e.paneId, (pane) => ({
-              ...pane,
-              tabs: pane.tabs.map((t) =>
-                t.id === existingLogviewerTab.id ? { ...t, id: e.tabId, label: e.sourceName, readOnly: e.readOnly } : t,
-              ),
-              activeTabId: e.tabId,
-            }));
-            treeRef.current = next;
-            return next;
-          }
-
-          // Pane exists but has no logviewer tab yet — add one.
-          const tab: Tab = { id: e.tabId, type: 'logviewer', label: e.sourceName, closable: true, readOnly: e.readOnly };
-          const next = updateLeaf(prev, e.paneId, (pane) => ({
-            ...pane,
-            tabs: [...pane.tabs, tab],
-            activeTabId: tab.id,
-          }));
-          treeRef.current = next;
-          return next;
-        }
-
-        // paneId not found in tree — fall back to first pane.
-        // This handles startup restore where paneId is 'primary' (not yet in tree),
-        // or first-run where localStorage hasn't been written yet.
-        // Only reuse an existing logviewer pane if it is NOT already occupied by
-        // another session — otherwise we'd clobber a live session's tab label.
-        const existing = findTabByType(prev, 'logviewer');
-        if (existing && !paneSessionMapRef.current.has(existing.pane.id)) {
-          const next = updateLeaf(prev, existing.pane.id, (pane) => ({
-            ...pane,
-            tabs: pane.tabs.map((t) =>
-              t.id === existing.tab.id ? { ...t, id: e.tabId, label: e.sourceName, readOnly: e.readOnly } : t,
-            ),
-            activeTabId: e.tabId,
-          }));
-          treeRef.current = next;
-          return next;
-        }
-        const target = firstLeaf(prev);
-        const tab: Tab = { id: e.tabId, type: 'logviewer', label: e.sourceName, closable: true, readOnly: e.readOnly };
-        const next = updateLeaf(prev, target.pane.id, (pane) => ({
-          ...pane,
-          tabs: [...pane.tabs, tab],
-          activeTabId: tab.id,
-        }));
-        treeRef.current = next;
-        return next;
+        result = applySessionLoaded(prev, e, paneSessionMapRef.current);
+        treeRef.current = result.tree;
+        return result.tree;
       });
 
-      // Maintain the workspace-owned tab->session map. Always set the new mapping;
-      // delete the old tab ID if we replaced an existing logviewer tab.
+      // Side effects run after setCenterTree — result is guaranteed set by the
+      // synchronous updater call above.
       tabSessionMapRef.current.set(e.tabId, e.sessionId);
-      if (tabIdToDelete) tabSessionMapRef.current.delete(tabIdToDelete);
-
-      // Emit bus events AFTER the state update, outside the updater.
-      // This is the only correct place — updaters must be pure (no side effects).
-      if (emitTabActivated) bus.emit('layout:logviewer-tab-activated', emitTabActivated);
-      if (emitPaneRemap) bus.emit('layout:pane-session-remap', emitPaneRemap);
+      if (result!.tabIdToDelete) tabSessionMapRef.current.delete(result!.tabIdToDelete);
+      if (result!.emitTabActivated) bus.emit('layout:logviewer-tab-activated', result!.emitTabActivated);
+      if (result!.emitPaneRemap) bus.emit('layout:pane-session-remap', result!.emitPaneRemap);
     };
 
     const onPipelineCompleted = (e: { sessionId: string; hasReporters: boolean; hasTrackers: boolean; hasCorrelators: boolean }) => {
@@ -554,56 +437,7 @@ export function useCenterTree(
     // sees feedback while the backend decompresses/indexes the file.
     const onSessionLoading = (e: { paneId: string; tabId: string; label: string; isNewTab: boolean }) => {
       setCenterTree((prev) => {
-        const targetLeaf = findLeafByPaneId(prev, e.paneId);
-        if (!targetLeaf) return prev;
-
-        // If a tab with this ID already exists, just update its label.
-        if (targetLeaf.pane.tabs.some((t) => t.id === e.tabId)) {
-          const next = updateLeaf(prev, e.paneId, (pane) => ({
-            ...pane,
-            tabs: pane.tabs.map((t) =>
-              t.id === e.tabId ? { ...t, label: e.label } : t,
-            ),
-            activeTabId: e.tabId,
-          }));
-          treeRef.current = next;
-          return next;
-        }
-
-        const existingLogviewerTab = targetLeaf.pane.tabs.find((t) => t.type === 'logviewer');
-
-        if (e.isNewTab && existingLogviewerTab) {
-          // Add new tab alongside existing one
-          const tab: Tab = { id: e.tabId, type: 'logviewer', label: e.label, closable: true };
-          const next = updateLeaf(prev, e.paneId, (pane) => ({
-            ...pane,
-            tabs: [...pane.tabs, tab],
-            activeTabId: e.tabId,
-          }));
-          treeRef.current = next;
-          return next;
-        }
-
-        if (existingLogviewerTab) {
-          // Replace existing logviewer tab's ID and label
-          const next = updateLeaf(prev, e.paneId, (pane) => ({
-            ...pane,
-            tabs: pane.tabs.map((t) =>
-              t.id === existingLogviewerTab.id ? { ...t, id: e.tabId, label: e.label } : t,
-            ),
-            activeTabId: e.tabId,
-          }));
-          treeRef.current = next;
-          return next;
-        }
-
-        // No logviewer tab yet — add one
-        const tab: Tab = { id: e.tabId, type: 'logviewer', label: e.label, closable: true };
-        const next = updateLeaf(prev, e.paneId, (pane) => ({
-          ...pane,
-          tabs: [...pane.tabs, tab],
-          activeTabId: e.tabId,
-        }));
+        const next = applySessionLoading(prev, e);
         treeRef.current = next;
         return next;
       });

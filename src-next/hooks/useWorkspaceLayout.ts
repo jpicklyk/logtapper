@@ -19,6 +19,7 @@ import {
   findLeafByPaneId,
 } from './workspace';
 import type { CenterTabType } from './workspace';
+import { resolveFocusedTab } from './workspace/sessionTreeOps';
 
 // ---------------------------------------------------------------------------
 // Re-exports — public API surface (call sites import from here or hooks/index)
@@ -172,19 +173,8 @@ export function useWorkspaceLayout() {
   useEffect(() => {
     const onSessionFocused = (e: { paneId: string | null }) => {
       setActiveLogPaneId(e.paneId);
-      // When focus moves to a pane, mark its active logviewer tab as focused.
-      // Prefer the active tab; fall back to the first logviewer tab in the pane.
       if (e.paneId) {
-        const leaf = findLeafByPaneId(centerTreeRef.current, e.paneId);
-        if (leaf) {
-          const active = leaf.pane.tabs.find((t) => t.id === leaf.pane.activeTabId);
-          if (active?.type === 'logviewer') {
-            setFocusedLogviewerTabId(active.id);
-          } else {
-            const firstLogviewer = leaf.pane.tabs.find((t) => t.type === 'logviewer');
-            setFocusedLogviewerTabId(firstLogviewer?.id ?? null);
-          }
-        }
+        setFocusedLogviewerTabId(resolveFocusedTab(centerTreeRef.current, e.paneId));
       }
     };
 
