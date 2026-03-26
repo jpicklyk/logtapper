@@ -8,6 +8,9 @@ interface ModalProps {
   title?: string;
   children: React.ReactNode;
   width?: number;
+  /** When true, removes the 16px padding from the body wrapper so components
+   *  can supply their own internal layout (e.g. panels with headers/tabs/footers). */
+  noPadding?: boolean;
 }
 
 export const Modal = React.memo<ModalProps>(function Modal({
@@ -16,6 +19,7 @@ export const Modal = React.memo<ModalProps>(function Modal({
   title,
   children,
   width,
+  noPadding,
 }) {
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -47,7 +51,7 @@ export const Modal = React.memo<ModalProps>(function Modal({
             <span className={styles.title}>{title}</span>
           </div>
         )}
-        <div className={styles.body}>{children}</div>
+        <div className={noPadding ? styles.bodyNoPadding : styles.body}>{children}</div>
       </div>
     </div>,
     document.body

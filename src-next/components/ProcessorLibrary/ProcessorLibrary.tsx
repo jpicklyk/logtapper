@@ -1,5 +1,4 @@
 import { memo, useState, useCallback, useRef, useMemo, useEffect } from 'react';
-import ReactDOM from 'react-dom';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { ProcessorSummary, PackSummary } from '../../bridge/types';
 import { matchesAllTags, getBareId } from '../../bridge/types';
@@ -9,7 +8,7 @@ import {
 } from '../../bridge/commands';
 import { usePipeline } from '../../hooks';
 import { useProcessors, usePipelineChain } from '../../context';
-import { ProcessorTypeIcon, PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY } from '../../ui';
+import { Modal, ProcessorTypeIcon, PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY } from '../../ui';
 import { ProcessorDetailCard } from '../ProcessorDetailCard';
 import css from './ProcessorLibrary.module.css';
 import badgeCss from '../../ui/processorBadge.module.css';
@@ -270,15 +269,10 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
-  const modal = (
-    <div
-      className={css.backdrop}
-      onClick={onClose}
-      onKeyDown={(e) => e.key === 'Escape' && onClose()}
-    >
+  return (
+    <Modal open onClose={onClose} width={560} noPadding>
       <div
-        className={css.dialog}
-        onClick={(e) => e.stopPropagation()}
+        className={css.dialogInner}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && hasSelection) {
             e.preventDefault();
@@ -576,7 +570,7 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                 spellCheck={false}
                 autoFocus
               />
-              {yamlError && <div className={css.errorBar} style={{ marginTop: 6 }}>{yamlError}</div>}
+              {yamlError && <div className={`${css.errorBar} ${css.errorBarYaml}`}>{yamlError}</div>}
               <div className={css.yamlFooter}>
                 <button
                   className={css.actionBtn}
@@ -640,10 +634,8 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
           </div>
         )}
       </div>
-    </div>
+    </Modal>
   );
-
-  return ReactDOM.createPortal(modal, document.body);
 });
 
 export default ProcessorLibrary;

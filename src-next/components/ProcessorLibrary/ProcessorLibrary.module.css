@@ -1,37 +1,11 @@
-/* ── Backdrop & Dialog Shell ──────────────────────────────────────────────── */
+/* ── Inner dialog layout (Modal primitive handles backdrop & shell) ─────────── */
 
-.backdrop {
-  position: fixed;
-  inset: 0;
-  background: var(--scrim);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: var(--z-modal);
-  animation: fadeIn 120ms ease-out;
-}
-
-.dialog {
-  width: 560px;
-  max-height: 78vh;
+.dialogInner {
   display: flex;
   flex-direction: column;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
-  animation: dialogIn 160ms ease-out;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-
-@keyframes dialogIn {
-  from { opacity: 0; transform: translateY(-8px) scale(0.98); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* ── Header ──────────────────────────────────────────────────────────────── */
@@ -679,6 +653,10 @@
   color: var(--danger);
   font-size: 11px;
   line-height: 1.4;
+}
+
+.errorBarYaml {
+  margin-top: 6px;
 }
 
 /* ── Spinner ─────────────────────────────────────────────────────────────── */

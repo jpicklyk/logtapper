@@ -13,6 +13,7 @@
   background: var(--bg-base);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
+  box-shadow: var(--shadow-overlay);
   max-width: 90vw;
   max-height: 80vh;
   display: flex;
@@ -36,6 +37,15 @@
 .body {
   padding: 16px;
   overflow-y: auto;
+}
+
+.bodyNoPadding {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 @keyframes fadeIn {
