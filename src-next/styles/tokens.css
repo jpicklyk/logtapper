@@ -295,8 +295,8 @@
   --bg-overlay: #dce0e6;
 
   /* Borders */
-  --border:        #c2cad4;
-  --border-subtle: #d4dae0;
+  --border:        #b8c2cc;
+  --border-subtle: #c8d0d8;
 
   /* Text */
   --text-dimmed:    #8b95a1;   /* decorative, disabled, line numbers — lowest contrast */
@@ -399,7 +399,8 @@
   --editor-selection-bg:   rgba(9, 105, 218, 0.2);
 
   /* Chrome */
-  --chrome-bg:             #edf0f3;
+  --chrome-bg:             #f6f8fa;
+  --chrome-border:         #d0d7de;
   --scrim:                 rgba(0, 0, 0, 0.3);
   --border-accent:         color-mix(in srgb, var(--accent) 20%, transparent);
 }
