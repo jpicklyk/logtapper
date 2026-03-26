@@ -1,3 +1,12 @@
+/* ── Layer order declaration ─────────────────────────────────────────────
+   Intent: @layer reset, tokens, components, utilities;
+   CSS Modules + @layer: Vite 5 does not natively wrap .module.css output
+   in a named layer. A PostCSS plugin (e.g. postcss-layer) or Vite's
+   future css.modules.layer option would be required to assign the
+   `components` layer automatically. Deferring until tooling matures —
+   do NOT remove !important declarations until layers are confirmed working.
+   ─────────────────────────────────────────────────────────────────────── */
+
 @import '@fontsource/geist/400.css';
 @import '@fontsource/geist/500.css';
 @import '@fontsource/geist/600.css';

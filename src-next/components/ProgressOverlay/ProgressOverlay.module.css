@@ -5,7 +5,7 @@
   align-items: center;
   justify-content: center;
   background: var(--scrim);
-  z-index: 100;
+  z-index: 100; /* intra-panel overlay; intentionally between --z-overlay(50) and --z-modal(9000) */
 }
 
 .card {

@@ -44,7 +44,7 @@ export const DropdownMenu = React.memo<DropdownMenuProps>(function DropdownMenu(
         position: 'fixed',
         top,
         left,
-        zIndex: 1050,
+        zIndex: 1050, // TODO: use z-index token (--z-dropdown) once CSS var() works in inline styles
       });
     } else {
       setPanelStyle(null);

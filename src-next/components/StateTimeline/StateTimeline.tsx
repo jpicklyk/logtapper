@@ -118,7 +118,7 @@ const BookmarkMarkers = React.memo(function BookmarkMarkers({
               backgroundColor: color,
               opacity: 0.7,
               cursor: 'pointer',
-              zIndex: 3,
+              zIndex: 3, // TODO: use z-index token once CSS var() works in inline styles
               pointerEvents: 'auto',
             }}
             title={b.label}

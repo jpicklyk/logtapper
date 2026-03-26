@@ -2,7 +2,7 @@
   position: fixed;
   bottom: 16px;
   right: 52px;
-  z-index: 9500;
+  z-index: var(--z-toast);
   display: flex;
   flex-direction: column-reverse;
   gap: 8px;
@@ -56,6 +56,11 @@
     0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent),
     0 4px 24px rgba(0, 0, 0, 0.5),
     0 0 48px -4px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.toast[data-clickable='true']:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .indicator {
@@ -112,6 +117,11 @@
 .close:hover {
   color: var(--text);
   background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.close:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 /* ── Animations ─────────────────────────────────────────────────────────── */
