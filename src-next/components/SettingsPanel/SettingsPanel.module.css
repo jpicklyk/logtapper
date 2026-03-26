@@ -617,6 +617,19 @@
   border-color: var(--border);
 }
 
+.catSwatchSm {
+  width: 16px;
+  height: 16px;
+}
+
+.labelHintTopGap {
+  margin-top: 12px;
+}
+
+.assocBadgeMargin {
+  margin-top: 2px;
+}
+
 .catColorInput {
   position: absolute;
   inset: 0;

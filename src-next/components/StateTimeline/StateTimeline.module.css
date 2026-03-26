@@ -99,7 +99,7 @@
 }
 
 .trackLabel {
-  width: 130px;
+  width: 128px;
   flex-shrink: 0;
   padding: 6px 8px;
   font-size: 11px;
@@ -160,10 +160,14 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 130px;
+  left: 128px;
   right: 0;
   pointer-events: none;
   z-index: 3;
+}
+
+.noPointerEvents {
+  pointer-events: none;
 }
 
 .cursor {
@@ -221,7 +225,7 @@
 }
 
 .rulerSpacer {
-  width: 130px;
+  width: 128px;
   flex-shrink: 0;
   display: flex;
   align-items: center;

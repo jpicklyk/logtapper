@@ -65,6 +65,9 @@ body {
   overflow: hidden;
 }
 
+.fullHeight { height: 100%; }
+.hidden { display: none; }
+
 /* ── Scrollbars ────────────────────────────────────────────────────────── */
 /* App-wide thin scrollbar — applied globally so every scrollable container
    matches the dark theme. Individual components no longer need per-class

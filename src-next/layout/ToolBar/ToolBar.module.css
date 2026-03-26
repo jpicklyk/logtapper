@@ -6,6 +6,7 @@
   align-items: center;
   padding: 4px 0;
   user-select: none;
+  overflow-y: auto;
 }
 
 .left {
@@ -82,15 +83,15 @@
   position: absolute;
   top: 4px;
   right: 4px;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 3px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
   border-radius: var(--radius-full);
   background: var(--accent-base);
   color: var(--text-on-accent);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 600;
-  line-height: 14px;
+  line-height: 16px;
   text-align: center;
   pointer-events: none;
 }

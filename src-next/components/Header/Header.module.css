@@ -132,7 +132,7 @@
 /* When macOS titleBarStyle is 'overlay', the native traffic lights float
    over the left side of the header. Add padding so brand content clears them. */
 .brandMac {
-  padding-left: 70px;
+  padding-left: 72px;
 }
 
 /* ── Window controls (Windows / Linux) ─────────────────────────────────── */

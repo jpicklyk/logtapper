@@ -597,7 +597,7 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
                         {trackerTransitions.slice(0, 100).map((t, i) => (
                           <tr
                             key={i}
-                            style={{ cursor: 'pointer' }}
+                            className={styles.clickableRow}
                             onClick={() => jumpToLine(t.lineNum)}
                             title={`Jump to line ${t.lineNum + 1}`}
                           >
@@ -648,7 +648,7 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
                             {correlatorResult.events.slice(0, 100).map((ev, i) => (
                               <tr
                                 key={i}
-                                style={{ cursor: 'pointer' }}
+                                className={styles.clickableRow}
                                 onClick={() => jumpToLine(ev.triggerLineNum)}
                                 title={`Jump to line ${ev.triggerLineNum + 1}`}
                               >
@@ -716,7 +716,7 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
                   <span className={styles.sectionLabel}>
                     Matched Lines
                     {summary && (
-                      <span className={styles.metaChip} style={{ marginLeft: 8 }}>
+                      <span className={`${styles.metaChip} ${styles.metaChipOffset}`}>
                         {summary.matchedLines.toLocaleString()}
                       </span>
                     )}

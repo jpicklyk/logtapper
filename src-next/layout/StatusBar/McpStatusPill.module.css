@@ -1,8 +1,8 @@
 .pill {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 0 7px;
+  gap: 4px;
+  padding: 0 8px;
   height: 18px;
   border-radius: var(--radius-lg);
   background: var(--bg-overlay);
@@ -23,8 +23,8 @@
 }
 
 .dot {
-  width: 5px;
-  height: 5px;
+  width: 4px;
+  height: 4px;
   border-radius: var(--radius-full);
   flex-shrink: 0;
   transition: background var(--transition-normal), opacity var(--transition-normal);

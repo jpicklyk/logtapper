@@ -35,6 +35,9 @@
   line-height: 1.3;
   color: var(--text);
   letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .timestamp {

@@ -66,6 +66,9 @@
   font-size: 12px;
   font-weight: 600;
   color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .modeTag {
@@ -144,6 +147,9 @@
   text-align: right;
   font-family: var(--font-mono);
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .unknown {

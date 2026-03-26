@@ -1,4 +1,5 @@
 import React from 'react';
+import styles from './Icon.module.css';
 
 interface IconProps {
   icon: React.ComponentType<{ size?: number; className?: string }>;
@@ -12,7 +13,7 @@ export const Icon = React.memo<IconProps>(function Icon({
   className,
 }) {
   return (
-    <span aria-hidden="true" style={{ display: 'inline-flex', alignItems: 'center' }}>
+    <span aria-hidden="true" className={styles.icon}>
       <IconComponent size={size} className={className} />
     </span>
   );

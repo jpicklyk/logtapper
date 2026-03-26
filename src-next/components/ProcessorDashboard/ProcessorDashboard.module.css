@@ -161,7 +161,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 10px 16px;
+  padding: 8px 16px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-raised);
@@ -263,6 +263,9 @@
 
 .stringVal {
   color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Tables */
@@ -422,6 +425,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   font-family: var(--font-mono);
+  min-width: 0;
 }
 
 /* Mono table cells (tracker/correlator detail) */
@@ -434,6 +438,15 @@
   font-family: var(--font-mono);
   font-size: 10px;
   color: var(--text-dimmed);
+}
+
+/* Clickable table rows */
+.clickableRow {
+  cursor: pointer;
+}
+
+.metaChipOffset {
+  margin-left: 8px;
 }
 
 /* Script error banner */

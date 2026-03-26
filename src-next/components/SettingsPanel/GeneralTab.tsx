@@ -263,7 +263,7 @@ function AddCategoryButton({ onAdd, existingIds }: {
 
   return (
     <div className={css.catAddForm}>
-      <div className={css.catSwatch} style={{ background: newColor, width: 16, height: 16 }}>
+      <div className={`${css.catSwatch} ${css.catSwatchSm}`} style={{ background: newColor }}>
         <input
           type="color"
           className={css.catColorInput}
@@ -349,7 +349,7 @@ function FileAssociationsSection() {
 
       {isWindows && (
         <>
-          <span className={css.labelHint} style={{ marginTop: 12 }}>
+          <span className={`${css.labelHint} ${css.labelHintTopGap}`}>
             Enable additional file types to open with LogTapper. Once enabled, set
             LogTapper as the default handler in Windows Settings.
           </span>
@@ -359,8 +359,7 @@ function FileAssociationsSection() {
                 <span className={css.labelText}>{label} (.{ext})</span>
                 {registered && (
                   <span
-                    className={`${css.assocBadge} ${isDefault ? css.assocBadgeDefault : css.assocBadgeAvailable}`}
-                    style={{ marginTop: 2 }}
+                    className={`${css.assocBadge} ${isDefault ? css.assocBadgeDefault : css.assocBadgeAvailable} ${css.assocBadgeMargin}`}
                   >
                     {isDefault ? 'Default handler' : 'Available in Open With'}
                   </span>
