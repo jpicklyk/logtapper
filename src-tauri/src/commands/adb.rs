@@ -11,7 +11,6 @@ use crate::anonymizer::LogAnonymizer;
 use crate::commands::{lock_or_err, AppState};
 use crate::commands::files::LoadResult;
 use crate::commands::pipeline_core::{ContinuousStates, PartitionedDefs, PipelineCore};
-use crate::processors::reporter::engine::RunResult;
 use crate::core::line::{LineContext, LineMeta, LogLevel, ParsedLineMeta, PipelineContext, ViewLine};
 use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;

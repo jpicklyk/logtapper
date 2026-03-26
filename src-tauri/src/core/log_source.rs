@@ -146,9 +146,7 @@ impl LogSource for FileLogSource {
 
 /// Detect CRLF line endings by checking the first `\n` in the data.
 pub fn detect_crlf(data: &[u8]) -> bool {
-    memchr::memchr(b'\n', data)
-        .map(|pos| pos > 0 && data[pos - 1] == b'\r')
-        .unwrap_or(false)
+    memchr::memchr(b'\n', data).is_some_and(|pos| pos > 0 && data[pos - 1] == b'\r')
 }
 
 impl FileLogSource {

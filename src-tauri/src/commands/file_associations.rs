@@ -37,7 +37,7 @@ pub struct FileAssocEntry {
 
 #[cfg(target_os = "windows")]
 mod platform {
-    use winreg::enums::*;
+    use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
     use winreg::RegKey;
 
     use super::{prog_id, FileAssocEntry, DYNAMIC_EXTENSIONS};

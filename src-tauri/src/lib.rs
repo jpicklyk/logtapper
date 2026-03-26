@@ -56,7 +56,7 @@ pub(crate) fn resolve_dev_marketplace_path() -> String {
         return simplified_path(&p).to_string_lossy().to_string();
     }
 
-    let exe_dir = exe_path.parent().unwrap_or(std::path::Path::new("."));
+    let exe_dir = exe_path.parent().unwrap_or_else(|| std::path::Path::new("."));
     let fallback = exe_dir.join("..").join("..").join("..").join("marketplace");
     log::warn!("[marketplace] Could not find marketplace/ by walking up from exe");
     fallback.to_string_lossy().to_string()
@@ -223,7 +223,7 @@ pub fn run() {
 
             // Extract file path from args (skip binary name, skip flags).
             if let Some(path) = args.iter().skip(1).find(|a| !a.starts_with('-')) {
-                let _ = app.emit("open-file", path.to_string());
+                let _ = app.emit("open-file", path.clone());
             }
         }))
         .plugin(tauri_plugin_window_state::Builder::new().build())
@@ -277,16 +277,17 @@ pub fn run() {
             if first_run {
                 // In debug builds, use local marketplace directory for instant iteration.
                 // In release builds, use GitHub so users always get the latest.
-                let official_source_type = if cfg!(debug_assertions) {
+                #[cfg(debug_assertions)]
+                let official_source_type = {
                     let marketplace_path = resolve_dev_marketplace_path();
                     SourceType::Local {
                         path: marketplace_path,
                     }
-                } else {
-                    SourceType::Github {
-                        repo: "jpicklyk/logtapper".to_string(),
-                        git_ref: "main".to_string(),
-                    }
+                };
+                #[cfg(not(debug_assertions))]
+                let official_source_type = SourceType::Github {
+                    repo: "jpicklyk/logtapper".to_string(),
+                    git_ref: "main".to_string(),
                 };
                 let official = Source {
                     name: "official".to_string(),
@@ -311,7 +312,8 @@ pub fn run() {
 
                 // Dev: force official source to Local pointing at project root marketplace/.
                 // Handles stale paths and Github sources left by release builds.
-                if cfg!(debug_assertions) {
+                #[cfg(debug_assertions)]
+                {
                     let correct_path = resolve_dev_marketplace_path();
                     let json_to_write = if let Ok(mut sources) = state.sources.lock() {
                         let mut fixed = false;
@@ -332,7 +334,8 @@ pub fn run() {
                 }
 
                 // Release: migrate legacy local official sources to GitHub.
-                if !cfg!(debug_assertions) {
+                #[cfg(not(debug_assertions))]
+                {
                     let json_to_write = if let Ok(mut sources) = state.sources.lock() {
                         let mut migrated = false;
                         for source in sources.iter_mut() {

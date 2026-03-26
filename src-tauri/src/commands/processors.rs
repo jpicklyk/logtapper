@@ -121,7 +121,7 @@ pub async fn list_processors(
         .collect();
     for summary in &mut out {
         if let Some(pack_id) = proc_to_pack.get(summary.id.as_str()) {
-            summary.pack_id = Some(pack_id.to_string());
+            summary.pack_id = Some((*pack_id).to_string());
         }
     }
     drop(packs);
