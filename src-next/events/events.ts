@@ -77,6 +77,11 @@ export type AppEvents = {
   'selection:changed':      { paneId: string; sessionId: string | null;
                               anchor: number | null; range: [number, number] | null };
 
+  // ── Section tracking ──────────────────────────────────────────────────
+  /** Fired by useFileInfo when the active section changes (bugreport/dumpstate).
+   *  StatusBar subscribes to display the section chip reactively. */
+  'section:active-changed': { paneId: string; sectionName: string | null; lineNumber: number | null };
+
   // ── Bookmarks ─────────────────────────────────────────────────────────────
   /** Fired when the user triggers a bookmark creation action (right-click context menu,
    *  Ctrl+B shortcut). Consumers render a creation dialog. */

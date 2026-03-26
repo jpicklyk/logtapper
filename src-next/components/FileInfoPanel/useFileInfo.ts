@@ -255,6 +255,22 @@ export function useFileInfo(paneId: string | null): FileInfoData {
     return -1;
   }, [sections, trackingLine]);
 
+  // Publish active section for StatusBar (and any future consumers).
+  const activeSectionName = activeSectionIndex >= 0 ? sections[activeSectionIndex].name : null;
+  const prevSectionRef = useRef<{ name: string | null; line: number | null }>({ name: null, line: null });
+  if (activeSectionName !== prevSectionRef.current.name || trackingLine !== prevSectionRef.current.line) {
+    prevSectionRef.current = { name: activeSectionName, line: trackingLine ?? null };
+    // Deferred to avoid emitting during render — React 18 auto-batches setState but
+    // bus.emit is synchronous and could trigger subscriber setState calls.
+    queueMicrotask(() => {
+      bus.emit('section:active-changed', {
+        paneId: paneId ?? '',
+        sectionName: activeSectionName,
+        lineNumber: trackingLine ?? null,
+      });
+    });
+  }
+
   // Section toggle callbacks — indices into the original (unfiltered) sections array.
   const toggleSection = useCallback((index: number) => {
     setSelectedSectionIndices(prev => {

@@ -1,6 +1,8 @@
-import React, { useCallback } from 'react';
-import { useSessionForPane, useIsStreamingForPane, useScrollTarget, useViewerActions } from '../../context';
+import React, { useCallback, useEffect, useState } from 'react';
+import { useSessionForPane, useIsStreamingForPane, useViewerActions } from '../../context';
 import { useStatusBarSelection } from '../../hooks';
+import { bus } from '../../events';
+import type { AppEvents } from '../../events/events';
 import { McpStatusPill } from './McpStatusPill';
 import styles from './StatusBar.module.css';
 
@@ -33,6 +35,13 @@ const fmtLn = (n: number) => (n + 1).toLocaleString();
 /** En-dash for ranges. */
 const EN_DASH = '\u2013';
 
+interface ActiveSection {
+  sectionName: string | null;
+  lineNumber: number | null;
+}
+
+const EMPTY_SECTION: ActiveSection = { sectionName: null, lineNumber: null };
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 export const StatusBar = React.memo(function StatusBar({ activeLogPaneId }: StatusBarProps) {
@@ -41,16 +50,31 @@ export const StatusBar = React.memo(function StatusBar({ activeLogPaneId }: Stat
   const selection = useStatusBarSelection(activeLogPaneId);
   const { jumpToLine } = useViewerActions();
 
-  const { lineNum: scrollTarget, paneId: jumpPaneId } = useScrollTarget();
-
   const filePath = session?.filePath ?? null;
   const sourceType = session?.sourceType ?? null;
   const sourceChip = sourceType ? SOURCE_TYPE_CHIP[sourceType] : null;
   const lineEndingLabel = session?.hasCrlf ? 'Windows (CRLF)' : 'Unix (LF)';
 
-  // Scroll target applies when the jump targeted this pane (or was global).
-  const effectiveScrollTarget = (jumpPaneId === null || jumpPaneId === activeLogPaneId)
-    ? scrollTarget : null;
+  // Subscribe to section:active-changed from useFileInfo (reactive, no cache read).
+  const [activeSection, setActiveSection] = useState<ActiveSection>(EMPTY_SECTION);
+
+  useEffect(() => {
+    setActiveSection(EMPTY_SECTION);
+    if (!activeLogPaneId) return;
+
+    const handler = (ev: AppEvents['section:active-changed']) => {
+      if (ev.paneId !== activeLogPaneId) return;
+      setActiveSection(prev => {
+        if (prev.sectionName === ev.sectionName && prev.lineNumber === ev.lineNumber) return prev;
+        return { sectionName: ev.sectionName, lineNumber: ev.lineNumber };
+      });
+    };
+
+    bus.on('section:active-changed', handler);
+    return () => { bus.off('section:active-changed', handler); };
+  }, [activeLogPaneId]);
+
+  const { sectionName, lineNumber: sectionLine } = activeSection;
 
   const hasAnchor = selection.anchor != null;
   const hasRange = selection.range != null;
@@ -65,10 +89,10 @@ export const StatusBar = React.memo(function StatusBar({ activeLogPaneId }: Stat
   }, [selection.anchor, jumpToLine, activeLogPaneId]);
 
   const handleSecClick = useCallback(() => {
-    if (effectiveScrollTarget != null) {
-      jumpToLine(effectiveScrollTarget, activeLogPaneId ?? undefined);
+    if (sectionLine != null) {
+      jumpToLine(sectionLine, activeLogPaneId ?? undefined);
     }
-  }, [effectiveScrollTarget, jumpToLine, activeLogPaneId]);
+  }, [sectionLine, jumpToLine, activeLogPaneId]);
 
   return (
     <div className={styles.bar}>
@@ -96,10 +120,10 @@ export const StatusBar = React.memo(function StatusBar({ activeLogPaneId }: Stat
 
       {/* ── Right zone ────────────────────────────────────────── */}
       <div className={styles.right}>
-        {effectiveScrollTarget != null && (
+        {sectionName != null && sectionLine != null && (
           <span className={CLS_CHIP_SEC} onClick={handleSecClick}
-                title={`Jump to section line ${fmtLn(effectiveScrollTarget)}`}>
-            Sec {fmtLn(effectiveScrollTarget)}
+                title={`Jump to ${sectionName} (line ${fmtLn(sectionLine)})`}>
+            Sec {sectionName} ({fmtLn(sectionLine)})
           </span>
         )}
 
@@ -116,7 +140,7 @@ export const StatusBar = React.memo(function StatusBar({ activeLogPaneId }: Stat
           </span>
         )}
 
-        {(hasAnchor || effectiveScrollTarget != null) && <span className={styles.separator} />}
+        {(hasAnchor || sectionName != null) && <span className={styles.separator} />}
 
         <span className={CLS_CHIP_GRAY} title="Line endings">
           {lineEndingLabel}
