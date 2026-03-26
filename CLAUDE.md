@@ -36,6 +36,31 @@ New code must target `src-next/`.
 
 All feature and performance implementation plans live in `plans/` at the project root. The directory is `.gitignore`d (local working docs only). Name files descriptively: `plans/<feature-name>-<tier-or-phase>.md` (e.g. `plans/perf-tier1-quick-wins.md`). When asked to plan a feature or create an implementation plan, write it there.
 
+## Agent Discipline Rules
+
+These rules address recurring mistakes. Follow them before writing code, not as an afterthought.
+
+### Search before creating
+Before writing any new function, helper, or utility, search the codebase for existing implementations that do the same thing. Check adjacent files, shared modules, and utility directories. Duplication is caught in every review — prevent it by searching first. If you find a near-match, extend or reuse it rather than creating a parallel version.
+
+### No inline styles in React components
+Never use `style={{ ... }}` on JSX elements. All visual properties go in CSS module classes. The codebase uses CSS modules exclusively — inline styles bypass theming, are not greppable, and create inconsistency. If a suitable class doesn't exist, create one in the component's `.module.css` file.
+
+### Side effects belong in useEffect, never in the render body
+Do not call `bus.emit()`, `fetch()`, `invoke()`, or any side-effectful function during render — even if wrapped in `queueMicrotask` or `setTimeout`. React may re-invoke render functions (StrictMode, Suspense, concurrent features). Derive values during render; perform effects in `useEffect`.
+
+### No reading external mutable state in useMemo/render
+Module-level caches, Maps, and global singletons are invisible to React's reactivity system. Reading them inside `useMemo` or render produces stale results — the memo won't re-run when the external data changes. Use the event bus, context, or state to bridge external data into React's render cycle.
+
+### Trace flags through all consumers
+When adding a boolean flag or mode that controls behavior (e.g., `timeline: false`), search for ALL code paths that consume the underlying data — both backend commands and frontend components. A flag only works if every path checks it. Use `Grep` to find all references to the data the flag controls before considering the work done.
+
+### Metadata the UI needs before pipeline run goes on ProcessorSummary
+If the UI needs processor metadata (sections, mode, source types, timeline flag) without requiring a pipeline run first, put it on `ProcessorSummary` — not on result types like `StateSnapshot` or `StateTrackerResult` which are only populated after execution.
+
+### Marketplace processor changes require version bumps
+Any change to a processor YAML — including metadata-only changes like `source_types` — requires bumping the `version` in both the YAML file AND the matching entry in `marketplace/marketplace.json`. The update checker compares against the index, not the YAML files.
+
 ## Commands
 
 ```bash
