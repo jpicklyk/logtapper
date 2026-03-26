@@ -78,7 +78,17 @@ export const DropdownMenu = React.memo<DropdownMenuProps>(function DropdownMenu(
       <div
         ref={triggerRef}
         className={styles.triggerWrapper}
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        aria-haspopup="menu"
         onClick={() => onOpenChange(!open)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onOpenChange(!open);
+          }
+        }}
       >
         {trigger}
       </div>

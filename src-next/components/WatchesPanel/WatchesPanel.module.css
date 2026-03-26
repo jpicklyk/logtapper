@@ -61,6 +61,11 @@
   background: var(--state-hover);
 }
 
+.addBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .content {
   flex: 1;
   min-height: 0;
@@ -163,6 +168,12 @@
 .cancelBtn:hover {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.cancelBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+  opacity: 1;
 }
 
 /* ── Criteria chips ──────────────────────────────────────────────────────── */
@@ -309,6 +320,11 @@
   color: var(--text-muted);
 }
 
+.levelToggle:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .levelToggleActive {
   border-color: var(--accent);
   color: var(--accent);
@@ -348,6 +364,11 @@
 
 .combineToggle:hover {
   color: var(--text-muted);
+}
+
+.combineToggle:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .combineToggleActive {

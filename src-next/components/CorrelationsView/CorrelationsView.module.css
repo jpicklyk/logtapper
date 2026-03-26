@@ -113,6 +113,11 @@
   background: var(--bg-overlay);
 }
 
+.eventHeader:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
 .eventLine {
   display: flex;
   align-items: center;
@@ -133,6 +138,12 @@
 
 .lineLink:hover {
   color: var(--text);
+}
+
+.lineLink:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+  border-radius: var(--radius-sm);
 }
 
 .sourceBadge {

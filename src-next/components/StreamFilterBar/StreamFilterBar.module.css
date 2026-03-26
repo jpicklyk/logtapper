@@ -31,6 +31,11 @@
   color: var(--text);
 }
 
+.chip:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 .count {
   font-family: var(--font-mono);
   font-size: 10px;
@@ -60,6 +65,11 @@
 .copyBtn:hover {
   border-color: var(--accent);
   color: var(--text);
+}
+
+.copyBtn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .inputRow {

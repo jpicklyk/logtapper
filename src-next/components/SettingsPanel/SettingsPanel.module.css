@@ -49,6 +49,11 @@
   background: var(--bg-overlay);
 }
 
+.closeBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 /* Tabs */
 .tabs {
   display: flex;
@@ -74,6 +79,11 @@
 .tab:hover {
   color: var(--text);
   background: var(--bg-overlay);
+}
+
+.tab:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .tabActive {
@@ -244,6 +254,11 @@
   background: var(--bg-overlay);
 }
 
+.expandBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 /* Pattern list */
 .patternList {
   padding: 4px 10px 8px;
@@ -300,6 +315,11 @@
 
 .patternDelBtn:hover {
   color: var(--danger);
+}
+
+.patternDelBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 /* Add pattern form */
@@ -371,6 +391,11 @@
   text-decoration: underline;
 }
 
+.addPatternToggle:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 /* Custom detectors */
 .customSection {
   margin-top: 16px;
@@ -438,6 +463,11 @@
   filter: brightness(1.1);
 }
 
+.btnPrimary:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .btnSecondary {
   padding: 6px 16px;
   border: 1px solid var(--border);
@@ -450,6 +480,11 @@
 
 .btnSecondary:hover {
   border-color: var(--accent);
+}
+
+.btnSecondary:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 /* ── File association status badges ──────────────────────────────────────── */

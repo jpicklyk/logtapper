@@ -108,6 +108,11 @@
   background: var(--state-hover);
 }
 
+.cancelBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .exportBtn {
   padding: 6px 16px;
   border-radius: var(--radius-md);
@@ -121,6 +126,11 @@
 
 .exportBtn:hover:not(:disabled) {
   opacity: 0.9;
+}
+
+.exportBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .exportBtn:disabled {
