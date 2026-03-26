@@ -1,6 +1,6 @@
 {
   "name": "official",
-  "version": 5,
+  "version": 6,
   "owner": {
     "name": "LogTapper"
   },
@@ -29,12 +29,13 @@
     {
       "id": "battery-state",
       "name": "Battery State",
-      "version": "4.1.0",
-      "description": "Tracks battery level, charging status, plug source, voltage, temperature, and current draw from BatteryService ACTION_BATTERY_CHANGED broadcasts.",
+      "version": "5.0.0",
+      "description": "Tracks battery level, charging status, plug source, voltage, temperature, current draw, charge type, charger type, and HVC status from BatteryService ACTION_BATTERY_CHANGED broadcasts.",
       "path": "processors/battery_state.yaml",
       "tags": [
         "battery",
         "power",
+        "charging",
         "android"
       ],
       "sha256": "",
@@ -78,28 +79,6 @@
         "battery",
         "health",
         "samsung",
-        "android"
-      ],
-      "sha256": "",
-      "category": "battery",
-      "license": null,
-      "processor_type": "state_tracker",
-      "source_types": [
-        "logcat",
-        "bugreport"
-      ],
-      "deprecated": false
-    },
-    {
-      "id": "charging-state",
-      "name": "Charging State",
-      "version": "1.1.0",
-      "description": "Tracks how power is delivered: charge source (AC/USB/wireless/pogo), charge type, charger type, max current/voltage, and high-voltage charging.",
-      "path": "processors/charging_state.yaml",
-      "tags": [
-        "battery",
-        "charging",
-        "power",
         "android"
       ],
       "sha256": "",
@@ -270,8 +249,8 @@
     {
       "id": "connectivity-check-probes",
       "name": "Connectivity Check Probes",
-      "version": "1.1.4",
-      "description": "Captures every Android NetworkMonitor probe (DNS, HTTP, HTTPS, FALLBACK) with timing, result, and failure details. Highlights DNS resolution failures as a root cause of connectivity check failures.",
+      "version": "1.2.0",
+      "description": "Captures every Android NetworkMonitor probe (DNS, HTTP, HTTPS, FALLBACK) with timing, result, and failure details. Tracks the validation lifecycle per network including captive portal redirect URLs and partial connectivity detection.",
       "path": "processors/connectivity_check_probes.yaml",
       "tags": [
         "network",
@@ -284,51 +263,8 @@
       "license": null,
       "processor_type": "reporter",
       "source_types": [
-        "logcat"
-      ],
-      "deprecated": false
-    },
-    {
-      "id": "connectivity-check-state",
-      "name": "Connectivity Check State",
-      "version": "1.1.3",
-      "description": "Tracks Android NetworkMonitor validation lifecycle per network. Monitors probe-level DNS failures, HTTP/HTTPS probe outcomes, and the final isCaptivePortal verdict.",
-      "path": "processors/connectivity_check_state.yaml",
-      "tags": [
-        "network",
-        "connectivity",
-        "dns",
-        "android"
-      ],
-      "sha256": "",
-      "category": "network",
-      "license": null,
-      "processor_type": "state_tracker",
-      "source_types": [
         "logcat",
         "bugreport"
-      ],
-      "deprecated": false
-    },
-    {
-      "id": "ebadf-error-tracker",
-      "name": "EBADF Error Tracker",
-      "version": "1.1.4",
-      "description": "Finds EBADF (bad file descriptor) errors across all processes. Groups by PID and operation type. High EBADF rates often indicate FD recycling caused by an FD leak in another process.",
-      "path": "processors/ebadf_error_tracker.yaml",
-      "tags": [
-        "ebadf",
-        "fd",
-        "file-descriptor",
-        "error",
-        "android"
-      ],
-      "sha256": "",
-      "category": "stability",
-      "license": null,
-      "processor_type": "reporter",
-      "source_types": [
-        "logcat"
       ],
       "deprecated": false
     },
@@ -350,28 +286,6 @@
       "category": "stability",
       "license": null,
       "processor_type": "reporter",
-      "source_types": [
-        "logcat"
-      ],
-      "deprecated": false
-    },
-    {
-      "id": "fd-ebadf-correlator",
-      "name": "FD Exhaustion \u2192 EBADF Correlator",
-      "version": "1.0.1",
-      "description": "Detects when a system_server FD spike (>900 FDs per Watchdog telemetry) precedes EBADF errors in other processes \u2014 indicating FD recycling as the root cause.",
-      "path": "processors/fd_ebadf_correlator.yaml",
-      "tags": [
-        "fd",
-        "ebadf",
-        "correlator",
-        "system_server",
-        "android"
-      ],
-      "sha256": "",
-      "category": "stability",
-      "license": null,
-      "processor_type": "correlator",
       "source_types": [
         "logcat"
       ],
@@ -423,41 +337,20 @@
       "deprecated": false
     },
     {
-      "id": "system-server-fd-monitor",
-      "name": "System Server FD Monitor",
-      "version": "1.1.2",
-      "description": "Extracts Samsung Watchdog FD telemetry from system_server. Tracks FD count over time, classifies into normal/elevated/critical states, and detects the boot FD spike pattern.",
-      "path": "processors/system_server_fd_monitor.yaml",
+      "id": "system-server-monitor",
+      "name": "System Server Monitor",
+      "version": "1.0.0",
+      "description": "Monitors system_server health via Watchdog !@Sync messages. Tracks Java heap pressure (5-level classification) and FD usage (normal/elevated/critical with boot spike detection).",
+      "path": "processors/system_server_monitor.yaml",
       "tags": [
+        "memory",
+        "heap",
         "fd",
         "file-descriptor",
         "system_server",
         "watchdog",
-        "leak",
-        "android"
-      ],
-      "sha256": "",
-      "category": "stability",
-      "license": null,
-      "processor_type": "reporter",
-      "source_types": [
-        "logcat",
-        "bugreport"
-      ],
-      "deprecated": false
-    },
-    {
-      "id": "system-server-heap",
-      "name": "System Server Heap Monitor",
-      "version": "1.1.2",
-      "description": "Monitors Android system_server Java heap pressure via Watchdog !@Sync messages. Tracks heap used/max and pressure level over time.",
-      "path": "processors/system_server_heap.yaml",
-      "tags": [
-        "memory",
-        "heap",
-        "system_server",
-        "watchdog",
         "oom",
+        "leak",
         "android"
       ],
       "sha256": "",
@@ -796,8 +689,8 @@
     {
       "id": "network-connectivity",
       "name": "Network Connectivity",
-      "version": "1.0.0",
-      "description": "Network connectivity state tracking, DNS resolution analysis, and connectivity check monitoring",
+      "version": "1.1.0",
+      "description": "Network connectivity state tracking and DNS resolution analysis",
       "path": "packs/network-connectivity.pack.yaml",
       "tags": [
         "network",
@@ -808,7 +701,6 @@
       "category": "network",
       "processor_ids": [
         "network-connectivity",
-        "connectivity-check-state",
         "dns-query-events",
         "dns-server-stats",
         "dns-private-probe-tracker"
@@ -841,8 +733,8 @@
     {
       "id": "stability-monitor",
       "name": "Stability Monitor",
-      "version": "1.0.0",
-      "description": "Crash detection, exception tracking, and process kill storm analysis",
+      "version": "1.1.0",
+      "description": "Crash detection, exception tracking, process kill storm analysis, and app lifecycle monitoring",
       "path": "packs/stability-monitor.pack.yaml",
       "tags": [
         "stability",
@@ -855,15 +747,16 @@
         "crash-storm-detector",
         "exception-stack-tracker",
         "exception-storm-detector",
-        "process-kill-storm"
+        "process-kill-storm",
+        "app-lifecycle"
       ],
       "sha256": ""
     },
     {
       "id": "device-health",
       "name": "Device Health",
-      "version": "1.0.0",
-      "description": "Battery, charging, thermal, CPU, GPU, and memory pressure monitoring",
+      "version": "1.1.0",
+      "description": "Battery, thermal, CPU, GPU, memory pressure, GC pressure, and system server health monitoring",
       "path": "packs/device-health.pack.yaml",
       "tags": [
         "battery",
@@ -879,32 +772,29 @@
         "battery-state",
         "battery-events",
         "battery-health",
-        "charging-state",
-        "memory-pressure",
         "thermal-state",
         "cpu-load",
         "gpu-memory",
         "gc-pressure-monitor",
-        "system-server-heap"
+        "system-server-monitor",
+        "memory-pressure"
       ],
       "sha256": ""
     },
     {
-      "id": "error-analysis",
-      "name": "Error Analysis",
+      "id": "samsung-security",
+      "name": "Samsung Security",
       "version": "1.0.0",
-      "description": "EBADF error tracking and file descriptor correlation analysis",
-      "path": "packs/error-analysis.pack.yaml",
+      "description": "Samsung-specific security feature monitoring \u2014 Auto Blocker state tracking and security setting analysis",
+      "path": "packs/samsung-security.pack.yaml",
       "tags": [
-        "stability",
-        "errors",
-        "fd",
+        "samsung",
+        "security",
         "android"
       ],
-      "category": "stability",
+      "category": "security",
       "processor_ids": [
-        "ebadf-error-tracker",
-        "fd-ebadf-correlator"
+        "samsung-auto-blocker"
       ],
       "sha256": ""
     }

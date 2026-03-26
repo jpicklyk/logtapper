@@ -1,6 +1,6 @@
 name: Stability Monitor
-version: 1.0.0
-description: Crash detection, exception tracking, and process kill storm analysis
+version: 1.1.0
+description: Crash detection, exception tracking, process kill storm analysis, and app lifecycle monitoring
 author: LogTapper
 tags: [stability, crashes, exceptions, android]
 category: stability
@@ -9,3 +9,4 @@ processors:
   - exception-stack-tracker
   - exception-storm-detector
   - process-kill-storm
+  - app-lifecycle

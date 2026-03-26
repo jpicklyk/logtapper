@@ -1,9 +1,9 @@
 type: state_tracker
 id: battery-state
 name: Battery State
-version: 4.1.0
+version: 5.0.0
 author: LogTapper
-description: "Tracks battery level, charging status, plug source, voltage, temperature, and current draw from BatteryService ACTION_BATTERY_CHANGED broadcasts. Each transition captures all fields atomically. Supports Samsung (named booleans: ac:true/false) and AOSP (processValuesLocked) formats."
+description: "Tracks battery level, charging status, plug source, voltage, temperature, current draw, charge type, charger type, and high-voltage charging (HVC) status from BatteryService ACTION_BATTERY_CHANGED broadcasts. Each transition captures all fields atomically. Supports Samsung (named booleans: ac:true/false, charge_type, charger_type, hvc) and AOSP (processValuesLocked) formats."
 tags: [battery, power, android]
 category: battery
 builtin: false
@@ -25,17 +25,91 @@ state:
     type: int
   - name: current_avg
     type: int
+  - name: charge_type
+    type: int
+  - name: charger_type
+    type: int
+  - name: hvc
+    type: bool
 
 transitions:
-  # ── Samsung format: Sending ACTION_BATTERY_CHANGED with named booleans ───
+  # ── Samsung full format: level + plug source + voltage/temp/current + charge details ──
   # Line format (field order is stable):
   #   level:54, status:2, health:2, ac:false, usb:true, wireless:false, pogo:false,
-  #   ..., voltage:3949, temperature:270, ..., current_avg:454, ...
+  #   ..., voltage:3949, temperature:270, ..., current_avg:454, ...,
+  #   charge_type:N, charger_type:N, ..., hvc:B
   #
-  # Each transition captures level ($1), voltage ($2), temperature ($3),
-  # and current_avg ($4) atomically alongside the plug source.
-  # State trackers fire first-matching-only, so all fields must be
-  # captured in a single transition.
+  # Full transitions capture level ($1), voltage ($2), temperature ($3),
+  # current_avg ($4), charge_type ($5), charger_type ($6), hvc ($7).
+  # These fire first on Samsung devices with charging detail fields.
+  # The fallback transitions below handle AOSP or older firmware.
+
+  - name: Charging via AC (full)
+    filter:
+      tag: BatteryService
+      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*level:(\d+).*ac:true.*voltage:(\d+).*temperature:(\d+).*current_avg:(-?\d+).*charge_type:(\d+).*charger_type:(\d+).*hvc:(true|false)'
+    set:
+      level: "$1"
+      charging: true
+      status: charging
+      plugged: ac
+      voltage: "$2"
+      temperature: "$3"
+      current_avg: "$4"
+      charge_type: "$5"
+      charger_type: "$6"
+      hvc: "$7"
+
+  - name: Charging via USB (full)
+    filter:
+      tag: BatteryService
+      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*level:(\d+).*usb:true.*voltage:(\d+).*temperature:(\d+).*current_avg:(-?\d+).*charge_type:(\d+).*charger_type:(\d+).*hvc:(true|false)'
+    set:
+      level: "$1"
+      charging: true
+      status: charging
+      plugged: usb
+      voltage: "$2"
+      temperature: "$3"
+      current_avg: "$4"
+      charge_type: "$5"
+      charger_type: "$6"
+      hvc: "$7"
+
+  - name: Charging via Wireless (full)
+    filter:
+      tag: BatteryService
+      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*level:(\d+).*wireless:true.*voltage:(\d+).*temperature:(\d+).*current_avg:(-?\d+).*charge_type:(\d+).*charger_type:(\d+).*hvc:(true|false)'
+    set:
+      level: "$1"
+      charging: true
+      status: charging
+      plugged: wireless
+      voltage: "$2"
+      temperature: "$3"
+      current_avg: "$4"
+      charge_type: "$5"
+      charger_type: "$6"
+      hvc: "$7"
+
+  - name: Charging via Pogo (full)
+    filter:
+      tag: BatteryService
+      message_regex: 'Sending ACTION_BATTERY_CHANGED:.*level:(\d+).*pogo:true.*voltage:(\d+).*temperature:(\d+).*current_avg:(-?\d+).*charge_type:(\d+).*charger_type:(\d+).*hvc:(true|false)'
+    set:
+      level: "$1"
+      charging: true
+      status: charging
+      plugged: pogo
+      voltage: "$2"
+      temperature: "$3"
+      current_avg: "$4"
+      charge_type: "$5"
+      charger_type: "$6"
+      hvc: "$7"
+
+  # ── Samsung/AOSP fallback: no charge_type/charger_type/hvc fields ──────
+  # Fires on AOSP or older Samsung firmware that omits charging detail fields.
 
   - name: Charging via AC
     filter:
@@ -155,6 +229,6 @@ schema:
   emissions: []
   mcp:
     summary:
-      template: "Battery: level={{level}}%, status={{status}}, plugged={{plugged}}, voltage={{voltage}}mV, temp={{temperature}} (x0.1C), current={{current_avg}}mA."
-      include_vars: [level, status, plugged, voltage, temperature, current_avg]
+      template: "Battery: level={{level}}%, status={{status}}, plugged={{plugged}}, voltage={{voltage}}mV, temp={{temperature}} (x0.1C), current={{current_avg}}mA, charge_type={{charge_type}}, charger_type={{charger_type}}, hvc={{hvc}}."
+      include_vars: [level, status, plugged, voltage, temperature, current_avg, charge_type, charger_type, hvc]
     signals: []

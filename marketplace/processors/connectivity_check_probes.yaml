@@ -1,13 +1,15 @@
 meta:
   id: connectivity-check-probes
   name: Connectivity Check Probes
-  version: 1.1.4
+  version: 1.2.0
   author: LogTapper
   description: >
     Captures every Android NetworkMonitor probe (DNS, HTTP, HTTPS, FALLBACK)
     with timing, result, and failure details. Highlights DNS resolution failures
-    as a root cause of connectivity check failures. Aggregates probe outcomes
-    by type and result, and charts probe latency over time.
+    as a root cause of connectivity check failures. Tracks the validation
+    lifecycle per network — including captive portal redirect URLs and partial
+    connectivity detection. Aggregates probe outcomes by type and result,
+    and charts probe latency over time.
   tags: [network, connectivity, dns, android]
   category: network
 
@@ -166,6 +168,9 @@ pipeline:
       - name: validation_time_ms
         pattern: 'Time=(\d+)ms'
         cast: int
+      - name: redirect_url
+        pattern: 'RedirectUrl=(\S+)'
+        cast: string
 
   - stage: script
     runtime: rhai
@@ -313,10 +318,13 @@ pipeline:
           vars.validation_fail += 1;
         }
 
+        let redir = if "redirect_url" in fields { fields.redirect_url } else { "" };
+
         _emits.push(#{
           probe_type: "VERDICT",
           result: verdict,
           validation_time_ms: if "validation_time_ms" in fields { fields.validation_time_ms } else { 0 },
+          redirect_url: redir,
           net_id: net_id
         });
       }
@@ -383,6 +391,9 @@ schema:
     - name: detail
       type: string
       description: "Detailed failure message or exception text"
+    - name: redirect_url
+      type: string
+      description: "Captive portal redirect URL when portal is detected"
   mcp:
     summary:
       template: "{{total_probes}} probes: DNS {{dns_ok}}/{{dns_fail}} ok/fail, HTTP {{http_ok}}/{{http_fail}}, HTTPS {{https_ok}}/{{https_fail}}. Validations: {{validation_pass}} passed, {{validation_fail}} failed, {{portal_detected}} portals."
@@ -406,3 +417,9 @@ schema:
         fields: [portal_detected]
         format: "{{portal_detected}} captive portal(s) detected"
         type: aggregate
+      - name: captive_portal_redirect
+        severity: warning
+        condition: "result == 'portal' && probe_type == 'VERDICT'"
+        fields: [probe_type, result, redirect_url, net_id]
+        format: "Captive portal on network {{net_id}}: redirect to {{redirect_url}}"
+        type: emission

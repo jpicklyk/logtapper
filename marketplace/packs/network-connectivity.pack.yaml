@@ -1,12 +1,11 @@
 name: Network Connectivity
-version: 1.0.0
-description: Network connectivity state tracking, DNS resolution analysis, and connectivity check monitoring
+version: 1.1.0
+description: Network connectivity state tracking and DNS resolution analysis
 author: LogTapper
 tags: [network, connectivity, dns, android]
 category: network
 processors:
   - network-connectivity
-  - connectivity-check-state
   - dns-query-events
   - dns-server-stats
   - dns-private-probe-tracker

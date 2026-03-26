@@ -1,0 +1,8 @@
+name: Samsung Security
+version: 1.0.0
+description: Samsung-specific security feature monitoring — Auto Blocker state tracking and security setting analysis
+author: LogTapper
+tags: [samsung, security, android]
+category: security
+processors:
+  - samsung-auto-blocker
