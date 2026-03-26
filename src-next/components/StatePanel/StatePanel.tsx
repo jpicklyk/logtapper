@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
+import { ChevronRight } from 'lucide-react';
 import type { StateSnapshot, ProcessorSummary } from '../../bridge/types';
 import {
   useSession,
@@ -209,6 +210,26 @@ const StatePanel = React.memo(function StatePanel() {
     return map;
   }, [activeTrackers]);
 
+  // Collapsed state per tracker — tracks manual user overrides only.
+  // Trackers without an override auto-collapse when empty, auto-expand when populated.
+  const [manualCollapsed, setManualCollapsed] = useState<Map<string, boolean>>(new Map());
+
+  const toggleCollapsed = useCallback((trackerId: string) => {
+    setManualCollapsed((prev) => {
+      const next = new Map(prev);
+      const current = next.get(trackerId);
+      // If no manual override exists, determine current visual state and invert it
+      if (current === undefined) {
+        const ts = trackerStates.find((t) => t.trackerId === trackerId);
+        const hasData = ts?.snapshot != null && ts.snapshot.initializedFields.length > 0;
+        next.set(trackerId, hasData); // collapse if has data (was expanded), expand if empty (was collapsed)
+      } else {
+        next.set(trackerId, !current);
+      }
+      return next;
+    });
+  }, [trackerStates]);
+
   if (activeTrackers.length === 0) {
     return (
       <div className={styles.empty}>
@@ -229,6 +250,14 @@ const StatePanel = React.memo(function StatePanel() {
       {trackerStates.map((ts) => {
         const meta = trackerMeta.get(ts.trackerId);
         const mode = meta?.trackerMode;
+        const hasData = ts.snapshot != null && ts.snapshot.initializedFields.length > 0;
+        const fieldCount = ts.snapshot ? Object.keys(ts.snapshot.fields).length : 0;
+        const initCount = ts.snapshot?.initializedFields.length ?? 0;
+
+        // Resolve collapsed state: manual override > auto (empty = collapsed)
+        const manualState = manualCollapsed.get(ts.trackerId);
+        const isCollapsed = manualState !== undefined ? manualState : !hasData && !ts.loading;
+
         // Sections from the definition, falling back to source types from schema.
         const sources = meta?.trackerSections?.length
           ? meta.trackerSections
@@ -237,17 +266,33 @@ const StatePanel = React.memo(function StatePanel() {
               : (meta?.sourceTypes ?? []));
 
         return (
-          <div key={ts.trackerId} className={styles.card}>
-            <div className={styles.cardTop}>
-              <span className={styles.cardName}>{ts.trackerName}</span>
-              {mode && (
-                <span className={styles.modeTag}>
-                  {mode === 'snapshot' ? 'snapshot' : 'time-series'}
-                </span>
-              )}
-            </div>
+          <div key={ts.trackerId} className={`${styles.card} ${isCollapsed ? styles.cardCollapsed : ''}`}>
+            <button
+              type="button"
+              className={styles.cardTop}
+              onClick={() => toggleCollapsed(ts.trackerId)}
+              title={isCollapsed ? 'Expand' : 'Collapse'}
+            >
+              <span className={styles.cardTopLeft}>
+                <ChevronRight
+                  size={12}
+                  className={`${styles.chevron} ${isCollapsed ? '' : styles.chevronOpen}`}
+                />
+                <span className={styles.cardName}>{ts.trackerName}</span>
+              </span>
+              <span className={styles.cardTopRight}>
+                {hasData && (
+                  <span className={styles.fieldCount}>{initCount}/{fieldCount}</span>
+                )}
+                {mode && (
+                  <span className={styles.modeTag}>
+                    {mode === 'snapshot' ? 'snapshot' : 'time-series'}
+                  </span>
+                )}
+              </span>
+            </button>
 
-            {sources.length > 0 && (
+            {!isCollapsed && sources.length > 0 && (
               <div className={styles.sourceBar}>
                 {sources.map((s) => (
                   <span key={s} className={styles.sourceChip}>{s}</span>
@@ -255,32 +300,34 @@ const StatePanel = React.memo(function StatePanel() {
               </div>
             )}
 
-            {/* Body: fields or loading/empty state */}
-            <div className={styles.cardBody}>
-              {ts.loading && (
-                <div className={styles.skelRows}>
-                  {[55, 40, 65].map((w, i) => (
-                    <div key={i} className={styles.skelRow}>
-                      <div className={styles.skelKey} style={{ width: `${w}%` }} />
-                      <div
-                        className={styles.skelVal}
-                        style={{ width: `${100 - w - 15}%` }}
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
+            {/* Body: fields or loading/empty state — hidden when collapsed */}
+            {!isCollapsed && (
+              <div className={styles.cardBody}>
+                {ts.loading && (
+                  <div className={styles.skelRows}>
+                    {[55, 40, 65].map((w, i) => (
+                      <div key={i} className={styles.skelRow}>
+                        <div className={styles.skelKey} style={{ width: `${w}%` }} />
+                        <div
+                          className={styles.skelVal}
+                          style={{ width: `${100 - w - 15}%` }}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
 
-              {!ts.loading && !ts.snapshot && (
-                <div className={styles.noData}>
-                  Run the pipeline to see state
-                </div>
-              )}
+                {!ts.loading && !ts.snapshot && (
+                  <div className={styles.noData}>
+                    Run the pipeline to see state
+                  </div>
+                )}
 
-              {!ts.loading && ts.snapshot && (
-                <FieldsGrid snapshot={ts.snapshot} />
-              )}
-            </div>
+                {!ts.loading && ts.snapshot && (
+                  <FieldsGrid snapshot={ts.snapshot} />
+                )}
+              </div>
+            )}
           </div>
         );
       })}
