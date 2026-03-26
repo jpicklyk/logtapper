@@ -1,7 +1,7 @@
 meta:
   id: connectivity-check-probes
   name: Connectivity Check Probes
-  version: 1.1.3
+  version: 1.1.4
   author: LogTapper
   description: >
     Captures every Android NetworkMonitor probe (DNS, HTTP, HTTPS, FALLBACK)
@@ -351,7 +351,7 @@ pipeline:
         interactive: true
 
 schema:
-  source_types: ["logcat"]
+  source_types: ["logcat", "bugreport"]
   emissions:
     - name: probe_type
       type: string

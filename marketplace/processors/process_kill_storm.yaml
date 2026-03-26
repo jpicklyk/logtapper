@@ -1,7 +1,7 @@
 meta:
   id: "process-kill-storm"
   name: "Process Kill Storm"
-  version: "1.1.2"
+  version: "1.1.3"
   author: "LogTapper"
   description: "Captures ActivityManager process kills. Tracks kill rate, RSS freed per kill, and groups kills by reason (e.g. empty process, background ANR). Useful for diagnosing memory pressure kill storms."
   tags: ["am", "activitymanager", "kill", "oom", "memory", "android"]
@@ -120,7 +120,7 @@ pipeline:
         y: { field: rss_kb, label: "RSS (KB)", aggregation: sum }
 
 schema:
-  source_types: ["logcat"]
+  source_types: ["logcat", "bugreport"]
   emissions:
     - name: process_name
       type: string

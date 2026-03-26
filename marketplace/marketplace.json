@@ -247,7 +247,7 @@
     {
       "id": "samsung-auto-blocker",
       "name": "Auto Blocker",
-      "version": "1.1.1",
+      "version": "1.1.2",
       "description": "Tracks Samsung Auto Blocker state. When enabled, blocks USB debugging, ADB commands, app sideloading, and developer certificates.",
       "path": "processors/samsung_auto_blocker.yaml",
       "tags": [
@@ -270,7 +270,7 @@
     {
       "id": "connectivity-check-probes",
       "name": "Connectivity Check Probes",
-      "version": "1.1.3",
+      "version": "1.1.4",
       "description": "Captures every Android NetworkMonitor probe (DNS, HTTP, HTTPS, FALLBACK) with timing, result, and failure details. Highlights DNS resolution failures as a root cause of connectivity check failures.",
       "path": "processors/connectivity_check_probes.yaml",
       "tags": [
@@ -313,7 +313,7 @@
     {
       "id": "ebadf-error-tracker",
       "name": "EBADF Error Tracker",
-      "version": "1.1.3",
+      "version": "1.1.4",
       "description": "Finds EBADF (bad file descriptor) errors across all processes. Groups by PID and operation type. High EBADF rates often indicate FD recycling caused by an FD leak in another process.",
       "path": "processors/ebadf_error_tracker.yaml",
       "tags": [
@@ -335,7 +335,7 @@
     {
       "id": "exception-storm-detector",
       "name": "Exception Storm Detector",
-      "version": "1.1.2",
+      "version": "1.1.3",
       "description": "Detects exception storms \u2014 bursts of 20+ identical errors within a 2-second window. Uses the BurstDetector aggregate to fire exactly once per rising edge.",
       "path": "processors/exception_storm_detector.yaml",
       "tags": [
@@ -380,7 +380,7 @@
     {
       "id": "gc-pressure-monitor",
       "name": "GC Pressure Monitor",
-      "version": "1.1.2",
+      "version": "1.1.3",
       "description": "Tracks ART GC events. Monitors heap used/max and GC duration. Classifies heap pressure as normal (<70%), stressed (70-85%), or critical (>85%).",
       "path": "processors/gc_pressure_monitor.yaml",
       "tags": [
@@ -402,7 +402,7 @@
     {
       "id": "process-kill-storm",
       "name": "Process Kill Storm",
-      "version": "1.1.2",
+      "version": "1.1.3",
       "description": "Captures ActivityManager process kills. Tracks kill rate, RSS freed per kill, and groups kills by reason. Useful for diagnosing memory pressure kill storms.",
       "path": "processors/process_kill_storm.yaml",
       "tags": [

@@ -1,7 +1,7 @@
 type: state_tracker
 id: samsung-auto-blocker
 name: Auto Blocker
-version: 1.1.1
+version: 1.1.2
 author: LogTapper
 description: >-
   Tracks Samsung Auto Blocker state. When enabled, blocks USB debugging,
@@ -68,7 +68,7 @@ output:
   annotate: true
 
 schema:
-  source_types: ["logcat", "dumpstate"]
+  source_types: ["logcat", "bugreport", "dumpstate"]
   emissions: []
   mcp:
     summary:
