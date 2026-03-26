@@ -383,6 +383,11 @@
   background: var(--bg-overlay);
 }
 
+.sectionItem:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
 .sectionItemActive {
   background: var(--bg-overlay);
   color: var(--accent);
@@ -446,6 +451,11 @@
   background: var(--bg-overlay);
 }
 
+.sectionGroupHeader:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
 .sectionGroupActive {
   color: var(--accent);
 }
@@ -506,6 +516,11 @@
 
 .showMoreBtn:hover {
   background: var(--bg-overlay);
+}
+
+.showMoreBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 @keyframes section-flash {
@@ -577,6 +592,11 @@
 
 .parentHeader:hover {
   background: var(--bg-overlay);
+}
+
+.parentHeader:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 .parentHeaderActive {
@@ -823,4 +843,9 @@
 
 .sectionFilterClear:hover {
   background: var(--state-active);
+}
+
+.sectionFilterClear:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }

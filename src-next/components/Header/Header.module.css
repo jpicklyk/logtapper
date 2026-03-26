@@ -91,6 +91,11 @@
   background: var(--state-hover);
 }
 
+.actionBtn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 .actionBtnStreaming {
   color: var(--success);
   border-color: var(--success-dark);
@@ -159,6 +164,11 @@
   color: var(--text);
 }
 
+.winBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .winBtnClose:hover {
   background: var(--danger);
   color: white;
@@ -194,6 +204,11 @@
 .deviceItem:hover {
   border-color: var(--accent);
   background: var(--state-hover);
+}
+
+.deviceItem:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .deviceIcon {

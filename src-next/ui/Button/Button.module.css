@@ -19,7 +19,12 @@
   outline: none;
 }
 
-.button:disabled {
+.button:active:not(:disabled) {
+  opacity: 0.75;
+}
+
+.button:disabled,
+.button[aria-disabled="true"] {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -44,8 +49,12 @@
   color: var(--text-on-accent);
 }
 
-.primary:hover:not(:disabled) {
+.primary:hover:not(:disabled):not([aria-disabled="true"]) {
   opacity: 0.85;
+}
+
+.primary:active:not(:disabled):not([aria-disabled="true"]) {
+  opacity: 0.7;
 }
 
 .secondary {
@@ -54,8 +63,12 @@
   color: var(--text);
 }
 
-.secondary:hover:not(:disabled) {
+.secondary:hover:not(:disabled):not([aria-disabled="true"]) {
   border-color: var(--accent);
+}
+
+.secondary:active:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--state-active);
 }
 
 .danger {
@@ -64,8 +77,12 @@
   color: var(--text-on-accent);
 }
 
-.danger:hover:not(:disabled) {
+.danger:hover:not(:disabled):not([aria-disabled="true"]) {
   opacity: 0.85;
+}
+
+.danger:active:not(:disabled):not([aria-disabled="true"]) {
+  opacity: 0.7;
 }
 
 .ghost {
@@ -74,8 +91,12 @@
   color: var(--text);
 }
 
-.ghost:hover:not(:disabled) {
+.ghost:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--bg-raised);
+}
+
+.ghost:active:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--state-active);
 }
 
 /* Loading */

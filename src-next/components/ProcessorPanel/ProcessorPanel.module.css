@@ -63,6 +63,11 @@
   border-color: var(--accent);
 }
 
+.actionBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 /* Chain — scrollable middle area */
 .chain {
   display: flex;
@@ -357,6 +362,11 @@
   background: var(--state-hover);
 }
 
+.runBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .runBtnRunning {
   border-color: var(--accent);
   color: var(--accent);
@@ -388,6 +398,11 @@
 .stopBtn:hover {
   color: var(--danger);
   border-color: var(--danger);
+}
+
+.stopBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .error {
@@ -527,6 +542,12 @@
   color: var(--accent);
 }
 
+.toggleBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+  opacity: 1 !important;
+}
+
 .toggleBtnOff {
   opacity: 0.6 !important;
   color: var(--text-dimmed);
@@ -584,6 +605,11 @@
 
 .chainFilterClear:hover {
   color: var(--text);
+}
+
+.chainFilterClear:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .chainFilterEmpty {

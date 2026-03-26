@@ -51,6 +51,11 @@
   background: var(--bg-overlay);
 }
 
+.closeBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 /* Body */
 .body {
   display: flex;
@@ -137,6 +142,11 @@
   filter: brightness(1.1);
 }
 
+.btnPrimary:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .btnPrimary:disabled {
   opacity: 0.5;
   cursor: default;
@@ -155,6 +165,11 @@
 
 .btnSecondary:hover:not(:disabled) {
   border-color: var(--accent);
+}
+
+.btnSecondary:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .btnSecondary:disabled {

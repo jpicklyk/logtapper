@@ -53,6 +53,11 @@
   border-color: var(--accent);
 }
 
+.procCard:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 .procCardActive {
   border-color: var(--accent);
   background: var(--state-selected);
@@ -395,6 +400,11 @@
 
 .matchRow:hover {
   background: var(--bg-overlay);
+}
+
+.matchRow:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .matchNum {

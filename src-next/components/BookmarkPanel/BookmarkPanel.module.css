@@ -119,6 +119,11 @@
   color: var(--text-muted);
 }
 
+.categoryHeader:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .categoryDot {
   flex-shrink: 0;
   width: 7px;
@@ -189,6 +194,11 @@
 
 .card:hover {
   background: var(--bg-overlay);
+}
+
+.card:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .card:hover .deleteBtn {
@@ -267,6 +277,12 @@
 
 .deleteBtn:hover {
   color: var(--danger);
+}
+
+.deleteBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+  opacity: 1;
 }
 
 /* ── Meta row (line indicator) ───────────────────────────────────────────── */
@@ -364,6 +380,12 @@
 
 .addNoteBtn:hover {
   color: var(--accent);
+}
+
+.addNoteBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+  opacity: 1;
 }
 
 .noteEdit {

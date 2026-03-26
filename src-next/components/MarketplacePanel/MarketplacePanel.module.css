@@ -335,6 +335,11 @@
   color: var(--accent);
 }
 
+.tagChip:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 .tagChipActive {
   background: var(--accent-muted);
   border-color: var(--accent);
@@ -363,6 +368,11 @@
   background: var(--danger-muted);
 }
 
+.tagFilterClear:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 /* ── Buttons ─────────────────────────────────────────────────────────────── */
 
 .fetchBtn {
@@ -384,6 +394,11 @@
 .fetchBtn:hover:not(:disabled) {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.fetchBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .fetchBtn:disabled {
@@ -414,6 +429,11 @@
 
 .actionBtn:hover:not(:disabled) {
   background: var(--state-hover);
+}
+
+.actionBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .actionBtn:disabled {

@@ -61,6 +61,11 @@
   background: var(--bg-raised);
 }
 
+.clearBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .toggle {
   display: flex;
   align-items: center;
@@ -81,6 +86,11 @@
 .toggle:hover:not(:disabled) {
   background: var(--bg-raised);
   color: var(--text);
+}
+
+.toggle:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .toggle:disabled {
@@ -168,6 +178,11 @@
 .navBtn:hover:not(:disabled) {
   background: var(--bg-raised);
   color: var(--text);
+}
+
+.navBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .navBtn:disabled {
