@@ -344,6 +344,9 @@ pub struct ProcessorSummary {
     /// Section names this state tracker targets (bugreport/dumpstate only).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tracker_sections: Vec<String>,
+    /// Whether this state tracker outputs to the timeline. Only set for state_tracker type.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tracker_timeline: Option<bool>,
     /// Log source types this processor supports (from schema.source_types).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub source_types: Vec<String>,
@@ -397,6 +400,10 @@ impl From<&AnyProcessor> for ProcessorSummary {
             pack_id: None,
             tracker_mode: match &p.kind {
                 ProcessorKind::StateTracker(def) => Some(def.mode),
+                _ => None,
+            },
+            tracker_timeline: match &p.kind {
+                ProcessorKind::StateTracker(def) => Some(def.output.timeline),
                 _ => None,
             },
             tracker_sections: match &p.kind {

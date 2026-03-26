@@ -255,6 +255,8 @@ export interface ProcessorSummary {
   packId?: string;
   /** State tracker mode. Only set for state_tracker type. */
   trackerMode?: 'snapshot' | 'time_series';
+  /** Whether this state tracker outputs to the timeline. */
+  trackerTimeline?: boolean;
   /** Section names this state tracker targets (bugreport/dumpstate only). */
   trackerSections?: string[];
   /** Log source types this processor supports (e.g. "logcat", "bugreport", "dumpstate"). */

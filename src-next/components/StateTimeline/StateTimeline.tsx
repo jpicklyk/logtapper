@@ -193,7 +193,8 @@ const StateTimeline = React.memo(function StateTimeline() {
     () =>
       pipelineChain
         .map((id) => processors.find((p) => p.id === id))
-        .filter((p): p is ProcessorSummary => p != null && p.processorType === 'state_tracker'),
+        .filter((p): p is ProcessorSummary =>
+          p != null && p.processorType === 'state_tracker' && p.trackerTimeline !== false),
     [pipelineChain, processors],
   );
 
