@@ -79,6 +79,19 @@
   opacity: 0.5;
 }
 
+.procCardNotRun {
+  opacity: 0.5;
+  border-style: dashed;
+}
+
+.procCardNotRun:hover {
+  opacity: 0.8;
+}
+
+.procCardZeroMatches .procCardStats {
+  color: var(--text-dimmed);
+}
+
 .procCardEmissions {
   opacity: 0.7;
 }
@@ -141,7 +154,7 @@
 .detailBody {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
 }
 
 .hint {
@@ -188,12 +201,45 @@
   gap: 6px;
 }
 
+.section + .section {
+  padding-top: 20px;
+  border-top: 1px solid var(--border-subtle);
+}
+
 .sectionLabel {
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-dimmed);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.sectionLabel:hover {
+  color: var(--text-muted);
+}
+
+.sectionChevron {
+  flex-shrink: 0;
+  transition: transform var(--transition-fast);
+}
+
+.sectionChevronOpen {
+  transform: rotate(90deg);
+}
+
+.sectionCollapsed .sectionLabel {
+  margin-bottom: 0;
+}
+
+.sectionContent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 /* Ranked list */
