@@ -42,18 +42,24 @@
   opacity: 0.6;
 }
 
+/* ── Card ──────────────────────────────────────────────────────────────── */
+
 .card {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-raised);
-  padding: 8px;
+  overflow: hidden;
 }
 
-.cardHeader {
+/* ── Card top bar: name + mode ─────────────────────────────────────────── */
+
+.cardTop {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-overlay);
 }
 
 .cardName {
@@ -62,40 +68,94 @@
   color: var(--text);
 }
 
+.modeTag {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--text-dimmed);
+}
+
+/* ── Source context bar ─────────────────────────────────────────────────── */
+
+.sourceBar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-wrap: wrap;
+}
+
+.sourceChip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--proc-tracker) 10%, transparent);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--proc-tracker);
+  white-space: nowrap;
+  line-height: 1.7;
+}
+
+/* ── Card body ─────────────────────────────────────────────────────────── */
+
+.cardBody {
+  padding: 6px 8px 8px;
+}
+
 .noData {
   font-size: 11px;
   color: var(--text-dimmed);
   padding: 4px 0;
 }
 
+/* ── Fields grid ──────────────────────────────────────────────────────── */
+
 .fieldsGrid {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .fieldRow {
   display: flex;
   align-items: baseline;
+  justify-content: space-between;
   gap: 8px;
   font-size: 11px;
   padding: 2px 0;
 }
 
+.fieldRowUnknown {
+  composes: fieldRow;
+  opacity: 0.4;
+}
+
 .fieldKey {
-  color: var(--text-dimmed);
-  min-width: 80px;
+  color: var(--text-muted);
   flex-shrink: 0;
+}
+
+.fieldVal {
+  text-align: right;
+  font-family: var(--font-mono);
+  min-width: 0;
 }
 
 .unknown {
   color: var(--text-dimmed);
   font-style: italic;
+  font-family: var(--font-ui);
 }
 
 .emptyVal {
   color: var(--text-dimmed);
   font-style: italic;
+  font-family: var(--font-ui);
 }
 
 .boolTrue {
@@ -110,16 +170,26 @@
 
 .numVal {
   color: var(--accent);
-  font-family: var(--font-mono);
 }
 
 .strVal {
   color: var(--text);
-  max-width: 180px;
+  max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ── Separator between known and unknown fields ─────────────────────── */
+
+.unknownDivider {
+  height: 0;
+  border: none;
+  border-top: 1px dashed var(--border-subtle);
+  margin: 4px 0 2px;
+}
+
+/* ── Skeleton loading ─────────────────────────────────────────────────── */
 
 .skelRows {
   display: flex;

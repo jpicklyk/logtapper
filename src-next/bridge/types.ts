@@ -253,6 +253,12 @@ export interface ProcessorSummary {
   source?: string;
   /** Pack this processor belongs to, if any. */
   packId?: string;
+  /** State tracker mode. Only set for state_tracker type. */
+  trackerMode?: 'snapshot' | 'time_series';
+  /** Section names this state tracker targets (bugreport/dumpstate only). */
+  trackerSections?: string[];
+  /** Log source types this processor supports (e.g. "logcat", "bugreport", "dumpstate"). */
+  sourceTypes?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -494,6 +500,8 @@ export interface StateSnapshot {
    *  Fields absent from this list are still at their declared default and
    *  have never been triggered — treat their value as Unknown. */
   initializedFields: string[];
+  /** Section names this tracker's data was sourced from (bugreport/dumpstate only). */
+  sourceSections: string[];
 }
 
 export interface AdbTrackerUpdate {

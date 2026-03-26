@@ -1,7 +1,7 @@
 type: state_tracker
 id: thermal-state
 name: Thermal State
-version: 1.0.1
+version: 1.0.3
 author: LogTapper
 description: "Tracks device thermal state from Android's thermalservice dumpsys output and ThermalEngine logcat events. Captures cached temperature readings per thermal zone (AP, SKIN, BAT, PA, USB, PATHM) and the overall thermal status level."
 tags: [thermal, temperature, hardware, android]
@@ -9,6 +9,7 @@ category: system
 builtin: false
 
 group: System
+mode: snapshot
 
 sections:
   - "SYSTEM LOG"
@@ -116,8 +117,8 @@ transitions:
       num_gpus: "$1"
 
 output:
-  timeline: true
-  annotate: true
+  timeline: false
+  annotate: false
 
 schema:
   source_types: ["logcat", "bugreport", "dumpstate"]

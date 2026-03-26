@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import type { PipelineRunSummary, MatchedLine, VarMeta } from '../../bridge/types';
-import { getMatchedLines, getPiiMappings } from '../../bridge/commands';
+import type { PipelineRunSummary, MatchedLine, VarMeta, StateTransition, StateSnapshot, CorrelatorResult } from '../../bridge/types';
+import { getMatchedLines, getPiiMappings, getStateTransitions, getStateAtLine, getCorrelatorEvents } from '../../bridge/commands';
 import {
   useSession,
   useProcessors,
@@ -195,6 +195,12 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
   const [matchesLoading, setMatchesLoading] = useState(false);
   const [matchSearch, setMatchSearch] = useState('');
 
+  // State tracker detail
+  const [trackerTransitions, setTrackerTransitions] = useState<StateTransition[]>([]);
+  const [trackerSnapshot, setTrackerSnapshot] = useState<StateSnapshot | null>(null);
+  // Correlator detail
+  const [correlatorResult, setCorrelatorResult] = useState<CorrelatorResult | null>(null);
+
   const sessionId = session?.sessionId ?? null;
 
   const activeProcessors = useMemo(
@@ -239,6 +245,42 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
         .catch(() => setPiiMappings({}));
     }
   }, [selected, sessionId, runCount]);
+
+  // Fetch state tracker transitions + final snapshot
+  useEffect(() => {
+    if (!selected || !sessionId || runCount === 0 || selectedProc?.processorType !== 'state_tracker') {
+      setTrackerTransitions([]);
+      setTrackerSnapshot(null);
+      return;
+    }
+    let cancelled = false;
+    Promise.all([
+      getStateTransitions(sessionId, selected),
+      getStateAtLine(sessionId, selected, Number.MAX_SAFE_INTEGER),
+    ]).then(([transitions, snapshot]) => {
+      if (cancelled) return;
+      setTrackerTransitions(transitions);
+      setTrackerSnapshot(snapshot);
+    }).catch(() => {
+      if (cancelled) return;
+      setTrackerTransitions([]);
+      setTrackerSnapshot(null);
+    });
+    return () => { cancelled = true; };
+  }, [selected, sessionId, runCount, selectedProc?.processorType]);
+
+  // Fetch correlator events
+  useEffect(() => {
+    if (!selected || !sessionId || runCount === 0 || selectedProc?.processorType !== 'correlator') {
+      setCorrelatorResult(null);
+      return;
+    }
+    let cancelled = false;
+    getCorrelatorEvents(sessionId, selected)
+      .then((result) => { if (!cancelled) setCorrelatorResult(result); })
+      .catch(() => { if (!cancelled) setCorrelatorResult(null); });
+    return () => { cancelled = true; };
+  }, [selected, sessionId, runCount, selectedProc?.processorType]);
 
   const fetchMatches = useCallback(async () => {
     if (!selected || !sessionId) return;
@@ -358,7 +400,10 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
             {summary && runCount > 0 && (
               <div className={styles.detailMeta}>
                 <span className={styles.metaChip}>
-                  {summary.matchedLines.toLocaleString()} matched
+                  {summary.matchedLines.toLocaleString()}{' '}
+                  {selectedProc?.processorType === 'state_tracker' ? 'transitions'
+                    : selectedProc?.processorType === 'correlator' ? 'events'
+                    : 'matched'}
                 </span>
                 {summary.emissionCount > 0 && (
                   <span className={`${styles.metaChip} ${styles.metaChipEmit}`}>
@@ -511,6 +556,122 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
                 varGroups.tables.map(({ name, value }) => (
                   <DataTable key={name} name={name} value={value} />
                 ))}
+
+              {/* State tracker detail */}
+              {selectedProc?.processorType === 'state_tracker' && trackerSnapshot && (
+                <div className={styles.section}>
+                  <div className={styles.sectionLabel}>Final State</div>
+                  <div className={styles.stringList}>
+                    {Object.entries(trackerSnapshot.fields)
+                      .sort(([a], [b]) => a.localeCompare(b))
+                      .map(([key, val]) => {
+                        const initialized = trackerSnapshot.initializedFields.includes(key);
+                        return (
+                          <div key={key} className={styles.stringRow} style={initialized ? undefined : { opacity: 0.4 }}>
+                            <span className={styles.stringKey}>{key}</span>
+                            <span className={initialized ? styles.stringVal : styles.stringKey}>
+                              {initialized ? String(val ?? '') : '--'}
+                            </span>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
+
+              {selectedProc?.processorType === 'state_tracker' && trackerTransitions.length > 0 && (
+                <div className={styles.section}>
+                  <div className={styles.sectionLabel}>
+                    Transitions ({trackerTransitions.length})
+                  </div>
+                  <div className={styles.tableWrap}>
+                    <table className={styles.dataTable}>
+                      <thead>
+                        <tr>
+                          <th>Line</th>
+                          <th>Transition</th>
+                          <th>Changes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {trackerTransitions.slice(0, 100).map((t, i) => (
+                          <tr
+                            key={i}
+                            style={{ cursor: 'pointer' }}
+                            onClick={() => jumpToLine(t.lineNum)}
+                            title={`Jump to line ${t.lineNum + 1}`}
+                          >
+                            <td style={{ fontFamily: 'var(--font-mono)', fontSize: 10 }}>
+                              {(t.lineNum + 1).toLocaleString()}
+                            </td>
+                            <td>{t.transitionName}</td>
+                            <td style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dimmed)' }}>
+                              {Object.entries(t.changes).map(([k, c]) =>
+                                `${k}: ${String(c.to)}`
+                              ).join(', ')}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {trackerTransitions.length > 100 && (
+                      <div className={styles.hint}>
+                        Showing first 100 of {trackerTransitions.length} transitions
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Correlator detail */}
+              {selectedProc?.processorType === 'correlator' && correlatorResult && (
+                <>
+                  {correlatorResult.guidance && (
+                    <div className={styles.section}>
+                      <p className={styles.detailDesc}>{correlatorResult.guidance}</p>
+                    </div>
+                  )}
+                  {correlatorResult.events.length > 0 ? (
+                    <div className={styles.section}>
+                      <div className={styles.sectionLabel}>
+                        Correlation Events ({correlatorResult.events.length})
+                      </div>
+                      <div className={styles.tableWrap}>
+                        <table className={styles.dataTable}>
+                          <thead>
+                            <tr>
+                              <th>Line</th>
+                              <th>Message</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {correlatorResult.events.slice(0, 100).map((ev, i) => (
+                              <tr
+                                key={i}
+                                style={{ cursor: 'pointer' }}
+                                onClick={() => jumpToLine(ev.triggerLineNum)}
+                                title={`Jump to line ${ev.triggerLineNum + 1}`}
+                              >
+                                <td style={{ fontFamily: 'var(--font-mono)', fontSize: 10 }}>
+                                  {(ev.triggerLineNum + 1).toLocaleString()}
+                                </td>
+                                <td>{ev.message}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {correlatorResult.events.length > 100 && (
+                          <div className={styles.hint}>
+                            Showing first 100 of {correlatorResult.events.length} events
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className={styles.hint}>No correlation events detected.</div>
+                  )}
+                </>
+              )}
 
               {/* PII token mapping */}
               {selected === '__pii_anonymizer' && (

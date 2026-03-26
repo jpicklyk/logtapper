@@ -5,7 +5,7 @@ use serde_json::Value as JsonValue;
 use crate::core::line::{LineContext, PipelineContext};
 use crate::processors::filter::{rule_matches, FilterMatch};
 use crate::processors::reporter::schema::FilterRule;
-use crate::processors::state_tracker::schema::StateTrackerDef;
+use crate::processors::state_tracker::schema::{StateTrackerDef, TrackerMode};
 use crate::processors::state_tracker::types::{
     ContinuousTrackerState, FieldChange, StateSnapshot, StateTrackerResult, StateTransition,
 };
@@ -103,6 +103,7 @@ impl StateTrackerRun {
             timestamp: ts,
             fields,
             initialized_fields: initialized.into_iter().collect(),
+            source_sections: vec![],
         }
     }
 
@@ -110,11 +111,13 @@ impl StateTrackerRun {
         &self.transitions
     }
 
-    pub fn finish(self) -> StateTrackerResult {
+    pub fn finish(self, source_sections: Vec<String>, mode: TrackerMode) -> StateTrackerResult {
         StateTrackerResult {
             tracker_id: self.tracker_id,
             transitions: self.transitions,
             final_state: self.current_state,
+            source_sections,
+            mode,
         }
     }
 
@@ -228,7 +231,7 @@ mod tests {
     use std::sync::Arc;
     use crate::core::line::LogLevel;
     use crate::processors::state_tracker::schema::{
-        StateFieldDecl, StateFieldType, StateTrackerOutput, TransitionFilter, TransitionRule,
+        StateFieldDecl, StateFieldType, StateTrackerOutput, TrackerMode, TransitionFilter, TransitionRule,
     };
     use serde_json::json;
 
@@ -327,6 +330,7 @@ mod tests {
         let mut def = StateTrackerDef {
             group: "Network".to_string(),
             sections: vec![],
+            mode: TrackerMode::default(),
             state: vec![
                 StateFieldDecl {
                     name: "enabled".to_string(),
@@ -471,7 +475,7 @@ mod tests {
         let mut run2 = StateTrackerRun::new_seeded("wifi", &def, saved);
         run2.process_line(&make_line(5, "WifiStateMachine", "WiFi DISABLED"), &PipelineContext::test_default());
 
-        let result = run2.finish();
+        let result = run2.finish(vec![], TrackerMode::default());
         assert_eq!(result.transitions.len(), 2);
         assert_eq!(result.final_state["enabled"], json!(false));
     }
@@ -487,6 +491,7 @@ mod tests {
         let mut def = StateTrackerDef {
             group: String::new(),
             sections: vec![],
+            mode: TrackerMode::default(),
             state: vec![
                 StateFieldDecl { name: "network_id".into(), field_type: StateFieldType::String, default: serde_json::Value::Null },
                 StateFieldDecl { name: "time_ms".into(), field_type: StateFieldType::String, default: serde_json::Value::Null },
@@ -532,6 +537,7 @@ mod tests {
         let mut def = StateTrackerDef {
             group: String::new(),
             sections: vec![],
+            mode: TrackerMode::default(),
             state: vec![
                 StateFieldDecl { name: "time_ms".into(), field_type: StateFieldType::String, default: serde_json::Value::Null },
             ],
@@ -571,6 +577,7 @@ mod tests {
         let mut def = StateTrackerDef {
             group: "Wifi".to_string(),
             sections: vec![],
+            mode: TrackerMode::default(),
             state: vec![
                 StateFieldDecl {
                     name: "connected".into(),
@@ -615,6 +622,7 @@ mod tests {
         let mut def = StateTrackerDef {
             group: "Test".to_string(),
             sections: vec![],
+            mode: TrackerMode::default(),
             state: vec![
                 StateFieldDecl {
                     name: "error_seen".into(),
@@ -665,6 +673,7 @@ mod tests {
         let mut def = StateTrackerDef {
             group: String::new(),
             sections: vec![],
+            mode: TrackerMode::default(),
             state: vec![
                 StateFieldDecl { name: "net_id".into(), field_type: StateFieldType::String, default: serde_json::Value::Null },
                 StateFieldDecl { name: "time".into(), field_type: StateFieldType::String, default: serde_json::Value::Null },

@@ -338,6 +338,15 @@ pub struct ProcessorSummary {
     /// Pack ID this processor belongs to, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pack_id: Option<String>,
+    /// State tracker mode. Only set for state_tracker type.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tracker_mode: Option<crate::processors::state_tracker::schema::TrackerMode>,
+    /// Section names this state tracker targets (bugreport/dumpstate only).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tracker_sections: Vec<String>,
+    /// Log source types this processor supports (from schema.source_types).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub source_types: Vec<String>,
 }
 
 fn snake_to_title(s: &str) -> String {
@@ -386,6 +395,15 @@ impl From<&AnyProcessor> for ProcessorSummary {
             has_schema: p.schema.is_some(),
             source: p.source.clone(),
             pack_id: None,
+            tracker_mode: match &p.kind {
+                ProcessorKind::StateTracker(def) => Some(def.mode),
+                _ => None,
+            },
+            tracker_sections: match &p.kind {
+                ProcessorKind::StateTracker(def) => def.section_names().into_iter().map(str::to_string).collect(),
+                _ => Vec::new(),
+            },
+            source_types: p.schema.as_ref().map(|s| s.source_types.clone()).unwrap_or_default(),
         }
     }
 }

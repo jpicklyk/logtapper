@@ -3,6 +3,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::processors::reporter::schema::FilterRule;
 
+/// Controls how a state tracker's snapshot is resolved relative to the selected line.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum TrackerMode {
+    /// State is reconstructed by replaying transitions up to the selected line.
+    #[default]
+    TimeSeries,
+    /// State is always the final state — used for point-in-time dumps (e.g. dumpsys).
+    Snapshot,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StateTrackerDef {
     #[serde(default)]
@@ -12,6 +23,8 @@ pub struct StateTrackerDef {
     /// Exact match against section names as parsed by BugreportParser.
     #[serde(default)]
     pub sections: Vec<String>,
+    #[serde(default)]
+    pub mode: TrackerMode,
     #[serde(default)]
     pub state: Vec<StateFieldDecl>,
     #[serde(default)]
@@ -109,6 +122,20 @@ impl TransitionFilter {
 }
 
 impl StateTrackerDef {
+    /// Distinct section names this tracker is configured to process, combining
+    /// top-level `sections` and per-transition `filter.section` entries.
+    pub fn section_names(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = self.sections.iter().map(String::as_str).collect();
+        for transition in &self.transitions {
+            if let Some(ref sec) = transition.filter.section {
+                if !names.contains(&sec.as_str()) {
+                    names.push(sec.as_str());
+                }
+            }
+        }
+        names
+    }
+
     /// Populate `filter_rules` on each `TransitionRule` from its `TransitionFilter`.
     /// Call this once after deserialization.
     pub fn compile_filter_rules(&mut self) {

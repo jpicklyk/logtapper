@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use crate::processors::state_tracker::schema::TrackerMode;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,6 +27,9 @@ pub struct StateSnapshot {
     /// this snapshot's line. Fields absent from this set are still at their
     /// declared default and have never been touched — i.e. their value is unknown.
     pub initialized_fields: Vec<String>,
+    /// Section names this tracker's data was sourced from (bugreport/dumpstate only).
+    #[serde(default)]
+    pub source_sections: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,6 +37,10 @@ pub struct StateTrackerResult {
     pub tracker_id: String,
     pub transitions: Vec<StateTransition>,
     pub final_state: HashMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub source_sections: Vec<String>,
+    #[serde(default)]
+    pub mode: TrackerMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

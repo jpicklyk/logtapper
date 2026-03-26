@@ -245,14 +245,14 @@
 
 .packGroupCompact .packHeader {
   padding: 3px 6px;
-  border: none;
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
-  background: transparent;
+  background: var(--bg-raised);
 }
 
 .packGroupCompact .packHeader:hover {
   background: var(--state-hover);
-  border: none;
+  border-color: var(--accent);
 }
 
 .packGroupCompact .packName {
