@@ -3,7 +3,7 @@ import { ExternalLink, Moon, Monitor, Plus, Sun, Trash2 } from 'lucide-react';
 import type { AppSettings, UseSettingsResult, BookmarkCategoryDef } from '../../hooks';
 import { SETTING_DEFAULTS, DEFAULT_BOOKMARK_CATEGORIES } from '../../hooks';
 import { useTheme } from '../../context';
-import { SegmentedControl } from '../../ui';
+import { SegmentedControl, Button, IconButton } from '../../ui';
 import type { SegmentedOption } from '../../ui';
 import type { ThemeMode } from '../../context';
 import { getFileAssociationStatus, setFileAssociation, openDefaultAppsSettings } from '../../bridge/commands';
@@ -176,13 +176,15 @@ export const GeneralTab = memo(function GeneralTab({ settings, onUpdate }: Gener
             }}
             existingIds={settings.bookmarkCategories.map((c) => c.id)}
           />
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
             className={css.linkBtn}
             type="button"
             onClick={() => onUpdate('bookmarkCategories', DEFAULT_BOOKMARK_CATEGORIES)}
           >
             Reset to defaults
-          </button>
+          </Button>
         </div>
       </div>
     </>
@@ -219,14 +221,14 @@ function CategoryRow({ cat, onUpdate, onDelete, canDelete }: {
       </div>
       <span className={css.catId}>{cat.id}</span>
       {canDelete && (
-        <button
+        <IconButton
+          icon={Trash2}
+          size={12}
           type="button"
           className={css.catDeleteBtn}
           onClick={onDelete}
           title="Remove category"
-        >
-          <Trash2 size={12} />
-        </button>
+        />
       )}
     </div>
   );
@@ -253,9 +255,9 @@ function AddCategoryButton({ onAdd, existingIds }: {
 
   if (!adding) {
     return (
-      <button className={css.linkBtn} type="button" onClick={() => setAdding(true)}>
+      <Button variant="ghost" size="sm" className={css.linkBtn} type="button" onClick={() => setAdding(true)}>
         <Plus size={12} /> Add category
-      </button>
+      </Button>
     );
   }
 
@@ -286,8 +288,8 @@ function AddCategoryButton({ onAdd, existingIds }: {
         placeholder="Display label"
         onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit(); if (e.key === 'Escape') setAdding(false); }}
       />
-      <button className={css.linkBtn} type="button" onClick={handleSubmit}>Add</button>
-      <button className={css.linkBtn} type="button" onClick={() => setAdding(false)}>Cancel</button>
+      <Button variant="ghost" size="sm" className={css.linkBtn} type="button" onClick={handleSubmit}>Add</Button>
+      <Button variant="ghost" size="sm" className={css.linkBtn} type="button" onClick={() => setAdding(false)}>Cancel</Button>
     </div>
   );
 }

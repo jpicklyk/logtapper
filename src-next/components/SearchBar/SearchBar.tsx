@@ -2,6 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import clsx from 'clsx';
 import { Search, X, ChevronUp, ChevronDown } from 'lucide-react';
 import { useSearch, useViewerActions } from '../../context';
+import { IconButton } from '../../ui';
 import styles from './SearchBar.module.css';
 
 interface SearchBarProps {
@@ -162,9 +163,13 @@ export const SearchBar = React.memo<SearchBarProps>(function SearchBar({
           }}
         />
         {text && (
-          <button className={styles.clearBtn} onClick={handleClear} title="Clear (Esc)">
-            <X size={12} />
-          </button>
+          <IconButton
+            icon={X}
+            size={12}
+            className={styles.clearBtn}
+            onClick={handleClear}
+            title="Clear (Esc)"
+          />
         )}
       </div>
 
@@ -211,9 +216,13 @@ export const SearchBar = React.memo<SearchBarProps>(function SearchBar({
             maxLength={8}
           />
           {hasTimeFilter && (
-            <button className={styles.clearBtn} onClick={handleClearTime} title="Clear time filter">
-              <X size={12} />
-            </button>
+            <IconButton
+              icon={X}
+              size={12}
+              className={styles.clearBtn}
+              onClick={handleClearTime}
+              title="Clear time filter"
+            />
           )}
           {hasTimeFilter && timeFilterCount != null && (
             <span className={styles.timeCount}>{timeFilterCount.toLocaleString()} lines</span>
@@ -224,22 +233,22 @@ export const SearchBar = React.memo<SearchBarProps>(function SearchBar({
       {summary && (
         <>
           <span className={styles.matchCount}>{matchLabel}</span>
-          <button
+          <IconButton
+            icon={ChevronUp}
+            size={14}
             className={styles.navBtn}
             onClick={() => handleJump(-1)}
             disabled={!summary.totalMatches}
             title="Previous match (Shift+Enter)"
-          >
-            <ChevronUp size={14} />
-          </button>
-          <button
+          />
+          <IconButton
+            icon={ChevronDown}
+            size={14}
             className={styles.navBtn}
             onClick={() => handleJump(1)}
             disabled={!summary.totalMatches}
             title="Next match (Enter)"
-          >
-            <ChevronDown size={14} />
-          </button>
+          />
         </>
       )}
     </div>

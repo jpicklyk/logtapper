@@ -1,6 +1,6 @@
 import { memo, useState } from 'react';
 import type { AppSettings, UseSettingsResult, UseAnonymizerConfigResult } from '../../hooks';
-import { Modal } from '../../ui';
+import { Modal, Button } from '../../ui';
 import { GeneralTab } from './GeneralTab';
 import { PiiTab } from './PiiTab';
 import css from './SettingsPanel.module.css';
@@ -28,25 +28,29 @@ const SettingsPanel = memo(function SettingsPanel({
     <Modal open onClose={onClose} width={580} noPadding>
       <div className={css.header}>
         <span className={css.title}>Settings</span>
-        <button className={css.closeBtn} onClick={onClose}>
+        <Button variant="ghost" size="sm" className={css.closeBtn} onClick={onClose}>
           x
-        </button>
+        </Button>
       </div>
 
       {/* Tab bar */}
       <div className={css.tabs}>
-        <button
+        <Button
+          variant="ghost"
+          size="sm"
           className={`${css.tab}${activeTab === 'general' ? ` ${css.tabActive}` : ''}`}
           onClick={() => setActiveTab('general')}
         >
           General
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
           className={`${css.tab}${activeTab === 'pii' ? ` ${css.tabActive}` : ''}`}
           onClick={() => setActiveTab('pii')}
         >
           PII Anonymization
-        </button>
+        </Button>
       </div>
 
       <div className={css.body}>
@@ -60,17 +64,19 @@ const SettingsPanel = memo(function SettingsPanel({
 
       <div className={css.footer}>
         {activeTab === 'general' && (
-          <button
+          <Button
+            variant="secondary"
+            size="sm"
             className={css.btnSecondary}
             onClick={onReset}
             title="Restore settings to their default values"
           >
             Reset to Defaults
-          </button>
+          </Button>
         )}
-        <button className={css.btnPrimary} onClick={onClose}>
+        <Button variant="primary" size="sm" className={css.btnPrimary} onClick={onClose}>
           Done
-        </button>
+        </Button>
       </div>
     </Modal>
   );

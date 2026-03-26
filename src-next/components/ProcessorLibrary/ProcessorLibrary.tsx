@@ -8,7 +8,7 @@ import {
 } from '../../bridge/commands';
 import { usePipeline } from '../../hooks';
 import { useProcessors, usePipelineChain } from '../../context';
-import { Modal, ProcessorTypeIcon, PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY } from '../../ui';
+import { Modal, ProcessorTypeIcon, PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY, Button } from '../../ui';
 import { ProcessorDetailCard } from '../ProcessorDetailCard';
 import css from './ProcessorLibrary.module.css';
 import badgeCss from '../../ui/processorBadge.module.css';
@@ -297,11 +297,11 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
             </svg>
             <span className={css.title}>Add to Pipeline</span>
           </div>
-          <button className={css.closeBtn} onClick={onClose} title="Close (Esc)">
+          <Button variant="ghost" size="sm" className={css.closeBtn} onClick={onClose} title="Close (Esc)">
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
               <path d="M1 1l10 10M11 1L1 11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
-          </button>
+          </Button>
         </div>
 
         {/* Tab bar */}
@@ -346,9 +346,9 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                     autoFocus
                   />
                   {query && (
-                    <button className={css.searchClear} onClick={() => setQuery('')}>
+                    <Button variant="ghost" size="sm" className={css.searchClear} onClick={() => setQuery('')}>
                       x
-                    </button>
+                    </Button>
                   )}
                 </div>
                 {selectableEntries.length > 0 && (
@@ -366,9 +366,9 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
               {allTags.length > 0 && (
                 <div className={css.filterChips}>
                   {activeTagFilters.size > 0 && (
-                    <button className={css.filterChipClear} onClick={clearTagFilters}>
+                    <Button variant="ghost" size="sm" className={css.filterChipClear} onClick={clearTagFilters}>
                       Clear
-                    </button>
+                    </Button>
                   )}
                   {allTags.map((tag) => (
                     <button
@@ -531,7 +531,9 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
           {tab === 'yaml' && (
             <div className={css.yaml}>
               <div className={css.yamlActions}>
-                <button
+                <Button
+                  variant="secondary"
+                  size="sm"
                   className={`${css.actionBtn} ${css.actionBtnSecondary}`}
                   onClick={() => fileInputRef.current?.click()}
                 >
@@ -545,18 +547,20 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                     />
                   </svg>
                   Upload .yaml
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
                   className={`${css.actionBtn} ${css.actionBtnSecondary}`}
                   onClick={handleLoadFromFile}
                 >
                   Load from disk...
-                </button>
+                </Button>
                 <input
                   ref={fileInputRef}
                   type="file"
                   accept=".yaml,.yml"
-                  style={{ display: 'none' }}
+                  className="hidden"
                   onChange={handleFileUpload}
                 />
               </div>
@@ -572,20 +576,19 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
               />
               {yamlError && <div className={`${css.errorBar} ${css.errorBarYaml}`}>{yamlError}</div>}
               <div className={css.yamlFooter}>
-                <button
+                <Button
+                  variant="primary"
+                  size="sm"
                   className={css.actionBtn}
                   onClick={handleYamlInstall}
                   disabled={!yamlInput.trim() || yamlInstalling}
+                  loading={yamlInstalling}
                 >
-                  {yamlInstalling ? (
-                    <>
-                      <span className={css.spinner} /> Installing...
-                    </>
-                  ) : (
-                    'Install'
-                  )}
-                </button>
-                <button
+                  {yamlInstalling ? 'Installing...' : 'Install'}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
                   className={`${css.actionBtn} ${css.actionBtnSecondary}`}
                   onClick={() => {
                     setYamlInput('');
@@ -593,7 +596,7 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                   }}
                 >
                   Clear
-                </button>
+                </Button>
                 <span className={css.yamlHint}>
                   After install, switch to the Installed tab to add to pipeline
                 </span>
@@ -612,18 +615,20 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                   processor{selected.size !== 1 ? 's' : ''} selected
                 </span>
                 <div className={css.footerActions}>
-                  <button
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     className={`${css.actionBtn} ${css.actionBtnSecondary}`}
                     onClick={() => setSelected(new Set())}
                   >
                     Clear
-                  </button>
-                  <button className={css.addBtn} onClick={handleAddSelected}>
+                  </Button>
+                  <Button variant="primary" size="sm" className={css.addBtn} onClick={handleAddSelected}>
                     <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
                       <path d="M3 1.5l7 4.5-7 4.5V1.5z" fill="currentColor" />
                     </svg>
                     Add {selected.size} to Pipeline
-                  </button>
+                  </Button>
                 </div>
               </>
             ) : (
