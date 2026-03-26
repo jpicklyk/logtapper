@@ -79,6 +79,11 @@
   filter: brightness(1.3);
 }
 
+.chipClickable:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 /* Dimmed variant for secondary chips (Sel range) */
 .chipDimmed {
   font-weight: 500;

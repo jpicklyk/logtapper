@@ -87,6 +87,11 @@
   color: var(--accent);
 }
 
+.navButton:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .navButton:active {
   background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
@@ -141,6 +146,11 @@
 
 .newLinesBadge:hover {
   background: var(--accent-base);
+}
+
+.newLinesBadge:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 /* ── Empty state ──────────────────────────────────────────────────────── */

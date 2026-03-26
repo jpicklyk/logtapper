@@ -51,6 +51,11 @@
   color: var(--text-muted);
 }
 
+.tab:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .tabActive {
   color: var(--accent);
 }
@@ -151,6 +156,11 @@
   background: var(--bg-overlay);
 }
 
+.searchClear:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .sourceSelect {
   padding: 4px 6px;
   border: 1px solid var(--border);
@@ -205,6 +215,11 @@
 
 .entryRow:hover {
   background: var(--bg-overlay);
+}
+
+.entryRow:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .entryRowClickable {
@@ -560,6 +575,11 @@
   background: var(--bg-overlay);
 }
 
+.updateRow:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .updateInfo {
   flex: 1;
   min-width: 0;
@@ -699,6 +719,11 @@
   border-color: var(--danger-muted-border);
 }
 
+.removeBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .removeBtn:disabled {
   opacity: 0.5;
   cursor: default;
@@ -729,6 +754,11 @@
 .addSourceBtn:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.addSourceBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .addForm {
@@ -781,6 +811,11 @@
   background: var(--state-hover);
 }
 
+.packEntry:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 /* Row 1: chevron + badge + name ... action button */
 .packTop {
   display: flex;
@@ -801,6 +836,11 @@
 
 .packHeader:hover .packName {
   color: var(--accent);
+}
+
+.packHeader:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .packChevron {
@@ -868,6 +908,11 @@
   border-color: var(--accent);
 }
 
+.packBtnInstall:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .packBtnInstall:disabled {
   opacity: 0.6;
   cursor: not-allowed;
@@ -894,6 +939,11 @@
   border-color: var(--danger);
   color: var(--danger);
   background: var(--danger-muted);
+}
+
+.packBtnUninstall:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .packBtnUninstall:disabled {

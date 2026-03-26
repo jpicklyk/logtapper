@@ -61,6 +61,11 @@
   border-color: var(--accent);
 }
 
+.exportBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 /* ── Scrollable list area ────────────────────────────────────────────────── */
 
 .list {
@@ -351,6 +356,11 @@
 
 .noteDisplay:hover {
   background: var(--border);
+}
+
+.noteDisplay:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .noteIcon {

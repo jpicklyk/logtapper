@@ -398,6 +398,11 @@
   color: var(--text);
 }
 
+.formCancelLink:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .formError {
   font-family: var(--font-ui);
   font-size: 11px;

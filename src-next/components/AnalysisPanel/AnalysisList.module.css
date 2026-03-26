@@ -76,6 +76,11 @@
   background: var(--bg-overlay);
 }
 
+.card:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .card:hover .deleteBtn {
   opacity: 1;
 }
@@ -137,6 +142,12 @@
 
 .deleteBtn:hover {
   color: var(--danger);
+}
+
+.deleteBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+  opacity: 1;
 }
 
 /* ── Meta row ─────────────────────────────────────────────────────────────── */

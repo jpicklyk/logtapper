@@ -276,6 +276,12 @@
   background: var(--bg-overlay);
 }
 
+.nodeRemove:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+  opacity: 1;
+}
+
 /* Output gate separator */
 .outputGateSep {
   width: 100%;

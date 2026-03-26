@@ -86,6 +86,12 @@
   color: var(--accent);
 }
 
+.packEyeBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+  opacity: 1;
+}
+
 .packEyeBtn.packEyeBtnOff {
   opacity: 0.6;
   color: var(--text-dimmed);
@@ -122,6 +128,12 @@
 .packRemoveBtn:hover {
   color: var(--danger);
   background: var(--bg-overlay);
+}
+
+.packRemoveBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+  opacity: 1;
 }
 
 /* Expanded processor list */
@@ -213,6 +225,11 @@
 .procRemove:hover {
   color: var(--danger);
   background: var(--bg-overlay);
+}
+
+.procRemove:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 /* Pack group separator */

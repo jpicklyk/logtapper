@@ -57,6 +57,11 @@
   border-color: var(--border);
 }
 
+.closeBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 /* ── Tab Bar ─────────────────────────────────────────────────────────────── */
 
 .tabs {
@@ -200,6 +205,11 @@
   background: var(--bg-overlay);
 }
 
+.searchClear:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .groupBy {
   padding: 4px 6px;
   border: 1px solid var(--border);
@@ -234,6 +244,11 @@
 .selectAll:hover {
   color: var(--accent);
   border-color: var(--accent);
+}
+
+.selectAll:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 /* ── Scroll area ─────────────────────────────────────────────────────────── */
@@ -286,12 +301,22 @@
   background: var(--state-hover);
 }
 
+.item:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .itemSelected {
   background: var(--state-selected);
 }
 
 .itemSelected:hover {
   background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.itemSelected:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .itemInChain {
@@ -301,6 +326,11 @@
 
 .itemInChain:hover {
   background: transparent;
+}
+
+.itemInChain:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 /* ── Checkbox ────────────────────────────────────────────────────────────── */
@@ -513,6 +543,11 @@
   background: var(--bg-overlay);
 }
 
+.categoryHeader:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .chevron {
   color: var(--text-dimmed);
   flex-shrink: 0;
@@ -576,6 +611,11 @@
   color: var(--accent);
 }
 
+.filterChip:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .filterChipActive {
   border-color: var(--accent);
   background: var(--accent-muted);
@@ -605,6 +645,11 @@
   border-color: var(--danger);
 }
 
+.filterChipClear:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 /* ── Shared action buttons ───────────────────────────────────────────────── */
 
 .actionBtn {
@@ -627,6 +672,11 @@
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
+.actionBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .actionBtn:disabled {
   opacity: 0.5;
   cursor: default;
@@ -640,6 +690,11 @@
 .actionBtnSecondary:hover:not(:disabled) {
   border-color: var(--text-muted);
   background: var(--bg-overlay);
+}
+
+.actionBtnSecondary:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 /* ── Error bar ───────────────────────────────────────────────────────────── */
@@ -788,6 +843,11 @@
 
 .addBtn:hover {
   opacity: 0.85;
+}
+
+.addBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 /* ── Placeholder (legacy) ────────────────────────────────────────────────── */

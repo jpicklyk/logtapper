@@ -223,6 +223,11 @@
   color: var(--text-muted);
 }
 
+.sectionLabel:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .sectionChevron {
   flex-shrink: 0;
   transition: transform var(--transition-fast);

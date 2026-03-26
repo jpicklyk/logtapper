@@ -551,6 +551,11 @@
   background: var(--bg-overlay);
 }
 
+.assocOpenSettings:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 /* ── Link-style buttons ──────────────────────────────────────────────────── */
 
 .linkBtn {
@@ -567,6 +572,11 @@
 
 .linkBtn:hover {
   text-decoration: underline;
+}
+
+.linkBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 /* ── Bookmark category editor ────────────────────────────────────────────── */
@@ -607,6 +617,11 @@
 
 .catSwatch:hover {
   border-color: var(--border);
+}
+
+.catSwatch:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .catSwatchSm {
@@ -687,6 +702,12 @@
 
 .catDeleteBtn:hover {
   color: var(--danger);
+}
+
+.catDeleteBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+  opacity: 1;
 }
 
 .catActions {
