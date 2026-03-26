@@ -601,11 +601,11 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
                             onClick={() => jumpToLine(t.lineNum)}
                             title={`Jump to line ${t.lineNum + 1}`}
                           >
-                            <td style={{ fontFamily: 'var(--font-mono)', fontSize: 10 }}>
+                            <td className={styles.tdMono}>
                               {(t.lineNum + 1).toLocaleString()}
                             </td>
                             <td>{t.transitionName}</td>
-                            <td style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dimmed)' }}>
+                            <td className={styles.tdMonoDim}>
                               {Object.entries(t.changes).map(([k, c]) =>
                                 `${k}: ${String(c.to)}`
                               ).join(', ')}
@@ -652,7 +652,7 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
                                 onClick={() => jumpToLine(ev.triggerLineNum)}
                                 title={`Jump to line ${ev.triggerLineNum + 1}`}
                               >
-                                <td style={{ fontFamily: 'var(--font-mono)', fontSize: 10 }}>
+                                <td className={styles.tdMono}>
                                   {(ev.triggerLineNum + 1).toLocaleString()}
                                 </td>
                                 <td>{ev.message}</td>

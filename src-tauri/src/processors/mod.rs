@@ -398,18 +398,11 @@ impl From<&AnyProcessor> for ProcessorSummary {
             has_schema: p.schema.is_some(),
             source: p.source.clone(),
             pack_id: None,
-            tracker_mode: match &p.kind {
-                ProcessorKind::StateTracker(def) => Some(def.mode),
-                _ => None,
-            },
-            tracker_timeline: match &p.kind {
-                ProcessorKind::StateTracker(def) => Some(def.output.timeline),
-                _ => None,
-            },
-            tracker_sections: match &p.kind {
-                ProcessorKind::StateTracker(def) => def.section_names().into_iter().map(str::to_string).collect(),
-                _ => Vec::new(),
-            },
+            tracker_mode: if let ProcessorKind::StateTracker(def) = &p.kind { Some(def.mode) } else { None },
+            tracker_timeline: if let ProcessorKind::StateTracker(def) = &p.kind { Some(def.output.timeline) } else { None },
+            tracker_sections: if let ProcessorKind::StateTracker(def) = &p.kind {
+                def.section_names().into_iter().map(str::to_string).collect()
+            } else { Vec::new() },
             source_types: p.schema.as_ref().map(|s| s.source_types.clone()).unwrap_or_default(),
         }
     }

@@ -191,6 +191,7 @@ const StatePanel = React.memo(function StatePanel() {
           prev.length === next.length &&
           prev.every(
             (p, i) =>
+              p.snapshot === next[i].snapshot ||
               JSON.stringify(p.snapshot) === JSON.stringify(next[i].snapshot),
           )
         ) {
