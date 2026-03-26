@@ -94,15 +94,17 @@ export const StreamFilterBar = React.memo<StreamFilterBarProps>(
       <div className={styles.bar}>
         <div className={styles.chips}>
           {CHIPS.map((chip) => (
-            <button
+            <Button
               key={chip.label}
+              variant="ghost"
+              size="sm"
               className={styles.chip}
               title={chip.hint}
               onClick={() => insertChip(chip.label)}
               tabIndex={-1}
             >
               {chip.label}
-            </button>
+            </Button>
           ))}
           {isDirty && draft.trim().length > 0 && (
             <span className={clsx(styles.count, styles.countScanning)}>Press Enter to apply</span>

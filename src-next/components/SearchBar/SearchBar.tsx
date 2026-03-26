@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import clsx from 'clsx';
 import { Search, X, ChevronUp, ChevronDown } from 'lucide-react';
 import { useSearch, useViewerActions } from '../../context';
-import { IconButton } from '../../ui';
+import { IconButton, Button } from '../../ui';
 import styles from './SearchBar.module.css';
 
 interface SearchBarProps {
@@ -173,23 +173,27 @@ export const SearchBar = React.memo<SearchBarProps>(function SearchBar({
         )}
       </div>
 
-      <button
+      <Button
+        variant="ghost"
+        size="sm"
         className={clsx(styles.toggle, isRegex && styles.toggleActive)}
         onClick={handleRegexToggle}
         title="Regular expression"
         disabled={disabled}
       >
         .*
-      </button>
+      </Button>
 
-      <button
+      <Button
+        variant="ghost"
+        size="sm"
         className={clsx(styles.toggle, caseSensitive && styles.toggleActive)}
         onClick={handleCaseToggle}
         title="Case sensitive"
         disabled={disabled}
       >
         Aa
-      </button>
+      </Button>
 
       {onTimeFilter && (
         <div className={styles.timeWrap}>

@@ -540,21 +540,13 @@
 }
 
 .assocOpenSettings {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
   margin-top: 8px;
-  padding: 5px 12px;
-  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-base);
-  color: var(--text);
   font-size: 11px;
-  cursor: pointer;
-  transition: border-color var(--transition-fast), background var(--transition-fast);
 }
 
-.assocOpenSettings:hover {
+.assocOpenSettings:hover:not(:disabled):not([aria-disabled="true"]) {
   border-color: var(--accent);
   background: var(--bg-overlay);
 }

@@ -375,14 +375,16 @@ function FileAssociationsSection() {
               </div>
             </div>
           ))}
-          <button
+          <Button
+            variant="secondary"
+            size="sm"
             className={css.assocOpenSettings}
             type="button"
             onClick={handleOpenDefaults}
           >
             <ExternalLink size={11} />
             Windows Default Apps
-          </button>
+          </Button>
         </>
       )}
     </div>
