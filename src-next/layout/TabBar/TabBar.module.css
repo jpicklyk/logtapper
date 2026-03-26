@@ -274,7 +274,7 @@
 .unsavedDot {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   background: var(--warning);
   flex-shrink: 0;
   display: inline-block;

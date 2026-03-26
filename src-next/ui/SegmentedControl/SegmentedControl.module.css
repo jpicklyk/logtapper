@@ -21,7 +21,7 @@
 }
 
 .button:hover:not(:disabled):not([aria-disabled="true"]) {
-  background: var(--bg-overlay);
+  background: var(--state-hover);
   color: var(--text);
 }
 

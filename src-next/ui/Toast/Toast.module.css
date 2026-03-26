@@ -24,7 +24,7 @@
   color: var(--text);
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--accent) 6%, transparent),
-    0 4px 24px rgba(0, 0, 0, 0.5),
+    var(--shadow-overlay),
     0 0 40px -8px color-mix(in srgb, var(--accent) 15%, transparent);
   backdrop-filter: blur(8px);
 }
@@ -54,7 +54,7 @@
   border-color: color-mix(in srgb, var(--accent) 60%, transparent);
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent),
-    0 4px 24px rgba(0, 0, 0, 0.5),
+    var(--shadow-overlay),
     0 0 48px -4px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 

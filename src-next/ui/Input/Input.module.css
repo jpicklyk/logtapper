@@ -42,6 +42,6 @@
 }
 
 .input::placeholder {
-  color: var(--text);
-  opacity: 0.4;
+  color: var(--text-muted);
+  opacity: 1;
 }

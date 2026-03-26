@@ -609,12 +609,12 @@
   height: 18px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  border: 1.5px solid rgba(255, 255, 255, 0.1);
+  border: 1.5px solid var(--border-subtle);
   transition: border-color var(--transition-normal);
 }
 
 .catSwatch:hover {
-  border-color: rgba(255, 255, 255, 0.3);
+  border-color: var(--border);
 }
 
 .catColorInput {
@@ -725,5 +725,5 @@
   width: 16px;
   height: 16px;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border-subtle);
 }

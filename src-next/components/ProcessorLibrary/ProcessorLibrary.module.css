@@ -283,15 +283,15 @@
 }
 
 .item:hover {
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--state-hover);
 }
 
 .itemSelected {
-  background: rgba(88, 166, 255, 0.06);
+  background: var(--state-selected);
 }
 
 .itemSelected:hover {
-  background: rgba(88, 166, 255, 0.09);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
 }
 
 .itemInChain {
@@ -578,7 +578,7 @@
 
 .filterChipActive {
   border-color: var(--accent);
-  background: rgba(88, 166, 255, 0.1);
+  background: var(--accent-muted);
   color: var(--accent);
 }
 
