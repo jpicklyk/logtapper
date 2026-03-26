@@ -18,7 +18,7 @@
   padding: 12px 34px 12px 14px;
   position: relative;
   pointer-events: auto;
-  animation: toastEnter 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: toastEnter var(--duration-slow) var(--easing-enter) both;
   font-family: var(--font-mono);
   font-size: 13px;
   color: var(--text);

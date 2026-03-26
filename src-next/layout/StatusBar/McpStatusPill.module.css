@@ -9,7 +9,7 @@
   font-family: var(--font-mono);
   font-size: 10px;
   cursor: default;
-  transition: background var(--duration-fast) ease;
+  transition: background var(--transition-fast);
 }
 
 .pill:hover {
@@ -27,7 +27,7 @@
   height: 5px;
   border-radius: var(--radius-full);
   flex-shrink: 0;
-  transition: background var(--duration-normal) ease, opacity var(--duration-normal) ease;
+  transition: background var(--transition-normal), opacity var(--transition-normal);
 }
 
 .dotConnected {

@@ -286,14 +286,6 @@
 
 /* ── Processor groups (installed tab) ────────────────────────────────────── */
 
-.groupCount {
-  font-size: 9px;
-  background: var(--bg-overlay);
-  color: var(--text-dimmed);
-  border-radius: var(--radius-lg);
-  padding: 1px 5px;
-}
-
 /* ── Processor item wrapper (row + optional detail card) ─────────────────── */
 
 .itemWrapper {
@@ -570,10 +562,11 @@
 .groupCount {
   font-family: var(--font-mono);
   font-size: 10px;
+  font-weight: 600;
   color: var(--text-dimmed);
   background: var(--bg-overlay);
-  padding: 1px 6px;
   border-radius: var(--radius-full);
+  padding: 1px 6px;
   min-width: 18px;
   text-align: center;
 }

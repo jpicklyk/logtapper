@@ -35,7 +35,7 @@
   height: 100%;
   background: var(--accent);
   border-radius: var(--radius-sm);
-  transition: width 120ms ease;
+  transition: width var(--transition-fast);
 }
 
 .pct {

@@ -231,7 +231,7 @@
 .nodeProgressFill {
   height: 100%;
   background: var(--accent);
-  transition: width 0.3s;
+  transition: width var(--duration-normal);
 }
 
 .progressShimmer {
@@ -508,9 +508,11 @@
   opacity: 0.35;
 }
 
+.nodeDisabled.chainNode .nodeAccent,
+.nodeDisabled.chainNodeCompact .compactDot,
 .nodeDisabled .nodeAccent,
 .nodeDisabled .compactDot {
-  background: var(--border) !important;
+  background: var(--border);
 }
 
 /* ── Toggle enabled button ───────────────────────────────────────────────── */
@@ -537,24 +539,29 @@
   opacity: 0.6;
 }
 
+.chainNode:hover .toggleBtn:hover,
+.chainNodeCompact:hover .toggleBtn:hover,
 .toggleBtn:hover {
-  opacity: 1 !important;
+  opacity: 1;
   color: var(--accent);
 }
 
 .toggleBtn:focus-visible {
   box-shadow: var(--shadow-focus);
   outline: none;
-  opacity: 1 !important;
+  opacity: 1;
 }
 
-.toggleBtnOff {
-  opacity: 0.6 !important;
+.toggleBtn.toggleBtnOff {
+  opacity: 0.6;
   color: var(--text-dimmed);
 }
 
-.toggleBtnOff:hover {
-  color: var(--accent) !important;
+.chainNode:hover .toggleBtn.toggleBtnOff:hover,
+.chainNodeCompact:hover .toggleBtn.toggleBtnOff:hover,
+.toggleBtn.toggleBtnOff:hover {
+  color: var(--accent);
+  opacity: 1;
 }
 
 /* ── Chain filter ────────────────────────────────────────────────────────── */

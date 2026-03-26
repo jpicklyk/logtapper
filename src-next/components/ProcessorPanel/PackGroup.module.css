@@ -30,7 +30,7 @@
   display: flex;
   align-items: center;
   color: var(--text-muted, var(--text-dimmed));
-  transition: transform 0.15s ease;
+  transition: transform var(--transition-fast);
   flex-shrink: 0;
 }
 
@@ -80,19 +80,21 @@
   opacity: 0.6;
 }
 
+.packHeader:hover .packEyeBtn:hover,
 .packEyeBtn:hover {
-  opacity: 1 !important;
+  opacity: 1;
   color: var(--accent);
 }
 
-.packEyeBtnOff {
-  opacity: 0.6 !important;
+.packEyeBtn.packEyeBtnOff {
+  opacity: 0.6;
   color: var(--text-dimmed);
 }
 
-.packEyeBtnOff:hover {
-  color: var(--accent) !important;
-  opacity: 1 !important;
+.packHeader:hover .packEyeBtn.packEyeBtnOff:hover,
+.packEyeBtn.packEyeBtnOff:hover {
+  color: var(--accent);
+  opacity: 1;
 }
 
 /* Remove button for whole pack */
@@ -146,8 +148,9 @@
   opacity: 0.35;
 }
 
+.procRowDisabled.procRow .procAccent,
 .procRowDisabled .procAccent {
-  background: var(--border) !important;
+  background: var(--border);
 }
 
 .procAccent {

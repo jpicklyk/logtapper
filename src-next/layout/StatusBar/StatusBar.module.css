@@ -53,12 +53,7 @@
   height: 6px;
   border-radius: var(--radius-full);
   background: var(--success);
-  animation: pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  animation: stream-pulse 1.5s var(--easing-standard) infinite;
 }
 
 /* ── Chips (colored pill indicators) ───────────────────────── */
@@ -77,7 +72,7 @@
 /* Clickable chips — pointer cursor + hover brightening */
 .chipClickable {
   cursor: pointer;
-  transition: filter var(--duration-fast) ease;
+  transition: filter var(--transition-fast);
 }
 
 .chipClickable:hover {
