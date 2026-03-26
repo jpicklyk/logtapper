@@ -42,7 +42,7 @@
   );
   pointer-events: none;
   z-index: -1;
-  animation: shimmer 1.6s ease-out both;
+  animation: toast-shimmer 1.6s ease-out both;
 }
 
 .toast[data-clickable='true'] {
@@ -76,7 +76,7 @@
   border-radius: var(--radius-full);
   background: var(--accent);
   box-shadow: 0 0 6px 1px color-mix(in srgb, var(--accent) 50%, transparent);
-  animation: pulseDot 2s ease-in-out infinite;
+  animation: toast-pulse-dot 2s ease-in-out infinite;
   flex-shrink: 0;
 }
 
@@ -137,7 +137,7 @@
   }
 }
 
-@keyframes shimmer {
+@keyframes toast-shimmer {
   0% {
     opacity: 0.8;
   }
@@ -146,7 +146,7 @@
   }
 }
 
-@keyframes pulseDot {
+@keyframes toast-pulse-dot {
   0%, 100% {
     opacity: 1;
     box-shadow: 0 0 6px 1px color-mix(in srgb, var(--accent) 50%, transparent);

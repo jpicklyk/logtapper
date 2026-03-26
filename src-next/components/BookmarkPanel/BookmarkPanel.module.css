@@ -170,12 +170,7 @@
 .categoryItems {
   display: flex;
   flex-direction: column;
-  animation: expandIn 150ms ease;
-}
-
-@keyframes expandIn {
-  from { opacity: 0; transform: translateY(-4px); }
-  to   { opacity: 1; transform: translateY(0); }
+  animation: expand-in 150ms ease;
 }
 
 /* ── Bookmark item card ───────────────────────────────────────────────────── */

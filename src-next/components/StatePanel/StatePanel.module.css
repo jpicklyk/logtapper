@@ -270,10 +270,10 @@
   height: 10px;
   border-radius: var(--radius-sm);
   background: var(--bg-overlay);
-  animation: shimmer 1.5s infinite;
+  animation: state-skel-pulse 1.5s infinite;
 }
 
-@keyframes shimmer {
+@keyframes state-skel-pulse {
   0%,
   100% {
     opacity: 0.4;

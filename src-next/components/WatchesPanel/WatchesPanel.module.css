@@ -126,7 +126,7 @@
 .statusDotActive {
   background: var(--success);
   box-shadow: 0 0 4px 1px color-mix(in srgb, var(--success) 40%, transparent);
-  animation: pulseDot 2s ease-in-out infinite;
+  animation: watches-pulse-dot 2s ease-in-out infinite;
 }
 
 .statusDotCancelled {
@@ -424,7 +424,7 @@
   }
 }
 
-@keyframes pulseDot {
+@keyframes watches-pulse-dot {
   0%,
   100% {
     opacity: 1;
