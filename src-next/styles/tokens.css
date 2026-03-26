@@ -193,57 +193,63 @@
   --state-selected: color-mix(in srgb, var(--accent) 6%, transparent);
 
   /* Shadows */
-  --shadow-focus:   0 0 0 2px var(--focus-ring);
-  --shadow-popover: 0 4px 12px rgba(0, 0, 0, 0.4);
-  --shadow-overlay: 0 8px 32px rgba(0, 0, 0, 0.5);
+  --shadow-focus:   0 0 0 2px var(--focus-ring); /* inherits via --focus-ring (light overrides to rgba(9,105,218,0.35)) */
+  --shadow-popover: 0 4px 12px rgba(0, 0, 0, 0.4); /* explicit light override in [data-theme="light"] */
+  --shadow-overlay: 0 8px 32px rgba(0, 0, 0, 0.5); /* explicit light override in [data-theme="light"] */
 }
 
 /* ══ COMPONENT ═══════════════════════════════════════════════════════════════
    Component-scoped aliases that reference semantic tokens. These exist so
    component CSS can use self-describing names without knowing which semantic
    token backs them. Changing a mapping here re-themes all consumers at once.
+
+   Light-theme behavior key (check [data-theme="light"] blocks below):
+     "inherits via --foo"  — no explicit override needed; resolves through a
+                             semantic token that IS overridden in light theme.
+     "explicit override"   — [data-theme="light"] sets a different raw value.
+     "theme-independent"   — same correct value in both themes; no override needed.
    ══════════════════════════════════════════════════════════════════════════ */
 
 :root,
 [data-theme="dark"] {
-  /* Viewer (log viewer) */
-  --viewer-bg:               var(--bg-base);
-  --viewer-gutter-bg:        transparent;
-  --viewer-gutter-text:      var(--text-dimmed);
-  --viewer-text:             var(--text);
-  --viewer-selection-bg:     rgba(255, 200, 50, 0.12);
-  --viewer-selection-border:  rgba(255, 200, 50, 0.75);
-  --viewer-search-bg:        rgba(255, 200, 50, 0.10);
-  --viewer-search-active-bg: rgba(255, 200, 50, 0.22);
+  /* ══ Viewer (log viewer) ══ */
+  --viewer-bg:               var(--bg-base);               /* inherits via --bg-base */
+  --viewer-gutter-bg:        transparent;                  /* explicit override in light (var(--bg-input)) */
+  --viewer-gutter-text:      var(--text-dimmed);           /* explicit override in light (#7a8491) */
+  --viewer-text:             var(--text);                  /* inherits via --text */
+  --viewer-selection-bg:     rgba(255, 200, 50, 0.12);     /* explicit override in light */
+  --viewer-selection-border:  rgba(255, 200, 50, 0.75);   /* explicit override in light */
+  --viewer-search-bg:        rgba(255, 200, 50, 0.10);     /* explicit override in light */
+  --viewer-search-active-bg: rgba(255, 200, 50, 0.22);     /* explicit override in light */
 
-  /* Editor */
-  --editor-bg:             var(--bg-base);
-  --editor-text:           var(--text);
-  --editor-gutter-bg:      var(--bg-raised);
-  --editor-gutter-text:    var(--text-dimmed);
-  --editor-active-line:    rgba(255, 255, 255, 0.03);
-  --editor-selection-bg:   rgba(88, 166, 255, 0.2);
+  /* ══ Editor ══ */
+  --editor-bg:             var(--bg-base);                 /* explicit override in light (#fafbfc) */
+  --editor-text:           var(--text);                    /* inherits via --text */
+  --editor-gutter-bg:      var(--bg-raised);               /* explicit override in light (var(--bg-input)) */
+  --editor-gutter-text:    var(--text-dimmed);             /* explicit override in light (var(--text-muted)) */
+  --editor-active-line:    rgba(255, 255, 255, 0.03);      /* explicit override in light (rgba(0,0,0,0.03)) */
+  --editor-selection-bg:   rgba(88, 166, 255, 0.2);        /* explicit override in light (rgba(9,105,218,0.2)) */
 
-  /* Dashboard */
-  --dashboard-bg:          var(--bg-base);
+  /* ══ Dashboard ══ */
+  --dashboard-bg:          var(--bg-base);                 /* inherits via --bg-base */
 
-  /* Chrome (header, toolbar, status bar) */
-  --chrome-bg:             var(--bg-base);
-  --chrome-border:         var(--border);
-  --panel-bg:              var(--bg-raised);
-  --scrim:                 rgba(0, 0, 0, 0.5);
-  --border-accent:         color-mix(in srgb, var(--accent) 15%, transparent);
+  /* ══ Chrome (header, toolbar, status bar) ══ */
+  --chrome-bg:             var(--bg-base);                 /* explicit override in light (#edf0f3) */
+  --chrome-border:         var(--border);                  /* inherits via --border */
+  --panel-bg:              var(--bg-raised);               /* inherits via --bg-raised */
+  --scrim:                 rgba(0, 0, 0, 0.5);             /* explicit override in light (rgba(0,0,0,0.3)) */
+  --border-accent:         color-mix(in srgb, var(--accent) 15%, transparent); /* explicit override in light (20%) */
 
-  /* Tab type accents */
-  --tab-viewer:            var(--accent);
-  --tab-dashboard:         var(--success);
-  --tab-editor:            var(--warning);
-  --tab-analysis:          var(--accent);
+  /* ══ Tab type accents ══ */
+  --tab-viewer:            var(--accent);                  /* inherits via --accent */
+  --tab-dashboard:         var(--success);                 /* inherits via --success */
+  --tab-editor:            var(--warning);                 /* inherits via --warning */
+  --tab-analysis:          var(--accent);                  /* inherits via --accent */
 
-  /* Foreground pairings */
-  --on-danger:   var(--white);
-  --on-success:  var(--white);
-  --on-warning:  var(--white);
+  /* ══ Foreground pairings ══ */
+  --on-danger:   var(--white);                             /* theme-independent */
+  --on-success:  var(--white);                             /* theme-independent */
+  --on-warning:  var(--white);                             /* theme-independent */
 }
 
 /* ── Light theme ─────────────────────────────────────────────────────────── */
