@@ -119,9 +119,9 @@
   --border-subtle: var(--neutral-750);
 
   /* Text */
-  --text-dimmed:    var(--neutral-700);   /* decorative, disabled, line numbers */
-  --text-muted:     var(--neutral-500);   /* secondary labels, timestamps */
-  --text-subtle:    var(--neutral-400);   /* tertiary but still readable */
+  --text-dimmed:    var(--neutral-700);   /* decorative, disabled, line numbers — lowest contrast */
+  --text-muted:     var(--neutral-500);   /* secondary labels, timestamps, metadata */
+  --text-subtle:    var(--neutral-400);   /* tertiary but readable — descriptions, help text */
   --text:           var(--neutral-300);
   --text-on-accent: var(--white);
 
@@ -272,9 +272,9 @@
   --border-subtle: #d4dae0;
 
   /* Text */
-  --text-dimmed:    #8b95a1;   /* decorative, disabled, line numbers */
-  --text-muted:     #5d6672;   /* secondary labels, timestamps */
-  --text-subtle:    #4b5563;   /* tertiary but still readable */
+  --text-dimmed:    #8b95a1;   /* decorative, disabled, line numbers — lowest contrast */
+  --text-muted:     #5d6672;   /* secondary labels, timestamps, metadata */
+  --text-subtle:    #4b5563;   /* tertiary but readable — descriptions, help text */
   --text:           #1a1f26;
   --text-on-accent: var(--white);
 

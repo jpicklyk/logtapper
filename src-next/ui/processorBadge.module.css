@@ -2,7 +2,7 @@
 /* Used by: MarketplaceEntryRow, ProcessorLibrary, ProcessorPanel             */
 
 .typeBadge {
-  font-size: 9px;
+  font-size: 9px; /* intentionally smaller than Badge (10px) for compact processor labels */
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
