@@ -118,11 +118,24 @@ pub async fn get_state_transitions(
 }
 
 /// Get all transition line numbers grouped by tracker ID.
+/// Only includes trackers where `output.timeline` is true.
 #[tauri::command]
 pub async fn get_all_transition_lines(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<HashMap<String, Vec<usize>>, String> {
+    // Build a set of tracker IDs that have timeline enabled.
+    let timeline_enabled: std::collections::HashSet<String> = {
+        let processors = lock_or_err(&state.processors, "processors")?;
+        processors.iter()
+            .filter_map(|(id, proc)| {
+                proc.as_state_tracker()
+                    .filter(|def| def.output.timeline)
+                    .map(|_| id.clone())
+            })
+            .collect()
+    };
+
     let mut map: HashMap<String, Vec<usize>> = HashMap::new();
 
     // Collect from pipeline results.
@@ -130,6 +143,7 @@ pub async fn get_all_transition_lines(
         let results = lock_or_err(&state.state_tracker_results, "state_tracker_results")?;
         if let Some(session_map) = results.get(&session_id) {
             for (tracker_id, result) in session_map {
+                if !timeline_enabled.contains(tracker_id) { continue; }
                 let lines: Vec<usize> = result.transitions.iter().map(|t| t.line_num).collect();
                 map.insert(tracker_id.clone(), lines);
             }
@@ -141,6 +155,7 @@ pub async fn get_all_transition_lines(
         let stream = lock_or_err(&state.stream_tracker_state, "stream_tracker_state")?;
         if let Some(session_map) = stream.get(&session_id) {
             for (tracker_id, cont) in session_map {
+                if !timeline_enabled.contains(tracker_id) { continue; }
                 let lines: Vec<usize> = cont.transitions.iter().map(|t| t.line_num).collect();
                 map.entry(tracker_id.clone()).or_insert(lines);
             }
