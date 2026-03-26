@@ -50,6 +50,33 @@
   /* ── Orange / brand ── */
   --orange-500: #FF6128;
 
+  /* ── Slate / cool grays (log levels, misc) ── */
+  --slate-600: #6e7681;
+  --slate-400: #9ca3af;
+
+  /* ── Dark reds (level backgrounds) ── */
+  --darkred-900: #2d1117;
+  --darkred-800: #3d1118;
+
+  /* ── Dark blues (tracker flash, field highlights) ── */
+  --navy-700: #1a3a60;
+  --navy-600: #1e4a80;
+  --navy-500: #2a5ea0;
+
+  /* ── Input background ── */
+  --neutral-925: #0e1318;
+
+  /* ── Highlight base colors ── */
+  --gold-600: #bb8000;
+  --gold-500: #d29922;
+  --maroon-800: #5a1e1e;
+
+  /* ── Badge background base colors ── */
+  --badge-base-blue:   #3498db;
+  --badge-base-green:  #27ae60;
+  --badge-base-red:    #c0392b;
+  --badge-base-yellow: #f1c40f;
+
   /* ── White / neutrals ── */
   --white: #ffffff;
   --black: #000000;
@@ -110,7 +137,7 @@
 [data-theme="dark"] {
   /* Backgrounds */
   --bg-base:    var(--neutral-950);
-  --bg-input:   #0e1318;
+  --bg-input:   var(--neutral-925);
   --bg-raised:  var(--neutral-900);
   --bg-overlay: var(--neutral-850);
 
@@ -138,44 +165,44 @@
   --warning-muted:      var(--amber-400);
 
   /* Focus ring */
-  --focus-ring: rgba(88, 166, 255, 0.4);
+  --focus-ring: color-mix(in srgb, var(--blue-500) 40%, transparent);
 
   /* Badges */
   --badge-blue:      var(--blue-300);
   --badge-green:     var(--green-400);
   --badge-red:       var(--red-200);
   --badge-yellow:    var(--amber-200);
-  --badge-gray:      rgba(255, 255, 255, 0.5);
-  --badge-blue-bg:   rgba(52, 152, 219, 0.2);
-  --badge-green-bg:  rgba(39, 174, 96, 0.2);
-  --badge-red-bg:    rgba(192, 57, 43, 0.2);
-  --badge-yellow-bg: rgba(241, 196, 15, 0.2);
-  --badge-gray-bg:   rgba(255, 255, 255, 0.08);
+  --badge-gray:      color-mix(in srgb, var(--white) 50%, transparent);
+  --badge-blue-bg:   color-mix(in srgb, var(--badge-base-blue) 20%, transparent);
+  --badge-green-bg:  color-mix(in srgb, var(--badge-base-green) 20%, transparent);
+  --badge-red-bg:    color-mix(in srgb, var(--badge-base-red) 20%, transparent);
+  --badge-yellow-bg: color-mix(in srgb, var(--badge-base-yellow) 20%, transparent);
+  --badge-gray-bg:   color-mix(in srgb, var(--white) 8%, transparent);
 
   /* Animation colors */
-  --flash-warning-hi:         rgba(255, 185, 0, 0.40);
-  --flash-warning-mid:        rgba(255, 185, 0, 0.30);
-  --flash-warning-lo:         rgba(255, 185, 0, 0.10);
-  --flash-tracker-hi:         #1a3a6044;
-  --flash-tracker-mid:        #1a3a6022;
-  --flash-tracker-border-hi:  #2a5ea0;
-  --flash-tracker-border-mid: #1e4a80;
-  --flash-field-hi:           #1e4a8055;
+  --flash-warning-hi:         color-mix(in srgb, var(--amber-500) 40%, transparent);
+  --flash-warning-mid:        color-mix(in srgb, var(--amber-500) 30%, transparent);
+  --flash-warning-lo:         color-mix(in srgb, var(--amber-500) 10%, transparent);
+  --flash-tracker-hi:         color-mix(in srgb, var(--navy-700) 27%, transparent);
+  --flash-tracker-mid:        color-mix(in srgb, var(--navy-700) 13%, transparent);
+  --flash-tracker-border-hi:  var(--navy-500);
+  --flash-tracker-border-mid: var(--navy-600);
+  --flash-field-hi:           color-mix(in srgb, var(--navy-600) 33%, transparent);
 
   /* Highlights */
-  --hl-search:        #bb800066;
-  --hl-search-active: #d29922cc;
-  --hl-pii:           #5a1e1e88;
+  --hl-search:        color-mix(in srgb, var(--gold-600) 40%, transparent);
+  --hl-search-active: color-mix(in srgb, var(--gold-500) 80%, transparent);
+  --hl-pii:           color-mix(in srgb, var(--maroon-800) 53%, transparent);
 
   /* Log levels */
-  --level-verbose:    #6e7681;
-  --level-debug:      #9ca3af;
+  --level-verbose:    var(--slate-600);
+  --level-debug:      var(--slate-400);
   --level-warning:    var(--amber-300);
   --level-error:      var(--red-400);
   --level-fatal:      var(--red-300);
-  --level-warning-bg: rgba(26, 19, 0, 0.06);
-  --level-error-bg:   #2d1117;
-  --level-fatal-bg:   #3d1118;
+  --level-warning-bg: color-mix(in srgb, var(--amber-500) 6%, transparent);
+  --level-error-bg:   var(--darkred-900);
+  --level-fatal-bg:   var(--darkred-800);
 
   /* Muted / emphasis variants */
   --danger-muted:         color-mix(in srgb, var(--danger) 12%, transparent);
