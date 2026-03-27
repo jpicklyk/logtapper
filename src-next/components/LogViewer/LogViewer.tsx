@@ -93,58 +93,44 @@ const LogViewer = React.memo(function LogViewer({
   const lineNumbersRef = useRef<number[] | undefined>(lineNumbers);
   lineNumbersRef.current = lineNumbers;
 
-  // Create CacheDataSource synchronously during render via ref identity tracking.
-  // This is React 19 StrictMode-safe: on double-invoke, prevDataSourceKeyRef already
-  // matches the key, so the factory doesn't run again (same pattern as useViewCache).
+  // Create CacheDataSource via useState + useEffect for lifecycle safety.
+  // React 19 StrictMode calls useMemo factories twice — the first instance gets
+  // disposed while in-flight fetches still reference it. useEffect cleanup runs
+  // once per committed mount, so only one active instance exists at any time.
   //
-  // A version counter (`dsVersion`) triggers a re-render after creation so that
-  // downstream effects (useFetchScheduler's onFetch binding) re-fire with the
-  // new dataSource reference. Without this, the ref change is invisible to effects.
+  // P0 (synchronous ref-based creation) was attempted but doesn't work because
+  // useFetchScheduler's effects depend on dataSource identity changes to rebind
+  // onFetch. A ref-derived value is invisible to React's effect dependency tracking.
   const dataSourceRef = useRef<CacheDataSource | null>(null);
-  const prevDataSourceKeyRef = useRef<string | null>(null);
-  const [, setDsVersion] = useState(0);
+  const [dataSource, setDataSource] = useState<CacheDataSource | null>(null);
 
-  const dataSourceKey = sessionId && viewCache ? sessionId : null;
-
-  if (prevDataSourceKeyRef.current !== dataSourceKey) {
-    // Key changed — dispose previous, create new (or null)
-    if (prevDataSourceKeyRef.current !== null && dataSourceRef.current) {
-      dataSourceRef.current.dispose();
-    }
-    prevDataSourceKeyRef.current = dataSourceKey;
-
-    if (!dataSourceKey || !sessionId || !viewCache) {
-      dataSourceRef.current = null;
-    } else {
-      console.debug('[LogViewer] dataSource → created', { sessionId, paneId, totalLines });
-      const ds = createCacheDataSource({
-        sessionId,
-        viewCache,
-        fetchLines,
-        getLineNumbers: () => lineNumbersRef.current,
-        registry,
-      });
-      ds.updateTotalLines(totalLines);
-      dataSourceRef.current = ds;
-    }
-  }
-
-  const dataSource = dataSourceRef.current;
-
-  // Notify downstream effects that the DataSource changed. Scheduled as a
-  // microtask so the current render completes first (the DataSource is already
-  // available synchronously via ref for this render's children).
   useEffect(() => {
-    setDsVersion((v: number) => v + 1);
-  }, [dataSourceKey]);
+    dataSourceRef.current?.dispose();
+    dataSourceRef.current = null;
 
-  // Cleanup on unmount only
-  useEffect(() => {
+    if (!sessionId || !viewCache) {
+      setDataSource(null);
+      return;
+    }
+
+    console.debug('[LogViewer] dataSource → created', { sessionId, paneId, totalLines });
+    const ds = createCacheDataSource({
+      sessionId,
+      viewCache,
+      fetchLines,
+      getLineNumbers: () => lineNumbersRef.current,
+      registry,
+    });
+    ds.updateTotalLines(totalLines);
+    dataSourceRef.current = ds;
+    setDataSource(ds);
+
     return () => {
-      dataSourceRef.current?.dispose();
+      ds.dispose();
       dataSourceRef.current = null;
     };
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, viewCache, fetchLines, registry]);
 
   // Update total lines imperatively without recreating the data source
   useEffect(() => {
