@@ -175,7 +175,6 @@ interface SectionItemProps {
   jumpSeq: number;
   startLine: number;
   onJump: ((line: number) => void) | undefined;
-  maxLines: number;
   isChild?: boolean;
   originalIndex: number;
   isSelected?: boolean;
@@ -188,7 +187,6 @@ const SectionItem = memo<SectionItemProps>(function SectionItem({
   jumpSeq,
   startLine,
   onJump,
-  maxLines,
   isChild = false,
   originalIndex,
   isSelected,
@@ -209,7 +207,6 @@ const SectionItem = memo<SectionItemProps>(function SectionItem({
   }, [isActive, jumpSeq]);
 
   const lineCount = section.endLine - section.startLine + 1;
-  const barWidth = maxLines > 0 ? (lineCount / maxLines) * 100 : 0;
   const description = getSectionDescription(section.name);
   const tooltip = description
     ? `${description}\nLines ${section.startLine + 1}\u2013${section.endLine + 1} (${lineCount.toLocaleString()} lines)`
@@ -238,7 +235,6 @@ const SectionItem = memo<SectionItemProps>(function SectionItem({
       )}
       <span className={styles.sectionName}>{section.name}</span>
       <span className={styles.sectionLine}>{lineCount.toLocaleString()}</span>
-      <div className={styles.sizeBar} style={{ width: `${barWidth}%` }} />
     </button>
   );
 });
@@ -404,7 +400,6 @@ interface ParentSectionProps {
   activeStartLine: number;
   jumpSeq: number;
   onJump: ((line: number) => void) | undefined;
-  maxLines: number;
   selectedSectionIndices?: Set<number>;
   onToggleSection?: (index: number) => void;
   onToggleGroup?: (indices: number[]) => void;
@@ -418,7 +413,6 @@ const ParentSection = memo<ParentSectionProps>(function ParentSection({
   activeStartLine,
   jumpSeq,
   onJump,
-  maxLines,
   selectedSectionIndices,
   onToggleSection,
   onToggleGroup,
@@ -491,13 +485,14 @@ const ParentSection = memo<ParentSectionProps>(function ParentSection({
             onClick={stopGroupProp}
           />
         )}
+        <span className={styles.sectionGroupAccent} />
+        <span className={styles.parentName}>{section.name}</span>
+        <span className={styles.sectionGroupBadge}>{children.length}</span>
+        <span className={styles.sectionLine}>{totalLines.toLocaleString()}</span>
         <ChevronRight
           size={12}
           className={clsx(styles.sectionGroupChevron, expanded && styles.sectionGroupChevronOpen)}
         />
-        <span className={styles.parentName}>{section.name}</span>
-        <span className={styles.sectionGroupBadge}>{children.length}</span>
-        <span className={styles.sectionLine}>{totalLines.toLocaleString()}</span>
       </button>
       {expanded && (
         <div className={styles.parentChildren}>
@@ -511,7 +506,6 @@ const ParentSection = memo<ParentSectionProps>(function ParentSection({
                 jumpSeq={jumpSeq}
                 startLine={c.section.startLine}
                 onJump={onJump}
-                maxLines={maxLines}
                 isChild={true}
                 originalIndex={origIdx}
                 isSelected={origIdx >= 0 ? selectedSectionIndices?.has(origIdx) : false}
@@ -539,7 +533,6 @@ interface SectionGroupProps {
   activeStartLine: number;
   jumpSeq: number;
   onJump: ((line: number) => void) | undefined;
-  maxLines: number;
   selectedSectionIndices?: Set<number>;
   onToggleSection?: (index: number) => void;
   onToggleGroup?: (indices: number[]) => void;
@@ -553,7 +546,6 @@ const SectionGroup = memo<SectionGroupProps>(function SectionGroup({
   activeStartLine,
   jumpSeq,
   onJump,
-  maxLines,
   selectedSectionIndices,
   onToggleSection,
   onToggleGroup,
@@ -619,13 +611,14 @@ const SectionGroup = memo<SectionGroupProps>(function SectionGroup({
             onClick={stopGroupProp}
           />
         )}
+        <span className={styles.sectionGroupAccent} />
+        <span className={styles.sectionGroupPrefix}>{prefix.trim()}</span>
+        <span className={styles.sectionGroupBadge}>{sections.length}</span>
+        <span className={styles.sectionLine}>{totalLines.toLocaleString()}</span>
         <ChevronRight
           size={12}
           className={clsx(styles.sectionGroupChevron, expanded && styles.sectionGroupChevronOpen)}
         />
-        <span className={styles.sectionGroupPrefix}>{prefix.trim()}</span>
-        <span className={styles.sectionGroupBadge}>{sections.length}</span>
-        <span className={styles.sectionLine}>{totalLines.toLocaleString()}</span>
       </button>
       {expanded && (
         <div className={styles.sectionGroupItems}>
@@ -639,7 +632,6 @@ const SectionGroup = memo<SectionGroupProps>(function SectionGroup({
                 jumpSeq={jumpSeq}
                 startLine={item.section.startLine}
                 onJump={onJump}
-                maxLines={maxLines}
                 isChild={false}
                 originalIndex={origIdx}
                 isSelected={origIdx >= 0 ? selectedSectionIndices?.has(origIdx) : false}
@@ -713,16 +705,6 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
       [sections, debouncedQuery],
     );
     const groupedSections = useMemo(() => buildSectionTree(filteredSections, sections), [filteredSections, sections]);
-
-    // ── Max lines for proportional size bars ──────────────────────────────
-    const maxLines = useMemo(() => {
-      let max = 0;
-      for (const s of filteredSections) {
-        const count = s.endLine - s.startLine + 1;
-        if (count > max) max = count;
-      }
-      return max;
-    }, [filteredSections]);
 
     // ── Active section tracking (by startLine, works across filter) ────────
     const activeStartLine = activeSectionIndex >= 0 && activeSectionIndex < sections.length
@@ -873,7 +855,7 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
                   </button>
                 </div>
               )}
-              <div className={styles.sectionList}>
+              <div className={clsx(styles.sectionList, isSectionFilterActive && styles.sectionFilterActive)}>
                 {groupedSections.map((row) => {
                   switch (row.kind) {
                     case 'single': {
@@ -886,7 +868,7 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
                           jumpSeq={sectionJumpSeq}
                           startLine={row.section.startLine}
                           onJump={onJumpToLine}
-                          maxLines={maxLines}
+
                           originalIndex={origIdx}
                           isSelected={origIdx >= 0 ? selectedSectionIndices?.has(origIdx) : false}
                           onToggle={onToggleSection}
@@ -903,7 +885,7 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
                           activeStartLine={activeStartLine}
                           jumpSeq={sectionJumpSeq}
                           onJump={onJumpToLine}
-                          maxLines={maxLines}
+
                           selectedSectionIndices={selectedSectionIndices}
                           onToggleSection={onToggleSection}
                           onToggleGroup={onToggleGroup}
@@ -920,7 +902,7 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
                           activeStartLine={activeStartLine}
                           jumpSeq={sectionJumpSeq}
                           onJump={onJumpToLine}
-                          maxLines={maxLines}
+
                           selectedSectionIndices={selectedSectionIndices}
                           onToggleSection={onToggleSection}
                           onToggleGroup={onToggleGroup}
