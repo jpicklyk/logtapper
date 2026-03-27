@@ -838,8 +838,8 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
           {/* ── Sections scanning ─────────────────────────────────── */}
           {isScanning && <SectionsScanning progress={indexingProgress} />}
 
-          {/* ── Sections list ─────────────────────────────────────── */}
-          {!isScanning && sections.length > 0 && (
+          {/* ── Sections list (bugreport/dumpstate only) ──────────── */}
+          {!isScanning && sections.length > 0 && isBugreportLike(sourceType ?? '') && (
             <div className={styles.sectionsArea}>
               <div className={styles.groupHeader}>
                 <Layers size={11} />
