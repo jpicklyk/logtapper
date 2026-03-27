@@ -125,6 +125,10 @@ export function useSessionTabManager(
       // be preserved.
       if (reason !== 'drag') resetViewerState();
       activateSessionForPane(paneId, sessionId);
+      // Emit session:focused so the focus marker (blue underline) moves to
+      // this tab. Without this, closing a tab that falls back to another
+      // logviewer tab would leave the focus marker on the old (now closed) tab.
+      bus.emit('session:focused', { sessionId, paneId });
       const sess = refs.sessionsRef.current.get(sessionId);
       if (sess && sess.totalLines > 0) {
         let hasCachedLines = false;

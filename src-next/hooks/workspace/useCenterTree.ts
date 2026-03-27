@@ -32,6 +32,8 @@ export interface UseCenterTreeOptions {
 
 export interface CenterTreeHandle {
   centerTree: SplitNode;
+  /** Synchronous ref — always reflects the latest tree, even mid-batch before React re-renders. */
+  treeRef: React.RefObject<SplitNode>;
   reorderTab: (paneId: string, fromIndex: number, toIndex: number) => void;
   closeTab: (tabId: string, paneId: string) => void;
   setActiveTab: (tabId: string, paneId: string) => void;
@@ -461,6 +463,8 @@ export function useCenterTree(
 
   return {
     centerTree,
+    /** Synchronous ref — always reflects the latest tree, even mid-batch before React re-renders. */
+    treeRef,
     reorderTab,
     closeTab,
     setActiveTab,

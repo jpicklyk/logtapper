@@ -164,8 +164,11 @@ export function useWorkspaceLayout() {
   // Event bus subscriptions (cross-cutting — not owned by any sub-hook)
   // ---------------------------------------------------------------------------
 
-  const centerTreeRef = useRef(centerTree.centerTree);
-  centerTreeRef.current = centerTree.centerTree;
+  // Use the synchronous treeRef from useCenterTree — it's updated inside
+  // setCenterTree updaters, so it reflects the latest tree even before React
+  // re-renders. The old centerTreeRef was stale during session:focused events
+  // that fire synchronously after session:loaded (which queues the tree update).
+  const centerTreeSyncRef = centerTree.treeRef;
 
   const openCenterTabRef = useRef(centerTree.openCenterTab);
   openCenterTabRef.current = centerTree.openCenterTab;
@@ -174,7 +177,7 @@ export function useWorkspaceLayout() {
     const onSessionFocused = (e: { paneId: string | null }) => {
       setActiveLogPaneId(e.paneId);
       if (e.paneId) {
-        setFocusedLogviewerTabId(resolveFocusedTab(centerTreeRef.current, e.paneId));
+        setFocusedLogviewerTabId(resolveFocusedTab(centerTreeSyncRef.current, e.paneId));
       }
     };
 
