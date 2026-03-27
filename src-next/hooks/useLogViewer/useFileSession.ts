@@ -132,7 +132,7 @@ export function useFileSession(
         preSeedSession(result.sessionId, window.lines);
       }).catch((err) => { console.warn('[useFileSession] optimistic fetch failed (non-fatal):', err); });
 
-      diag('session', 'registerSession', { paneId: targetPaneId, sessionId: result.sessionId });
+      diag('session', 'registerSession', { paneId: targetPaneId, sessionId: result.sessionId, isNewTab, sourceType: result.sourceType });
       registerSession(targetPaneId, result);
 
       if (!isNewTab) {

@@ -155,6 +155,7 @@ export function useSessionTabManager(
     const handlePaneRemap = ({ originalPaneId, actualPaneId, sessionId }: {
       originalPaneId: string; actualPaneId: string; sessionId: string;
     }) => {
+      console.debug('[TabManager] handlePaneRemap', { originalPaneId, actualPaneId, sessionId });
       activateSessionForPane(actualPaneId, sessionId);
       unregisterSession(originalPaneId);
       // Keep the streaming pane ref in sync so stream:stopped fires with the
