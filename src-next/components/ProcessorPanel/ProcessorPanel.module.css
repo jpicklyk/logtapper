@@ -340,6 +340,10 @@
   50% { opacity: 0.4; }
 }
 
+@keyframes proc-spin {
+  to { transform: rotate(360deg); }
+}
+
 .runBtn {
   display: flex;
   align-items: center;
