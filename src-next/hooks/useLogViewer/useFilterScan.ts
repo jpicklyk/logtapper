@@ -9,7 +9,7 @@ import {
   closeFilter,
 } from '../../bridge/commands';
 import { onFilterProgress } from '../../bridge/events';
-import { parseFilter, matchesFilter, extractPackageNames, FilterParseError, type FilterNode } from '../../../src/filter';
+import { parseFilter, matchesFilter, extractPackageNames, FilterParseError, type FilterNode } from '../../filter';
 import { useSessionContext } from '../../context/SessionContext';
 import type { CacheController } from '../../cache';
 import type { SharedLogViewerRefs } from './types';

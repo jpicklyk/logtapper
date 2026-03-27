@@ -1,7 +1,7 @@
 import type { MutableRefObject } from 'react';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import type { LoadResult } from '../../bridge/types';
-import type { FilterNode } from '../../../src/filter';
+import type { FilterNode } from '../../filter';
 
 /**
  * Refs that cross sub-hook boundaries. Created once in the orchestrator,

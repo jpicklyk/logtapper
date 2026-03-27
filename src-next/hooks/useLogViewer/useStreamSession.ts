@@ -1,6 +1,6 @@
 import { useCallback, useRef, useEffect } from 'react';
 import type { AdbBatchPayload, AdbProcessorUpdate, AdbStreamEvent, SourceType } from '../../bridge/types';
-import { matchesFilter } from '../../../src/filter';
+import { matchesFilter } from '../../filter';
 import { startAdbStream, stopAdbStream } from '../../bridge/commands';
 import { onAdbStreamStopped } from '../../bridge/events';
 import { useSessionContext } from '../../context/SessionContext';
