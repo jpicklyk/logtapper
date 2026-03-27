@@ -1015,12 +1015,17 @@ fn flush_batch(
                     })
                     .unwrap_or_default();
 
+                // Clone (not remove) tracker states so concurrent reads via
+                // getStateTransitions still see data during processing.
+                // The processed states are re-inserted after execution.
                 let tracker_states = state.stream_tracker_state.lock()
                     .ok()
-                    .and_then(|mut st| {
-                        st.get_mut(session_id).map(|inner| {
+                    .and_then(|st| {
+                        st.get(session_id).map(|inner| {
                             tracker_ids.iter()
-                                .filter_map(|id| inner.remove(id).map(|s| (id.clone(), s)))
+                                .filter_map(|id| {
+                                    inner.get(id.as_str()).cloned().map(|s| (id.clone(), s))
+                                })
                                 .collect()
                         })
                     })

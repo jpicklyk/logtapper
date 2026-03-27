@@ -374,15 +374,26 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
     return () => { cancelled = true; };
   }, [selected, sessionId, runCount, selectedProc?.processorType]);
 
-  const fetchMatches = useCallback(async () => {
+  const fetchMatches = useCallback(async (showLoading = true) => {
     if (!selected || !sessionId) return;
-    setMatchesLoading(true);
+    if (showLoading) setMatchesLoading(true);
     try {
-      setMatchedLines(await getMatchedLines(sessionId, selected));
+      const next = await getMatchedLines(sessionId, selected);
+      // Referential bail-out: skip update if the line count and last entry
+      // are unchanged — avoids re-rendering the list (and losing scroll
+      // position) during streaming when no new matches have arrived.
+      setMatchedLines((prev) => {
+        if (
+          prev.length === next.length &&
+          prev.length > 0 &&
+          prev[prev.length - 1].lineNum === next[next.length - 1].lineNum
+        ) return prev;
+        return next;
+      });
     } catch {
       setMatchedLines([]);
     } finally {
-      setMatchesLoading(false);
+      if (showLoading) setMatchesLoading(false);
     }
   }, [selected, sessionId]);
 
@@ -393,7 +404,9 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
   }, [showMatches, fetchMatches]);
 
   useEffect(() => {
-    if (showMatches && runCount > 0) fetchMatches();
+    // Silent refetch during streaming — no loading indicator, referential
+    // bail-out prevents re-render when matches haven't changed.
+    if (showMatches && runCount > 0) fetchMatches(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runCount]);
 

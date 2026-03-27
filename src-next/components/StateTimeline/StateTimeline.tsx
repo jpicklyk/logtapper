@@ -207,8 +207,14 @@ const StateTimeline = React.memo(function StateTimeline() {
     [pipelineChain, processors],
   );
 
+  // Fetch timeline data when the session or pipeline run changes.
+  // Depend on sessionId (not the full session object) to avoid refetching on
+  // every ADB batch — session.totalLines updates ~50ms during streaming, but
+  // timeline data only changes when the pipeline re-runs (runCount bump).
+  const sessionId = session?.sessionId ?? null;
+
   useEffect(() => {
-    if (!session) {
+    if (!sessionId) {
       setTimelines([]);
       setReporterTimelines([]);
       setVp([0, 1]);
@@ -227,7 +233,6 @@ const StateTimeline = React.memo(function StateTimeline() {
       return;
     }
 
-    const sessionId = session.sessionId;
     if (!hasDataRef.current) setLoading(true);
 
     const trackerPromise = hasTrackers
@@ -280,7 +285,7 @@ const StateTimeline = React.memo(function StateTimeline() {
       setLoading(false);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runCount, session]);
+  }, [runCount, sessionId]);
 
   const totalLines = session?.totalLines ?? 1;
   const maxLine = Math.max(totalLines - 1, 1);
