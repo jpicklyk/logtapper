@@ -24,7 +24,7 @@ export interface FetchSchedulerConfig {
 
 const DEFAULT_SETTLE_MS = 100;
 const DEFAULT_VELOCITY_THRESHOLD = 5; // lines per ms
-const DEFAULT_PREFETCH_LINES = 2000;
+const DEFAULT_PREFETCH_LINES = 5000;
 
 /**
  * Callback receives two ranges:
@@ -57,6 +57,11 @@ export class FetchScheduler {
 
   get velocity(): number {
     return this._velocity;
+  }
+
+  /** Update the prefetch line count at runtime (e.g., when cache allocation changes). */
+  setPrefetchLines(n: number): void {
+    this._prefetchLines = Math.max(n, DEFAULT_PREFETCH_LINES);
   }
 
   get isSettled(): boolean {

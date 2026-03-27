@@ -110,7 +110,8 @@ export function useFetchScheduler(
           Promise.resolve(dataSource.getLines(prefetch.offset, prefetch.count))
             .then(() => {
               if (pfGen !== fetchGenRef.current) return;
-              bumpCacheVersion();
+              // No bumpCacheVersion here — forceFetch() in .finally() re-evaluates
+              // and bumps if the viewport moved, avoiding a redundant re-render.
             })
             .catch(console.error)
             .finally(() => {
@@ -149,6 +150,13 @@ export function useFetchScheduler(
     const last = items[items.length - 1].index;
     const firstActual = virtualBase + first;
     const lastActual = virtualBase + last;
+
+    // Cancel stale in-flight prefetch when scrolling fast — don't let
+    // an old prefetch block the post-settle viewport fetch
+    if (scheduler.velocity >= 5 && fetchInFlightRef.current) {
+      fetchGenRef.current++;
+      fetchInFlightRef.current = false;
+    }
 
     scheduler.reportScroll(firstActual, lastActual, liveTotalLines);
 
