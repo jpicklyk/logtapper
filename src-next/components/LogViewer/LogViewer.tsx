@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback, useEffect, useRef } from 'react';
+import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import type { ViewLine } from '../../bridge/types';
 import type { GutterColumnDef, LineDecoratorDef, CacheDataSource, Selection } from '../../viewport';
 import { ReadOnlyViewer, createCacheDataSource, sessionScrollPositions } from '../../viewport';
@@ -96,8 +96,13 @@ const LogViewer = React.memo(function LogViewer({
   // Create CacheDataSource synchronously during render via ref identity tracking.
   // This is React 19 StrictMode-safe: on double-invoke, prevDataSourceKeyRef already
   // matches the key, so the factory doesn't run again (same pattern as useViewCache).
+  //
+  // A version counter (`dsVersion`) triggers a re-render after creation so that
+  // downstream effects (useFetchScheduler's onFetch binding) re-fire with the
+  // new dataSource reference. Without this, the ref change is invisible to effects.
   const dataSourceRef = useRef<CacheDataSource | null>(null);
   const prevDataSourceKeyRef = useRef<string | null>(null);
+  const [, setDsVersion] = useState(0);
 
   const dataSourceKey = sessionId && viewCache ? sessionId : null;
 
@@ -125,6 +130,13 @@ const LogViewer = React.memo(function LogViewer({
   }
 
   const dataSource = dataSourceRef.current;
+
+  // Notify downstream effects that the DataSource changed. Scheduled as a
+  // microtask so the current render completes first (the DataSource is already
+  // available synchronously via ref for this render's children).
+  useEffect(() => {
+    setDsVersion((v: number) => v + 1);
+  }, [dataSourceKey]);
 
   // Cleanup on unmount only
   useEffect(() => {
