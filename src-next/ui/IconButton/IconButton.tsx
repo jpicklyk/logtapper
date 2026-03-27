@@ -16,7 +16,7 @@ export const IconButton = React.memo<IconButtonProps>(function IconButton({
   title,
   ...rest
 }) {
-  if (process.env.NODE_ENV !== 'production' && !title && !(rest as React.ButtonHTMLAttributes<HTMLButtonElement>)['aria-label']) {
+  if (import.meta.env.DEV && !title && !(rest as React.ButtonHTMLAttributes<HTMLButtonElement>)['aria-label']) {
     console.warn('IconButton: provide a `title` or `aria-label` for screen reader accessibility.');
   }
 
