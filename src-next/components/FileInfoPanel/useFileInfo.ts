@@ -340,13 +340,20 @@ export function useFileInfo(paneId: string | null): FileInfoData {
     [jumpToLine, paneId],
   );
 
+  // For streaming sessions, timestamps are updated every batch via updateSession
+  // but the local state is only set once (on sessionId change). Read directly
+  // from the live session object so FROM/TO stay current during streaming.
+  const isStreaming = session?.isStreaming ?? false;
+  const effectiveFirstTs = isStreaming ? (session?.firstTimestamp ?? firstTimestamp) : firstTimestamp;
+  const effectiveLastTs = isStreaming ? (session?.lastTimestamp ?? lastTimestamp) : lastTimestamp;
+
   return {
     sourceName: session?.sourceName,
     sourceType: session?.sourceType,
-    totalLines,
-    fileSize,
-    firstTimestamp,
-    lastTimestamp,
+    totalLines: isStreaming ? (session?.totalLines ?? totalLines) : totalLines,
+    fileSize: isStreaming ? (session?.fileSize ?? fileSize) : fileSize,
+    firstTimestamp: effectiveFirstTs,
+    lastTimestamp: effectiveLastTs,
     sections,
     dumpstateMetadata,
     activeSectionIndex,
