@@ -1,5 +1,5 @@
 import React from 'react';
-import { Code, Columns2, Eye, WrapText } from 'lucide-react';
+import { Code, Columns2, Eye, TextWrap } from 'lucide-react';
 import { SegmentedControl, IconButton } from '../../ui';
 import type { SegmentedOption } from '../../ui';
 import type { EditorViewMode } from './EditorTab';
@@ -27,7 +27,7 @@ export const EditorToolbar = React.memo(function EditorToolbar({
   return (
     <div className={styles.toolbar}>
       <IconButton
-        icon={WrapText}
+        icon={TextWrap}
         size={14}
         active={wordWrap}
         onClick={onWordWrapToggle}

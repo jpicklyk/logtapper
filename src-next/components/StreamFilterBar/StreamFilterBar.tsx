@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 import clsx from 'clsx';
-import { Search, X, AlertTriangle } from 'lucide-react';
+import { Search, X, TriangleAlert } from 'lucide-react';
 import { Button, IconButton } from '../../ui';
 import styles from './StreamFilterBar.module.css';
 
@@ -155,7 +155,7 @@ export const StreamFilterBar = React.memo<StreamFilterBarProps>(
 
         {hasError && (
           <div className={styles.parseError}>
-            <AlertTriangle size={12} className={styles.errorIcon} /> {parseError}
+            <TriangleAlert size={12} className={styles.errorIcon} /> {parseError}
           </div>
         )}
       </div>

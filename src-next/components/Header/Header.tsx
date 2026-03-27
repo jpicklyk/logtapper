@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import clsx from 'clsx';
-import { FolderOpen, FileEdit, Menu, Radio, Square, Smartphone, Download, Settings, Minus, Copy, X } from 'lucide-react';
+import { FolderOpen, FilePen, Menu, Radio, Square, Smartphone, Download, Settings, Minus, Copy, X } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useSession, useIsStreaming, useViewerActions } from '../../context';
 import { listAdbDevices } from '../../bridge/commands';
@@ -117,7 +117,7 @@ export const Header = React.memo(function Header() {
 
   const fileMenuItems = useMemo<MenuItem[]>(() => [
     { id: 'open-log', label: 'Open Log...', icon: FolderOpen, shortcut: 'Ctrl+O' },
-    { id: 'open-editor', label: 'Open in Editor...', icon: FileEdit, shortcut: 'Ctrl+Shift+O' },
+    { id: 'open-editor', label: 'Open in Editor...', icon: FilePen, shortcut: 'Ctrl+Shift+O' },
     { separator: true },
     { id: 'save', label: isStreaming ? 'Save Capture' : 'Save', shortcut: 'Ctrl+S' },
     { id: 'save-as', label: 'Save As...', shortcut: 'Ctrl+Shift+S' },

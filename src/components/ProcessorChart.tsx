@@ -51,10 +51,11 @@ export default function ProcessorChart({ chart, onPointClick }: Props) {
     );
   }
 
-  const handleClick = (data: { activePayload?: Array<{ payload?: { timelinePos?: number } }> }) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handleClick = (data: any) => {
     if (!onPointClick) return;
-    const pos = data.activePayload?.[0]?.payload?.timelinePos;
-    if (pos != null) onPointClick(pos);
+    const pos = data?.activePayload?.[0]?.payload?.timelinePos;
+    if (pos != null) onPointClick(pos as number);
   };
 
   return (
@@ -117,7 +118,7 @@ export default function ProcessorChart({ chart, onPointClick }: Props) {
           </ScatterChart>
         ) : chartType === 'pie' ? (
           <PieChart>
-            <Pie data={series[0].points.map((p) => ({ name: p.label ?? String(p.x), value: p.y, timelinePos: p.timelinePos }))} dataKey="value" nameKey="name" onClick={(d) => { if (onPointClick && d.timelinePos != null) onPointClick(d.timelinePos as number); }}>
+            <Pie data={series[0].points.map((p) => ({ name: p.label ?? String(p.x), value: p.y, timelinePos: p.timelinePos }))} dataKey="value" nameKey="name" onClick={(d: any) => { if (onPointClick && d.timelinePos != null) onPointClick(d.timelinePos as number); }}>
               {series[0].points.map((_, i) => (
                 <Cell key={i} fill={COLORS[i % COLORS.length]} />
               ))}
