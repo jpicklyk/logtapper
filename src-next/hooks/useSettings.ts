@@ -31,7 +31,7 @@ export const DEFAULT_BOOKMARK_CATEGORIES: BookmarkCategoryDef[] = [
 
 export const SETTING_DEFAULTS: AppSettings = {
   streamBackendLineMax: 500_000,
-  fileCacheBudget: 100_000,
+  fileCacheBudget: 250_000,
   autoReconnectStream: true,
   bookmarkCategories: DEFAULT_BOOKMARK_CATEGORIES,
 };

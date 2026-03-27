@@ -3,8 +3,9 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import type { SourceType } from '../../bridge/types';
 import { isBugreportLike } from '../../bridge/types';
-import { loadLogFile, closeSession as closeSessionCmd } from '../../bridge/commands';
+import { loadLogFile, closeSession as closeSessionCmd, getLines } from '../../bridge/commands';
 import { onFileIndexProgress, onFileIndexComplete } from '../../bridge/events';
+import { preSeedSession } from '../../cache';
 import { useSessionContext } from '../../context/SessionContext';
 import { bus } from '../../events/bus';
 import { getStoredFirstPaneId, getStoredLogviewerTabs } from '../useWorkspaceLayout';
@@ -60,6 +61,9 @@ export function useFileSession(
 
   const loadGenRef = useRef<Map<string, number>>(new Map());
   const hasRestoredRef = useRef(false);
+  // Throttle totalLines → sessions update to at most every 250ms (reduces LogViewer re-renders
+  // on large file indexing which can emit ~1000 progress events for a 1M-line file).
+  const lastTotalLinesUpdateRef = useRef(0);
 
   const loadFile = useCallback(async (path: string, paneId?: string, existingTabId?: string) => {
     const targetPaneId = paneId ?? refs.activeLogPaneIdRef.current ?? getStoredFirstPaneId() ?? DEFAULT_PANE_ID;
@@ -111,6 +115,21 @@ export function useFileSession(
         try { await closeSessionCmd(result.sessionId); } catch { /* ignore */ }
         return;
       }
+
+      // Optimistic fetch: pre-populate cache while React propagates session state.
+      // When useViewCache allocates the handle it will consume these pre-seeded lines,
+      // making the FetchScheduler's first viewport fetch a cache hit.
+      diag('file-load', 'optimistic fetch: requesting first 100 lines');
+      getLines({
+        sessionId: result.sessionId,
+        mode: { mode: 'Full' },
+        offset: 0,
+        count: 100,
+        context: 0,
+      }).then((window) => {
+        diag('file-load', 'optimistic fetch: received', { lines: window.lines.length });
+        preSeedSession(result.sessionId, window.lines);
+      }).catch(() => {});  // best-effort — FetchScheduler retries on miss
 
       diag('session', 'registerSession', { paneId: targetPaneId, sessionId: result.sessionId });
       registerSession(targetPaneId, result);
@@ -233,10 +252,16 @@ export function useFileSession(
 
     onFileIndexProgress((payload) => {
       if (cancelled) return;
-      updateSession(payload.sessionId, (prev) => ({
-        ...prev,
-        totalLines: payload.indexedLines,
-      }));
+      // Throttle totalLines → sessions update to reduce LogViewer re-renders.
+      // setIndexingProgressCtx is unthrottled — it's in a separate sub-context.
+      const now = performance.now();
+      if (now - lastTotalLinesUpdateRef.current > 250) {
+        lastTotalLinesUpdateRef.current = now;
+        updateSession(payload.sessionId, (prev) => ({
+          ...prev,
+          totalLines: payload.indexedLines,
+        }));
+      }
       const percent = payload.totalBytes > 0
         ? (payload.bytesScanned / payload.totalBytes) * 100
         : 0;

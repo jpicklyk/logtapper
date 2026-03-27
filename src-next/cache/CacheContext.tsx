@@ -2,6 +2,20 @@ import { createContext, useContext, useEffect, useRef, type ReactNode } from 're
 import { CacheManager, type WritableViewCache, type CacheController } from './CacheManager';
 import { DataSourceRegistry, type DataSourceRegistrar } from '../viewport/DataSourceRegistry';
 import { storageGetJSON } from '../utils';
+import type { ViewLine } from '../bridge/types';
+
+// ---------------------------------------------------------------------------
+// Pre-seed store — allows optimistic line fetches to be stored before the
+// ViewCacheHandle is allocated (e.g. while React propagates session state).
+// useViewCache consumes and clears these when it allocates a new handle.
+// ---------------------------------------------------------------------------
+const preSeedStore = new Map<string, ViewLine[]>();
+
+/** Store pre-fetched lines for a session before its ViewCacheHandle is allocated.
+ *  useViewCache will consume these when it allocates the handle. */
+export function preSeedSession(sessionId: string, lines: ViewLine[]): void {
+  preSeedStore.set(sessionId, lines);
+}
 
 /** Default total line budget — matches SETTING_DEFAULTS.fileCacheBudget. */
 const DEFAULT_BUDGET = 100_000;
@@ -99,6 +113,15 @@ export function useViewCache(viewId: string | null, sessionId?: string | null): 
     console.debug('[useViewCache] allocating handle (viewId changed)', { viewId, prevId: prevIdRef.current });
     handleRef.current = mgr.allocateView(viewId, sessionId ?? undefined);
     prevIdRef.current = viewId;
+    // Consume any pre-seeded lines that arrived before this handle was allocated.
+    if (sessionId) {
+      const preSeed = preSeedStore.get(sessionId);
+      if (preSeed) {
+        console.debug('[useViewCache] consuming pre-seed', { sessionId, lineCount: preSeed.length });
+        handleRef.current!.put(preSeed);
+        preSeedStore.delete(sessionId);
+      }
+    }
   } else if (handleRef.current === null) {
     // viewId matches prevId but the local ref was cleared during a brief null
     // interlude (e.g. pane move before paneSessionMap updates: viewId goes

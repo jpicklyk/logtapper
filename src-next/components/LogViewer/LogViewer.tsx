@@ -94,24 +94,21 @@ const LogViewer = React.memo(function LogViewer({
   lineNumbersRef.current = lineNumbers;
 
   // Create CacheDataSource via useState + useEffect for lifecycle safety.
-  // useMemo is NOT safe for disposable resources in React 19 StrictMode:
-  // StrictMode calls the factory twice, creating two instances. The second
-  // is kept, but in-flight fetches from the first (or from a FetchScheduler
-  // callback that captured the first) check _disposed and silently discard
-  // results. By using useState (lazy init runs once per committed mount)
-  // and useEffect cleanup (runs once on unmount), we guarantee exactly one
-  // active instance at all times.
+  // React 19 StrictMode calls useMemo factories twice — the first instance gets
+  // disposed while in-flight fetches still reference it. useEffect cleanup runs
+  // once per committed mount, so only one active instance exists at any time.
+  //
+  // P0 (synchronous ref-based creation) was attempted but doesn't work because
+  // useFetchScheduler's effects depend on dataSource identity changes to rebind
+  // onFetch. A ref-derived value is invisible to React's effect dependency tracking.
   const dataSourceRef = useRef<CacheDataSource | null>(null);
-
   const [dataSource, setDataSource] = useState<CacheDataSource | null>(null);
 
   useEffect(() => {
-    // Dispose previous before creating new
     dataSourceRef.current?.dispose();
     dataSourceRef.current = null;
 
     if (!sessionId || !viewCache) {
-      console.debug('[LogViewer] dataSource → null', { sessionId, hasViewCache: !!viewCache, paneId });
       setDataSource(null);
       return;
     }
@@ -124,7 +121,6 @@ const LogViewer = React.memo(function LogViewer({
       getLineNumbers: () => lineNumbersRef.current,
       registry,
     });
-
     ds.updateTotalLines(totalLines);
     dataSourceRef.current = ds;
     setDataSource(ds);
@@ -133,7 +129,6 @@ const LogViewer = React.memo(function LogViewer({
       ds.dispose();
       dataSourceRef.current = null;
     };
-  // totalLines and lineNumbers excluded — updated imperatively / via ref
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, viewCache, fetchLines, registry]);
 

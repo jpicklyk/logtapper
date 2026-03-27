@@ -91,8 +91,13 @@ export function createCacheDataSource(options: CacheDataSourceOptions): CacheDat
       const virtualMissIdx = offset + firstMiss;
       const fetchOffset = ln ? (ln[virtualMissIdx] ?? -1) : virtualMissIdx;
       if (ln && fetchOffset === -1) return Promise.resolve(prefixLines);
-      const fetchCount = count - firstMiss;
-      console.debug('[CacheDataSource] getLines: partial miss → fetching', { sessionId, offset, count, fetchOffset, fetchCount, cacheSize: viewCache.size, allocation: viewCache.allocation, disposed: _disposed });
+      const rawFetchCount = count - firstMiss;
+      // Minimum fetch size to avoid tiny IPC round-trips during progressive
+      // indexing (totalLines grows by small increments, each triggering a
+      // forceFetch that would otherwise fetch 1-50 lines at a time).
+      const MIN_FETCH = 500;
+      const fetchCount = Math.max(rawFetchCount, MIN_FETCH);
+      console.debug('[CacheDataSource] getLines: partial miss → fetching', { sessionId, offset, count, fetchOffset, fetchCount, rawFetchCount, cacheSize: viewCache.size, allocation: viewCache.allocation, disposed: _disposed });
       const gen = _fetchGen;
       return fetchLines(fetchOffset, fetchCount).then((window: LineWindow) => {
         if (gen !== _fetchGen || _disposed) {

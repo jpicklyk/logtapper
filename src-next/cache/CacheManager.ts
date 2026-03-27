@@ -199,7 +199,7 @@ export class ViewCacheHandle implements WritableViewCache {
  * Global cache manager that distributes a shared line budget across views.
  *
  * Usage:
- *   const mgr = new CacheManager(100_000);
+ *   const mgr = new CacheManager(250_000);
  *   const handle = mgr.allocateView('pane-1-sess-abc', 'sess-abc');
  *   mgr.setFocus('pane-1-sess-abc');
  *   handle.put(lines);
