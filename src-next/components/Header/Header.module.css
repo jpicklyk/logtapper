@@ -91,6 +91,11 @@
   background: var(--state-hover);
 }
 
+.actionBtn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 .actionBtnStreaming {
   color: var(--success);
   border-color: var(--success-dark);
@@ -127,7 +132,7 @@
 /* When macOS titleBarStyle is 'overlay', the native traffic lights float
    over the left side of the header. Add padding so brand content clears them. */
 .brandMac {
-  padding-left: 70px;
+  padding-left: 72px;
 }
 
 /* ── Window controls (Windows / Linux) ─────────────────────────────────── */
@@ -159,9 +164,14 @@
   color: var(--text);
 }
 
+.winBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .winBtnClose:hover {
   background: var(--danger);
-  color: white;
+  color: var(--on-danger);
 }
 
 /* ── Device picker (inside Modal) ───────────────────────────────────────── */
@@ -194,6 +204,11 @@
 .deviceItem:hover {
   border-color: var(--accent);
   background: var(--state-hover);
+}
+
+.deviceItem:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .deviceIcon {
@@ -238,35 +253,3 @@
   padding: 8px 0;
 }
 
-/* ── Window Controls (Windows/Linux) ──────────────────────────────────── */
-
-.windowControls {
-  display: flex;
-  align-items: stretch;
-  height: 100%;
-  flex-shrink: 0;
-  border-left: 1px solid var(--border);
-  -webkit-app-region: no-drag;
-}
-
-.winBtn {
-  width: 46px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast);
-}
-
-.winBtn:hover {
-  background: var(--state-hover);
-  color: var(--text);
-}
-
-.winBtnClose:hover {
-  background: var(--danger);
-  color: white;
-}

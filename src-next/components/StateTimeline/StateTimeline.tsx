@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { StateTransition, TimelineSeriesData, ProcessorSummary, Bookmark } from '../../bridge/types';
 import type { AppEvents } from '../../events/events';
 import { getTimelineData } from '../../bridge/commands';
+import { Button } from '../../ui';
 import {
   useSession,
   useProcessors,
@@ -100,7 +101,7 @@ const BookmarkMarkers = React.memo(function BookmarkMarkers({
 }) {
   if (bookmarks.length === 0 || maxLine === 0) return null;
   return (
-    <div className={styles.cursorOverlay} style={{ pointerEvents: 'none' }}>
+    <div className={`${styles.cursorOverlay} ${styles.noPointerEvents}`}>
       {bookmarks.map((b) => {
         const norm = b.lineNumber / maxLine;
         // Skip markers outside the visible viewport (with a small margin)
@@ -118,7 +119,7 @@ const BookmarkMarkers = React.memo(function BookmarkMarkers({
               backgroundColor: color,
               opacity: 0.7,
               cursor: 'pointer',
-              zIndex: 3,
+              zIndex: 3, // TODO: use z-index token once CSS var() works in inline styles
               pointerEvents: 'auto',
             }}
             title={b.label}
@@ -375,16 +376,16 @@ const StateTimeline = React.memo(function StateTimeline() {
             </span>
           )}
           <div className={styles.zoomBtns}>
-            <button className={styles.zoomBtn} onClick={() => zoomBy(true)} title="Zoom in">
+            <Button variant="ghost" size="sm" className={styles.zoomBtn} onClick={() => zoomBy(true)} title="Zoom in">
               +
-            </button>
-            <button className={styles.zoomBtn} onClick={() => zoomBy(false)} title="Zoom out">
+            </Button>
+            <Button variant="ghost" size="sm" className={styles.zoomBtn} onClick={() => zoomBy(false)} title="Zoom out">
               -
-            </button>
+            </Button>
             {isZoomed && (
-              <button className={styles.zoomBtn} onClick={resetZoom} title="Fit all">
+              <Button variant="ghost" size="sm" className={styles.zoomBtn} onClick={resetZoom} title="Fit all">
                 Fit
-              </button>
+              </Button>
             )}
           </div>
         </div>

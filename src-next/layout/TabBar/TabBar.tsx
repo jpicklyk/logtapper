@@ -122,7 +122,7 @@ const SortableTabButton = React.memo(function SortableTabButton({
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.35 : undefined,
-    zIndex: isDragging ? 1 : undefined,
+    zIndex: isDragging ? 1 : undefined, // TODO: use z-index token once CSS var() works in inline styles
     '--tab-strip-color': tabColor,
   } as React.CSSProperties;
 

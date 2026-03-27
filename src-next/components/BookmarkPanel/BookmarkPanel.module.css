@@ -61,6 +61,11 @@
   border-color: var(--accent);
 }
 
+.exportBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 /* ── Scrollable list area ────────────────────────────────────────────────── */
 
 .list {
@@ -119,6 +124,11 @@
   color: var(--text-muted);
 }
 
+.categoryHeader:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .categoryDot {
   flex-shrink: 0;
   width: 7px;
@@ -160,12 +170,7 @@
 .categoryItems {
   display: flex;
   flex-direction: column;
-  animation: expandIn 150ms ease;
-}
-
-@keyframes expandIn {
-  from { opacity: 0; transform: translateY(-4px); }
-  to   { opacity: 1; transform: translateY(0); }
+  animation: expand-in 150ms ease;
 }
 
 /* ── Bookmark item card ───────────────────────────────────────────────────── */
@@ -189,6 +194,11 @@
 
 .card:hover {
   background: var(--bg-overlay);
+}
+
+.card:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .card:hover .deleteBtn {
@@ -269,6 +279,12 @@
   color: var(--danger);
 }
 
+.deleteBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+  opacity: 1;
+}
+
 /* ── Meta row (line indicator) ───────────────────────────────────────────── */
 
 .metaRow {
@@ -337,6 +353,11 @@
   background: var(--border);
 }
 
+.noteDisplay:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .noteIcon {
   flex-shrink: 0;
   margin-top: 2px;
@@ -364,6 +385,12 @@
 
 .addNoteBtn:hover {
   color: var(--accent);
+}
+
+.addNoteBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+  opacity: 1;
 }
 
 .noteEdit {

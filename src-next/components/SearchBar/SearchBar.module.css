@@ -61,31 +61,21 @@
   background: var(--bg-raised);
 }
 
+.clearBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
   padding: 3px 6px;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
   color: var(--text-muted);
-  font-family: var(--font-ui);
   font-size: 11px;
   font-weight: 600;
-  cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast),
-    border-color var(--transition-fast);
 }
 
-.toggle:hover:not(:disabled) {
-  background: var(--bg-raised);
+.toggle:hover:not(:disabled):not([aria-disabled="true"]) {
   color: var(--text);
-}
-
-.toggle:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
 }
 
 .toggleActive {
@@ -168,6 +158,11 @@
 .navBtn:hover:not(:disabled) {
   background: var(--bg-raised);
   color: var(--text);
+}
+
+.navBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .navBtn:disabled {

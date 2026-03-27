@@ -17,11 +17,13 @@
   pointer-events: none;
   opacity: 0;
   transition: opacity var(--transition-fast);
-  z-index: 1000;
+  z-index: var(--z-tooltip);
 }
 
-.tooltip:hover::after {
+.tooltip:hover::after,
+.tooltip:focus-within::after {
   opacity: 1;
+  visibility: visible;
 }
 
 /* Positions */

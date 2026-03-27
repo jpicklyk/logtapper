@@ -35,6 +35,9 @@
   line-height: 1.3;
   color: var(--text);
   letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .timestamp {
@@ -228,6 +231,11 @@
   color: var(--accent);
 }
 
+.lineRef:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .lineRefAnchor {
   border-color: var(--accent-base);
   background: var(--state-selected);
@@ -235,6 +243,11 @@
 
 .lineRefAnchor:hover {
   background: var(--state-hover);
+}
+
+.lineRefAnchor:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .lineRefNum {

@@ -49,9 +49,20 @@
   border-radius: var(--radius-md);
   background: var(--bg-raised);
   overflow: hidden;
+  transition: opacity var(--transition-fast);
 }
 
-/* ── Card top bar: name + mode ─────────────────────────────────────────── */
+/* ── Collapsed card ───────────────────────────────────────────────────── */
+
+.cardCollapsed {
+  opacity: 0.7;
+}
+
+.cardCollapsed .cardTop {
+  border-bottom: none;
+}
+
+/* ── Card top bar: name + mode (clickable toggle) ─────────────────────── */
 
 .cardTop {
   display: flex;
@@ -60,12 +71,60 @@
   padding: 6px 8px;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--bg-overlay);
+  border: none;
+  width: 100%;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.cardTop:hover {
+  background: var(--state-hover);
+}
+
+.cardTop:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
+.cardTopLeft {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cardTopRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.chevron {
+  flex-shrink: 0;
+  color: var(--text-dimmed);
+  transition: transform var(--transition-fast);
+}
+
+.chevronOpen {
+  transform: rotate(90deg);
 }
 
 .cardName {
   font-size: 12px;
   font-weight: 600;
   color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fieldCount {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-dimmed);
 }
 
 .modeTag {
@@ -144,6 +203,9 @@
   text-align: right;
   font-family: var(--font-mono);
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .unknown {
@@ -208,10 +270,10 @@
   height: 10px;
   border-radius: var(--radius-sm);
   background: var(--bg-overlay);
-  animation: shimmer 1.5s infinite;
+  animation: state-skel-pulse 1.5s infinite;
 }
 
-@keyframes shimmer {
+@keyframes state-skel-pulse {
   0%,
   100% {
     opacity: 0.4;

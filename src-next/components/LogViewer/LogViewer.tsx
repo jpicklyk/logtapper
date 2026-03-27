@@ -369,7 +369,7 @@ const LogViewer = React.memo(function LogViewer({
   return (
     // Wrap in a div to capture context-menu events before they bubble out.
     // onContextMenu is suppressed when there is no selection (handled in handler).
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }} onContextMenu={handleContextMenu}>
+    <div className={styles.viewerRoot} onContextMenu={handleContextMenu}>
       <ReadOnlyViewer
         dataSource={dataSource}
         totalLineCount={effectiveTotalLines}

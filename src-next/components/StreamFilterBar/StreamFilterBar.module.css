@@ -17,18 +17,16 @@
 .chip {
   padding: 2px 6px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
   background: var(--bg-raised);
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 10px;
-  cursor: pointer;
-  transition: border-color var(--transition-fast), color var(--transition-fast);
 }
 
-.chip:hover {
+.chip:hover:not(:disabled):not([aria-disabled="true"]) {
   border-color: var(--accent);
   color: var(--text);
+  background: var(--bg-raised);
 }
 
 .count {
@@ -60,6 +58,11 @@
 .copyBtn:hover {
   border-color: var(--accent);
   color: var(--text);
+}
+
+.copyBtn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .inputRow {

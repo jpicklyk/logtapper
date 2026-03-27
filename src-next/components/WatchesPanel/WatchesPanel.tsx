@@ -3,6 +3,7 @@ import { Plus } from 'lucide-react';
 import { useSession, useIsStreaming } from '../../context';
 import { useWatches } from '../../hooks';
 import type { FilterCriteria } from '../../bridge/types';
+import { IconButton } from '../../ui';
 import { WatchRow } from './WatchRow';
 import { CreateWatchForm } from './CreateWatchForm';
 import styles from './WatchesPanel.module.css';
@@ -73,14 +74,14 @@ export const WatchesPanel = React.memo(function WatchesPanel() {
             <span className={styles.watchCount}>{activeWatches.length}</span>
           )}
         </div>
-        <button
+        <IconButton
+          icon={Plus}
+          size={14}
           className={styles.addBtn}
           onClick={handleToggleCreate}
           title={showCreate ? 'Cancel' : 'Create watch'}
           disabled={!isStreaming && !session}
-        >
-          <Plus size={14} />
-        </button>
+        />
       </div>
 
       <div className={styles.content}>

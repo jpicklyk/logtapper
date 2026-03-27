@@ -30,7 +30,7 @@
   display: flex;
   align-items: center;
   color: var(--text-muted, var(--text-dimmed));
-  transition: transform 0.15s ease;
+  transition: transform var(--transition-fast);
   flex-shrink: 0;
 }
 
@@ -69,7 +69,7 @@
   border: none;
   color: var(--text-dimmed);
   cursor: pointer;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   flex-shrink: 0;
   padding: 0;
   opacity: 0;
@@ -80,19 +80,27 @@
   opacity: 0.6;
 }
 
+.packHeader:hover .packEyeBtn:hover,
 .packEyeBtn:hover {
-  opacity: 1 !important;
+  opacity: 1;
   color: var(--accent);
 }
 
-.packEyeBtnOff {
-  opacity: 0.6 !important;
+.packEyeBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+  opacity: 1;
+}
+
+.packEyeBtn.packEyeBtnOff {
+  opacity: 0.6;
   color: var(--text-dimmed);
 }
 
-.packEyeBtnOff:hover {
-  color: var(--accent) !important;
-  opacity: 1 !important;
+.packHeader:hover .packEyeBtn.packEyeBtnOff:hover,
+.packEyeBtn.packEyeBtnOff:hover {
+  color: var(--accent);
+  opacity: 1;
 }
 
 /* Remove button for whole pack */
@@ -106,7 +114,7 @@
   border: none;
   color: var(--text-dimmed);
   cursor: pointer;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   flex-shrink: 0;
   padding: 0;
   opacity: 0;
@@ -120,6 +128,12 @@
 .packRemoveBtn:hover {
   color: var(--danger);
   background: var(--bg-overlay);
+}
+
+.packRemoveBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+  opacity: 1;
 }
 
 /* Expanded processor list */
@@ -146,8 +160,9 @@
   opacity: 0.35;
 }
 
+.procRowDisabled.procRow .procAccent,
 .procRowDisabled .procAccent {
-  background: var(--border) !important;
+  background: var(--border);
 }
 
 .procAccent {
@@ -203,13 +218,18 @@
   border: none;
   color: var(--text-dimmed);
   cursor: pointer;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   padding: 0;
 }
 
 .procRemove:hover {
   color: var(--danger);
   background: var(--bg-overlay);
+}
+
+.procRemove:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 /* Pack group separator */

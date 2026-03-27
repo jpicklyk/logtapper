@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { save } from '@tauri-apps/plugin-dialog';
 import { Modal } from '../../ui/Modal/Modal';
-import { Spinner } from '../../ui';
+import { Spinner, Button } from '../../ui';
 import { useSession } from '../../context';
 import { getExportSessionInfo, exportSession } from '../../bridge/commands';
 import type { ExportSessionInfo } from '../../bridge/types';
@@ -126,16 +126,18 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
           )}
 
           <div className={styles.actions}>
-            <button className={styles.cancelBtn} onClick={onClose}>
+            <Button variant="ghost" className={styles.cancelBtn} onClick={onClose}>
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="primary"
               className={styles.exportBtn}
               onClick={handleExport}
               disabled={exporting}
+              loading={exporting}
             >
               {exporting ? 'Exporting...' : 'Export...'}
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}

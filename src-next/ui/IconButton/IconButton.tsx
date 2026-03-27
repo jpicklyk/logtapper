@@ -13,14 +13,19 @@ export const IconButton = React.memo<IconButtonProps>(function IconButton({
   size = 16,
   active = false,
   className,
+  title,
   ...rest
 }) {
+  if (process.env.NODE_ENV !== 'production' && !title && !(rest as React.ButtonHTMLAttributes<HTMLButtonElement>)['aria-label']) {
+    console.warn('IconButton: provide a `title` or `aria-label` for screen reader accessibility.');
+  }
+
   const cls = [styles.iconButton, active ? styles.active : '', className ?? '']
     .filter(Boolean)
     .join(' ');
 
   return (
-    <button className={cls} {...rest}>
+    <button className={cls} title={title} {...rest}>
       <IconComponent size={size} />
     </button>
   );

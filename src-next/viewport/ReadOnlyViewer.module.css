@@ -87,6 +87,11 @@
   color: var(--accent);
 }
 
+.navButton:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .navButton:active {
   background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
@@ -127,7 +132,7 @@
   bottom: 16px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 10;
+  z-index: var(--z-drag);
   padding: 4px 16px;
   font-size: 12px;
   color: var(--bg-base);
@@ -141,6 +146,11 @@
 
 .newLinesBadge:hover {
   background: var(--accent-base);
+}
+
+.newLinesBadge:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 /* ── Empty state ──────────────────────────────────────────────────────── */

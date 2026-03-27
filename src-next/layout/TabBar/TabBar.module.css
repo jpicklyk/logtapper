@@ -22,7 +22,7 @@
   align-items: center;
   gap: 6px;
   /* left padding reserves space for the drag handle */
-  padding: 0 10px 0 20px;
+  padding: 0 12px 0 20px;
   background: transparent;
   border: 1px solid transparent;
   border-bottom: none;
@@ -37,7 +37,7 @@
     border-color var(--transition-fast);
   flex-shrink: 0;
   touch-action: none;
-  margin-top: 3px;
+  margin-top: 4px;
 }
 
 /* ── Drag handle ─────────────────────────────────────────────────────────── */
@@ -48,7 +48,7 @@
   left: 0;
   top: 0;
   bottom: 0;
-  width: 18px;
+  width: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -106,7 +106,7 @@
 /* ── Tab states ──────────────────────────────────────────────────────────── */
 
 .md .tab {
-  height: 29px;
+  height: 28px;
 }
 
 .md {
@@ -114,14 +114,14 @@
 }
 
 .sm .tab {
-  height: 23px;
-  padding: 0 8px 0 13px;
-  font-size: 11px;
+  height: 24px;
+  padding: 0 8px 0 12px;
+  font-size: 12px;
   margin-top: 2px;
 }
 
 .sm {
-  min-height: 26px;
+  min-height: 24px;
 }
 
 .tab:hover {
@@ -233,7 +233,7 @@
   justify-content: center;
   width: 28px;
   align-self: center;
-  margin: 0 2px;
+  margin: 0 4px;
   background: transparent;
   border: none;
   border-radius: var(--radius-sm);
@@ -266,15 +266,15 @@
   color: var(--text-muted);
   opacity: 0.7;
   flex-shrink: 0;
-  margin-right: 2px;
+  margin-right: 4px;
 }
 
 /* ── Unsaved changes indicator (dirty dot) ───────────────────────────────── */
 
 .unsavedDot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
+  width: 4px;
+  height: 4px;
+  border-radius: var(--radius-full);
   background: var(--warning);
   flex-shrink: 0;
   display: inline-block;

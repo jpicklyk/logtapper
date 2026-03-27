@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { createBookmark, getLines } from '../../bridge/commands';
 import { useSettings } from '../../hooks';
+import { Modal } from '../../ui';
 import styles from './BookmarkCreateDialog.module.css';
 
 export interface BookmarkCreateRequest {
@@ -122,52 +122,32 @@ const BookmarkCreateDialog = React.memo(function BookmarkCreateDialog({
     [request, submitting, label, note, category, onClose],
   );
 
-  const handleBackdropMouseDown = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
-  );
-
-  // Escape key closes dialog
-  useEffect(() => {
-    if (!request) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [request, onClose]);
-
-  if (!request) return null;
-
   const isRange =
-    request.lineNumberEnd != null && request.lineNumberEnd > request.lineNumber;
+    request != null &&
+    request.lineNumberEnd != null &&
+    request.lineNumberEnd > request.lineNumber;
 
-  const dialogTitle = isRange
-    ? `Bookmark Lines ${request.lineNumber + 1}–${request.lineNumberEnd! + 1}`
-    : `Bookmark Line ${request.lineNumber + 1}`;
+  const dialogTitle = request
+    ? isRange
+      ? `Bookmark Lines ${request.lineNumber + 1}–${request.lineNumberEnd! + 1}`
+      : `Bookmark Line ${request.lineNumber + 1}`
+    : '';
 
-  const dialog = (
-    <div className={styles.backdrop} onMouseDown={handleBackdropMouseDown}>
-      <div
-        className={styles.dialog}
-        role="dialog"
-        aria-modal="true"
-        aria-label={dialogTitle}
-      >
-        <div className={styles.header}>
-          <span className={styles.title}>{dialogTitle}</span>
-          <button
-            type="button"
-            className={styles.closeBtn}
-            onClick={onClose}
-            aria-label="Close"
-          >
-            &times;
-          </button>
-        </div>
+  return (
+    <Modal open={request !== null} onClose={onClose} width={420} noPadding>
+      <div className={styles.header}>
+        <span className={styles.title}>{dialogTitle}</span>
+        <button
+          type="button"
+          className={styles.closeBtn}
+          onClick={onClose}
+          aria-label="Close"
+        >
+          &times;
+        </button>
+      </div>
 
+      {request && (
         <form className={styles.body} onSubmit={handleSubmit}>
           {/* Label */}
           <div className={styles.field}>
@@ -238,11 +218,9 @@ const BookmarkCreateDialog = React.memo(function BookmarkCreateDialog({
             </button>
           </div>
         </form>
-      </div>
-    </div>
+      )}
+    </Modal>
   );
-
-  return createPortal(dialog, document.body);
 });
 
 export default BookmarkCreateDialog;

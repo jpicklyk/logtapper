@@ -1,153 +1,208 @@
 /* ── Design tokens ───────────────────────────────────────────────────────── */
 
-/* Non-color tokens (shared, no theme dependency) */
+/* ══ PRIMITIVE ══════════════════════════════════════════════════════════════
+   Raw named values — no semantic meaning. All semantic and component tokens
+   must reference these via var(). Direct use in components is forbidden.
+   ══════════════════════════════════════════════════════════════════════════ */
+
 :root {
-  /* Radius scale */
+  /* ── Neutral palette (dark theme grays) ── */
+  --neutral-950: #0c1014;
+  --neutral-900: #141b21;
+  --neutral-850: #1b2530;
+  --neutral-800: #243040;
+  --neutral-750: #2d3d4e;
+  --neutral-700: #484f58;
+  --neutral-500: #8b949e;
+  --neutral-400: #9faab4;
+  --neutral-300: #b8c4ce;
+
+  /* ── Blue / accent palette ── */
+  --blue-600: #1f6feb;
+  --blue-500: #58a6ff;
+  --blue-400: #60a5fa;
+  --blue-300: #5dade2;
+
+  /* ── Red / danger palette ── */
+  --red-500: #f85149;
+  --red-400: #f47067;
+  --red-300: #ff6e6e;
+  --red-200: #ec7063;
+
+  /* ── Green / success palette ── */
+  --green-600: #238636;
+  --green-550: #2ea043;
+  --green-500: #3fb950;
+  --green-400: #58d68d;
+
+  /* ── Amber / warning palette ── */
+  --amber-500: #f0a500;
+  --amber-400: #c9a227;
+  --amber-300: #d29922;
+  --amber-200: #f4d03f;
+
+  /* ── Purple / correlator ── */
+  --purple-400: #c084fc;
+
+  /* ── Teal / transformer ── */
+  --teal-400: #2dd4bf;
+
+  /* ── Orange / brand ── */
+  --orange-500: #FF6128;
+
+  /* ── Slate / cool grays (log levels, misc) ── */
+  --slate-600: #6e7681;
+  --slate-400: #9ca3af;
+
+  /* ── Dark reds (level backgrounds) ── */
+  --darkred-900: #2d1117;
+  --darkred-800: #3d1118;
+
+  /* ── Dark blues (tracker flash, field highlights) ── */
+  --navy-700: #1a3a60;
+  --navy-600: #1e4a80;
+  --navy-500: #2a5ea0;
+
+  /* ── Input background ── */
+  --neutral-925: #0e1318;
+
+  /* ── Highlight base colors ── */
+  --gold-600: #bb8000;
+  --gold-500: #d29922;
+  --maroon-800: #5a1e1e;
+
+  /* ── Badge background base colors ── */
+  --badge-base-blue:   #3498db;
+  --badge-base-green:  #27ae60;
+  --badge-base-red:    #c0392b;
+  --badge-base-yellow: #f1c40f;
+
+  /* ── White / neutrals ── */
+  --white: #ffffff;
+  --black: #000000;
+
+  /* ── Radius scale ── */
   --radius-none: 0;
+  --radius-xs:   2px;
   --radius-sm:   3px;
   --radius-md:   6px;
   --radius-lg:   8px;
   --radius-xl:   12px;
   --radius-full: 9999px;
 
-  /* Duration */
+  /* ── Duration ── */
   --duration-fast:   80ms;
   --duration-normal: 150ms;
   --duration-slow:   400ms;
 
-  /* Easing (M3 standard curves) */
+  /* ── Easing (M3 standard curves) ── */
   --easing-standard: cubic-bezier(0.2, 0, 0, 1);
   --easing-enter:    cubic-bezier(0.05, 0.7, 0.1, 1);
   --easing-exit:     cubic-bezier(0.3, 0, 0.8, 0.15);
 
-  /* Transitions */
+  /* ── Transitions ── */
   --transition-fast:   var(--duration-fast) var(--easing-standard);
   --transition-normal: var(--duration-normal) var(--easing-standard);
 
+  /* ── Typography ── */
   --font-mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
   --font-ui: 'Geist', system-ui, -apple-system, sans-serif;
 
-  /* Brand (not theme-dependent) */
-  --android: #FF6128;
+  /* ── Z-index scale ── */
+  --z-drag:     10;
+  --z-overlay:  50;
+  --z-tooltip:  1000;
+  --z-dropdown: 1050;
+  --z-modal:    9000;
+  --z-toast:    9500;
 
-  /* Processor types (not theme-dependent) */
-  --proc-reporter:    #58a6ff;
-  --proc-tracker:     #60a5fa;
-  --proc-correlator:  #c084fc;
-  --proc-transformer: #2dd4bf;
+  /* ── Processor type colors (not theme-dependent) ── */
+  --proc-reporter:    var(--blue-500);
+  --proc-tracker:     var(--blue-400);
+  --proc-correlator:  var(--purple-400);
+  --proc-transformer: var(--teal-400);
+
+  /* ── Brand (not theme-dependent) ── */
+  --android: var(--orange-500);
 }
 
-/* ── Dark theme (default) ────────────────────────────────────────────────── */
+/* ══ SEMANTIC ════════════════════════════════════════════════════════════════
+   Named roles that reference primitives. Components must use these — never
+   reference primitives directly in component CSS.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Dark theme (default) ── */
 
 :root,
 [data-theme="dark"] {
   /* Backgrounds */
-  --bg-base:    #0c1014;
-  --bg-input:   #0e1318;
-  --bg-raised:  #141b21;
-  --bg-overlay: #1b2530;
+  --bg-base:    var(--neutral-950);
+  --bg-input:   var(--neutral-925);
+  --bg-raised:  var(--neutral-900);
+  --bg-overlay: var(--neutral-850);
 
   /* Borders */
-  --border:        #243040;
-  --border-subtle: #2d3d4e;
+  --border:        var(--neutral-800);
+  --border-subtle: var(--neutral-750);
 
   /* Text */
-  --text-dimmed:    #484f58;
-  --text-muted:     #8b949e;
-  --text-subtle:    #9faab4;
-  --text:           #b8c4ce;
-  --text-on-accent: #fff;
+  --text-dimmed:    var(--neutral-700);   /* decorative, disabled, line numbers — lowest contrast */
+  --text-muted:     var(--neutral-500);   /* secondary labels, timestamps, metadata */
+  --text-subtle:    var(--neutral-400);   /* tertiary but readable — descriptions, help text */
+  --text:           var(--neutral-300);
+  --text-on-accent: var(--white);
 
   /* Accent (blue) */
-  --accent:      #58a6ff;
-  --accent-base: #1f6feb;
+  --accent:      var(--blue-500);
+  --accent-base: var(--blue-600);
 
   /* Semantic */
-  --success:            #3fb950;
-  --success-dark:       #238636;
-  --success-dark-hover: #2ea043;
-  --danger:             #f85149;
-  --warning:            #f0a500;
-  --warning-muted:      #c9a227;
+  --success:            var(--green-500);
+  --success-dark:       var(--green-600);
+  --success-dark-hover: var(--green-550);
+  --danger:             var(--red-500);
+  --warning:            var(--amber-500);
+  --warning-muted:      var(--amber-400);
 
   /* Focus ring */
-  --focus-ring: rgba(88, 166, 255, 0.4);
+  --focus-ring: color-mix(in srgb, var(--blue-500) 40%, transparent);
 
   /* Badges */
-  --badge-blue:      #5dade2;
-  --badge-green:     #58d68d;
-  --badge-red:       #ec7063;
-  --badge-yellow:    #f4d03f;
-  --badge-gray:      rgba(255, 255, 255, 0.5);
-  --badge-blue-bg:   rgba(52, 152, 219, 0.2);
-  --badge-green-bg:  rgba(39, 174, 96, 0.2);
-  --badge-red-bg:    rgba(192, 57, 43, 0.2);
-  --badge-yellow-bg: rgba(241, 196, 15, 0.2);
-  --badge-gray-bg:   rgba(255, 255, 255, 0.08);
+  --badge-blue:      var(--blue-300);
+  --badge-green:     var(--green-400);
+  --badge-red:       var(--red-200);
+  --badge-yellow:    var(--amber-200);
+  --badge-gray:      color-mix(in srgb, var(--white) 50%, transparent);
+  --badge-blue-bg:   color-mix(in srgb, var(--badge-base-blue) 20%, transparent);
+  --badge-green-bg:  color-mix(in srgb, var(--badge-base-green) 20%, transparent);
+  --badge-red-bg:    color-mix(in srgb, var(--badge-base-red) 20%, transparent);
+  --badge-yellow-bg: color-mix(in srgb, var(--badge-base-yellow) 20%, transparent);
+  --badge-gray-bg:   color-mix(in srgb, var(--white) 8%, transparent);
 
   /* Animation colors */
-  --flash-warning-hi:       rgba(255, 185, 0, 0.40);
-  --flash-warning-mid:      rgba(255, 185, 0, 0.30);
-  --flash-warning-lo:       rgba(255, 185, 0, 0.10);
-  --flash-tracker-hi:       #1a3a6044;
-  --flash-tracker-mid:      #1a3a6022;
-  --flash-tracker-border-hi:  #2a5ea0;
-  --flash-tracker-border-mid: #1e4a80;
-  --flash-field-hi:         #1e4a8055;
+  --flash-warning-hi:         color-mix(in srgb, var(--amber-500) 40%, transparent);
+  --flash-warning-mid:        color-mix(in srgb, var(--amber-500) 30%, transparent);
+  --flash-warning-lo:         color-mix(in srgb, var(--amber-500) 10%, transparent);
+  --flash-tracker-hi:         color-mix(in srgb, var(--navy-700) 27%, transparent);
+  --flash-tracker-mid:        color-mix(in srgb, var(--navy-700) 13%, transparent);
+  --flash-tracker-border-hi:  var(--navy-500);
+  --flash-tracker-border-mid: var(--navy-600);
+  --flash-field-hi:           color-mix(in srgb, var(--navy-600) 33%, transparent);
 
   /* Highlights */
-  --hl-search:        #bb800066;
-  --hl-search-active: #d29922cc;
-  --hl-pii:           #5a1e1e88;
+  --hl-search:        color-mix(in srgb, var(--gold-600) 40%, transparent);
+  --hl-search-active: color-mix(in srgb, var(--gold-500) 80%, transparent);
+  --hl-pii:           color-mix(in srgb, var(--maroon-800) 53%, transparent);
 
   /* Log levels */
-  --level-verbose:    #6e7681;
-  --level-debug:      #9ca3af;
-  --level-warning:    #d29922;
-  --level-error:      #f47067;
-  --level-fatal:      #ff6e6e;
-  --level-warning-bg: rgba(26, 19, 0, 0.06);
-  --level-error-bg:   #2d1117;
-  --level-fatal-bg:   #3d1118;
-
-  /* Viewer (log viewer) */
-  --viewer-bg:               var(--bg-base);
-  --viewer-gutter-bg:        transparent;
-  --viewer-gutter-text:      var(--text-dimmed);
-  --viewer-selection-bg:     rgba(255, 200, 50, 0.12);
-  --viewer-selection-border:  rgba(255, 200, 50, 0.75);
-  --viewer-search-bg:        rgba(255, 200, 50, 0.10);
-  --viewer-search-active-bg: rgba(255, 200, 50, 0.22);
-
-  /* Editor */
-  --editor-bg:             var(--bg-base);
-  --editor-gutter-bg:      var(--bg-raised);
-  --editor-gutter-text:    var(--text-dimmed);
-  --editor-active-line:    rgba(255, 255, 255, 0.03);
-  --editor-selection-bg:   rgba(88, 166, 255, 0.2);
-
-  /* Dashboard */
-  --dashboard-bg:          var(--bg-base);
-
-  /* Chrome (header, toolbar, status bar) */
-  --chrome-bg:             var(--bg-base);
-  --chrome-border:         var(--border);
-  --panel-bg:              var(--bg-raised);
-  --scrim:                 rgba(0, 0, 0, 0.5);
-  --border-accent:         color-mix(in srgb, var(--accent) 15%, transparent);
-
-  /* Tab type accents */
-  --tab-viewer:            var(--accent);
-  --tab-dashboard:         var(--success);
-  --tab-editor:            var(--warning);
-  --tab-analysis:          var(--accent);
-
-  /* Foreground pairings */
-  --on-danger:   #fff;
-  --on-success:  #fff;
-  --on-warning:  #fff;
-  --viewer-text: var(--text);
-  --editor-text: var(--text);
+  --level-verbose:    var(--slate-600);
+  --level-debug:      var(--slate-400);
+  --level-warning:    var(--amber-300);
+  --level-error:      var(--red-400);
+  --level-fatal:      var(--red-300);
+  --level-warning-bg: color-mix(in srgb, var(--amber-500) 6%, transparent);
+  --level-error-bg:   var(--darkred-900);
+  --level-fatal-bg:   var(--darkred-800);
 
   /* Muted / emphasis variants */
   --danger-muted:         color-mix(in srgb, var(--danger) 12%, transparent);
@@ -165,31 +220,90 @@
   --state-selected: color-mix(in srgb, var(--accent) 6%, transparent);
 
   /* Shadows */
-  --shadow-focus:   0 0 0 2px var(--focus-ring);
-  --shadow-popover: 0 4px 12px rgba(0, 0, 0, 0.4);
-  --shadow-overlay: 0 8px 32px rgba(0, 0, 0, 0.5);
+  --shadow-focus:   0 0 0 2px var(--focus-ring); /* inherits via --focus-ring (light overrides to rgba(9,105,218,0.35)) */
+  --shadow-popover: 0 4px 12px rgba(0, 0, 0, 0.4); /* explicit light override in [data-theme="light"] */
+  --shadow-overlay: 0 8px 32px rgba(0, 0, 0, 0.5); /* explicit light override in [data-theme="light"] */
+}
+
+/* ══ COMPONENT ═══════════════════════════════════════════════════════════════
+   Component-scoped aliases that reference semantic tokens. These exist so
+   component CSS can use self-describing names without knowing which semantic
+   token backs them. Changing a mapping here re-themes all consumers at once.
+
+   Light-theme behavior key (check [data-theme="light"] blocks below):
+     "inherits via --foo"  — no explicit override needed; resolves through a
+                             semantic token that IS overridden in light theme.
+     "explicit override"   — [data-theme="light"] sets a different raw value.
+     "theme-independent"   — same correct value in both themes; no override needed.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+:root,
+[data-theme="dark"] {
+  /* ══ Viewer (log viewer) ══ */
+  --viewer-bg:               var(--bg-base);               /* inherits via --bg-base */
+  --viewer-gutter-bg:        transparent;                  /* explicit override in light (var(--bg-input)) */
+  --viewer-gutter-text:      var(--text-dimmed);           /* explicit override in light (#7a8491) */
+  --viewer-text:             var(--text);                  /* inherits via --text */
+  --viewer-selection-bg:     rgba(255, 200, 50, 0.12);     /* explicit override in light */
+  --viewer-selection-border:  rgba(255, 200, 50, 0.75);   /* explicit override in light */
+  --viewer-search-bg:        rgba(255, 200, 50, 0.10);     /* explicit override in light */
+  --viewer-search-active-bg: rgba(255, 200, 50, 0.22);     /* explicit override in light */
+
+  /* ══ Editor ══ */
+  --editor-bg:             var(--bg-base);                 /* explicit override in light (#fafbfc) */
+  --editor-text:           var(--text);                    /* inherits via --text */
+  --editor-gutter-bg:      var(--bg-raised);               /* explicit override in light (var(--bg-input)) */
+  --editor-gutter-text:    var(--text-dimmed);             /* explicit override in light (var(--text-muted)) */
+  --editor-active-line:    rgba(255, 255, 255, 0.03);      /* explicit override in light (rgba(0,0,0,0.03)) */
+  --editor-selection-bg:   rgba(88, 166, 255, 0.2);        /* explicit override in light (rgba(9,105,218,0.2)) */
+
+  /* ══ Dashboard ══ */
+  --dashboard-bg:          var(--bg-base);                 /* inherits via --bg-base */
+
+  /* ══ Chrome (header, toolbar, status bar) ══ */
+  --chrome-bg:             var(--bg-base);                 /* explicit override in light (#edf0f3) */
+  --chrome-border:         var(--border);                  /* inherits via --border */
+  --panel-bg:              var(--bg-raised);               /* inherits via --bg-raised */
+  --scrim:                 rgba(0, 0, 0, 0.5);             /* explicit override in light (rgba(0,0,0,0.3)) */
+  --border-accent:         color-mix(in srgb, var(--accent) 15%, transparent); /* explicit override in light (20%) */
+
+  /* ══ Tab type accents ══ */
+  --tab-viewer:            var(--accent);                  /* inherits via --accent */
+  --tab-dashboard:         var(--success);                 /* inherits via --success */
+  --tab-editor:            var(--warning);                 /* inherits via --warning */
+  --tab-analysis:          var(--accent);                  /* inherits via --accent */
+
+  /* ══ Foreground pairings ══ */
+  --on-danger:   var(--white);                             /* theme-independent */
+  --on-success:  var(--white);                             /* theme-independent */
+  --on-warning:  var(--white);                             /* theme-independent */
 }
 
 /* ── Light theme ─────────────────────────────────────────────────────────── */
 /* GitHub light mode aesthetic: warm whites, slate borders, blue accents     */
 
+/* ══ SEMANTIC (light) ════════════════════════════════════════════════════════
+   Light-theme overrides for semantic tokens. Primitives re-used where
+   values coincide; unique light-only hex values are kept inline.
+   ══════════════════════════════════════════════════════════════════════════ */
+
 [data-theme="light"] {
   /* Backgrounds */
-  --bg-base:    #ffffff;
+  --bg-base:    var(--white);
   --bg-input:   #f2f4f7;
   --bg-raised:  #e9ecf0;
   --bg-overlay: #dce0e6;
 
   /* Borders */
-  --border:        #c2cad4;
-  --border-subtle: #d4dae0;
+  --border:        #b8c2cc;
+  --border-subtle: #c8d0d8;
 
   /* Text */
-  --text-dimmed:    #8b95a1;
-  --text-muted:     #5d6672;
-  --text-subtle:    #4b5563;
+  --text-dimmed:    #8b95a1;   /* decorative, disabled, line numbers — lowest contrast */
+  --text-muted:     #5d6672;   /* secondary labels, timestamps, metadata */
+  --text-subtle:    #4b5563;   /* tertiary but readable — descriptions, help text */
   --text:           #1a1f26;
-  --text-on-accent: #ffffff;
+  --text-on-accent: var(--white);
 
   /* Accent (blue) */
   --accent:      #0969da;
@@ -219,14 +333,14 @@
   --badge-gray-bg:   rgba(0, 0, 0, 0.07);
 
   /* Animation colors */
-  --flash-warning-hi:       rgba(158, 108, 0, 0.22);
-  --flash-warning-mid:      rgba(158, 108, 0, 0.14);
-  --flash-warning-lo:       rgba(158, 108, 0, 0.06);
-  --flash-tracker-hi:       rgba(9, 105, 218, 0.14);
-  --flash-tracker-mid:      rgba(9, 105, 218, 0.07);
+  --flash-warning-hi:         rgba(158, 108, 0, 0.22);
+  --flash-warning-mid:        rgba(158, 108, 0, 0.14);
+  --flash-warning-lo:         rgba(158, 108, 0, 0.06);
+  --flash-tracker-hi:         rgba(9, 105, 218, 0.14);
+  --flash-tracker-mid:        rgba(9, 105, 218, 0.07);
   --flash-tracker-border-hi:  #0969da;
   --flash-tracker-border-mid: #0550ae;
-  --flash-field-hi:         rgba(9, 105, 218, 0.18);
+  --flash-field-hi:           rgba(9, 105, 218, 0.18);
 
   /* Highlights */
   --hl-search:        rgba(210, 153, 34, 0.28);
@@ -243,7 +357,33 @@
   --level-error-bg:   rgba(207, 34, 46, 0.05);
   --level-fatal-bg:   rgba(164, 14, 38, 0.06);
 
-  /* Viewer (log viewer) */
+  /* Muted / emphasis variants */
+  --danger-muted:         color-mix(in srgb, var(--danger) 10%, transparent);
+  --danger-muted-border:  color-mix(in srgb, var(--danger) 25%, transparent);
+  --success-muted:        color-mix(in srgb, var(--success) 10%, transparent);
+  --success-muted-border: color-mix(in srgb, var(--success) 25%, transparent);
+  --warning-muted-bg:     color-mix(in srgb, var(--warning) 10%, transparent);
+  --warning-muted-border: color-mix(in srgb, var(--warning) 30%, transparent);
+  --accent-muted:         color-mix(in srgb, var(--accent) 10%, transparent);
+  --accent-muted-border:  color-mix(in srgb, var(--accent) 20%, transparent);
+
+  /* State layers */
+  --state-hover:    color-mix(in srgb, var(--accent) 6%, transparent);
+  --state-active:   color-mix(in srgb, var(--accent) 12%, transparent);
+  --state-selected: color-mix(in srgb, var(--accent) 5%, transparent);
+
+  /* Shadows (layered for light theme) */
+  --shadow-popover: 0 4px 12px rgba(0, 0, 0, 0.10), 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-overlay: 0 8px 32px rgba(0, 0, 0, 0.14), 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+/* ══ COMPONENT (light) ═══════════════════════════════════════════════════════
+   Light-theme overrides for component tokens that need different values
+   (not just inherited through the semantic layer).
+   ══════════════════════════════════════════════════════════════════════════ */
+
+[data-theme="light"] {
+  /* Viewer */
   --viewer-gutter-bg:        var(--bg-input);
   --viewer-gutter-text:      #7a8491;
   --viewer-selection-bg:     rgba(210, 153, 34, 0.14);
@@ -259,31 +399,8 @@
   --editor-selection-bg:   rgba(9, 105, 218, 0.2);
 
   /* Chrome */
-  --chrome-bg:             #edf0f3;
+  --chrome-bg:             #f6f8fa;
+  --chrome-border:         #d0d7de;
   --scrim:                 rgba(0, 0, 0, 0.3);
   --border-accent:         color-mix(in srgb, var(--accent) 20%, transparent);
-
-  /* Foreground pairings */
-  --on-danger:  #fff;
-  --on-success: #fff;
-  --on-warning: #fff;
-
-  /* Muted / emphasis variants */
-  --danger-muted:         color-mix(in srgb, var(--danger) 10%, transparent);
-  --danger-muted-border:  color-mix(in srgb, var(--danger) 25%, transparent);
-  --success-muted:        color-mix(in srgb, var(--success) 10%, transparent);
-  --success-muted-border: color-mix(in srgb, var(--success) 25%, transparent);
-  --warning-muted-bg:     color-mix(in srgb, var(--warning) 10%, transparent);
-  --warning-muted-border: color-mix(in srgb, var(--warning) 25%, transparent);
-  --accent-muted:         color-mix(in srgb, var(--accent) 10%, transparent);
-  --accent-muted-border:  color-mix(in srgb, var(--accent) 20%, transparent);
-
-  /* State layers */
-  --state-hover:    color-mix(in srgb, var(--accent) 6%, transparent);
-  --state-active:   color-mix(in srgb, var(--accent) 12%, transparent);
-  --state-selected: color-mix(in srgb, var(--accent) 5%, transparent);
-
-  /* Shadows (layered for light theme) */
-  --shadow-popover: 0 4px 12px rgba(0, 0, 0, 0.10), 0 1px 3px rgba(0, 0, 0, 0.08);
-  --shadow-overlay: 0 8px 32px rgba(0, 0, 0, 0.14), 0 2px 8px rgba(0, 0, 0, 0.06);
 }

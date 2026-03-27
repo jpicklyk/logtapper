@@ -5,7 +5,7 @@
   align-items: center;
   justify-content: center;
   background: var(--scrim);
-  z-index: 100;
+  z-index: 100; /* intra-panel overlay; intentionally between --z-overlay(50) and --z-modal(9000) */
 }
 
 .card {
@@ -35,7 +35,7 @@
   height: 100%;
   background: var(--accent);
   border-radius: var(--radius-sm);
-  transition: width 120ms ease;
+  transition: width var(--transition-fast);
 }
 
 .pct {

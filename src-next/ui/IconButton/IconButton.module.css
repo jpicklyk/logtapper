@@ -11,8 +11,12 @@
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 
-.iconButton:hover:not(:disabled) {
-  background: var(--bg-overlay);
+.iconButton:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--state-hover);
+}
+
+.iconButton:active:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--state-active);
 }
 
 .iconButton:focus-visible {
@@ -20,7 +24,8 @@
   outline: none;
 }
 
-.iconButton:disabled {
+.iconButton:disabled,
+.iconButton[aria-disabled="true"] {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -30,6 +35,6 @@
   color: var(--accent);
 }
 
-.active:hover:not(:disabled) {
+.active:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--bg-raised);
 }

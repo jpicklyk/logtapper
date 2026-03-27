@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import clsx from 'clsx';
 import { Search, X, AlertTriangle } from 'lucide-react';
+import { Button, IconButton } from '../../ui';
 import styles from './StreamFilterBar.module.css';
 
 const CHIPS: { label: string; hint: string }[] = [
@@ -93,15 +94,17 @@ export const StreamFilterBar = React.memo<StreamFilterBarProps>(
       <div className={styles.bar}>
         <div className={styles.chips}>
           {CHIPS.map((chip) => (
-            <button
+            <Button
               key={chip.label}
+              variant="ghost"
+              size="sm"
               className={styles.chip}
               title={chip.hint}
               onClick={() => insertChip(chip.label)}
               tabIndex={-1}
             >
               {chip.label}
-            </button>
+            </Button>
           ))}
           {isDirty && draft.trim().length > 0 && (
             <span className={clsx(styles.count, styles.countScanning)}>Press Enter to apply</span>
@@ -113,9 +116,9 @@ export const StreamFilterBar = React.memo<StreamFilterBarProps>(
             <span className={styles.count}>
               {matchCount.toLocaleString()} / {totalLines.toLocaleString()} lines
               {onCopyAll && (
-                <button className={styles.copyBtn} onClick={onCopyAll} title="Copy all matched lines to clipboard" tabIndex={-1}>
+                <Button variant="ghost" size="sm" className={styles.copyBtn} onClick={onCopyAll} title="Copy all matched lines to clipboard" tabIndex={-1}>
                   Copy all
-                </button>
+                </Button>
               )}
             </span>
           )}
@@ -139,14 +142,14 @@ export const StreamFilterBar = React.memo<StreamFilterBarProps>(
             autoCapitalize="off"
           />
           {(draft.trim().length > 0) && (
-            <button
+            <IconButton
+              icon={X}
+              size={12}
               className={styles.clearBtn}
               onClick={handleClear}
               title="Clear filter"
               tabIndex={-1}
-            >
-              <X size={12} />
-            </button>
+            />
           )}
         </div>
 

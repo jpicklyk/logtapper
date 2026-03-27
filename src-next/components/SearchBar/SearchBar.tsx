@@ -2,6 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import clsx from 'clsx';
 import { Search, X, ChevronUp, ChevronDown } from 'lucide-react';
 import { useSearch, useViewerActions } from '../../context';
+import { IconButton, Button } from '../../ui';
 import styles from './SearchBar.module.css';
 
 interface SearchBarProps {
@@ -162,29 +163,37 @@ export const SearchBar = React.memo<SearchBarProps>(function SearchBar({
           }}
         />
         {text && (
-          <button className={styles.clearBtn} onClick={handleClear} title="Clear (Esc)">
-            <X size={12} />
-          </button>
+          <IconButton
+            icon={X}
+            size={12}
+            className={styles.clearBtn}
+            onClick={handleClear}
+            title="Clear (Esc)"
+          />
         )}
       </div>
 
-      <button
+      <Button
+        variant="ghost"
+        size="sm"
         className={clsx(styles.toggle, isRegex && styles.toggleActive)}
         onClick={handleRegexToggle}
         title="Regular expression"
         disabled={disabled}
       >
         .*
-      </button>
+      </Button>
 
-      <button
+      <Button
+        variant="ghost"
+        size="sm"
         className={clsx(styles.toggle, caseSensitive && styles.toggleActive)}
         onClick={handleCaseToggle}
         title="Case sensitive"
         disabled={disabled}
       >
         Aa
-      </button>
+      </Button>
 
       {onTimeFilter && (
         <div className={styles.timeWrap}>
@@ -211,9 +220,13 @@ export const SearchBar = React.memo<SearchBarProps>(function SearchBar({
             maxLength={8}
           />
           {hasTimeFilter && (
-            <button className={styles.clearBtn} onClick={handleClearTime} title="Clear time filter">
-              <X size={12} />
-            </button>
+            <IconButton
+              icon={X}
+              size={12}
+              className={styles.clearBtn}
+              onClick={handleClearTime}
+              title="Clear time filter"
+            />
           )}
           {hasTimeFilter && timeFilterCount != null && (
             <span className={styles.timeCount}>{timeFilterCount.toLocaleString()} lines</span>
@@ -224,22 +237,22 @@ export const SearchBar = React.memo<SearchBarProps>(function SearchBar({
       {summary && (
         <>
           <span className={styles.matchCount}>{matchLabel}</span>
-          <button
+          <IconButton
+            icon={ChevronUp}
+            size={14}
             className={styles.navBtn}
             onClick={() => handleJump(-1)}
             disabled={!summary.totalMatches}
             title="Previous match (Shift+Enter)"
-          >
-            <ChevronUp size={14} />
-          </button>
-          <button
+          />
+          <IconButton
+            icon={ChevronDown}
+            size={14}
             className={styles.navBtn}
             onClick={() => handleJump(1)}
             disabled={!summary.totalMatches}
             title="Next match (Enter)"
-          >
-            <ChevronDown size={14} />
-          </button>
+          />
         </>
       )}
     </div>

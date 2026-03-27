@@ -20,9 +20,13 @@
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 
-.button:hover {
-  background: var(--bg-overlay);
+.button:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--state-hover);
   color: var(--text);
+}
+
+.button:active:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--state-active);
 }
 
 .button:focus-visible {

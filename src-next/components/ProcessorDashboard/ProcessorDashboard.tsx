@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
+import { ChevronRight } from 'lucide-react';
 import type { PipelineRunSummary, MatchedLine, VarMeta, StateTransition, StateSnapshot, CorrelatorResult } from '../../bridge/types';
 import { getMatchedLines, getPiiMappings, getStateTransitions, getStateAtLine, getCorrelatorEvents } from '../../bridge/commands';
 import {
@@ -57,6 +58,38 @@ function groupVars(vars: Record<string, unknown>): VarGroup {
   return g;
 }
 
+// ── Collapsible section wrapper ──────────────────────────────────────────────
+
+const CollapsibleSection = React.memo(function CollapsibleSection({
+  label,
+  children,
+  defaultOpen = true,
+}: {
+  label: string;
+  children: ReactNode;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className={`${styles.section} ${open ? '' : styles.sectionCollapsed}`}>
+      <div
+        className={styles.sectionLabel}
+        onClick={() => setOpen((v) => !v)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen((v) => !v); } }}
+      >
+        <ChevronRight
+          size={10}
+          className={`${styles.sectionChevron} ${open ? styles.sectionChevronOpen : ''}`}
+        />
+        {label}
+      </div>
+      {open && <div className={styles.sectionContent}>{children}</div>}
+    </div>
+  );
+});
+
 // ── Sub-components ───────────────────────────────────────────────────────────
 
 const StatCard = React.memo(function StatCard({ label, value }: { label: string; value: number }) {
@@ -82,8 +115,7 @@ const RankedList = React.memo(function RankedList({
     .slice(0, 15);
   const max = sorted[0]?.[1] ?? 1;
   return (
-    <div className={styles.section}>
-      <div className={styles.sectionLabel}>{label ?? snakeToTitle(name)}</div>
+    <CollapsibleSection label={label ?? snakeToTitle(name)}>
       <div className={styles.rankedList}>
         {sorted.map(([k, v]) => (
           <div key={k} className={styles.rankedRow}>
@@ -100,7 +132,7 @@ const RankedList = React.memo(function RankedList({
           </div>
         ))}
       </div>
-    </div>
+    </CollapsibleSection>
   );
 });
 
@@ -129,8 +161,7 @@ const DataTable = React.memo(function DataTable({
   );
 
   return (
-    <div className={styles.section}>
-      <div className={styles.sectionLabel}>{label ?? snakeToTitle(name)}</div>
+    <CollapsibleSection label={label ?? snakeToTitle(name)}>
       <div className={styles.tableWrap}>
         <table className={styles.dataTable}>
           <thead>
@@ -172,7 +203,7 @@ const DataTable = React.memo(function DataTable({
           </tbody>
         </table>
       </div>
-    </div>
+    </CollapsibleSection>
   );
 });
 
@@ -356,10 +387,18 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
         {activeProcessors.map((p) => {
           const s = getSummary(p.id);
           const isSelected = p.id === selected;
+          const notRun = !s;
+          const zeroMatches = s && s.matchedLines === 0;
+          const cardClass = [
+            styles.procCard,
+            isSelected && styles.procCardActive,
+            notRun && styles.procCardNotRun,
+            zeroMatches && styles.procCardZeroMatches,
+          ].filter(Boolean).join(' ');
           return (
             <button
               key={p.id}
-              className={`${styles.procCard}${isSelected ? ` ${styles.procCardActive}` : ''}`}
+              className={cardClass}
               onClick={() => {
                 setSelectedId(p.id);
                 setShowMatches(false);
@@ -597,7 +636,7 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
                         {trackerTransitions.slice(0, 100).map((t, i) => (
                           <tr
                             key={i}
-                            style={{ cursor: 'pointer' }}
+                            className={styles.clickableRow}
                             onClick={() => jumpToLine(t.lineNum)}
                             title={`Jump to line ${t.lineNum + 1}`}
                           >
@@ -648,7 +687,7 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
                             {correlatorResult.events.slice(0, 100).map((ev, i) => (
                               <tr
                                 key={i}
-                                style={{ cursor: 'pointer' }}
+                                className={styles.clickableRow}
                                 onClick={() => jumpToLine(ev.triggerLineNum)}
                                 title={`Jump to line ${ev.triggerLineNum + 1}`}
                               >
@@ -716,7 +755,7 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
                   <span className={styles.sectionLabel}>
                     Matched Lines
                     {summary && (
-                      <span className={styles.metaChip} style={{ marginLeft: 8 }}>
+                      <span className={`${styles.metaChip} ${styles.metaChipOffset}`}>
                         {summary.matchedLines.toLocaleString()}
                       </span>
                     )}

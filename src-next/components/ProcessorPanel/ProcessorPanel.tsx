@@ -1,4 +1,5 @@
 import React, { Fragment, useEffect, useCallback, useState, useMemo } from 'react';
+import { Button } from '../../ui';
 import {
   DndContext,
   closestCenter,
@@ -231,9 +232,9 @@ const ChainNode = React.memo(function ChainNode({
         <span className={styles.compactName}>{name}</span>
         {result && <span className={styles.compactStat}>{compactStatText(result)}</span>}
         <ToggleEnabledBtn disabled={disabled} onClick={() => onToggleEnabled(id)} />
-        <button className={styles.nodeRemove} title="Remove from chain" onClick={(e) => { e.stopPropagation(); onRemove(id); }}>
+        <Button variant="ghost" size="sm" className={styles.nodeRemove} title="Remove from chain" onClick={(e) => { e.stopPropagation(); onRemove(id); }}>
           {RemoveSvg}
-        </button>
+        </Button>
       </div>
     );
   }
@@ -268,9 +269,9 @@ const ChainNode = React.memo(function ChainNode({
       <div className={styles.nodeActions}>
         <ToggleEnabledBtn disabled={disabled} onClick={() => onToggleEnabled(id)} />
       </div>
-      <button className={styles.nodeRemove} title="Remove from chain" onClick={() => onRemove(id)}>
+      <Button variant="ghost" size="sm" className={styles.nodeRemove} title="Remove from chain" onClick={() => onRemove(id)}>
         {RemoveSvg}
-      </button>
+      </Button>
     </div>
   );
 });
@@ -306,9 +307,9 @@ const PinnedChainNode = React.memo(function PinnedChainNode({
         <span className={styles.compactName}>{name}</span>
         {result && <span className={styles.compactStat}>{compactStatText(result)}</span>}
         <ToggleEnabledBtn disabled={disabled} onClick={() => onToggleEnabled(id)} />
-        <button className={styles.nodeRemove} title="Remove from chain" onClick={(e) => { e.stopPropagation(); onRemove(id); }}>
+        <Button variant="ghost" size="sm" className={styles.nodeRemove} title="Remove from chain" onClick={(e) => { e.stopPropagation(); onRemove(id); }}>
           {RemoveSvg}
-        </button>
+        </Button>
       </div>
     );
   }
@@ -629,7 +630,9 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
         </div>
         <div className={styles.headerActions}>
           {/* Compact/detailed toggle */}
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
             className={styles.actionBtn}
             title={compact ? 'Detailed view' : 'Compact view'}
             onClick={handleToggleCompact}
@@ -646,13 +649,13 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
                 <line x1="1" y1="10.5" x2="13" y2="10.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
               </svg>
             )}
-          </button>
+          </Button>
           {/* Add processor */}
-          <button className={styles.actionBtn} title="Add processor" onClick={handleOpenLibrary}>
+          <Button variant="ghost" size="sm" className={styles.actionBtn} title="Add processor" onClick={handleOpenLibrary}>
             <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
               <path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -671,7 +674,9 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
               <span className={styles.chainFilterCount}>
                 {filteredTotal}/{allChainProcessors.length}
               </span>
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 className={styles.chainFilterClear}
                 title="Clear filter"
                 onClick={() => setChainFilter('')}
@@ -679,7 +684,7 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
                 <svg width="8" height="8" viewBox="0 0 10 10" fill="none">
                   <path d="M1 1l8 8M9 1L1 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                 </svg>
-              </button>
+              </Button>
             </>
           )}
         </div>
@@ -844,9 +849,9 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
             )}
           </button>
           {running && sessionId && (
-            <button className={styles.stopBtn} onClick={() => pipeline.stop(sessionId)}>
+            <Button variant="danger" size="sm" className={styles.stopBtn} onClick={() => pipeline.stop(sessionId)}>
               Stop
-            </button>
+            </Button>
           )}
         </div>
       )}

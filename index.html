@@ -7,6 +7,18 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Synchronous theme bootstrap — prevents FOUC on cold start.
+         Runs before React hydrates; reads localStorage and applies
+         data-theme before any CSS paint. -->
+    <script>
+      (function() {
+        var t = localStorage.getItem('theme');
+        if (!t || t === 'system') {
+          t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        document.documentElement.setAttribute('data-theme', t);
+      })();
+    </script>
     <script type="module" src="/src-next/main.tsx"></script>
   </body>
 </html>

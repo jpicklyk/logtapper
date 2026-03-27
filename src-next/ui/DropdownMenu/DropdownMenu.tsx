@@ -44,7 +44,7 @@ export const DropdownMenu = React.memo<DropdownMenuProps>(function DropdownMenu(
         position: 'fixed',
         top,
         left,
-        zIndex: 1050,
+        zIndex: 1050, // TODO: use z-index token (--z-dropdown) once CSS var() works in inline styles
       });
     } else {
       setPanelStyle(null);
@@ -78,7 +78,17 @@ export const DropdownMenu = React.memo<DropdownMenuProps>(function DropdownMenu(
       <div
         ref={triggerRef}
         className={styles.triggerWrapper}
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        aria-haspopup="menu"
         onClick={() => onOpenChange(!open)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onOpenChange(!open);
+          }
+        }}
       >
         {trigger}
       </div>

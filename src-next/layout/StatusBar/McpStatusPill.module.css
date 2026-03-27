@@ -1,15 +1,15 @@
 .pill {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 0 7px;
+  gap: 4px;
+  padding: 0 8px;
   height: 18px;
   border-radius: var(--radius-lg);
   background: var(--bg-overlay);
   font-family: var(--font-mono);
   font-size: 10px;
   cursor: default;
-  transition: background var(--duration-fast) ease;
+  transition: background var(--transition-fast);
 }
 
 .pill:hover {
@@ -23,11 +23,11 @@
 }
 
 .dot {
-  width: 5px;
-  height: 5px;
+  width: 4px;
+  height: 4px;
   border-radius: var(--radius-full);
   flex-shrink: 0;
-  transition: background var(--duration-normal) ease, opacity var(--duration-normal) ease;
+  transition: background var(--transition-normal), opacity var(--transition-normal);
 }
 
 .dotConnected {

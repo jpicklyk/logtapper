@@ -22,7 +22,7 @@ function SegmentedControlInner<T extends string>({
   size = 'sm',
 }: SegmentedControlProps<T>) {
   return (
-    <div className={clsx(styles.root, styles[size])}>
+    <div className={clsx(styles.root, styles[size])} role="group">
       {options.map((opt) => (
         <SegmentedButton
           key={opt.value}
@@ -57,6 +57,7 @@ const SegmentedButton = React.memo(function SegmentedButton<T extends string>({
       onClick={handleClick}
       title={option.tooltip}
       type="button"
+      aria-pressed={active}
     >
       <Icon size={14} />
     </button>

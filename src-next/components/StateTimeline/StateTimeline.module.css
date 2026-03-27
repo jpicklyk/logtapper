@@ -73,6 +73,11 @@
   border-color: var(--accent);
 }
 
+.zoomBtn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 .interact {
   flex: 1;
   min-height: 0;
@@ -94,7 +99,7 @@
 }
 
 .trackLabel {
-  width: 130px;
+  width: 128px;
   flex-shrink: 0;
   padding: 6px 8px;
   font-size: 11px;
@@ -141,6 +146,11 @@
   transform: scale(1.4);
 }
 
+.tick:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 .tickNoTs {
   background: var(--text-dimmed);
 }
@@ -150,10 +160,14 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 130px;
+  left: 128px;
   right: 0;
   pointer-events: none;
   z-index: 3;
+}
+
+.noPointerEvents {
+  pointer-events: none;
 }
 
 .cursor {
@@ -173,8 +187,8 @@
   font-size: 10px;
   white-space: nowrap;
   pointer-events: none;
-  z-index: 100;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  z-index: var(--z-tooltip);
+  box-shadow: var(--shadow-popover);
 }
 
 /* Sparkline */
@@ -211,7 +225,7 @@
 }
 
 .rulerSpacer {
-  width: 130px;
+  width: 128px;
   flex-shrink: 0;
   display: flex;
   align-items: center;

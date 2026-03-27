@@ -1,37 +1,11 @@
-/* ── Backdrop & Dialog Shell ──────────────────────────────────────────────── */
+/* ── Inner dialog layout (Modal primitive handles backdrop & shell) ─────────── */
 
-.backdrop {
-  position: fixed;
-  inset: 0;
-  background: var(--scrim);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  animation: fadeIn 120ms ease-out;
-}
-
-.dialog {
-  width: 560px;
-  max-height: 78vh;
+.dialogInner {
   display: flex;
   flex-direction: column;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
-  animation: dialogIn 160ms ease-out;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-
-@keyframes dialogIn {
-  from { opacity: 0; transform: translateY(-8px) scale(0.98); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* ── Header ──────────────────────────────────────────────────────────────── */
@@ -81,6 +55,11 @@
   color: var(--text);
   background: var(--bg-overlay);
   border-color: var(--border);
+}
+
+.closeBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 /* ── Tab Bar ─────────────────────────────────────────────────────────────── */
@@ -226,6 +205,11 @@
   background: var(--bg-overlay);
 }
 
+.searchClear:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .groupBy {
   padding: 4px 6px;
   border: 1px solid var(--border);
@@ -262,6 +246,11 @@
   border-color: var(--accent);
 }
 
+.selectAll:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 /* ── Scroll area ─────────────────────────────────────────────────────────── */
 
 .scroll {
@@ -286,14 +275,6 @@
 
 /* ── Processor groups (installed tab) ────────────────────────────────────── */
 
-.groupCount {
-  font-size: 9px;
-  background: var(--bg-overlay);
-  color: var(--text-dimmed);
-  border-radius: var(--radius-lg);
-  padding: 1px 5px;
-}
-
 /* ── Processor item wrapper (row + optional detail card) ─────────────────── */
 
 .itemWrapper {
@@ -308,7 +289,7 @@
   align-items: flex-start;
   gap: 10px;
   width: 100%;
-  padding: 8px 14px 8px 22px;
+  padding: 8px 16px 8px 24px;
   border: none;
   background: transparent;
   cursor: pointer;
@@ -317,15 +298,25 @@
 }
 
 .item:hover {
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--state-hover);
+}
+
+.item:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .itemSelected {
-  background: rgba(88, 166, 255, 0.06);
+  background: var(--state-selected);
 }
 
 .itemSelected:hover {
-  background: rgba(88, 166, 255, 0.09);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.itemSelected:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .itemInChain {
@@ -335,6 +326,11 @@
 
 .itemInChain:hover {
   background: transparent;
+}
+
+.itemInChain:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 /* ── Checkbox ────────────────────────────────────────────────────────────── */
@@ -547,6 +543,11 @@
   background: var(--bg-overlay);
 }
 
+.categoryHeader:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .chevron {
   color: var(--text-dimmed);
   flex-shrink: 0;
@@ -570,10 +571,11 @@
 .groupCount {
   font-family: var(--font-mono);
   font-size: 10px;
+  font-weight: 600;
   color: var(--text-dimmed);
   background: var(--bg-overlay);
-  padding: 1px 6px;
   border-radius: var(--radius-full);
+  padding: 1px 6px;
   min-width: 18px;
   text-align: center;
 }
@@ -609,9 +611,14 @@
   color: var(--accent);
 }
 
+.filterChip:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .filterChipActive {
   border-color: var(--accent);
-  background: rgba(88, 166, 255, 0.1);
+  background: var(--accent-muted);
   color: var(--accent);
 }
 
@@ -638,6 +645,11 @@
   border-color: var(--danger);
 }
 
+.filterChipClear:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 /* ── Shared action buttons ───────────────────────────────────────────────── */
 
 .actionBtn {
@@ -660,6 +672,11 @@
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
+.actionBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .actionBtn:disabled {
   opacity: 0.5;
   cursor: default;
@@ -675,6 +692,11 @@
   background: var(--bg-overlay);
 }
 
+.actionBtnSecondary:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 /* ── Error bar ───────────────────────────────────────────────────────────── */
 
 .errorBar {
@@ -688,6 +710,10 @@
   line-height: 1.4;
 }
 
+.errorBarYaml {
+  margin-top: 6px;
+}
+
 /* ── Spinner ─────────────────────────────────────────────────────────────── */
 
 .spinner {
@@ -697,11 +723,7 @@
   border: 1.5px solid var(--border);
   border-top-color: var(--accent);
   border-radius: var(--radius-full);
-  animation: librarySpin 0.6s linear infinite;
-}
-
-@keyframes librarySpin {
-  to { transform: rotate(360deg); }
+  animation: proc-spin 0.6s linear infinite;
 }
 
 /* ── YAML tab ────────────────────────────────────────────────────────────── */
@@ -817,6 +839,11 @@
 
 .addBtn:hover {
   opacity: 0.85;
+}
+
+.addBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 /* ── Placeholder (legacy) ────────────────────────────────────────────────── */

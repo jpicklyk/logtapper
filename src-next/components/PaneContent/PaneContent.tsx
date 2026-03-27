@@ -155,7 +155,7 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
   if (!activeTab) {
     return (
       <>
-        <div onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus} style={{ height: '100%' }}>
+        <div onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus} className="fullHeight">
           <EmptyDropZone />
         </div>
         {bookmarkDialog}
@@ -168,7 +168,7 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
       if (!session && !isLoading) {
         return (
           <>
-            <div onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus} style={{ height: '100%' }}>
+            <div onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus} className="fullHeight">
               <EmptyDropZone />
             </div>
             {bookmarkDialog}
@@ -220,7 +220,7 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
       // NOT move the focus marker away from the logviewer tab that owns the session.
       return focusedSession ? (
         <>
-          <div style={{ height: '100%' }}>
+          <div className="fullHeight">
             <ProcessorDashboard />
           </div>
           {bookmarkDialog}
@@ -237,7 +237,7 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
     case 'analysis':
       return (
         <>
-          <div style={{ height: '100%' }}>
+          <div className="fullHeight">
             <AnalysisReader />
           </div>
           {bookmarkDialog}
@@ -248,7 +248,7 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
       return (
         <>
           {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
-          <div onClick={handleActivePaneFocus} onFocus={handleActivePaneFocus} style={{ height: '100%' }}>
+          <div onClick={handleActivePaneFocus} onFocus={handleActivePaneFocus} className="fullHeight">
             <EditorTab
               tabId={activeTab.id}
               tabLabel={activeTab.label}

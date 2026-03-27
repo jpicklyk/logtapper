@@ -53,6 +53,11 @@
   border-color: var(--accent);
 }
 
+.procCard:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 .procCardActive {
   border-color: var(--accent);
   background: var(--state-selected);
@@ -72,6 +77,19 @@
 
 .procCardStatsDim {
   opacity: 0.5;
+}
+
+.procCardNotRun {
+  opacity: 0.5;
+  border-style: dashed;
+}
+
+.procCardNotRun:hover {
+  opacity: 0.8;
+}
+
+.procCardZeroMatches .procCardStats {
+  color: var(--text-dimmed);
 }
 
 .procCardEmissions {
@@ -136,7 +154,7 @@
 .detailBody {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
 }
 
 .hint {
@@ -156,7 +174,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 10px 16px;
+  padding: 8px 16px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-raised);
@@ -183,12 +201,50 @@
   gap: 6px;
 }
 
+.section + .section {
+  padding-top: 20px;
+  border-top: 1px solid var(--border-subtle);
+}
+
 .sectionLabel {
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-dimmed);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.sectionLabel:hover {
+  color: var(--text-muted);
+}
+
+.sectionLabel:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
+.sectionChevron {
+  flex-shrink: 0;
+  transition: transform var(--transition-fast);
+}
+
+.sectionChevronOpen {
+  transform: rotate(90deg);
+}
+
+.sectionCollapsed .sectionLabel {
+  margin-bottom: 0;
+}
+
+.sectionContent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 /* Ranked list */
@@ -258,6 +314,9 @@
 
 .stringVal {
   color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Tables */
@@ -397,6 +456,11 @@
   background: var(--bg-overlay);
 }
 
+.matchRow:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 .matchNum {
   color: var(--text-dimmed);
   font-family: var(--font-mono);
@@ -412,6 +476,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   font-family: var(--font-mono);
+  min-width: 0;
 }
 
 /* Mono table cells (tracker/correlator detail) */
@@ -424,6 +489,15 @@
   font-family: var(--font-mono);
   font-size: 10px;
   color: var(--text-dimmed);
+}
+
+/* Clickable table rows */
+.clickableRow {
+  cursor: pointer;
+}
+
+.metaChipOffset {
+  margin-left: 8px;
 }
 
 /* Script error banner */

@@ -27,11 +27,21 @@
   font-family: inherit;
 }
 
-.item:hover:not(:disabled) {
+.item:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--state-hover);
 }
 
-.item:disabled {
+.item:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
+.item:active:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--state-active);
+}
+
+.item:disabled,
+.item[aria-disabled="true"] {
   color: var(--text-dimmed);
   pointer-events: none;
 }

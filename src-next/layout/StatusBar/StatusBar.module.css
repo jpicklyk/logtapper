@@ -5,7 +5,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 10px;
+  padding: 0 8px;
   background: var(--chrome-bg);
   border-top: 1px solid var(--border-accent);
   font-size: 11px;
@@ -41,7 +41,7 @@
 .streaming {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   color: var(--success);
   font-weight: 600;
   font-size: 10px;
@@ -49,23 +49,18 @@
 }
 
 .dot {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
   border-radius: var(--radius-full);
   background: var(--success);
-  animation: pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  animation: stream-pulse 1.5s var(--easing-standard) infinite;
 }
 
 /* ── Chips (colored pill indicators) ───────────────────────── */
 .chip {
   display: inline-flex;
   align-items: center;
-  padding: 1px 6px;
+  padding: 2px 8px;
   border-radius: var(--radius-full);
   font-family: var(--font-mono);
   font-size: 10px;
@@ -77,11 +72,16 @@
 /* Clickable chips — pointer cursor + hover brightening */
 .chipClickable {
   cursor: pointer;
-  transition: filter var(--duration-fast) ease;
+  transition: filter var(--transition-fast);
 }
 
 .chipClickable:hover {
   filter: brightness(1.3);
+}
+
+.chipClickable:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 /* Dimmed variant for secondary chips (Sel range) */

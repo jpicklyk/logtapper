@@ -61,6 +61,11 @@
   background: var(--state-hover);
 }
 
+.addBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .content {
   flex: 1;
   min-height: 0;
@@ -121,7 +126,7 @@
 .statusDotActive {
   background: var(--success);
   box-shadow: 0 0 4px 1px color-mix(in srgb, var(--success) 40%, transparent);
-  animation: pulseDot 2s ease-in-out infinite;
+  animation: watches-pulse-dot 2s ease-in-out infinite;
 }
 
 .statusDotCancelled {
@@ -163,6 +168,12 @@
 .cancelBtn:hover {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.cancelBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+  opacity: 1;
 }
 
 /* ── Criteria chips ──────────────────────────────────────────────────────── */
@@ -309,6 +320,11 @@
   color: var(--text-muted);
 }
 
+.levelToggle:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .levelToggleActive {
   border-color: var(--accent);
   color: var(--accent);
@@ -350,6 +366,11 @@
   color: var(--text-muted);
 }
 
+.combineToggle:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .combineToggleActive {
   border-color: var(--accent);
   color: var(--accent);
@@ -377,6 +398,11 @@
   color: var(--text);
 }
 
+.formCancelLink:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .formError {
   font-family: var(--font-ui);
   font-size: 11px;
@@ -398,7 +424,7 @@
   }
 }
 
-@keyframes pulseDot {
+@keyframes watches-pulse-dot {
   0%,
   100% {
     opacity: 1;

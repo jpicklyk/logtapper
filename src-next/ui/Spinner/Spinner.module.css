@@ -4,11 +4,5 @@
   border-color: color-mix(in srgb, var(--text) 15%, transparent);
   border-top-color: var(--accent);
   border-radius: var(--radius-full);
-  animation: spin 0.6s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+  animation: proc-spin 0.6s linear infinite;
 }

@@ -25,6 +25,14 @@ export const Toast = React.memo(function Toast({ toasts, onDismiss }: ToastProps
           className={styles.toast}
           data-clickable={toast.onClick ? 'true' : undefined}
           onClick={toast.onClick}
+          role={toast.onClick ? 'button' : undefined}
+          tabIndex={toast.onClick ? 0 : undefined}
+          onKeyDown={toast.onClick ? (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              toast.onClick!();
+            }
+          } : undefined}
         >
           <div className={styles.indicator}>
             <span className={styles.pulse} />

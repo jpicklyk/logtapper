@@ -16,6 +16,11 @@
   background: rgba(136, 152, 170, 0.04);
 }
 
+.line:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .lineNum {
   color: var(--viewer-gutter-text);
   min-width: 60px;
