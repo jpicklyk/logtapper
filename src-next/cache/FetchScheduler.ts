@@ -59,9 +59,10 @@ export class FetchScheduler {
     return this._velocity;
   }
 
-  /** Update the prefetch line count at runtime (e.g., when cache allocation changes). */
+  /** Update the prefetch line count at runtime (e.g., when cache allocation changes).
+   *  Floors at 500 to ensure a meaningful prefetch even with small allocations. */
   setPrefetchLines(n: number): void {
-    this._prefetchLines = Math.max(n, DEFAULT_PREFETCH_LINES);
+    this._prefetchLines = Math.max(n, 500);
   }
 
   get isSettled(): boolean {

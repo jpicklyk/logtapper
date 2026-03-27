@@ -17,8 +17,13 @@ export function preSeedSession(sessionId: string, lines: ViewLine[]): void {
   preSeedStore.set(sessionId, lines);
 }
 
+/** Remove a pre-seed entry (call on load failure or stale-generation abort). */
+export function clearPreSeed(sessionId: string): void {
+  preSeedStore.delete(sessionId);
+}
+
 /** Default total line budget — matches SETTING_DEFAULTS.fileCacheBudget. */
-const DEFAULT_BUDGET = 100_000;
+const DEFAULT_BUDGET = 250_000;
 
 /** Read the persisted fileCacheBudget from localStorage at startup. Falls back to DEFAULT_BUDGET. */
 function readPersistedBudget(): number {

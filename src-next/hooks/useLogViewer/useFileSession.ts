@@ -5,7 +5,7 @@ import type { SourceType } from '../../bridge/types';
 import { isBugreportLike } from '../../bridge/types';
 import { loadLogFile, closeSession as closeSessionCmd, getLines } from '../../bridge/commands';
 import { onFileIndexProgress, onFileIndexComplete } from '../../bridge/events';
-import { preSeedSession } from '../../cache';
+import { preSeedSession, clearPreSeed } from '../../cache';
 import { useSessionContext } from '../../context/SessionContext';
 import { bus } from '../../events/bus';
 import { getStoredFirstPaneId, getStoredLogviewerTabs } from '../useWorkspaceLayout';
@@ -113,6 +113,7 @@ export function useFileSession(
       if (loadGenRef.current.get(targetPaneId) !== gen) {
         diag('file-load', 'stale generation — discarding', { gen, current: loadGenRef.current.get(targetPaneId) });
         try { await closeSessionCmd(result.sessionId); } catch { /* ignore */ }
+        clearPreSeed(result.sessionId);
         return;
       }
 
@@ -129,7 +130,7 @@ export function useFileSession(
       }).then((window) => {
         diag('file-load', 'optimistic fetch: received', { lines: window.lines.length });
         preSeedSession(result.sessionId, window.lines);
-      }).catch(() => {});  // best-effort — FetchScheduler retries on miss
+      }).catch((err) => { console.warn('[useFileSession] optimistic fetch failed (non-fatal):', err); });
 
       diag('session', 'registerSession', { paneId: targetPaneId, sessionId: result.sessionId });
       registerSession(targetPaneId, result);

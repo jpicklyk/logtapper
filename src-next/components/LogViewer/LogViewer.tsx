@@ -109,6 +109,7 @@ const LogViewer = React.memo(function LogViewer({
     dataSourceRef.current = null;
 
     if (!sessionId || !viewCache) {
+      console.debug('[LogViewer] dataSource → null', { sessionId, hasViewCache: !!viewCache, paneId });
       setDataSource(null);
       return;
     }
