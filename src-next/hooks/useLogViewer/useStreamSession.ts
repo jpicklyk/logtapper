@@ -53,7 +53,7 @@ export function useStreamSession(
   const lastStreamParamsRef    = useRef<StreamParams | null>(null);
   // Stable ref to startStream so the reconnect timer (defined in useEffect)
   // always calls the latest version without a stale closure.
-  const startStreamRef         = useRef<(deviceId?: string, packageFilter?: string, activeProcessorIds?: string[], maxRawLines?: number) => Promise<void>>();
+  const startStreamRef         = useRef<((deviceId?: string, packageFilter?: string, activeProcessorIds?: string[], maxRawLines?: number) => Promise<void>) | undefined>(undefined);
   // Stable ref to scheduleReconnect so it can be set once in useEffect([])
   // and called from the channel/fallback handlers without re-creating them.
   const scheduleReconnectRef   = useRef<((params: StreamParams) => void) | null>(null);
