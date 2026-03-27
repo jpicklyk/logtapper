@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback, useEffect, useRef } from 'react';
+import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import type { ViewLine } from '../../bridge/types';
 import type { GutterColumnDef, LineDecoratorDef, CacheDataSource, Selection } from '../../viewport';
 import { ReadOnlyViewer, createCacheDataSource, sessionScrollPositions } from '../../viewport';
@@ -93,17 +93,27 @@ const LogViewer = React.memo(function LogViewer({
   const lineNumbersRef = useRef<number[] | undefined>(lineNumbers);
   lineNumbersRef.current = lineNumbers;
 
-  // Create CacheDataSource
+  // Create CacheDataSource via useState + useEffect for lifecycle safety.
+  // useMemo is NOT safe for disposable resources in React 19 StrictMode:
+  // StrictMode calls the factory twice, creating two instances. The second
+  // is kept, but in-flight fetches from the first (or from a FetchScheduler
+  // callback that captured the first) check _disposed and silently discard
+  // results. By using useState (lazy init runs once per committed mount)
+  // and useEffect cleanup (runs once on unmount), we guarantee exactly one
+  // active instance at all times.
   const dataSourceRef = useRef<CacheDataSource | null>(null);
 
-  const dataSource = useMemo(() => {
-    // Dispose previous
-    dataSourceRef.current?.dispose?.();
+  const [dataSource, setDataSource] = useState<CacheDataSource | null>(null);
+
+  useEffect(() => {
+    // Dispose previous before creating new
+    dataSourceRef.current?.dispose();
+    dataSourceRef.current = null;
 
     if (!sessionId || !viewCache) {
       console.debug('[LogViewer] dataSource → null', { sessionId, hasViewCache: !!viewCache, paneId });
-      dataSourceRef.current = null;
-      return null;
+      setDataSource(null);
+      return;
     }
 
     console.debug('[LogViewer] dataSource → created', { sessionId, paneId, totalLines });
@@ -111,19 +121,18 @@ const LogViewer = React.memo(function LogViewer({
       sessionId,
       viewCache,
       fetchLines,
-      // Pass a getter so lineNumbers changes don't recreate the data source.
-      // The ref is synced synchronously before this memo runs, so the getter
-      // always returns the current value (including during the render that
-      // triggered this memo).
       getLineNumbers: () => lineNumbersRef.current,
       registry,
     });
 
-    // Set initial total lines
     ds.updateTotalLines(totalLines);
-
     dataSourceRef.current = ds;
-    return ds;
+    setDataSource(ds);
+
+    return () => {
+      ds.dispose();
+      dataSourceRef.current = null;
+    };
   // totalLines and lineNumbers excluded — updated imperatively / via ref
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, viewCache, fetchLines, registry]);
@@ -145,7 +154,7 @@ const LogViewer = React.memo(function LogViewer({
   // 2. prevSearchRef identity — skips the clear when isStreaming→false fires
   //    the effect without an actual search change, and on fresh mounts where
   //    prevSearch === search (both null) and we haven't opened a new query.
-  const prevSearchRef = useRef<typeof search>(null);
+  const prevSearchRef = useRef<typeof search | null>(null);
   useEffect(() => {
     const prevSearch = prevSearchRef.current;
     prevSearchRef.current = search;

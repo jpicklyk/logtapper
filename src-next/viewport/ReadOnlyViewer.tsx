@@ -126,7 +126,7 @@ export default function ReadOnlyViewer({
     lastSetScrollTopRef,
     resetAutoScroll,
     disableAutoScroll,
-  } = useScrollControls(parentRef, tailMode, totalLines, dataSource, bumpCacheVersion);
+  } = useScrollControls(parentRef as React.RefObject<HTMLDivElement>, tailMode, totalLines, dataSource, bumpCacheVersion);
 
   const effectiveCount = clamp(totalLines - virtualBase, 0, MAX_VIRTUAL_LINES);
   const liveEffectiveCount = clamp(liveTotalLines - virtualBase, 0, MAX_VIRTUAL_LINES);
