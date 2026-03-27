@@ -10,6 +10,7 @@ import { bus } from '../../events/bus';
 import { getStoredFirstPaneId, getStoredLogviewerTabs } from '../useWorkspaceLayout';
 import { storageGetJSON, storageSetJSON, storageRemove } from '../../utils';
 import type { CacheController } from '../../cache';
+import { diag, diagStart, diagEnd } from '../../utils/diagnostics';
 import type { SharedLogViewerRefs } from './types';
 
 const LS_TAB_PATHS = 'logtapper_tab_paths';
@@ -96,19 +97,26 @@ export function useFileSession(
     // Create a placeholder tab immediately so the user sees feedback while the
     // backend decompresses/indexes (especially important for large .lts files).
     const label = path.split(/[\\/]/).pop() ?? path;
+    diagStart(`loadFile:${label}`);
+    diag('file-load', 'starting', { path: label, paneId: targetPaneId, tabId, isNewTab });
     bus.emit('session:loading', { paneId: targetPaneId, tabId, label, isNewTab });
 
     try {
+      diag('file-load', 'calling loadLogFile IPC');
       const result = await loadLogFile(path);
+      diag('file-load', 'IPC returned', { sessionId: result.sessionId, totalLines: result.totalLines, sourceType: result.sourceType, isIndexing: result.isIndexing });
 
       if (loadGenRef.current.get(targetPaneId) !== gen) {
+        diag('file-load', 'stale generation — discarding', { gen, current: loadGenRef.current.get(targetPaneId) });
         try { await closeSessionCmd(result.sessionId); } catch { /* ignore */ }
         return;
       }
 
+      diag('session', 'registerSession', { paneId: targetPaneId, sessionId: result.sessionId });
       registerSession(targetPaneId, result);
 
       if (!isNewTab) {
+        diag('session', 'activateSessionForPane', { paneId: targetPaneId, sessionId: result.sessionId });
         activateSessionForPane(targetPaneId, result.sessionId);
       }
 
@@ -120,6 +128,7 @@ export function useFileSession(
 
       // Emit session:loaded BEFORE session:focused so the tree has the new tab
       // when onSessionFocused looks up the active tab for the focus marker.
+      diag('bus', 'emitting session:loaded + session:focused');
       bus.emit('session:loaded', {
         sourceName: result.sourceName,
         sourceType: result.sourceType as SourceType,
@@ -146,6 +155,7 @@ export function useFileSession(
         });
       }
     } catch (e) {
+      diag('file-load', 'ERROR', { error: String(e) });
       if (loadGenRef.current.get(targetPaneId) === gen) {
         const tabPathsErr = readTabPaths(); delete tabPathsErr[tabId]; saveTabPaths(tabPathsErr);
         setErrorPane(targetPaneId, String(e));
@@ -155,6 +165,7 @@ export function useFileSession(
         loadGenRef.current.delete(targetPaneId);
         setLoadingPane(targetPaneId, false);
       }
+      diagEnd(`loadFile:${label}`);
     }
   }, [
     refs.activeLogPaneIdRef, refs.paneSessionMapRef,

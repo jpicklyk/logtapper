@@ -1,4 +1,5 @@
 import type { ViewLine } from '../bridge/types';
+import { diag } from '../utils/diagnostics';
 
 /** Priority tiers for cache allocation. */
 export type ViewPriority = 'focused' | 'visible' | 'background';
@@ -299,6 +300,9 @@ export class CacheManager implements CacheController {
     }
     if (handleCount === 0) {
       console.warn('[CacheManager] broadcastToSession: NO handles found for session', { sessionId, viewCount: this._views.size });
+      diag('cache', 'broadcastToSession: NO handles', { sessionId, viewCount: this._views.size, viewIds: [...this._views.keys()] });
+    } else {
+      diag('cache', 'broadcastToSession', { sessionId, lineCount: lines.length, handleCount, firstLine: lines[0]?.lineNum, lastLine: lines[lines.length - 1]?.lineNum });
     }
   }
 

@@ -1,6 +1,7 @@
 import { useRef, useEffect } from 'react';
 import type { VirtualItem } from '@tanstack/react-virtual';
 import { FetchScheduler } from '../cache';
+import { diag, diagStart, diagEnd } from '../utils/diagnostics';
 import type { DataSource } from './DataSource';
 
 /**
@@ -68,7 +69,7 @@ export function useFetchScheduler(
           break;
         }
       }
-      console.debug('[FetchScheduler] onFetch', { viewport, prefetch, hasMiss, sourceId: dataSource.sourceId });
+      diag('fetch', 'onFetch', { viewport, prefetch, hasMiss, sourceId: dataSource.sourceId });
 
       if (!hasMiss) {
         // Viewport cached — try prefetch.
@@ -96,9 +97,12 @@ export function useFetchScheduler(
       // Phase 1: viewport fill
       fetchInFlightRef.current = true;
       const gen = fetchGenRef.current;
+      diagStart('fetch:viewport');
       Promise.resolve(dataSource.getLines(viewport.offset, viewport.count))
         .then(() => {
+          diagEnd('fetch:viewport');
           if (gen !== fetchGenRef.current) { fetchInFlightRef.current = false; return; }
+          diag('fetch', 'viewport filled — bumping cache version');
           bumpCacheVersion();
 
           // Phase 2: directional prefetch

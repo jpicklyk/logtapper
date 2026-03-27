@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo, useReducer, useCallback, useEffect, type ReactNode } from 'react';
 import type { LoadResult } from '../bridge/types';
 import { bus } from '../events/bus';
+import { diag } from '../utils/diagnostics';
 
 export interface IndexingProgress {
   linesIndexed: number;
@@ -76,9 +77,11 @@ type SessionAction =
 // ── Reducer ───────────────────────────────────────────────────────────────────
 
 function sessionReducer(state: SessionState, action: SessionAction): SessionState {
+  diag('context', `reducer: ${action.type}`, 'sessionId' in action ? { sessionId: (action as { sessionId?: string }).sessionId } : undefined);
   switch (action.type) {
     case 'session:registered': {
       const sessions = new Map(state.sessions).set(action.result.sessionId, action.result);
+      diag('context', 'session registered', { sessionId: action.result.sessionId, paneId: action.paneId, totalLines: action.result.totalLines, sessionCount: sessions.size });
       // paneSessionMap is NOT updated here — call activateSessionForPane separately.
       // This prevents new-tab loads from overwriting the pane's currently active session.
       return { ...state, sessions };
@@ -142,7 +145,11 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
 
     case 'pane:session-activated': {
       if (state.paneSessionMap.get(action.paneId) === action.sessionId) return state;
-      if (!state.sessions.has(action.sessionId)) return state;
+      if (!state.sessions.has(action.sessionId)) {
+        diag('context', 'pane:session-activated SKIPPED — session not in map', { paneId: action.paneId, sessionId: action.sessionId, knownSessions: [...state.sessions.keys()] });
+        return state;
+      }
+      diag('context', 'pane:session-activated', { paneId: action.paneId, sessionId: action.sessionId });
       const paneSessionMap = new Map(state.paneSessionMap).set(action.paneId, action.sessionId);
       return { ...state, paneSessionMap };
     }
