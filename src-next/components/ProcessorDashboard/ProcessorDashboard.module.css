@@ -36,64 +36,165 @@
   margin-bottom: 8px;
 }
 
-.procCard {
-  display: block;
+/* Pack group */
+.packGroup {
+  margin: 2px 0;
+}
+
+.packAccent {
+  width: 3px;
+  height: 12px;
+  border-radius: 1px;
+  flex-shrink: 0;
+  background: var(--pack-accent, var(--accent));
+}
+
+.packHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   width: 100%;
-  text-align: left;
-  padding: 8px;
-  margin-bottom: 4px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-raised);
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: border-color var(--transition-normal);
+  background: transparent;
+  border: 1px solid transparent;
+  user-select: none;
+  transition: background var(--transition-fast);
 }
 
-.procCard:hover {
-  border-color: var(--accent);
+.packHeader:hover {
+  background: var(--bg-overlay);
 }
 
-.procCard:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
+.packHeader:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
-.procCardActive {
-  border-color: var(--accent);
-  background: var(--state-selected);
+.packChevron {
+  display: flex;
+  align-items: center;
+  color: var(--text-dimmed);
+  flex-shrink: 0;
+  margin-left: auto;
+  transition: transform var(--transition-fast);
 }
 
-.procCardName {
+.packChevronOpen {
+  transform: rotate(90deg);
+}
+
+.packName {
   font-size: 12px;
   font-weight: 600;
   color: var(--text);
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.procCardStats {
-  font-size: 10px;
+.packStats {
+  font-size: 9px;
   color: var(--text-dimmed);
-  margin-top: 2px;
+  background: var(--bg-overlay);
+  border-radius: var(--radius-lg);
+  padding: 0 5px;
+  font-family: var(--font-mono);
+  flex-shrink: 0;
 }
 
-.procCardStatsDim {
+.packProcessors {
+  padding-left: 10px;
+  padding-bottom: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.standaloneSep {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.standaloneSep::before,
+.standaloneSep::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
   opacity: 0.5;
 }
 
-.procCardNotRun {
-  opacity: 0.5;
-  border-style: dashed;
+/* Processor row (compact inline) */
+.procRow {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 3px 8px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast);
 }
 
-.procCardNotRun:hover {
+.procRow:hover {
+  background: var(--state-hover);
+}
+
+.procRow:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
+.procRowActive {
+  background: var(--state-selected);
+}
+
+.procRowActive:hover {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.procRowName {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.procRowStats {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-dimmed);
+  margin-left: 8px;
+}
+
+.procRowStatsDim {
+  opacity: 0.4;
+}
+
+.procRowNotRun {
+  opacity: 0.5;
+}
+
+.procRowNotRun:hover {
   opacity: 0.8;
 }
 
-.procCardZeroMatches .procCardStats {
-  color: var(--text-dimmed);
-}
-
-.procCardEmissions {
-  opacity: 0.7;
+.procRowZeroMatches .procRowStats {
+  opacity: 0.5;
 }
 
 /* Detail panel */

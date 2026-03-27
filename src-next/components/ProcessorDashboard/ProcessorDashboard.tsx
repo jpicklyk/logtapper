@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
 import { ChevronRight } from 'lucide-react';
-import type { PipelineRunSummary, MatchedLine, VarMeta, StateTransition, StateSnapshot, CorrelatorResult } from '../../bridge/types';
-import { getMatchedLines, getPiiMappings, getStateTransitions, getStateAtLine, getCorrelatorEvents } from '../../bridge/commands';
+import type { PipelineRunSummary, MatchedLine, VarMeta, StateTransition, StateSnapshot, CorrelatorResult, ProcessorSummary, PackSummary } from '../../bridge/types';
+import { getMatchedLines, getPiiMappings, getStateTransitions, getStateAtLine, getCorrelatorEvents, listPacks } from '../../bridge/commands';
+import { getBareId } from '../../bridge/types';
 import {
   useSession,
   useProcessors,
@@ -10,6 +11,8 @@ import {
   useViewerActions,
 } from '../../context';
 import { usePipeline, useChartData } from '../../hooks';
+import { PROC_TYPE_ACCENT } from '../../ui';
+import { bus } from '../../events';
 import styles from './ProcessorDashboard.module.css';
 
 // ── Var rendering helpers ────────────────────────────────────────────────────
@@ -207,6 +210,12 @@ const DataTable = React.memo(function DataTable({
   );
 });
 
+interface DashboardPackGroup {
+  packId: string;
+  packName: string;
+  processors: ProcessorSummary[];
+}
+
 // ── Main component ───────────────────────────────────────────────────────────
 
 const ProcessorDashboard = React.memo(function ProcessorDashboard() {
@@ -231,6 +240,9 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
   const [trackerSnapshot, setTrackerSnapshot] = useState<StateSnapshot | null>(null);
   // Correlator detail
   const [correlatorResult, setCorrelatorResult] = useState<CorrelatorResult | null>(null);
+  // Pack grouping
+  const [packs, setPacks] = useState<PackSummary[]>([]);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   const sessionId = session?.sessionId ?? null;
 
@@ -242,11 +254,60 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
     [activeProcessorIds, processors],
   );
 
+  // Fetch packs for grouping (mount + marketplace events only)
+  useEffect(() => {
+    listPacks().then(setPacks).catch(() => setPacks([]));
+  }, []);
+
+  useEffect(() => {
+    const refresh = () => { listPacks().then(setPacks).catch(() => setPacks([])); };
+    bus.on('marketplace:processor-installed', refresh);
+    bus.on('marketplace:processor-updated', refresh);
+    return () => {
+      bus.off('marketplace:processor-installed', refresh);
+      bus.off('marketplace:processor-updated', refresh);
+    };
+  }, []);
+
+  // Group processors by pack (bare-ID join — packId on ProcessorSummary
+  // is not reliably populated for marketplace processors)
+  const { packGroups, standaloneProcessors } = useMemo(() => {
+    const groups: DashboardPackGroup[] = [];
+    const assigned = new Set<string>();
+
+    for (const pack of packs) {
+      const packProcs = activeProcessors.filter((p) =>
+        pack.processorIds.includes(getBareId(p.id)),
+      );
+      if (packProcs.length > 0) {
+        groups.push({ packId: pack.id, packName: pack.name, processors: packProcs });
+        for (const p of packProcs) assigned.add(p.id);
+      }
+    }
+
+    const standalone = activeProcessors.filter((p) => !assigned.has(p.id));
+    return { packGroups: groups, standaloneProcessors: standalone };
+  }, [activeProcessors, packs]);
+
+  const toggleGroup = useCallback((groupId: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
+  }, []);
+
   const selected = selectedId ?? activeProcessors[0]?.id ?? null;
   const selectedProc = activeProcessors.find((p) => p.id === selected);
 
-  const getSummary = (id: string) =>
-    (lastResults as PipelineRunSummary[]).find((r) => r.processorId === id);
+  const summaryMap = useMemo(() => {
+    const map = new Map<string, PipelineRunSummary>();
+    for (const r of lastResults as PipelineRunSummary[]) map.set(r.processorId, r);
+    return map;
+  }, [lastResults]);
+
+  const getSummary = (id: string) => summaryMap.get(id);
 
   // Fetch vars
   useEffect(() => {
@@ -375,6 +436,42 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
     0,
   );
 
+  const renderProcRow = (p: ProcessorSummary) => {
+    const s = getSummary(p.id);
+    const isSelected = p.id === selected;
+    const notRun = !s;
+    const zeroMatches = s && s.matchedLines === 0;
+    const rowClass = [
+      styles.procRow,
+      isSelected && styles.procRowActive,
+      notRun && styles.procRowNotRun,
+      zeroMatches && styles.procRowZeroMatches,
+    ].filter(Boolean).join(' ');
+    return (
+      <button
+        key={p.id}
+        className={rowClass}
+        onClick={() => {
+          setSelectedId(p.id);
+          setShowMatches(false);
+        }}
+      >
+        <span className={styles.procRowName}>{p.name}</span>
+        {s ? (
+          <span className={styles.procRowStats}>
+            {s.matchedLines > 0
+              ? s.matchedLines.toLocaleString()
+              : s.emissionCount > 0
+                ? `${s.emissionCount.toLocaleString()} ev`
+                : '0'}
+          </span>
+        ) : (
+          <span className={`${styles.procRowStats} ${styles.procRowStatsDim}`}>--</span>
+        )}
+      </button>
+    );
+  };
+
   return (
     <div className={styles.layout}>
       {/* Left: processor list */}
@@ -384,44 +481,54 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
             ? `${activeProcessors.length} processor${activeProcessors.length !== 1 ? 's' : ''} . ${totalMatches.toLocaleString()} matches`
             : `${activeProcessors.length} processor${activeProcessors.length !== 1 ? 's' : ''}`}
         </div>
-        {activeProcessors.map((p) => {
-          const s = getSummary(p.id);
-          const isSelected = p.id === selected;
-          const notRun = !s;
-          const zeroMatches = s && s.matchedLines === 0;
-          const cardClass = [
-            styles.procCard,
-            isSelected && styles.procCardActive,
-            notRun && styles.procCardNotRun,
-            zeroMatches && styles.procCardZeroMatches,
-          ].filter(Boolean).join(' ');
+        {packGroups.map((group) => {
+          const isCollapsed = collapsedGroups.has(group.packId);
+          const groupMatches = group.processors.reduce((n, p) => {
+            const s = getSummary(p.id);
+            return n + (s?.matchedLines ?? 0);
+          }, 0);
+          // Use the most common processor type's accent color for the pack
+          const typeCounts = new Map<ProcessorSummary['processorType'], number>();
+          for (const p of group.processors) {
+            typeCounts.set(p.processorType, (typeCounts.get(p.processorType) ?? 0) + 1);
+          }
+          let dominantType: ProcessorSummary['processorType'] = group.processors[0]?.processorType ?? 'reporter';
+          let maxCount = 0;
+          for (const [type, count] of typeCounts) {
+            if (count > maxCount) { maxCount = count; dominantType = type; }
+          }
+          const accentColor = PROC_TYPE_ACCENT[dominantType] ?? 'var(--proc-reporter)';
           return (
-            <button
-              key={p.id}
-              className={cardClass}
-              onClick={() => {
-                setSelectedId(p.id);
-                setShowMatches(false);
-              }}
-            >
-              <div className={styles.procCardName}>{p.name}</div>
-              {s ? (
-                <div className={styles.procCardStats}>
-                  <span>{s.matchedLines.toLocaleString()} matches</span>
-                  {s.emissionCount > 0 && (
-                    <span className={styles.procCardEmissions}>
-                      . {s.emissionCount.toLocaleString()} events
-                    </span>
-                  )}
-                </div>
-              ) : (
-                <div className={`${styles.procCardStats} ${styles.procCardStatsDim}`}>
-                  not run
+            <div key={group.packId} className={styles.packGroup}>
+              <button
+                className={styles.packHeader}
+                onClick={() => toggleGroup(group.packId)}
+              >
+                <div
+                  className={styles.packAccent}
+                  style={{ '--pack-accent': accentColor } as React.CSSProperties}
+                />
+                <span className={styles.packName}>{group.packName}</span>
+                {isCollapsed && runCount > 0 && (
+                  <span className={styles.packStats}>{groupMatches.toLocaleString()}</span>
+                )}
+                <ChevronRight
+                  size={10}
+                  className={`${styles.packChevron} ${isCollapsed ? '' : styles.packChevronOpen}`}
+                />
+              </button>
+              {!isCollapsed && (
+                <div className={styles.packProcessors}>
+                  {group.processors.map((p) => renderProcRow(p))}
                 </div>
               )}
-            </button>
+            </div>
           );
         })}
+        {standaloneProcessors.length > 0 && packGroups.length > 0 && (
+          <div className={styles.standaloneSep} />
+        )}
+        {standaloneProcessors.map((p) => renderProcRow(p))}
       </div>
 
       {/* Right: detail panel */}
