@@ -3,6 +3,14 @@
   width: 100%;
 }
 
+.packAccent {
+  width: 3px;
+  height: 12px;
+  border-radius: 1px;
+  flex-shrink: 0;
+  background: var(--pack-accent, var(--accent));
+}
+
 .packHeader {
   display: flex;
   align-items: center;
@@ -158,17 +166,6 @@
 
 .procRowDisabled {
   opacity: 0.35;
-}
-
-.procRowDisabled.procRow .procAccent,
-.procRowDisabled .procAccent {
-  background: var(--border);
-}
-
-.procAccent {
-  width: 3px;
-  flex-shrink: 0;
-  background: var(--proc-accent, var(--accent));
 }
 
 .procBody {

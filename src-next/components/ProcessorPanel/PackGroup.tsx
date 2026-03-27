@@ -73,15 +73,13 @@ const ProcessorRow = React.memo(function ProcessorRow({
   onToggle,
   onRemove,
 }: ProcessorRowProps) {
-  const accentColor = PROC_TYPE_ACCENT[proc.processorType] ?? 'var(--proc-reporter)';
   const [typeLabel, typeBadgeClass] = (PINNED_TAIL_IDS.has(proc.id) ? PII_TYPE_META : null)
     ?? getProcTypeMeta(proc.processorType);
 
   const cls = `${styles.procRow}${disabled ? ` ${styles.procRowDisabled}` : ''}`;
 
   return (
-    <div className={cls} style={{ '--proc-accent': accentColor } as React.CSSProperties}>
-      <div className={styles.procAccent} />
+    <div className={cls}>
       <div className={styles.procBody}>
         <span className={styles.procName}>{proc.name}</span>
         <div className={styles.procMeta}>
@@ -154,6 +152,19 @@ const PackGroup = React.memo(function PackGroup({
   resultsByProcessor,
   pipelineRunning,
 }: PackGroupProps) {
+  // Derive the accent color from the most common processor type in the pack.
+  const packAccentColor = React.useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const p of processors) {
+      counts.set(p.processorType, (counts.get(p.processorType) ?? 0) + 1);
+    }
+    let dominant = 'reporter';
+    let max = 0;
+    for (const [type, count] of counts) {
+      if (count > max) { max = count; dominant = type; }
+    }
+    return PROC_TYPE_ACCENT[dominant] ?? 'var(--accent)';
+  }, [processors]);
   const handleRemovePack = useCallback(
     (e: React.MouseEvent) => { e.stopPropagation(); onRemovePack(); },
     [onRemovePack],
@@ -175,12 +186,9 @@ const PackGroup = React.memo(function PackGroup({
     <div className={`${styles.packGroup}${compact ? ` ${styles.packGroupCompact}` : ''}`}>
       {/* Pack header */}
       <div className={styles.packHeader} onClick={onToggleExpand} role="button" tabIndex={0}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggleExpand(); } }}>
-        {!compact && (
-          <span className={`${styles.chevron}${expanded ? ` ${styles.chevronExpanded}` : ''}`}>
-            {ChevronSvg}
-          </span>
-        )}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggleExpand(); } }}
+        style={{ '--pack-accent': packAccentColor } as React.CSSProperties}>
+        <span className={styles.packAccent} />
         <span className={styles.packName}>{packName}</span>
         <span className={styles.packCount}>{processors.length}</span>
         <button
@@ -198,6 +206,11 @@ const PackGroup = React.memo(function PackGroup({
           >
             {RemoveSvg}
           </button>
+        )}
+        {!compact && (
+          <span className={`${styles.chevron}${expanded ? ` ${styles.chevronExpanded}` : ''}`}>
+            {ChevronSvg}
+          </span>
         )}
       </div>
 
