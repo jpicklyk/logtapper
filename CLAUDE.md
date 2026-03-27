@@ -30,7 +30,7 @@ Action callbacks (`onViewProcessor`, `onCloseSession`, `onOpenLibrary`) must be 
 ### 8. Barrel exports control public API — never import internal modules directly
 Every module directory (`cache/`, `viewport/`, `hooks/`) must have an `index.ts` barrel that defines its public API. Components and hooks outside a module must import from the barrel only, never from internal files. The barrel exports narrow interfaces and hooks — not implementation classes. Internal files import from each other directly within the same module. Test files may import internals for white-box testing.
 
-New code must target `src-next/`.
+All frontend code lives in `src-next/`. The legacy `src/` directory has been removed.
 
 ## Implementation Plans
 
@@ -77,13 +77,13 @@ cargo test --manifest-path src-tauri/Cargo.toml <name>   # single test by name
 cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 ```
 
-**Platform note (MSYS2/Windows):** `.npmrc` sets `os=win32` and `cpu=x64` so npm installs the correct `@rollup/rollup-win32-x64-msvc` native binary. `cargo build` exits with code 1 on MSYS2 even on success — check for "Finished" in output.
+**Platform note (MSYS2/Windows):** `cargo build` exits with code 1 on MSYS2 even on success — check for "Finished" in output.
 
 **IMPORTANT — Do NOT prefix Bash commands with `cd`.** The working directory is already the project root. All commands work as-is without a `cd` prefix. Prepending `cd /d/Projects/LogTapper &&` breaks permission pattern matching and causes unnecessary user prompts. Never use `cd <path> &&` before any command — use absolute paths or flags like `--manifest-path` instead.
 
 ## Architecture
 
-Tauri 2.x desktop app: React 18/TypeScript frontend + Rust backend. All IPC goes through typed `invoke()` calls and Tauri events — no direct filesystem or network access from the frontend. See `design_docs/log-viewer-architecture.md` for the full design spec.
+Tauri 2.x desktop app: React 19/TypeScript frontend + Rust backend (Vite 8, plugin-react 6). All IPC goes through typed `invoke()` calls and Tauri events — no direct filesystem or network access from the frontend. See `design_docs/log-viewer-architecture.md` for the full design spec.
 
 ### Backend layout
 
@@ -259,3 +259,18 @@ This applies to ALL Tauri async listener APIs: `listen()`, `once()`, `onDragDrop
 **StrictMode also breaks `requestAnimationFrame` cleanup.** Double-mount means: effect → cleanup → effect. If the cleanup calls `cancelAnimationFrame`, the first rAF is cancelled before it fires. **Never return `cancelAnimationFrame` from a useEffect cleanup.** Either omit cleanup (let stale rAFs fire harmlessly with a ref guard) or avoid rAF entirely — prefer a `programmaticScrollRef` flag pattern for distinguishing programmatic from user-initiated scrolls (see LogViewer.tsx).
 
 **StrictMode doubles `setState` updater functions — never emit bus events inside them.** StrictMode calls updaters twice to detect impurities, so any `bus.emit` inside a `setState(fn)` callback fires twice. Pre-compute payloads from a ref before calling `setState`, then emit after.
+
+**StrictMode doubles `useMemo` factories — never create disposable resources in `useMemo`.** React 19 StrictMode calls `useMemo` factories twice, creates two instances, and keeps the second. If the factory creates an object with a `dispose()` method, registry registration, or any side effect, the first instance leaks or — worse — in-flight async operations resolve against the disposed first instance and silently discard results. **Use `useState` + `useEffect` for objects with lifecycle semantics:**
+```tsx
+// WRONG — React 19 StrictMode creates two DataSources, disposes the first
+const ds = useMemo(() => createDataSource({ ... }), [deps]);
+
+// CORRECT — useEffect runs once per committed mount, cleanup on unmount
+const [ds, setDs] = useState<DataSource | null>(null);
+useEffect(() => {
+  const instance = createDataSource({ ... });
+  setDs(instance);
+  return () => instance.dispose();
+}, [deps]);
+```
+This applies to any object with `dispose()`, `destroy()`, `unsubscribe()`, `close()`, or that registers with an external registry. Pure data structures (Map, Set, arrays, plain objects) remain safe in `useMemo`.
