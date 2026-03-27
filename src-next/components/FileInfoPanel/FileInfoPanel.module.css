@@ -355,37 +355,37 @@
   overflow-x: hidden;
 }
 
+/* Section rows — consistent 28px height for scan-friendly density. */
 .sectionItem {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 12px 8px;
+  gap: 6px;
+  padding: 4px 8px;
+  margin: 0;
   border: none;
-  border-bottom: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text);
   font-family: var(--font-ui);
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: 11.5px;
+  line-height: 1.35;
   cursor: pointer;
   text-align: left;
+  width: 100%;
+  min-height: 28px;
   transition: background var(--transition-fast);
   overflow: hidden;
   z-index: 0;
 }
 
-.sectionItem:last-child {
-  border-bottom: none;
-}
-
 .sectionItem:hover {
-  background: var(--bg-overlay);
+  background: var(--state-hover);
 }
 
 .sectionItem:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: -2px;
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .sectionItemActive {
@@ -393,7 +393,7 @@
   color: var(--accent);
   animation: section-flash 600ms ease-out;
   border-left: 2px solid var(--accent);
-  padding-left: 6px; /* reduced to compensate for border */
+  padding-left: 6px;
 }
 
 .sectionItemSelected {
@@ -423,11 +423,7 @@
 /* ── Collapsed section group ──────────────────────────────────────────────── */
 
 .sectionGroup {
-  border-bottom: 1px solid var(--border);
-}
-
-.sectionGroup:last-child {
-  border-bottom: none;
+  margin: 2px 0;
 }
 
 .sectionGroupHeader {
@@ -435,8 +431,9 @@
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 6px 8px 6px 10px;
-  border: none;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   background: var(--bg-raised);
   color: var(--text);
   font-family: var(--font-ui);
@@ -448,12 +445,21 @@
 }
 
 .sectionGroupHeader:hover {
-  background: var(--bg-overlay);
+  background: var(--state-hover);
+  border-color: var(--accent);
 }
 
 .sectionGroupHeader:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: -2px;
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.sectionGroupAccent {
+  width: 3px;
+  height: 12px;
+  border-radius: 1px;
+  flex-shrink: 0;
+  background: var(--warning, #e89b30);
 }
 
 .sectionGroupActive {
@@ -476,7 +482,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .sectionGroupBadge {
@@ -493,8 +499,12 @@
 }
 
 .sectionGroupItems {
-  padding-left: 12px;
-  border-top: 1px solid var(--border);
+  padding-left: 8px;
+  margin-top: 2px;
+  margin-left: 9px;
+  border-left: 1px solid var(--border-subtle, var(--border));
+  display: flex;
+  flex-direction: column;
   animation: expandIn 150ms ease;
 }
 
@@ -505,7 +515,6 @@
   width: 100%;
   padding: 5px 8px;
   border: none;
-  border-top: 1px solid var(--border);
   background: none;
   color: var(--accent);
   font-family: var(--font-ui);
@@ -528,48 +537,19 @@
   100% { background-color: var(--bg-overlay); }
 }
 
-/* ── Proportional size bar ─────────────────────────────────────────────────── */
-
-.sizeBar {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  height: 2px;
-  background: var(--accent);
-  opacity: 0.12;
-  border-radius: 0 1px 1px 0;
-  transition: opacity var(--transition-fast);
-  pointer-events: none;
-}
-
-.sectionItem:hover .sizeBar {
-  opacity: 0.25;
-}
-
-.sectionItemActive .sizeBar {
-  opacity: 0.35;
-}
+/* Size bar removed — accent bar on group headers provides visual grouping,
+   and the line-count column provides the quantitative information. */
 
 /* ── Child section indent ──────────────────────────────────────────────────── */
 
 .sectionItemChild {
-  padding-left: 14px;
-  border-left: 2px solid var(--border-subtle);
-  margin-left: 8px;
-}
-
-.sectionItemChild.sectionItemActive {
-  border-left-color: var(--accent);
+  padding-left: 6px;
 }
 
 /* ── Parent DUMPSYS group ──────────────────────────────────────────────────── */
 
 .parentGroup {
-  border-bottom: 1px solid var(--border);
-}
-
-.parentGroup:last-child {
-  border-bottom: none;
+  margin: 2px 0;
 }
 
 .parentHeader {
@@ -577,8 +557,9 @@
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 6px 8px 6px 10px;
-  border: none;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   background: var(--bg-raised);
   color: var(--text);
   font-family: var(--font-ui);
@@ -591,12 +572,13 @@
 }
 
 .parentHeader:hover {
-  background: var(--bg-overlay);
+  background: var(--state-hover);
+  border-color: var(--accent);
 }
 
 .parentHeader:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: -2px;
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .parentHeaderActive {
@@ -612,7 +594,12 @@
 }
 
 .parentChildren {
-  border-top: 1px solid var(--border);
+  padding-left: 8px;
+  margin-top: 2px;
+  margin-left: 9px;
+  border-left: 1px solid var(--border-subtle, var(--border));
+  display: flex;
+  flex-direction: column;
   animation: expand-in 150ms ease;
 }
 
@@ -764,7 +751,23 @@
   border-radius: var(--radius-sm);
   background: transparent;
   position: relative;
-  transition: border-color var(--transition-normal), background var(--transition-normal);
+  transition: border-color var(--transition-normal), background var(--transition-normal),
+              opacity var(--transition-normal);
+  /* Hover-reveal: hidden by default, visible on row hover or when checked/indeterminate */
+  opacity: 0;
+}
+
+.sectionItem:hover .sectionCheckbox,
+.sectionGroupHeader:hover .sectionCheckbox,
+.parentHeader:hover .sectionCheckbox,
+.sectionCheckbox:checked,
+.sectionCheckbox:indeterminate {
+  opacity: 1;
+}
+
+/* Always show checkboxes when section filter is active (indicated by parent having filterActive class) */
+.sectionFilterActive .sectionCheckbox {
+  opacity: 1;
 }
 
 .sectionCheckbox:hover {
