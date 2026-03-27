@@ -29,8 +29,10 @@ export interface PersistedState {
 // Sanitization
 // ---------------------------------------------------------------------------
 
-/** Sanitize a tree restored from localStorage. Strip unknown tab types, flatten corrupt nodes. */
-export function sanitizeTree(node: SplitNode): SplitNode | null {
+/** Sanitize a tree restored from localStorage. Strip unknown tab types, flatten corrupt nodes.
+ *  @param tabPaths  Optional tabId→filePath map. When provided, logviewer tabs without a
+ *                   corresponding file path are stripped (e.g. unsaved ADB stream tabs). */
+export function sanitizeTree(node: SplitNode, tabPaths?: Record<string, string>): SplitNode | null {
   if (!node || typeof node !== 'object') return null;
 
   if (node.type === 'leaf') {
@@ -39,6 +41,8 @@ export function sanitizeTree(node: SplitNode): SplitNode | null {
       // Migrate legacy 'scratch' tabs to 'editor'
       .map((t) => (t.type as string) === 'scratch' ? { ...t, type: 'editor' as const } : t)
       .filter((t) => VALID_CENTER_TYPES.has(t.type))
+      // Strip logviewer tabs that have no file path (unsaved ADB streams)
+      .filter((t) => t.type !== 'logviewer' || !tabPaths || !!tabPaths[t.id])
       .map((t) => ({ ...t, closable: true }));
     // Empty panes are valid (the default state is an empty leaf)
     const activeTabId = tabs.find((t) => t.id === node.pane.activeTabId)
@@ -49,8 +53,8 @@ export function sanitizeTree(node: SplitNode): SplitNode | null {
 
   if (node.type === 'split') {
     if (!Array.isArray(node.children) || node.children.length !== 2) return null;
-    const left = sanitizeTree(node.children[0]);
-    const right = sanitizeTree(node.children[1]);
+    const left = sanitizeTree(node.children[0], tabPaths);
+    const right = sanitizeTree(node.children[1], tabPaths);
     if (left === null && right === null) return null;
     if (left === null) return right;
     if (right === null) return left;
@@ -74,7 +78,10 @@ export function loadPersistedState(): Partial<PersistedState> {
     const result: Partial<PersistedState> = {};
 
     if (parsed.centerTree) {
-      const sanitized = sanitizeTree(parsed.centerTree);
+      // Pass tabPaths so logviewer tabs without a file path (unsaved ADB
+      // streams) are stripped before the tree is used by the app.
+      const tabPaths = storageGetJSON<Record<string, string>>('logtapper_tab_paths', {});
+      const sanitized = sanitizeTree(parsed.centerTree, tabPaths);
       if (sanitized) result.centerTree = sanitized;
     }
     if (typeof parsed.leftPaneWidth === 'number') {

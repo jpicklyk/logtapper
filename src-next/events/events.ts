@@ -41,6 +41,9 @@ export type AppEvents = {
   // ── ADB streaming (always logcat) ──────────────────────────────────────────
   'stream:started':         { sessionId: string; paneId: string; deviceSerial: string };
   'stream:stopped':         { sessionId: string; paneId: string };
+  /** Fired after a live capture is saved to disk — registers the file path
+   *  with the tab restore system so it survives app restart. */
+  'stream:saved':           { sessionId: string; path: string };
 
   // ── Pipeline ───────────────────────────────────────────────────────────────
   'pipeline:completed':     { sessionId: string; runCount: number;

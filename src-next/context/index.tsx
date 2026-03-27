@@ -102,6 +102,7 @@ function HookWiring({ children }: { children: ReactNode }) {
       });
       if (typeof outputPath === 'string') {
         await saveLiveCapture(sessionId, outputPath);
+        bus.emit('stream:saved', { sessionId, path: outputPath });
       }
     } else {
       // Static file / editor tab: emit bus event for the focused EditorTab to handle

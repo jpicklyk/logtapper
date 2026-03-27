@@ -445,15 +445,31 @@ export function useCenterTree(
       });
     };
 
+    // When a live capture is saved, register the file path so the tab
+    // survives app restart via the startup restore in useFileSession.
+    const onStreamSaved = (e: { sessionId: string; path: string }) => {
+      // Reverse-lookup tabId from tabSessionMap (tabId → sessionId).
+      for (const [tabId, sid] of tabSessionMapRef.current.entries()) {
+        if (sid === e.sessionId) {
+          const tabPaths = JSON.parse(localStorage.getItem('logtapper_tab_paths') ?? '{}');
+          tabPaths[tabId] = e.path;
+          localStorage.setItem('logtapper_tab_paths', JSON.stringify(tabPaths));
+          break;
+        }
+      }
+    };
+
     bus.on('session:loading', onSessionLoading);
     bus.on('session:loaded', onSessionLoaded);
     bus.on('session:closed', onSessionClosed);
     bus.on('pipeline:completed', onPipelineCompleted);
+    bus.on('stream:saved', onStreamSaved);
     return () => {
       bus.off('session:loading', onSessionLoading);
       bus.off('session:loaded', onSessionLoaded);
       bus.off('session:closed', onSessionClosed);
       bus.off('pipeline:completed', onPipelineCompleted);
+      bus.off('stream:saved', onStreamSaved);
     };
   }, []);
 
