@@ -147,7 +147,7 @@ export const StatusBar = React.memo(function StatusBar({ activeLogPaneId }: Stat
         </span>
 
         <span className={CLS_CHIP_GRAY} title="File encoding">
-          UTF-8
+          {session?.encoding ?? 'UTF-8'}
         </span>
 
         <span className={styles.separator} />

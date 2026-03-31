@@ -1,0 +1,269 @@
+type: state_tracker
+id: p2p-wps-provisioning-tracker
+name: P2P WPS Provisioning Tracker
+version: 1.0.0
+author: LogTapper
+description: "Tracks the WPS provisioning exchange during Wi-Fi Direct group formation — from client association through EAP authentication, WPS M1-M8 message exchange, and 4-way handshake completion. Detects WPS failures, EAP timeouts, and authentication rejections."
+tags: [network, wifi, p2p, wifi-direct, wps, android]
+category: network
+builtin: false
+
+group: Network
+
+state:
+  - name: wps_state
+    type: string
+    default: "idle"
+  - name: wps_method
+    type: string
+    default: "unknown"
+  - name: peer_mac
+    type: string
+  - name: eap_state
+    type: string
+  - name: group_interface
+    type: string
+  - name: failure_reason
+    type: string
+    default: "none"
+
+transitions:
+  # ── Client Association ─────────────────────────────────────────────────
+
+  - name: Client Associated
+    filter:
+      tag: wpa_supplicant
+      message_regex: "hostapd_logger: STA ([0-9a-fA-F:]{17}).*start authentication"
+    set:
+      wps_state: "authenticating"
+      peer_mac: $1
+      failure_reason: "none"
+
+  # ── EAP State Machine ─────────────────────────────────────────────────
+
+  - name: EAP Identity
+    filter:
+      tag: wpa_supplicant
+      message_contains: "EAP entering state IDENTITY"
+    set:
+      wps_state: "eap_identity"
+      eap_state: "IDENTITY"
+
+  - name: EAP Method Selected
+    filter:
+      tag: wpa_supplicant
+      message_contains: "EAP entering state METHOD"
+    set:
+      eap_state: "METHOD"
+
+  - name: EAP Integrity Check
+    filter:
+      tag: wpa_supplicant
+      message_contains: "EAP entering state INTEGRITY_CHECK"
+    set:
+      eap_state: "INTEGRITY_CHECK"
+
+  - name: EAP Success
+    filter:
+      tag: wpa_supplicant
+      message_contains: "EAP entering state SUCCESS"
+    set:
+      eap_state: "SUCCESS"
+
+  - name: EAP Failure
+    filter:
+      tag: wpa_supplicant
+      message_contains: "EAP entering state FAILURE"
+    set:
+      wps_state: "failed"
+      eap_state: "FAILURE"
+      failure_reason: "eap_failure"
+
+  # ── WPS Message Exchange ───────────────────────────────────────────────
+
+  - name: WPS Started
+    filter:
+      tag: wpa_supplicant
+      message_contains: "WPS: Starting WPS"
+    set:
+      wps_state: "wps_started"
+
+  - name: WPS M1 Sent
+    filter:
+      tag: wpa_supplicant
+      message_contains: "WPS: Sending M1"
+    set:
+      wps_state: "m1_sent"
+
+  - name: WPS M2 Received
+    filter:
+      tag: wpa_supplicant
+      message_contains: "WPS: Received M2"
+    set:
+      wps_state: "m2_received"
+
+  - name: WPS M3 Sent
+    filter:
+      tag: wpa_supplicant
+      message_contains: "WPS: Sending M3"
+    set:
+      wps_state: "m3_sent"
+
+  - name: WPS M4 Received
+    filter:
+      tag: wpa_supplicant
+      message_contains: "WPS: Received M4"
+    set:
+      wps_state: "m4_received"
+
+  - name: WPS M5 Sent
+    filter:
+      tag: wpa_supplicant
+      message_contains: "WPS: Sending M5"
+    set:
+      wps_state: "m5_sent"
+
+  - name: WPS M6 Received
+    filter:
+      tag: wpa_supplicant
+      message_contains: "WPS: Received M6"
+    set:
+      wps_state: "m6_received"
+
+  - name: WPS M7 Sent
+    filter:
+      tag: wpa_supplicant
+      message_contains: "WPS: Sending M7"
+    set:
+      wps_state: "m7_sent"
+
+  - name: WPS M8 Received
+    filter:
+      tag: wpa_supplicant
+      message_contains: "WPS: Received M8"
+    set:
+      wps_state: "m8_received"
+
+  - name: WPS Success
+    filter:
+      tag: wpa_supplicant
+      message_contains: "WPS: Enrollee: Learned new AP credentials"
+    set:
+      wps_state: "wps_complete"
+
+  - name: WPS Registration Success (GO side)
+    filter:
+      tag: wpa_supplicant
+      message_contains: "WPS: Registration protocol completed successfully"
+    set:
+      wps_state: "wps_complete"
+
+  - name: WPS Timeout
+    filter:
+      tag: wpa_supplicant
+      message_contains: "WPS: PBC session overlap"
+    set:
+      wps_state: "failed"
+      failure_reason: "pbc_overlap"
+
+  - name: WPS Failed
+    filter:
+      tag: wpa_supplicant
+      message_regex: "WPS:.*[Ff]ail"
+    set:
+      wps_state: "failed"
+      failure_reason: "wps_failure"
+
+  # ── 4-Way Handshake ────────────────────────────────────────────────────
+
+  - name: 4-Way HS Message 1
+    filter:
+      tag: wpa_supplicant
+      message_contains: "WPA: RX message 1 of 4-Way Handshake"
+    set:
+      wps_state: "fourway_hs"
+
+  - name: 4-Way HS Message 3
+    filter:
+      tag: wpa_supplicant
+      message_contains: "WPA: RX message 3 of 4-Way Handshake"
+    set:
+      wps_state: "fourway_hs_msg3"
+
+  - name: 4-Way HS Complete
+    filter:
+      tag: wpa_supplicant
+      message_contains: "WPA: Key negotiation completed"
+    set:
+      wps_state: "connected"
+      failure_reason: "none"
+
+  - name: 4-Way HS Timeout
+    filter:
+      tag: wpa_supplicant
+      message_contains: "EAPOL-Key timeout"
+    set:
+      wps_state: "failed"
+      failure_reason: "fourway_hs_timeout"
+
+  # ── Group Key Handshake ────────────────────────────────────────────────
+
+  - name: Group Key HS Complete
+    filter:
+      tag: wpa_supplicant
+      message_contains: "WPA: Group rekeying completed"
+    set:
+      wps_state: "connected"
+
+  # ── Teardown ───────────────────────────────────────────────────────────
+
+  - name: Client Deauthenticated
+    filter:
+      tag: wpa_supplicant
+      message_regex: "hostapd_logger: STA ([0-9a-fA-F:]{17}).*deauth"
+    set:
+      wps_state: "deauthenticated"
+      peer_mac: $1
+
+  - name: Interface Removed
+    filter:
+      tag: wpa_supplicant
+      message_regex: "Remove interface (p2p-wlan\\d+-\\d+) from radio"
+    set:
+      wps_state: "idle"
+    clear:
+      - peer_mac
+      - eap_state
+      - group_interface
+      - failure_reason
+
+output:
+  timeline: true
+  annotate: true
+
+schema:
+  source_types: ["logcat"]
+  emissions: []
+  mcp:
+    summary:
+      template: "WPS Provisioning: state={{wps_state}}, method={{wps_method}}, peer={{peer_mac}}, EAP={{eap_state}}, failure={{failure_reason}}"
+      include_vars: []
+    signals:
+      - name: wps_failure
+        severity: critical
+        condition: "wps_state == 'failed'"
+        fields: [wps_state, failure_reason, peer_mac, eap_state]
+        format: "WPS provisioning failed: {{failure_reason}} (peer: {{peer_mac}}, EAP state: {{eap_state}})"
+        type: aggregate
+      - name: eap_failure
+        severity: critical
+        condition: "eap_state == 'FAILURE'"
+        fields: [eap_state, peer_mac]
+        format: "EAP authentication failed for peer {{peer_mac}}"
+        type: aggregate
+      - name: fourway_timeout
+        severity: critical
+        condition: "failure_reason == 'fourway_hs_timeout'"
+        fields: [failure_reason, peer_mac]
+        format: "4-Way Handshake timed out with peer {{peer_mac}} — key exchange failed"
+        type: aggregate

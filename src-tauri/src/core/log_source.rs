@@ -8,24 +8,128 @@ use std::sync::{Arc, Mutex};
 use crate::core::line::LineMeta;
 use crate::core::session::{SectionInfo, SourceType};
 
+// ---------------------------------------------------------------------------
+// Encoding detection and UTF-16 decode
+// ---------------------------------------------------------------------------
+
+/// File encoding detected from BOM.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+pub enum Encoding {
+    #[default]
+    Utf8,
+    Utf16Le,
+    Utf16Be,
+}
+
+impl Encoding {
+    /// Byte length of the BOM for this encoding (0 for UTF-8 without BOM).
+    pub fn bom_len(self) -> usize {
+        match self {
+            Encoding::Utf8 => 0,
+            Encoding::Utf16Le | Encoding::Utf16Be => 2,
+        }
+    }
+
+    /// Human-readable name for display in the status bar.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Encoding::Utf8 => "UTF-8",
+            Encoding::Utf16Le => "UTF-16 LE",
+            Encoding::Utf16Be => "UTF-16 BE",
+        }
+    }
+
+    pub fn is_utf16(self) -> bool {
+        matches!(self, Encoding::Utf16Le | Encoding::Utf16Be)
+    }
+}
+
+/// Detect encoding from the first bytes of a file (BOM detection).
+pub fn detect_encoding(data: &[u8]) -> Encoding {
+    if data.len() >= 2 {
+        if data[0] == 0xFF && data[1] == 0xFE {
+            return Encoding::Utf16Le;
+        }
+        if data[0] == 0xFE && data[1] == 0xFF {
+            return Encoding::Utf16Be;
+        }
+    }
+    Encoding::Utf8
+}
+
+/// Decode a UTF-16 byte slice into a UTF-8 String.
+/// Returns None if the byte slice has an odd length or is empty.
+/// Uses `char::decode_utf16` iterator directly to avoid intermediate `Vec<u16>`.
+pub fn decode_utf16_bytes(bytes: &[u8], big_endian: bool) -> Option<String> {
+    if bytes.is_empty() || bytes.len() % 2 != 0 {
+        return None;
+    }
+    let iter = bytes.chunks_exact(2).map(|c| {
+        if big_endian {
+            u16::from_be_bytes([c[0], c[1]])
+        } else {
+            u16::from_le_bytes([c[0], c[1]])
+        }
+    });
+    Some(
+        char::decode_utf16(iter)
+            .map(|r| r.unwrap_or(char::REPLACEMENT_CHARACTER))
+            .collect(),
+    )
+}
+
+/// Check if a pair of bytes represents a UTF-16 LF code unit.
+#[inline]
+pub fn is_utf16_lf(a: u8, b: u8, big_endian: bool) -> bool {
+    if big_endian { a == 0x00 && b == 0x0A } else { a == 0x0A && b == 0x00 }
+}
+
+/// Check if a pair of bytes represents a UTF-16 CR code unit.
+#[inline]
+pub fn is_utf16_cr(a: u8, b: u8, big_endian: bool) -> bool {
+    if big_endian { a == 0x00 && b == 0x0D } else { a == 0x0D && b == 0x00 }
+}
+
+/// Decode a line's byte range from raw data, handling encoding.
+/// For UTF-8 this borrows from the data; for UTF-16 it allocates.
+pub fn decode_line_bytes<'a>(data: &'a [u8], start: usize, end: usize, encoding: Encoding) -> Option<Cow<'a, str>> {
+    if start >= end || end > data.len() {
+        return None;
+    }
+    match encoding {
+        Encoding::Utf8 => {
+            let mut slice_end = end;
+            if slice_end > start && data[slice_end - 1] == b'\n' {
+                slice_end -= 1;
+            }
+            if slice_end > start && data[slice_end - 1] == b'\r' {
+                slice_end -= 1;
+            }
+            std::str::from_utf8(&data[start..slice_end]).ok().map(Cow::Borrowed)
+        }
+        Encoding::Utf16Le | Encoding::Utf16Be => {
+            let be = encoding == Encoding::Utf16Be;
+            let mut slice_end = end;
+            // Strip UTF-16 LF (2 bytes) and optional preceding CR (2 bytes)
+            if slice_end >= start + 2 && is_utf16_lf(data[slice_end - 2], data[slice_end - 1], be) {
+                slice_end -= 2;
+                if slice_end >= start + 2 && is_utf16_cr(data[slice_end - 2], data[slice_end - 1], be) {
+                    slice_end -= 2;
+                }
+            }
+            decode_utf16_bytes(&data[start..slice_end], be).map(Cow::Owned)
+        }
+    }
+}
+
 /// Shared line extraction from indexed byte data. Used by FileLogSource and ZipLogSource.
-fn raw_line_from_bytes<'a>(data: &'a [u8], line_index: &[u64], line_num: usize) -> Option<Cow<'a, str>> {
+fn raw_line_from_bytes<'a>(data: &'a [u8], line_index: &[u64], line_num: usize, encoding: Encoding) -> Option<Cow<'a, str>> {
     if line_num + 1 >= line_index.len() {
         return None;
     }
     let start = line_index[line_num] as usize;
     let end = line_index[line_num + 1] as usize;
-    if start >= end || end > data.len() {
-        return None;
-    }
-    let mut slice_end = end;
-    if slice_end > start && data[slice_end - 1] == b'\n' {
-        slice_end -= 1;
-    }
-    if slice_end > start && data[slice_end - 1] == b'\r' {
-        slice_end -= 1;
-    }
-    std::str::from_utf8(&data[start..slice_end]).ok().map(Cow::Borrowed)
+    decode_line_bytes(data, start, end, encoding)
 }
 
 // ---------------------------------------------------------------------------
@@ -49,6 +153,9 @@ pub trait LogSource: Send + Sync {
 
     /// Whether the source uses CRLF line endings. Always false for streams.
     fn has_crlf(&self) -> bool { false }
+
+    /// Detected file encoding. Defaults to UTF-8.
+    fn encoding(&self) -> Encoding { Encoding::Utf8 }
 
     /// Downcast support for type-specific mutable operations.
     fn as_any(&self) -> &dyn Any;
@@ -88,6 +195,8 @@ pub struct FileLogSource {
     pub(crate) indexing: bool,
     /// True if the file uses CRLF (`\r\n`) line endings, false for LF (`\n`).
     pub(crate) has_crlf: bool,
+    /// Detected file encoding (UTF-8, UTF-16LE, UTF-16BE).
+    pub(crate) encoding: Encoding,
 }
 
 impl LogSource for FileLogSource {
@@ -108,7 +217,7 @@ impl LogSource for FileLogSource {
     }
 
     fn raw_line(&self, line_num: usize) -> Option<Cow<'_, str>> {
-        raw_line_from_bytes(&self.mmap, &self.line_index, line_num)
+        raw_line_from_bytes(&self.mmap, &self.line_index, line_num, self.encoding)
     }
 
     fn meta_at(&self, line_num: usize) -> Option<&LineMeta> {
@@ -135,6 +244,10 @@ impl LogSource for FileLogSource {
         self.has_crlf
     }
 
+    fn encoding(&self) -> Encoding {
+        self.encoding
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -144,9 +257,23 @@ impl LogSource for FileLogSource {
     }
 }
 
-/// Detect CRLF line endings by checking the first `\n` in the data.
-pub fn detect_crlf(data: &[u8]) -> bool {
-    memchr::memchr(b'\n', data).is_some_and(|pos| pos > 0 && data[pos - 1] == b'\r')
+/// Detect CRLF line endings, accounting for file encoding.
+pub fn detect_crlf(data: &[u8], encoding: Encoding) -> bool {
+    match encoding {
+        Encoding::Utf8 => {
+            memchr::memchr(b'\n', data).is_some_and(|pos| pos > 0 && data[pos - 1] == b'\r')
+        }
+        Encoding::Utf16Le | Encoding::Utf16Be => {
+            let be = encoding == Encoding::Utf16Be;
+            let d = &data[encoding.bom_len()..];
+            for i in (0..d.len().saturating_sub(1)).step_by(2) {
+                if is_utf16_lf(d[i], d[i + 1], be) {
+                    return i >= 2 && is_utf16_cr(d[i - 2], d[i - 1], be);
+                }
+            }
+            false
+        }
+    }
 }
 
 impl FileLogSource {
@@ -206,6 +333,8 @@ pub struct ZipLogSource {
     pub(crate) line_index: Vec<u64>,
     pub(crate) line_meta: Vec<LineMeta>,
     pub(crate) section_info: Vec<SectionInfo>,
+    /// Detected file encoding.
+    pub(crate) encoding: Encoding,
 }
 
 impl LogSource for ZipLogSource {
@@ -226,7 +355,7 @@ impl LogSource for ZipLogSource {
     }
 
     fn raw_line(&self, line_num: usize) -> Option<Cow<'_, str>> {
-        raw_line_from_bytes(&self.data, &self.line_index, line_num)
+        raw_line_from_bytes(&self.data, &self.line_index, line_num, self.encoding)
     }
 
     fn meta_at(&self, line_num: usize) -> Option<&LineMeta> {
@@ -247,6 +376,10 @@ impl LogSource for ZipLogSource {
 
     fn is_indexing(&self) -> bool {
         false
+    }
+
+    fn encoding(&self) -> Encoding {
+        self.encoding
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -274,7 +407,7 @@ impl ZipLogSource {
 
 #[cfg(test)]
 mod tests {
-    use super::raw_line_from_bytes;
+    use super::{raw_line_from_bytes, Encoding, detect_encoding, decode_utf16_bytes, detect_crlf};
 
     /// Empty line_index (no sentinel) returns None for any line_num.
     #[test]
@@ -282,7 +415,7 @@ mod tests {
         let data = b"hello\n";
         let index: Vec<u64> = vec![];
         assert!(
-            raw_line_from_bytes(data, &index, 0).is_none(),
+            raw_line_from_bytes(data, &index, 0, Encoding::Utf8).is_none(),
             "empty index must return None for line 0"
         );
     }
@@ -291,10 +424,9 @@ mod tests {
     #[test]
     fn raw_line_from_bytes_sentinel_only() {
         let data = b"hello\n";
-        // A sentinel-only index has one entry: the end offset, no line spans.
         let index: Vec<u64> = vec![6];
         assert!(
-            raw_line_from_bytes(data, &index, 0).is_none(),
+            raw_line_from_bytes(data, &index, 0, Encoding::Utf8).is_none(),
             "sentinel-only index must return None for line 0"
         );
     }
@@ -303,11 +435,10 @@ mod tests {
     #[test]
     fn raw_line_from_bytes_strips_crlf() {
         let data = b"hello\r\nworld\r\n";
-        // line_index: [0, 7, 14] — each entry is the start of a line, last is sentinel.
         let index: Vec<u64> = vec![0, 7, 14];
-        let line0 = raw_line_from_bytes(data, &index, 0).unwrap();
+        let line0 = raw_line_from_bytes(data, &index, 0, Encoding::Utf8).unwrap();
         assert_eq!(line0.as_ref(), "hello", "\\r\\n must be fully stripped from line 0");
-        let line1 = raw_line_from_bytes(data, &index, 1).unwrap();
+        let line1 = raw_line_from_bytes(data, &index, 1, Encoding::Utf8).unwrap();
         assert_eq!(line1.as_ref(), "world", "\\r\\n must be fully stripped from line 1");
     }
 
@@ -316,9 +447,9 @@ mod tests {
     fn raw_line_from_bytes_strips_lf() {
         let data = b"alpha\nbeta\n";
         let index: Vec<u64> = vec![0, 6, 11];
-        let line0 = raw_line_from_bytes(data, &index, 0).unwrap();
+        let line0 = raw_line_from_bytes(data, &index, 0, Encoding::Utf8).unwrap();
         assert_eq!(line0.as_ref(), "alpha");
-        let line1 = raw_line_from_bytes(data, &index, 1).unwrap();
+        let line1 = raw_line_from_bytes(data, &index, 1, Encoding::Utf8).unwrap();
         assert_eq!(line1.as_ref(), "beta");
     }
 
@@ -327,19 +458,119 @@ mod tests {
     fn raw_line_from_bytes_out_of_bounds() {
         let data = b"line0\nline1\n";
         let index: Vec<u64> = vec![0, 6, 12];
-        // Valid lines are 0 and 1.
-        assert!(raw_line_from_bytes(data, &index, 2).is_none(), "line 2 must return None");
-        assert!(raw_line_from_bytes(data, &index, 100).is_none(), "line 100 must return None");
+        assert!(raw_line_from_bytes(data, &index, 2, Encoding::Utf8).is_none(), "line 2 must return None");
+        assert!(raw_line_from_bytes(data, &index, 100, Encoding::Utf8).is_none(), "line 100 must return None");
     }
 
     /// Non-UTF-8 bytes return None (not a panic).
     #[test]
     fn raw_line_from_bytes_invalid_utf8() {
-        // 0xFF 0xFE is not valid UTF-8.
+        // 0xFF 0xFE is not valid UTF-8 — but IS a UTF-16LE BOM.
+        // With Utf8 encoding, this should return None.
         let data: &[u8] = &[0xFF, 0xFE, b'\n'];
         let index: Vec<u64> = vec![0, 3];
-        let result = raw_line_from_bytes(data, &index, 0);
+        let result = raw_line_from_bytes(data, &index, 0, Encoding::Utf8);
         assert!(result.is_none(), "invalid UTF-8 bytes must return None, not panic");
+    }
+
+    // ── Encoding detection tests ────────────────────────────────────────
+
+    #[test]
+    fn detect_encoding_utf16le_bom() {
+        let data: &[u8] = &[0xFF, 0xFE, b'h', 0x00, b'i', 0x00];
+        assert_eq!(detect_encoding(data), Encoding::Utf16Le);
+    }
+
+    #[test]
+    fn detect_encoding_utf16be_bom() {
+        let data: &[u8] = &[0xFE, 0xFF, 0x00, b'h', 0x00, b'i'];
+        assert_eq!(detect_encoding(data), Encoding::Utf16Be);
+    }
+
+    #[test]
+    fn detect_encoding_utf8_default() {
+        let data = b"hello world\n";
+        assert_eq!(detect_encoding(data), Encoding::Utf8);
+    }
+
+    #[test]
+    fn detect_encoding_empty() {
+        assert_eq!(detect_encoding(&[]), Encoding::Utf8);
+    }
+
+    // ── UTF-16 decode tests ─────────────────────────────────────────────
+
+    #[test]
+    fn decode_utf16_le_basic() {
+        // "Hi" in UTF-16LE: H=0x48,0x00  i=0x69,0x00
+        let data: &[u8] = &[0x48, 0x00, 0x69, 0x00];
+        assert_eq!(decode_utf16_bytes(data, false).unwrap(), "Hi");
+    }
+
+    #[test]
+    fn decode_utf16_be_basic() {
+        // "Hi" in UTF-16BE: H=0x00,0x48  i=0x00,0x69
+        let data: &[u8] = &[0x00, 0x48, 0x00, 0x69];
+        assert_eq!(decode_utf16_bytes(data, true).unwrap(), "Hi");
+    }
+
+    #[test]
+    fn decode_utf16_odd_bytes_returns_none() {
+        let data: &[u8] = &[0x48, 0x00, 0x69];
+        assert!(decode_utf16_bytes(data, false).is_none());
+    }
+
+    #[test]
+    fn decode_utf16_empty_returns_none() {
+        assert!(decode_utf16_bytes(&[], false).is_none());
+    }
+
+    // ── UTF-16 raw_line_from_bytes tests ────────────────────────────────
+
+    #[test]
+    fn raw_line_from_bytes_utf16le() {
+        // BOM + "Hi\n" in UTF-16LE
+        let data: &[u8] = &[
+            0xFF, 0xFE,             // BOM
+            0x48, 0x00, 0x69, 0x00, // "Hi"
+            0x0A, 0x00,             // LF
+        ];
+        // Line starts after BOM (offset 2), ends at offset 8 (sentinel)
+        let index: Vec<u64> = vec![2, 8];
+        let line = raw_line_from_bytes(data, &index, 0, Encoding::Utf16Le).unwrap();
+        assert_eq!(line.as_ref(), "Hi");
+    }
+
+    #[test]
+    fn raw_line_from_bytes_utf16le_crlf() {
+        // BOM + "Hi\r\n" in UTF-16LE
+        let data: &[u8] = &[
+            0xFF, 0xFE,             // BOM
+            0x48, 0x00, 0x69, 0x00, // "Hi"
+            0x0D, 0x00, 0x0A, 0x00, // CRLF
+        ];
+        let index: Vec<u64> = vec![2, 10];
+        let line = raw_line_from_bytes(data, &index, 0, Encoding::Utf16Le).unwrap();
+        assert_eq!(line.as_ref(), "Hi");
+    }
+
+    // ── detect_crlf with encoding tests ─────────────────────────────────
+
+    #[test]
+    fn detect_crlf_utf8() {
+        assert!(detect_crlf(b"hello\r\nworld\r\n", Encoding::Utf8));
+        assert!(!detect_crlf(b"hello\nworld\n", Encoding::Utf8));
+    }
+
+    #[test]
+    fn detect_crlf_utf16le() {
+        // BOM + "hi\r\n" in UTF-16LE
+        let data: &[u8] = &[0xFF, 0xFE, 0x68, 0x00, 0x69, 0x00, 0x0D, 0x00, 0x0A, 0x00];
+        assert!(detect_crlf(data, Encoding::Utf16Le));
+
+        // BOM + "hi\n" in UTF-16LE (no CR)
+        let data_lf: &[u8] = &[0xFF, 0xFE, 0x68, 0x00, 0x69, 0x00, 0x0A, 0x00];
+        assert!(!detect_crlf(data_lf, Encoding::Utf16Le));
     }
 }
 

@@ -10,7 +10,7 @@ use crate::core::bugreport_parser::BugreportParser;
 use crate::core::index::CrossSourceIndex;
 use crate::core::kernel_parser::KernelParser;
 use crate::core::line::{LineMeta, LogLevel, ParsedLineMeta};
-use crate::core::log_source::{detect_crlf, FileLogSource, LogSource, StreamLogSource, ZipLogSource};
+use crate::core::log_source::{detect_crlf, detect_encoding, decode_line_bytes, decode_utf16_bytes, is_utf16_lf, is_utf16_cr, Encoding, FileLogSource, LogSource, StreamLogSource, ZipLogSource};
 use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;
 use crate::core::timeline::{Timeline, TimelineEntry};
@@ -224,9 +224,10 @@ impl AnalysisSession {
         let mmap =
             Arc::new(unsafe { Mmap::map(&file) }.map_err(|e| format!("Cannot mmap file: {e}"))?);
 
-        let source_type = detect_source_type(&mmap);
+        let encoding = detect_encoding(mmap.as_ref());
+        let source_type = detect_source_type(&mmap, encoding);
 
-        let (line_index, line_meta) = build_line_index(&mmap, &source_type, &mut self.tag_interner);
+        let (line_index, line_meta) = build_line_index(&mmap, &source_type, &mut self.tag_interner, encoding);
         let sections = build_section_index(&line_meta, &source_type, &self.tag_interner, mmap.as_ref(), &line_index);
 
         let name = path
@@ -235,7 +236,7 @@ impl AnalysisSession {
             .unwrap_or("unknown")
             .to_string();
 
-        let has_crlf = detect_crlf(mmap.as_ref());
+        let has_crlf = detect_crlf(mmap.as_ref(), encoding);
         self.source = Some(Box::new(FileLogSource {
             source_id,
             source_name: name,
@@ -246,6 +247,7 @@ impl AnalysisSession {
             section_info: sections,
             indexing: false,
             has_crlf,
+            encoding,
         }));
 
         self.rebuild_timeline();
@@ -276,10 +278,11 @@ impl AnalysisSession {
         source_name: String,
     ) -> Result<(), String> {
         let data = Arc::new(data);
-        let source_type = detect_source_type_from_slice(&data);
+        let encoding = detect_encoding(&data);
+        let source_type = detect_source_type_with_encoding(&data, encoding);
         let parser = parser_for(&source_type);
         let (line_index, line_meta, _bytes_consumed) =
-            build_partial_line_index(&data, parser.as_ref(), &mut self.tag_interner, data.len());
+            build_partial_line_index(&data, parser.as_ref(), &mut self.tag_interner, data.len(), encoding);
         let sections = build_section_index(&line_meta, &source_type, &self.tag_interner, &data, &line_index);
 
         self.source = Some(Box::new(ZipLogSource {
@@ -290,6 +293,7 @@ impl AnalysisSession {
             line_index,
             line_meta,
             section_info: sections,
+            encoding,
         }));
         self.rebuild_timeline();
         Ok(())
@@ -316,10 +320,11 @@ impl AnalysisSession {
             unsafe { Mmap::map(&file) }.map_err(|e| format!("Cannot mmap file: {e}"))?,
         );
         let total_bytes = mmap.len();
-        let source_type = detect_source_type(&mmap);
+        let encoding = detect_encoding(mmap.as_ref());
+        let source_type = detect_source_type(&mmap, encoding);
         let parser = parser_for(&source_type);
         let (line_index, line_meta, bytes_consumed) =
-            build_partial_line_index(mmap.as_ref(), parser.as_ref(), &mut self.tag_interner, max_bytes);
+            build_partial_line_index(mmap.as_ref(), parser.as_ref(), &mut self.tag_interner, max_bytes, encoding);
         let sections = build_section_index(&line_meta, &source_type, &self.tag_interner, mmap.as_ref(), &line_index);
         let name = path
             .file_name()
@@ -328,7 +333,7 @@ impl AnalysisSession {
             .to_string();
         let is_indexing = bytes_consumed < total_bytes;
 
-        let has_crlf = detect_crlf(mmap.as_ref());
+        let has_crlf = detect_crlf(mmap.as_ref(), encoding);
         let mmap_clone = Arc::clone(&mmap);
         self.source = Some(Box::new(FileLogSource {
             source_id,
@@ -340,6 +345,7 @@ impl AnalysisSession {
             section_info: sections,
             indexing: is_indexing,
             has_crlf,
+            encoding,
         }));
 
         if !is_indexing {
@@ -413,13 +419,26 @@ impl AnalysisSession {
 // Source-type detection
 // ---------------------------------------------------------------------------
 
-fn detect_source_type(mmap: &Mmap) -> SourceType {
-    detect_source_type_from_slice(mmap.as_ref())
+fn detect_source_type(mmap: &Mmap, encoding: Encoding) -> SourceType {
+    detect_source_type_with_encoding(mmap.as_ref(), encoding)
 }
 
 pub fn detect_source_type_from_slice(data: &[u8]) -> SourceType {
+    detect_source_type_with_encoding(data, detect_encoding(data))
+}
+
+fn detect_source_type_with_encoding(data: &[u8], encoding: Encoding) -> SourceType {
     let sample = &data[..data.len().min(4096)];
-    let text = std::str::from_utf8(sample).unwrap_or("");
+    let decoded_buf: String;
+    let text: &str = match encoding {
+        Encoding::Utf8 => std::str::from_utf8(sample).unwrap_or(""),
+        Encoding::Utf16Le | Encoding::Utf16Be => {
+            let skip = encoding.bom_len();
+            let raw = &sample[skip..];
+            decoded_buf = decode_utf16_bytes(raw, encoding == Encoding::Utf16Be).unwrap_or_default();
+            &decoded_buf
+        }
+    };
 
     // Samsung dumpstate files start with "== dumpstate:" and are a superset of bugreport.
     // Standard ADB bugreports start with "Bugreport format version:".
@@ -502,10 +521,79 @@ fn intern_parsed_meta(parsed: ParsedLineMeta, interner: &mut TagInterner) -> Lin
     }
 }
 
+/// Parse a single line's bytes and push results into the index/meta vectors.
+/// Handles encoding-aware decode. For UTF-16, uses `decode_buf` to avoid per-line allocation.
+#[allow(clippy::too_many_arguments)]
+fn index_one_line(
+    data: &[u8],
+    start: usize,
+    end: usize,
+    encoding: Encoding,
+    parser: &dyn LogParser,
+    decode_buf: &mut String,
+    line_index: &mut Vec<u64>,
+    line_meta: &mut Vec<LineMeta>,
+    interner: &mut TagInterner,
+) {
+    let be = encoding == Encoding::Utf16Be;
+    // Strip trailing CR before the LF we already split on
+    let content_end = match encoding {
+        Encoding::Utf8 => {
+            if end > start && data[end - 1] == b'\r' { end - 1 } else { end }
+        }
+        Encoding::Utf16Le | Encoding::Utf16Be => {
+            if end >= start + 2 && is_utf16_cr(data[end - 2], data[end - 1], be) { end - 2 } else { end }
+        }
+    };
+
+    let byte_len = content_end - start;
+    let parsed = if byte_len > 0 {
+        // Decode line bytes to a &str for the parser
+        let decoded: Option<std::borrow::Cow<str>> = decode_line_bytes(data, start, content_end, encoding);
+        match decoded {
+            Some(s) if !s.trim().is_empty() => {
+                parser.parse_meta(s.trim(), start).unwrap_or(ParsedLineMeta {
+                    level: LogLevel::Info,
+                    tag: String::new(),
+                    timestamp: 0,
+                    byte_offset: start,
+                    byte_len,
+                    is_section_boundary: false,
+                })
+            }
+            _ => ParsedLineMeta {
+                level: LogLevel::Verbose,
+                tag: String::new(),
+                timestamp: 0,
+                byte_offset: start,
+                byte_len,
+                is_section_boundary: false,
+            },
+        }
+    } else {
+        ParsedLineMeta {
+            level: LogLevel::Verbose,
+            tag: String::new(),
+            timestamp: 0,
+            byte_offset: start,
+            byte_len: 0,
+            is_section_boundary: false,
+        }
+    };
+
+    // Suppress unused-variable warning — decode_buf is used by decode_line_bytes indirectly
+    // via the Cow::Owned path for UTF-16, but Rust can't see that through the function call.
+    let _ = decode_buf;
+
+    line_index.push(start as u64);
+    line_meta.push(intern_parsed_meta(parsed, interner));
+}
+
 fn build_line_index(
     mmap: &Mmap,
     source_type: &SourceType,
     interner: &mut TagInterner,
+    encoding: Encoding,
 ) -> (Vec<u64>, Vec<LineMeta>) {
     let parser: Box<dyn LogParser> = parser_for(source_type);
     let data = mmap.as_ref();
@@ -513,61 +601,30 @@ fn build_line_index(
     let estimate = (data.len() / 120).max(1024);
     let mut line_index: Vec<u64> = Vec::with_capacity(estimate + 1);
     let mut line_meta: Vec<LineMeta> = Vec::with_capacity(estimate);
+    let mut decode_buf = String::new();
 
-    let mut start = 0usize;
+    let mut start = encoding.bom_len();
     let len = data.len();
+    let be = encoding == Encoding::Utf16Be;
 
-    let index_line = |start: usize, end: usize, line_index: &mut Vec<u64>, line_meta: &mut Vec<LineMeta>, interner: &mut TagInterner| {
-        let content_end = if end > start && data[end - 1] == b'\r' {
-            end - 1
-        } else {
-            end
-        };
-
-        let byte_len = content_end - start;
-        let parsed = if byte_len > 0 {
-            match std::str::from_utf8(&data[start..content_end]) {
-                Ok(s) if !s.trim().is_empty() => {
-                    parser.parse_meta(s.trim(), start).unwrap_or(ParsedLineMeta {
-                        level: LogLevel::Info,
-                        tag: String::new(),
-                        timestamp: 0,
-                        byte_offset: start,
-                        byte_len,
-                        is_section_boundary: false,
-                    })
-                }
-                _ => ParsedLineMeta {
-                    level: LogLevel::Verbose,
-                    tag: String::new(),
-                    timestamp: 0,
-                    byte_offset: start,
-                    byte_len,
-                    is_section_boundary: false,
-                },
+    if encoding.is_utf16() {
+        let mut i = start;
+        while i + 1 < len {
+            if is_utf16_lf(data[i], data[i + 1], be) {
+                index_one_line(data, start, i, encoding, parser.as_ref(), &mut decode_buf, &mut line_index, &mut line_meta, interner);
+                start = i + 2;
             }
-        } else {
-            ParsedLineMeta {
-                level: LogLevel::Verbose,
-                tag: String::new(),
-                timestamp: 0,
-                byte_offset: start,
-                byte_len: 0,
-                is_section_boundary: false,
-            }
-        };
-
-        line_index.push(start as u64);
-        line_meta.push(intern_parsed_meta(parsed, interner));
-    };
-
-    for nl_pos in memchr_iter(b'\n', data) {
-        index_line(start, nl_pos, &mut line_index, &mut line_meta, interner);
-        start = nl_pos + 1;
+            i += 2;
+        }
+    } else {
+        for nl_pos in memchr_iter(b'\n', data) {
+            index_one_line(data, start, nl_pos, encoding, parser.as_ref(), &mut decode_buf, &mut line_index, &mut line_meta, interner);
+            start = nl_pos + 1;
+        }
     }
 
     if start < len {
-        index_line(start, len, &mut line_index, &mut line_meta, interner);
+        index_one_line(data, start, len, encoding, parser.as_ref(), &mut decode_buf, &mut line_index, &mut line_meta, interner);
     }
 
     line_index.push(len as u64);
@@ -584,6 +641,7 @@ pub(crate) fn build_partial_line_index(
     parser: &dyn LogParser,
     interner: &mut TagInterner,
     max_bytes: usize,
+    encoding: Encoding,
 ) -> (Vec<u64>, Vec<LineMeta>, usize) {
     let scan_limit = max_bytes.min(data.len());
     let estimate = (scan_limit / 120).max(1024);
@@ -591,62 +649,35 @@ pub(crate) fn build_partial_line_index(
     let mut line_meta: Vec<LineMeta> = Vec::with_capacity(estimate);
     let mut start = 0usize;
     let mut end_byte = 0usize;
+    let mut decode_buf = String::new();
+    let be = encoding == Encoding::Utf16Be;
 
-    let index_line = |start: usize, end: usize, line_index: &mut Vec<u64>, line_meta: &mut Vec<LineMeta>, interner: &mut TagInterner| {
-        let content_end = if end > start && data[end - 1] == b'\r' {
-            end - 1
-        } else {
-            end
-        };
-
-        let byte_len = content_end - start;
-        let parsed = if byte_len > 0 {
-            match std::str::from_utf8(&data[start..content_end]) {
-                Ok(s) if !s.trim().is_empty() => {
-                    parser.parse_meta(s.trim(), start).unwrap_or(ParsedLineMeta {
-                        level: LogLevel::Info,
-                        tag: String::new(),
-                        timestamp: 0,
-                        byte_offset: start,
-                        byte_len,
-                        is_section_boundary: false,
-                    })
+    if encoding.is_utf16() {
+        let mut i = 0usize;
+        while i + 1 < data.len() {
+            if is_utf16_lf(data[i], data[i + 1], be) {
+                index_one_line(data, start, i, encoding, parser, &mut decode_buf, &mut line_index, &mut line_meta, interner);
+                end_byte = i + 2;
+                start = end_byte;
+                if end_byte >= scan_limit && scan_limit < data.len() {
+                    break;
                 }
-                _ => ParsedLineMeta {
-                    level: LogLevel::Verbose,
-                    tag: String::new(),
-                    timestamp: 0,
-                    byte_offset: start,
-                    byte_len,
-                    is_section_boundary: false,
-                },
             }
-        } else {
-            ParsedLineMeta {
-                level: LogLevel::Verbose,
-                tag: String::new(),
-                timestamp: 0,
-                byte_offset: start,
-                byte_len: 0,
-                is_section_boundary: false,
+            i += 2;
+        }
+    } else {
+        for nl_pos in memchr_iter(b'\n', data) {
+            index_one_line(data, start, nl_pos, encoding, parser, &mut decode_buf, &mut line_index, &mut line_meta, interner);
+            end_byte = nl_pos + 1;
+            start = nl_pos + 1;
+            if end_byte >= scan_limit && scan_limit < data.len() {
+                break;
             }
-        };
-
-        line_index.push(start as u64);
-        line_meta.push(intern_parsed_meta(parsed, interner));
-    };
-
-    for nl_pos in memchr_iter(b'\n', data) {
-        index_line(start, nl_pos, &mut line_index, &mut line_meta, interner);
-        end_byte = nl_pos + 1;
-        start = nl_pos + 1;
-        if end_byte >= scan_limit && scan_limit < data.len() {
-            break;
         }
     }
 
     if start < data.len() && scan_limit == data.len() {
-        index_line(start, data.len(), &mut line_index, &mut line_meta, interner);
+        index_one_line(data, start, data.len(), encoding, parser, &mut decode_buf, &mut line_index, &mut line_meta, interner);
         end_byte = data.len();
     }
 
@@ -861,10 +892,11 @@ mod tests {
         let mmap = Arc::new(mmap);
 
         let mut interner = TagInterner::new();
-        let (line_index, line_meta) = build_line_index(&mmap, &SourceType::Logcat, &mut interner);
+        let encoding = detect_encoding(mmap.as_ref());
+        let (line_index, line_meta) = build_line_index(&mmap, &SourceType::Logcat, &mut interner, encoding);
         let sections = build_section_index(&line_meta, &SourceType::Logcat, &interner, &[], &[]);
 
-        let has_crlf = detect_crlf(mmap.as_ref());
+        let has_crlf = detect_crlf(mmap.as_ref(), encoding);
         let src = FileLogSource {
             source_id: "file-src".into(),
             source_name: "test.log".into(),
@@ -875,6 +907,7 @@ mod tests {
             section_info: sections,
             indexing: false,
             has_crlf,
+            encoding,
         };
         (src, mmap)
     }
@@ -1171,7 +1204,7 @@ mod tests {
         -> (Vec<u64>, Vec<LineMeta>, usize, TagInterner)
     {
         let mut interner = TagInterner::new();
-        let (idx, meta, consumed) = build_partial_line_index(data, parser, &mut interner, max_bytes);
+        let (idx, meta, consumed) = build_partial_line_index(data, parser, &mut interner, max_bytes, Encoding::Utf8);
         (idx, meta, consumed, interner)
     }
 
@@ -1207,7 +1240,7 @@ mod tests {
         while cursor < data.len() {
             let remaining = &data[cursor..];
             let (mut chunk_idx, mut chunk_meta, bytes_in_chunk) =
-                build_partial_line_index(remaining, parser, &mut interner, chunk_bytes);
+                build_partial_line_index(remaining, parser, &mut interner, chunk_bytes, Encoding::Utf8);
 
             if bytes_in_chunk == 0 {
                 break;
@@ -1439,13 +1472,13 @@ mod tests {
 
         let half = data.len() / 2;
         let (part_idx, part_meta, consumed) =
-            build_partial_line_index(&data, &parser, &mut interner, half);
+            build_partial_line_index(&data, &parser, &mut interner, half, Encoding::Utf8);
         let part_count = line_count(&part_idx);
         assert!(part_count > 0 && part_count < 10);
 
         let remaining = &data[consumed..];
         let (mut ext_idx, mut ext_meta, _) =
-            build_partial_line_index(remaining, &parser, &mut interner, remaining.len() + 100);
+            build_partial_line_index(remaining, &parser, &mut interner, remaining.len() + 100, Encoding::Utf8);
         for offset in ext_idx.iter_mut() {
             *offset += consumed as u64;
         }
@@ -1474,7 +1507,8 @@ mod tests {
             line_meta: part_meta,
             section_info: Vec::new(),
             indexing: true,
-            has_crlf: detect_crlf(mmap.as_ref()),
+            has_crlf: detect_crlf(mmap.as_ref(), Encoding::Utf8),
+            encoding: Encoding::Utf8,
         }));
 
         let source = session.primary_source().unwrap();
@@ -1628,7 +1662,7 @@ mod tests {
 
         let mut interner = TagInterner::new();
         let (part_idx, part_meta, _consumed) =
-            build_partial_line_index(&data, &parser, &mut interner, data.len() + 100);
+            build_partial_line_index(&data, &parser, &mut interner, data.len() + 100, Encoding::Utf8);
 
         let mut mmap_mut = memmap2::MmapOptions::new()
             .len(data.len())
@@ -1650,7 +1684,8 @@ mod tests {
             line_meta: part_meta,
             section_info: Vec::new(),
             indexing: true,
-            has_crlf: detect_crlf(mmap.as_ref()),
+            has_crlf: detect_crlf(mmap.as_ref(), Encoding::Utf8),
+            encoding: Encoding::Utf8,
         }));
 
         let sentinel = *part_idx.last().unwrap_or(&0);

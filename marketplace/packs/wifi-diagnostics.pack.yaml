@@ -1,11 +1,14 @@
 name: WiFi Diagnostics
-version: 1.0.0
-description: Full WiFi connection analysis — state tracking, disconnect events, and probe monitoring
+version: 2.0.0
+description: Full WiFi connection analysis — state tracking, disconnect events, probe monitoring, and Wi-Fi Direct P2P group formation diagnostics
 author: LogTapper
-tags: [network, wifi, android]
+tags: [network, wifi, p2p, android]
 category: network
 processors:
   - wifi-state
   - wlan-disconnect-events
   - wlan-disconnect-tracker
   - connectivity-check-probes
+  - p2p-group-formation-tracker
+  - p2p-go-negotiation-events
+  - p2p-wps-provisioning-tracker

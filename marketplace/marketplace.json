@@ -1,6 +1,6 @@
 {
   "name": "official",
-  "version": 6,
+  "version": 7,
   "owner": {
     "name": "LogTapper"
   },
@@ -663,18 +663,86 @@
         "bugreport"
       ],
       "deprecated": false
+    },
+    {
+      "id": "p2p-group-formation-tracker",
+      "name": "P2P Group Formation Tracker",
+      "version": "1.0.0",
+      "description": "Tracks Wi-Fi Direct (P2P) group formation lifecycle from discovery through GO Negotiation, client association, and group teardown. Detects GO Negotiation race conditions, formation timeouts (15 second spec deadline), and client association failures.",
+      "path": "processors/p2p_group_formation_tracker.yaml",
+      "tags": [
+        "network",
+        "wifi",
+        "p2p",
+        "wifi-direct",
+        "android"
+      ],
+      "sha256": "",
+      "category": "network",
+      "license": null,
+      "processor_type": "state_tracker",
+      "source_types": [
+        "logcat"
+      ],
+      "deprecated": false
+    },
+    {
+      "id": "p2p-go-negotiation-events",
+      "name": "P2P GO Negotiation Events",
+      "version": "1.0.0",
+      "description": "Emits events for every Wi-Fi Direct GO Negotiation exchange — requests, responses, confirms, race conditions, and timeouts. Tracks negotiation success/failure rates and detects simultaneous initiation race conditions.",
+      "path": "processors/p2p_go_negotiation_events.yaml",
+      "tags": [
+        "network",
+        "wifi",
+        "p2p",
+        "wifi-direct",
+        "android"
+      ],
+      "sha256": "",
+      "category": "network",
+      "license": null,
+      "processor_type": "reporter",
+      "source_types": [
+        "logcat"
+      ],
+      "deprecated": false
+    },
+    {
+      "id": "p2p-wps-provisioning-tracker",
+      "name": "P2P WPS Provisioning Tracker",
+      "version": "1.0.0",
+      "description": "Tracks WPS provisioning during Wi-Fi Direct group formation — EAP authentication, WPS M1-M8 message exchange, and 4-way handshake. Detects WPS failures, EAP timeouts, and authentication rejections.",
+      "path": "processors/p2p_wps_provisioning_tracker.yaml",
+      "tags": [
+        "network",
+        "wifi",
+        "p2p",
+        "wifi-direct",
+        "wps",
+        "android"
+      ],
+      "sha256": "",
+      "category": "network",
+      "license": null,
+      "processor_type": "state_tracker",
+      "source_types": [
+        "logcat"
+      ],
+      "deprecated": false
     }
   ],
   "packs": [
     {
       "id": "wifi-diagnostics",
       "name": "WiFi Diagnostics",
-      "version": "1.0.0",
-      "description": "Full WiFi connection analysis \u2014 state tracking, disconnect events, and probe monitoring",
+      "version": "2.0.0",
+      "description": "Full WiFi connection analysis \u2014 state tracking, disconnect events, probe monitoring, and Wi-Fi Direct P2P group formation diagnostics",
       "path": "packs/wifi-diagnostics.pack.yaml",
       "tags": [
         "network",
         "wifi",
+        "p2p",
         "android"
       ],
       "category": "network",
@@ -682,7 +750,10 @@
         "wifi-state",
         "wlan-disconnect-events",
         "wlan-disconnect-tracker",
-        "connectivity-check-probes"
+        "connectivity-check-probes",
+        "p2p-group-formation-tracker",
+        "p2p-go-negotiation-events",
+        "p2p-wps-provisioning-tracker"
       ],
       "sha256": ""
     },
