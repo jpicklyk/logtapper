@@ -1,0 +1,244 @@
+type: state_tracker
+id: p2p-group-formation-tracker
+name: P2P Group Formation Tracker
+version: 1.0.0
+author: LogTapper
+description: "Tracks Wi-Fi Direct (P2P) group formation lifecycle from discovery through GO Negotiation, client association, and group teardown. Detects GO Negotiation race conditions, formation timeouts (Wi-Fi P2P Technical Specification Section 3.1.4 — 15 second deadline), and client association failures. Monitors both GO and Client roles."
+tags: [network, wifi, p2p, wifi-direct, android]
+category: network
+builtin: false
+
+group: Network
+
+state:
+  - name: formation_state
+    type: string
+    default: "idle"
+  - name: role
+    type: string
+    default: "unknown"
+  - name: peer_device
+    type: string
+  - name: peer_mac
+    type: string
+  - name: operating_freq
+    type: string
+  - name: go_neg_status
+    type: string
+    default: "none"
+  - name: failure_reason
+    type: string
+    default: "none"
+  - name: race_detected
+    type: bool
+    default: false
+  - name: group_interface
+    type: string
+  - name: ssid
+    type: string
+
+transitions:
+  # ── Discovery Phase ────────────────────────────────────────────────────
+
+  - name: P2P Search Started
+    filter:
+      tag: wpa_supplicant
+      message_contains: "State IDLE -> SEARCH"
+    set:
+      formation_state: "searching"
+      failure_reason: "none"
+      race_detected: false
+
+  - name: P2P Device Found
+    filter:
+      tag: WifiP2pService
+      message_regex: "P2P_DEVICE_FOUND_EVENT.*Device:\\s+(\\S+)"
+    set:
+      formation_state: "device_found"
+      peer_device: $1
+
+  # ── GO Negotiation Phase ───────────────────────────────────────────────
+
+  - name: GO Negotiation Started
+    filter:
+      tag: wpa_supplicant
+      message_regex: "GO Negotiation with ([0-9a-fA-F:]{17})$"
+    set:
+      formation_state: "go_negotiation"
+      peer_mac: $1
+
+  - name: GO Negotiation Race Detected
+    filter:
+      tag: wpa_supplicant
+      message_contains: "Was not expecting GO Negotiation Response"
+    set:
+      race_detected: true
+
+  - name: GO Neg Success - Local is GO
+    filter:
+      tag: wpa_supplicant
+      message_regex: "P2P-GO-NEG-SUCCESS role=GO freq=(\\d+).*peer_dev=([0-9a-fA-F:]{17})"
+    set:
+      formation_state: "provisioning"
+      role: "GO"
+      operating_freq: $1
+      peer_mac: $2
+      go_neg_status: "success"
+
+  - name: GO Neg Success - Local is Client
+    filter:
+      tag: wpa_supplicant
+      message_regex: "P2P-GO-NEG-SUCCESS role=client freq=(\\d+).*peer_dev=([0-9a-fA-F:]{17})"
+    set:
+      formation_state: "provisioning"
+      role: "client"
+      operating_freq: $1
+      peer_mac: $2
+      go_neg_status: "success"
+
+  - name: GO Neg Failed
+    filter:
+      tag: WifiP2pService
+      message_contains: "P2P_GO_NEGOTIATION_FAILURE_EVENT"
+    set:
+      formation_state: "failed"
+      go_neg_status: "failed"
+      failure_reason: "go_negotiation_failed"
+
+  # ── Group Interface Setup ──────────────────────────────────────────────
+
+  - name: Group Interface Created
+    filter:
+      tag: wpa_supplicant
+      message_regex: "Initializing interface '(p2p-wlan\\d+-\\d+)'"
+    set:
+      group_interface: $1
+
+  - name: GO Beaconing (SSID)
+    filter:
+      tag: wpa_supplicant
+      message_regex: 'hwaddr.*ssid "(DIRECT-[^"]+)"'
+    set:
+      ssid: $1
+
+  - name: GO AP Setup Complete
+    filter:
+      tag: wpa_supplicant
+      message_regex: "hostapd_setup_bss.*p2p-wlan"
+    set:
+      formation_state: "awaiting_client"
+
+  # ── Client Association (monitors the 15s spec deadline) ────────────────
+
+  - name: Client Association Received
+    filter:
+      tag: wpa_supplicant
+      message_regex: "hostapd_logger: STA ([0-9a-fA-F:]{17}).*start authentication"
+    set:
+      formation_state: "authenticating"
+      peer_mac: $1
+
+  - name: WPS Provisioning Started
+    filter:
+      tag: wpa_supplicant
+      message_contains: "WPS: Starting WPS"
+    set:
+      formation_state: "wps_provisioning"
+
+  # ── Group Formed ───────────────────────────────────────────────────────
+
+  - name: P2P Group Started
+    filter:
+      tag: WifiP2pService
+      message_contains: "P2P_GROUP_STARTED_EVENT"
+    set:
+      formation_state: "formed"
+      failure_reason: "none"
+
+  - name: Tethering Active
+    filter:
+      tag: Tethering
+      message_regex: "adding IpServer for: (p2p-wlan\\d+-\\d+)"
+    set:
+      formation_state: "formed"
+      group_interface: $1
+
+  # ── Failure / Teardown ─────────────────────────────────────────────────
+  # Order matters: Group Removed (clean) must come before interface removal
+  # so that normal disconnects don't get flagged as formation timeouts.
+
+  - name: Group Removed
+    filter:
+      tag: WifiP2pService
+      message_contains: "P2P_GROUP_REMOVED_EVENT"
+    set:
+      formation_state: "idle"
+    clear:
+      - role
+      - peer_device
+      - peer_mac
+      - operating_freq
+      - group_interface
+      - ssid
+
+  - name: Tethering Removed
+    filter:
+      tag: Tethering
+      message_regex: "removing IpServer for: p2p-wlan"
+    set:
+      formation_state: "teardown"
+
+  - name: Formation Timeout (Interface Removed Without Group)
+    filter:
+      tag: wpa_supplicant
+      message_regex: "Remove interface (p2p-wlan\\d+-\\d+) from radio"
+    set:
+      formation_state: "failed"
+      failure_reason: "formation_timeout"
+
+  - name: P2P Disabled
+    filter:
+      tag: WifiP2pService
+      message_contains: "DISABLE_P2P"
+    set:
+      formation_state: "idle"
+    clear:
+      - role
+      - peer_device
+      - peer_mac
+      - operating_freq
+      - failure_reason
+      - group_interface
+      - ssid
+      - race_detected
+
+output:
+  timeline: true
+  annotate: true
+
+schema:
+  source_types: ["logcat"]
+  emissions: []
+  mcp:
+    summary:
+      template: "P2P Group Formation: state={{formation_state}}, role={{role}}, peer={{peer_device}} ({{peer_mac}}), freq={{operating_freq}}, failure={{failure_reason}}, race_detected={{race_detected}}"
+      include_vars: []
+    signals:
+      - name: formation_timeout
+        severity: critical
+        condition: "failure_reason == 'formation_timeout'"
+        fields: [formation_state, role, peer_mac, operating_freq, failure_reason]
+        format: "P2P Group Formation timed out — client {{peer_mac}} did not associate within spec deadline (Section 3.1.4)"
+        type: aggregate
+      - name: go_neg_race
+        severity: warning
+        condition: "race_detected == true"
+        fields: [race_detected, peer_mac]
+        format: "GO Negotiation race condition detected — both devices initiated simultaneously"
+        type: aggregate
+      - name: go_neg_failed
+        severity: critical
+        condition: "go_neg_status == 'failed'"
+        fields: [go_neg_status, peer_mac]
+        format: "GO Negotiation failed with peer {{peer_mac}}"
+        type: aggregate

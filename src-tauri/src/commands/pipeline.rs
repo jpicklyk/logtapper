@@ -10,7 +10,7 @@ use crate::commands::pipeline_core::{
     excluded_by_source_type, PartitionedDefs, PipelineCore,
 };
 use crate::core::line::PipelineContext;
-use crate::core::log_source::{FileLogSource, ZipLogSource};
+use crate::core::log_source::{decode_line_bytes, Encoding, FileLogSource, ZipLogSource};
 use crate::core::session::parser_for;
 use crate::processors::ProcessorKind;
 use crate::processors::marketplace::resolve_processor_id;
@@ -61,6 +61,7 @@ enum SourceSnapshot {
     File {
         mmap: Arc<memmap2::Mmap>,
         line_index: Vec<u64>,
+        encoding: Encoding,
     },
     Stream {
         raw_lines: Vec<String>,
@@ -68,6 +69,7 @@ enum SourceSnapshot {
     Zip {
         data: Arc<Vec<u8>>,
         line_index: Vec<u64>,
+        encoding: Encoding,
     },
 }
 
@@ -85,33 +87,23 @@ impl SourceSnapshot {
         }
     }
 
-    fn raw_line(&self, n: usize) -> Option<&str> {
+    fn raw_line(&self, n: usize) -> Option<std::borrow::Cow<'_, str>> {
         match self {
-            SourceSnapshot::File { mmap, line_index } => {
+            SourceSnapshot::File { mmap, line_index, encoding } => {
                 if n + 1 >= line_index.len() {
                     return None;
                 }
                 let start = line_index[n] as usize;
                 let end = line_index[n + 1] as usize;
-                // Guard against corrupt/stale offsets (can happen during concurrent indexing)
                 if start >= end || end > mmap.len() {
                     return None;
                 }
-                // Trim trailing \n and \r\n
-                let slice = &mmap[start..end];
-                let trimmed = if slice.ends_with(b"\r\n") {
-                    &slice[..slice.len() - 2]
-                } else if slice.ends_with(b"\n") {
-                    &slice[..slice.len() - 1]
-                } else {
-                    slice
-                };
-                std::str::from_utf8(trimmed).ok()
+                decode_line_bytes(mmap.as_ref(), start, end, *encoding)
             }
             SourceSnapshot::Stream { raw_lines } => {
-                raw_lines.get(n).map(std::string::String::as_str)
+                raw_lines.get(n).map(|s| std::borrow::Cow::Borrowed(s.as_str()))
             }
-            SourceSnapshot::Zip { data, line_index } => {
+            SourceSnapshot::Zip { data, line_index, encoding } => {
                 if n + 1 >= line_index.len() {
                     return None;
                 }
@@ -120,15 +112,7 @@ impl SourceSnapshot {
                 if start >= end || end > data.len() {
                     return None;
                 }
-                // Trim trailing \r\n or \n
-                let mut slice_end = end;
-                if slice_end > start && data[slice_end - 1] == b'\n' {
-                    slice_end -= 1;
-                }
-                if slice_end > start && data[slice_end - 1] == b'\r' {
-                    slice_end -= 1;
-                }
-                std::str::from_utf8(&data[start..slice_end]).ok()
+                decode_line_bytes(data.as_ref(), start, end, *encoding)
             }
         }
     }
@@ -196,17 +180,20 @@ pub fn execute_pipeline(
 
         let sid = src.id().to_string();
         let stype = src.source_type().clone();
+        let src_encoding = src.encoding();
 
         // Build snapshot by downcasting to concrete type
         let snapshot = if let Some(file_src) = src.as_any().downcast_ref::<FileLogSource>() {
             SourceSnapshot::File {
                 mmap: Arc::clone(file_src.mmap()),
                 line_index: file_src.line_index().to_vec(),
+                encoding: src_encoding,
             }
         } else if let Some(zip_src) = src.as_any().downcast_ref::<ZipLogSource>() {
             SourceSnapshot::Zip {
                 data: Arc::clone(zip_src.data()),
                 line_index: zip_src.line_index().to_vec(),
+                encoding: src_encoding,
             }
         } else {
             // StreamLogSource — clone the raw lines
@@ -279,8 +266,9 @@ pub fn execute_pipeline(
         let line_indices: Vec<usize> = if core.prefilter.is_active() {
             (chunk_start..chunk_end)
                 .filter(|&n| {
-                    let raw = source_snapshot.raw_line(n).unwrap_or("");
-                    core.prefilter.should_process(raw)
+                    let raw = source_snapshot.raw_line(n);
+                    let raw_str = raw.as_deref().unwrap_or("");
+                    core.prefilter.should_process(raw_str)
                 })
                 .collect()
         } else {
@@ -293,8 +281,9 @@ pub fn execute_pipeline(
         let mut parsed_chunk: Vec<Option<crate::core::line::LineContext>> = line_indices
             .into_par_iter()
             .map(|n| {
-                let raw = source_snapshot.raw_line(n).unwrap_or("");
-                parser.parse_line(raw, &source_id, n)
+                let raw = source_snapshot.raw_line(n);
+                let raw_str = raw.as_deref().unwrap_or("");
+                parser.parse_line(raw_str, &source_id, n)
             })
             .collect();
 

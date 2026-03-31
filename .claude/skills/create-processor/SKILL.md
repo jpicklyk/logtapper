@@ -383,7 +383,7 @@ schema:
       include_vars: [var_name, other_var]   # vars to include in MCP context
     signals:
       - name: signal_name
-        severity: critical                  # critical, warning, info
+        severity: critical                  # ONLY: critical, warning, info — NOT "error"
         condition: "field_name > threshold" # filter expression on emissions
         fields: [field_name]               # which emission fields to include
         format: "Alert: {{field_name}} exceeded threshold"
@@ -485,3 +485,6 @@ Before delivering a processor YAML, verify:
 - [ ] `schema.source_types` matches where the processor actually works
 - [ ] Variable types match their usage (int fields don't get string assignments)
 - [ ] Aggregate type is one of: count, count_by, burst_detector
+- [ ] Signal severity is one of: `critical`, `warning`, `info` — NOT `error` (will fail YAML parse at install time)
+- [ ] Signal type is one of: `emission`, `aggregate` — NOT `state` (will fail YAML parse at install time)
+- [ ] Reporter filter rules use `type: tag_match` with `tags: [...]` array — NOT `type: tag` with `value:`

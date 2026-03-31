@@ -1,0 +1,265 @@
+meta:
+  id: "p2p-go-negotiation-events"
+  name: "P2P GO Negotiation Events"
+  version: "1.0.0"
+  author: "LogTapper"
+  description: "Emits events for every Wi-Fi Direct GO Negotiation exchange — requests, responses, confirms, race conditions, and timeouts. Tracks negotiation success/failure rates and detects simultaneous initiation (race conditions per Wi-Fi P2P Technical Specification Section 3.1.4.2). Aggregates negotiation timing and outcome statistics."
+  tags: ["network", "wifi", "p2p", "wifi-direct", "android"]
+  category: network
+
+vars:
+  - name: total_negotiations
+    type: int
+    default: 0
+    display: true
+    label: "Total Negotiations"
+
+  - name: successful
+    type: int
+    default: 0
+    display: true
+    label: "Successful"
+
+  - name: failed
+    type: int
+    default: 0
+    display: true
+    label: "Failed"
+
+  - name: race_conditions
+    type: int
+    default: 0
+    display: true
+    label: "Race Conditions"
+
+  - name: formation_timeouts
+    type: int
+    default: 0
+    display: true
+    label: "Formation Timeouts"
+
+  - name: unexpected_responses
+    type: int
+    default: 0
+    display: true
+    label: "Unexpected Responses"
+
+  - name: peer_counts
+    type: map
+    default: {}
+    display: true
+    label: "Negotiations per Peer"
+    display_as: table
+    columns: ["peer", "count"]
+
+  - name: outcome_counts
+    type: map
+    default: {}
+    display: true
+    label: "Outcomes"
+    display_as: table
+    columns: ["outcome", "count"]
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: tag_match
+        tags: ["wpa_supplicant"]
+      - type: message_contains_any
+        values:
+          - "GO Negotiation with"
+          - "GO Negotiation Request"
+          - "Received GO Negotiation Response"
+          - "Received GO Negotiation Confirm"
+          - "GO Negotiation Response TX callback"
+          - "P2P-GO-NEG-SUCCESS"
+          - "Was not expecting GO Negotiation Response"
+          - "Sending GO Negotiation Response"
+          - "Timeout (state=CONNECT)"
+          - "Timeout (state=WAIT_PEER_IDLE)"
+          - "Timeout (state=WAIT_PEER_CONNECT)"
+          - "Provision Discovery Request TX"
+
+  - stage: extract
+    fields:
+      - name: peer_mac
+        pattern: '(?:from|with) ([0-9a-fA-F:]{17})'
+        cast: string
+      - name: freq
+        pattern: 'freq=(\d+)'
+        cast: int
+      - name: role
+        pattern: 'role=(\w+)'
+        cast: string
+      - name: status_code
+        pattern: 'status[=:](\d+)'
+        cast: int
+      - name: wps_method
+        pattern: 'wps_method=(\w+)'
+        cast: string
+      - name: success_flag
+        pattern: 'success=(\d)'
+        cast: int
+
+  - stage: script
+    runtime: rhai
+    src: |
+      let msg = line.message;
+      let peer = if "peer_mac" in fields { fields.peer_mac } else { "unknown" };
+
+      // Classify the event
+      let event_type = "unknown";
+      let outcome = "";
+
+      if "Was not expecting GO Negotiation Response" in msg {
+        event_type = "unexpected_response";
+        outcome = "race_condition";
+        vars.unexpected_responses += 1;
+        vars.race_conditions += 1;
+      } else if "Received GO Negotiation Confirm" in msg {
+        event_type = "go_neg_confirm_rx";
+      } else if "Received GO Negotiation Response" in msg {
+        event_type = "go_neg_response_rx";
+      } else if "Received GO Negotiation Request" in msg {
+        event_type = "go_neg_request_rx";
+      } else if "GO Negotiation Response TX callback" in msg {
+        event_type = "go_neg_response_tx";
+        if "success_flag" in fields {
+          outcome = if fields.success_flag == 1 { "tx_success" } else { "tx_failed" };
+        }
+      } else if "Sending GO Negotiation Response" in msg {
+        event_type = "go_neg_response_sending";
+        if "status_code" in fields {
+          outcome = "status_" + fields.status_code.to_string();
+        }
+      } else if "P2P-GO-NEG-SUCCESS" in msg {
+        event_type = "go_neg_success";
+        vars.total_negotiations += 1;
+        vars.successful += 1;
+        outcome = "success";
+
+        let role_val = if "role" in fields { fields.role } else { "unknown" };
+        outcome = "success_as_" + role_val;
+
+        // Count per peer
+        let m = vars.peer_counts;
+        if peer in m { m[peer] = m[peer] + 1; } else { m[peer] = 1; }
+        vars.peer_counts = m;
+      } else if "GO Negotiation with" in msg {
+        event_type = "go_neg_started";
+      } else if "Timeout (state=CONNECT)" in msg
+            || "Timeout (state=WAIT_PEER_IDLE)" in msg
+            || "Timeout (state=WAIT_PEER_CONNECT)" in msg {
+        event_type = "go_neg_timeout";
+        vars.total_negotiations += 1;
+        vars.failed += 1;
+        outcome = "timeout";
+      } else if "Provision Discovery Request TX" in msg {
+        event_type = "provision_discovery_tx";
+        if "success_flag" in fields {
+          outcome = if fields.success_flag == 1 { "tx_success" } else { "tx_failed" };
+        }
+      }
+
+      // Count outcomes
+      if outcome != "" {
+        let oc = vars.outcome_counts;
+        if outcome in oc { oc[outcome] = oc[outcome] + 1; } else { oc[outcome] = 1; }
+        vars.outcome_counts = oc;
+      }
+
+      let freq_val = if "freq" in fields { fields.freq.to_string() } else { "" };
+      let role_val = if "role" in fields { fields.role } else { "" };
+      let wps_val  = if "wps_method" in fields { fields.wps_method } else { "" };
+
+      _emits.push(#{
+        event_type: event_type,
+        peer_mac: peer,
+        freq: freq_val,
+        role: role_val,
+        wps_method: wps_val,
+        outcome: outcome,
+        tag: line.tag,
+      });
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["event_type", "peer_mac", "freq", "role", "outcome"]
+        sort: "event_type"
+      - type: summary
+        source: vars
+        template: |
+          {{total_negotiations}} GO negotiations: {{successful}} succeeded, {{failed}} failed.
+          Race conditions: {{race_conditions}} | Unexpected responses: {{unexpected_responses}} | Formation timeouts: {{formation_timeouts}}
+
+    charts:
+      - id: event_type_bar
+        type: bar
+        title: "GO Negotiation Events by Type"
+        source: emissions
+        x: { field: event_type, label: "Event Type" }
+        y: { field: event_type, label: "Count", aggregation: count }
+
+      - id: outcome_bar
+        type: bar
+        title: "Negotiation Outcomes"
+        source: emissions
+        x: { field: outcome, label: "Outcome" }
+        y: { field: outcome, label: "Count", aggregation: count }
+
+      - id: timeline
+        type: time_series
+        title: "GO Negotiation Events Over Time"
+        source: emissions
+        x: { field: timestamp, label: "Time" }
+        y: { field: event_type, label: "Events", aggregation: count }
+
+schema:
+  source_types: ["logcat"]
+  emissions:
+    - name: event_type
+      type: string
+      description: "GO Negotiation event type (go_neg_started, go_neg_response_rx, go_neg_confirm_rx, go_neg_success, unexpected_response, go_neg_timeout, provision_discovery_tx)"
+    - name: peer_mac
+      type: string
+      description: "MAC address of the P2P peer"
+    - name: freq
+      type: string
+      description: "Operating frequency in MHz"
+    - name: role
+      type: string
+      description: "Negotiated role (GO or client)"
+    - name: wps_method
+      type: string
+      description: "WPS method (PBC, PIN, etc.)"
+    - name: outcome
+      type: string
+      description: "Outcome classification (success, race_condition, timeout, tx_success, tx_failed)"
+    - name: tag
+      type: string
+      description: "Log tag from the source line"
+  mcp:
+    summary:
+      template: "{{total_negotiations}} GO negotiations: {{successful}} succeeded, {{failed}} failed. Race conditions: {{race_conditions}}. Formation timeouts: {{formation_timeouts}}."
+      include_vars: [total_negotiations, successful, failed, race_conditions, formation_timeouts]
+    signals:
+      - name: race_condition_detected
+        severity: warning
+        condition: "race_conditions > 0"
+        fields: [race_conditions, unexpected_responses]
+        format: "{{race_conditions}} GO Negotiation race condition(s) — both devices initiated simultaneously (Section 3.1.4.2)"
+        type: aggregate
+      - name: negotiation_failures
+        severity: critical
+        condition: "failed > 0"
+        fields: [failed, total_negotiations]
+        format: "{{failed}} of {{total_negotiations}} GO Negotiations failed"
+        type: aggregate
+      - name: high_failure_rate
+        severity: critical
+        condition: "failed > successful"
+        fields: [failed, successful]
+        format: "More GO Negotiations failed ({{failed}}) than succeeded ({{successful}}) — connectivity issue"
+        type: aggregate

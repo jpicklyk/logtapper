@@ -105,6 +105,8 @@ export interface LoadResult {
   isIndexing: boolean;
   /** True if the file uses CRLF line endings. Always false for streams. */
   hasCrlf: boolean;
+  /** Detected file encoding (e.g. "UTF-8", "UTF-16 LE", "UTF-16 BE"). */
+  encoding: string;
 }
 
 // ---------------------------------------------------------------------------

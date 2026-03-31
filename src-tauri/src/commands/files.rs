@@ -100,6 +100,8 @@ pub struct LoadResult {
     pub is_indexing: bool,
     /// True if the file uses CRLF (`\r\n`) line endings. Always false for streams.
     pub has_crlf: bool,
+    /// Detected file encoding (e.g. "UTF-8", "UTF-16 LE", "UTF-16 BE").
+    pub encoding: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -180,6 +182,7 @@ pub async fn load_log_file(
     let is_indexing = source.is_indexing();
     let has_crlf = source.has_crlf();
     let source_type = source.source_type().clone();
+    let encoding = source.encoding();
 
     let result = LoadResult {
         session_id: session_id.clone(),
@@ -194,6 +197,7 @@ pub async fn load_log_file(
         is_streaming: false,
         is_indexing,
         has_crlf,
+        encoding: encoding.display_name().to_string(),
     };
 
     {
@@ -220,6 +224,7 @@ pub async fn load_log_file(
                 sid,
                 mmap_arc,
                 source_type,
+                encoding,
                 bytes_consumed,
                 total_bytes,
                 initial_line_count,
@@ -287,6 +292,7 @@ fn load_lts_file_inner(
         is_streaming: false,
         is_indexing: false, // ZipLogSource is fully indexed
         has_crlf: source.has_crlf(),
+        encoding: source.encoding().display_name().to_string(),
     };
 
     // 4. Insert session (brief lock)
@@ -462,6 +468,7 @@ async fn run_background_indexer(
     session_id: String,
     mmap: Arc<Mmap>,
     source_type: crate::core::session::SourceType,
+    encoding: crate::core::log_source::Encoding,
     start_byte: usize,
     total_bytes: usize,
     initial_line_count: usize,
@@ -481,8 +488,15 @@ async fn run_background_indexer(
     // header was in the initial chunk (already indexed), so re-feed that one
     // line to the fresh parser before it processes the remaining chunks.
     if matches!(source_type, crate::core::session::SourceType::Bugreport | crate::core::session::SourceType::Dumpstate) && start_byte > 0 {
-        let initial = std::str::from_utf8(&data[..start_byte.min(data.len())]).unwrap_or("");
-        for line in initial.lines() {
+        let initial_text: String = if encoding.is_utf16() {
+            crate::core::log_source::decode_utf16_bytes(
+                &data[encoding.bom_len()..start_byte.min(data.len())],
+                encoding == crate::core::log_source::Encoding::Utf16Be,
+            ).unwrap_or_default()
+        } else {
+            std::str::from_utf8(&data[..start_byte.min(data.len())]).unwrap_or("").to_string()
+        };
+        for line in initial_text.lines() {
             if line.trim_start().starts_with("== dumpstate:") {
                 let _ = parser.parse_meta(line.trim(), 0);
                 break;
@@ -520,6 +534,7 @@ async fn run_background_indexer(
                     parser.as_ref(),
                     &mut session.tag_interner,
                     CHUNK_BYTES,
+                    encoding,
                 );
 
             if bytes_in_chunk == 0 {
