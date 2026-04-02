@@ -27,6 +27,7 @@ pub mod export;
 pub mod file_associations;
 pub mod files;
 pub mod filter;
+pub mod mcp;
 pub mod pipeline;
 pub mod pipeline_core;
 pub mod processors;

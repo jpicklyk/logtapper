@@ -22,6 +22,7 @@ import { BottomPane } from '../../components/BottomPane';
 import { PaneContent } from '../../components/PaneContent';
 import { SettingsPanel } from '../../components/SettingsPanel';
 import { useSettings, useAnonymizerConfig, useToast, useAnalysisToast, useWatchToast, useWorkspaceRestoreToast, useFileShortcuts, useStartupFile } from '../../hooks';
+import { startMcpBridge } from '../../bridge/commands';
 import { useCacheManager } from '../../cache';
 import { Toast } from '../../ui';
 import { findTabAcrossTree, allPanes } from '../../hooks/workspace/splitTreeHelpers';
@@ -76,6 +77,15 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   const { openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession } = useViewerActions();
   useFileShortcuts({ openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession });
   useStartupFile();
+
+  // Start MCP bridge on mount if the user has it enabled.
+  // Only runs once — runtime toggling is handled by the Settings panel (Task 4).
+  useEffect(() => {
+    if (settingsHook.settings.mcpBridgeEnabled) {
+      startMcpBridge().catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally empty — run once on mount only
 
   // -- Watch badge (unacknowledged match count on Eye icon) --
   const [watchBadge, setWatchBadge] = useState(0);

@@ -173,6 +173,10 @@ pub async fn start(handle: Handle, shutdown_rx: tokio::sync::oneshot::Receiver<(
             if let Ok(mut p) = state.mcp_bridge_port.lock() {
                 *p = None;
             }
+            // Clear the shutdown sender so start_mcp_bridge can restart cleanly.
+            if let Ok(mut s) = state.mcp_bridge_shutdown.lock() {
+                s.take();
+            }
             log::info!("MCP bridge stopped");
         }
         Err(e) => {
@@ -180,6 +184,11 @@ pub async fn start(handle: Handle, shutdown_rx: tokio::sync::oneshot::Receiver<(
                 "MCP bridge: cannot bind to 127.0.0.1:{PORT} — {e}. \
                  Is another instance running?"
             );
+            // Clear the shutdown sender on bind failure too, so the bridge can be restarted.
+            let state = handle.state::<AppState>();
+            if let Ok(mut s) = state.mcp_bridge_shutdown.lock() {
+                s.take();
+            }
         }
     }
 }

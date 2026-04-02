@@ -596,3 +596,15 @@ export function uninstallPackFromMarketplace(
 export function uninstallPack(packId: string): Promise<void> {
   return invoke('uninstall_pack', { packId });
 }
+
+// ---------------------------------------------------------------------------
+// MCP bridge control
+// ---------------------------------------------------------------------------
+
+export function startMcpBridge(): Promise<void> {
+  return invoke('start_mcp_bridge');
+}
+
+export function stopMcpBridge(): Promise<void> {
+  return invoke('stop_mcp_bridge');
+}

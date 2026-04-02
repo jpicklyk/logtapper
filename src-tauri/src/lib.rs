@@ -498,6 +498,9 @@ pub fn run() {
             // Export commands (T4 + T5)
             commands::export::get_export_session_info,
             commands::export::export_session,
+            // MCP bridge control
+            commands::mcp::start_mcp_bridge,
+            commands::mcp::stop_mcp_bridge,
         ])
         .build(tauri::generate_context!())
         .expect("error building tauri application")

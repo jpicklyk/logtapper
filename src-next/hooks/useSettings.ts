@@ -16,6 +16,8 @@ export interface AppSettings {
   autoReconnectStream: boolean;
   /** User-configurable bookmark categories with display labels and colors. */
   bookmarkCategories: BookmarkCategoryDef[];
+  /** Whether the MCP HTTP bridge (port 40404) is enabled. */
+  mcpBridgeEnabled: boolean;
 }
 
 const STORAGE_KEY = 'logtapper_settings';
@@ -34,6 +36,7 @@ export const SETTING_DEFAULTS: AppSettings = {
   fileCacheBudget: 250_000,
   autoReconnectStream: true,
   bookmarkCategories: DEFAULT_BOOKMARK_CATEGORIES,
+  mcpBridgeEnabled: false,
 };
 
 /** Map of old default hex colors → new theme-aware token references.
