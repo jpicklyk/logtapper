@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FileText } from 'lucide-react';
+import woodpeckerIcon from '../../assets/woodpecker.png';
 import { Spinner } from '../../ui';
 import { LogViewer } from '../LogViewer';
 import { ProcessorDashboard } from '../ProcessorDashboard';
@@ -42,7 +42,7 @@ function EmptyDropZone() {
     <div className={styles.dropZone}>
       <div className={styles.dropZoneContent}>
         <div className={styles.dropZoneIcon}>
-          <FileText size={48} strokeWidth={1} />
+          <img src={woodpeckerIcon} alt="LogTapper" className={styles.dropZoneLogo} />
         </div>
         <div className={styles.dropZoneHeading}>Open a log file</div>
         <div className={styles.dropZoneSubtext}>
