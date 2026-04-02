@@ -23,23 +23,17 @@ pub async fn start_mcp_bridge(
         }
     }
 
-    // Also check if there is already a shutdown sender (bridge spawned but
-    // hasn't bound its port yet).
-    {
-        let shutdown = lock_or_err(&state.mcp_bridge_shutdown, "mcp_bridge_shutdown")?;
+    // Atomically check if a shutdown sender already exists (bridge spawned but
+    // hasn't bound its port yet) and store the new sender if not.
+    let rx = {
+        let mut shutdown = lock_or_err(&state.mcp_bridge_shutdown, "mcp_bridge_shutdown")?;
         if shutdown.is_some() {
             return Ok(());
         }
-    }
-
-    // Create the oneshot pair.
-    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-
-    // Store the sender before spawning so the bridge is stoppable immediately.
-    {
-        let mut shutdown = lock_or_err(&state.mcp_bridge_shutdown, "mcp_bridge_shutdown")?;
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
         *shutdown = Some(tx);
-    }
+        rx
+    };
 
     // Spawn the bridge — it will clear the shutdown sender when it exits.
     tauri::async_runtime::spawn(crate::mcp_bridge::start(app.clone(), rx));

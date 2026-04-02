@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:mcp-sidecar": "bun install --cwd mcp-server && npm --prefix mcp-server run build:binary",
+    "build:full": "npm run build && npm run build:mcp-sidecar",
     "preview": "vite preview",
     "tauri": "tauri",
     "lint": "eslint src-next/",

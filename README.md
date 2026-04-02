@@ -46,6 +46,7 @@ Download the latest release for your platform from [GitHub Releases](https://git
 - **Node.js** >= 22
 - **Rust** (stable toolchain, MSVC on Windows)
 - **npm** (comes with Node)
+- **[Bun](https://bun.sh/)** (required to compile the MCP sidecar binary for production builds)
 
 ### Install dependencies
 

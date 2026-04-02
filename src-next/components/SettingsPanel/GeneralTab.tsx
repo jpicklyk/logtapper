@@ -196,7 +196,7 @@ export const GeneralTab = memo(function GeneralTab({ settings, onUpdate }: Gener
 
 // ── MCP Integration section ───────────────────────────────────────────────
 
-function McpIntegrationSection({ settings, onUpdate }: GeneralTabProps) {
+const McpIntegrationSection = memo(function McpIntegrationSection({ settings, onUpdate }: GeneralTabProps) {
   const { connState, port } = useMcpStatus();
   const [pending, setPending] = useState(false);
 
@@ -232,6 +232,10 @@ function McpIntegrationSection({ settings, onUpdate }: GeneralTabProps) {
       statusText = 'Bridge: offline';
       statusClass = css.mcpStatusOffline;
       break;
+    case 'disabled':
+      statusText = 'Bridge: disabled';
+      statusClass = css.mcpStatusChecking;
+      break;
     default:
       statusText = 'Bridge: starting...';
       statusClass = css.mcpStatusChecking;
@@ -264,7 +268,7 @@ function McpIntegrationSection({ settings, onUpdate }: GeneralTabProps) {
       )}
     </div>
   );
-}
+});
 
 // ── Category settings helpers ─────────────────────────────────────────────
 

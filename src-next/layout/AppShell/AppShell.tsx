@@ -79,7 +79,6 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   useStartupFile();
 
   // Start MCP bridge on mount if the user has it enabled.
-  // Only runs once — runtime toggling is handled by the Settings panel (Task 4).
   useEffect(() => {
     if (settingsHook.settings.mcpBridgeEnabled) {
       startMcpBridge().catch(() => {});

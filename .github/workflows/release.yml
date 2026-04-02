@@ -57,6 +57,26 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Build MCP sidecar binary
+        shell: bash
+        run: |
+          cd mcp-server
+          bun install
+          bun run build:binary
+
+      - name: Rename MCP sidecar for Tauri target triple (Unix)
+        if: matrix.platform != 'windows-latest'
+        shell: bash
+        run: mv mcp-server/dist/logtapper-mcp mcp-server/dist/logtapper-mcp-${{ matrix.target }}
+
+      - name: Rename MCP sidecar for Tauri target triple (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: Move-Item -Path mcp-server/dist/logtapper-mcp.exe -Destination mcp-server/dist/logtapper-mcp-${{ matrix.target }}.exe
+
       - name: Build and release
         uses: tauri-apps/tauri-action@v0
         env:

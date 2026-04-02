@@ -45,12 +45,16 @@ function _notify() {
   for (const fn of _listeners) fn();
 }
 
+function _statusChanged(a: McpStatus | null, b: McpStatus): boolean {
+  return a === null || a.running !== b.running || a.port !== b.port || a.idleSecs !== b.idleSecs;
+}
+
 function _poll() {
   getMcpStatus()
-    .then((s) => { _status = s; _notify(); })
+    .then((s) => { if (_statusChanged(_status, s)) { _status = s; _notify(); } })
     .catch(() => {
-      _status = { running: false, port: 40404, idleSecs: null };
-      _notify();
+      const fallback: McpStatus = { running: false, port: 40404, idleSecs: null };
+      if (_statusChanged(_status, fallback)) { _status = fallback; _notify(); }
     });
 }
 
