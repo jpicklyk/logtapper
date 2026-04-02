@@ -753,3 +753,41 @@
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-subtle);
 }
+
+/* ── MCP Integration status ──────────────────────────────────────────────── */
+
+.mcpStatus {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding-left: 2px;
+}
+
+.mcpStatusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.mcpStatusText {
+  font-size: 11px;
+  color: var(--text-dimmed);
+}
+
+.mcpStatusConnected {
+  background: var(--success);
+}
+
+.mcpStatusReady {
+  background: var(--accent);
+}
+
+.mcpStatusOffline {
+  background: var(--danger);
+}
+
+.mcpStatusChecking {
+  background: var(--text-dimmed);
+}

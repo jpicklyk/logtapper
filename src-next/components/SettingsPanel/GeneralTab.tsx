@@ -6,8 +6,9 @@ import { useTheme } from '../../context';
 import { SegmentedControl, Button, IconButton } from '../../ui';
 import type { SegmentedOption } from '../../ui';
 import type { ThemeMode } from '../../context';
-import { getFileAssociationStatus, setFileAssociation, openDefaultAppsSettings } from '../../bridge/commands';
+import { getFileAssociationStatus, setFileAssociation, openDefaultAppsSettings, startMcpBridge, stopMcpBridge } from '../../bridge/commands';
 import type { FileAssocEntry } from '../../bridge/types';
+import { useMcpStatus } from '../../hooks';
 import css from './SettingsPanel.module.css';
 
 function formatNumber(n: number): string {
@@ -144,6 +145,8 @@ export const GeneralTab = memo(function GeneralTab({ settings, onUpdate }: Gener
         </div>
       </div>
 
+      <McpIntegrationSection settings={settings} onUpdate={onUpdate} />
+
       <FileAssociationsSection />
 
       <div className={css.section}>
@@ -190,6 +193,78 @@ export const GeneralTab = memo(function GeneralTab({ settings, onUpdate }: Gener
     </>
   );
 });
+
+// ── MCP Integration section ───────────────────────────────────────────────
+
+function McpIntegrationSection({ settings, onUpdate }: GeneralTabProps) {
+  const { connState, port } = useMcpStatus();
+  const [pending, setPending] = useState(false);
+
+  const handleToggle = useCallback(async (checked: boolean) => {
+    setPending(true);
+    try {
+      if (checked) {
+        await startMcpBridge();
+        onUpdate('mcpBridgeEnabled', true);
+      } else {
+        await stopMcpBridge();
+        onUpdate('mcpBridgeEnabled', false);
+      }
+    } catch {
+      // If start fails, don't persist the change
+    } finally {
+      setPending(false);
+    }
+  }, [onUpdate]);
+
+  let statusText: string;
+  let statusClass: string;
+  switch (connState) {
+    case 'connected':
+      statusText = 'Bridge: connected';
+      statusClass = css.mcpStatusConnected;
+      break;
+    case 'ready':
+      statusText = `Bridge: ready on port ${port}`;
+      statusClass = css.mcpStatusReady;
+      break;
+    case 'offline':
+      statusText = 'Bridge: offline';
+      statusClass = css.mcpStatusOffline;
+      break;
+    default:
+      statusText = 'Bridge: starting...';
+      statusClass = css.mcpStatusChecking;
+  }
+
+  return (
+    <div className={css.section}>
+      <div className={css.sectionTitle}>MCP Integration</div>
+      <div className={css.row}>
+        <div className={css.label}>
+          <span className={css.labelText}>HTTP Bridge</span>
+          <span className={css.labelHint}>
+            Runs a local server on port 40404 for AI agent integration.
+          </span>
+        </div>
+        <div className={css.control}>
+          <input
+            type="checkbox"
+            checked={settings.mcpBridgeEnabled}
+            disabled={pending}
+            onChange={(e) => handleToggle(e.target.checked)}
+          />
+        </div>
+      </div>
+      {settings.mcpBridgeEnabled && (
+        <div className={css.mcpStatus}>
+          <span className={`${css.mcpStatusDot} ${statusClass}`} />
+          <span className={css.mcpStatusText}>{statusText}</span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── Category settings helpers ─────────────────────────────────────────────
 
