@@ -34,13 +34,8 @@
   margin-right: 8px;
 }
 
-.titleAndroid {
-  color: var(--android);
-  font-weight: 700;
-}
-
 .titleAccent {
-  color: var(--accent);
+  color: var(--brand-accent);
 }
 
 /* ── Search area ────────────────────────────────────────────────────────── */

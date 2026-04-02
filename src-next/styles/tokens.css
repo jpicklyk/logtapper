@@ -152,6 +152,9 @@
   --text:           var(--neutral-300);
   --text-on-accent: var(--white);
 
+  /* Brand (LogTapper red — used for logo/title accent only) */
+  --brand-accent: #E2383D;
+
   /* Accent (blue) */
   --accent:      var(--blue-500);
   --accent-base: var(--blue-600);
@@ -304,6 +307,9 @@
   --text-subtle:    #4b5563;   /* tertiary but readable — descriptions, help text */
   --text:           #1a1f26;
   --text-on-accent: var(--white);
+
+  /* Brand */
+  --brand-accent: #D42F34;
 
   /* Accent (blue) */
   --accent:      #0969da;

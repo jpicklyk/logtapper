@@ -7,7 +7,7 @@
   --esp-glow-primary-fade: rgba(226, 56, 61, 0.03);
   --esp-glow-secondary: rgba(46, 94, 184, 0.08);
   --esp-title-color: #f1f1f1;
-  --esp-accent: #E2383D;
+  --esp-accent: var(--brand-accent);
   --esp-muted-text: rgba(241, 241, 241, 0.5);
   --esp-badge-text: rgba(241, 241, 241, 0.5);
   --esp-badge-bg: rgba(241, 241, 241, 0.06);
@@ -26,7 +26,7 @@
   --esp-glow-primary-fade: rgba(226, 56, 61, 0.02);
   --esp-glow-secondary: rgba(46, 94, 184, 0.05);
   --esp-title-color: #1a1f2e;
-  --esp-accent: #D42F34;
+  --esp-accent: var(--brand-accent);
   --esp-muted-text: rgba(26, 31, 46, 0.5);
   --esp-badge-text: rgba(26, 31, 46, 0.45);
   --esp-badge-bg: rgba(26, 31, 46, 0.04);

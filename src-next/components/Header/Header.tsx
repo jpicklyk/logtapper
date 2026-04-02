@@ -145,8 +145,7 @@ export const Header = React.memo(function Header() {
     <header className={styles.header}>
       <div className={clsx(styles.brand, isMac && styles.brandMac)}>
         <span className={styles.title}>
-          <span className={styles.titleAndroid}>Android</span>
-          {' '}Log<span className={styles.titleAccent}>Tapper</span>
+          Log<span className={styles.titleAccent}>Tapper</span>
         </span>
         <DropdownMenu
           trigger={
