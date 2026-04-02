@@ -28,8 +28,8 @@ Download the latest release for your platform from [GitHub Releases](https://git
 - PII anonymizer with pluggable detectors
 - Axum HTTP bridge for MCP integration (`127.0.0.1:40404`)
 
-**Frontend (React 18 / TypeScript)**
-- [Vite 5](https://vite.dev/) for bundling and dev server
+**Frontend (React 19 / TypeScript)**
+- [Vite 8](https://vite.dev/) for bundling and dev server
 - [@tanstack/react-virtual](https://tanstack.com/virtual) for virtualized log viewing (handles millions of lines)
 - [CodeMirror 6](https://codemirror.net/) for the editable scratch pad / text editor
 - [Recharts](https://recharts.org/) for processor dashboard charts
@@ -43,7 +43,7 @@ Download the latest release for your platform from [GitHub Releases](https://git
 
 ### Prerequisites
 
-- **Node.js** >= 18
+- **Node.js** >= 22
 - **Rust** (stable toolchain, MSVC on Windows)
 - **npm** (comes with Node)
 
@@ -88,34 +88,59 @@ cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 
 ## MCP Server
 
-LogTapper includes an [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) server that gives AI agents direct tool access to live log sessions. This lets tools like Claude Code query, search, and analyze logs loaded in the app without copy-pasting.
+LogTapper includes a bundled MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) server that gives AI agents direct tool access to live log sessions — no Node.js or separate install required.
 
 ### How it works
 
-1. The Tauri app runs a local HTTP bridge on `127.0.0.1:40404`
-2. The MCP server (`mcp-server/`) connects via stdio transport (spawned by Claude Code or Claude Desktop)
-3. The server translates MCP tool calls into HTTP requests to the bridge
+1. LogTapper ships a bundled MCP server binary alongside the app
+2. Enable the HTTP bridge in **Settings > General > MCP Integration**
+3. Configure your AI agent to spawn the bundled binary — it connects via stdio transport
+
+### Setup
+
+**Step 1 — Enable the MCP Bridge**
+
+Open LogTapper and go to **Settings > General > MCP Integration**, then toggle the MCP Bridge on. LogTapper starts listening on `127.0.0.1:40404`.
+
+**Step 2 — Configure your AI agent**
+
+Add LogTapper to your agent's MCP server config, pointing at the bundled binary:
+
+_Claude Code_ (`~/.claude/settings.json`):
+```json
+{
+  "mcpServers": {
+    "logtapper": {
+      "command": "<path-to-logtapper-mcp>"
+    }
+  }
+}
+```
+
+_Claude Desktop_ (`claude_desktop_config.json`): same format as above.
+
+**Step 3 — Find the binary path**
+
+| Platform | Location |
+|----------|----------|
+| Windows  | Installed alongside the app executable |
+| macOS    | Inside `LogTapper.app/Contents/MacOS/` |
+| Linux    | Alongside the AppImage/binary |
+
+Replace `<path-to-logtapper-mcp>` with the full path to the binary on your system.
+
+> **Note:** LogTapper must be running with the MCP Bridge enabled for tool calls to work.
 
 ### Capabilities
 
-The server exposes 16 tools organized into these categories:
+The server exposes 18 tools organized into these categories:
 
-- **Session discovery** — list active sessions, get metadata (source type, line count, time range, tag distribution, bugreport sections)
+- **Session discovery** — list active sessions, get metadata (source type, line count, time range, tag distribution), browse bugreport/dumpstate sections
 - **Log querying** — sample lines (uniform/recent/around strategies), regex search with context, get lines around a point of interest
-- **Pipeline & processors** — view processor definitions, trigger pipeline runs, get results (reporter emissions, state tracker transitions, correlator events)
+- **Pipeline & processors** — view processor definitions, trigger pipeline runs, get results (reporter emissions, state tracker transitions, correlator events), get rendered insight summaries
 - **State reconstruction** — get a tracker's state at any line number (e.g., "what was the WiFi state when this crash happened?")
 - **Annotations** — manage bookmarks and analysis artifacts with line references
 - **Live monitoring** — create watches with filter criteria for real-time ADB streaming
-
-### Running the MCP server
-
-```bash
-cd mcp-server
-npm install
-npm start
-```
-
-Configure it in your Claude Code or Claude Desktop MCP settings to point at `mcp-server/src/index.ts` with the stdio transport.
 
 ## Project Structure
 
