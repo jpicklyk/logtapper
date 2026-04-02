@@ -1,11 +1,12 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import { getMcpStatus } from '../bridge/commands';
 import type { McpStatus } from '../bridge/types';
+import { loadSettings } from './useSettings';
 
 const MCP_ACTIVE_THRESHOLD_SECS = 30;
 const MCP_POLL_INTERVAL_MS = 5_000;
 
-export type McpConnState = 'checking' | 'offline' | 'ready' | 'connected';
+export type McpConnState = 'checking' | 'offline' | 'ready' | 'connected' | 'disabled';
 
 export interface McpStatusInfo {
   connState: McpConnState;
@@ -19,10 +20,12 @@ const MCP_CONN_LABELS: Record<McpConnState, string> = {
   offline: 'offline',
   ready: 'ready',
   connected: 'connected',
+  disabled: 'disabled',
 };
 
 function deriveConnState(status: McpStatus | null): McpConnState {
   if (status === null) return 'checking';
+  if (!status.running && !loadSettings().mcpBridgeEnabled) return 'disabled';
   if (!status.running) return 'offline';
   if (status.idleSecs === null) return 'ready';
   if (status.idleSecs <= MCP_ACTIVE_THRESHOLD_SECS) return 'connected';
@@ -83,7 +86,7 @@ export function useMcpStatus(): McpStatusInfo {
   return useMemo(() => ({
     connState,
     label: MCP_CONN_LABELS[connState],
-    running: connState !== 'offline' && connState !== 'checking',
+    running: connState !== 'offline' && connState !== 'checking' && connState !== 'disabled',
     port: status?.port ?? 40404,
   }), [connState, status?.port]);
 }

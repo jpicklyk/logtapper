@@ -43,6 +43,11 @@
   opacity: 0.4;
 }
 
+.dotDisabled {
+  background: var(--text-dimmed);
+  opacity: 0.2;
+}
+
 .stateLabel {
   color: var(--text-muted);
 }

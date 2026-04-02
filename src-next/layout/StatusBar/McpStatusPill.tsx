@@ -8,6 +8,7 @@ const DOT_CLASS: Record<McpConnState, string> = {
   ready: styles.dotReady,
   offline: styles.dotOffline,
   checking: styles.dotOffline,
+  disabled: styles.dotDisabled,
 };
 
 export const McpStatusPill = React.memo(function McpStatusPill() {
