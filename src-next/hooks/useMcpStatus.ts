@@ -23,7 +23,7 @@ const MCP_CONN_LABELS: Record<McpConnState, string> = {
   disabled: 'disabled',
 };
 
-function deriveConnState(status: McpStatus | null): McpConnState {
+export function deriveConnState(status: McpStatus | null): McpConnState {
   if (status === null) return 'checking';
   if (!status.running && !loadSettings().mcpBridgeEnabled) return 'disabled';
   if (!status.running) return 'offline';
@@ -45,16 +45,16 @@ function _notify() {
   for (const fn of _listeners) fn();
 }
 
-function _statusChanged(a: McpStatus | null, b: McpStatus): boolean {
+export function statusChanged(a: McpStatus | null, b: McpStatus): boolean {
   return a === null || a.running !== b.running || a.port !== b.port || a.idleSecs !== b.idleSecs;
 }
 
 function _poll() {
   getMcpStatus()
-    .then((s) => { if (_statusChanged(_status, s)) { _status = s; _notify(); } })
+    .then((s) => { if (statusChanged(_status, s)) { _status = s; _notify(); } })
     .catch(() => {
       const fallback: McpStatus = { running: false, port: 40404, idleSecs: null };
-      if (_statusChanged(_status, fallback)) { _status = fallback; _notify(); }
+      if (statusChanged(_status, fallback)) { _status = fallback; _notify(); }
     });
 }
 
