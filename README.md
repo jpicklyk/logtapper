@@ -1,6 +1,8 @@
-<p align="center">
-  <img src="assets/logtapper-social-banner.png" alt="LogTapper Banner" width="100%">
-</p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logtapper-social-banner.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/logtapper-social-banner-light.png">
+  <img alt="LogTapper Banner" src="assets/logtapper-social-banner-light.png" width="100%">
+</picture>
 
 # LogTapper
 
