@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logtapper-social-banner.png" alt="LogTapper Banner" width="100%">
+</p>
+
 # LogTapper
 
 A desktop log analysis tool for Android developers. Load logcat, bugreport, dumpstate, and kernel (dmesg) files, or stream live from ADB — then search, filter, and run custom analysis pipelines powered by a YAML processor system with embedded Rhai scripting.
