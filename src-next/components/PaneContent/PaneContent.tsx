@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import woodpeckerIcon from '../../assets/woodpecker.png';
+import socialBannerDark from '../../assets/social-banner.png';
+import socialBannerLight from '../../assets/social-banner-light.png';
+import { useTheme } from '../../context/ThemeContext';
 import { Spinner } from '../../ui';
 import { LogViewer } from '../LogViewer';
 import { ProcessorDashboard } from '../ProcessorDashboard';
@@ -38,20 +40,11 @@ function intersectSorted(a: number[], b: number[]): number[] {
 }
 
 function EmptyDropZone() {
+  const { resolvedTheme } = useTheme();
+  const banner = resolvedTheme === 'light' ? socialBannerLight : socialBannerDark;
   return (
     <div className={styles.dropZone}>
-      <div className={styles.dropZoneContent}>
-        <div className={styles.dropZoneIcon}>
-          <img src={woodpeckerIcon} alt="LogTapper" className={styles.dropZoneLogo} />
-        </div>
-        <div className={styles.dropZoneHeading}>Open a log file</div>
-        <div className={styles.dropZoneSubtext}>
-          Drag a log file here or click Open Log File
-        </div>
-        <div className={styles.dropZoneHint}>
-          Supports logcat, kernel (dmesg), bugreport, and dumpstate files
-        </div>
-      </div>
+      <img src={banner} alt="LogTapper — Android log analysis, reimagined" className={styles.dropZoneBanner} />
     </div>
   );
 }
