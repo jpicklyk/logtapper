@@ -384,10 +384,6 @@ pub fn run() {
                 }
             }
 
-            // Spawn the MCP HTTP bridge on Tauri's async runtime.
-            let bridge_handle = app.handle().clone();
-            tauri::async_runtime::spawn(crate::mcp_bridge::start(bridge_handle));
-
             // Spawn background startup update check (non-blocking).
             // Checks enabled sources for newer processor versions.
             // If auto_update is enabled for a source, applies updates silently.

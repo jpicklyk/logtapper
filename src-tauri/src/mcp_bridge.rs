@@ -116,7 +116,7 @@ async fn record_activity(
     next.run(req).await
 }
 
-pub async fn start(handle: Handle) {
+pub async fn start(handle: Handle, shutdown_rx: tokio::sync::oneshot::Receiver<()>) {
     // Clone handle for the router state; keep original for the port flag.
     let router = Router::new()
         .route("/mcp/status", get(h_status))
@@ -161,9 +161,19 @@ pub async fn start(handle: Handle) {
             #[allow(clippy::drop_non_drop)]
             drop(state);
             log::info!("MCP bridge listening on 127.0.0.1:{PORT}");
-            if let Err(e) = axum::serve(listener, router).await {
+            let graceful = axum::serve(listener, router)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                });
+            if let Err(e) = graceful.await {
                 log::error!("MCP bridge error: {e}");
             }
+            // Clear the port flag so the frontend knows the bridge is no longer running.
+            let state = handle.state::<AppState>();
+            if let Ok(mut p) = state.mcp_bridge_port.lock() {
+                *p = None;
+            }
+            log::info!("MCP bridge stopped");
         }
         Err(e) => {
             log::error!(

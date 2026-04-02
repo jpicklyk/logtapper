@@ -104,6 +104,8 @@ pub struct AppState {
     pub packs: Mutex<Vec<PackMeta>>,
     /// Path passed via CLI args at launch (double-click file association).
     pub startup_file_path: Mutex<Option<String>>,
+    /// Shutdown sender for the MCP HTTP bridge. Send `()` to stop the server.
+    pub mcp_bridge_shutdown: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 }
 
 impl Default for AppState {
@@ -157,6 +159,7 @@ impl AppState {
             session_pipeline_meta: Mutex::new(HashMap::new()),
             packs: Mutex::new(Vec::new()),
             startup_file_path: Mutex::new(None),
+            mcp_bridge_shutdown: Mutex::new(None),
         }
     }
 }
