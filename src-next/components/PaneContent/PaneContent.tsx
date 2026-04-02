@@ -1,7 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import socialBannerDark from '../../assets/logtapper-banner-dark-4x3.png';
-import socialBannerLight from '../../assets/logtapper-banner-light-4x3.png';
-import { useTheme } from '../../context/ThemeContext';
+import { EmptyStatePane } from './EmptyStatePane';
 import { Spinner } from '../../ui';
 import { LogViewer } from '../LogViewer';
 import { ProcessorDashboard } from '../ProcessorDashboard';
@@ -39,15 +37,6 @@ function intersectSorted(a: number[], b: number[]): number[] {
   return result;
 }
 
-function EmptyDropZone() {
-  const { resolvedTheme } = useTheme();
-  const banner = resolvedTheme === 'light' ? socialBannerLight : socialBannerDark;
-  return (
-    <div className={styles.dropZone}>
-      <img src={banner} alt="LogTapper — Android log analysis, reimagined" className={styles.dropZoneBanner} />
-    </div>
-  );
-}
 
 /** Must match the CSS animation duration for noticeSlideOut. */
 const NOTICE_EXIT_MS = 400;
@@ -149,7 +138,7 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
     return (
       <>
         <div onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus} className="fullHeight">
-          <EmptyDropZone />
+          <EmptyStatePane />
         </div>
         {bookmarkDialog}
       </>
@@ -162,7 +151,7 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
         return (
           <>
             <div onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus} className="fullHeight">
-              <EmptyDropZone />
+              <EmptyStatePane />
             </div>
             {bookmarkDialog}
           </>

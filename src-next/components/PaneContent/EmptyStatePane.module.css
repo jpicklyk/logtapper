@@ -1,0 +1,174 @@
+/* ── Theme-dependent custom properties ──────────────────────────────────── */
+
+:global([data-theme="dark"]) .container {
+  --esp-bg: #0f1419;
+  --esp-grid-line: rgba(56, 189, 248, 0.03);
+  --esp-glow-primary: rgba(226, 56, 61, 0.1);
+  --esp-glow-primary-fade: rgba(226, 56, 61, 0.03);
+  --esp-glow-secondary: rgba(46, 94, 184, 0.08);
+  --esp-title-color: #f1f1f1;
+  --esp-accent: #E2383D;
+  --esp-muted-text: rgba(241, 241, 241, 0.5);
+  --esp-badge-text: rgba(241, 241, 241, 0.5);
+  --esp-badge-bg: rgba(241, 241, 241, 0.06);
+  --esp-badge-border: rgba(241, 241, 241, 0.08);
+  --esp-badge-accent-text: rgba(226, 56, 61, 0.8);
+  --esp-badge-accent-bg: rgba(226, 56, 61, 0.06);
+  --esp-badge-accent-border: rgba(226, 56, 61, 0.2);
+  --esp-corner-text: rgba(241, 241, 241, 0.15);
+  --esp-mascot-shadow: drop-shadow(0 4px 24px rgba(0, 0, 0, 0.4));
+}
+
+:global([data-theme="light"]) .container {
+  --esp-bg: #f8f9fb;
+  --esp-grid-line: rgba(46, 94, 184, 0.04);
+  --esp-glow-primary: rgba(226, 56, 61, 0.06);
+  --esp-glow-primary-fade: rgba(226, 56, 61, 0.02);
+  --esp-glow-secondary: rgba(46, 94, 184, 0.05);
+  --esp-title-color: #1a1f2e;
+  --esp-accent: #D42F34;
+  --esp-muted-text: rgba(26, 31, 46, 0.5);
+  --esp-badge-text: rgba(26, 31, 46, 0.45);
+  --esp-badge-bg: rgba(26, 31, 46, 0.04);
+  --esp-badge-border: rgba(26, 31, 46, 0.1);
+  --esp-badge-accent-text: rgba(212, 47, 52, 0.75);
+  --esp-badge-accent-bg: rgba(212, 47, 52, 0.05);
+  --esp-badge-accent-border: rgba(212, 47, 52, 0.2);
+  --esp-corner-text: rgba(26, 31, 46, 0.15);
+  --esp-mascot-shadow: drop-shadow(0 4px 20px rgba(0, 0, 0, 0.1));
+}
+
+/* ── Structural styles ─────────────────────────────────────────────────── */
+
+.container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-family: var(--font-ui);
+  background: var(--esp-bg);
+}
+
+.grid {
+  position: absolute;
+  inset: 0;
+  background-size: 32px 32px;
+  background-image:
+    linear-gradient(var(--esp-grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--esp-grid-line) 1px, transparent 1px);
+  pointer-events: none;
+}
+
+.glow {
+  position: absolute;
+  width: clamp(300px, 40vw, 600px);
+  height: clamp(300px, 40vw, 600px);
+  border-radius: 50%;
+  pointer-events: none;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -60%);
+  background: radial-gradient(
+    circle,
+    var(--esp-glow-primary) 0%,
+    var(--esp-glow-primary-fade) 40%,
+    transparent 70%
+  );
+}
+
+.glow2 {
+  position: absolute;
+  width: clamp(200px, 25vw, 400px);
+  height: clamp(200px, 25vw, 400px);
+  border-radius: 50%;
+  pointer-events: none;
+  right: 5%;
+  bottom: -5%;
+  background: radial-gradient(
+    circle,
+    var(--esp-glow-secondary) 0%,
+    transparent 70%
+  );
+}
+
+.content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 2rem;
+  max-width: 700px;
+}
+
+.mascot {
+  width: clamp(140px, 20vw, 280px);
+  height: clamp(140px, 20vw, 280px);
+  object-fit: contain;
+  margin-bottom: clamp(0.75rem, 2vw, 1.5rem);
+  user-select: none;
+  pointer-events: none;
+  filter: var(--esp-mascot-shadow);
+}
+
+.title {
+  font-size: clamp(2.5rem, 5vw, 5rem);
+  font-weight: 800;
+  letter-spacing: -2px;
+  line-height: 1;
+  margin: 0 0 clamp(0.4rem, 1vw, 0.75rem) 0;
+  color: var(--esp-title-color);
+}
+
+.titleAccent {
+  color: var(--esp-accent);
+}
+
+.tagline {
+  font-size: clamp(0.95rem, 1.8vw, 1.6rem);
+  font-weight: 300;
+  letter-spacing: 0.5px;
+  line-height: 1.35;
+  margin: 0 0 clamp(1.25rem, 2.5vw, 2rem) 0;
+  color: var(--esp-muted-text);
+}
+
+.badges {
+  display: flex;
+  gap: clamp(0.5rem, 1vw, 0.75rem);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.badge {
+  font-family: var(--font-mono);
+  font-size: clamp(0.7rem, 1vw, 0.8125rem);
+  font-weight: 400;
+  padding: clamp(4px, 0.5vw, 6px) clamp(8px, 1vw, 14px);
+  border-radius: 6px;
+  border: 1px solid var(--esp-badge-border);
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  color: var(--esp-badge-text);
+  background: var(--esp-badge-bg);
+}
+
+.badgeAccent {
+  color: var(--esp-badge-accent-text);
+  background: var(--esp-badge-accent-bg);
+  border-color: var(--esp-badge-accent-border);
+}
+
+.cornerMark {
+  position: absolute;
+  top: clamp(16px, 2vw, 32px);
+  right: clamp(20px, 2.5vw, 40px);
+  font-family: var(--font-mono);
+  font-size: clamp(0.6rem, 0.8vw, 0.75rem);
+  letter-spacing: 2px;
+  color: var(--esp-corner-text);
+}
