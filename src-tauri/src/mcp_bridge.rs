@@ -185,10 +185,9 @@ pub async fn start(handle: Handle, shutdown_rx: tokio::sync::oneshot::Receiver<(
                  Is another instance running?"
             );
             // Clear the shutdown sender on bind failure too, so the bridge can be restarted.
-            let state = handle.state::<AppState>();
-            if let Ok(mut s) = state.mcp_bridge_shutdown.lock() {
+            if let Ok(mut s) = handle.state::<AppState>().mcp_bridge_shutdown.lock() {
                 s.take();
-            }
+            };
         }
     }
 }
