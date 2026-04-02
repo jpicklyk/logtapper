@@ -8,7 +8,8 @@
     "start": "node --experimental-strip-types src/index.ts",
     "dev": "node --watch --experimental-strip-types src/index.ts",
     "build": "tsc --outDir dist",
-    "start:compiled": "node dist/index.js"
+    "start:compiled": "node dist/index.js",
+    "build:binary": "bun build --compile --outfile dist/logtapper-mcp src/index.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",

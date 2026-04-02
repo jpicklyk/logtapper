@@ -42,3 +42,6 @@ yarn-debug.log*
 yarn-error.log*
 *.jpg
 .claude/worktrees/
+
+# MCP server compiled binary (platform-suffixed, built via bun build --compile)
+mcp-server/dist/logtapper-mcp*

@@ -31,6 +31,7 @@
     "resources": {
       "../marketplace/marketplace.json": "marketplace/marketplace.json"
     },
+    "externalBin": ["../mcp-server/dist/logtapper-mcp"],
 "windows": {
       "nsis": {
         "installMode": "both"
