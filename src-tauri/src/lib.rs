@@ -495,7 +495,7 @@ pub fn run() {
             commands::sources::uninstall_pack_from_marketplace,
             // Pipeline meta (workspace persistence)
             commands::pipeline::set_session_pipeline_meta,
-            // Export commands (T4 + T5)
+            // Export commands
             commands::export::get_export_session_info,
             commands::export::export_session,
             // MCP bridge control

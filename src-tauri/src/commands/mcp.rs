@@ -14,7 +14,6 @@ use crate::commands::{lock_or_err, AppState};
 pub(crate) fn start_mcp_bridge_inner(
     state: &AppState,
 ) -> Result<Option<tokio::sync::oneshot::Receiver<()>>, String> {
-    // Check if already running — if the port is set the bridge is up.
     {
         let port = lock_or_err(&state.mcp_bridge_port, "mcp_bridge_port")?;
         if port.is_some() {
@@ -22,8 +21,6 @@ pub(crate) fn start_mcp_bridge_inner(
         }
     }
 
-    // Atomically check if a shutdown sender already exists (bridge spawned but
-    // hasn't bound its port yet) and store the new sender if not.
     let mut shutdown = lock_or_err(&state.mcp_bridge_shutdown, "mcp_bridge_shutdown")?;
     if shutdown.is_some() {
         return Ok(None);
