@@ -81,6 +81,7 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_CONFIG: '{"bundle":{"externalBin":["../mcp-server/dist/logtapper-mcp"]}}'
         with:
           tagName: v__VERSION__
           releaseName: LogTapper v__VERSION__
