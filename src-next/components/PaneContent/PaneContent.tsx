@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import socialBannerDark from '../../assets/social-banner.png';
-import socialBannerLight from '../../assets/social-banner-light.png';
+import socialBannerDark from '../../assets/logtapper-banner-dark-4x3.png';
+import socialBannerLight from '../../assets/logtapper-banner-light-4x3.png';
 import { useTheme } from '../../context/ThemeContext';
 import { Spinner } from '../../ui';
 import { LogViewer } from '../LogViewer';
