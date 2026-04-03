@@ -122,7 +122,7 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
                 checked={includeProcessors}
                 onChange={(e) => setIncludeProcessors(e.target.checked)}
               />
-              Processors ({info.totalProcessorCount})
+              Processors ({info.totalProcessorCount} of {info.totalPipelineProcessorCount} enabled)
             </label>
           </div>
 

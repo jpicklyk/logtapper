@@ -42,6 +42,25 @@ pub(crate) fn active_custom_processor_ids(state: &AppState, session_id: &str) ->
         .collect()
 }
 
+/// Count deduplicated non-builtin processors in the pipeline across sessions
+/// (includes disabled ones — the total pipeline size before filtering).
+fn all_pipeline_custom_processor_count(state: &AppState, session_ids: &[String]) -> usize {
+    let Ok(meta_guard) = state.session_pipeline_meta.lock() else {
+        return 0;
+    };
+    let mut seen: HashSet<String> = HashSet::new();
+    for session_id in session_ids {
+        if let Some(meta) = meta_guard.get(session_id) {
+            for id in &meta.active_processor_ids {
+                if !id.starts_with("__") {
+                    seen.insert(id.clone());
+                }
+            }
+        }
+    }
+    seen.len()
+}
+
 /// Collect deduplicated active custom processor IDs across multiple sessions.
 /// Preserves first-seen order (first session wins for ordering purposes).
 pub(crate) fn all_active_custom_processor_ids(
@@ -111,6 +130,7 @@ fn session_display_name(session: &crate::core::session::AnalysisSession) -> Stri
 pub struct ExportAllSessionsInfo {
     pub sessions: Vec<ExportSessionEntry>,
     pub total_processor_count: usize,
+    pub total_pipeline_processor_count: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -168,12 +188,13 @@ pub async fn get_export_all_sessions_info(
             .collect()
     };
 
-    // Deduplicated processor count across all sessions.
     let total_processor_count = all_active_custom_processor_ids(&state, &session_ids).len();
+    let total_pipeline_processor_count = all_pipeline_custom_processor_count(&state, &session_ids);
 
     Ok(ExportAllSessionsInfo {
         sessions,
         total_processor_count,
+        total_pipeline_processor_count,
     })
 }
 

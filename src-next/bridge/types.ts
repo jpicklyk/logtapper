@@ -766,6 +766,7 @@ export interface ExportSessionEntry {
 export interface ExportAllSessionsInfo {
   sessions: ExportSessionEntry[];
   totalProcessorCount: number;
+  totalPipelineProcessorCount: number;
 }
 
 export interface ExportAllOptions {
