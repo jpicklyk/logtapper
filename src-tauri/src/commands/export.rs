@@ -316,10 +316,17 @@ pub fn resolve_lts_processors_raw(
         // Check if exact qualified ID exists locally.
         let local_yaml = read_processor_yaml(app, &entry.id);
         if let Some(local_content) = local_yaml {
-            // Same ID exists locally — check namespace and version.
-            let local_version = crate::processors::AnyProcessor::from_yaml(&local_content)
-                .map(|p| p.meta.version)
-                .unwrap_or_default();
+            let local_version = match crate::processors::AnyProcessor::from_yaml(&local_content) {
+                Ok(p) => p.meta.version,
+                Err(e) => {
+                    // Local YAML is corrupt — replace it with the bundled version.
+                    log::warn!(
+                        "Local processor '{}' YAML is malformed ({e}) — replacing with bundled version",
+                        entry.id
+                    );
+                    String::new()
+                }
+            };
 
             if !crate::commands::sources::is_newer(&local_version, bundled_version) {
                 log::info!(
