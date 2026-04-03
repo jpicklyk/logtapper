@@ -1813,7 +1813,7 @@ mod tests {
             },
         ];
 
-        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
+        write_lts(&zip_path, &sessions, &[], &[]).expect("write_lts");
 
         let loaded = read_lts(&zip_path).expect("read_lts");
 
@@ -1886,7 +1886,7 @@ mod tests {
             },
         ];
 
-        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
+        write_lts(&zip_path, &sessions, &[], &[]).expect("write_lts");
 
         let loaded = read_lts(&zip_path).expect("read_lts");
 

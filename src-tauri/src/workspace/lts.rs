@@ -9,7 +9,7 @@ use zip::write::SimpleFileOptions;
 use crate::core::analysis::AnalysisArtifact;
 use crate::core::bookmark::Bookmark;
 
-pub const LTS_FORMAT_VERSION: u32 = 2;
+pub const LTS_FORMAT_VERSION: u32 = 3;
 
 /// Top-level manifest stored as `manifest.json` inside the `.lts` zip.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,6 +55,17 @@ impl From<LtsSessionMeta> for super::SessionMeta {
     }
 }
 
+/// One editor tab stored in `editor-tabs.json` inside the `.lts` zip.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LtsEditorTab {
+    pub label: String,
+    pub content: String,
+    pub view_mode: String,
+    pub word_wrap: bool,
+    pub file_path: Option<String>,
+}
+
 /// One entry in the processor manifest.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -86,6 +97,7 @@ pub struct LtsData {
     pub sessions: Vec<LtsSessionData>,
     pub processor_manifest: LtsProcessorManifest,
     pub processor_yamls: HashMap<String, String>,
+    pub editor_tabs: Vec<LtsEditorTab>,
 }
 
 /// Write a `.lts` zip file (format v2) to `dest`.
@@ -109,6 +121,7 @@ pub fn write_lts(
     dest: &Path,
     sessions: &[LtsSessionData],
     processor_yamls: &[(String, String, String)], // (id, filename, yaml_content)
+    editor_tabs: &[LtsEditorTab],
 ) -> Result<(), String> {
     let manifest_sessions: Vec<LtsManifestSession> = sessions
         .iter()
@@ -193,6 +206,11 @@ pub fn write_lts(
         deflate_opts,
         &proc_manifest,
     )?;
+
+    // 5. editor-tabs.json (Deflated) — omitted when empty
+    if !editor_tabs.is_empty() {
+        super::zip_write_json(&mut writer, "editor-tabs.json", deflate_opts, &editor_tabs)?;
+    }
 
     writer
         .finish()
@@ -280,11 +298,19 @@ pub fn read_lts(path: &Path) -> Result<LtsData, String> {
         processor_yamls.insert(entry_meta.id.clone(), buf);
     }
 
+    // 5. editor-tabs.json (optional — default to empty vec if missing)
+    let editor_tabs: Vec<LtsEditorTab> = match archive.by_name("editor-tabs.json") {
+        Ok(file) => serde_json::from_reader(file)
+            .map_err(|e| format!("editor-tabs.json: {e}"))?,
+        Err(_) => vec![],
+    };
+
     Ok(LtsData {
         manifest,
         sessions,
         processor_manifest,
         processor_yamls,
+        editor_tabs,
     })
 }
 
@@ -360,7 +386,7 @@ mod tests {
         )];
 
         let sessions = vec![make_session("test.log", source_bytes.clone(), bookmarks, analyses, meta)];
-        write_lts(&zip_path, &sessions, &proc_yamls).expect("write_lts");
+        write_lts(&zip_path, &sessions, &proc_yamls, &[]).expect("write_lts");
 
         let loaded = read_lts(&zip_path).expect("read_lts");
 
@@ -414,7 +440,7 @@ mod tests {
         drop(tmp);
 
         let sessions = vec![make_session("empty.log", vec![], vec![], vec![], LtsSessionMeta::default())];
-        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
+        write_lts(&zip_path, &sessions, &[], &[]).expect("write_lts");
 
         let loaded = read_lts(&zip_path).expect("read_lts");
 
@@ -450,7 +476,7 @@ mod tests {
         let original_len = source_bytes.len();
 
         let sessions = vec![make_session("large.log", source_bytes.clone(), vec![], vec![], LtsSessionMeta::default())];
-        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
+        write_lts(&zip_path, &sessions, &[], &[]).expect("write_lts");
 
         let loaded = read_lts(&zip_path).expect("read_lts");
 
@@ -481,7 +507,7 @@ mod tests {
             .unwrap_or(0);
 
         let sessions = vec![make_session("myfile.log", source_bytes.to_vec(), vec![], vec![], LtsSessionMeta::default())];
-        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
+        write_lts(&zip_path, &sessions, &[], &[]).expect("write_lts");
 
         let after_write = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -585,7 +611,7 @@ mod tests {
         ];
 
         let sessions = vec![make_session("test.log", b"data".to_vec(), vec![], vec![], LtsSessionMeta::default())];
-        write_lts(&zip_path, &sessions, &proc_yamls).expect("write_lts");
+        write_lts(&zip_path, &sessions, &proc_yamls, &[]).expect("write_lts");
 
         let loaded = read_lts(&zip_path).expect("read_lts");
 
@@ -634,7 +660,7 @@ mod tests {
         ];
 
         let sessions = vec![make_session("test.log", b"data".to_vec(), vec![], vec![], LtsSessionMeta::default())];
-        write_lts(&zip_path, &sessions, &proc_yamls).expect("write_lts");
+        write_lts(&zip_path, &sessions, &proc_yamls, &[]).expect("write_lts");
 
         let loaded = read_lts(&zip_path).expect("read_lts");
 
@@ -680,11 +706,11 @@ mod tests {
         )];
 
         let sessions = vec![make_session("session0.log", source_bytes.clone(), bookmarks, analyses, meta)];
-        write_lts(&zip_path, &sessions, &proc_yamls).expect("write_lts");
+        write_lts(&zip_path, &sessions, &proc_yamls, &[]).expect("write_lts");
 
         let loaded = read_lts(&zip_path).expect("read_lts");
 
-        assert_eq!(loaded.manifest.format_version, 2);
+        assert_eq!(loaded.manifest.format_version, LTS_FORMAT_VERSION);
         assert_eq!(loaded.manifest.sessions.len(), 1);
         assert_eq!(loaded.sessions.len(), 1);
 
@@ -736,7 +762,7 @@ mod tests {
             ),
         ];
 
-        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
+        write_lts(&zip_path, &sessions, &[], &[]).expect("write_lts");
 
         let loaded = read_lts(&zip_path).expect("read_lts");
 
@@ -774,7 +800,7 @@ mod tests {
             make_session("third.log", b"CCC\n".to_vec(), vec![make_bookmark(3)], vec![], LtsSessionMeta::default()),
         ];
 
-        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
+        write_lts(&zip_path, &sessions, &[], &[]).expect("write_lts");
 
         let loaded = read_lts(&zip_path).expect("read_lts");
 
@@ -820,7 +846,7 @@ mod tests {
             }),
         ];
 
-        write_lts(&zip_path, &sessions, &proc_yamls).expect("write_lts");
+        write_lts(&zip_path, &sessions, &proc_yamls, &[]).expect("write_lts");
 
         let loaded = read_lts(&zip_path).expect("read_lts");
 
@@ -851,11 +877,11 @@ mod tests {
             make_session("one.log", bytes1.to_vec(), vec![], vec![], LtsSessionMeta::default()),
         ];
 
-        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
+        write_lts(&zip_path, &sessions, &[], &[]).expect("write_lts");
 
         let loaded = read_lts(&zip_path).expect("read_lts");
 
-        assert_eq!(loaded.manifest.format_version, 2, "format_version must be 2");
+        assert_eq!(loaded.manifest.format_version, LTS_FORMAT_VERSION, "format_version must equal LTS_FORMAT_VERSION");
         assert_eq!(loaded.manifest.sessions.len(), 2);
 
         assert_eq!(loaded.manifest.sessions[0].source_filename, "zero.log");
@@ -877,7 +903,7 @@ mod tests {
             make_session("b.log", b"data b\n".to_vec(), vec![], vec![], LtsSessionMeta::default()),
         ];
 
-        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
+        write_lts(&zip_path, &sessions, &[], &[]).expect("write_lts");
 
         let loaded = read_lts(&zip_path).expect("read_lts");
 
@@ -896,12 +922,78 @@ mod tests {
         drop(tmp);
 
         let sessions = vec![make_session("noproc.log", b"content\n".to_vec(), vec![], vec![], LtsSessionMeta::default())];
-        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
+        write_lts(&zip_path, &sessions, &[], &[]).expect("write_lts");
 
         let loaded = read_lts(&zip_path).expect("read_lts");
 
         assert!(loaded.processor_manifest.processors.is_empty(), "no processors expected in manifest");
         assert!(loaded.processor_yamls.is_empty(), "no YAML entries expected");
+    }
+
+    // ─── New v3 editor-tab tests ─────────────────────────────────────────────
+
+    /// Round-trip: two editor tabs (one scratch, one file-backed) survive write+read.
+    #[test]
+    fn lts_editor_tabs_roundtrip() {
+        let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        let zip_path = tmp.path().to_path_buf();
+        drop(tmp);
+
+        let tab_scratch = LtsEditorTab {
+            label: "Scratch".to_string(),
+            content: "let x = 1;\n".to_string(),
+            view_mode: "text".to_string(),
+            word_wrap: true,
+            file_path: None,
+        };
+        let tab_file = LtsEditorTab {
+            label: "main.rs".to_string(),
+            content: "fn main() {}\n".to_string(),
+            view_mode: "code".to_string(),
+            word_wrap: false,
+            file_path: Some("/home/user/project/src/main.rs".to_string()),
+        };
+        let editor_tabs = vec![tab_scratch, tab_file];
+
+        let sessions = vec![make_session("test.log", b"data\n".to_vec(), vec![], vec![], LtsSessionMeta::default())];
+        write_lts(&zip_path, &sessions, &[], &editor_tabs).expect("write_lts");
+
+        let loaded = read_lts(&zip_path).expect("read_lts");
+
+        assert_eq!(loaded.editor_tabs.len(), 2, "both editor tabs must survive round-trip");
+
+        let t0 = &loaded.editor_tabs[0];
+        assert_eq!(t0.label, "Scratch");
+        assert_eq!(t0.content, "let x = 1;\n");
+        assert_eq!(t0.view_mode, "text");
+        assert!(t0.word_wrap);
+        assert!(t0.file_path.is_none(), "scratch tab must have no file_path");
+
+        let t1 = &loaded.editor_tabs[1];
+        assert_eq!(t1.label, "main.rs");
+        assert_eq!(t1.content, "fn main() {}\n");
+        assert_eq!(t1.view_mode, "code");
+        assert!(!t1.word_wrap);
+        assert_eq!(t1.file_path.as_deref(), Some("/home/user/project/src/main.rs"));
+    }
+
+    /// Compatibility: a .lts file with no editor-tabs.json entry reads back as empty vec.
+    #[test]
+    fn lts_v2_compat() {
+        let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        let zip_path = tmp.path().to_path_buf();
+        drop(tmp);
+
+        // Write with empty editor_tabs — no editor-tabs.json entry is created.
+        let sessions = vec![make_session("compat.log", b"v2data\n".to_vec(), vec![], vec![], LtsSessionMeta::default())];
+        write_lts(&zip_path, &sessions, &[], &[]).expect("write_lts");
+
+        let loaded = read_lts(&zip_path).expect("read_lts");
+
+        assert!(
+            loaded.editor_tabs.is_empty(),
+            "reading a file with no editor-tabs.json must return empty vec"
+        );
     }
 
     /// V2: large (100 KB) source bytes survive Stored compression byte-for-byte.
@@ -918,7 +1010,7 @@ mod tests {
         let original = source_bytes.clone();
 
         let sessions = vec![make_session("big.log", source_bytes, vec![], vec![], LtsSessionMeta::default())];
-        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
+        write_lts(&zip_path, &sessions, &[], &[]).expect("write_lts");
 
         let loaded = read_lts(&zip_path).expect("read_lts");
 

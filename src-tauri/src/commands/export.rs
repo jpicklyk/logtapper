@@ -296,7 +296,7 @@ pub async fn export_all_sessions(
 
     // 4. Write multi-session .lts file (no locks held).
     let dest = std::path::Path::new(&options.dest_path);
-    crate::workspace::lts::write_lts(dest, &lts_sessions, &processor_yamls)?;
+    crate::workspace::lts::write_lts(dest, &lts_sessions, &processor_yamls, &[])?;
 
     Ok(())
 }
