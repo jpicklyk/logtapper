@@ -115,8 +115,10 @@ export function useFileSession(
 
       if (loadGenRef.current.get(targetPaneId) !== gen) {
         diag('file-load', 'stale generation — discarding', { gen, current: loadGenRef.current.get(targetPaneId) });
-        try { await closeSessionCmd(result.sessionId); } catch { /* ignore */ }
-        clearPreSeed(result.sessionId);
+        for (const r of results) {
+          try { await closeSessionCmd(r.sessionId); } catch { /* ignore */ }
+          clearPreSeed(r.sessionId);
+        }
         return;
       }
 

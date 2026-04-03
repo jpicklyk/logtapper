@@ -252,6 +252,8 @@ fn load_lts_file_inner(
         return Err("No sessions in .lts file".to_string());
     }
 
+    close_stale_sessions(state, Some(app), lts_path)?;
+
     let file_size = path_obj.metadata().map(|m| m.len()).unwrap_or(0);
 
     // Destructure to avoid cloning the processor fields.
