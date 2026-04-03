@@ -2,9 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { save } from '@tauri-apps/plugin-dialog';
 import { Modal } from '../../ui/Modal/Modal';
 import { Spinner, Button } from '../../ui';
-import { useSession } from '../../context';
-import { getExportSessionInfo, exportSession } from '../../bridge/commands';
-import type { ExportSessionInfo } from '../../bridge/types';
+import { getExportAllSessionsInfo, exportAllSessions } from '../../bridge/commands';
+import type { ExportAllSessionsInfo } from '../../bridge/types';
 import styles from './ExportModal.module.css';
 
 interface ExportModalProps {
@@ -13,8 +12,7 @@ interface ExportModalProps {
 }
 
 export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ open, onClose }) {
-  const session = useSession();
-  const [info, setInfo] = useState<ExportSessionInfo | null>(null);
+  const [info, setInfo] = useState<ExportAllSessionsInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -22,9 +20,8 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
   const [includeAnalyses, setIncludeAnalyses] = useState(true);
   const [includeProcessors, setIncludeProcessors] = useState(true);
 
-  // Fetch session info when modal opens
   useEffect(() => {
-    if (!open || !session?.sessionId) {
+    if (!open) {
       setInfo(null);
       setError(null);
       setLoading(false);
@@ -34,9 +31,8 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
       return;
     }
     let cancelled = false;
-    const sid = session.sessionId;
     setLoading(true);
-    getExportSessionInfo(sid).then(data => {
+    getExportAllSessionsInfo().then(data => {
       if (!cancelled) {
         setInfo(data);
         setLoading(false);
@@ -48,20 +44,24 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
       }
     });
     return () => { cancelled = true; };
-  }, [open, session?.sessionId]);
+  }, [open]);
 
   const handleExport = useCallback(async () => {
-    if (!session || !info) return;
+    if (!info || info.sessions.length === 0) return;
     try {
+      const firstName = info.sessions[0].sourceFilename.replace(/\.[^.]+$/, '');
+      const defaultName = info.sessions.length === 1
+        ? `${firstName}.lts`
+        : `${firstName}-and-${info.sessions.length - 1}-more.lts`;
       const destPath = await save({
-        defaultPath: info.sourceFilename.replace(/\.[^.]+$/, '') + '.lts',
+        defaultPath: defaultName,
         filters: [{ name: 'LogTapper Session', extensions: ['lts'] }],
       });
-      if (typeof destPath !== 'string') return; // user cancelled
+      if (typeof destPath !== 'string') return;
 
       setExporting(true);
       setError(null);
-      await exportSession(session.sessionId, {
+      await exportAllSessions({
         destPath,
         includeBookmarks,
         includeAnalyses,
@@ -73,10 +73,15 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
     } finally {
       setExporting(false);
     }
-  }, [session, info, includeBookmarks, includeAnalyses, includeProcessors, onClose]);
+  }, [info, includeBookmarks, includeAnalyses, includeProcessors, onClose]);
+
+  const multiSession = info && info.sessions.length > 1;
+  const title = multiSession ? 'Export Sessions' : 'Export Session';
+  const totalBookmarks = info?.sessions.reduce((sum, s) => sum + s.bookmarkCount, 0) ?? 0;
+  const totalAnalyses = info?.sessions.reduce((sum, s) => sum + s.analysisCount, 0) ?? 0;
 
   return (
-    <Modal open={open} onClose={onClose} title="Export Session" width={360}>
+    <Modal open={open} onClose={onClose} title={title} width={400}>
       {loading ? (
         <div className={styles.loading}>
           <Spinner size={24} />
@@ -84,9 +89,15 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
         </div>
       ) : error ? (
         <div className={styles.error}>{error}</div>
-      ) : info ? (
+      ) : info && info.sessions.length > 0 ? (
         <div className={styles.content}>
-          <div className={styles.sourceInfo}>{info.sourceFilename}</div>
+          <div className={styles.sessionList}>
+            {info.sessions.map((s) => (
+              <div key={s.sessionId} className={styles.sessionEntry}>
+                <span className={styles.sessionName}>{s.sourceFilename}</span>
+              </div>
+            ))}
+          </div>
 
           <div className={styles.section}>
             <label className={styles.checkbox}>
@@ -95,7 +106,7 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
                 checked={includeBookmarks}
                 onChange={(e) => setIncludeBookmarks(e.target.checked)}
               />
-              Bookmarks ({info.bookmarkCount})
+              Bookmarks ({totalBookmarks})
             </label>
             <label className={styles.checkbox}>
               <input
@@ -103,7 +114,7 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
                 checked={includeAnalyses}
                 onChange={(e) => setIncludeAnalyses(e.target.checked)}
               />
-              Analyses ({info.analysisCount})
+              Analyses ({totalAnalyses})
             </label>
             <label className={styles.checkbox}>
               <input
@@ -111,7 +122,7 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
                 checked={includeProcessors}
                 onChange={(e) => setIncludeProcessors(e.target.checked)}
               />
-              Processors ({info.processorCount})
+              Processors ({info.totalProcessorCount})
             </label>
           </div>
 
@@ -129,6 +140,8 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
             </Button>
           </div>
         </div>
+      ) : info ? (
+        <div className={styles.error}>No sessions to export.</div>
       ) : null}
     </Modal>
   );

@@ -756,14 +756,19 @@ export interface UpdateResult {
 // Export types (T4 + T5)
 // ---------------------------------------------------------------------------
 
-export interface ExportSessionInfo {
+export interface ExportSessionEntry {
+  sessionId: string;
   sourceFilename: string;
   bookmarkCount: number;
   analysisCount: number;
-  processorCount: number;
 }
 
-export interface ExportOptions {
+export interface ExportAllSessionsInfo {
+  sessions: ExportSessionEntry[];
+  totalProcessorCount: number;
+}
+
+export interface ExportAllOptions {
   destPath: string;
   includeBookmarks: boolean;
   includeAnalyses: boolean;

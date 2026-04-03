@@ -19,7 +19,19 @@
   padding: 4px 0;
 }
 
-.sourceInfo {
+.sessionList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sessionEntry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sessionName {
   font-size: 13px;
   color: var(--text);
   font-family: var(--font-mono);

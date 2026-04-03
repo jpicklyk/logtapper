@@ -176,6 +176,25 @@ export function useFileSession(
           sourceName: result.sourceName,
         });
       }
+
+      // Register additional sessions from multi-session .lts import
+      for (let i = 1; i < results.length; i++) {
+        const extra = results[i];
+        const extraTabId = crypto.randomUUID();
+        const extraLabel = extra.sourceName ?? `Session ${i + 1}`;
+        bus.emit('session:loading', { paneId: targetPaneId, tabId: extraTabId, label: extraLabel, isNewTab: true });
+        registerSession(targetPaneId, extra);
+        bus.emit('session:loaded', {
+          sourceName: extra.sourceName,
+          sourceType: extra.sourceType as SourceType,
+          sessionId: extra.sessionId,
+          paneId: targetPaneId,
+          tabId: extraTabId,
+          isNewTab: true,
+          previousSessionId: undefined,
+          readOnly: isBugreportLike(extra.sourceType) ? true : undefined,
+        });
+      }
     } catch (e) {
       diag('file-load', 'ERROR', { error: String(e) });
       if (loadGenRef.current.get(targetPaneId) === gen) {

@@ -25,15 +25,6 @@ pub fn read_processor_yaml(app: &AppHandle, processor_id: &str) -> Option<String
 // Per-session helpers
 // ---------------------------------------------------------------------------
 
-/// Returns the count of active non-builtin processors for a session.
-/// A processor is active if it is in session_pipeline_meta.active_processor_ids
-/// and NOT in session_pipeline_meta.disabled_processor_ids.
-/// Built-in processors (IDs starting with `__`) are always excluded.
-#[allow(dead_code)]
-pub(crate) fn active_custom_processor_count(state: &AppState, session_id: &str) -> usize {
-    active_custom_processor_ids(state, session_id).len()
-}
-
 /// Returns active non-builtin processor IDs for a session.
 /// Excludes built-in processors (IDs starting with `__`) and disabled ones.
 pub(crate) fn active_custom_processor_ids(state: &AppState, session_id: &str) -> Vec<String> {
@@ -153,24 +144,19 @@ pub async fn get_export_all_sessions_info(
 
     let session_ids: Vec<String> = session_entries.iter().map(|(id, _)| id.clone()).collect();
 
-    // Build per-session entries with bookmark/analysis counts.
-    let mut sessions: Vec<ExportSessionEntry> = Vec::with_capacity(session_entries.len());
-    for (session_id, source_filename) in session_entries {
-        let bookmark_count = {
-            let bookmarks = lock_or_err(&state.bookmarks, "bookmarks")?;
-            bookmarks.get(&session_id).map_or(0, Vec::len)
-        };
-        let analysis_count = {
-            let analyses = lock_or_err(&state.analyses, "analyses")?;
-            analyses.get(&session_id).map_or(0, Vec::len)
-        };
-        sessions.push(ExportSessionEntry {
-            session_id,
-            source_filename,
-            bookmark_count,
-            analysis_count,
-        });
-    }
+    // Build per-session entries with bookmark/analysis counts (one lock each, not per-session).
+    let sessions: Vec<ExportSessionEntry> = {
+        let bookmarks = lock_or_err(&state.bookmarks, "bookmarks")?;
+        let analyses = lock_or_err(&state.analyses, "analyses")?;
+        session_entries
+            .into_iter()
+            .map(|(session_id, source_filename)| {
+                let bookmark_count = bookmarks.get(&session_id).map_or(0, Vec::len);
+                let analysis_count = analyses.get(&session_id).map_or(0, Vec::len);
+                ExportSessionEntry { session_id, source_filename, bookmark_count, analysis_count }
+            })
+            .collect()
+    };
 
     // Deduplicated processor count across all sessions.
     let total_processor_count = all_active_custom_processor_ids(&state, &session_ids).len();
@@ -223,29 +209,27 @@ pub async fn export_all_sessions(
     let session_ids: Vec<String> = session_snapshots.iter().map(|(id, _, _)| id.clone()).collect();
     let mut lts_sessions: Vec<LtsSessionData> = Vec::with_capacity(session_snapshots.len());
 
-    for (session_id, source_filename, sref) in session_snapshots {
+    // Snapshot bookmarks and analyses under one lock each (not per-session).
+    let all_bookmarks = if options.include_bookmarks {
+        let guard = lock_or_err(&state.bookmarks, "bookmarks")?;
+        session_snapshots.iter().map(|(id, _, _)| guard.get(id).cloned().unwrap_or_default()).collect::<Vec<_>>()
+    } else {
+        vec![vec![]; session_snapshots.len()]
+    };
+    let all_analyses = if options.include_analyses {
+        let guard = lock_or_err(&state.analyses, "analyses")?;
+        session_snapshots.iter().map(|(id, _, _)| guard.get(id).cloned().unwrap_or_default()).collect::<Vec<_>>()
+    } else {
+        vec![vec![]; session_snapshots.len()]
+    };
+
+    for ((session_id, source_filename, sref), (bookmarks, analyses)) in
+        session_snapshots.into_iter().zip(all_bookmarks.into_iter().zip(all_analyses))
+    {
         let source_bytes = match sref {
             SourceRef::Mmap(mmap) => mmap.to_vec(),
             SourceRef::Zip(data) => data.as_ref().clone(),
             SourceRef::Stream(bytes) => bytes,
-        };
-
-        let bookmarks = if options.include_bookmarks {
-            lock_or_err(&state.bookmarks, "bookmarks")?
-                .get(&session_id)
-                .cloned()
-                .unwrap_or_default()
-        } else {
-            vec![]
-        };
-
-        let analyses = if options.include_analyses {
-            lock_or_err(&state.analyses, "analyses")?
-                .get(&session_id)
-                .cloned()
-                .unwrap_or_default()
-        } else {
-            vec![]
         };
 
         let session_meta: LtsSessionMeta =
@@ -302,6 +286,61 @@ pub fn resolve_lts_processors(
     lts: &crate::workspace::lts::LtsData,
 ) -> Vec<String> {
     resolve_lts_processors_raw(state, app, &lts.processor_manifest, &lts.processor_yamls)
+}
+
+/// Low-level variant that accepts the processor manifest and YAML map directly.
+/// Used by `load_lts_file_inner` where `LtsData` has been partially consumed.
+pub fn resolve_lts_processors_raw(
+    state: &AppState,
+    app: &tauri::AppHandle,
+    processor_manifest: &crate::workspace::lts::LtsProcessorManifest,
+    processor_yamls: &std::collections::HashMap<String, String>,
+) -> Vec<String> {
+    let mut resolved_ids = Vec::new();
+
+    for entry in &processor_manifest.processors {
+        let Some(bundled_yaml) = processor_yamls.get(&entry.id) else {
+            continue;
+        };
+
+        let local_yaml = read_processor_yaml(app, &entry.id);
+        let needs_install = match &local_yaml {
+            Some(local) => {
+                let local_hash = crate::workspace::sha256_hex(local);
+                let mismatch = local_hash != entry.sha256;
+                if mismatch {
+                    log::warn!(
+                        "Overwriting locally installed processor '{}' with version from .lts session",
+                        entry.id
+                    );
+                }
+                mismatch
+            }
+            None => true,
+        };
+
+        if needs_install {
+            match crate::processors::AnyProcessor::from_yaml(bundled_yaml) {
+                Ok(proc) => {
+                    let id = proc.meta.id.clone();
+                    if let Ok(mut procs) = state.processors.lock() {
+                        procs.insert(id.clone(), proc);
+                    }
+                    if let Err(e) = crate::commands::processors::persist_processor(app, &id, bundled_yaml) {
+                        log::warn!("Failed to persist processor {id} from .lts: {e}");
+                    }
+                    resolved_ids.push(id);
+                }
+                Err(e) => {
+                    log::warn!("Failed to parse processor {} from .lts: {e}", entry.id);
+                }
+            }
+        } else {
+            resolved_ids.push(entry.id.clone());
+        }
+    }
+
+    resolved_ids
 }
 
 // ---------------------------------------------------------------------------
@@ -408,62 +447,4 @@ mod tests {
 
         assert!(ids.is_empty(), "expected empty vec for sessions with no pipeline meta");
     }
-}
-
-/// Low-level variant that accepts the processor manifest and YAML map directly.
-/// Used by `load_lts_file_inner` where `LtsData` has been partially consumed.
-pub fn resolve_lts_processors_raw(
-    state: &AppState,
-    app: &tauri::AppHandle,
-    processor_manifest: &crate::workspace::lts::LtsProcessorManifest,
-    processor_yamls: &std::collections::HashMap<String, String>,
-) -> Vec<String> {
-    let mut resolved_ids = Vec::new();
-
-    for entry in &processor_manifest.processors {
-        let Some(bundled_yaml) = processor_yamls.get(&entry.id) else {
-            continue; // YAML not actually bundled — skip
-        };
-
-        // Check if processor exists locally and compute its content hash.
-        let local_yaml = read_processor_yaml(app, &entry.id);
-        let needs_install = match &local_yaml {
-            Some(local) => {
-                let local_hash = crate::workspace::sha256_hex(local);
-                let mismatch = local_hash != entry.sha256;
-                if mismatch {
-                    log::warn!(
-                        "Overwriting locally installed processor '{}' with version from .lts session",
-                        entry.id
-                    );
-                }
-                mismatch
-            }
-            None => true, // Not installed locally
-        };
-
-        if needs_install {
-            // Install the bundled processor globally (v1 — no session namespacing).
-            match crate::processors::AnyProcessor::from_yaml(bundled_yaml) {
-                Ok(proc) => {
-                    let id = proc.meta.id.clone();
-                    if let Ok(mut procs) = state.processors.lock() {
-                        procs.insert(id.clone(), proc);
-                    }
-                    // Persist to disk.
-                    if let Err(e) = crate::commands::processors::persist_processor(app, &id, bundled_yaml) {
-                        log::warn!("Failed to persist processor {id} from .lts: {e}");
-                    }
-                    resolved_ids.push(id);
-                }
-                Err(e) => {
-                    log::warn!("Failed to parse processor {} from .lts: {e}", entry.id);
-                }
-            }
-        } else {
-            resolved_ids.push(entry.id.clone());
-        }
-    }
-
-    resolved_ids
 }

@@ -252,11 +252,10 @@ fn load_lts_file_inner(
         return Err("No sessions in .lts file".to_string());
     }
 
-    // Clone shared processor fields once — all sessions share the same processor pool.
-    let processor_manifest = lts.processor_manifest.clone();
-    let processor_yamls = lts.processor_yamls.clone();
-
     let file_size = path_obj.metadata().map(|m| m.len()).unwrap_or(0);
+
+    // Destructure to avoid cloning the processor fields.
+    let crate::workspace::lts::LtsData { sessions, processor_manifest, processor_yamls, .. } = lts;
 
     // 2. Resolve bundled processors ONCE for all sessions (install missing / hash-mismatched).
     let _resolved = crate::commands::export::resolve_lts_processors_raw(
@@ -267,9 +266,9 @@ fn load_lts_file_inner(
     );
 
     // 3. Create one AnalysisSession per embedded session.
-    let mut results = Vec::with_capacity(lts.sessions.len());
+    let mut results = Vec::with_capacity(sessions.len());
 
-    for session_data in lts.sessions {
+    for session_data in sessions {
         let session_id = uuid::Uuid::new_v4().to_string();
 
         // source_id is derived from the original filename (no extension), following the same
