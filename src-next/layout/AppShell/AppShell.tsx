@@ -21,7 +21,7 @@ import { RightPane } from '../../components/RightPane';
 import { BottomPane } from '../../components/BottomPane';
 import { PaneContent } from '../../components/PaneContent';
 import { SettingsPanel } from '../../components/SettingsPanel';
-import { useSettings, useAnonymizerConfig, useToast, useAnalysisToast, useWatchToast, useWorkspaceRestoreToast, useFileShortcuts, useStartupFile, useEditorTabRestore } from '../../hooks';
+import { useSettings, useAnonymizerConfig, useToast, useAnalysisToast, useWatchToast, useWorkspaceRestoreToast, useLtsImportToast, useFileShortcuts, useStartupFile, useEditorTabRestore } from '../../hooks';
 import { startMcpBridge } from '../../bridge/commands';
 import { useCacheManager } from '../../cache';
 import { Toast } from '../../ui';
@@ -65,6 +65,7 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   useAnalysisToast(addToast);
   useWatchToast(addToast);
   useWorkspaceRestoreToast(addToast);
+  useLtsImportToast(addToast);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Listen for settings-requested event from Header

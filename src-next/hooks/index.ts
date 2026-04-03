@@ -40,6 +40,7 @@ export type { MarketplaceState } from './useMarketplace';
 export { useToast } from './useToast';
 export { useAnalysisToast } from './useAnalysisToast';
 export { useWatchToast } from './useWatchToast';
+export { useLtsImportToast } from './useLtsImportToast';
 export { useWorkspaceRestore } from './useWorkspaceRestore';
 export { useWorkspaceRestoreToast } from './useWorkspaceRestoreToast';
 export { useFileShortcuts } from './useFileShortcuts';
