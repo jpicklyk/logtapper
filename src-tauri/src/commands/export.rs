@@ -21,25 +21,50 @@ pub fn read_processor_yaml(app: &AppHandle, processor_id: &str) -> Option<String
 }
 
 // ---------------------------------------------------------------------------
+// Helpers — testable processor selection logic
+// ---------------------------------------------------------------------------
+
+/// Count non-builtin processors enabled in the pipeline for a session.
+/// Excludes processors present in `disabled_processor_ids`.
+pub(crate) fn active_custom_processor_count(state: &AppState, session_id: &str) -> usize {
+    let Ok(meta) = state.session_pipeline_meta.lock() else {
+        return 0;
+    };
+    meta.get(session_id)
+        .map_or(0, |m| {
+            m.active_processor_ids.iter()
+                .filter(|id| !id.starts_with("__") && !m.disabled_processor_ids.contains(id))
+                .count()
+        })
+}
+
+/// Collect non-builtin processor IDs enabled in the pipeline for a session.
+/// Excludes processors present in `disabled_processor_ids`.
+pub(crate) fn active_custom_processor_ids(state: &AppState, session_id: &str) -> Vec<String> {
+    let Ok(meta) = state.session_pipeline_meta.lock() else {
+        return vec![];
+    };
+    meta.get(session_id)
+        .map(|m| {
+            m.active_processor_ids.iter()
+                .filter(|id| !id.starts_with("__") && !m.disabled_processor_ids.contains(id))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+// ---------------------------------------------------------------------------
 // T5 — Export session info command
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ExportProcessorEntry {
-    pub id: String,
-    pub name: String,
-    pub builtin: bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ExportSessionInfo {
     pub source_filename: String,
-    pub source_size: u64,
     pub bookmark_count: usize,
     pub analysis_count: usize,
-    pub processors: Vec<ExportProcessorEntry>,
+    pub processor_count: usize,
 }
 
 #[tauri::command]
@@ -47,8 +72,8 @@ pub async fn get_export_session_info(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<ExportSessionInfo, String> {
-    // Read source info under brief lock.
-    let (source_filename, source_size) = {
+    // Read source filename under brief lock.
+    let source_filename = {
         let sessions = lock_or_err(&state.sessions, "sessions")?;
         let session = sessions
             .get(&session_id)
@@ -56,17 +81,7 @@ pub async fn get_export_session_info(
         let src = session
             .primary_source()
             .ok_or("No source in session")?;
-        let name = src.name().to_string();
-        // Derive size from line_index sentinel (last entry = total bytes) for file sources,
-        // or from data.len() for zip sources.
-        let size = if let Some(file_src) = src.as_any().downcast_ref::<FileLogSource>() {
-            file_src.line_index().last().copied().unwrap_or(0)
-        } else if let Some(zip_src) = src.as_any().downcast_ref::<ZipLogSource>() {
-            zip_src.data().len() as u64
-        } else {
-            0
-        };
-        (name, size)
+        src.name().to_string()
     };
     // sessions lock dropped
 
@@ -82,25 +97,13 @@ pub async fn get_export_session_info(
         analyses.get(&session_id).map_or(0, Vec::len)
     };
 
-    // Processor list under brief lock.
-    let processors = {
-        let procs = lock_or_err(&state.processors, "processors")?;
-        procs
-            .iter()
-            .map(|(id, proc)| ExportProcessorEntry {
-                id: id.clone(),
-                name: proc.meta.name.clone(),
-                builtin: id.starts_with("__"),
-            })
-            .collect()
-    };
+    let processor_count = active_custom_processor_count(&state, &session_id);
 
     Ok(ExportSessionInfo {
         source_filename,
-        source_size,
         bookmark_count,
         analysis_count,
-        processors,
+        processor_count,
     })
 }
 
@@ -114,6 +117,7 @@ pub struct ExportOptions {
     pub dest_path: String,
     pub include_bookmarks: bool,
     pub include_analyses: bool,
+    pub include_processors: bool,
 }
 
 #[tauri::command]
@@ -172,36 +176,37 @@ pub async fn export_session(
         vec![]
     };
 
-    // 4. Get non-builtin processor YAMLs under brief lock.
-    let processor_yamls: Vec<(String, String, String)> = {
-        let processors = lock_or_err(&state.processors, "processors")?;
-        processors
-            .iter()
-            .filter(|(id, _)| !id.starts_with("__"))
-            .filter_map(|(id, _proc)| {
-                let yaml = read_processor_yaml(&app, id)?;
-                let filename = crate::processors::marketplace::id_to_filename(id);
-                Some((id.clone(), format!("{filename}.yaml"), yaml))
+    // 4. Get pipeline-enabled non-builtin processor YAMLs (if requested).
+    // Collect active IDs under brief lock, then read YAMLs from disk outside the lock.
+    let processor_yamls: Vec<(String, String, String)> = if options.include_processors {
+        let proc_ids = active_custom_processor_ids(&state, &session_id);
+        proc_ids
+            .into_iter()
+            .filter_map(|id| {
+                let yaml = read_processor_yaml(&app, &id)?;
+                let filename = crate::processors::marketplace::id_to_filename(&id);
+                Some((id, format!("{filename}.yaml"), yaml))
             })
             .collect()
+    } else {
+        vec![]
     };
-    // processors lock dropped
 
     // 5. Snapshot pipeline meta under brief lock.
     let meta: crate::workspace::lts::LtsSessionMeta =
         crate::commands::workspace_sync::snapshot_pipeline_meta(&state, &session_id).into();
 
     // 6. Write .lts file (no locks held).
+    // TODO(WI-2): Update to v2 multi-session API.
     let dest = std::path::Path::new(&options.dest_path);
-    crate::workspace::lts::write_lts(
-        dest,
-        &source_name,
-        &source_bytes,
-        &bookmarks,
-        &analyses,
-        &meta,
-        &processor_yamls,
-    )?;
+    let session_data = crate::workspace::lts::LtsSessionData {
+        source_bytes,
+        source_filename: source_name,
+        bookmarks,
+        analyses,
+        session_meta: meta,
+    };
+    crate::workspace::lts::write_lts(dest, &[session_data], &processor_yamls)?;
 
     Ok(())
 }
@@ -235,23 +240,212 @@ pub fn resolve_lts_processors(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workspace;
 
-    /// `read_processor_yaml` with a nonexistent processor ID must return None without panicking.
+    fn make_state() -> AppState {
+        AppState::new()
+    }
+
+    fn set_pipeline_meta(state: &AppState, session_id: &str, active: Vec<&str>, disabled: Vec<&str>) {
+        state.session_pipeline_meta.lock().unwrap().insert(
+            session_id.to_string(),
+            workspace::SessionMeta {
+                active_processor_ids: active.into_iter().map(String::from).collect(),
+                disabled_processor_ids: disabled.into_iter().map(String::from).collect(),
+            },
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // active_custom_processor_count
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn count_no_pipeline_meta_returns_zero() {
+        let state = make_state();
+        assert_eq!(active_custom_processor_count(&state, "sess-1"), 0);
+    }
+
+    #[test]
+    fn count_empty_active_list_returns_zero() {
+        let state = make_state();
+        set_pipeline_meta(&state, "sess-1", vec![], vec!["proc-a"]);
+        assert_eq!(active_custom_processor_count(&state, "sess-1"), 0);
+    }
+
+    #[test]
+    fn count_only_builtin_active_returns_zero() {
+        let state = make_state();
+        set_pipeline_meta(&state, "sess-1", vec!["__pii_anonymizer", "__builtin_other"], vec![]);
+        assert_eq!(active_custom_processor_count(&state, "sess-1"), 0);
+    }
+
+    #[test]
+    fn count_mix_of_builtin_and_custom_active() {
+        let state = make_state();
+        set_pipeline_meta(
+            &state,
+            "sess-1",
+            vec!["__pii_anonymizer", "crash-reporter", "anr-tracker"],
+            vec![],
+        );
+        assert_eq!(active_custom_processor_count(&state, "sess-1"), 2);
+    }
+
+    #[test]
+    fn count_all_custom_active() {
+        let state = make_state();
+        set_pipeline_meta(
+            &state,
+            "sess-1",
+            vec!["proc-a", "proc-b", "proc-c"],
+            vec![],
+        );
+        assert_eq!(active_custom_processor_count(&state, "sess-1"), 3);
+    }
+
+    #[test]
+    fn count_ignores_other_sessions() {
+        let state = make_state();
+        set_pipeline_meta(&state, "sess-1", vec!["proc-a", "proc-b"], vec![]);
+        set_pipeline_meta(&state, "sess-2", vec!["proc-c"], vec![]);
+        assert_eq!(active_custom_processor_count(&state, "sess-1"), 2);
+        assert_eq!(active_custom_processor_count(&state, "sess-2"), 1);
+        assert_eq!(active_custom_processor_count(&state, "sess-3"), 0);
+    }
+
+    #[test]
+    fn count_disabled_processors_excluded() {
+        let state = make_state();
+        // Chain has 3 processors, but 2 are disabled — only 1 should count
+        set_pipeline_meta(
+            &state,
+            "sess-1",
+            vec!["proc-a", "proc-b", "proc-c"],
+            vec!["proc-b", "proc-c"],
+        );
+        assert_eq!(active_custom_processor_count(&state, "sess-1"), 1);
+    }
+
+    #[test]
+    fn count_disabled_builtin_and_custom_mix() {
+        // 7 in chain (2 builtin + 5 custom), 3 custom disabled → 2 custom remain
+        let state = make_state();
+        set_pipeline_meta(
+            &state,
+            "sess-1",
+            vec!["__pii_anonymizer", "__builtin_x", "proc-a", "proc-b", "proc-c", "proc-d", "proc-e"],
+            vec!["proc-c", "proc-d", "proc-e"],
+        );
+        assert_eq!(active_custom_processor_count(&state, "sess-1"), 2);
+    }
+
+    #[test]
+    fn count_all_custom_disabled() {
+        let state = make_state();
+        set_pipeline_meta(
+            &state,
+            "sess-1",
+            vec!["proc-a", "proc-b", "proc-c"],
+            vec!["proc-a", "proc-b", "proc-c"],
+        );
+        assert_eq!(active_custom_processor_count(&state, "sess-1"), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // active_custom_processor_ids
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ids_no_pipeline_meta_returns_empty() {
+        let state = make_state();
+        assert!(active_custom_processor_ids(&state, "sess-1").is_empty());
+    }
+
+    #[test]
+    fn ids_filters_out_builtins() {
+        let state = make_state();
+        set_pipeline_meta(
+            &state,
+            "sess-1",
+            vec!["__pii_anonymizer", "crash-reporter", "__builtin_x", "anr-tracker"],
+            vec![],
+        );
+        let ids = active_custom_processor_ids(&state, "sess-1");
+        assert_eq!(ids, vec!["crash-reporter", "anr-tracker"]);
+    }
+
+    #[test]
+    fn ids_excludes_disabled() {
+        let state = make_state();
+        set_pipeline_meta(
+            &state,
+            "sess-1",
+            vec!["proc-a", "proc-b", "proc-c"],
+            vec!["proc-b"],
+        );
+        let ids = active_custom_processor_ids(&state, "sess-1");
+        assert_eq!(ids, vec!["proc-a", "proc-c"]);
+    }
+
+    #[test]
+    fn ids_empty_when_all_disabled() {
+        let state = make_state();
+        set_pipeline_meta(
+            &state,
+            "sess-1",
+            vec!["proc-a", "proc-b"],
+            vec!["proc-a", "proc-b"],
+        );
+        assert!(active_custom_processor_ids(&state, "sess-1").is_empty());
+    }
+
+    #[test]
+    fn ids_filters_both_builtin_and_disabled() {
+        let state = make_state();
+        set_pipeline_meta(
+            &state,
+            "sess-1",
+            vec!["__pii_anonymizer", "proc-a", "proc-b", "proc-c", "__builtin_x"],
+            vec!["proc-b"],
+        );
+        let ids = active_custom_processor_ids(&state, "sess-1");
+        assert_eq!(ids, vec!["proc-a", "proc-c"]);
+    }
+
+    #[test]
+    fn ids_preserves_order() {
+        let state = make_state();
+        set_pipeline_meta(
+            &state,
+            "sess-1",
+            vec!["zebra-proc", "alpha-proc", "middle-proc"],
+            vec![],
+        );
+        let ids = active_custom_processor_ids(&state, "sess-1");
+        assert_eq!(ids, vec!["zebra-proc", "alpha-proc", "middle-proc"]);
+    }
+
+    #[test]
+    fn ids_scoped_to_session() {
+        let state = make_state();
+        set_pipeline_meta(&state, "sess-1", vec!["proc-a"], vec![]);
+        set_pipeline_meta(&state, "sess-2", vec!["proc-b", "proc-c"], vec![]);
+
+        assert_eq!(active_custom_processor_ids(&state, "sess-1"), vec!["proc-a"]);
+        assert_eq!(active_custom_processor_ids(&state, "sess-2"), vec!["proc-b", "proc-c"]);
+        assert!(active_custom_processor_ids(&state, "nonexistent").is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // read_processor_yaml (filesystem)
+    // -----------------------------------------------------------------------
+
     #[test]
     fn read_processor_yaml_nonexistent_returns_none() {
-        // We cannot construct a real AppHandle in unit tests, so we exercise the
-        // path through the public helper indirectly by verifying that reading
-        // from a temp directory for a nonexistent ID returns None.
-        //
-        // The helper internally does:
-        //   data_dir.join("processors").join("{filename}.yaml")
-        //   std::fs::read_to_string(...).ok()
-        //
-        // We verify the None path by calling std::fs::read_to_string on a
-        // nonexistent path directly — same logic.
         let nonexistent = std::path::Path::new("/tmp/nonexistent-logtapper-test-xyz/processors/bogus-id.yaml");
         let result = std::fs::read_to_string(nonexistent).ok();
-        assert!(result.is_none(), "reading a nonexistent path must return None");
+        assert!(result.is_none());
     }
 }
 

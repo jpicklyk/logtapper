@@ -9,20 +9,27 @@ use zip::write::SimpleFileOptions;
 use crate::core::analysis::AnalysisArtifact;
 use crate::core::bookmark::Bookmark;
 
-pub const LTS_FORMAT_VERSION: u32 = 1;
+pub const LTS_FORMAT_VERSION: u32 = 2;
 
-/// Manifest stored as `manifest.json` inside the `.lts` zip.
+/// Top-level manifest stored as `manifest.json` inside the `.lts` zip.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LtsManifest {
     pub format_version: u32,
-    pub source_filename: String,
-    pub source_size: u64,
+    pub sessions: Vec<LtsManifestSession>,
     /// Milliseconds since UNIX epoch.
     pub saved_at: i64,
 }
 
-/// Session-level metadata stored as `artifacts/session-meta.json` inside the `.lts` zip.
+/// Per-session metadata recorded in the top-level manifest.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LtsManifestSession {
+    pub source_filename: String,
+    pub source_size: u64,
+}
+
+/// Session-level metadata stored as `sessions/{idx}/artifacts/session-meta.json`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LtsSessionMeta {
@@ -64,40 +71,56 @@ pub struct LtsProcessorManifest {
     pub processors: Vec<LtsProcessorEntry>,
 }
 
-/// In-memory representation of a loaded `.lts` file.
-pub struct LtsData {
-    pub manifest: LtsManifest,
+/// In-memory representation of a single session within an `.lts` file.
+pub struct LtsSessionData {
     pub source_bytes: Vec<u8>,
+    pub source_filename: String,
     pub bookmarks: Vec<Bookmark>,
     pub analyses: Vec<AnalysisArtifact>,
     pub session_meta: LtsSessionMeta,
+}
+
+/// In-memory representation of a loaded `.lts` file.
+pub struct LtsData {
+    pub manifest: LtsManifest,
+    pub sessions: Vec<LtsSessionData>,
     pub processor_manifest: LtsProcessorManifest,
     pub processor_yamls: HashMap<String, String>,
 }
 
-/// Write a `.lts` zip file to `dest`.
+/// Write a `.lts` zip file (format v2) to `dest`.
 ///
 /// # Arguments
 /// * `dest` — output path for the zip file
-/// * `source_filename` — original filename of the log source (no path, just the name)
-/// * `source_bytes` — raw bytes of the log source; stored uncompressed (`Stored`)
-/// * `bookmarks` — session bookmarks
-/// * `analyses` — session analysis artifacts
-/// * `meta` — session-level metadata (active/disabled processor IDs)
+/// * `sessions` — slice of per-session data to embed
 /// * `processor_yamls` — `(id, filename, yaml_content)` tuples for each processor to embed
+///
+/// # Zip layout
+/// ```text
+/// manifest.json
+/// sessions/{idx}/source/{filename}         (Stored, large_file=true)
+/// sessions/{idx}/artifacts/bookmarks.json  (Deflated)
+/// sessions/{idx}/artifacts/analyses.json   (Deflated)
+/// sessions/{idx}/artifacts/session-meta.json (Deflated)
+/// processors/{filename}.yaml               (Deflated)
+/// processors/processor-manifest.json       (Deflated)
+/// ```
 pub fn write_lts(
     dest: &Path,
-    source_filename: &str,
-    source_bytes: &[u8],
-    bookmarks: &[Bookmark],
-    analyses: &[AnalysisArtifact],
-    meta: &LtsSessionMeta,
-    processor_yamls: &[(String, String, String)],
+    sessions: &[LtsSessionData],
+    processor_yamls: &[(String, String, String)], // (id, filename, yaml_content)
 ) -> Result<(), String> {
+    let manifest_sessions: Vec<LtsManifestSession> = sessions
+        .iter()
+        .map(|s| LtsManifestSession {
+            source_filename: s.source_filename.clone(),
+            source_size: s.source_bytes.len() as u64,
+        })
+        .collect();
+
     let manifest = LtsManifest {
         format_version: LTS_FORMAT_VERSION,
-        source_filename: source_filename.to_string(),
-        source_size: source_bytes.len() as u64,
+        sessions: manifest_sessions,
         saved_at: super::now_ms(),
     };
 
@@ -114,24 +137,36 @@ pub fn write_lts(
     // 1. manifest.json (Deflated)
     super::zip_write_json(&mut writer, "manifest.json", deflate_opts, &manifest)?;
 
-    // 2. source/<source_filename> (Stored — no compression for large files)
-    let source_entry = format!("source/{source_filename}");
-    writer
-        .start_file(&source_entry, stored_opts)
-        .map_err(|e| format!("Failed to start source entry '{source_entry}': {e}"))?;
-    std::io::Write::write_all(&mut writer, source_bytes)
-        .map_err(|e| format!("Failed to write source bytes: {e}"))?;
+    // 2. Per-session entries
+    for (idx, session) in sessions.iter().enumerate() {
+        let source_entry = format!("sessions/{idx}/source/{}", session.source_filename);
+        writer
+            .start_file(&source_entry, stored_opts)
+            .map_err(|e| format!("Failed to start source entry '{source_entry}': {e}"))?;
+        std::io::Write::write_all(&mut writer, &session.source_bytes)
+            .map_err(|e| format!("Failed to write source bytes for session {idx}: {e}"))?;
 
-    // 3. artifacts/bookmarks.json (Deflated)
-    super::zip_write_json(&mut writer, "artifacts/bookmarks.json", deflate_opts, bookmarks)?;
+        super::zip_write_json(
+            &mut writer,
+            &format!("sessions/{idx}/artifacts/bookmarks.json"),
+            deflate_opts,
+            &session.bookmarks,
+        )?;
+        super::zip_write_json(
+            &mut writer,
+            &format!("sessions/{idx}/artifacts/analyses.json"),
+            deflate_opts,
+            &session.analyses,
+        )?;
+        super::zip_write_json(
+            &mut writer,
+            &format!("sessions/{idx}/artifacts/session-meta.json"),
+            deflate_opts,
+            &session.session_meta,
+        )?;
+    }
 
-    // 4. artifacts/analyses.json (Deflated)
-    super::zip_write_json(&mut writer, "artifacts/analyses.json", deflate_opts, analyses)?;
-
-    // 5. artifacts/session-meta.json (Deflated)
-    super::zip_write_json(&mut writer, "artifacts/session-meta.json", deflate_opts, meta)?;
-
-    // 6. processors/<filename>.yaml + build processor manifest (Deflated)
+    // 3. processors/<filename>.yaml + build processor manifest (Deflated)
     let mut proc_manifest = LtsProcessorManifest {
         processors: Vec::with_capacity(processor_yamls.len()),
     };
@@ -151,8 +186,13 @@ pub fn write_lts(
             .map_err(|e| format!("Failed to write processor YAML '{yaml_entry}': {e}"))?;
     }
 
-    // 7. processors/processor-manifest.json (Deflated)
-    super::zip_write_json(&mut writer, "processors/processor-manifest.json", deflate_opts, &proc_manifest)?;
+    // 4. processors/processor-manifest.json (Deflated)
+    super::zip_write_json(
+        &mut writer,
+        "processors/processor-manifest.json",
+        deflate_opts,
+        &proc_manifest,
+    )?;
 
     writer
         .finish()
@@ -171,33 +211,53 @@ pub fn read_lts(path: &Path) -> Result<LtsData, String> {
     // 1. manifest.json
     let manifest: LtsManifest = super::zip_read_json(&mut archive, "manifest.json")?;
 
-    // 2. source/<manifest.source_filename>
-    let source_bytes: Vec<u8> = {
-        let source_entry = format!("source/{}", manifest.source_filename);
-        let mut entry = archive
-            .by_name(&source_entry)
-            .map_err(|e| format!("Source entry '{source_entry}' not found in .lts file: {e}"))?;
-        let mut buf = Vec::new();
-        entry
-            .read_to_end(&mut buf)
-            .map_err(|e| format!("Failed to read source bytes from '{source_entry}': {e}"))?;
-        buf
-    };
+    // 2. Per-session data
+    let mut sessions: Vec<LtsSessionData> = Vec::with_capacity(manifest.sessions.len());
+    for (idx, session_meta_entry) in manifest.sessions.iter().enumerate() {
+        // source bytes (Stored)
+        let source_bytes: Vec<u8> = {
+            let source_entry =
+                format!("sessions/{idx}/source/{}", session_meta_entry.source_filename);
+            let mut entry = archive.by_name(&source_entry).map_err(|e| {
+                format!("Source entry '{source_entry}' not found in .lts file: {e}")
+            })?;
+            let mut buf = Vec::new();
+            entry
+                .read_to_end(&mut buf)
+                .map_err(|e| format!("Failed to read source bytes from '{source_entry}': {e}"))?;
+            buf
+        };
 
-    // 3. artifacts/bookmarks.json
-    let bookmarks: Vec<Bookmark> = super::zip_read_json(&mut archive, "artifacts/bookmarks.json")?;
+        let bookmarks: Vec<Bookmark> = super::zip_read_json(
+            &mut archive,
+            &format!("sessions/{idx}/artifacts/bookmarks.json"),
+        )?;
 
-    // 4. artifacts/analyses.json
-    let analyses: Vec<AnalysisArtifact> = super::zip_read_json(&mut archive, "artifacts/analyses.json")?;
+        let analyses: Vec<AnalysisArtifact> = super::zip_read_json(
+            &mut archive,
+            &format!("sessions/{idx}/artifacts/analyses.json"),
+        )?;
 
-    // 5. artifacts/session-meta.json (optional — default if missing)
-    let session_meta: LtsSessionMeta = match archive.by_name("artifacts/session-meta.json") {
-        Ok(entry) => serde_json::from_reader(entry)
-            .map_err(|e| format!("Failed to parse artifacts/session-meta.json: {e}"))?,
-        Err(_) => LtsSessionMeta::default(),
-    };
+        // session-meta.json is optional — default if missing
+        let session_meta: LtsSessionMeta = {
+            let meta_path = format!("sessions/{idx}/artifacts/session-meta.json");
+            match archive.by_name(&meta_path) {
+                Ok(entry) => serde_json::from_reader(entry)
+                    .map_err(|e| format!("Failed to parse {meta_path}: {e}"))?,
+                Err(_) => LtsSessionMeta::default(),
+            }
+        };
 
-    // 6. processors/processor-manifest.json (optional — default if missing)
+        sessions.push(LtsSessionData {
+            source_bytes,
+            source_filename: session_meta_entry.source_filename.clone(),
+            bookmarks,
+            analyses,
+            session_meta,
+        });
+    }
+
+    // 3. processors/processor-manifest.json (optional — default if missing)
     let processor_manifest: LtsProcessorManifest =
         match archive.by_name("processors/processor-manifest.json") {
             Ok(entry) => serde_json::from_reader(entry)
@@ -205,7 +265,7 @@ pub fn read_lts(path: &Path) -> Result<LtsData, String> {
             Err(_) => LtsProcessorManifest::default(),
         };
 
-    // 7. Read each processor YAML listed in the manifest.
+    // 4. Read each processor YAML listed in the manifest.
     let mut processor_yamls: HashMap<String, String> =
         HashMap::with_capacity(processor_manifest.processors.len());
     for entry_meta in &processor_manifest.processors {
@@ -222,10 +282,7 @@ pub fn read_lts(path: &Path) -> Result<LtsData, String> {
 
     Ok(LtsData {
         manifest,
-        source_bytes,
-        bookmarks,
-        analyses,
-        session_meta,
+        sessions,
         processor_manifest,
         processor_yamls,
     })
@@ -264,7 +321,25 @@ mod tests {
         }
     }
 
-    /// Full round-trip: write_lts then read_lts, verify all fields survive.
+    fn make_session(
+        filename: &str,
+        source_bytes: Vec<u8>,
+        bookmarks: Vec<Bookmark>,
+        analyses: Vec<AnalysisArtifact>,
+        meta: LtsSessionMeta,
+    ) -> LtsSessionData {
+        LtsSessionData {
+            source_bytes,
+            source_filename: filename.to_string(),
+            bookmarks,
+            analyses,
+            session_meta: meta,
+        }
+    }
+
+    // ─── Existing tests (updated for v2) ────────────────────────────────────
+
+    /// Full round-trip: write_lts then read_lts, verify all fields survive (single session).
     #[test]
     fn lts_roundtrip() {
         let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
@@ -284,44 +359,40 @@ mod tests {
             "id: proc-a\ntype: reporter\n".to_string(),
         )];
 
-        write_lts(
-            &zip_path,
-            "test.log",
-            &source_bytes,
-            &bookmarks,
-            &analyses,
-            &meta,
-            &proc_yamls,
-        )
-        .expect("write_lts");
+        let sessions = vec![make_session("test.log", source_bytes.clone(), bookmarks, analyses, meta)];
+        write_lts(&zip_path, &sessions, &proc_yamls).expect("write_lts");
 
         let loaded = read_lts(&zip_path).expect("read_lts");
 
         // Manifest
         assert_eq!(loaded.manifest.format_version, LTS_FORMAT_VERSION);
-        assert_eq!(loaded.manifest.source_filename, "test.log");
-        assert_eq!(loaded.manifest.source_size, source_bytes.len() as u64);
+        assert_eq!(loaded.manifest.sessions.len(), 1);
+        assert_eq!(loaded.manifest.sessions[0].source_filename, "test.log");
+        assert_eq!(loaded.manifest.sessions[0].source_size, source_bytes.len() as u64);
         assert!(loaded.manifest.saved_at > 0);
 
+        assert_eq!(loaded.sessions.len(), 1);
+        let sess = &loaded.sessions[0];
+
         // Source bytes (Stored — no transformation)
-        assert_eq!(loaded.source_bytes, source_bytes);
+        assert_eq!(sess.source_bytes, source_bytes);
 
         // Bookmarks
-        assert_eq!(loaded.bookmarks.len(), 2);
-        assert_eq!(loaded.bookmarks[0].line_number, 10);
-        assert_eq!(loaded.bookmarks[1].line_number, 20);
+        assert_eq!(sess.bookmarks.len(), 2);
+        assert_eq!(sess.bookmarks[0].line_number, 10);
+        assert_eq!(sess.bookmarks[1].line_number, 20);
 
         // Analyses
-        assert_eq!(loaded.analyses.len(), 1);
-        assert_eq!(loaded.analyses[0].title, "Test Analysis");
+        assert_eq!(sess.analyses.len(), 1);
+        assert_eq!(sess.analyses[0].title, "Test Analysis");
 
         // Session meta
         assert_eq!(
-            loaded.session_meta.active_processor_ids,
+            sess.session_meta.active_processor_ids,
             vec!["proc-a".to_string()]
         );
         assert_eq!(
-            loaded.session_meta.disabled_processor_ids,
+            sess.session_meta.disabled_processor_ids,
             vec!["proc-b".to_string()]
         );
 
@@ -342,15 +413,17 @@ mod tests {
         let zip_path = tmp.path().to_path_buf();
         drop(tmp);
 
-        let meta = LtsSessionMeta::default();
-        write_lts(&zip_path, "empty.log", b"", &[], &[], &meta, &[]).expect("write_lts");
+        let sessions = vec![make_session("empty.log", vec![], vec![], vec![], LtsSessionMeta::default())];
+        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
 
         let loaded = read_lts(&zip_path).expect("read_lts");
 
-        assert!(loaded.source_bytes.is_empty());
-        assert!(loaded.bookmarks.is_empty());
-        assert!(loaded.analyses.is_empty());
-        assert!(loaded.session_meta.active_processor_ids.is_empty());
+        assert_eq!(loaded.sessions.len(), 1);
+        let sess = &loaded.sessions[0];
+        assert!(sess.source_bytes.is_empty());
+        assert!(sess.bookmarks.is_empty());
+        assert!(sess.analyses.is_empty());
+        assert!(sess.session_meta.active_processor_ids.is_empty());
         assert!(loaded.processor_manifest.processors.is_empty());
         assert!(loaded.processor_yamls.is_empty());
     }
@@ -376,17 +449,19 @@ mod tests {
         }
         let original_len = source_bytes.len();
 
-        let meta = LtsSessionMeta::default();
-        write_lts(&zip_path, "large.log", &source_bytes, &[], &[], &meta, &[]).expect("write_lts");
+        let sessions = vec![make_session("large.log", source_bytes.clone(), vec![], vec![], LtsSessionMeta::default())];
+        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
 
         let loaded = read_lts(&zip_path).expect("read_lts");
 
+        assert_eq!(loaded.sessions.len(), 1);
+        let sess = &loaded.sessions[0];
         assert_eq!(
-            loaded.source_bytes.len(), original_len,
+            sess.source_bytes.len(), original_len,
             "source byte count must survive round-trip"
         );
         assert_eq!(
-            loaded.source_bytes, source_bytes,
+            sess.source_bytes, source_bytes,
             "source bytes must be bit-for-bit identical after Stored round-trip"
         );
     }
@@ -399,14 +474,14 @@ mod tests {
         drop(tmp);
 
         let source_bytes = b"01-01 00:00:00.000  1000  1001 I Tag: line\n";
-        let meta = LtsSessionMeta::default();
 
         let before_write = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
 
-        write_lts(&zip_path, "myfile.log", source_bytes, &[], &[], &meta, &[]).expect("write_lts");
+        let sessions = vec![make_session("myfile.log", source_bytes.to_vec(), vec![], vec![], LtsSessionMeta::default())];
+        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
 
         let after_write = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -416,9 +491,10 @@ mod tests {
         let loaded = read_lts(&zip_path).expect("read_lts");
 
         assert_eq!(loaded.manifest.format_version, LTS_FORMAT_VERSION);
-        assert_eq!(loaded.manifest.source_filename, "myfile.log");
+        assert_eq!(loaded.manifest.sessions.len(), 1);
+        assert_eq!(loaded.manifest.sessions[0].source_filename, "myfile.log");
         assert_eq!(
-            loaded.manifest.source_size,
+            loaded.manifest.sessions[0].source_size,
             source_bytes.len() as u64,
             "source_size must equal the actual byte count"
         );
@@ -444,8 +520,10 @@ mod tests {
 
             let manifest = LtsManifest {
                 format_version: LTS_FORMAT_VERSION,
-                source_filename: "minimal.log".to_string(),
-                source_size: 5,
+                sessions: vec![LtsManifestSession {
+                    source_filename: "minimal.log".to_string(),
+                    source_size: 5,
+                }],
                 saved_at: 12345,
             };
 
@@ -461,16 +539,16 @@ mod tests {
             writer.start_file("manifest.json", deflate).unwrap();
             serde_json::to_writer(&mut writer, &manifest).unwrap();
 
-            // source/minimal.log
-            writer.start_file("source/minimal.log", stored).unwrap();
+            // sessions/0/source/minimal.log
+            writer.start_file("sessions/0/source/minimal.log", stored).unwrap();
             std::io::Write::write_all(&mut writer, b"hello").unwrap();
 
-            // artifacts/bookmarks.json
-            writer.start_file("artifacts/bookmarks.json", deflate).unwrap();
+            // sessions/0/artifacts/bookmarks.json
+            writer.start_file("sessions/0/artifacts/bookmarks.json", deflate).unwrap();
             serde_json::to_writer(&mut writer, &Vec::<crate::core::bookmark::Bookmark>::new()).unwrap();
 
-            // artifacts/analyses.json
-            writer.start_file("artifacts/analyses.json", deflate).unwrap();
+            // sessions/0/artifacts/analyses.json
+            writer.start_file("sessions/0/artifacts/analyses.json", deflate).unwrap();
             serde_json::to_writer(&mut writer, &Vec::<crate::core::analysis::AnalysisArtifact>::new()).unwrap();
 
             // Intentionally omit session-meta.json and processor-manifest.json
@@ -480,11 +558,13 @@ mod tests {
         // Must not return an error — missing optional entries must use defaults.
         let loaded = read_lts(&zip_path).expect("read_lts must succeed with missing optional entries");
 
-        assert!(loaded.session_meta.active_processor_ids.is_empty(), "default session meta must have no active processors");
-        assert!(loaded.session_meta.disabled_processor_ids.is_empty(), "default session meta must have no disabled processors");
+        assert_eq!(loaded.sessions.len(), 1);
+        let sess = &loaded.sessions[0];
+        assert!(sess.session_meta.active_processor_ids.is_empty(), "default session meta must have no active processors");
+        assert!(sess.session_meta.disabled_processor_ids.is_empty(), "default session meta must have no disabled processors");
         assert!(loaded.processor_manifest.processors.is_empty(), "default processor manifest must be empty");
         assert!(loaded.processor_yamls.is_empty(), "no processor YAMLs when manifest is missing");
-        assert_eq!(loaded.source_bytes, b"hello");
+        assert_eq!(sess.source_bytes, b"hello");
     }
 
     /// Three processors all survive round-trip with correct hashes.
@@ -504,8 +584,8 @@ mod tests {
             ("proc-c".to_string(), "proc-c.yaml".to_string(), yaml_c.to_string()),
         ];
 
-        let meta = LtsSessionMeta::default();
-        write_lts(&zip_path, "test.log", b"data", &[], &[], &meta, &proc_yamls).expect("write_lts");
+        let sessions = vec![make_session("test.log", b"data".to_vec(), vec![], vec![], LtsSessionMeta::default())];
+        write_lts(&zip_path, &sessions, &proc_yamls).expect("write_lts");
 
         let loaded = read_lts(&zip_path).expect("read_lts");
 
@@ -553,9 +633,8 @@ mod tests {
             ("proc-b".to_string(), "proc-b.yaml".to_string(), yaml_b.to_string()),
         ];
 
-        let meta = LtsSessionMeta::default();
-        write_lts(&zip_path, "test.log", b"data", &[], &[], &meta, &proc_yamls)
-            .expect("write_lts");
+        let sessions = vec![make_session("test.log", b"data".to_vec(), vec![], vec![], LtsSessionMeta::default())];
+        write_lts(&zip_path, &sessions, &proc_yamls).expect("write_lts");
 
         let loaded = read_lts(&zip_path).expect("read_lts");
 
@@ -576,5 +655,276 @@ mod tests {
         let hash_a = &loaded.processor_manifest.processors[0].sha256;
         let hash_b = &loaded.processor_manifest.processors[1].sha256;
         assert_ne!(hash_a, hash_b, "Different YAMLs must produce different hashes");
+    }
+
+    // ─── New v2 tests ────────────────────────────────────────────────────────
+
+    /// V2: 1 session with bookmarks, analyses, session-meta, processors round-trips.
+    #[test]
+    fn lts_v2_roundtrip_single_session() {
+        let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        let zip_path = tmp.path().to_path_buf();
+        drop(tmp);
+
+        let source_bytes = b"logcat line one\nlogcat line two\n".to_vec();
+        let bookmarks = vec![make_bookmark(1), make_bookmark(5)];
+        let analyses = vec![make_artifact()];
+        let meta = LtsSessionMeta {
+            active_processor_ids: vec!["proc-x".to_string()],
+            disabled_processor_ids: vec!["proc-y".to_string()],
+        };
+        let proc_yamls = vec![(
+            "proc-x".to_string(),
+            "proc-x.yaml".to_string(),
+            "id: proc-x\ntype: reporter\n".to_string(),
+        )];
+
+        let sessions = vec![make_session("session0.log", source_bytes.clone(), bookmarks, analyses, meta)];
+        write_lts(&zip_path, &sessions, &proc_yamls).expect("write_lts");
+
+        let loaded = read_lts(&zip_path).expect("read_lts");
+
+        assert_eq!(loaded.manifest.format_version, 2);
+        assert_eq!(loaded.manifest.sessions.len(), 1);
+        assert_eq!(loaded.sessions.len(), 1);
+
+        let sess = &loaded.sessions[0];
+        assert_eq!(sess.source_filename, "session0.log");
+        assert_eq!(sess.source_bytes, source_bytes);
+        assert_eq!(sess.bookmarks.len(), 2);
+        assert_eq!(sess.bookmarks[0].line_number, 1);
+        assert_eq!(sess.bookmarks[1].line_number, 5);
+        assert_eq!(sess.analyses.len(), 1);
+        assert_eq!(sess.analyses[0].title, "Test Analysis");
+        assert_eq!(sess.session_meta.active_processor_ids, vec!["proc-x".to_string()]);
+        assert_eq!(sess.session_meta.disabled_processor_ids, vec!["proc-y".to_string()]);
+
+        assert_eq!(loaded.processor_manifest.processors.len(), 1);
+        assert_eq!(loaded.processor_yamls.get("proc-x").map(|s| s.as_str()), Some("id: proc-x\ntype: reporter\n"));
+    }
+
+    /// V2: 2 sessions with different sources/bookmarks/analyses/meta.
+    #[test]
+    fn lts_v2_roundtrip_two_sessions() {
+        let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        let zip_path = tmp.path().to_path_buf();
+        drop(tmp);
+
+        let bytes0 = b"session 0 data\n".to_vec();
+        let bytes1 = b"session 1 data - different\n".to_vec();
+
+        let sessions = vec![
+            make_session(
+                "alpha.log",
+                bytes0.clone(),
+                vec![make_bookmark(10)],
+                vec![],
+                LtsSessionMeta {
+                    active_processor_ids: vec!["pa".to_string()],
+                    disabled_processor_ids: vec![],
+                },
+            ),
+            make_session(
+                "beta.log",
+                bytes1.clone(),
+                vec![make_bookmark(20), make_bookmark(30)],
+                vec![make_artifact()],
+                LtsSessionMeta {
+                    active_processor_ids: vec!["pb".to_string()],
+                    disabled_processor_ids: vec!["pc".to_string()],
+                },
+            ),
+        ];
+
+        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
+
+        let loaded = read_lts(&zip_path).expect("read_lts");
+
+        assert_eq!(loaded.sessions.len(), 2);
+
+        let s0 = &loaded.sessions[0];
+        assert_eq!(s0.source_filename, "alpha.log");
+        assert_eq!(s0.source_bytes, bytes0);
+        assert_eq!(s0.bookmarks.len(), 1);
+        assert_eq!(s0.bookmarks[0].line_number, 10);
+        assert!(s0.analyses.is_empty());
+        assert_eq!(s0.session_meta.active_processor_ids, vec!["pa".to_string()]);
+
+        let s1 = &loaded.sessions[1];
+        assert_eq!(s1.source_filename, "beta.log");
+        assert_eq!(s1.source_bytes, bytes1);
+        assert_eq!(s1.bookmarks.len(), 2);
+        assert_eq!(s1.bookmarks[0].line_number, 20);
+        assert_eq!(s1.bookmarks[1].line_number, 30);
+        assert_eq!(s1.analyses.len(), 1);
+        assert_eq!(s1.session_meta.active_processor_ids, vec!["pb".to_string()]);
+        assert_eq!(s1.session_meta.disabled_processor_ids, vec!["pc".to_string()]);
+    }
+
+    /// V2: 3 sessions validates indexing beyond 0/1.
+    #[test]
+    fn lts_v2_roundtrip_three_sessions() {
+        let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        let zip_path = tmp.path().to_path_buf();
+        drop(tmp);
+
+        let sessions = vec![
+            make_session("first.log", b"AAA\n".to_vec(), vec![make_bookmark(1)], vec![], LtsSessionMeta::default()),
+            make_session("second.log", b"BBB\n".to_vec(), vec![make_bookmark(2)], vec![], LtsSessionMeta::default()),
+            make_session("third.log", b"CCC\n".to_vec(), vec![make_bookmark(3)], vec![], LtsSessionMeta::default()),
+        ];
+
+        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
+
+        let loaded = read_lts(&zip_path).expect("read_lts");
+
+        assert_eq!(loaded.sessions.len(), 3);
+        assert_eq!(loaded.manifest.sessions.len(), 3);
+
+        assert_eq!(loaded.sessions[0].source_filename, "first.log");
+        assert_eq!(loaded.sessions[0].source_bytes, b"AAA\n");
+        assert_eq!(loaded.sessions[0].bookmarks[0].line_number, 1);
+
+        assert_eq!(loaded.sessions[1].source_filename, "second.log");
+        assert_eq!(loaded.sessions[1].source_bytes, b"BBB\n");
+        assert_eq!(loaded.sessions[1].bookmarks[0].line_number, 2);
+
+        assert_eq!(loaded.sessions[2].source_filename, "third.log");
+        assert_eq!(loaded.sessions[2].source_bytes, b"CCC\n");
+        assert_eq!(loaded.sessions[2].bookmarks[0].line_number, 3);
+    }
+
+    /// V2: 2 sessions sharing proc-a, one also has proc-b → exactly 2 YAMLs in zip.
+    #[test]
+    fn lts_v2_processor_deduplication() {
+        let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        let zip_path = tmp.path().to_path_buf();
+        drop(tmp);
+
+        // Both sessions share proc-a; only session 1 uses proc-b.
+        // Caller is responsible for deduplication before calling write_lts.
+        // We pass deduplicated proc_yamls directly.
+        let proc_yamls = vec![
+            ("proc-a".to_string(), "proc-a.yaml".to_string(), "id: proc-a\ntype: reporter\n".to_string()),
+            ("proc-b".to_string(), "proc-b.yaml".to_string(), "id: proc-b\ntype: state_tracker\n".to_string()),
+        ];
+
+        let sessions = vec![
+            make_session("s0.log", b"s0\n".to_vec(), vec![], vec![], LtsSessionMeta {
+                active_processor_ids: vec!["proc-a".to_string()],
+                disabled_processor_ids: vec![],
+            }),
+            make_session("s1.log", b"s1\n".to_vec(), vec![], vec![], LtsSessionMeta {
+                active_processor_ids: vec!["proc-a".to_string(), "proc-b".to_string()],
+                disabled_processor_ids: vec![],
+            }),
+        ];
+
+        write_lts(&zip_path, &sessions, &proc_yamls).expect("write_lts");
+
+        let loaded = read_lts(&zip_path).expect("read_lts");
+
+        // Exactly 2 YAMLs in zip (no duplicates)
+        assert_eq!(loaded.processor_manifest.processors.len(), 2, "expected exactly 2 processor entries");
+        assert_eq!(loaded.processor_yamls.len(), 2, "expected exactly 2 YAML entries");
+
+        assert!(loaded.processor_yamls.contains_key("proc-a"), "proc-a must be present");
+        assert!(loaded.processor_yamls.contains_key("proc-b"), "proc-b must be present");
+
+        // Session active proc IDs survived
+        assert_eq!(loaded.sessions[0].session_meta.active_processor_ids, vec!["proc-a".to_string()]);
+        assert_eq!(loaded.sessions[1].session_meta.active_processor_ids, vec!["proc-a".to_string(), "proc-b".to_string()]);
+    }
+
+    /// V2: format_version is 2, sessions array has correct filenames and sizes.
+    #[test]
+    fn lts_v2_manifest_fields() {
+        let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        let zip_path = tmp.path().to_path_buf();
+        drop(tmp);
+
+        let bytes0 = b"file zero content\n";
+        let bytes1 = b"file one has more content\n";
+
+        let sessions = vec![
+            make_session("zero.log", bytes0.to_vec(), vec![], vec![], LtsSessionMeta::default()),
+            make_session("one.log", bytes1.to_vec(), vec![], vec![], LtsSessionMeta::default()),
+        ];
+
+        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
+
+        let loaded = read_lts(&zip_path).expect("read_lts");
+
+        assert_eq!(loaded.manifest.format_version, 2, "format_version must be 2");
+        assert_eq!(loaded.manifest.sessions.len(), 2);
+
+        assert_eq!(loaded.manifest.sessions[0].source_filename, "zero.log");
+        assert_eq!(loaded.manifest.sessions[0].source_size, bytes0.len() as u64);
+
+        assert_eq!(loaded.manifest.sessions[1].source_filename, "one.log");
+        assert_eq!(loaded.manifest.sessions[1].source_size, bytes1.len() as u64);
+    }
+
+    /// V2: sessions with 0 bookmarks/analyses round-trip cleanly.
+    #[test]
+    fn lts_v2_empty_artifacts() {
+        let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        let zip_path = tmp.path().to_path_buf();
+        drop(tmp);
+
+        let sessions = vec![
+            make_session("a.log", b"data a\n".to_vec(), vec![], vec![], LtsSessionMeta::default()),
+            make_session("b.log", b"data b\n".to_vec(), vec![], vec![], LtsSessionMeta::default()),
+        ];
+
+        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
+
+        let loaded = read_lts(&zip_path).expect("read_lts");
+
+        assert_eq!(loaded.sessions.len(), 2);
+        for sess in &loaded.sessions {
+            assert!(sess.bookmarks.is_empty(), "bookmarks must be empty");
+            assert!(sess.analyses.is_empty(), "analyses must be empty");
+        }
+    }
+
+    /// V2: empty processor_yamls writes and reads back cleanly.
+    #[test]
+    fn lts_v2_no_processors() {
+        let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        let zip_path = tmp.path().to_path_buf();
+        drop(tmp);
+
+        let sessions = vec![make_session("noproc.log", b"content\n".to_vec(), vec![], vec![], LtsSessionMeta::default())];
+        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
+
+        let loaded = read_lts(&zip_path).expect("read_lts");
+
+        assert!(loaded.processor_manifest.processors.is_empty(), "no processors expected in manifest");
+        assert!(loaded.processor_yamls.is_empty(), "no YAML entries expected");
+    }
+
+    /// V2: large (100 KB) source bytes survive Stored compression byte-for-byte.
+    #[test]
+    fn lts_v2_source_bytes_preserved() {
+        let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        let zip_path = tmp.path().to_path_buf();
+        drop(tmp);
+
+        // Generate 100 KB of pseudo-random bytes (not compressible)
+        let source_bytes: Vec<u8> = (0u32..102_400)
+            .map(|i| ((i.wrapping_mul(2_654_435_761) >> 24) & 0xFF) as u8)
+            .collect();
+        let original = source_bytes.clone();
+
+        let sessions = vec![make_session("big.log", source_bytes, vec![], vec![], LtsSessionMeta::default())];
+        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
+
+        let loaded = read_lts(&zip_path).expect("read_lts");
+
+        assert_eq!(loaded.sessions.len(), 1);
+        let sess = &loaded.sessions[0];
+        assert_eq!(sess.source_bytes.len(), original.len(), "byte count must match");
+        assert_eq!(sess.source_bytes, original, "source bytes must be bit-for-bit identical after Stored round-trip");
     }
 }

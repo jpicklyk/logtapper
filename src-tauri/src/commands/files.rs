@@ -263,11 +263,15 @@ fn load_lts_file_inner(
     let mut session = crate::core::session::AnalysisSession::new(session_id.clone());
     session.file_path = Some(lts_path.to_string());
 
+    // TODO(WI-3): Update to v2 multi-session API. Currently uses first session only.
+    let first_session = lts.sessions.into_iter().next()
+        .ok_or("No sessions in .lts file")?;
+
     // 3. Create ZipLogSource from decompressed bytes
     session.add_zip_source(
-        lts.source_bytes,
+        first_session.source_bytes,
         source_id.clone(),
-        lts.manifest.source_filename.clone(),
+        first_session.source_filename.clone(),
     )?;
 
     let source = session.primary_source().ok_or("No source after zip load")?;
@@ -302,7 +306,7 @@ fn load_lts_file_inner(
     }
 
     // 5 & 6. Restore bookmarks and analyses (rewrite session_id)
-    let (bm_count, an_count) = restore_artifacts(state, &session_id, lts.bookmarks, lts.analyses);
+    let (bm_count, an_count) = restore_artifacts(state, &session_id, first_session.bookmarks, first_session.analyses);
 
     // 6.5. Resolve bundled processors (install missing / hash-mismatched processors globally).
     // processor_manifest and processor_yamls were cloned before the partial moves above.
@@ -314,7 +318,7 @@ fn load_lts_file_inner(
     );
 
     // 6.6. Store pipeline meta + emit workspace-restored event
-    emit_workspace_restored(state, app, &session_id, bm_count, an_count, lts.session_meta.into());
+    emit_workspace_restored(state, app, &session_id, bm_count, an_count, first_session.session_meta.into());
 
     Ok(result)
 }
