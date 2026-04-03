@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { EmptyStatePane } from './EmptyStatePane';
-import { Spinner } from '../../ui';
 import { LogViewer } from '../LogViewer';
 import { ProcessorDashboard } from '../ProcessorDashboard';
 import { AnalysisReader } from '../AnalysisReader';
@@ -160,9 +159,8 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
       if (!session && isLoading) {
         return (
           <>
-            <div className={styles.loadingPane} onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus}>
-              <Spinner size={28} />
-              <span className={styles.loadingText}>Loading session{'\u2026'}</span>
+            <div onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus} className="fullHeight">
+              <EmptyStatePane loading />
             </div>
             {bookmarkDialog}
           </>

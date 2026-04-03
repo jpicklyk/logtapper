@@ -163,6 +163,28 @@
   border-color: var(--esp-badge-accent-border);
 }
 
+.progressTrack {
+  width: clamp(160px, 20vw, 280px);
+  height: 3px;
+  border-radius: 2px;
+  background: var(--esp-badge-bg);
+  overflow: hidden;
+}
+
+.progressBar {
+  width: 40%;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--esp-accent);
+  opacity: 0.7;
+  animation: espSlide 1.6s linear infinite;
+}
+
+@keyframes espSlide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+
 .cornerMark {
   position: absolute;
   top: clamp(16px, 2vw, 32px);
