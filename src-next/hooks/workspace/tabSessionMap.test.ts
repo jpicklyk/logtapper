@@ -502,3 +502,4 @@ describe('focus marker (focusedLogviewerTabId)', () => {
     });
   });
 });
+

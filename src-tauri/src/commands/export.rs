@@ -89,6 +89,19 @@ pub(crate) fn snapshot_stream_bytes(source: &StreamLogSource) -> Vec<u8> {
     buf
 }
 
+/// Derive a display name for a session: source name > file_path basename > session ID.
+fn session_display_name(session: &crate::core::session::AnalysisSession) -> String {
+    if let Some(src) = session.primary_source() {
+        return src.name().to_string();
+    }
+    if let Some(ref path) = session.file_path {
+        if let Some(name) = std::path::Path::new(path).file_name().and_then(|n| n.to_str()) {
+            return name.to_string();
+        }
+    }
+    session.id.clone()
+}
+
 // ---------------------------------------------------------------------------
 // Multi-session export types
 // ---------------------------------------------------------------------------
@@ -132,10 +145,7 @@ pub async fn get_export_all_sessions_info(
         sessions
             .iter()
             .map(|(id, session)| {
-                let name = session
-                    .primary_source()
-                    .map(|src| src.name().to_string())
-                    .unwrap_or_default();
+                let name = session_display_name(session);
                 (id.clone(), name)
             })
             .collect()
@@ -185,19 +195,23 @@ pub async fn export_all_sessions(
         let sessions = lock_or_err(&state.sessions, "sessions")?;
         let mut result = Vec::with_capacity(sessions.len());
         for (session_id, session) in sessions.iter() {
-            let src = session
-                .primary_source()
-                .ok_or_else(|| format!("No source in session: {session_id}"))?;
-            let name = src.name().to_string();
-            let sref = if let Some(file_src) = src.as_any().downcast_ref::<FileLogSource>() {
-                SourceRef::Mmap(Arc::clone(file_src.mmap()))
-            } else if let Some(zip_src) = src.as_any().downcast_ref::<ZipLogSource>() {
-                SourceRef::Zip(Arc::clone(zip_src.data()))
-            } else if let Some(stream_src) = src.as_any().downcast_ref::<StreamLogSource>() {
-                // Point-in-time snapshot of stream bytes without stopping the stream.
-                SourceRef::Stream(snapshot_stream_bytes(stream_src))
-            } else {
-                return Err(format!("Unsupported source type in session: {session_id}"));
+            let (name, sref) = match session.primary_source() {
+                Some(src) => {
+                    let name = src.name().to_string();
+                    let sref = if let Some(file_src) = src.as_any().downcast_ref::<FileLogSource>() {
+                        SourceRef::Mmap(Arc::clone(file_src.mmap()))
+                    } else if let Some(zip_src) = src.as_any().downcast_ref::<ZipLogSource>() {
+                        SourceRef::Zip(Arc::clone(zip_src.data()))
+                    } else if let Some(stream_src) = src.as_any().downcast_ref::<StreamLogSource>() {
+                        SourceRef::Stream(snapshot_stream_bytes(stream_src))
+                    } else {
+                        return Err(format!("Unsupported source type in session: {session_id}"));
+                    };
+                    (name, sref)
+                }
+                None => {
+                    (session_display_name(session), SourceRef::Stream(vec![]))
+                }
             };
             result.push((session_id.clone(), name, sref));
         }

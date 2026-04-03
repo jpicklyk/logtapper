@@ -13,6 +13,7 @@ import { storageGetJSON, storageSetJSON, storageRemove } from '../../utils';
 import type { CacheController } from '../../cache';
 import { diag, diagStart, diagEnd } from '../../utils/diagnostics';
 import type { SharedLogViewerRefs } from './types';
+import { planExtraSessionImport } from './multiSessionImport';
 
 const LS_TAB_PATHS = 'logtapper_tab_paths';
 
@@ -177,23 +178,41 @@ export function useFileSession(
         });
       }
 
-      // Register additional sessions from multi-session .lts import
-      for (let i = 1; i < results.length; i++) {
-        const extra = results[i];
-        const extraTabId = crypto.randomUUID();
-        const extraLabel = extra.sourceName ?? `Session ${i + 1}`;
-        bus.emit('session:loading', { paneId: targetPaneId, tabId: extraTabId, label: extraLabel, isNewTab: true });
-        registerSession(targetPaneId, extra);
-        bus.emit('session:loaded', {
-          sourceName: extra.sourceName,
-          sourceType: extra.sourceType as SourceType,
-          sessionId: extra.sessionId,
-          paneId: targetPaneId,
-          tabId: extraTabId,
-          isNewTab: true,
-          previousSessionId: undefined,
-          readOnly: isBugreportLike(extra.sourceType) ? true : undefined,
-        });
+      // Register additional sessions from multi-session .lts import.
+      const extraActions = planExtraSessionImport(
+        targetPaneId,
+        result.sessionId,
+        results.slice(1),
+        () => crypto.randomUUID(),
+      );
+      for (const action of extraActions) {
+        switch (action.type) {
+          case 'loading':
+            bus.emit('session:loading', { paneId: action.paneId, tabId: action.tabId, label: action.label, isNewTab: true });
+            break;
+          case 'register':
+            registerSession(action.paneId, results.find(r => r.sessionId === action.session.sessionId)!);
+            break;
+          case 'activate':
+            activateSessionForPane(action.paneId, action.sessionId);
+            break;
+          case 'loaded':
+            bus.emit('session:loaded', {
+              sourceName: action.session.sourceName,
+              sourceType: action.session.sourceType as SourceType,
+              sessionId: action.session.sessionId,
+              paneId: action.paneId,
+              tabId: action.tabId,
+              isNewTab: true,
+              previousSessionId: action.previousSessionId,
+              readOnly: action.readOnly || undefined,
+            });
+            break;
+          case 'persistTabPath': {
+            const tabPathsExtra = readTabPaths(); tabPathsExtra[action.tabId] = path; saveTabPaths(tabPathsExtra);
+            break;
+          }
+        }
       }
     } catch (e) {
       diag('file-load', 'ERROR', { error: String(e) });
