@@ -61,7 +61,7 @@ pub async fn start_mcp_bridge(
 ) -> Result<(), String> {
     if let Some(rx) = start_mcp_bridge_inner(&state)? {
         // Spawn the bridge — it will clear the shutdown sender when it exits.
-        tauri::async_runtime::spawn(crate::mcp_bridge::start(app.clone(), rx));
+        tauri::async_runtime::spawn(crate::mcp_bridge::start(app, rx));
     }
     Ok(())
 }

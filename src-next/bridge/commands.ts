@@ -113,7 +113,7 @@ export function getPackagePids(
 // Phase 1 — File / Session
 // ---------------------------------------------------------------------------
 
-export function loadLogFile(path: string): Promise<LoadResult> {
+export function loadLogFile(path: string): Promise<LoadResult[]> {
   return invoke('load_log_file', { path });
 }
 

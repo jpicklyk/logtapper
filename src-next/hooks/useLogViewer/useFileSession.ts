@@ -107,8 +107,10 @@ export function useFileSession(
 
     try {
       diag('file-load', 'calling loadLogFile IPC');
-      const result = await loadLogFile(path);
-      diag('file-load', 'IPC returned', { sessionId: result.sessionId, totalLines: result.totalLines, sourceType: result.sourceType, isIndexing: result.isIndexing });
+      const results = await loadLogFile(path);
+      const result = results[0];
+      if (!result) throw new Error('No sessions returned from load_log_file');
+      diag('file-load', 'IPC returned', { sessionId: result.sessionId, totalLines: result.totalLines, sourceType: result.sourceType, isIndexing: result.isIndexing, sessionCount: results.length });
 
       if (loadGenRef.current.get(targetPaneId) !== gen) {
         diag('file-load', 'stale generation — discarding', { gen, current: loadGenRef.current.get(targetPaneId) });

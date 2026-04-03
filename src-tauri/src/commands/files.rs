@@ -129,10 +129,10 @@ pub async fn load_log_file(
     state: State<'_, AppState>,
     app: AppHandle,
     path: String,
-) -> Result<LoadResult, String> {
+) -> Result<Vec<LoadResult>, String> {
     let path_obj = Path::new(&path);
 
-    // If the file is a .lts session export, use the dedicated import path.
+    // If the file is a .lts session export, use the dedicated multi-session import path.
     if path_obj.extension().and_then(|e| e.to_str()) == Some("lts") {
         return load_lts_file_inner(&state, &app, &path);
     }
@@ -235,81 +235,30 @@ pub async fn load_log_file(
         });
     }
 
-    Ok(result)
+    Ok(vec![result])
 }
 
 fn load_lts_file_inner(
     state: &AppState,
     app: &tauri::AppHandle,
     lts_path: &str,
-) -> Result<LoadResult, String> {
+) -> Result<Vec<LoadResult>, String> {
     let path_obj = std::path::Path::new(lts_path);
 
     // 1. Read the .lts zip (all I/O, no locks)
     let lts = crate::workspace::lts::read_lts(path_obj)?;
 
-    // Extract processor fields before lts is partially consumed by moves below.
+    if lts.sessions.is_empty() {
+        return Err("No sessions in .lts file".to_string());
+    }
+
+    // Clone shared processor fields once — all sessions share the same processor pool.
     let processor_manifest = lts.processor_manifest.clone();
     let processor_yamls = lts.processor_yamls.clone();
 
-    // 2. Create session
-    let session_id = uuid::Uuid::new_v4().to_string();
-    let source_id = path_obj
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("lts-source")
-        .to_string();
-
-    let mut session = crate::core::session::AnalysisSession::new(session_id.clone());
-    session.file_path = Some(lts_path.to_string());
-
-    // TODO(WI-3): Update to v2 multi-session API. Currently uses first session only.
-    let first_session = lts.sessions.into_iter().next()
-        .ok_or("No sessions in .lts file")?;
-
-    // 3. Create ZipLogSource from decompressed bytes
-    session.add_zip_source(
-        first_session.source_bytes,
-        source_id.clone(),
-        first_session.source_filename.clone(),
-    )?;
-
-    let source = session.primary_source().ok_or("No source after zip load")?;
-    let total_lines = source.total_lines();
-    let first_ts = source.first_timestamp();
-    let last_ts = source.last_timestamp();
-    let source_type_str = source.source_type().to_string();
-    let source_name = source.name().to_string();
-
     let file_size = path_obj.metadata().map(|m| m.len()).unwrap_or(0);
 
-    let result = LoadResult {
-        session_id: session_id.clone(),
-        source_id,
-        source_name,
-        file_path: Some(lts_path.to_string()),
-        total_lines,
-        file_size,
-        first_timestamp: first_ts,
-        last_timestamp: last_ts,
-        source_type: source_type_str,
-        is_streaming: false,
-        is_indexing: false, // ZipLogSource is fully indexed
-        has_crlf: source.has_crlf(),
-        encoding: source.encoding().display_name().to_string(),
-    };
-
-    // 4. Insert session (brief lock)
-    {
-        let mut sessions = lock_or_err(&state.sessions, "sessions")?;
-        sessions.insert(session_id.clone(), session);
-    }
-
-    // 5 & 6. Restore bookmarks and analyses (rewrite session_id)
-    let (bm_count, an_count) = restore_artifacts(state, &session_id, first_session.bookmarks, first_session.analyses);
-
-    // 6.5. Resolve bundled processors (install missing / hash-mismatched processors globally).
-    // processor_manifest and processor_yamls were cloned before the partial moves above.
+    // 2. Resolve bundled processors ONCE for all sessions (install missing / hash-mismatched).
     let _resolved = crate::commands::export::resolve_lts_processors_raw(
         state,
         app,
@@ -317,10 +266,80 @@ fn load_lts_file_inner(
         &processor_yamls,
     );
 
-    // 6.6. Store pipeline meta + emit workspace-restored event
-    emit_workspace_restored(state, app, &session_id, bm_count, an_count, first_session.session_meta.into());
+    // 3. Create one AnalysisSession per embedded session.
+    let mut results = Vec::with_capacity(lts.sessions.len());
 
-    Ok(result)
+    for session_data in lts.sessions {
+        let session_id = uuid::Uuid::new_v4().to_string();
+
+        // source_id is derived from the original filename (no extension), following the same
+        // convention as regular file loads.
+        let source_id = std::path::Path::new(&session_data.source_filename)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("lts-source")
+            .to_string();
+
+        let mut session = crate::core::session::AnalysisSession::new(session_id.clone());
+        // All sessions in this .lts file share the same file path.
+        session.file_path = Some(lts_path.to_string());
+
+        let source_filename = session_data.source_filename.clone();
+        session.add_zip_source(
+            session_data.source_bytes,
+            source_id.clone(),
+            source_filename,
+        )?;
+
+        let source = session.primary_source().ok_or("No source after zip load")?;
+        let total_lines = source.total_lines();
+        let first_ts = source.first_timestamp();
+        let last_ts = source.last_timestamp();
+        let source_type_str = source.source_type().to_string();
+        let source_name = source.name().to_string();
+        let has_crlf = source.has_crlf();
+        let encoding = source.encoding().display_name().to_string();
+
+        let result = LoadResult {
+            session_id: session_id.clone(),
+            source_id,
+            source_name,
+            file_path: Some(lts_path.to_string()),
+            total_lines,
+            file_size,
+            first_timestamp: first_ts,
+            last_timestamp: last_ts,
+            source_type: source_type_str,
+            is_streaming: false,
+            is_indexing: false, // ZipLogSource is fully indexed on load
+            has_crlf,
+            encoding,
+        };
+
+        // Insert session under a brief lock — release before any subsequent work.
+        {
+            let mut sessions = lock_or_err(&state.sessions, "sessions")?;
+            sessions.insert(session_id.clone(), session);
+        }
+
+        // Restore bookmarks and analyses, rewriting the stale session_id from the archive.
+        let (bm_count, an_count) =
+            restore_artifacts(state, &session_id, session_data.bookmarks, session_data.analyses);
+
+        // Store pipeline meta and emit workspace-restored event.
+        emit_workspace_restored(
+            state,
+            app,
+            &session_id,
+            bm_count,
+            an_count,
+            session_data.session_meta.into(),
+        );
+
+        results.push(result);
+    }
+
+    Ok(results)
 }
 
 /// Store pipeline meta in AppState and emit `workspace-restored` event.
@@ -1738,5 +1757,183 @@ mod tests {
 
         assert!(state.sessions.lock().unwrap().contains_key("sess-keep"),
             "non-matching session must not be removed");
+    }
+
+    // -------------------------------------------------------------------------
+    // WI-3 — Multi-session import: format layer round-trip
+    //
+    // load_lts_file_inner requires an AppHandle (for processor resolution and
+    // emitting Tauri events) which cannot be constructed in unit tests. The
+    // tests below verify the format layer (write_lts + read_lts) that
+    // load_lts_file_inner consumes, and also validate restore_artifacts rewriting
+    // for the multi-session case — which IS testable without AppHandle.
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn multi_session_lts_roundtrip_two_sessions() {
+        use crate::workspace::lts::{write_lts, read_lts, LtsSessionData, LtsSessionMeta};
+        use crate::core::bookmark::{Bookmark, CreatedBy};
+        use crate::core::analysis::AnalysisArtifact;
+
+        let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        let zip_path = tmp.path().to_path_buf();
+        drop(tmp);
+
+        let source_a = b"01-01 00:00:01.000  100  101 I TagA: hello session A\n".to_vec();
+        let source_b = b"01-01 00:00:02.000  200  201 I TagB: hello session B\n".to_vec();
+
+        let bm_a = Bookmark {
+            id: "bm-a".to_string(),
+            session_id: "old-sess-a".to_string(),
+            line_number: 1,
+            line_number_end: None,
+            snippet: None,
+            category: None,
+            tags: None,
+            label: "Bookmark A".to_string(),
+            note: String::new(),
+            created_by: CreatedBy::User,
+            created_at: 1000,
+        };
+        let artifact_b = AnalysisArtifact {
+            id: "art-b".to_string(),
+            session_id: "old-sess-b".to_string(),
+            title: "Analysis B".to_string(),
+            created_at: 2000,
+            sections: vec![],
+        };
+
+        let sessions = vec![
+            LtsSessionData {
+                source_bytes: source_a.clone(),
+                source_filename: "session_a.log".to_string(),
+                bookmarks: vec![bm_a],
+                analyses: vec![],
+                session_meta: LtsSessionMeta {
+                    active_processor_ids: vec!["proc-x".to_string()],
+                    disabled_processor_ids: vec![],
+                },
+            },
+            LtsSessionData {
+                source_bytes: source_b.clone(),
+                source_filename: "session_b.log".to_string(),
+                bookmarks: vec![],
+                analyses: vec![artifact_b],
+                session_meta: LtsSessionMeta::default(),
+            },
+        ];
+
+        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
+
+        let loaded = read_lts(&zip_path).expect("read_lts");
+
+        assert_eq!(loaded.sessions.len(), 2, "must load 2 sessions");
+
+        let s0 = &loaded.sessions[0];
+        assert_eq!(s0.source_filename, "session_a.log");
+        assert_eq!(s0.source_bytes, source_a);
+        assert_eq!(s0.bookmarks.len(), 1);
+        assert_eq!(s0.bookmarks[0].label, "Bookmark A");
+        assert!(s0.analyses.is_empty());
+        assert_eq!(s0.session_meta.active_processor_ids, vec!["proc-x"]);
+
+        let s1 = &loaded.sessions[1];
+        assert_eq!(s1.source_filename, "session_b.log");
+        assert_eq!(s1.source_bytes, source_b);
+        assert!(s1.bookmarks.is_empty());
+        assert_eq!(s1.analyses.len(), 1);
+        assert_eq!(s1.analyses[0].title, "Analysis B");
+        assert!(s1.session_meta.active_processor_ids.is_empty());
+    }
+
+    #[test]
+    fn multi_session_lts_restore_artifacts_rewrites_ids_for_each_session() {
+        use crate::workspace::lts::{write_lts, read_lts, LtsSessionData, LtsSessionMeta};
+        use crate::core::bookmark::{Bookmark, CreatedBy};
+
+        let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        let zip_path = tmp.path().to_path_buf();
+        drop(tmp);
+
+        let sessions = vec![
+            LtsSessionData {
+                source_bytes: b"data A\n".to_vec(),
+                source_filename: "a.log".to_string(),
+                bookmarks: vec![Bookmark {
+                    id: "bm-1".to_string(),
+                    session_id: "stale-sess".to_string(),
+                    line_number: 1,
+                    line_number_end: None,
+                    snippet: None,
+                    category: None,
+                    tags: None,
+                    label: "BM1".to_string(),
+                    note: String::new(),
+                    created_by: CreatedBy::User,
+                    created_at: 100,
+                }],
+                analyses: vec![],
+                session_meta: LtsSessionMeta::default(),
+            },
+            LtsSessionData {
+                source_bytes: b"data B\n".to_vec(),
+                source_filename: "b.log".to_string(),
+                bookmarks: vec![Bookmark {
+                    id: "bm-2".to_string(),
+                    session_id: "stale-sess".to_string(),
+                    line_number: 2,
+                    line_number_end: None,
+                    snippet: None,
+                    category: None,
+                    tags: None,
+                    label: "BM2".to_string(),
+                    note: String::new(),
+                    created_by: CreatedBy::User,
+                    created_at: 200,
+                }],
+                analyses: vec![],
+                session_meta: LtsSessionMeta::default(),
+            },
+        ];
+
+        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
+
+        let loaded = read_lts(&zip_path).expect("read_lts");
+
+        // Simulate what load_lts_file_inner does for each session.
+        let state = make_state();
+        let new_ids = ["new-sess-alpha", "new-sess-beta"];
+
+        for (session_data, new_id) in loaded.sessions.into_iter().zip(new_ids.iter()) {
+            let (bm_count, _) =
+                restore_artifacts(&state, new_id, session_data.bookmarks, session_data.analyses);
+            assert_eq!(bm_count, 1);
+        }
+
+        // Each session's bookmarks must be stored under its own fresh ID.
+        let bookmarks = state.bookmarks.lock().unwrap();
+        let bms_alpha = bookmarks.get("new-sess-alpha").expect("bookmarks for alpha");
+        let bms_beta = bookmarks.get("new-sess-beta").expect("bookmarks for beta");
+
+        assert_eq!(bms_alpha[0].session_id, "new-sess-alpha",
+            "bookmark session_id must be rewritten to alpha session");
+        assert_eq!(bms_beta[0].session_id, "new-sess-beta",
+            "bookmark session_id must be rewritten to beta session");
+
+        // The stale ID must not appear anywhere in the map.
+        assert!(!bookmarks.contains_key("stale-sess"),
+            "stale session ID must not remain after restore");
+    }
+
+    // This test validates that load_lts_file_inner returns one LoadResult per session
+    // embedded in the .lts file. It is marked #[ignore] because constructing a Tauri
+    // AppHandle for processor resolution and event emission is not possible in unit tests.
+    //
+    // Manual verification: open a multi-session .lts file in the app and confirm that
+    // N tabs are registered (one per session) and each tab shows the correct source.
+    #[test]
+    #[ignore = "requires Tauri AppHandle — run as integration test with the running app"]
+    fn load_lts_file_inner_returns_one_result_per_session() {
+        // Intentionally empty — serves as a documentation stub for future integration test.
     }
 }
