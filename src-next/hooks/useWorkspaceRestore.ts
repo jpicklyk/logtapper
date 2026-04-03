@@ -14,6 +14,9 @@ import { bus } from '../events/bus';
  *
  * `hasRestoredRef` is owned by usePipeline and set to `true` here so loadProcessors
  * can skip the localStorage chain override when a workspace restore already set it.
+ *
+ * Handlers are keyed by sessionId so that multi-session .lts restores do not
+ * clobber each other — each session gets its own independent handler pair.
  */
 export function useWorkspaceRestore(
   dispatch: React.Dispatch<PipelineAction>,
@@ -29,9 +32,9 @@ export function useWorkspaceRestore(
   const getIsIndexingRef = useRef(getIsIndexing);
   getIsIndexingRef.current = getIsIndexing;
 
-  // Track pending bus handlers so cleanup can remove them on unmount
-  const pendingBusHandlerRef = useRef<((e: { sessionId: string }) => void) | null>(null);
-  const pendingLoadedHandlerRef = useRef<((e: { sourceType: string; paneId: string }) => void) | null>(null);
+  // Maps keyed by sessionId so multi-session .lts restores don't clobber each other
+  const pendingIndexingHandlersRef = useRef(new Map<string, (e: { sessionId: string }) => void>());
+  const pendingLoadedHandlersRef = useRef(new Map<string, (e: any) => void>());
 
   useEffect(() => {
     let cancelled = false;
@@ -64,40 +67,56 @@ export function useWorkspaceRestore(
       // (small files that complete before this event is delivered).
       const autoRun = () => { runRef.current(sessionId).catch(() => {}); };
 
-      // Clean up any previous pending handler before registering a new one
-      if (pendingBusHandlerRef.current) {
-        bus.off('session:indexing-complete', pendingBusHandlerRef.current);
+      // Remove any existing handlers for this sessionId before registering new ones
+      const existingIndexingHandler = pendingIndexingHandlersRef.current.get(sessionId);
+      if (existingIndexingHandler) {
+        bus.off('session:indexing-complete', existingIndexingHandler);
+        pendingIndexingHandlersRef.current.delete(sessionId);
       }
+      const existingLoadedHandler = pendingLoadedHandlersRef.current.get(sessionId);
+      if (existingLoadedHandler) {
+        bus.off('session:loaded', existingLoadedHandler);
+        pendingLoadedHandlersRef.current.delete(sessionId);
+      }
+
       const handler = (e: { sessionId: string }) => {
         if (e.sessionId === sessionId) {
           bus.off('session:indexing-complete', handler);
-          pendingBusHandlerRef.current = null;
+          pendingIndexingHandlersRef.current.delete(sessionId);
+          // Also remove the loaded handler since indexing-complete fired
+          const lh = pendingLoadedHandlersRef.current.get(sessionId);
+          if (lh) {
+            bus.off('session:loaded', lh);
+            pendingLoadedHandlersRef.current.delete(sessionId);
+          }
           if (!cancelled) autoRun();
         }
       };
-      pendingBusHandlerRef.current = handler;
+      pendingIndexingHandlersRef.current.set(sessionId, handler);
       bus.on('session:indexing-complete', handler);
 
       // For files that are already fully indexed (isIndexing was false in
       // LoadResult), session:indexing-complete will never fire. Use
       // session:loaded as a fallback — it fires after the session is
       // registered in context and indexing status is known.
-      const loadedHandler = (_e: { sourceType: string; paneId: string }) => {
+      const loadedHandler = (e: { sessionId: string; sourceType: string; paneId: string }) => {
+        // Scope to the specific sessionId — don't act on other sessions' load events
+        if (e.sessionId !== sessionId) return;
         bus.off('session:loaded', loadedHandler);
-        pendingLoadedHandlerRef.current = null;
+        pendingLoadedHandlersRef.current.delete(sessionId);
         // Small delay to let the session context settle
         setTimeout(() => {
           if (cancelled) return;
           if (!getIsIndexingRef.current(sessionId)) {
             // Already indexed — indexing-complete won't fire, so run now
             bus.off('session:indexing-complete', handler);
-            pendingBusHandlerRef.current = null;
+            pendingIndexingHandlersRef.current.delete(sessionId);
             autoRun();
           }
           // else: still indexing — indexing-complete handler will fire later
         }, 100);
       };
-      pendingLoadedHandlerRef.current = loadedHandler;
+      pendingLoadedHandlersRef.current.set(sessionId, loadedHandler);
       bus.on('session:loaded', loadedHandler);
     }).then((fn) => {
       if (cancelled) fn();
@@ -107,15 +126,11 @@ export function useWorkspaceRestore(
     return () => {
       cancelled = true;
       unlisten?.();
-      // Clean up any pending bus listeners
-      if (pendingBusHandlerRef.current) {
-        bus.off('session:indexing-complete', pendingBusHandlerRef.current);
-        pendingBusHandlerRef.current = null;
-      }
-      if (pendingLoadedHandlerRef.current) {
-        bus.off('session:loaded', pendingLoadedHandlerRef.current);
-        pendingLoadedHandlerRef.current = null;
-      }
+      // Clean up all pending bus listeners across all sessions
+      pendingIndexingHandlersRef.current.forEach((h) => bus.off('session:indexing-complete', h));
+      pendingIndexingHandlersRef.current.clear();
+      pendingLoadedHandlersRef.current.forEach((h) => bus.off('session:loaded', h));
+      pendingLoadedHandlersRef.current.clear();
     };
   }, [dispatch]);
 }
