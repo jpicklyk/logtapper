@@ -201,6 +201,7 @@ pub fn write_lts(
     Ok(())
 }
 
+/// Write a multi-session `.lts` zip file to `dest`.
 /// Read a `.lts` zip file from `path` and return all embedded data.
 pub fn read_lts(path: &Path) -> Result<LtsData, String> {
     let file = File::open(path)

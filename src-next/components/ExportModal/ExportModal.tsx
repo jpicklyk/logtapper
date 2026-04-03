@@ -5,7 +5,6 @@ import { Spinner, Button } from '../../ui';
 import { useSession } from '../../context';
 import { getExportSessionInfo, exportSession } from '../../bridge/commands';
 import type { ExportSessionInfo } from '../../bridge/types';
-import { formatFileSize } from '../../utils';
 import styles from './ExportModal.module.css';
 
 interface ExportModalProps {
@@ -21,6 +20,7 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
   const [error, setError] = useState<string | null>(null);
   const [includeBookmarks, setIncludeBookmarks] = useState(true);
   const [includeAnalyses, setIncludeAnalyses] = useState(true);
+  const [includeProcessors, setIncludeProcessors] = useState(true);
 
   // Fetch session info when modal opens
   useEffect(() => {
@@ -28,6 +28,9 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
       setInfo(null);
       setError(null);
       setLoading(false);
+      setIncludeBookmarks(true);
+      setIncludeAnalyses(true);
+      setIncludeProcessors(true);
       return;
     }
     let cancelled = false;
@@ -62,6 +65,7 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
         destPath,
         includeBookmarks,
         includeAnalyses,
+        includeProcessors,
       });
       onClose();
     } catch (e) {
@@ -69,10 +73,10 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
     } finally {
       setExporting(false);
     }
-  }, [session, info, includeBookmarks, includeAnalyses, onClose]);
+  }, [session, info, includeBookmarks, includeAnalyses, includeProcessors, onClose]);
 
   return (
-    <Modal open={open} onClose={onClose} title="Export Session" width={420}>
+    <Modal open={open} onClose={onClose} title="Export Session" width={360}>
       {loading ? (
         <div className={styles.loading}>
           <Spinner size={24} />
@@ -82,15 +86,9 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
         <div className={styles.error}>{error}</div>
       ) : info ? (
         <div className={styles.content}>
-          <div className={styles.sourceInfo}>
-            <span className={styles.sourceLabel}>Source:</span>
-            <span className={styles.sourceValue}>
-              {info.sourceFilename} ({formatFileSize(info.sourceSize)})
-            </span>
-          </div>
+          <div className={styles.sourceInfo}>{info.sourceFilename}</div>
 
           <div className={styles.section}>
-            <div className={styles.sectionTitle}>Include:</div>
             <label className={styles.checkbox}>
               <input
                 type="checkbox"
@@ -107,31 +105,22 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
               />
               Analyses ({info.analysisCount})
             </label>
+            <label className={styles.checkbox}>
+              <input
+                type="checkbox"
+                checked={includeProcessors}
+                onChange={(e) => setIncludeProcessors(e.target.checked)}
+              />
+              Processors ({info.processorCount})
+            </label>
           </div>
 
-          {info.processors.length > 0 && (
-            <div className={styles.section}>
-              <div className={styles.sectionTitle}>
-                Processors (always included):
-              </div>
-              <ul className={styles.processorList}>
-                {info.processors.map((p) => (
-                  <li key={p.id} className={p.builtin ? styles.processorBuiltin : styles.processorCustom}>
-                    {p.name}
-                    {p.builtin && <span className={styles.builtinBadge}>built-in</span>}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
           <div className={styles.actions}>
-            <Button variant="ghost" className={styles.cancelBtn} onClick={onClose}>
+            <Button variant="ghost" onClick={onClose}>
               Cancel
             </Button>
             <Button
               variant="primary"
-              className={styles.exportBtn}
               onClick={handleExport}
               disabled={exporting}
               loading={exporting}

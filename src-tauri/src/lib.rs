@@ -496,8 +496,8 @@ pub fn run() {
             // Pipeline meta (workspace persistence)
             commands::pipeline::set_session_pipeline_meta,
             // Export commands
-            commands::export::get_export_session_info,
-            commands::export::export_session,
+            commands::export::get_export_all_sessions_info,
+            commands::export::export_all_sessions,
             // MCP bridge control
             commands::mcp::start_mcp_bridge,
             commands::mcp::stop_mcp_bridge,
