@@ -270,9 +270,19 @@ export function useFileSession(
     // then non-active tabs load into existing persisted tab slots.
     const sorted = [...storedTabs].sort((a, b) => (b.isActive ? 1 : 0) - (a.isActive ? 1 : 0));
     const loadedPanes = new Set<string>();
+    const handledLtsPaths = new Set<string>();
     for (const { tabId, paneId, isActive } of sorted) {
       const path = tabPaths[tabId];
       if (!path) continue;
+
+      // For .lts files, only the first tab pointing to this path loads all
+      // sessions via planExtraSessionImport. Subsequent tabs pointing to the
+      // same .lts would create N*M backend sessions — skip them.
+      if (path.endsWith('.lts')) {
+        if (handledLtsPaths.has(path)) continue;
+        handledLtsPaths.add(path);
+      }
+
       if (isActive && !loadedPanes.has(paneId)) {
         // First load for this pane — replaces the existing logviewer tab.
         loadedPanes.add(paneId);
