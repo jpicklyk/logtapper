@@ -75,6 +75,15 @@ pub struct LtsData {
     pub processor_yamls: HashMap<String, String>,
 }
 
+/// Per-session data for multi-session export.
+pub struct LtsSessionData {
+    pub source_bytes: Vec<u8>,
+    pub source_filename: String,
+    pub bookmarks: Vec<Bookmark>,
+    pub analyses: Vec<AnalysisArtifact>,
+    pub session_meta: LtsSessionMeta,
+}
+
 /// Write a `.lts` zip file to `dest`.
 ///
 /// # Arguments
@@ -153,6 +162,116 @@ pub fn write_lts(
 
     // 7. processors/processor-manifest.json (Deflated)
     super::zip_write_json(&mut writer, "processors/processor-manifest.json", deflate_opts, &proc_manifest)?;
+
+    writer
+        .finish()
+        .map_err(|e| format!("Failed to finalise .lts zip: {e}"))?;
+
+    Ok(())
+}
+
+/// Write a multi-session `.lts` zip file to `dest`.
+///
+/// Sessions are stored under `sessions/<index>/` sub-directories.
+/// Processors are deduplicated and stored once in `processors/`.
+///
+/// # Arguments
+/// * `dest` — output path for the zip file
+/// * `sessions` — per-session data (source bytes, bookmarks, analyses, meta)
+/// * `processor_yamls` — `(id, filename, yaml_content)` tuples for processors to embed (deduplicated by caller)
+pub fn write_lts_multi(
+    dest: &Path,
+    sessions: &[LtsSessionData],
+    processor_yamls: &[(String, String, String)],
+) -> Result<(), String> {
+    let out_file = File::create(dest)
+        .map_err(|e| format!("Failed to create .lts file '{}': {e}", dest.display()))?;
+    let mut writer = zip::ZipWriter::new(out_file);
+
+    let deflate_opts = SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    let stored_opts = SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Stored)
+        .large_file(true);
+
+    // 1. sessions/<index>/ entries
+    for (idx, session) in sessions.iter().enumerate() {
+        let prefix = format!("sessions/{idx}");
+
+        // manifest for this session
+        let session_manifest = LtsManifest {
+            format_version: LTS_FORMAT_VERSION,
+            source_filename: session.source_filename.clone(),
+            source_size: session.source_bytes.len() as u64,
+            saved_at: super::now_ms(),
+        };
+        super::zip_write_json(
+            &mut writer,
+            &format!("{prefix}/manifest.json"),
+            deflate_opts,
+            &session_manifest,
+        )?;
+
+        // source bytes (Stored)
+        let source_entry = format!("{prefix}/source/{}", session.source_filename);
+        writer
+            .start_file(&source_entry, stored_opts)
+            .map_err(|e| format!("Failed to start source entry '{source_entry}': {e}"))?;
+        std::io::Write::write_all(&mut writer, &session.source_bytes)
+            .map_err(|e| format!("Failed to write source bytes: {e}"))?;
+
+        // bookmarks
+        super::zip_write_json(
+            &mut writer,
+            &format!("{prefix}/artifacts/bookmarks.json"),
+            deflate_opts,
+            &session.bookmarks,
+        )?;
+
+        // analyses
+        super::zip_write_json(
+            &mut writer,
+            &format!("{prefix}/artifacts/analyses.json"),
+            deflate_opts,
+            &session.analyses,
+        )?;
+
+        // session-meta
+        super::zip_write_json(
+            &mut writer,
+            &format!("{prefix}/artifacts/session-meta.json"),
+            deflate_opts,
+            &session.session_meta,
+        )?;
+    }
+
+    // 2. processors/ (deduplicated, same layout as single-session)
+    let mut proc_manifest = LtsProcessorManifest {
+        processors: Vec::with_capacity(processor_yamls.len()),
+    };
+
+    for (id, filename, yaml_content) in processor_yamls {
+        proc_manifest.processors.push(LtsProcessorEntry {
+            id: id.clone(),
+            filename: filename.clone(),
+            sha256: super::sha256_hex(yaml_content),
+        });
+
+        let yaml_entry = format!("processors/{filename}");
+        writer
+            .start_file(&yaml_entry, deflate_opts)
+            .map_err(|e| format!("Failed to start processor entry '{yaml_entry}': {e}"))?;
+        std::io::Write::write_all(&mut writer, yaml_content.as_bytes())
+            .map_err(|e| format!("Failed to write processor YAML '{yaml_entry}': {e}"))?;
+    }
+
+    // 3. processors/processor-manifest.json
+    super::zip_write_json(
+        &mut writer,
+        "processors/processor-manifest.json",
+        deflate_opts,
+        &proc_manifest,
+    )?;
 
     writer
         .finish()
