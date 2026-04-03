@@ -772,7 +772,7 @@ export interface ExportAllSessionsInfo {
 export interface LtsEditorTabPayload {
   label: string;
   content: string;
-  viewMode: string;
+  viewMode: 'editor' | 'split' | 'preview';
   wordWrap: boolean;
   filePath: string | null;
 }

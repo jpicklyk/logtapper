@@ -8,13 +8,11 @@ import { writeTextFile, readTextFile } from '../../bridge/commands';
 import { bus } from '../../events';
 import styles from './EditorTab.module.css';
 
-/** Exported so useCenterTree can pre-seed editor content before the tab mounts. */
+// localStorage key prefixes for per-tab editor state.
+// Exported for pre-seeding by openCenterTab before EditorTab mounts.
 export const LS_CONTENT_PREFIX = 'logtapper_scratchpad_';
-/** Exported so useCenterTree can pre-seed the view mode before the tab mounts. */
 export const LS_MODE_PREFIX = 'logtapper_editor_mode_';
-/** Exported so useCenterTree can pre-seed word-wrap before the tab mounts. */
 export const LS_WRAP_PREFIX = 'logtapper_editor_wrap_';
-/** Exported so useCenterTree can pre-seed the file path before the tab mounts. */
 export const LS_FILEPATH_PREFIX = 'logtapper_editor_filepath_';
 
 export type EditorViewMode = 'editor' | 'split' | 'preview';

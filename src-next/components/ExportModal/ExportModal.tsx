@@ -4,9 +4,9 @@ import { Modal } from '../../ui/Modal/Modal';
 import { Spinner, Button } from '../../ui';
 import { getExportAllSessionsInfo, exportAllSessions } from '../../bridge/commands';
 import type { ExportAllSessionsInfo, LtsEditorTabPayload } from '../../bridge/types';
-import { allPanes } from '../../hooks/workspace/splitTreeHelpers';
-import type { SplitNode } from '../../hooks/workspace/workspaceTypes';
-import { LS_CONTENT_PREFIX, LS_MODE_PREFIX, LS_WRAP_PREFIX, LS_FILEPATH_PREFIX } from '../EditorTab/EditorTab';
+import { allPanes } from '../../hooks/workspace';
+import type { SplitNode } from '../../hooks/workspace';
+import { LS_CONTENT_PREFIX, LS_MODE_PREFIX, LS_WRAP_PREFIX, LS_FILEPATH_PREFIX } from '../EditorTab';
 import styles from './ExportModal.module.css';
 
 function collectEditorTabs(): LtsEditorTabPayload[] {
@@ -26,7 +26,7 @@ function collectEditorTabs(): LtsEditorTabPayload[] {
     for (const tab of pane.tabs) {
       if (tab.type !== 'editor') continue;
       const content = localStorage.getItem(LS_CONTENT_PREFIX + tab.id) ?? '';
-      const viewMode = localStorage.getItem(LS_MODE_PREFIX + tab.id) ?? 'editor';
+      const viewMode = (localStorage.getItem(LS_MODE_PREFIX + tab.id) ?? 'editor') as LtsEditorTabPayload['viewMode'];
       const wordWrap = localStorage.getItem(LS_WRAP_PREFIX + tab.id) === 'true';
       const filePath = localStorage.getItem(LS_FILEPATH_PREFIX + tab.id) ?? null;
       tabs.push({
@@ -54,7 +54,6 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
   const [includeBookmarks, setIncludeBookmarks] = useState(true);
   const [includeAnalyses, setIncludeAnalyses] = useState(true);
   const [includeProcessors, setIncludeProcessors] = useState(true);
-  const [editorTabCount, setEditorTabCount] = useState(0);
 
   useEffect(() => {
     if (!open) {
@@ -64,10 +63,8 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
       setIncludeBookmarks(true);
       setIncludeAnalyses(true);
       setIncludeProcessors(true);
-      setEditorTabCount(0);
       return;
     }
-    setEditorTabCount(collectEditorTabs().length);
     let cancelled = false;
     setLoading(true);
     getExportAllSessionsInfo().then(data => {
@@ -118,6 +115,7 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
   const title = multiSession ? 'Export Sessions' : 'Export Session';
   const totalBookmarks = info?.sessions.reduce((sum, s) => sum + s.bookmarkCount, 0) ?? 0;
   const totalAnalyses = info?.sessions.reduce((sum, s) => sum + s.analysisCount, 0) ?? 0;
+  const editorTabCount = open ? collectEditorTabs().length : 0;
 
   return (
     <Modal open={open} onClose={onClose} title={title} width={400}>
