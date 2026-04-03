@@ -303,41 +303,48 @@ pub fn resolve_lts_processors_raw(
             continue;
         };
 
-        let local_yaml = read_processor_yaml(app, &entry.id);
-        let needs_install = match &local_yaml {
-            Some(local) => {
-                let local_hash = crate::workspace::sha256_hex(local);
-                let mismatch = local_hash != entry.sha256;
-                if mismatch {
-                    log::warn!(
-                        "Overwriting locally installed processor '{}' with version from .lts session",
-                        entry.id
-                    );
-                }
-                mismatch
+        // Parse bundled YAML to get version for comparison.
+        let bundled_proc = match crate::processors::AnyProcessor::from_yaml(bundled_yaml) {
+            Ok(p) => p,
+            Err(e) => {
+                log::warn!("Failed to parse processor {} from .lts: {e}", entry.id);
+                continue;
             }
-            None => true,
         };
+        let bundled_version = &bundled_proc.meta.version;
 
-        if needs_install {
-            match crate::processors::AnyProcessor::from_yaml(bundled_yaml) {
-                Ok(proc) => {
-                    let id = proc.meta.id.clone();
-                    if let Ok(mut procs) = state.processors.lock() {
-                        procs.insert(id.clone(), proc);
-                    }
-                    if let Err(e) = crate::commands::processors::persist_processor(app, &id, bundled_yaml) {
-                        log::warn!("Failed to persist processor {id} from .lts: {e}");
-                    }
-                    resolved_ids.push(id);
-                }
-                Err(e) => {
-                    log::warn!("Failed to parse processor {} from .lts: {e}", entry.id);
-                }
+        // Check if exact qualified ID exists locally.
+        let local_yaml = read_processor_yaml(app, &entry.id);
+        if let Some(local_content) = local_yaml {
+            // Same ID exists locally — check namespace and version.
+            let local_version = crate::processors::AnyProcessor::from_yaml(&local_content)
+                .map(|p| p.meta.version)
+                .unwrap_or_default();
+
+            if !crate::commands::sources::is_newer(&local_version, bundled_version) {
+                log::info!(
+                    "Processor '{}' v{} already installed (bundled v{}) — skipping",
+                    entry.id, local_version, bundled_version
+                );
+                resolved_ids.push(entry.id.clone());
+                continue;
             }
-        } else {
-            resolved_ids.push(entry.id.clone());
+
+            log::info!(
+                "Upgrading processor '{}' from v{} to v{} (from .lts)",
+                entry.id, local_version, bundled_version
+            );
         }
+
+        // Install: either new processor or an upgrade of same-namespace version.
+        let id = bundled_proc.meta.id.clone();
+        if let Ok(mut procs) = state.processors.lock() {
+            procs.insert(id.clone(), bundled_proc);
+        }
+        if let Err(e) = crate::commands::processors::persist_processor(app, &id, bundled_yaml) {
+            log::warn!("Failed to persist processor {id} from .lts: {e}");
+        }
+        resolved_ids.push(id);
     }
 
     resolved_ids
