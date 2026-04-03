@@ -769,11 +769,20 @@ export interface ExportAllSessionsInfo {
   totalPipelineProcessorCount: number;
 }
 
+export interface LtsEditorTabPayload {
+  label: string;
+  content: string;
+  viewMode: string;
+  wordWrap: boolean;
+  filePath: string | null;
+}
+
 export interface ExportAllOptions {
   destPath: string;
   includeBookmarks: boolean;
   includeAnalyses: boolean;
   includeProcessors: boolean;
+  editorTabs: LtsEditorTabPayload[];
 }
 
 // ---------------------------------------------------------------------------

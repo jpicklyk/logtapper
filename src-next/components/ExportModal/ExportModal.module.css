@@ -56,6 +56,14 @@
   accent-color: var(--accent);
 }
 
+.infoLine {
+  display: flex;
+  align-items: center;
+  padding-left: 24px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
 .actions {
   display: flex;
   justify-content: flex-end;
