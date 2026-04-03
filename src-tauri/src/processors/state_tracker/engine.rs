@@ -132,7 +132,7 @@ impl StateTrackerRun {
 
 // -- Helpers ------------------------------------------------------------------
 
-fn build_defaults(def: &StateTrackerDef) -> HashMap<String, JsonValue> {
+pub(crate) fn build_defaults(def: &StateTrackerDef) -> HashMap<String, JsonValue> {
     def.state.iter()
         .map(|f| (f.name.clone(), f.default.clone()))
         .collect()

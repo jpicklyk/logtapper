@@ -564,18 +564,9 @@ async fn run_background_indexer(
                 // Return (0, 0) to signal the outer loop to break.
                 (0usize, 0usize)
             } else {
-                // Adjust offsets: build_partial_line_index operates on a sub-slice starting
-                // at byte 0, but real byte_offsets are cursor + local_offset.
-                // chunk_index includes the sentinel as its last element.
-                for offset in &mut chunk_index {
-                    *offset += cursor as u64;
-                }
-                for m in &mut chunk_meta {
-                    m.byte_offset += cursor;
-                }
-
-                // Extract sentinel (last element) — extend_source_index expects it separately.
-                let sentinel = chunk_index.pop().unwrap_or((cursor + bytes_in_chunk) as u64);
+                let sentinel = crate::core::session::adjust_and_strip_sentinel(
+                    &mut chunk_index, &mut chunk_meta, cursor, bytes_in_chunk,
+                );
 
                 let new_cursor = cursor + bytes_in_chunk;
                 let done = new_cursor >= data.len();

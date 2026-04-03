@@ -155,6 +155,8 @@ describe('CacheDataSource', () => {
 
   it('getLines fetches from backend on cache miss', async () => {
     const cache = new ViewCacheHandle(5000);
+    // Production applies MIN_FETCH=500, so fetchLines receives the inflated count.
+    // The mock returns a fixed 5-line window regardless of args.
     const fetchLines = vi.fn().mockResolvedValue(makeWindow(5, 5, 100));
 
     const ds = createCacheDataSource({
@@ -164,7 +166,7 @@ describe('CacheDataSource', () => {
     });
 
     const result = await ds.getLines(5, 5);
-    expect(fetchLines).toHaveBeenCalledWith(5, 5);
+    expect(fetchLines).toHaveBeenCalledWith(5, 500);
     expect(result).toHaveLength(5);
     expect(result[0].lineNum).toBe(5);
 
@@ -193,7 +195,7 @@ describe('CacheDataSource', () => {
     // Cache lines 0-2, but request 0-4 (lines 3,4 missing)
     cache.put(makeLines(0, 3));
 
-    // Mock returns 2 lines for the suffix fetch (offset=3, count=2)
+    // Mock returns 2 lines for the suffix fetch — production inflates to MIN_FETCH=500
     const fetchLines = vi.fn().mockResolvedValue(makeWindow(3, 2, 100));
     const ds = createCacheDataSource({
       sessionId: 'sess1',
@@ -202,9 +204,9 @@ describe('CacheDataSource', () => {
     });
 
     const result = await ds.getLines(0, 5);
-    // Only the missing suffix [3, 4] is fetched
-    expect(fetchLines).toHaveBeenCalledWith(3, 2);
-    // Returns window.lines directly (the 2 fetched lines)
+    // Only the missing suffix is fetched, but count is inflated to MIN_FETCH
+    expect(fetchLines).toHaveBeenCalledWith(3, 500);
+    // Returns window.lines directly (the 2 fetched lines from mock)
     expect(result).toHaveLength(2);
   });
 
@@ -262,9 +264,11 @@ describe('CacheDataSource', () => {
   it('sequential getLines without invalidate both apply (Fix #4: no ++_fetchGen per call)', async () => {
     const cache = new ViewCacheHandle(5000);
     let callCount = 0;
-    const fetchLines = vi.fn().mockImplementation((offset: number, count: number) => {
+    // Return only the requested lines (capped), not the inflated MIN_FETCH count,
+    // since the backend may return fewer lines than requested.
+    const fetchLines = vi.fn().mockImplementation((offset: number, _count: number) => {
       callCount++;
-      return Promise.resolve(makeWindow(offset, count, 1000));
+      return Promise.resolve(makeWindow(offset, 5, 1000));
     });
 
     const ds = createCacheDataSource({
@@ -286,8 +290,9 @@ describe('CacheDataSource', () => {
 
   it('concurrent getLines both resolve when no invalidation', async () => {
     const cache = new ViewCacheHandle(5000);
-    const fetchLines = vi.fn().mockImplementation((offset: number, count: number) =>
-      Promise.resolve(makeWindow(offset, count, 1000))
+    // Return only 5 lines per call (backend may return fewer than MIN_FETCH)
+    const fetchLines = vi.fn().mockImplementation((offset: number, _count: number) =>
+      Promise.resolve(makeWindow(offset, 5, 1000))
     );
 
     const ds = createCacheDataSource({

@@ -934,6 +934,7 @@ fn collect_prefilter_info(
 mod tests {
     use super::*;
     use std::collections::HashSet;
+    use crate::processors::state_tracker::engine::build_defaults;
 
     // ── extract_regex_literal_prefix ─────────────────────────────────────────
 
@@ -1166,9 +1167,7 @@ pipeline:
         };
 
         // Simulate initial state (as update_stream_trackers would create)
-        let initial_state: HashMap<String, serde_json::Value> = tracker_def.state.iter()
-            .map(|f| (f.name.clone(), f.default.clone()))
-            .collect();
+        let initial_state = build_defaults(&tracker_def);
         let cont_state = ContinuousTrackerState {
             current_state: initial_state,
             transitions: Vec::new(),
@@ -1258,9 +1257,7 @@ pipeline:
             correlator_defs: Vec::new(),
         };
 
-        let initial_state: HashMap<String, serde_json::Value> = tracker_def.state.iter()
-            .map(|f| (f.name.clone(), f.default.clone()))
-            .collect();
+        let initial_state = build_defaults(&tracker_def);
 
         let pipeline_ctx = crate::core::line::PipelineContext {
             source_type: crate::core::session::SourceType::Logcat,

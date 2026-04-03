@@ -18,6 +18,7 @@ use crate::core::log_source::LogSource;
 use crate::core::session::AnalysisSession;
 use crate::processors::interpreter::{ContinuousRunState, ProcessorRun};
 use crate::processors::reporter::schema::ReporterDef;
+use crate::processors::state_tracker::engine::build_defaults;
 
 // ---------------------------------------------------------------------------
 // Payload types for Tauri events
@@ -208,9 +209,7 @@ pub async fn start_adb_stream(
                     let run = ProcessorRun::new(def);
                     proc_states.insert(proc_id.clone(), run.into_continuous_state(0, false));
                 } else if let Some(def) = any_proc.as_state_tracker() {
-                    let current_state: HashMap<String, serde_json::Value> = def.state.iter()
-                        .map(|f| (f.name.clone(), f.default.clone()))
-                        .collect();
+                    let current_state = build_defaults(def);
                     tracker_states.insert(proc_id.clone(), crate::processors::state_tracker::types::ContinuousTrackerState {
                         current_state,
                         transitions: Vec::new(),
@@ -465,9 +464,7 @@ pub async fn update_stream_trackers(
     for t_id in &tracker_ids {
         if !inner.contains_key(t_id.as_str()) {
             if let Some(def) = tracker_defs.get(t_id) {
-                let current_state: HashMap<String, serde_json::Value> = def.state.iter()
-                    .map(|f| (f.name.clone(), f.default.clone()))
-                    .collect();
+                let current_state = build_defaults(def);
                 inner.insert(t_id.clone(), crate::processors::state_tracker::types::ContinuousTrackerState {
                     current_state,
                     transitions: Vec::new(),
@@ -1382,9 +1379,7 @@ mod tests {
         let proc = crate::processors::AnyProcessor::from_yaml(yaml).unwrap();
         let def = proc.as_state_tracker().unwrap();
 
-        let current_state: HashMap<String, serde_json::Value> = def.state.iter()
-            .map(|f| (f.name.clone(), f.default.clone()))
-            .collect();
+        let current_state = build_defaults(def);
         let cont = crate::processors::state_tracker::types::ContinuousTrackerState {
             current_state: current_state.clone(),
             transitions: Vec::new(),

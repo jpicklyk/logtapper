@@ -9,6 +9,7 @@ import { bus } from '../../events/bus';
 import type { CacheController } from '../../cache';
 import type { StreamPusher } from '../../viewport';
 import type { SharedLogViewerRefs } from './types';
+import { teardownStream, activateStream } from './streamStateMachine';
 
 // A stream that ran for less than this duration before EOF is counted as a
 // "quick" failure. Five consecutive quick failures abort auto-reconnect.
@@ -43,6 +44,9 @@ export function useStreamSession(
   // Channel messages are ignored. This replaces the need for an unlisten() call
   // since Channel<T> has no cancellation API.
   const channelActiveRef = useRef(false);
+
+  // Assembled once for teardownStream/activateStream calls.
+  const streamRefs = { streamingSessionIdRef: refs.streamingSessionIdRef, isStreamingRef: refs.isStreamingRef, channelActiveRef };
 
   // Auto-reconnect state
   const reconnectTimerRef      = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -147,13 +151,10 @@ export function useStreamSession(
     // Stop the previous stream if one is still running.
     const prevSessionId = refs.streamingSessionIdRef.current;
     if (prevSessionId) {
-      channelActiveRef.current = false;
       refs.adbStoppedUnlistenRef.current?.();
       refs.adbStoppedUnlistenRef.current = null;
-      try { await stopAdbStream(prevSessionId); } catch { /* best-effort */ }
+      await teardownStream(streamRefs, { stopAdbStream }, prevSessionId);
       setStreamingSession(prevSessionId, false);
-      refs.isStreamingRef.current = false;
-      refs.streamingSessionIdRef.current = null;
     }
 
     lastStreamParamsRef.current = { deviceId, packageFilter, activeProcessorIds, maxRawLines };
@@ -239,13 +240,11 @@ export function useStreamSession(
         deviceId, packageFilter, activeProcessorIds, maxRawLines, handleChannelEvent,
       );
 
-      channelActiveRef.current = true;
+      activateStream(streamRefs, result.sessionId);
       registerSession(targetPaneId, result);
       activateSessionForPane(targetPaneId, result.sessionId);
       setStreamingSession(result.sessionId, true);
-      refs.isStreamingRef.current = true;
       refs.streamingPaneIdRef.current = targetPaneId;
-      refs.streamingSessionIdRef.current = result.sessionId;
 
       // Keep the adb-stream-stopped emit listener as a fallback for the case
       // where stop_adb_stream emits it directly (e.g. the streaming task had
@@ -318,21 +317,15 @@ export function useStreamSession(
       reconnectTimerRef.current = null;
     }
     reconnectCountRef.current = 0;
-    // Deactivate channel and unlisten the fallback emit handler BEFORE issuing
-    // the stop command so neither path double-fires 'stream:stopped'.
-    channelActiveRef.current = false;
+    // Unlisten the fallback emit handler BEFORE issuing the stop command
+    // so neither path double-fires 'stream:stopped'.
     refs.adbStoppedUnlistenRef.current?.();
     refs.adbStoppedUnlistenRef.current = null;
-    try {
-      await stopAdbStream(sessionId);
-    } catch (e) {
-      console.error('Error stopping ADB stream:', e);
-    }
+    const streamRefs = { streamingSessionIdRef: refs.streamingSessionIdRef, isStreamingRef: refs.isStreamingRef, channelActiveRef };
+    await teardownStream(streamRefs, { stopAdbStream }, sessionId);
     setStreamingSession(sessionId, false);
-    refs.isStreamingRef.current = false;
     const stoppedPaneId = paneId ?? (refs.activeLogPaneIdRef.current ?? DEFAULT_PANE_ID);
     refs.streamingPaneIdRef.current = null;
-    refs.streamingSessionIdRef.current = null;
     bus.emit('stream:stopped', { sessionId, paneId: stoppedPaneId });
   }, [
     refs.streamingSessionIdRef, refs.streamingPaneIdRef, refs.activeLogPaneIdRef,

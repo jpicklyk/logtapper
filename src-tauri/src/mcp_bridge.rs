@@ -25,6 +25,7 @@ use crate::commands::AppState;
 use crate::processors::{AnyProcessor, ProcessorKind};
 use crate::processors::marketplace::{resolve_processor_id, split_qualified_id};
 use crate::processors::reporter::engine::RunResult;
+use crate::processors::state_tracker::engine::build_defaults;
 use crate::processors::state_tracker::types::StateTransition;
 
 pub const PORT: u16 = 40404;
@@ -1218,7 +1219,7 @@ async fn h_state_at_line(
     let defaults: HashMap<String, serde_json::Value> = {
         let procs = state.processors.lock().unwrap();
         match procs.get(&resolved_id).and_then(|p| p.as_state_tracker()) {
-            Some(def) => def.state.iter().map(|f| (f.name.clone(), f.default.clone())).collect(),
+            Some(def) => build_defaults(def),
             None => HashMap::new(),
         }
     };
