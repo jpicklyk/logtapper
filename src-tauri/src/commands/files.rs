@@ -255,7 +255,7 @@ fn load_lts_file_inner(
     let file_size = path_obj.metadata().map(|m| m.len()).unwrap_or(0);
 
     // Destructure to avoid cloning the processor fields.
-    let crate::workspace::lts::LtsData { sessions, processor_manifest, processor_yamls, .. } = lts;
+    let crate::workspace::lts::LtsData { sessions, processor_manifest, processor_yamls, editor_tabs, .. } = lts;
 
     // 2. Resolve bundled processors ONCE for all sessions (install missing / hash-mismatched).
     let _resolved = crate::commands::export::resolve_lts_processors_raw(
@@ -336,6 +336,12 @@ fn load_lts_file_inner(
         );
 
         results.push(result);
+    }
+
+    // Emit editor tabs to the frontend if any were stored in the .lts file.
+    if !editor_tabs.is_empty() {
+        app.emit("lts-editor-tabs", &editor_tabs)
+            .map_err(|e| format!("Failed to emit editor tabs: {e}"))?;
     }
 
     Ok(results)

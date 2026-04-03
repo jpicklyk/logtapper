@@ -6,7 +6,7 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::commands::{lock_or_err, AppState};
 use crate::core::log_source::{FileLogSource, ZipLogSource, StreamLogSource};
-use crate::workspace::lts::{LtsSessionData, LtsSessionMeta};
+use crate::workspace::lts::{LtsEditorTab, LtsSessionData, LtsSessionMeta};
 
 // ---------------------------------------------------------------------------
 // T4 — Processor YAML reader helper
@@ -144,11 +144,22 @@ pub struct ExportSessionEntry {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LtsEditorTabPayload {
+    pub label: String,
+    pub content: String,
+    pub view_mode: String,
+    pub word_wrap: bool,
+    pub file_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExportAllOptions {
     pub dest_path: String,
     pub include_bookmarks: bool,
     pub include_analyses: bool,
     pub include_processors: bool,
+    pub editor_tabs: Vec<LtsEditorTabPayload>,
 }
 
 // ---------------------------------------------------------------------------
@@ -295,8 +306,19 @@ pub async fn export_all_sessions(
     };
 
     // 4. Write multi-session .lts file (no locks held).
+    let editor_tabs: Vec<LtsEditorTab> = options.editor_tabs
+        .into_iter()
+        .map(|p| LtsEditorTab {
+            label: p.label,
+            content: p.content,
+            view_mode: p.view_mode,
+            word_wrap: p.word_wrap,
+            file_path: p.file_path,
+        })
+        .collect();
+
     let dest = std::path::Path::new(&options.dest_path);
-    crate::workspace::lts::write_lts(dest, &lts_sessions, &processor_yamls, &[])?;
+    crate::workspace::lts::write_lts(dest, &lts_sessions, &processor_yamls, &editor_tabs)?;
 
     Ok(())
 }
