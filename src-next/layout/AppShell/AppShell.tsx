@@ -21,7 +21,7 @@ import { RightPane } from '../../components/RightPane';
 import { BottomPane } from '../../components/BottomPane';
 import { PaneContent } from '../../components/PaneContent';
 import { SettingsPanel } from '../../components/SettingsPanel';
-import { useSettings, useAnonymizerConfig, useToast, useAnalysisToast, useWatchToast, useWorkspaceRestoreToast, useFileShortcuts, useStartupFile } from '../../hooks';
+import { useSettings, useAnonymizerConfig, useToast, useAnalysisToast, useWatchToast, useWorkspaceRestoreToast, useFileShortcuts, useStartupFile, useEditorTabRestore } from '../../hooks';
 import { startMcpBridge } from '../../bridge/commands';
 import { useCacheManager } from '../../cache';
 import { Toast } from '../../ui';
@@ -77,6 +77,7 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   const { openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession } = useViewerActions();
   useFileShortcuts({ openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession });
   useStartupFile();
+  useEditorTabRestore(workspace.openCenterTab);
 
   // Start MCP bridge on mount if the user has it enabled.
   useEffect(() => {
