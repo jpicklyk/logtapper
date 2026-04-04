@@ -17,7 +17,7 @@ export function useLtsImportToast(addToast: (toast: ToastItem) => void): void {
   const seenTabsRef = useRef(new Set<string>());
 
   useEffect(() => {
-    const handler = (e: { label: string; tabId: string }) => {
+    const onLoading = (e: { label: string; tabId: string }) => {
       if (!e.label.endsWith('.lts')) return;
       if (seenTabsRef.current.has(e.tabId)) return;
       seenTabsRef.current.add(e.tabId);
@@ -27,7 +27,18 @@ export function useLtsImportToast(addToast: (toast: ToastItem) => void): void {
         message: e.label,
       });
     };
-    bus.on('session:loading', handler);
-    return () => { bus.off('session:loading', handler); };
+    const onAlreadyOpen = (e: { label: string }) => {
+      addToastRef.current({
+        id: `lts-already-open-${++toastCounter}`,
+        title: 'Already imported',
+        message: `${e.label} is already open`,
+      });
+    };
+    bus.on('session:loading', onLoading);
+    bus.on('file:lts-already-open', onAlreadyOpen);
+    return () => {
+      bus.off('session:loading', onLoading);
+      bus.off('file:lts-already-open', onAlreadyOpen);
+    };
   }, []);
 }

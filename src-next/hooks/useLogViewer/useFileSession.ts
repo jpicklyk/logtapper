@@ -67,14 +67,18 @@ export function useFileSession(
   const lastTotalLinesUpdateRef = useRef(0);
 
   const loadFile = useCallback(async (path: string, paneId?: string, existingTabId?: string) => {
-    // Prevent duplicate imports: if this .lts file is already open in a tab, skip.
-    // The user can close the existing tab first if they want to re-import.
+    // Prevent duplicate imports: if this .lts file already has an active session, skip.
+    // Check live session context (via ref) rather than localStorage which can be stale.
     if (!existingTabId && path.endsWith('.lts')) {
-      const existingPaths = readTabPaths();
-      const alreadyOpen = Object.values(existingPaths).some((p) => p === path);
-      if (alreadyOpen) {
-        diag('file-load', 'skipping — .lts already open', { path });
-        return;
+      const sessionsMap = refs.sessionsRef?.current;
+      if (sessionsMap) {
+        const alreadyOpen = Array.from(sessionsMap.values()).some((s) => s.filePath === path);
+        if (alreadyOpen) {
+          diag('file-load', 'skipping — .lts already open', { path });
+          const label = path.split(/[\\/]/).pop() ?? path;
+          bus.emit('file:lts-already-open', { label });
+          return;
+        }
       }
     }
 
