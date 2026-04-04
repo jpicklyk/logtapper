@@ -4,37 +4,39 @@ import { Modal } from '../../ui/Modal/Modal';
 import { Spinner, Button } from '../../ui';
 import { getExportAllSessionsInfo, exportAllSessions } from '../../bridge/commands';
 import type { ExportAllSessionsInfo, LtsEditorTabPayload } from '../../bridge/types';
-import { allPanes } from '../../hooks/workspace';
-import type { SplitNode } from '../../hooks/workspace';
+import { allPanes, STORAGE_KEY } from '../../hooks/workspace';
 import { LS_CONTENT_PREFIX, LS_MODE_PREFIX, LS_WRAP_PREFIX, LS_FILEPATH_PREFIX } from '../EditorTab';
+import { storageGet, storageGetJSON } from '../../utils';
 import styles from './ExportModal.module.css';
 
-function collectEditorTabs(): LtsEditorTabPayload[] {
-  const raw = localStorage.getItem('logtapper_workspace_v1');
-  if (!raw) return [];
-
-  let persisted: { centerTree?: SplitNode };
-  try {
-    persisted = JSON.parse(raw);
-  } catch {
-    return [];
+/** Count editor tabs without reading per-tab content (cheap for display). */
+function countEditorTabs(): number {
+  const persisted = storageGetJSON<{ centerTree?: import('../../hooks/workspace').SplitNode } | null>(STORAGE_KEY, null);
+  if (!persisted?.centerTree) return 0;
+  let count = 0;
+  for (const pane of allPanes(persisted.centerTree)) {
+    for (const tab of pane.tabs) {
+      if (tab.type === 'editor') count++;
+    }
   }
-  if (!persisted.centerTree) return [];
+  return count;
+}
+
+/** Collect full editor tab data for export (reads per-tab localStorage keys). */
+function collectEditorTabs(): LtsEditorTabPayload[] {
+  const persisted = storageGetJSON<{ centerTree?: import('../../hooks/workspace').SplitNode } | null>(STORAGE_KEY, null);
+  if (!persisted?.centerTree) return [];
 
   const tabs: LtsEditorTabPayload[] = [];
   for (const pane of allPanes(persisted.centerTree)) {
     for (const tab of pane.tabs) {
       if (tab.type !== 'editor') continue;
-      const content = localStorage.getItem(LS_CONTENT_PREFIX + tab.id) ?? '';
-      const viewMode = (localStorage.getItem(LS_MODE_PREFIX + tab.id) ?? 'editor') as LtsEditorTabPayload['viewMode'];
-      const wordWrap = localStorage.getItem(LS_WRAP_PREFIX + tab.id) === 'true';
-      const filePath = localStorage.getItem(LS_FILEPATH_PREFIX + tab.id) ?? null;
       tabs.push({
         label: tab.label,
-        content,
-        viewMode,
-        wordWrap,
-        filePath,
+        content: storageGet(LS_CONTENT_PREFIX + tab.id) ?? '',
+        viewMode: (storageGet(LS_MODE_PREFIX + tab.id) ?? 'editor') as LtsEditorTabPayload['viewMode'],
+        wordWrap: storageGet(LS_WRAP_PREFIX + tab.id) === 'true',
+        filePath: storageGet(LS_FILEPATH_PREFIX + tab.id) ?? null,
       });
     }
   }
@@ -115,7 +117,7 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
   const title = multiSession ? 'Export Sessions' : 'Export Session';
   const totalBookmarks = info?.sessions.reduce((sum, s) => sum + s.bookmarkCount, 0) ?? 0;
   const totalAnalyses = info?.sessions.reduce((sum, s) => sum + s.analysisCount, 0) ?? 0;
-  const editorTabCount = open ? collectEditorTabs().length : 0;
+  const editorTabCount = open ? countEditorTabs() : 0;
 
   return (
     <Modal open={open} onClose={onClose} title={title} width={400}>

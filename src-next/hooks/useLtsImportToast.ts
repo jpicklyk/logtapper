@@ -5,22 +5,17 @@ import type { ToastItem } from '../ui';
 let toastCounter = 0;
 
 /**
- * Subscribes to the `session:loading` bus event and shows a toast notification
- * whenever a `.lts` file import starts, giving the user immediate feedback
- * even when files are already open in other panes.
- *
- * Deduplicates by tabId to prevent double-toasting from StrictMode double-mount.
+ * Shows toast notifications for .lts file import events:
+ * - "Importing session" when an import starts
+ * - "Already imported" when the user tries to re-open an already-loaded .lts
  */
 export function useLtsImportToast(addToast: (toast: ToastItem) => void): void {
   const addToastRef = useRef(addToast);
   addToastRef.current = addToast;
-  const seenTabsRef = useRef(new Set<string>());
 
   useEffect(() => {
-    const onLoading = (e: { label: string; tabId: string }) => {
+    const onLoading = (e: { label: string }) => {
       if (!e.label.endsWith('.lts')) return;
-      if (seenTabsRef.current.has(e.tabId)) return;
-      seenTabsRef.current.add(e.tabId);
       addToastRef.current({
         id: `lts-import-${++toastCounter}`,
         title: 'Importing session',
