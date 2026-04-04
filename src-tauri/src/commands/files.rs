@@ -252,10 +252,12 @@ fn load_lts_file_inner(
         return Err("No sessions in .lts file".to_string());
     }
 
+    close_stale_sessions(state, Some(app), lts_path)?;
+
     let file_size = path_obj.metadata().map(|m| m.len()).unwrap_or(0);
 
     // Destructure to avoid cloning the processor fields.
-    let crate::workspace::lts::LtsData { sessions, processor_manifest, processor_yamls, .. } = lts;
+    let crate::workspace::lts::LtsData { sessions, processor_manifest, processor_yamls, editor_tabs, .. } = lts;
 
     // 2. Resolve bundled processors ONCE for all sessions (install missing / hash-mismatched).
     let _resolved = crate::commands::export::resolve_lts_processors_raw(
@@ -336,6 +338,12 @@ fn load_lts_file_inner(
         );
 
         results.push(result);
+    }
+
+    // Emit editor tabs to the frontend if any were stored in the .lts file.
+    if !editor_tabs.is_empty() {
+        app.emit("lts-editor-tabs", &editor_tabs)
+            .map_err(|e| format!("Failed to emit editor tabs: {e}"))?;
     }
 
     Ok(results)
@@ -564,18 +572,9 @@ async fn run_background_indexer(
                 // Return (0, 0) to signal the outer loop to break.
                 (0usize, 0usize)
             } else {
-                // Adjust offsets: build_partial_line_index operates on a sub-slice starting
-                // at byte 0, but real byte_offsets are cursor + local_offset.
-                // chunk_index includes the sentinel as its last element.
-                for offset in &mut chunk_index {
-                    *offset += cursor as u64;
-                }
-                for m in &mut chunk_meta {
-                    m.byte_offset += cursor;
-                }
-
-                // Extract sentinel (last element) — extend_source_index expects it separately.
-                let sentinel = chunk_index.pop().unwrap_or((cursor + bytes_in_chunk) as u64);
+                let sentinel = crate::core::session::adjust_and_strip_sentinel(
+                    &mut chunk_index, &mut chunk_meta, cursor, bytes_in_chunk,
+                );
 
                 let new_cursor = cursor + bytes_in_chunk;
                 let done = new_cursor >= data.len();
@@ -1822,7 +1821,7 @@ mod tests {
             },
         ];
 
-        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
+        write_lts(&zip_path, &sessions, &[], &[]).expect("write_lts");
 
         let loaded = read_lts(&zip_path).expect("read_lts");
 
@@ -1895,7 +1894,7 @@ mod tests {
             },
         ];
 
-        write_lts(&zip_path, &sessions, &[]).expect("write_lts");
+        write_lts(&zip_path, &sessions, &[], &[]).expect("write_lts");
 
         let loaded = read_lts(&zip_path).expect("read_lts");
 

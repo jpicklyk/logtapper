@@ -67,6 +67,21 @@ export function useFileSession(
   const lastTotalLinesUpdateRef = useRef(0);
 
   const loadFile = useCallback(async (path: string, paneId?: string, existingTabId?: string) => {
+    // Prevent duplicate imports: if this .lts file already has an active session, skip.
+    // Check live session context (via ref) rather than localStorage which can be stale.
+    if (!existingTabId && path.endsWith('.lts')) {
+      const sessionsMap = refs.sessionsRef?.current;
+      if (sessionsMap) {
+        const alreadyOpen = Array.from(sessionsMap.values()).some((s) => s.filePath === path);
+        if (alreadyOpen) {
+          diag('file-load', 'skipping — .lts already open', { path });
+          const label = path.split(/[\\/]/).pop() ?? path;
+          bus.emit('file:lts-already-open', { label });
+          return;
+        }
+      }
+    }
+
     const targetPaneId = paneId ?? refs.activeLogPaneIdRef.current ?? getStoredFirstPaneId() ?? DEFAULT_PANE_ID;
 
     const gen = (loadGenRef.current.get(targetPaneId) ?? 0) + 1;
@@ -115,8 +130,10 @@ export function useFileSession(
 
       if (loadGenRef.current.get(targetPaneId) !== gen) {
         diag('file-load', 'stale generation — discarding', { gen, current: loadGenRef.current.get(targetPaneId) });
-        try { await closeSessionCmd(result.sessionId); } catch { /* ignore */ }
-        clearPreSeed(result.sessionId);
+        for (const r of results) {
+          try { await closeSessionCmd(r.sessionId); } catch { /* ignore */ }
+          clearPreSeed(r.sessionId);
+        }
         return;
       }
 
@@ -270,9 +287,19 @@ export function useFileSession(
     // then non-active tabs load into existing persisted tab slots.
     const sorted = [...storedTabs].sort((a, b) => (b.isActive ? 1 : 0) - (a.isActive ? 1 : 0));
     const loadedPanes = new Set<string>();
+    const handledLtsPaths = new Set<string>();
     for (const { tabId, paneId, isActive } of sorted) {
       const path = tabPaths[tabId];
       if (!path) continue;
+
+      // For .lts files, only the first tab pointing to this path loads all
+      // sessions via planExtraSessionImport. Subsequent tabs pointing to the
+      // same .lts would create N*M backend sessions — skip them.
+      if (path.endsWith('.lts')) {
+        if (handledLtsPaths.has(path)) continue;
+        handledLtsPaths.add(path);
+      }
+
       if (isActive && !loadedPanes.has(paneId)) {
         // First load for this pane — replaces the existing logviewer tab.
         loadedPanes.add(paneId);

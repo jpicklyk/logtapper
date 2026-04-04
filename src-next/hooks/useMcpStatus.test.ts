@@ -24,7 +24,7 @@ import { statusChanged, deriveConnState } from './useMcpStatus';
 import { loadSettings } from './useSettings';
 import { SETTING_DEFAULTS } from './useSettings';
 
-const mockLoadSettings = loadSettings as MockInstance;
+const mockLoadSettings = loadSettings as unknown as MockInstance;
 
 beforeEach(() => {
   // Reset to default settings (mcpBridgeEnabled: false) before each test.

@@ -6,7 +6,7 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::commands::{lock_or_err, AppState};
 use crate::core::log_source::{FileLogSource, ZipLogSource, StreamLogSource};
-use crate::workspace::lts::{LtsSessionData, LtsSessionMeta};
+use crate::workspace::lts::{LtsEditorTab, LtsSessionData, LtsSessionMeta};
 
 // ---------------------------------------------------------------------------
 // T4 — Processor YAML reader helper
@@ -149,6 +149,7 @@ pub struct ExportAllOptions {
     pub include_bookmarks: bool,
     pub include_analyses: bool,
     pub include_processors: bool,
+    pub editor_tabs: Vec<LtsEditorTab>,
 }
 
 // ---------------------------------------------------------------------------
@@ -296,7 +297,7 @@ pub async fn export_all_sessions(
 
     // 4. Write multi-session .lts file (no locks held).
     let dest = std::path::Path::new(&options.dest_path);
-    crate::workspace::lts::write_lts(dest, &lts_sessions, &processor_yamls)?;
+    crate::workspace::lts::write_lts(dest, &lts_sessions, &processor_yamls, &options.editor_tabs)?;
 
     Ok(())
 }

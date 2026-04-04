@@ -686,6 +686,23 @@ pub(crate) fn build_partial_line_index(
     (line_index, line_meta, end_byte)
 }
 
+/// Adjust byte offsets in a partial-index chunk from sub-slice-relative to file-relative,
+/// then pop and return the sentinel (last element of `chunk_index`).
+pub(crate) fn adjust_and_strip_sentinel(
+    chunk_index: &mut Vec<u64>,
+    chunk_meta: &mut [LineMeta],
+    cursor: usize,
+    bytes_in_chunk: usize,
+) -> u64 {
+    for offset in chunk_index.iter_mut() {
+        *offset += cursor as u64;
+    }
+    for m in chunk_meta.iter_mut() {
+        m.byte_offset += cursor;
+    }
+    chunk_index.pop().unwrap_or((cursor + bytes_in_chunk) as u64)
+}
+
 /// Scan `line_meta` to extract named section boundaries for Bugreport files.
 /// `raw_data` and `line_index` are used to detect DUMPSYS subsections (DUMP OF SERVICE lines).
 /// Pass empty slices when the raw data is not available (e.g. stream sources or tests for non-DUMPSYS content).
@@ -1246,16 +1263,7 @@ mod tests {
                 break;
             }
 
-            for offset in chunk_idx.iter_mut() {
-                *offset += cursor as u64;
-            }
-            for m in chunk_meta.iter_mut() {
-                m.byte_offset += cursor;
-            }
-
-            if !chunk_idx.is_empty() {
-                chunk_idx.pop();
-            }
+            let _ = adjust_and_strip_sentinel(&mut chunk_idx, &mut chunk_meta, cursor, bytes_in_chunk);
             all_offsets.extend(chunk_idx);
             all_meta.extend(chunk_meta);
             cursor += bytes_in_chunk;
@@ -1477,15 +1485,9 @@ mod tests {
         assert!(part_count > 0 && part_count < 10);
 
         let remaining = &data[consumed..];
-        let (mut ext_idx, mut ext_meta, _) =
+        let (mut ext_idx, mut ext_meta, ext_bytes) =
             build_partial_line_index(remaining, &parser, &mut interner, remaining.len() + 100, Encoding::Utf8);
-        for offset in ext_idx.iter_mut() {
-            *offset += consumed as u64;
-        }
-        for m in ext_meta.iter_mut() {
-            m.byte_offset += consumed;
-        }
-        let ext_sentinel = ext_idx.pop().unwrap_or(data.len() as u64);
+        let ext_sentinel = adjust_and_strip_sentinel(&mut ext_idx, &mut ext_meta, consumed, ext_bytes);
         let ext_count = ext_meta.len();
 
         let mut mmap_mut = memmap2::MmapOptions::new()

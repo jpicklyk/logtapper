@@ -120,6 +120,8 @@ export type AppEvents = {
   'marketplace:sources-changed':       undefined;
 
   // ── File operations ──────────────────────────────────────────────────────
+  /** Fired when an .lts file import is skipped because it's already open. */
+  'file:lts-already-open': { label: string };
   /** Emitted when user triggers Save. Focused EditorTab should handle. */
   'file:save-request':    undefined;
   /** Emitted when user triggers Save As. Focused EditorTab should handle. */

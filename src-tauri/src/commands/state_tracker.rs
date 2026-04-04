@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use tauri::State;
 use crate::commands::{lock_or_err, AppState};
+use crate::processors::state_tracker::engine::build_defaults;
 use crate::processors::state_tracker::schema::TrackerMode;
 use crate::processors::state_tracker::types::{StateSnapshot, StateTransition};
 
@@ -77,9 +78,7 @@ pub async fn get_state_at_line(
 
     let pos = resolved.transitions.partition_point(|t| t.line_num <= effective_line);
 
-    let mut fields: HashMap<String, serde_json::Value> = tracker_def.state.iter()
-        .map(|f| (f.name.clone(), f.default.clone()))
-        .collect();
+    let mut fields = build_defaults(tracker_def);
 
     let mut initialized: std::collections::HashSet<String> = Default::default();
     for t in &resolved.transitions[..pos] {

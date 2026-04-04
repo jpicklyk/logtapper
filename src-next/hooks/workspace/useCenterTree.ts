@@ -15,9 +15,9 @@ import {
   findTabAcrossTree,
   findTabByType,
 } from './splitTreeHelpers';
-import { LS_FILEPATH_PREFIX } from '../../components/EditorTab';
+import { LS_FILEPATH_PREFIX, LS_CONTENT_PREFIX, LS_MODE_PREFIX, LS_WRAP_PREFIX } from '../../components/EditorTab';
 import { storageSet } from '../../utils';
-import { applySessionLoading, applySessionLoaded } from './sessionTreeOps';
+import { applySessionLoading, applySessionLoaded, type SessionLoadedResult } from './sessionTreeOps';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -41,7 +41,7 @@ export interface CenterTreeHandle {
   resizeSplit: (splitNodeId: string, ratio: number) => void;
   renameTab: (tabId: string, label: string) => void;
   setTabUnsaved: (tabId: string, isDirty: boolean) => void;
-  openCenterTab: (type: CenterTabType, label?: string, filePath?: string) => void;
+  openCenterTab: (type: CenterTabType, label?: string, filePath?: string, editorState?: { content: string; viewMode: string; wordWrap: boolean }) => void;
   dropTabOnPane: (tabId: string, fromPaneId: string, toPaneId: string, zone: DropZone) => void;
 }
 
@@ -218,12 +218,12 @@ export function useCenterTree(
     );
   }, [updateTree]);
 
-  const openCenterTab = useCallback((type: CenterTabType, label?: string, filePath?: string) => {
+  const openCenterTab = useCallback((type: CenterTabType, label?: string, filePath?: string, editorState?: { content: string; viewMode: string; wordWrap: boolean }) => {
     updateTree((tree) => {
       // 1. If a tab of this type already exists (and no filePath — reuse tab), activate it
       if (!filePath) {
         const existing = findTabByType(tree, type);
-        if (existing) {
+        if (existing && !editorState) {
           if (existing.pane.activeTabId === existing.tab.id) return tree;
           return updateLeaf(tree, existing.pane.id, (pane) => ({
             ...pane,
@@ -240,6 +240,15 @@ export function useCenterTree(
       // Pre-seed localStorage with the file path so EditorTab picks it up on mount.
       if (filePath) {
         storageSet(LS_FILEPATH_PREFIX + tab.id, filePath);
+      }
+
+      // Pre-seed localStorage with editor state so EditorTab picks it up on mount.
+      if (editorState && type === 'editor') {
+        storageSet(LS_CONTENT_PREFIX + tab.id, editorState.content);
+        storageSet(LS_MODE_PREFIX + tab.id, editorState.viewMode);
+        if (editorState.wordWrap) {
+          storageSet(LS_WRAP_PREFIX + tab.id, 'true');
+        }
       }
 
       return updateLeaf(tree, target.pane.id, (pane) => ({
@@ -362,19 +371,23 @@ export function useCenterTree(
                                    tabId: string; isNewTab?: boolean; previousSessionId?: string; readOnly?: boolean }) => {
       // Compute from prev inside the updater so React's bailout works when the
       // tree is unchanged (e.g. session:loading already set up the tab).
-      let result: ReturnType<typeof applySessionLoaded> | null = null;
+      let result: SessionLoadedResult | null = null;
       setCenterTree((prev) => {
         result = applySessionLoaded(prev, e, paneSessionMapRef.current);
         treeRef.current = result.tree;
         return result.tree;
       });
 
-      // Side effects run after setCenterTree — result is guaranteed set by the
-      // synchronous updater call above.
+      // Side effects run after setCenterTree.  The updater is normally called
+      // synchronously, but React may skip it when the component is unmounting
+      // or during concurrent-mode interruptions — guard against null.
+      const r = result as SessionLoadedResult | null;
       tabSessionMapRef.current.set(e.tabId, e.sessionId);
-      if (result!.tabIdToDelete) tabSessionMapRef.current.delete(result!.tabIdToDelete);
-      if (result!.emitTabActivated) bus.emit('layout:logviewer-tab-activated', result!.emitTabActivated);
-      if (result!.emitPaneRemap) bus.emit('layout:pane-session-remap', result!.emitPaneRemap);
+      if (r) {
+        if (r.tabIdToDelete) tabSessionMapRef.current.delete(r.tabIdToDelete);
+        if (r.emitTabActivated) bus.emit('layout:logviewer-tab-activated', r.emitTabActivated);
+        if (r.emitPaneRemap) bus.emit('layout:pane-session-remap', r.emitPaneRemap);
+      }
     };
 
     const onPipelineCompleted = (e: { sessionId: string; hasReporters: boolean; hasTrackers: boolean; hasCorrelators: boolean }) => {

@@ -22,8 +22,8 @@ vi.mock('../utils', async (importOriginal) => {
 import { loadSettings, SETTING_DEFAULTS } from './useSettings';
 import { storageGetJSON, storageSetJSON } from '../utils';
 
-const mockStorageGetJSON = storageGetJSON as MockInstance;
-const mockStorageSetJSON = storageSetJSON as MockInstance;
+const mockStorageGetJSON = storageGetJSON as unknown as MockInstance;
+const mockStorageSetJSON = storageSetJSON as unknown as MockInstance;
 
 beforeEach(() => {
   // Default: nothing stored in localStorage.
@@ -56,7 +56,7 @@ describe('loadSettings', () => {
   it('preserves unknown (forward-compat) keys from stored settings', () => {
     // Simulate a future setting that does not exist in SETTING_DEFAULTS.
     mockStorageGetJSON.mockReturnValue({ unknownFutureKey: 'some-value' });
-    const result = loadSettings() as Record<string, unknown>;
+    const result = loadSettings() as unknown as Record<string, unknown>;
     expect(result['unknownFutureKey']).toBe('some-value');
   });
 });
