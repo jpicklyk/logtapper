@@ -22,10 +22,10 @@ export interface WorkspaceContextValue {
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
 // ---------------------------------------------------------------------------
-// Persistence helpers
+// Persistence helpers (exported for testing)
 // ---------------------------------------------------------------------------
 
-function loadPersistedIdentity(): WorkspaceIdentity {
+export function loadPersistedIdentity(): WorkspaceIdentity {
   try {
     const raw = localStorage.getItem(WORKSPACE_STORAGE_KEY);
     if (raw) {
@@ -38,17 +38,17 @@ function loadPersistedIdentity(): WorkspaceIdentity {
   return createEmptyIdentity();
 }
 
-function persistIdentity(identity: WorkspaceIdentity): void {
+export function persistIdentity(identity: WorkspaceIdentity): void {
   try {
     localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(identity));
   } catch { /* localStorage full — non-critical */ }
 }
 
 // ---------------------------------------------------------------------------
-// Title bar
+// Title bar (exported for testing)
 // ---------------------------------------------------------------------------
 
-function formatTitle(identity: WorkspaceIdentity): string {
+export function formatTitle(identity: WorkspaceIdentity): string {
   const indicator = identity.dirty ? ' *' : '';
   return `${identity.name}${indicator} \u2014 LogTapper`;
 }

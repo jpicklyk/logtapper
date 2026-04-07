@@ -12,6 +12,11 @@ import { LS_CONTENT_PREFIX, LS_MODE_PREFIX, LS_WRAP_PREFIX, LS_FILEPATH_PREFIX }
 // Re-use the same localStorage key as useWorkspaceLayout
 const STORAGE_KEY = 'logtapper_workspace_v1';
 
+/** Derive a workspace display name from an .lts file path. */
+export function workspaceNameFromPath(path: string): string {
+  return basename(path).replace(/\.lts$/i, '');
+}
+
 export type SavePromptChoice = 'save' | 'discard' | 'cancel';
 
 export interface WorkspaceActions {
@@ -85,8 +90,7 @@ export function useWorkspace(
       includeProcessors: true,
       editorTabs,
     });
-    const name = basename(destPath).replace(/\.lts$/i, '');
-    markClean(name, destPath);
+    markClean(workspaceNameFromPath(destPath), destPath);
   }, [collectEditorTabs, markClean]);
 
   const doReset = useCallback(async () => {
@@ -102,7 +106,7 @@ export function useWorkspace(
     resetIdentity();
     // loadFile handles .lts import (multi-session restore)
     await loadFile(path);
-    const name = basename(path).replace(/\.lts$/i, '');
+    const name = workspaceNameFromPath(path);
     markClean(name, path);
     bus.emit('workspace:opened', { name, filePath: path });
   }, [closeAllSessions, resetIdentity, loadFile, markClean]);
