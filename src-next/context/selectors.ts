@@ -1,9 +1,8 @@
 import { useMemo } from 'react';
-import type { LoadResult, SearchQuery, SearchSummary, ProcessorSummary, PipelineRunSummary, Source, UpdateAvailable } from '../bridge/types';
+import type { LoadResult, SearchQuery, SearchSummary, ProcessorSummary, Source, UpdateAvailable } from '../bridge/types';
 import { useSessionCoreCtx, useSessionPaneCtx, useSessionProgressCtx, type IndexingProgress } from './SessionContext';
 import { useSearchCtx, useScrollCtx, useProcessorViewCtx } from './ViewerContext';
-import { usePipelineContext, type SessionPipelineState } from './PipelineContext';
-import { useTrackerContext } from './TrackerContext';
+import { usePipelineContext } from './PipelineContext';
 import { useActionsContext } from './ActionsContext';
 import { useMarketplaceContext } from './MarketplaceContext';
 
@@ -131,82 +130,17 @@ export function useActiveProcessorIds(): string[] {
   return usePipelineContext().activeProcessorIds;
 }
 
+/** Global error from processor install/remove operations (not per-session run errors). */
+export function usePipelineGlobalError(): string | null {
+  return usePipelineContext().error;
+}
+
 export function useDisabledChainIds(): string[] {
   return usePipelineContext().disabledChainIds;
 }
 
 export function useProcessors(): ProcessorSummary[] {
   return usePipelineContext().processors;
-}
-
-// ── Per-session pipeline selectors ──────────────────────────────────────────
-
-const EMPTY_SESSION_PIPELINE: SessionPipelineState = {
-  results: [], runCount: 0, running: false, progress: null, error: null,
-};
-
-function sessionPipelineState(map: Map<string, SessionPipelineState>, sessionId: string | null): SessionPipelineState {
-  if (!sessionId) return EMPTY_SESSION_PIPELINE;
-  return map.get(sessionId) ?? EMPTY_SESSION_PIPELINE;
-}
-
-/** Per-session results with referential stability. */
-export function usePipelineResultsForSession(sessionId: string | null): { results: PipelineRunSummary[]; runCount: number } {
-  const { resultsBySession } = usePipelineContext();
-  const sessionState = sessionPipelineState(resultsBySession, sessionId);
-  return useMemo(
-    () => ({ results: sessionState.results, runCount: sessionState.runCount }),
-    [sessionState.results, sessionState.runCount],
-  );
-}
-
-export function usePipelineRunningForSession(sessionId: string | null): boolean {
-  const { resultsBySession } = usePipelineContext();
-  return sessionPipelineState(resultsBySession, sessionId).running;
-}
-
-export function usePipelineProgressForSession(sessionId: string | null): { current: number; total: number } | null {
-  const { resultsBySession } = usePipelineContext();
-  return sessionPipelineState(resultsBySession, sessionId).progress;
-}
-
-export function usePipelineErrorForSession(sessionId: string | null): string | null {
-  const { resultsBySession } = usePipelineContext();
-  return sessionPipelineState(resultsBySession, sessionId).error;
-}
-
-// ── Backward-compat selectors (auto-resolve focused session) ────────────────
-
-export function usePipelineRunning(): boolean {
-  const session = useFocusedSession();
-  return usePipelineRunningForSession(session?.sessionId ?? null);
-}
-
-export function usePipelineResults(): { results: PipelineRunSummary[]; runCount: number } {
-  const session = useFocusedSession();
-  return usePipelineResultsForSession(session?.sessionId ?? null);
-}
-
-// ---------------------------------------------------------------------------
-// Tracker selectors
-// ---------------------------------------------------------------------------
-
-// Module-level stable empty references avoid a new object on every render
-// when there is no data for the focused session.
-const EMPTY_TRACKER_SET = new Set<number>();
-const EMPTY_TRACKER_MAP = new Map<number, string[]>();
-
-export function useTrackerTransitions(): {
-  allLineNums: Set<number>;
-  byLine: Map<number, string[]>;
-} {
-  const { dataBySession } = useTrackerContext();
-  const focused = useFocusedSession();
-  const data = focused ? dataBySession[focused.sessionId] : undefined;
-  return {
-    allLineNums: data?.allLineNums ?? EMPTY_TRACKER_SET,
-    byLine: data?.byLine ?? EMPTY_TRACKER_MAP,
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -297,19 +231,6 @@ export function useStreamFilter(paneId: string): {
 
 export function useSearchQuery(): SearchQuery | null {
   return useSearchCtx().search;
-}
-
-export function usePipelineProgress(): { current: number; total: number } | null {
-  const session = useFocusedSession();
-  return usePipelineProgressForSession(session?.sessionId ?? null);
-}
-
-export function usePipelineError(): string | null {
-  const session = useFocusedSession();
-  const { resultsBySession, error: globalError } = usePipelineContext();
-  const sessionError = sessionPipelineState(resultsBySession, session?.sessionId ?? null).error;
-  // Per-session run errors take priority over global processor install/remove errors
-  return sessionError ?? globalError;
 }
 
 export function useTotalLines(): number {

@@ -44,6 +44,20 @@ Seven contexts split by change frequency (principle #1):
 
 **When adding new per-session state:** Add it to `SessionDataContextValue` and create a selector hook. Components inside a `SessionDataProvider` can read it directly — no need to pass sessionId.
 
+**Global Maps remain as write targets:** Domain hooks (`usePipeline`, `useStateTracker`, `useFilterScan`) write per-session data to global Maps in PipelineContext, TrackerContext, and SessionContext. `SessionDataProvider` reads from these Maps and provides isolated slices. The old global per-session selectors (`usePipelineResults`, `useTrackerTransitions`, etc.) have been removed — all per-session reads go through `SessionDataContext` hooks.
+
+### SessionActionsContext — per-session mutation surface
+
+`SessionActionsContext.tsx` provides mutation callbacks scoped to one session. Mounted alongside `SessionDataProvider` in each pane and sidebar.
+
+**Actions:** `addBookmark`, `editBookmark`, `removeBookmark`, `publishSessionAnalysis`, `updateSessionAnalysis`, `deleteSessionAnalysis`, `addWatch`, `removeWatch`
+
+**Selector hooks:** `useSessionBookmarkActions()`, `useSessionAnalysisActions()`, `useSessionWatchActions()`
+
+**Dirty tracking:** Bookmark and analysis mutations automatically emit `workspace:mutated`. Watch mutations do not (transient monitoring, not persisted artifacts).
+
+**SessionId from provider:** Actions read sessionId from a ref pattern — callbacks are stable and never recreated when sessionId changes. Components don't need to pass sessionId.
+
 ### SessionContext sub-context split
 
 `SessionContext.tsx` contains 3 internal sub-contexts to isolate re-renders by change frequency:

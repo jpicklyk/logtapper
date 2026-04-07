@@ -25,11 +25,15 @@ import {
   useProcessors,
   usePipelineChain,
   useDisabledChainIds,
-  usePipelineProgress,
-  usePipelineError,
   usePipelineActions,
+  usePipelineGlobalError,
 } from '../../context';
-import { useSessionPipelineResults, useSessionPipelineRunning } from '../../context/SessionDataContext';
+import {
+  useSessionPipelineResults,
+  useSessionPipelineRunning,
+  useSessionPipelineProgress,
+  useSessionPipelineError,
+} from '../../context/SessionDataContext';
 import { usePipeline } from '../../hooks';
 import { ProcessorLibrary } from '../ProcessorLibrary';
 import { bus } from '../../events';
@@ -363,8 +367,11 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
   const disabledChainIds = useDisabledChainIds();
   const running = useSessionPipelineRunning();
   const { results: lastResults } = useSessionPipelineResults();
-  const progress = usePipelineProgress();
-  const pipelineError = usePipelineError();
+  const progress = useSessionPipelineProgress();
+  const sessionError = useSessionPipelineError();
+  const globalError = usePipelineGlobalError();
+  // Per-session run errors take priority over global processor install/remove errors
+  const pipelineError = sessionError ?? globalError;
   const pipeline = usePipeline();
   const { removeFromChain, reorderChain, toggleChainEnabled } = usePipelineActions();
 

@@ -47,7 +47,7 @@ function extractIndexingSlice(
 // Pipeline slice extraction
 // ---------------------------------------------------------------------------
 describe('pipeline slice extraction', () => {
-  const makeResults = (sessionId: string, matchedLines: number): SessionPipelineState => ({
+  const makeResults = (_sessionId: string, matchedLines: number): SessionPipelineState => ({
     results: [{ processorId: 'p1', matchedLines, emissionCount: 0 }] as PipelineRunSummary[],
     runCount: 1,
     running: false,
