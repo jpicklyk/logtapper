@@ -60,7 +60,15 @@ export function persistList(state: WorkspaceListState): void {
 // ---------------------------------------------------------------------------
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const [listState, setListState] = useState<WorkspaceListState>(loadPersistedList);
+  const [listState, setListState] = useState<WorkspaceListState>(() => {
+    const persisted = loadPersistedList();
+    // Auto-create a default workspace on first run
+    if (persisted.workspaces.length === 0) {
+      const ws = createEmptyWorkspace();
+      return { workspaces: [ws], activeId: ws.id };
+    }
+    return persisted;
+  });
 
   // Persist on every list change
   useEffect(() => {

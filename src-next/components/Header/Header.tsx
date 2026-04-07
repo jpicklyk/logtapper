@@ -11,6 +11,7 @@ import { DropdownMenu } from '../../ui';
 import type { MenuItem } from '../../ui';
 import { SearchBar } from '../SearchBar';
 import { ExportModal } from '../ExportModal';
+import { WorkspaceSwitcher } from '../WorkspaceSwitcher';
 import { bus } from '../../events';
 import styles from './Header.module.css';
 
@@ -156,9 +157,7 @@ export const Header = React.memo(function Header() {
   return (
     <header className={styles.header}>
       <div className={clsx(styles.brand, isMac && styles.brandMac)}>
-        <span className={styles.title}>
-          Log<span className={styles.titleAccent}>Tapper</span>
-        </span>
+        <WorkspaceSwitcher />
         <DropdownMenu
           trigger={
             <button className={styles.actionBtn} title="Menu">
