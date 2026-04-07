@@ -85,4 +85,4 @@ Domain hooks (`useLogViewer`, `usePipeline`, `useStateTracker`) are co-owners of
 
 Default stubs (no-op functions) ensure components always have valid action references during initialization. `HookWiring` (in `index.tsx`) instantiates domain hooks and injects real implementations via `ActionsProvider`.
 
-**Component-local hooks exception:** `useBookmarks`, `useAnalysis`, `useWatches` bypass `ActionsContext` and call bridge commands directly. These must emit `bus.emit('workspace:mutated')` at each mutation point. This is documented and intentional — they will migrate to per-session context providers in a future phase.
+**Session-layer hooks:** `useBookmarks`, `useAnalysis`, `useWatches` are session-scoped and operate below the workspace action surface. They call bridge commands directly and emit `bus.emit('workspace:mutated')` at each mutation point. This is the correct pattern for their scope — they will migrate to per-session context providers with their own action surface in a future phase.
