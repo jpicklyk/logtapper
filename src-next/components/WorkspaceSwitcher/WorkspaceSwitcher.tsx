@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, Plus, FolderOpen, X } from 'lucide-react';
+import { ChevronDown, Plus, FolderOpen, X, Pencil } from 'lucide-react';
 import clsx from 'clsx';
 import { useWorkspaceList, useActiveWorkspaceId, useWorkspaceActions, useWorkspaceContext } from '../../context';
 import styles from './WorkspaceSwitcher.module.css';
@@ -100,11 +100,10 @@ export const WorkspaceSwitcher = React.memo(function WorkspaceSwitcher() {
     setOpen(false);
   }, [openWorkspace]);
 
-  const handleDoubleClick = useCallback((e: React.MouseEvent, id: string, name: string) => {
+  const handleStartRename = useCallback((e: React.MouseEvent, id: string, name: string) => {
     e.stopPropagation();
     setRenamingId(id);
     setRenameValue(name);
-    // Focus the input after React renders it
     requestAnimationFrame(() => renameInputRef.current?.select());
   }, []);
 
@@ -147,8 +146,7 @@ export const WorkspaceSwitcher = React.memo(function WorkspaceSwitcher() {
                 <button
                   key={ws.id}
                   className={clsx(styles.workspaceItem, ws.id === activeId && styles.workspaceItemActive)}
-                  onClick={() => handleSwitch(ws.id)}
-                  onDoubleClick={(e) => handleDoubleClick(e, ws.id, ws.name)}
+                  onClick={() => renamingId !== ws.id && handleSwitch(ws.id)}
                 >
                   <span className={ws.id === activeId ? styles.activeDot : styles.inactiveDot} />
                   {renamingId === ws.id ? (
@@ -162,9 +160,18 @@ export const WorkspaceSwitcher = React.memo(function WorkspaceSwitcher() {
                       onClick={(e) => e.stopPropagation()}
                     />
                   ) : (
-                    <span className={styles.wsName}>{ws.name}</span>
+                    <>
+                      <span className={styles.wsName}>{ws.name}</span>
+                      {ws.dirty && <span className={styles.wsDirty}>*</span>}
+                    </>
                   )}
-                  {ws.dirty && renamingId !== ws.id && <span className={styles.wsDirty}>*</span>}
+                  <button
+                    className={styles.renameBtn}
+                    onClick={(e) => handleStartRename(e, ws.id, ws.name)}
+                    title="Rename workspace"
+                  >
+                    <Pencil size={11} />
+                  </button>
                   <button
                     className={styles.closeBtn}
                     onClick={(e) => handleClose(e, ws.id)}
