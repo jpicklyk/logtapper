@@ -498,6 +498,11 @@ pub fn run() {
             // Export commands
             commands::export::get_export_all_sessions_info,
             commands::export::export_all_sessions,
+            // Workspace v4 commands
+            commands::workspace_cmd::save_workspace_v4,
+            commands::workspace_cmd::load_workspace_v4,
+            commands::workspace_cmd::get_app_state,
+            commands::workspace_cmd::save_app_state_cmd,
             // MCP bridge control
             commands::mcp::start_mcp_bridge,
             commands::mcp::stop_mcp_bridge,

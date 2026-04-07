@@ -35,6 +35,7 @@ pub mod session;
 pub mod sources;
 pub mod state_tracker;
 pub mod watch;
+pub mod workspace_cmd;
 pub mod workspace_sync;
 
 /// Global application state managed by Tauri.
