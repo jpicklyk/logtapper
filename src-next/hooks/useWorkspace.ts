@@ -2,15 +2,9 @@ import { useState, useCallback, useRef } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { useWorkspaceContext } from '../context/WorkspaceContext';
 import { exportAllSessions } from '../bridge/commands';
-import type { LtsEditorTabPayload } from '../bridge/types';
 import { bus } from '../events/bus';
 import { basename } from '../utils';
-import { storageGet } from '../utils';
-import { allPanes } from './workspace/splitTreeHelpers';
-import { LS_CONTENT_PREFIX, LS_MODE_PREFIX, LS_WRAP_PREFIX, LS_FILEPATH_PREFIX } from '../components/EditorTab';
-
-// Re-use the same localStorage key as useWorkspaceLayout
-const STORAGE_KEY = 'logtapper_workspace_v1';
+import { collectEditorTabs } from './workspace/workspacePersistence';
 
 /** Derive a workspace display name from an .lts file path. */
 export function workspaceNameFromPath(path: string): string {
@@ -56,31 +50,6 @@ export function useWorkspace(
 
   // --- Internal helpers ---
 
-  const collectEditorTabs = useCallback((): LtsEditorTabPayload[] => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw) as { centerTree?: import('./workspace/workspaceTypes').SplitNode };
-      if (!parsed?.centerTree) return [];
-      const tabs: LtsEditorTabPayload[] = [];
-      for (const pane of allPanes(parsed.centerTree)) {
-        for (const tab of pane.tabs) {
-          if (tab.type !== 'editor') continue;
-          tabs.push({
-            label: tab.label,
-            content: storageGet(LS_CONTENT_PREFIX + tab.id),
-            viewMode: (storageGet(LS_MODE_PREFIX + tab.id) || 'editor') as LtsEditorTabPayload['viewMode'],
-            wordWrap: storageGet(LS_WRAP_PREFIX + tab.id) === 'true',
-            filePath: storageGet(LS_FILEPATH_PREFIX + tab.id) || null,
-          });
-        }
-      }
-      return tabs;
-    } catch {
-      return [];
-    }
-  }, []);
-
   const doSave = useCallback(async (destPath: string) => {
     const editorTabs = collectEditorTabs();
     await exportAllSessions({
@@ -91,7 +60,7 @@ export function useWorkspace(
       editorTabs,
     });
     markClean(workspaceNameFromPath(destPath), destPath);
-  }, [collectEditorTabs, markClean]);
+  }, [markClean]);
 
   const doReset = useCallback(async () => {
     bus.emit('workspace:before-reset', undefined);

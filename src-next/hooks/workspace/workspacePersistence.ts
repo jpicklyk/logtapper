@@ -1,4 +1,7 @@
+import type { LtsEditorTabPayload } from '../../bridge/types';
 import type { BottomTabType, LeftPaneTab, RightPaneTab, SplitNode } from './workspaceTypes';
+import { storageGet } from '../../utils';
+import { LS_CONTENT_PREFIX, LS_MODE_PREFIX, LS_WRAP_PREFIX, LS_FILEPATH_PREFIX } from '../../components/EditorTab';
 import {
   MIN_LEFT_WIDTH, MAX_LEFT_WIDTH,
   MIN_RIGHT_WIDTH, MAX_RIGHT_WIDTH,
@@ -154,4 +157,28 @@ export function getStoredLogviewerTabs(): Array<{ tabId: string; paneId: string;
     }
   }
   return result;
+}
+
+/**
+ * Collect full editor tab data from persisted workspace state.
+ * Reads per-tab localStorage keys. Used by Export and workspace Save.
+ */
+export function collectEditorTabs(): LtsEditorTabPayload[] {
+  const parsed = storageGetJSON<{ centerTree?: SplitNode } | null>(STORAGE_KEY, null);
+  if (!parsed?.centerTree) return [];
+
+  const tabs: LtsEditorTabPayload[] = [];
+  for (const pane of allPanes(parsed.centerTree)) {
+    for (const tab of pane.tabs) {
+      if (tab.type !== 'editor') continue;
+      tabs.push({
+        label: tab.label,
+        content: storageGet(LS_CONTENT_PREFIX + tab.id) ?? '',
+        viewMode: (storageGet(LS_MODE_PREFIX + tab.id) ?? 'editor') as LtsEditorTabPayload['viewMode'],
+        wordWrap: storageGet(LS_WRAP_PREFIX + tab.id) === 'true',
+        filePath: storageGet(LS_FILEPATH_PREFIX + tab.id) ?? null,
+      });
+    }
+  }
+  return tabs;
 }

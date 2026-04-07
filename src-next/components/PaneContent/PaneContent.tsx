@@ -251,7 +251,7 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
       );
 
     default:
-      return <SessionProviders sessionId={sessionId}>{bookmarkDialog}</SessionProviders>;
+      return bookmarkDialog;
   }
 });
 

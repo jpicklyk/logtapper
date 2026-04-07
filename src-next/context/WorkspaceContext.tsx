@@ -78,12 +78,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   // --- Listen for workspace:mutated events ---
 
   useEffect(() => {
-    const handler = () => {
-      setIdentity(prev => prev.dirty ? prev : { ...prev, dirty: true });
-    };
-    bus.on('workspace:mutated', handler);
-    return () => { bus.off('workspace:mutated', handler); };
-  }, []);
+    bus.on('workspace:mutated', markDirty);
+    return () => { bus.off('workspace:mutated', markDirty); };
+  }, [markDirty]);
 
   const value = useMemo<WorkspaceContextValue>(() => ({
     identity,

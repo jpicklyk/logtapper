@@ -18,7 +18,7 @@ export interface WorkspaceMutationActions {
 
   // Processor library
   installProcessor: (yaml: string) => Promise<void>;
-  removeProcessor: (id: string) => void;
+  removeProcessor: (id: string) => Promise<void>;
 
   // Pipeline chain
   addToChain: (id: string) => void;
@@ -139,7 +139,7 @@ const DEFAULT_ACTIONS: ActionsContextValue = {
   startStream: (_deviceId?: string) => noopAsync(),
   closeSession: (_paneId?: string) => noopAsync(),
   installProcessor: (_yaml: string) => noopAsync(),
-  removeProcessor: (_id: string) => noop(),
+  removeProcessor: (_id: string) => noopAsync(),
   addToChain: (_id: string) => noop(),
   addPackToChain: (_processorIds: string[]) => noop(),
   removeFromChain: (_id: string) => noop(),
