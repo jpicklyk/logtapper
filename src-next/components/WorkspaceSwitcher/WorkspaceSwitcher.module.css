@@ -49,7 +49,7 @@
 .panel {
   min-width: 220px;
   max-width: 300px;
-  background: var(--bg-surface);
+  background: var(--bg-overlay);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-overlay);
