@@ -12,9 +12,12 @@ import { PipelineProvider, usePipelineContext } from './PipelineContext';
 import { TrackerProvider } from './TrackerContext';
 import { ActionsProvider, type ActionsContextValue } from './ActionsContext';
 import { MarketplaceProvider } from './MarketplaceContext';
+import { WorkspaceProvider, useWorkspaceIdentity } from './WorkspaceContext';
+import { SavePromptDialog } from '../ui/SavePromptDialog';
 import { useCacheManager, useDataSourceRegistry } from '../cache';
 import { useLogViewer } from '../hooks/useLogViewer';
 import { useSettings } from '../hooks/useSettings';
+import { useWorkspace } from '../hooks/useWorkspace';
 import { bus } from '../events/bus';
 
 /**
@@ -118,6 +121,16 @@ function HookWiring({ children }: { children: ReactNode }) {
     bus.emit('layout:export-session-requested', undefined);
   }, []);
 
+  // Close all open sessions (for workspace new/open transitions).
+  const closeAllSessions = useCallback(async () => {
+    const entries = [...paneSessionMapRef.current.entries()];
+    for (const [paneId] of entries) {
+      await logViewer.closeSession(paneId);
+    }
+  }, [logViewer.closeSession]);
+
+  const workspace = useWorkspace(closeAllSessions, logViewer.loadFile);
+
   const actions = useMemo<Partial<ActionsContextValue>>(() => ({
     loadFile: logViewer.loadFile,
     openFileDialog,
@@ -139,33 +152,47 @@ function HookWiring({ children }: { children: ReactNode }) {
     saveFile,
     saveFileAs,
     exportSession,
+    newWorkspace: workspace.newWorkspace,
+    openWorkspace: workspace.openWorkspace,
+    saveWorkspace: workspace.saveWorkspace,
+    saveWorkspaceAs: workspace.saveWorkspaceAs,
   }), [logViewer.loadFile, openFileDialog, openInEditorDialog, logViewer.startStream, logViewer.stopStream,
        logViewer.closeSession, logViewer.jumpToLine, logViewer.jumpToMatch,
        logViewer.handleSearch, logViewer.setStreamFilter, logViewer.cancelStreamFilter,
-       logViewer.setEffectiveLineNums, saveFile, saveFileAs, exportSession]);
+       logViewer.setEffectiveLineNums, saveFile, saveFileAs, exportSession,
+       workspace.newWorkspace, workspace.openWorkspace, workspace.saveWorkspace, workspace.saveWorkspaceAs]);
+
+  const workspaceIdentity = useWorkspaceIdentity();
 
   return (
     <ActionsProvider actions={actions}>
       {children}
+      <SavePromptDialog
+        open={workspace.showSavePrompt}
+        workspaceName={workspaceIdentity.name}
+        onResult={workspace.handleSavePromptResult}
+      />
     </ActionsProvider>
   );
 }
 
 export function AppProviders({ children }: { children: ReactNode }) {
   return (
-    <MarketplaceProvider>
-      <SessionProvider>
-        <ViewerProvider>
-          <PipelineProvider>
-            <TrackerProvider>
-              <HookWiring>
-                {children}
-              </HookWiring>
-            </TrackerProvider>
-          </PipelineProvider>
-        </ViewerProvider>
-      </SessionProvider>
-    </MarketplaceProvider>
+    <WorkspaceProvider>
+      <MarketplaceProvider>
+        <SessionProvider>
+          <ViewerProvider>
+            <PipelineProvider>
+              <TrackerProvider>
+                <HookWiring>
+                  {children}
+                </HookWiring>
+              </TrackerProvider>
+            </PipelineProvider>
+          </ViewerProvider>
+        </SessionProvider>
+      </MarketplaceProvider>
+    </WorkspaceProvider>
   );
 }
 
@@ -210,7 +237,13 @@ export {
   usePendingUpdateCount,
   usePendingUpdates,
   useMarketplaceSources,
+  useWorkspaceActions,
 } from './selectors';
+
+// Re-export workspace hooks
+export { useWorkspaceIdentity } from './WorkspaceContext';
+export { useWorkspaceContext } from './WorkspaceContext';
 
 // Re-export types
 export type { IndexingProgress, FilterState } from './SessionContext';
+export type { WorkspaceContextValue } from './WorkspaceContext';

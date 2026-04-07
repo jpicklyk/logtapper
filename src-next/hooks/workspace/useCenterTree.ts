@@ -172,6 +172,7 @@ export function useCenterTree(
         return { ...pane, tabs: [...pane.tabs, tab], activeTabId: tab.id };
       }),
     );
+    bus.emit('workspace:mutated', undefined);
   }, [updateTree]);
 
   const resizeSplit = useCallback((splitNodeId: string, ratio: number) => {
@@ -216,6 +217,8 @@ export function useCenterTree(
         tabs: pane.tabs.map((t) => (t.id === tabId ? { ...t, unsaved: isDirty } : t)),
       })),
     );
+    // Editor content changed — mark workspace dirty (only on dirty=true, not on save-clean)
+    if (isDirty) bus.emit('workspace:mutated', undefined);
   }, [updateTree]);
 
   const openCenterTab = useCallback((type: CenterTabType, label?: string, filePath?: string, editorState?: { content: string; viewMode: string; wordWrap: boolean }) => {

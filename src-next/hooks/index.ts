@@ -50,3 +50,5 @@ export { useStatusBarSelection } from './useStatusBarSelection';
 export type { StatusBarSelection } from './useStatusBarSelection';
 export { useStartupFile } from './useStartupFile';
 export { useEditorTabRestore } from './useEditorTabRestore';
+export { useWorkspace } from './useWorkspace';
+export type { WorkspaceActions, SavePromptChoice } from './useWorkspace';

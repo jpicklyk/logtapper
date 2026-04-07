@@ -119,6 +119,19 @@ export type AppEvents = {
   'marketplace:processor-uninstalled': { processorId: string };
   'marketplace:sources-changed':       undefined;
 
+  // ── Workspace ──────────────────────────────────────────────────────────
+  /** Fired when any tracked workspace state changes (session open/close, bookmark
+   *  edit, pipeline chain change, editor content change, etc.). WorkspaceContext
+   *  listens to set `dirty = true`. No payload — just a signal. */
+  'workspace:mutated':       undefined;
+  /** Fired just before a workspace reset (new workspace or open .lts). Hooks
+   *  should clean up session-scoped state. */
+  'workspace:before-reset':  undefined;
+  /** Fired after a workspace teardown completes. Hooks should reinitialize. */
+  'workspace:reset':         undefined;
+  /** Fired after an .lts workspace is fully restored. */
+  'workspace:opened':        { name: string; filePath: string };
+
   // ── File operations ──────────────────────────────────────────────────────
   /** Fired when an .lts file import is skipped because it's already open. */
   'file:lts-already-open': { label: string };

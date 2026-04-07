@@ -103,6 +103,7 @@ export function useSessionTabManager(
     sessionScrollPositions.delete(resolvedSessionId);
 
     bus.emit('session:closed', { sessionId: resolvedSessionId, paneId: targetPaneId, sourceType, tabId });
+    bus.emit('workspace:mutated', undefined);
   }, [
     activeLogPaneId,
     refs.paneSessionMapRef, refs.streamingSessionIdRef, refs.sessionsRef,

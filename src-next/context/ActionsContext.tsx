@@ -32,6 +32,10 @@ export interface ActionsContextValue {
   saveFile: () => Promise<void>;
   saveFileAs: () => Promise<void>;
   exportSession: () => void;
+  newWorkspace: () => void;
+  openWorkspace: (path?: string) => void;
+  saveWorkspace: () => Promise<void>;
+  saveWorkspaceAs: () => Promise<void>;
 }
 
 const noop = () => { /* stub */ };
@@ -62,6 +66,10 @@ const DEFAULT_ACTIONS: ActionsContextValue = {
   saveFile: () => noopAsync(),
   saveFileAs: () => noopAsync(),
   exportSession: noop,
+  newWorkspace: noop,
+  openWorkspace: (_path?: string) => noop(),
+  saveWorkspace: () => noopAsync(),
+  saveWorkspaceAs: () => noopAsync(),
 };
 
 const ActionsContext = createContext<ActionsContextValue | null>(null);

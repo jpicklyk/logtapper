@@ -180,6 +180,7 @@ export function useFileSession(
         readOnly: isBugreportLike(result.sourceType) ? true : undefined,
       });
       bus.emit('session:focused', { sessionId: result.sessionId, paneId: targetPaneId });
+      bus.emit('workspace:mutated', undefined);
 
       if (isBugreportLike(result.sourceType)) {
         bus.emit('session:dumpstate:opened', {

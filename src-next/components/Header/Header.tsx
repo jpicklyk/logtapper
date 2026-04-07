@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import clsx from 'clsx';
-import { FolderOpen, FilePen, Menu, Radio, Square, Smartphone, Download, Settings, Minus, Copy, X } from 'lucide-react';
+import { FolderOpen, FilePen, Menu, Radio, Square, Smartphone, Download, Settings, Minus, Copy, X, FilePlus2, Save } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useSession, useIsStreaming, useViewerActions } from '../../context';
 import { listAdbDevices } from '../../bridge/commands';
@@ -62,7 +62,8 @@ const WindowControls = React.memo(function WindowControls() {
 export const Header = React.memo(function Header() {
   const session = useSession();
   const isStreaming = useIsStreaming();
-  const { openFileDialog, openInEditorDialog, startStream, stopStream, saveFile, saveFileAs } = useViewerActions();
+  const { openFileDialog, openInEditorDialog, startStream, stopStream, saveFile, saveFileAs,
+          newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs } = useViewerActions();
 
   const [fileMenuOpen, setFileMenuOpen] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
@@ -116,24 +117,35 @@ export const Header = React.memo(function Header() {
   }, []);
 
   const fileMenuItems = useMemo<MenuItem[]>(() => [
+    { id: 'new-workspace', label: 'New Workspace', icon: FilePlus2, shortcut: 'Ctrl+N' },
+    { id: 'open-workspace', label: 'Open Workspace...', icon: FolderOpen },
+    { separator: true },
     { id: 'open-log', label: 'Open Log...', icon: FolderOpen, shortcut: 'Ctrl+O' },
     { id: 'open-editor', label: 'Open in Editor...', icon: FilePen, shortcut: 'Ctrl+Shift+O' },
     { separator: true },
     { id: 'save', label: isStreaming ? 'Save Capture' : 'Save', shortcut: 'Ctrl+S' },
     { id: 'save-as', label: 'Save As...', shortcut: 'Ctrl+Shift+S' },
     { separator: true },
+    { id: 'save-workspace', label: 'Save Workspace', icon: Save },
+    { id: 'save-workspace-as', label: 'Save Workspace As...' },
+    { separator: true },
     { id: 'export-session', label: 'Export Session...', icon: Download, shortcut: 'Ctrl+Shift+E', disabled: !session?.sessionId },
   ], [isStreaming, session?.sessionId]);
 
   const handleFileMenuSelect = useCallback((id: string) => {
     switch (id) {
+      case 'new-workspace': newWorkspace(); break;
+      case 'open-workspace': openWorkspace(); break;
       case 'open-log': openFileDialog(); break;
       case 'open-editor': openInEditorDialog(); break;
       case 'save': saveFile(); break;
       case 'save-as': saveFileAs(); break;
+      case 'save-workspace': saveWorkspace(); break;
+      case 'save-workspace-as': saveWorkspaceAs(); break;
       case 'export-session': setShowExportModal(true); break;
     }
-  }, [openFileDialog, openInEditorDialog, saveFile, saveFileAs]);
+  }, [newWorkspace, openWorkspace, openFileDialog, openInEditorDialog, saveFile, saveFileAs,
+      saveWorkspace, saveWorkspaceAs]);
 
   useEffect(() => {
     const handler = () => { setShowExportModal(true); };
