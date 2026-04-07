@@ -117,7 +117,7 @@ describe('save prompt decision logic', () => {
     return state; // proceed immediately
   }
 
-  function resolvePrompt(state: PromptState, choice: PromptChoice): {
+  function resolvePrompt(_state: PromptState, choice: PromptChoice): {
     state: PromptState;
     action: 'execute' | 'abort';
     shouldSaveFirst: boolean;
@@ -184,8 +184,7 @@ describe('save prompt decision logic', () => {
   });
 
   it('open workspace on dirty → discard → execute with stored path', () => {
-    let state = initPromptState();
-    state = triggerOpen(state, true, '/path/to/workspace.lts');
+    const state = triggerOpen(initPromptState(), true, '/path/to/workspace.lts');
 
     // Before resolving, the path is captured
     expect(state.pendingPath).toBe('/path/to/workspace.lts');

@@ -120,9 +120,10 @@ export type AppEvents = {
   'marketplace:sources-changed':       undefined;
 
   // ── Workspace ──────────────────────────────────────────────────────────
-  /** Fired when any tracked workspace state changes (session open/close, bookmark
-   *  edit, pipeline chain change, editor content change, etc.). WorkspaceContext
-   *  listens to set `dirty = true`. No payload — just a signal. */
+  /** Fired by component-local hooks (bookmarks, analyses, editor dirty) that
+   *  bypass ActionsContext. Actions routed through ActionsContext get automatic
+   *  dirty tracking via `trackMutations()` — they do NOT need this event.
+   *  WorkspaceContext listens to set `dirty = true`. No payload. */
   'workspace:mutated':       undefined;
   /** Fired just before a workspace reset (new workspace or open .lts). Hooks
    *  should clean up session-scoped state. */

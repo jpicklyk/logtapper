@@ -233,9 +233,11 @@ export function useWorkspaceActions() {
 
 export function usePipelineActions() {
   const { runPipeline, stopPipeline, clearResults, installProcessor,
-          removeProcessor, toggleProcessor } = useActionsContext();
+          removeProcessor, toggleProcessor,
+          addToChain, addPackToChain, removeFromChain, reorderChain, toggleChainEnabled } = useActionsContext();
   return { runPipeline, stopPipeline, clearResults, installProcessor,
-           removeProcessor, toggleProcessor };
+           removeProcessor, toggleProcessor,
+           addToChain, addPackToChain, removeFromChain, reorderChain, toggleChainEnabled };
 }
 
 export function useTrackerActions() {

@@ -10,9 +10,9 @@ export { ThemeProvider, useTheme } from './ThemeContext';
 export type { ThemeMode, ResolvedTheme } from './ThemeContext';
 import { PipelineProvider, usePipelineContext } from './PipelineContext';
 import { TrackerProvider } from './TrackerContext';
-import { ActionsProvider, type ActionsContextValue } from './ActionsContext';
+import { ActionsProvider, trackMutations, type ActionsContextValue } from './ActionsContext';
 import { MarketplaceProvider } from './MarketplaceContext';
-import { WorkspaceProvider, useWorkspaceIdentity } from './WorkspaceContext';
+import { WorkspaceProvider, useWorkspaceIdentity, useWorkspaceContext } from './WorkspaceContext';
 import { SavePromptDialog } from '../ui/SavePromptDialog';
 import { useCacheManager, useDataSourceRegistry } from '../cache';
 import { useLogViewer } from '../hooks/useLogViewer';
@@ -36,9 +36,27 @@ function HookWiring({ children }: { children: ReactNode }) {
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
-  const { activeProcessorIds } = usePipelineContext();
+  const pipelineCtx = usePipelineContext();
+  const { activeProcessorIds, dispatch: pipelineDispatch } = pipelineCtx;
   const activeProcessorIdsRef = useRef(activeProcessorIds);
   activeProcessorIdsRef.current = activeProcessorIds;
+
+  // Pipeline chain mutations — thin wrappers around dispatch, stable via useCallback.
+  const addToChain = useCallback((id: string) => {
+    pipelineDispatch({ type: 'chain:add', id });
+  }, [pipelineDispatch]);
+  const addPackToChain = useCallback((processorIds: string[]) => {
+    pipelineDispatch({ type: 'chain:add-pack', processorIds });
+  }, [pipelineDispatch]);
+  const removeFromChain = useCallback((id: string) => {
+    pipelineDispatch({ type: 'chain:remove', id });
+  }, [pipelineDispatch]);
+  const reorderChain = useCallback((fromIndex: number, toIndex: number) => {
+    pipelineDispatch({ type: 'chain:reorder', fromIndex, toIndex });
+  }, [pipelineDispatch]);
+  const toggleChainEnabled = useCallback((id: string) => {
+    pipelineDispatch({ type: 'chain:toggle-enabled', id });
+  }, [pipelineDispatch]);
 
   // Keep a ref so setActiveLogPane can read the current map without being
   // recreated every time paneSessionMap changes (which would invalidate
@@ -130,16 +148,30 @@ function HookWiring({ children }: { children: ReactNode }) {
   }, [logViewer.closeSession]);
 
   const workspace = useWorkspace(closeAllSessions, logViewer.loadFile);
+  const { markDirty } = useWorkspaceContext();
 
-  const actions = useMemo<Partial<ActionsContextValue>>(() => ({
+  // Build raw actions, then wrap mutations with automatic dirty tracking.
+  const rawActions = useMemo<Partial<ActionsContextValue>>(() => ({
+    // --- Workspace mutations (auto-tracked via trackMutations) ---
     loadFile: logViewer.loadFile,
-    openFileDialog,
-    openInEditorDialog,
     startStream: (deviceId?: string) => logViewer.startStream(
       deviceId, undefined, activeProcessorIdsRef.current, settingsRef.current.streamBackendLineMax,
     ),
-    stopStream: logViewer.stopStream,
     closeSession: logViewer.closeSession,
+    addToChain,
+    addPackToChain,
+    removeFromChain,
+    reorderChain,
+    toggleChainEnabled,
+    newWorkspace: workspace.newWorkspace,
+    openWorkspace: workspace.openWorkspace,
+    saveWorkspace: workspace.saveWorkspace,
+    saveWorkspaceAs: workspace.saveWorkspaceAs,
+
+    // --- View actions (not tracked) ---
+    openFileDialog,
+    openInEditorDialog,
+    stopStream: logViewer.stopStream,
     jumpToLine: logViewer.jumpToLine,
     jumpToMatch: logViewer.jumpToMatch,
     setSearch: logViewer.handleSearch,
@@ -152,15 +184,19 @@ function HookWiring({ children }: { children: ReactNode }) {
     saveFile,
     saveFileAs,
     exportSession,
-    newWorkspace: workspace.newWorkspace,
-    openWorkspace: workspace.openWorkspace,
-    saveWorkspace: workspace.saveWorkspace,
-    saveWorkspaceAs: workspace.saveWorkspaceAs,
-  }), [logViewer.loadFile, openFileDialog, openInEditorDialog, logViewer.startStream, logViewer.stopStream,
-       logViewer.closeSession, logViewer.jumpToLine, logViewer.jumpToMatch,
+  }), [logViewer.loadFile, logViewer.startStream, logViewer.stopStream, logViewer.closeSession,
+       logViewer.jumpToLine, logViewer.jumpToMatch,
        logViewer.handleSearch, logViewer.setStreamFilter, logViewer.cancelStreamFilter,
-       logViewer.setEffectiveLineNums, saveFile, saveFileAs, exportSession,
+       logViewer.setEffectiveLineNums,
+       addToChain, addPackToChain, removeFromChain, reorderChain, toggleChainEnabled,
+       openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession,
        workspace.newWorkspace, workspace.openWorkspace, workspace.saveWorkspace, workspace.saveWorkspaceAs]);
+
+  // Wrap mutation actions with automatic dirty tracking — the single enforcement point.
+  const actions = useMemo(
+    () => trackMutations(rawActions, markDirty),
+    [rawActions, markDirty],
+  );
 
   const workspaceIdentity = useWorkspaceIdentity();
 

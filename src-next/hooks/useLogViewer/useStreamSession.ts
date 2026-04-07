@@ -277,7 +277,6 @@ export function useStreamSession(
       });
 
       bus.emit('session:focused', { sessionId: result.sessionId, paneId: targetPaneId });
-      bus.emit('workspace:mutated', undefined);
 
       bus.emit('stream:started', {
         sessionId: result.sessionId,

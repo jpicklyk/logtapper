@@ -172,7 +172,6 @@ export function useCenterTree(
         return { ...pane, tabs: [...pane.tabs, tab], activeTabId: tab.id };
       }),
     );
-    bus.emit('workspace:mutated', undefined);
   }, [updateTree]);
 
   const resizeSplit = useCallback((splitNodeId: string, ratio: number) => {

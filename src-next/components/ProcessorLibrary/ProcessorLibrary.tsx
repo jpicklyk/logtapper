@@ -7,7 +7,7 @@ import {
   listPacks,
 } from '../../bridge/commands';
 import { usePipeline } from '../../hooks';
-import { useProcessors, usePipelineChain } from '../../context';
+import { useProcessors, usePipelineChain, usePipelineActions } from '../../context';
 import { Modal, ProcessorTypeIcon, PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY, Button } from '../../ui';
 import { ProcessorDetailCard } from '../ProcessorDetailCard';
 import css from './ProcessorLibrary.module.css';
@@ -39,6 +39,7 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
   const pipeline = usePipeline();
   const processors = useProcessors();
   const pipelineChain = usePipelineChain();
+  const { addToChain, addPackToChain } = usePipelineActions();
 
   const [tab, setTab] = useState<Tab>('installed');
   const [query, setQuery] = useState('');
@@ -106,9 +107,9 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
         const qualifiedIds = pack.processorIds
           .map((bareId) => processorsByBareId.get(bareId)?.id)
           .filter(Boolean) as string[];
-        pipeline.addPackToChain(qualifiedIds);
+        addPackToChain(qualifiedIds);
       } else {
-        pipeline.addToChain(id);
+        addToChain(id);
       }
     }
     onClose();
@@ -239,7 +240,7 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
     try {
       const summary = await loadProcessorFromFile(sel);
       await pipeline.loadProcessors();
-      pipeline.addToChain(summary.id);
+      addToChain(summary.id);
       onClose();
     } catch (e) {
       setYamlError(String(e));

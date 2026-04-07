@@ -266,29 +266,27 @@ export function usePipeline(): PipelineActions {
     }
   }, [dispatch]);
 
+  // Chain mutations are also available via ActionsContext (with automatic dirty
+  // tracking). Components should prefer the context versions. These are kept
+  // for internal use within usePipeline (e.g., toggleProcessor).
   const addToChain = useCallback((id: string) => {
     dispatch({ type: 'chain:add', id });
-    bus.emit('workspace:mutated', undefined);
   }, [dispatch]);
 
   const addPackToChain = useCallback((processorIds: string[]) => {
     dispatch({ type: 'chain:add-pack', processorIds });
-    bus.emit('workspace:mutated', undefined);
   }, [dispatch]);
 
   const removeFromChain = useCallback((id: string) => {
     dispatch({ type: 'chain:remove', id });
-    bus.emit('workspace:mutated', undefined);
   }, [dispatch]);
 
   const reorderChain = useCallback((fromIndex: number, toIndex: number) => {
     dispatch({ type: 'chain:reorder', fromIndex, toIndex });
-    bus.emit('workspace:mutated', undefined);
   }, [dispatch]);
 
   const toggleChainEnabled = useCallback((id: string) => {
     dispatch({ type: 'chain:toggle-enabled', id });
-    bus.emit('workspace:mutated', undefined);
   }, [dispatch]);
 
   const toggleProcessor = useCallback((id: string) => {

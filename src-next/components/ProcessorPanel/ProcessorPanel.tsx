@@ -29,6 +29,7 @@ import {
   usePipelineResults,
   usePipelineProgress,
   usePipelineError,
+  usePipelineActions,
 } from '../../context';
 import { usePipeline } from '../../hooks';
 import { ProcessorLibrary } from '../ProcessorLibrary';
@@ -366,6 +367,7 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
   const progress = usePipelineProgress();
   const pipelineError = usePipelineError();
   const pipeline = usePipeline();
+  const { removeFromChain, reorderChain, toggleChainEnabled } = usePipelineActions();
 
   // ── Compact mode (persisted to localStorage) ──
   const [compact, setCompact] = useState(() => storageGet(LS_COMPACT_KEY) === '1');
@@ -448,9 +450,9 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
       const fromIndex = pipelineChain.indexOf(String(active.id));
       const toIndex = pipelineChain.indexOf(String(over.id));
       if (fromIndex === -1 || toIndex === -1) return;
-      pipeline.reorderChain(fromIndex, toIndex);
+      reorderChain(fromIndex, toIndex);
     },
-    [pipelineChain, pipeline],
+    [pipelineChain, reorderChain],
   );
 
   const handleRun = useCallback(async () => {
@@ -551,9 +553,9 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
       for (const id of packProcessorIds) {
         const isDisabled = disabledSet.has(id);
         if (allEnabled && !isDisabled) {
-          pipeline.toggleChainEnabled(id);
+          toggleChainEnabled(id);
         } else if (!allEnabled && isDisabled) {
-          pipeline.toggleChainEnabled(id);
+          toggleChainEnabled(id);
         }
       }
     },
@@ -563,7 +565,7 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
   const handleRemovePack = useCallback(
     (packProcessorIds: string[]) => {
       for (const id of packProcessorIds) {
-        pipeline.removeFromChain(id);
+        removeFromChain(id);
       }
     },
     [pipeline],
@@ -733,8 +735,8 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
                     someDisabled={someDisabled}
                     onTogglePackEnabled={() => handleTogglePackEnabled(packIds)}
                     onRemovePack={() => handleRemovePack(packIds)}
-                    onToggleProcessor={pipeline.toggleChainEnabled}
-                    onRemoveProcessor={pipeline.removeFromChain}
+                    onToggleProcessor={toggleChainEnabled}
+                    onRemoveProcessor={removeFromChain}
                     disabledIds={disabledSet}
                     resultsByProcessor={resultMap}
                     pipelineRunning={running}
@@ -768,8 +770,8 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
                       running={running}
                       compact={compact}
                       disabled={disabledSet.has(proc.id)}
-                      onRemove={pipeline.removeFromChain}
-                      onToggleEnabled={pipeline.toggleChainEnabled}
+                      onRemove={removeFromChain}
+                      onToggleEnabled={toggleChainEnabled}
                     />
                   </Fragment>
                 ))}
@@ -790,8 +792,8 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
                   running={running}
                   compact={compact}
                   disabled={disabledSet.has(proc.id)}
-                  onRemove={pipeline.removeFromChain}
-                  onToggleEnabled={pipeline.toggleChainEnabled}
+                  onRemove={removeFromChain}
+                  onToggleEnabled={toggleChainEnabled}
                 />
               </Fragment>
             ))}
