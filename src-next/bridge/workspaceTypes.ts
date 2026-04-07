@@ -1,8 +1,10 @@
-/** Workspace identity — the root container for all open state. */
+/** A single workspace entry in the workspace list. */
 export interface WorkspaceIdentity {
-  /** Display name: filename stem for opened .lts, "Untitled" for new. */
+  /** Unique identifier for this workspace. */
+  id: string;
+  /** Display name: filename stem for opened .ltw, "Untitled" for new. */
   name: string;
-  /** Path to .lts file if opened/saved, null if unsaved. */
+  /** Path to .ltw file if saved, null if unsaved. */
   filePath: string | null;
   /** True when any tracked state has changed since last save/open. */
   dirty: boolean;
@@ -24,8 +26,35 @@ export interface WorkspaceEditorRef {
   filePath: string | null;
 }
 
-export const WORKSPACE_STORAGE_KEY = 'logtapper_workspace_identity';
+/** The workspace list state managed by WorkspaceContext. */
+export interface WorkspaceListState {
+  workspaces: WorkspaceIdentity[];
+  activeId: string | null;
+}
+
+export const WORKSPACE_STORAGE_KEY = 'logtapper_workspace_list';
+
+export function createEmptyWorkspace(): WorkspaceIdentity {
+  return { id: crypto.randomUUID(), name: 'Untitled', filePath: null, dirty: false };
+}
 
 export function createEmptyIdentity(): WorkspaceIdentity {
-  return { name: 'Untitled', filePath: null, dirty: false };
+  return createEmptyWorkspace();
+}
+
+export function createEmptyListState(): WorkspaceListState {
+  return { workspaces: [], activeId: null };
+}
+
+/** Get the active workspace from the list, or null if none. */
+export function getActiveWorkspace(state: WorkspaceListState): WorkspaceIdentity | null {
+  if (!state.activeId) return null;
+  return state.workspaces.find(w => w.id === state.activeId) ?? null;
+}
+
+/** Format the window title bar from the active workspace. */
+export function formatTitle(ws: WorkspaceIdentity | null): string {
+  if (!ws) return 'LogTapper';
+  const indicator = ws.dirty ? ' *' : '';
+  return `${ws.name}${indicator} \u2014 LogTapper`;
 }

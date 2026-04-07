@@ -786,6 +786,62 @@ export interface ExportAllOptions {
 }
 
 // ---------------------------------------------------------------------------
+// Workspace v4 (.ltw)
+// ---------------------------------------------------------------------------
+
+export interface LtwManifestSession {
+  filePath: string;
+  sourceName: string;
+  sourceType: string;
+}
+
+export interface LtwPipelineChain {
+  chain: string[];
+  disabledIds: string[];
+}
+
+export interface LtwEditorTab {
+  label: string;
+  content: string;
+  viewMode: string;
+  wordWrap: boolean;
+  filePath: string | null;
+}
+
+export interface SaveWorkspaceV4Options {
+  destPath: string;
+  workspaceName: string;
+  editorTabs: LtwEditorTab[];
+  layout: unknown | null;
+  pipelineChain: string[];
+  disabledChainIds: string[];
+}
+
+export interface LoadWorkspaceV4Result {
+  workspaceName: string;
+  sessions: LtwManifestSession[];
+  pipelineChain: LtwPipelineChain;
+  editorTabs: LtwEditorTab[];
+  layout: unknown | null;
+}
+
+// ---------------------------------------------------------------------------
+// App state persistence
+// ---------------------------------------------------------------------------
+
+export interface WorkspaceEntry {
+  id: string;
+  name: string;
+  ltwPath: string | null;
+  dirty: boolean;
+}
+
+export interface AppStateFile {
+  workspaces: WorkspaceEntry[];
+  activeWorkspaceId: string | null;
+}
+
+// ---------------------------------------------------------------------------
 // File associations
 // ---------------------------------------------------------------------------
 

@@ -187,6 +187,8 @@ function HookWiring({ children }: { children: ReactNode }) {
     openWorkspace: workspace.openWorkspace,
     saveWorkspace: workspace.saveWorkspace,
     saveWorkspaceAs: workspace.saveWorkspaceAs,
+    closeWorkspace: workspace.closeWorkspace,
+    switchWorkspace: workspace.switchWorkspace,
 
     // --- View actions (not tracked) ---
     openFileDialog,
@@ -211,7 +213,8 @@ function HookWiring({ children }: { children: ReactNode }) {
        logViewer.setEffectiveLineNums,
        addToChain, addPackToChain, removeFromChain, reorderChain, toggleChainEnabled,
        openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession,
-       workspace.newWorkspace, workspace.openWorkspace, workspace.saveWorkspace, workspace.saveWorkspaceAs]);
+       workspace.newWorkspace, workspace.openWorkspace, workspace.saveWorkspace, workspace.saveWorkspaceAs,
+       workspace.closeWorkspace, workspace.switchWorkspace]);
 
   // Wrap mutation actions with automatic dirty tracking — the single enforcement point.
   const actions = useMemo(
@@ -226,7 +229,7 @@ function HookWiring({ children }: { children: ReactNode }) {
       {children}
       <SavePromptDialog
         open={workspace.showSavePrompt}
-        workspaceName={workspaceIdentity.name}
+        workspaceName={workspaceIdentity?.name ?? 'Untitled'}
         onResult={workspace.handleSavePromptResult}
       />
     </ActionsProvider>
@@ -290,7 +293,7 @@ export {
 } from './selectors';
 
 // Re-export workspace hooks
-export { useWorkspaceIdentity } from './WorkspaceContext';
+export { useWorkspaceIdentity, useWorkspaceList, useActiveWorkspaceId } from './WorkspaceContext';
 export { useWorkspaceContext } from './WorkspaceContext';
 
 // Re-export per-session context

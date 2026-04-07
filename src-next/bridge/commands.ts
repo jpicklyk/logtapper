@@ -40,6 +40,9 @@ import type {
   ExportAllSessionsInfo,
   ExportAllOptions,
   FileAssocEntry,
+  SaveWorkspaceV4Options,
+  LoadWorkspaceV4Result,
+  AppStateFile,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -595,6 +598,26 @@ export function uninstallPackFromMarketplace(
 
 export function uninstallPack(packId: string): Promise<void> {
   return invoke('uninstall_pack', { packId });
+}
+
+// ---------------------------------------------------------------------------
+// Workspace v4 commands
+// ---------------------------------------------------------------------------
+
+export function saveWorkspaceV4(options: SaveWorkspaceV4Options): Promise<void> {
+  return invoke('save_workspace_v4', { options });
+}
+
+export function loadWorkspaceV4(path: string): Promise<LoadWorkspaceV4Result> {
+  return invoke('load_workspace_v4', { path });
+}
+
+export function getAppState(): Promise<AppStateFile> {
+  return invoke('get_app_state');
+}
+
+export function saveAppState(state: AppStateFile): Promise<void> {
+  return invoke('save_app_state_cmd', { state });
 }
 
 // ---------------------------------------------------------------------------

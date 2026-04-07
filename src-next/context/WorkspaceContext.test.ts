@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import type { WorkspaceIdentity } from '../bridge/workspaceTypes';
-import { WORKSPACE_STORAGE_KEY, createEmptyIdentity } from '../bridge/workspaceTypes';
-import { formatTitle, loadPersistedIdentity, persistIdentity } from './WorkspaceContext';
+import type { WorkspaceIdentity, WorkspaceListState } from '../bridge/workspaceTypes';
+import { createEmptyWorkspace, createEmptyListState, getActiveWorkspace, WORKSPACE_STORAGE_KEY } from '../bridge/workspaceTypes';
+import { loadPersistedList, persistList } from './WorkspaceContext';
 
 // ---------------------------------------------------------------------------
 // Mock localStorage
@@ -21,220 +21,190 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// formatTitle
+// loadPersistedList / persistList
 // ---------------------------------------------------------------------------
-describe('formatTitle', () => {
-  it('shows clean workspace title without asterisk', () => {
-    const id: WorkspaceIdentity = { name: 'MyProject', filePath: '/a.lts', dirty: false };
-    expect(formatTitle(id)).toBe('MyProject \u2014 LogTapper');
+describe('loadPersistedList', () => {
+  it('returns empty list when localStorage is empty', () => {
+    const state = loadPersistedList();
+    expect(state.workspaces).toEqual([]);
+    expect(state.activeId).toBeNull();
   });
 
-  it('shows dirty workspace title with asterisk', () => {
-    const id: WorkspaceIdentity = { name: 'MyProject', filePath: '/a.lts', dirty: true };
-    expect(formatTitle(id)).toBe('MyProject * \u2014 LogTapper');
-  });
-
-  it('handles Untitled workspace', () => {
-    expect(formatTitle(createEmptyIdentity())).toBe('Untitled \u2014 LogTapper');
-  });
-
-  it('handles Untitled dirty workspace', () => {
-    const id: WorkspaceIdentity = { name: 'Untitled', filePath: null, dirty: true };
-    expect(formatTitle(id)).toBe('Untitled * \u2014 LogTapper');
-  });
-
-  it('handles name with special characters', () => {
-    const id: WorkspaceIdentity = { name: 'my-log (2)', filePath: '/a.lts', dirty: false };
-    expect(formatTitle(id)).toBe('my-log (2) \u2014 LogTapper');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// loadPersistedIdentity
-// ---------------------------------------------------------------------------
-describe('loadPersistedIdentity', () => {
-  it('returns empty identity when localStorage is empty', () => {
-    const id = loadPersistedIdentity();
-    expect(id).toEqual(createEmptyIdentity());
-  });
-
-  it('restores a persisted identity', () => {
-    const saved: WorkspaceIdentity = { name: 'Test', filePath: '/test.lts', dirty: false };
+  it('restores a persisted list', () => {
+    const saved: WorkspaceListState = {
+      workspaces: [
+        { id: 'ws-1', name: 'Test', filePath: '/test.ltw', dirty: false },
+      ],
+      activeId: 'ws-1',
+    };
     store.set(WORKSPACE_STORAGE_KEY, JSON.stringify(saved));
 
-    const id = loadPersistedIdentity();
-    expect(id).toEqual(saved);
+    const state = loadPersistedList();
+    expect(state.workspaces.length).toBe(1);
+    expect(state.workspaces[0].name).toBe('Test');
+    expect(state.activeId).toBe('ws-1');
   });
 
-  it('preserves dirty flag from persisted state (crash recovery)', () => {
-    const saved: WorkspaceIdentity = { name: 'Crashed', filePath: '/x.lts', dirty: true };
+  it('preserves dirty flags (crash recovery)', () => {
+    const saved: WorkspaceListState = {
+      workspaces: [
+        { id: 'ws-1', name: 'Dirty', filePath: '/x.ltw', dirty: true },
+        { id: 'ws-2', name: 'Clean', filePath: '/y.ltw', dirty: false },
+      ],
+      activeId: 'ws-1',
+    };
     store.set(WORKSPACE_STORAGE_KEY, JSON.stringify(saved));
 
-    const id = loadPersistedIdentity();
-    expect(id.dirty).toBe(true);
-    expect(id.name).toBe('Crashed');
+    const state = loadPersistedList();
+    expect(state.workspaces[0].dirty).toBe(true);
+    expect(state.workspaces[1].dirty).toBe(false);
   });
 
-  it('returns empty identity on corrupt JSON', () => {
+  it('returns empty list on corrupt JSON', () => {
     store.set(WORKSPACE_STORAGE_KEY, '{not valid json');
-    const id = loadPersistedIdentity();
-    expect(id).toEqual(createEmptyIdentity());
-  });
-
-  it('returns empty identity when localStorage throws', () => {
-    localStorageMock.getItem.mockImplementationOnce(() => { throw new Error('quota'); });
-    const id = loadPersistedIdentity();
-    expect(id).toEqual(createEmptyIdentity());
+    const state = loadPersistedList();
+    expect(state.workspaces).toEqual([]);
   });
 });
 
-// ---------------------------------------------------------------------------
-// persistIdentity
-// ---------------------------------------------------------------------------
-describe('persistIdentity', () => {
-  it('writes identity to localStorage as JSON', () => {
-    const id: WorkspaceIdentity = { name: 'Saved', filePath: '/saved.lts', dirty: false };
-    persistIdentity(id);
-
-    const raw = store.get(WORKSPACE_STORAGE_KEY);
-    expect(raw).toBeDefined();
-    expect(JSON.parse(raw!)).toEqual(id);
-  });
-
-  it('overwrites previous value', () => {
-    persistIdentity({ name: 'First', filePath: null, dirty: false });
-    persistIdentity({ name: 'Second', filePath: '/s.lts', dirty: true });
-
-    const raw = store.get(WORKSPACE_STORAGE_KEY);
-    expect(JSON.parse(raw!).name).toBe('Second');
-  });
-
-  it('does not throw when localStorage is full', () => {
-    localStorageMock.setItem.mockImplementationOnce(() => { throw new Error('QuotaExceeded'); });
-    // Should not throw
-    expect(() => persistIdentity(createEmptyIdentity())).not.toThrow();
-  });
-
-  it('round-trips through loadPersistedIdentity', () => {
-    const original: WorkspaceIdentity = { name: 'RoundTrip', filePath: '/rt.lts', dirty: true };
-    persistIdentity(original);
-    const loaded = loadPersistedIdentity();
+describe('persistList', () => {
+  it('round-trips through loadPersistedList', () => {
+    const original: WorkspaceListState = {
+      workspaces: [
+        { id: 'ws-1', name: 'RoundTrip', filePath: '/rt.ltw', dirty: true },
+      ],
+      activeId: 'ws-1',
+    };
+    persistList(original);
+    const loaded = loadPersistedList();
     expect(loaded).toEqual(original);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Identity state transitions (pure logic extracted from provider)
+// Workspace list state transitions
 // ---------------------------------------------------------------------------
-describe('identity state transitions', () => {
-  // These test the pure state transition logic that the provider uses internally.
-  // The provider uses: prev => prev.dirty ? prev : { ...prev, dirty: true }
-
-  function applyMarkDirty(prev: WorkspaceIdentity): WorkspaceIdentity {
-    return prev.dirty ? prev : { ...prev, dirty: true };
+describe('workspace list state transitions', () => {
+  function addWorkspace(state: WorkspaceListState, ws: WorkspaceIdentity): WorkspaceListState {
+    return { workspaces: [...state.workspaces, ws], activeId: ws.id };
   }
 
-  function applyMarkClean(name: string, filePath: string): WorkspaceIdentity {
-    return { name, filePath, dirty: false };
+  function removeWorkspace(state: WorkspaceListState, id: string): WorkspaceListState {
+    const remaining = state.workspaces.filter(w => w.id !== id);
+    let nextActiveId = state.activeId;
+    if (state.activeId === id) {
+      const removedIdx = state.workspaces.findIndex(w => w.id === id);
+      nextActiveId = remaining.length > 0
+        ? remaining[Math.min(removedIdx, remaining.length - 1)].id
+        : null;
+    }
+    return { workspaces: remaining, activeId: nextActiveId };
   }
 
-  describe('markDirty', () => {
-    it('sets dirty=true on a clean workspace', () => {
-      const clean: WorkspaceIdentity = { name: 'Test', filePath: '/t.lts', dirty: false };
-      const result = applyMarkDirty(clean);
-      expect(result.dirty).toBe(true);
-      expect(result.name).toBe('Test');
-      expect(result.filePath).toBe('/t.lts');
-    });
+  function markDirty(state: WorkspaceListState): WorkspaceListState {
+    if (!state.activeId) return state;
+    const idx = state.workspaces.findIndex(w => w.id === state.activeId);
+    if (idx === -1 || state.workspaces[idx].dirty) return state;
+    const next = [...state.workspaces];
+    next[idx] = { ...next[idx], dirty: true };
+    return { ...state, workspaces: next };
+  }
 
-    it('is idempotent — returns same reference when already dirty', () => {
-      const dirty: WorkspaceIdentity = { name: 'Test', filePath: '/t.lts', dirty: true };
-      const result = applyMarkDirty(dirty);
-      expect(result).toBe(dirty); // same reference — React skips re-render
-    });
+  function markClean(state: WorkspaceListState, name: string, filePath: string): WorkspaceListState {
+    if (!state.activeId) return state;
+    const idx = state.workspaces.findIndex(w => w.id === state.activeId);
+    if (idx === -1) return state;
+    const next = [...state.workspaces];
+    next[idx] = { ...next[idx], name, filePath, dirty: false };
+    return { ...state, workspaces: next };
+  }
 
-    it('preserves null filePath', () => {
-      const clean: WorkspaceIdentity = { name: 'Untitled', filePath: null, dirty: false };
-      const result = applyMarkDirty(clean);
-      expect(result.filePath).toBeNull();
-      expect(result.dirty).toBe(true);
-    });
+  it('add workspace makes it active', () => {
+    const ws = createEmptyWorkspace();
+    const state = addWorkspace(createEmptyListState(), ws);
+    expect(state.workspaces.length).toBe(1);
+    expect(state.activeId).toBe(ws.id);
   });
 
-  describe('markClean', () => {
-    it('resets dirty and sets name/filePath', () => {
-      const result = applyMarkClean('Saved', '/saved.lts');
-      expect(result).toEqual({ name: 'Saved', filePath: '/saved.lts', dirty: false });
-    });
-
-    it('creates a completely new identity (no carry-over from previous state)', () => {
-      // This is intentional — markClean is a full replacement
-      const result = applyMarkClean('New', '/new.lts');
-      expect(result.name).toBe('New');
-      expect(result.filePath).toBe('/new.lts');
-      expect(result.dirty).toBe(false);
-    });
+  it('add second workspace switches active', () => {
+    const ws1 = createEmptyWorkspace();
+    const ws2 = createEmptyWorkspace();
+    let state = addWorkspace(createEmptyListState(), ws1);
+    state = addWorkspace(state, ws2);
+    expect(state.workspaces.length).toBe(2);
+    expect(state.activeId).toBe(ws2.id);
   });
 
-  describe('resetIdentity', () => {
-    it('returns a fresh empty identity', () => {
-      const result = createEmptyIdentity();
-      expect(result).toEqual({ name: 'Untitled', filePath: null, dirty: false });
-    });
+  it('remove active workspace selects next', () => {
+    const ws1 = { ...createEmptyWorkspace(), name: 'First' };
+    const ws2 = { ...createEmptyWorkspace(), name: 'Second' };
+    let state = addWorkspace(createEmptyListState(), ws1);
+    state = addWorkspace(state, ws2);
+    state = { ...state, activeId: ws1.id }; // switch back to first
+
+    state = removeWorkspace(state, ws1.id);
+    expect(state.workspaces.length).toBe(1);
+    expect(state.activeId).toBe(ws2.id);
   });
 
-  describe('transition sequences', () => {
-    it('new → dirty → save → clean', () => {
-      let state = createEmptyIdentity();
-      expect(state.dirty).toBe(false);
+  it('remove last workspace results in null active', () => {
+    const ws = createEmptyWorkspace();
+    let state = addWorkspace(createEmptyListState(), ws);
+    state = removeWorkspace(state, ws.id);
+    expect(state.workspaces.length).toBe(0);
+    expect(state.activeId).toBeNull();
+  });
 
-      // User makes a change
-      state = applyMarkDirty(state);
-      expect(state.dirty).toBe(true);
-      expect(state.name).toBe('Untitled');
+  it('markDirty sets active workspace dirty', () => {
+    const ws = createEmptyWorkspace();
+    let state = addWorkspace(createEmptyListState(), ws);
+    expect(getActiveWorkspace(state)!.dirty).toBe(false);
 
-      // User saves
-      state = applyMarkClean('MyLog', '/mylog.lts');
-      expect(state.dirty).toBe(false);
-      expect(state.name).toBe('MyLog');
-      expect(state.filePath).toBe('/mylog.lts');
-    });
+    state = markDirty(state);
+    expect(getActiveWorkspace(state)!.dirty).toBe(true);
+  });
 
-    it('saved → dirty → dirty (idempotent) → save again', () => {
-      let state = applyMarkClean('Project', '/p.lts');
+  it('markDirty is idempotent', () => {
+    const ws = createEmptyWorkspace();
+    let state = addWorkspace(createEmptyListState(), ws);
+    state = markDirty(state);
+    const ref = state;
+    state = markDirty(state);
+    expect(state).toBe(ref); // same reference — no re-render
+  });
 
-      state = applyMarkDirty(state);
-      expect(state.dirty).toBe(true);
+  it('markClean resets dirty and sets name/path', () => {
+    const ws = createEmptyWorkspace();
+    let state = addWorkspace(createEmptyListState(), ws);
+    state = markDirty(state);
+    state = markClean(state, 'Saved', '/saved.ltw');
 
-      const ref = state;
-      state = applyMarkDirty(state);
-      expect(state).toBe(ref); // idempotent — same reference
+    const active = getActiveWorkspace(state)!;
+    expect(active.dirty).toBe(false);
+    expect(active.name).toBe('Saved');
+    expect(active.filePath).toBe('/saved.ltw');
+  });
 
-      state = applyMarkClean('Project', '/p.lts');
-      expect(state.dirty).toBe(false);
-    });
+  it('full lifecycle: new → dirty → save → new → switch', () => {
+    const ws1 = createEmptyWorkspace();
+    let state = addWorkspace(createEmptyListState(), ws1);
 
-    it('saved → dirty → new workspace (reset)', () => {
-      let state = applyMarkClean('Old', '/old.lts');
-      state = applyMarkDirty(state);
-      expect(state.dirty).toBe(true);
+    // Make dirty
+    state = markDirty(state);
+    expect(getActiveWorkspace(state)!.dirty).toBe(true);
 
-      // User confirms discard → reset
-      state = createEmptyIdentity();
-      expect(state).toEqual({ name: 'Untitled', filePath: null, dirty: false });
-    });
+    // Save
+    state = markClean(state, 'ProjectA', '/a.ltw');
+    expect(getActiveWorkspace(state)!.dirty).toBe(false);
 
-    it('saved → dirty → open different workspace', () => {
-      let state = applyMarkClean('First', '/first.lts');
-      state = applyMarkDirty(state);
+    // Add second workspace
+    const ws2 = createEmptyWorkspace();
+    state = addWorkspace(state, ws2);
+    expect(state.activeId).toBe(ws2.id);
+    expect(state.workspaces.length).toBe(2);
 
-      // User confirms discard → open new
-      state = createEmptyIdentity(); // reset phase
-      state = applyMarkClean('Second', '/second.lts'); // load phase
-
-      expect(state.name).toBe('Second');
-      expect(state.filePath).toBe('/second.lts');
-      expect(state.dirty).toBe(false);
-    });
+    // Switch back
+    state = { ...state, activeId: ws1.id };
+    expect(getActiveWorkspace(state)!.name).toBe('ProjectA');
   });
 });

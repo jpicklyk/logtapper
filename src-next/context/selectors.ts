@@ -152,17 +152,21 @@ export function useViewerActions() {
           jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
           openTab, setActiveLogPane, setActivePane, setEffectiveLineNums,
           saveFile, saveFileAs, exportSession,
-          newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs } = useActionsContext();
+          newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs,
+          closeWorkspace, switchWorkspace } = useActionsContext();
   return { loadFile, openFileDialog, openInEditorDialog, startStream, stopStream, closeSession,
            jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
            openTab, setActiveLogPane, setActivePane, setEffectiveLineNums,
            saveFile, saveFileAs, exportSession,
-           newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs };
+           newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs,
+           closeWorkspace, switchWorkspace };
 }
 
 export function useWorkspaceActions() {
-  const { newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs } = useActionsContext();
-  return { newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs };
+  const { newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs,
+          closeWorkspace, switchWorkspace } = useActionsContext();
+  return { newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs,
+           closeWorkspace, switchWorkspace };
 }
 
 export function usePipelineActions() {

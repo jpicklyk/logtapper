@@ -1,8 +1,11 @@
 import { createContext, useContext, useState, useCallback, useEffect, useMemo, type ReactNode } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { bus } from '../events/bus';
-import type { WorkspaceIdentity } from '../bridge/workspaceTypes';
-import { createEmptyIdentity, WORKSPACE_STORAGE_KEY } from '../bridge/workspaceTypes';
+import type { WorkspaceIdentity, WorkspaceListState } from '../bridge/workspaceTypes';
+import {
+  createEmptyWorkspace, createEmptyListState,
+  getActiveWorkspace, formatTitle, WORKSPACE_STORAGE_KEY,
+} from '../bridge/workspaceTypes';
 import { storageGetJSON, storageSetJSON } from '../utils';
 
 // ---------------------------------------------------------------------------
@@ -10,14 +13,32 @@ import { storageGetJSON, storageSetJSON } from '../utils';
 // ---------------------------------------------------------------------------
 
 export interface WorkspaceContextValue {
-  /** Current workspace identity (name, filePath, dirty flag). */
-  identity: WorkspaceIdentity;
-  /** Mark the workspace as having unsaved changes. Idempotent. */
+  /** All open workspaces. */
+  workspaces: WorkspaceIdentity[];
+  /** ID of the active workspace, or null if none. */
+  activeId: string | null;
+  /** The active workspace entry, or null. */
+  activeWorkspace: WorkspaceIdentity | null;
+
+  // Workspace list mutations
+  /** Add a new empty workspace and make it active. Returns the new workspace ID. */
+  addWorkspace: () => string;
+  /** Add a workspace with a given identity (e.g. from opening a .ltw file). */
+  addWorkspaceEntry: (ws: WorkspaceIdentity) => void;
+  /** Switch the active workspace. */
+  setActiveId: (id: string) => void;
+  /** Remove a workspace from the list. */
+  removeWorkspace: (id: string) => void;
+
+  // Active workspace mutations
+  /** Mark the active workspace dirty. Idempotent. */
   markDirty: () => void;
-  /** Mark the workspace as clean after a save/open. Sets name + filePath. */
+  /** Mark the active workspace clean after save. Sets name + filePath. */
   markClean: (name: string, filePath: string) => void;
-  /** Reset identity to a fresh "Untitled" workspace. */
-  resetIdentity: () => void;
+  /** Update the name of a workspace. */
+  renameWorkspace: (id: string, name: string) => void;
+  /** Update the ltwPath of a workspace after save. */
+  setWorkspacePath: (id: string, ltwPath: string) => void;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
@@ -26,22 +47,12 @@ const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 // Persistence helpers (exported for testing)
 // ---------------------------------------------------------------------------
 
-/** Load workspace identity from localStorage (crash recovery). Preserves dirty flag. */
-export function loadPersistedIdentity(): WorkspaceIdentity {
-  return storageGetJSON<WorkspaceIdentity>(WORKSPACE_STORAGE_KEY, createEmptyIdentity());
+export function loadPersistedList(): WorkspaceListState {
+  return storageGetJSON<WorkspaceListState>(WORKSPACE_STORAGE_KEY, createEmptyListState());
 }
 
-export function persistIdentity(identity: WorkspaceIdentity): void {
-  storageSetJSON(WORKSPACE_STORAGE_KEY, identity);
-}
-
-// ---------------------------------------------------------------------------
-// Title bar (exported for testing)
-// ---------------------------------------------------------------------------
-
-export function formatTitle(identity: WorkspaceIdentity): string {
-  const indicator = identity.dirty ? ' *' : '';
-  return `${identity.name}${indicator} \u2014 LogTapper`;
+export function persistList(state: WorkspaceListState): void {
+  storageSetJSON(WORKSPACE_STORAGE_KEY, state);
 }
 
 // ---------------------------------------------------------------------------
@@ -49,31 +60,103 @@ export function formatTitle(identity: WorkspaceIdentity): string {
 // ---------------------------------------------------------------------------
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const [identity, setIdentity] = useState<WorkspaceIdentity>(loadPersistedIdentity);
+  const [listState, setListState] = useState<WorkspaceListState>(loadPersistedList);
 
-  // Persist on every identity change
+  // Persist on every list change
   useEffect(() => {
-    persistIdentity(identity);
-  }, [identity]);
+    persistList(listState);
+  }, [listState]);
 
-  // Update window title
+  // Update window title when active workspace changes
+  const activeWs = getActiveWorkspace(listState);
   useEffect(() => {
-    getCurrentWindow().setTitle(formatTitle(identity));
-  }, [identity.name, identity.dirty]);
+    getCurrentWindow().setTitle(formatTitle(activeWs));
+  }, [activeWs?.name, activeWs?.dirty]);
 
-  // --- Callbacks (stable refs) ---
+  // --- Helpers ---
+
+  const updateWorkspace = useCallback((id: string, updater: (ws: WorkspaceIdentity) => WorkspaceIdentity) => {
+    setListState(prev => {
+      const idx = prev.workspaces.findIndex(w => w.id === id);
+      if (idx === -1) return prev;
+      const updated = updater(prev.workspaces[idx]);
+      if (updated === prev.workspaces[idx]) return prev; // no change
+      const next = [...prev.workspaces];
+      next[idx] = updated;
+      return { ...prev, workspaces: next };
+    });
+  }, []);
+
+  // --- Workspace list mutations ---
+
+  const addWorkspace = useCallback((): string => {
+    const ws = createEmptyWorkspace();
+    setListState(prev => ({
+      workspaces: [...prev.workspaces, ws],
+      activeId: ws.id,
+    }));
+    return ws.id;
+  }, []);
+
+  const addWorkspaceEntry = useCallback((ws: WorkspaceIdentity) => {
+    setListState(prev => ({
+      workspaces: [...prev.workspaces, ws],
+      activeId: ws.id,
+    }));
+  }, []);
+
+  const setActiveId = useCallback((id: string) => {
+    setListState(prev => prev.activeId === id ? prev : { ...prev, activeId: id });
+  }, []);
+
+  const removeWorkspace = useCallback((id: string) => {
+    setListState(prev => {
+      const remaining = prev.workspaces.filter(w => w.id !== id);
+      let nextActiveId = prev.activeId;
+      if (prev.activeId === id) {
+        // Activate the previous workspace, or the first remaining, or null
+        const removedIdx = prev.workspaces.findIndex(w => w.id === id);
+        if (remaining.length > 0) {
+          nextActiveId = remaining[Math.min(removedIdx, remaining.length - 1)].id;
+        } else {
+          nextActiveId = null;
+        }
+      }
+      return { workspaces: remaining, activeId: nextActiveId };
+    });
+  }, []);
+
+  // --- Active workspace mutations ---
 
   const markDirty = useCallback(() => {
-    setIdentity(prev => prev.dirty ? prev : { ...prev, dirty: true });
+    setListState(prev => {
+      if (!prev.activeId) return prev;
+      const idx = prev.workspaces.findIndex(w => w.id === prev.activeId);
+      if (idx === -1 || prev.workspaces[idx].dirty) return prev;
+      const next = [...prev.workspaces];
+      next[idx] = { ...next[idx], dirty: true };
+      return { ...prev, workspaces: next };
+    });
   }, []);
 
   const markClean = useCallback((name: string, filePath: string) => {
-    setIdentity({ name, filePath, dirty: false });
+    setListState(prev => {
+      if (!prev.activeId) return prev;
+      const idx = prev.workspaces.findIndex(w => w.id === prev.activeId);
+      if (idx === -1) return prev;
+      const next = [...prev.workspaces];
+      next[idx] = { ...next[idx], name, filePath, dirty: false };
+      return { ...prev, workspaces: next };
+    });
   }, []);
 
-  const resetIdentity = useCallback(() => {
-    setIdentity(createEmptyIdentity());
-  }, []);
+  const renameWorkspace = useCallback((id: string, name: string) => {
+    updateWorkspace(id, ws => ws.name === name ? ws : { ...ws, name });
+  }, [updateWorkspace]);
+
+  const setWorkspacePath = useCallback((id: string, ltwPath: string) => {
+    updateWorkspace(id, ws => ws.filePath === ltwPath ? ws : { ...ws, filePath: ltwPath });
+  }, [updateWorkspace]);
 
   // --- Listen for workspace:mutated events ---
 
@@ -83,11 +166,20 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [markDirty]);
 
   const value = useMemo<WorkspaceContextValue>(() => ({
-    identity,
+    workspaces: listState.workspaces,
+    activeId: listState.activeId,
+    activeWorkspace: activeWs,
+    addWorkspace,
+    addWorkspaceEntry,
+    setActiveId,
+    removeWorkspace,
     markDirty,
     markClean,
-    resetIdentity,
-  }), [identity, markDirty, markClean, resetIdentity]);
+    renameWorkspace,
+    setWorkspacePath,
+  }), [listState.workspaces, listState.activeId, activeWs,
+       addWorkspace, addWorkspaceEntry, setActiveId, removeWorkspace,
+       markDirty, markClean, renameWorkspace, setWorkspacePath]);
 
   return (
     <WorkspaceContext.Provider value={value}>
@@ -106,7 +198,17 @@ export function useWorkspaceContext(): WorkspaceContextValue {
   return ctx;
 }
 
-/** Narrow selector: returns only the workspace identity (name, filePath, dirty). */
-export function useWorkspaceIdentity(): WorkspaceIdentity {
-  return useWorkspaceContext().identity;
+/** The active workspace entry (name, filePath, dirty, id), or null. */
+export function useWorkspaceIdentity(): WorkspaceIdentity | null {
+  return useWorkspaceContext().activeWorkspace;
+}
+
+/** The full workspace list. */
+export function useWorkspaceList(): WorkspaceIdentity[] {
+  return useWorkspaceContext().workspaces;
+}
+
+/** The active workspace ID. */
+export function useActiveWorkspaceId(): string | null {
+  return useWorkspaceContext().activeId;
 }
