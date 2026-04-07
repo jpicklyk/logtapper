@@ -75,8 +75,8 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
     return () => { bus.off('layout:settings-requested', handler); };
   }, []);
   const updateBadgeCount = usePendingUpdateCount();
-  const { openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession } = useViewerActions();
-  useFileShortcuts({ openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession });
+  const { openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession, newWorkspace, saveWorkspace } = useViewerActions();
+  useFileShortcuts({ openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession, newWorkspace, saveWorkspace });
   useStartupFile();
   useEditorTabRestore(workspace.openCenterTab);
 

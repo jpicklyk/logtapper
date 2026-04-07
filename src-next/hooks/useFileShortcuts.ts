@@ -6,6 +6,8 @@ interface FileShortcutActions {
   saveFile: () => void;
   saveFileAs: () => void;
   exportSession: () => void;
+  newWorkspace: () => void;
+  saveWorkspace: () => void;
 }
 
 export function useFileShortcuts(actions: FileShortcutActions): void {
@@ -22,7 +24,10 @@ export function useFileShortcuts(actions: FileShortcutActions): void {
       const key = e.key.toLowerCase();
       const a = actionsRef.current;
 
-      if (key === 'o' && !e.shiftKey) {
+      if (key === 'n' && !e.shiftKey) {
+        e.preventDefault();
+        a.newWorkspace();
+      } else if (key === 'o' && !e.shiftKey) {
         e.preventDefault();
         a.openFileDialog();
       } else if (key === 'o' && e.shiftKey) {
@@ -33,7 +38,7 @@ export function useFileShortcuts(actions: FileShortcutActions): void {
         a.saveFile();
       } else if (key === 's' && e.shiftKey) {
         e.preventDefault();
-        a.saveFileAs();
+        a.saveWorkspace();
       } else if (key === 'e' && e.shiftKey) {
         e.preventDefault();
         a.exportSession();

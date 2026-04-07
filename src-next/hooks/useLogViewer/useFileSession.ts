@@ -1,6 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import { getCurrentWebview } from '@tauri-apps/api/webview';
 import type { SourceType } from '../../bridge/types';
 import { isBugreportLike } from '../../bridge/types';
 import { loadLogFile, closeSession as closeSessionCmd, getLines } from '../../bridge/commands';
@@ -251,25 +250,6 @@ export function useFileSession(
     setIndexingProgressCtx,
     deps.resetSessionState, deps.detachStream,
   ]);
-
-  // Wire up Tauri file drag-and-drop (StrictMode-safe)
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: UnlistenFn | null = null;
-    getCurrentWebview().onDragDropEvent((event) => {
-      if (cancelled) return;
-      if (event.payload.type === 'drop' && event.payload.paths.length > 0) {
-        loadFile(event.payload.paths[0]);
-      }
-    }).then((fn) => {
-      if (cancelled) fn();
-      else unlisten = fn;
-    });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [loadFile]);
 
   // Restore all open files on app startup (StrictMode double-mount guard).
   // Active tabs are loaded first (they replace the existing logviewer tab in the
