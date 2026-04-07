@@ -157,7 +157,9 @@ export const Header = React.memo(function Header() {
   return (
     <header className={styles.header}>
       <div className={clsx(styles.brand, isMac && styles.brandMac)}>
-        <WorkspaceSwitcher />
+        <span className={styles.title}>
+          Log<span className={styles.titleAccent}>Tapper</span>
+        </span>
         <DropdownMenu
           trigger={
             <button className={styles.actionBtn} title="Menu">
@@ -169,6 +171,7 @@ export const Header = React.memo(function Header() {
           open={fileMenuOpen}
           onOpenChange={setFileMenuOpen}
         />
+        <WorkspaceSwitcher />
       </div>
 
       <div className={styles.searchArea}>
