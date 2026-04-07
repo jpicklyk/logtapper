@@ -2,12 +2,13 @@
 
 ## Architecture
 
-Six contexts split by change frequency (principle #1):
+Seven contexts split by change frequency (principle #1):
 
 | Context | Change frequency |
 |---|---|
 | `WorkspaceContext` | Low (save/open/dirty flag) — outermost provider |
 | `SessionContext` | Low (session load/close) — internally split into 3 sub-contexts |
+| `SessionDataContext` | Per-session (pipeline results, tracker transitions, filter, indexing) — one provider per pane + sidebar |
 | `ViewerContext` | Medium (search, navigation) — internally split into 3 sub-contexts |
 | `PipelineContext` | Mixed (processors stable, results fast) |
 | `TrackerContext` | Fast (~50ms during streaming) |
@@ -26,6 +27,22 @@ Six contexts split by change frequency (principle #1):
 `ViewerProvider` nests all 3 providers and owns all `useState` calls. The narrow hooks (`useSearchCtx`, `useScrollCtx`, `useProcessorViewCtx`) are used by `selectors.ts` so each selector subscribes to only its relevant sub-context.
 
 `useViewerContext()` is a facade that reads all 3 sub-contexts — used by writer hooks (`useLogViewer`, `useSearchNavigation`, `useSessionTabManager`) that need setter access across all viewer state.
+
+### SessionDataContext — per-session isolation
+
+`SessionDataContext.tsx` provides per-session data in isolation. One `SessionDataProvider` is mounted per center pane (in `PaneContent`) and per sidebar pane (in `LeftPane`, `RightPane`, `BottomPane`). Each provider extracts its session's slice from the global Maps in PipelineContext, TrackerContext, and SessionContext.
+
+**Key benefit:** A pipeline run completing for Session A only re-renders Session A's provider tree. Components showing Session B are unaffected.
+
+**Center panes** use the pane's own session (via `useSessionForPane`). **Sidebar panes** use the focused session (via `useFocusedSession`).
+
+**Selector hooks (read from nearest SessionDataProvider):**
+- `useSessionPipelineResults()`, `useSessionPipelineRunning()`, `useSessionPipelineProgress()`, `useSessionPipelineError()`
+- `useSessionTrackerTransitions()`, `useSessionTrackerUpdateCounts()`
+- `useSessionFilterState()`, `useSessionIndexingProgress()`
+- `useSessionDataId()` — the provider's sessionId
+
+**When adding new per-session state:** Add it to `SessionDataContextValue` and create a selector hook. Components inside a `SessionDataProvider` can read it directly — no need to pass sessionId.
 
 ### SessionContext sub-context split
 

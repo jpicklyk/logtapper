@@ -280,6 +280,21 @@ export {
 export { useWorkspaceIdentity } from './WorkspaceContext';
 export { useWorkspaceContext } from './WorkspaceContext';
 
+// Re-export per-session context
+export { SessionDataProvider } from './SessionDataContext';
+export {
+  useSessionPipelineResults,
+  useSessionPipelineRunning,
+  useSessionPipelineProgress,
+  useSessionPipelineError,
+  useSessionTrackerTransitions,
+  useSessionTrackerUpdateCounts,
+  useSessionFilterState,
+  useSessionIndexingProgress,
+  useSessionDataId,
+} from './SessionDataContext';
+
 // Re-export types
 export type { IndexingProgress, FilterState } from './SessionContext';
 export type { WorkspaceContextValue } from './WorkspaceContext';
+export type { SessionDataContextValue } from './SessionDataContext';

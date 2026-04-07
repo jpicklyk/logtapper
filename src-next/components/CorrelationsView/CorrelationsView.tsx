@@ -5,9 +5,9 @@ import {
   useSession,
   useProcessors,
   useActiveProcessorIds,
-  usePipelineResults,
   useViewerActions,
 } from '../../context';
+import { useSessionPipelineResults } from '../../context/SessionDataContext';
 import css from './CorrelationsView.module.css';
 
 /* ─── CorrelationPanel (internal) ─────────────────────────────────────────── */
@@ -169,7 +169,7 @@ const CorrelationsView = React.memo(function CorrelationsView() {
   const session = useSession();
   const processors = useProcessors();
   const activeProcessorIds = useActiveProcessorIds();
-  const { runCount } = usePipelineResults();
+  const { runCount } = useSessionPipelineResults();
   const { jumpToLine } = useViewerActions();
 
   const sessionId = session?.sessionId ?? '';

@@ -5,9 +5,8 @@ import {
   useSession,
   useProcessors,
   usePipelineChain,
-  usePipelineResults,
-  useTrackerTransitions,
 } from '../../context';
+import { useSessionPipelineResults, useSessionTrackerTransitions } from '../../context/SessionDataContext';
 import { useStateTracker } from '../../hooks';
 import { bus } from '../../events';
 import type { AppEvents } from '../../events';
@@ -93,8 +92,8 @@ const StatePanel = React.memo(function StatePanel() {
   const session = useSession();
   const processors = useProcessors();
   const pipelineChain = usePipelineChain();
-  const { runCount } = usePipelineResults();
-  useTrackerTransitions();
+  const { runCount } = useSessionPipelineResults();
+  useSessionTrackerTransitions();
   const stateTracker = useStateTracker();
   const [trackerStates, setTrackerStates] = useState<TrackerState[]>([]);
   const hasDataRef = useRef(false);

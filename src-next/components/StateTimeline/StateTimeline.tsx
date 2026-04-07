@@ -7,9 +7,9 @@ import {
   useSession,
   useProcessors,
   usePipelineChain,
-  usePipelineResults,
   useViewerActions,
 } from '../../context';
+import { useSessionPipelineResults } from '../../context/SessionDataContext';
 import { useStateTracker, useBookmarks, useSettings } from '../../hooks';
 import { bus } from '../../events';
 import { clamp } from '../../utils';
@@ -157,7 +157,7 @@ const StateTimeline = React.memo(function StateTimeline() {
   const session = useSession();
   const processors = useProcessors();
   const pipelineChain = usePipelineChain();
-  const { runCount } = usePipelineResults();
+  const { runCount } = useSessionPipelineResults();
   const { jumpToLine } = useViewerActions();
   const stateTracker = useStateTracker();
   const { bookmarks } = useBookmarks(session?.sessionId ?? null);

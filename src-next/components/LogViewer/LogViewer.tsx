@@ -7,9 +7,9 @@ import {
   useSessionForPane,
   useIsStreamingForPane,
   useScrollTarget,
-  useTrackerTransitions,
   useSearchQuery,
 } from '../../context';
+import { useSessionTrackerTransitions } from '../../context/SessionDataContext';
 import { useBookmarks, useBookmarkLines, useBookmarkLookup, useSettings } from '../../hooks';
 import { bus } from '../../events';
 import type { AppEvents } from '../../events';
@@ -60,7 +60,7 @@ const LogViewer = React.memo(function LogViewer({
   }, [isJumpForThisPane, scrollToLine, lineNumbers]);
   const effectiveScrollToLine = mappedScrollToLine;
   const effectiveJumpSeq = isJumpForThisPane ? jumpSeq : 0;
-  const { allLineNums: transitionLineNums, byLine: transitionsByLine } = useTrackerTransitions();
+  const { allLineNums: transitionLineNums, byLine: transitionsByLine } = useSessionTrackerTransitions();
 
   // View cache handle
   const viewId = sessionId ? `view-${sessionId}` : null;

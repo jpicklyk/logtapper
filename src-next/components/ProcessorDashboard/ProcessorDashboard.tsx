@@ -7,9 +7,9 @@ import {
   useSession,
   useProcessors,
   useActiveProcessorIds,
-  usePipelineResults,
   useViewerActions,
 } from '../../context';
+import { useSessionPipelineResults } from '../../context/SessionDataContext';
 import { usePipeline, useChartData } from '../../hooks';
 import { PROC_TYPE_ACCENT } from '../../ui';
 import { bus } from '../../events';
@@ -222,7 +222,7 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
   const session = useSession();
   const processors = useProcessors();
   const activeProcessorIds = useActiveProcessorIds();
-  const { results: lastResults, runCount } = usePipelineResults();
+  const { results: lastResults, runCount } = useSessionPipelineResults();
   const { jumpToLine } = useViewerActions();
   const pipeline = usePipeline();
   const { fetchCharts } = useChartData();

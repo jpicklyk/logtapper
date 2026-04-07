@@ -8,6 +8,7 @@ import { StreamFilterBar } from '../StreamFilterBar';
 import { BookmarkCreateDialog } from '../BookmarkPanel';
 import type { BookmarkCreateRequest } from '../BookmarkPanel';
 import { useSessionForPane, useIsLoadingForPane, useViewerActions, useStreamFilter, useFocusedSession, useIsActivePane } from '../../context';
+import { SessionDataProvider } from '../../context/SessionDataContext';
 import type { CenterPane } from '../../hooks';
 import { useLogViewerActions } from './useLogViewerActions';
 import { bus } from '../../events';
@@ -133,14 +134,18 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
     />
   );
 
+  // Resolve sessionId for this pane — used by SessionDataProvider.
+  // For dashboard tabs, fall back to focused session (dashboard shows the focused session's results).
+  const sessionId = session?.sessionId ?? focusedSession?.sessionId ?? null;
+
   if (!activeTab) {
     return (
-      <>
+      <SessionDataProvider sessionId={sessionId}>
         <div onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus} className="fullHeight">
           <EmptyStatePane />
         </div>
         {bookmarkDialog}
-      </>
+      </SessionDataProvider>
     );
   }
 
@@ -148,26 +153,26 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
     case 'logviewer':
       if (!session && !isLoading) {
         return (
-          <>
+          <SessionDataProvider sessionId={sessionId}>
             <div onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus} className="fullHeight">
               <EmptyStatePane />
             </div>
             {bookmarkDialog}
-          </>
+          </SessionDataProvider>
         );
       }
       if (!session && isLoading) {
         return (
-          <>
+          <SessionDataProvider sessionId={sessionId}>
             <div onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus} className="fullHeight">
               <EmptyStatePane loading />
             </div>
             {bookmarkDialog}
-          </>
+          </SessionDataProvider>
         );
       }
       return (
-        <>
+        <SessionDataProvider sessionId={sessionId}>
           <div className={styles.logviewerPane} onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus}>
             {session && (
               <StreamFilterBar
@@ -192,41 +197,45 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
             />
           </div>
           {bookmarkDialog}
-        </>
+        </SessionDataProvider>
       );
 
     case 'dashboard':
       // Dashboard displays results for the focused session — clicking it should
       // NOT move the focus marker away from the logviewer tab that owns the session.
-      return focusedSession ? (
-        <>
-          <div className="fullHeight">
-            <ProcessorDashboard />
-          </div>
-          {bookmarkDialog}
-        </>
-      ) : (
-        <>
-          <div className={styles.placeholder}>
-            Open a log file to see the dashboard.
-          </div>
-          {bookmarkDialog}
-        </>
+      return (
+        <SessionDataProvider sessionId={sessionId}>
+          {focusedSession ? (
+            <>
+              <div className="fullHeight">
+                <ProcessorDashboard />
+              </div>
+              {bookmarkDialog}
+            </>
+          ) : (
+            <>
+              <div className={styles.placeholder}>
+                Open a log file to see the dashboard.
+              </div>
+              {bookmarkDialog}
+            </>
+          )}
+        </SessionDataProvider>
       );
 
     case 'analysis':
       return (
-        <>
+        <SessionDataProvider sessionId={sessionId}>
           <div className="fullHeight">
             <AnalysisReader />
           </div>
           {bookmarkDialog}
-        </>
+        </SessionDataProvider>
       );
 
     case 'editor':
       return (
-        <>
+        <SessionDataProvider sessionId={sessionId}>
           {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
           <div onClick={handleActivePaneFocus} onFocus={handleActivePaneFocus} className="fullHeight">
             <EditorTab
@@ -238,11 +247,11 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
             />
           </div>
           {bookmarkDialog}
-        </>
+        </SessionDataProvider>
       );
 
     default:
-      return bookmarkDialog;
+      return <SessionDataProvider sessionId={sessionId}>{bookmarkDialog}</SessionDataProvider>;
   }
 });
 

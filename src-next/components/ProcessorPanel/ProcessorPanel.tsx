@@ -25,12 +25,11 @@ import {
   useProcessors,
   usePipelineChain,
   useDisabledChainIds,
-  usePipelineRunning,
-  usePipelineResults,
   usePipelineProgress,
   usePipelineError,
   usePipelineActions,
 } from '../../context';
+import { useSessionPipelineResults, useSessionPipelineRunning } from '../../context/SessionDataContext';
 import { usePipeline } from '../../hooks';
 import { ProcessorLibrary } from '../ProcessorLibrary';
 import { bus } from '../../events';
@@ -362,8 +361,8 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
   const processors = useProcessors();
   const pipelineChain = usePipelineChain();
   const disabledChainIds = useDisabledChainIds();
-  const running = usePipelineRunning();
-  const { results: lastResults } = usePipelineResults();
+  const running = useSessionPipelineRunning();
+  const { results: lastResults } = useSessionPipelineResults();
   const progress = usePipelineProgress();
   const pipelineError = usePipelineError();
   const pipeline = usePipeline();
