@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { ChevronRight, Download } from 'lucide-react';
 import type { Bookmark } from '../../bridge/types';
 import { useFocusedSession, useViewerActions } from '../../context';
+import { useSessionBookmarkActions } from '../../context/SessionActionsContext';
 import { useBookmarks, useSettings } from '../../hooks';
 import type { BookmarkCategoryDef } from '../../hooks';
 import BookmarkItem from './BookmarkItem';
@@ -83,7 +84,8 @@ const CategoryGroup = React.memo(function CategoryGroup({
 const BookmarkPanel = React.memo(function BookmarkPanel() {
   const session = useFocusedSession();
   const sessionId = session?.sessionId ?? null;
-  const { bookmarks, bookmarksLoading, editBookmark, removeBookmark } = useBookmarks(sessionId);
+  const { bookmarks, bookmarksLoading } = useBookmarks(sessionId);
+  const { editBookmark, removeBookmark } = useSessionBookmarkActions();
   const { jumpToLine } = useViewerActions();
   const { settings } = useSettings();
   const categories = settings.bookmarkCategories;

@@ -282,6 +282,9 @@ export { useWorkspaceContext } from './WorkspaceContext';
 
 // Re-export per-session context
 export { SessionDataProvider } from './SessionDataContext';
+export { SessionActionsProvider, useSessionActions,
+  useSessionBookmarkActions, useSessionAnalysisActions, useSessionWatchActions,
+} from './SessionActionsContext';
 export {
   useSessionPipelineResults,
   useSessionPipelineRunning,
@@ -298,3 +301,4 @@ export {
 export type { IndexingProgress, FilterState } from './SessionContext';
 export type { WorkspaceContextValue } from './WorkspaceContext';
 export type { SessionDataContextValue } from './SessionDataContext';
+export type { SessionActionsContextValue } from './SessionActionsContext';

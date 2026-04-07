@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { createBookmark, getLines } from '../../bridge/commands';
+import { getLines } from '../../bridge/commands';
+import { useSessionBookmarkActions } from '../../context/SessionActionsContext';
 import { useSettings } from '../../hooks';
 import { Modal } from '../../ui';
 import styles from './BookmarkCreateDialog.module.css';
@@ -23,6 +24,7 @@ const BookmarkCreateDialog = React.memo(function BookmarkCreateDialog({
   onClose,
 }: Props) {
   const { settings } = useSettings();
+  const { addBookmark } = useSessionBookmarkActions();
   const categories = settings.bookmarkCategories;
   const [label, setLabel] = useState('');
   const [category, setCategory] = useState<string>(() => categories[0]?.id ?? 'custom');
@@ -102,8 +104,7 @@ const BookmarkCreateDialog = React.memo(function BookmarkCreateDialog({
           }
         }
 
-        await createBookmark(
-          sessionId,
+        await addBookmark(
           lineNumber,
           trimmedLabel,
           note.trim(),
@@ -119,7 +120,7 @@ const BookmarkCreateDialog = React.memo(function BookmarkCreateDialog({
         setSubmitting(false);
       }
     },
-    [request, submitting, label, note, category, onClose],
+    [request, submitting, label, note, category, onClose, addBookmark],
   );
 
   const isRange =

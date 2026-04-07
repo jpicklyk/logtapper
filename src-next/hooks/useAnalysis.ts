@@ -100,7 +100,6 @@ export function useAnalysis(sessionId: string | null) {
       // Notify toast hook so it can suppress the toast for this local publish
       if (art) {
         bus.emit('analysis:published-local', { artifactId: art.id });
-        bus.emit('workspace:mutated', undefined);
       }
       return art;
     },
@@ -111,7 +110,6 @@ export function useAnalysis(sessionId: string | null) {
     async (artifactId: string, title?: string, sections?: AnalysisSection[]) => {
       if (!sessionId) return null;
       const art = await updateAnalysis(sessionId, artifactId, title, sections);
-      if (art) bus.emit('workspace:mutated', undefined);
       return art;
     },
     [sessionId],
@@ -121,7 +119,6 @@ export function useAnalysis(sessionId: string | null) {
     async (artifactId: string) => {
       if (!sessionId) return;
       await deleteAnalysis(sessionId, artifactId);
-      bus.emit('workspace:mutated', undefined);
     },
     [sessionId],
   );

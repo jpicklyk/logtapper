@@ -8,7 +8,6 @@ import {
   deleteBookmark,
 } from '../bridge/commands';
 import { onBookmarkUpdate } from '../bridge/events';
-import { bus } from '../events/bus';
 
 export interface BookmarkState {
   bookmarks: Bookmark[];
@@ -100,9 +99,7 @@ export function useBookmarks(sessionId: string | null) {
     ): Promise<Bookmark | null> => {
       if (!sessionId) return null;
       try {
-        const result = await createBookmark(sessionId, lineNumber, label, note, createdBy, lineNumberEnd, snippet, category, tags);
-        bus.emit('workspace:mutated', undefined);
-        return result;
+        return await createBookmark(sessionId, lineNumber, label, note, createdBy, lineNumberEnd, snippet, category, tags);
       } catch (e) {
         console.error('[useBookmarks] addBookmark error:', e);
         return null;
@@ -121,9 +118,7 @@ export function useBookmarks(sessionId: string | null) {
     ): Promise<Bookmark | null> => {
       if (!sessionId) return null;
       try {
-        const result = await updateBookmark(sessionId, bookmarkId, label, note, category, tags);
-        bus.emit('workspace:mutated', undefined);
-        return result;
+        return await updateBookmark(sessionId, bookmarkId, label, note, category, tags);
       } catch (e) {
         console.error('[useBookmarks] editBookmark error:', e);
         return null;
@@ -136,7 +131,6 @@ export function useBookmarks(sessionId: string | null) {
     async (bookmarkId: string) => {
       if (!sessionId) return;
       await deleteBookmark(sessionId, bookmarkId);
-      bus.emit('workspace:mutated', undefined);
     },
     [sessionId],
   );

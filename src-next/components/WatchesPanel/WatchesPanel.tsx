@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { Plus } from 'lucide-react';
 import { useSession, useIsStreaming } from '../../context';
+import { useSessionWatchActions } from '../../context/SessionActionsContext';
 import { useWatches } from '../../hooks';
 import type { FilterCriteria } from '../../bridge/types';
 import { IconButton } from '../../ui';
@@ -11,7 +12,8 @@ import styles from './WatchesPanel.module.css';
 export const WatchesPanel = React.memo(function WatchesPanel() {
   const session = useSession();
   const isStreaming = useIsStreaming();
-  const { watches, addWatch, removeWatch, refreshWatches } = useWatches();
+  const { watches, refreshWatches } = useWatches();
+  const { addWatch, removeWatch } = useSessionWatchActions();
   const [showCreate, setShowCreate] = useState(false);
 
   // Refresh watch list on session change
@@ -29,19 +31,17 @@ export const WatchesPanel = React.memo(function WatchesPanel() {
 
   const handleCreate = useCallback(
     async (criteria: FilterCriteria) => {
-      if (!session?.sessionId) return;
-      await addWatch(session.sessionId, criteria);
+      await addWatch(criteria);
       setShowCreate(false);
     },
-    [session?.sessionId, addWatch],
+    [addWatch],
   );
 
   const handleCancel = useCallback(
     (watchId: string) => {
-      if (!session?.sessionId) return;
-      removeWatch(session.sessionId, watchId);
+      removeWatch(watchId);
     },
-    [session?.sessionId, removeWatch],
+    [removeWatch],
   );
 
   const handleToggleCreate = useCallback(() => {

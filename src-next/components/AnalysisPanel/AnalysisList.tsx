@@ -4,6 +4,7 @@ import type { AnalysisArtifact, AnalysisSection, AnalysisSeverity } from '../../
 import { severityColor } from '../../bridge/types';
 import { useSession, useViewerActions } from '../../context';
 import { useAnalysis } from '../../hooks';
+import { useSessionAnalysisActions } from '../../context/SessionActionsContext';
 import { bus } from '../../events/bus';
 import styles from './AnalysisList.module.css';
 
@@ -186,7 +187,8 @@ const AnalysisItem = React.memo(function AnalysisItem({ artifact, onOpen, onDele
 const AnalysisList = React.memo(function AnalysisList() {
   const session = useSession();
   const sessionId = session?.sessionId ?? null;
-  const { artifacts, analysisLoading, deleteAnalysis } = useAnalysis(sessionId);
+  const { artifacts, analysisLoading } = useAnalysis(sessionId);
+  const { deleteSessionAnalysis } = useSessionAnalysisActions();
   const { openTab } = useViewerActions();
 
   const handleOpen = useCallback((artifactId: string) => {
@@ -195,8 +197,8 @@ const AnalysisList = React.memo(function AnalysisList() {
   }, [openTab]);
 
   const handleDelete = useCallback((artifactId: string) => {
-    deleteAnalysis(artifactId);
-  }, [deleteAnalysis]);
+    deleteSessionAnalysis(artifactId);
+  }, [deleteSessionAnalysis]);
 
   if (!sessionId) {
     return (

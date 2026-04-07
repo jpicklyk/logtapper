@@ -5,6 +5,7 @@ import { AnalysisList } from '../AnalysisPanel';
 import { BookmarkPanel } from '../BookmarkPanel';
 import { useFocusedSession } from '../../context';
 import { SessionDataProvider } from '../../context/SessionDataContext';
+import { SessionActionsProvider } from '../../context/SessionActionsContext';
 import styles from './LeftPane.module.css';
 
 export type LeftPaneTab = 'info' | 'state' | 'bookmarks' | 'analysis';
@@ -18,12 +19,14 @@ const LeftPane = React.memo(function LeftPane({ activeTab, displayPaneId }: Prop
   const session = useFocusedSession();
   return (
     <SessionDataProvider sessionId={session?.sessionId ?? null}>
+    <SessionActionsProvider sessionId={session?.sessionId ?? null}>
     <div className={styles.root}>
       {activeTab === 'info' && <FileInfoPane paneId={displayPaneId} />}
       {activeTab === 'state' && <StatePanel />}
       {activeTab === 'bookmarks' && <BookmarkPanel />}
       {activeTab === 'analysis' && <AnalysisList />}
     </div>
+    </SessionActionsProvider>
     </SessionDataProvider>
   );
 });
