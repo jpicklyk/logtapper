@@ -42,6 +42,7 @@ import type {
   FileAssocEntry,
   SaveWorkspaceV4Options,
   LoadWorkspaceV4Result,
+  LtwEditorTab,
   AppStateFile,
 } from './types';
 
@@ -606,6 +607,19 @@ export function uninstallPack(packId: string): Promise<void> {
 
 export function saveWorkspaceV4(options: SaveWorkspaceV4Options): Promise<void> {
   return invoke('save_workspace_v4', { options });
+}
+
+export interface AutoSaveWorkspaceOptions {
+  workspaceId: string;
+  workspaceName: string;
+  editorTabs: LtwEditorTab[];
+  layout: unknown | null;
+  pipelineChain: string[];
+  disabledChainIds: string[];
+}
+
+export function autoSaveWorkspace(options: AutoSaveWorkspaceOptions): Promise<string> {
+  return invoke('auto_save_workspace', { options });
 }
 
 export function loadWorkspaceV4(path: string): Promise<LoadWorkspaceV4Result> {

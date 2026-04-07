@@ -500,6 +500,7 @@ pub fn run() {
             commands::export::export_all_sessions,
             // Workspace v4 commands
             commands::workspace_cmd::save_workspace_v4,
+            commands::workspace_cmd::auto_save_workspace,
             commands::workspace_cmd::load_workspace_v4,
             commands::workspace_cmd::get_app_state,
             commands::workspace_cmd::save_app_state_cmd,

@@ -119,6 +119,113 @@ pub async fn save_workspace_v4(
 }
 
 // ---------------------------------------------------------------------------
+// Auto-save workspace to app_data_dir (for workspace switching)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoSaveWorkspaceOptions {
+    pub workspace_id: String,
+    pub workspace_name: String,
+    pub editor_tabs: Vec<LtwEditorTab>,
+    pub layout: Option<LtwLayout>,
+    pub pipeline_chain: Vec<String>,
+    pub disabled_chain_ids: Vec<String>,
+}
+
+/// Auto-save the active workspace to `app_data_dir/workspaces/{workspace_id}.ltw`.
+/// Returns the path where it was saved.
+#[tauri::command]
+pub async fn auto_save_workspace(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    options: AutoSaveWorkspaceOptions,
+) -> Result<String, String> {
+    let ws_dir = crate::workspace::workspace_dir(&app)?;
+    let dest = ws_dir.join(format!("{}.ltw", options.workspace_id));
+
+    // Snapshot session info
+    let session_info: Vec<(String, String, String, String)> = {
+        let sessions = lock_or_err(&state.sessions, "sessions")?;
+        sessions
+            .iter()
+            .filter_map(|(id, session)| {
+                let file_path = session.file_path.as_ref()?;
+                let source = session.primary_source()?;
+                Some((
+                    id.clone(),
+                    file_path.clone(),
+                    source.name().to_string(),
+                    format!("{:?}", source.source_type()),
+                ))
+            })
+            .collect()
+    };
+
+    let mut session_entries: Vec<(
+        LtwManifestSession,
+        Vec<crate::core::bookmark::Bookmark>,
+        Vec<crate::core::analysis::AnalysisArtifact>,
+        SessionMeta,
+    )> = Vec::new();
+
+    for (session_id, file_path, source_name, source_type) in &session_info {
+        let bookmarks = {
+            let bm = lock_or_err(&state.bookmarks, "bookmarks")?;
+            bm.get(session_id).cloned().unwrap_or_default()
+        };
+        let analyses = {
+            let an = lock_or_err(&state.analyses, "analyses")?;
+            an.get(session_id).cloned().unwrap_or_default()
+        };
+        let meta = {
+            let pm = lock_or_err(&state.session_pipeline_meta, "session_pipeline_meta")?;
+            pm.get(session_id).cloned().unwrap_or_default()
+        };
+
+        session_entries.push((
+            LtwManifestSession {
+                file_path: file_path.clone(),
+                source_name: source_name.clone(),
+                source_type: source_type.clone(),
+            },
+            bookmarks,
+            analyses,
+            meta,
+        ));
+    }
+
+    let chain = LtwPipelineChain {
+        chain: options.pipeline_chain,
+        disabled_ids: options.disabled_chain_ids,
+    };
+
+    let entry_refs: Vec<(
+        LtwManifestSession,
+        &[crate::core::bookmark::Bookmark],
+        &[crate::core::analysis::AnalysisArtifact],
+        &SessionMeta,
+    )> = session_entries
+        .iter()
+        .map(|(m, b, a, meta)| (m.clone(), b.as_slice(), a.as_slice(), meta))
+        .collect();
+
+    ltw_v4::write_ltw(
+        &dest,
+        &options.workspace_name,
+        &entry_refs,
+        &chain,
+        &options.editor_tabs,
+        options.layout.as_ref(),
+    )?;
+
+    // Return the path as a string so the frontend can store it
+    dest.to_str()
+        .map(str::to_string)
+        .ok_or_else(|| "Failed to convert path to string".to_string())
+}
+
+// ---------------------------------------------------------------------------
 // Load workspace (.ltw v4) — returns manifest for frontend orchestration
 // ---------------------------------------------------------------------------
 

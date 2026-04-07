@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { useWorkspaceContext } from '../context/WorkspaceContext';
-import { saveWorkspaceV4, loadWorkspaceV4, saveAppState } from '../bridge/commands';
+import { saveWorkspaceV4, autoSaveWorkspace, loadWorkspaceV4, saveAppState } from '../bridge/commands';
 import type { WorkspaceIdentity } from '../bridge/workspaceTypes';
 import { bus } from '../events/bus';
 import { basename, storageGetJSON } from '../utils';
@@ -84,6 +84,37 @@ export function useWorkspace(
     });
 
     ctx.markClean(workspaceNameFromPath(destPath), destPath);
+  }, [getLayoutState]);
+
+  /** Auto-save the active workspace to app_data_dir for workspace switching. */
+  const doAutoSave = useCallback(async () => {
+    const ctx = wsCtxRef.current;
+    const active = ctx.activeWorkspace;
+    if (!active) return;
+
+    const editorTabs = collectEditorTabs();
+    const layout = getLayoutState();
+
+    try {
+      const savedPath = await autoSaveWorkspace({
+        workspaceId: active.id,
+        workspaceName: active.name,
+        editorTabs: editorTabs.map(t => ({
+          label: t.label,
+          content: t.content,
+          viewMode: t.viewMode,
+          wordWrap: t.wordWrap,
+          filePath: t.filePath,
+        })),
+        layout,
+        pipelineChain: [], // TODO: read from PipelineContext
+        disabledChainIds: [], // TODO: read from PipelineContext
+      });
+      // Update the workspace entry with the auto-save path so we can restore
+      ctx.setWorkspacePath(active.id, savedPath);
+    } catch (e) {
+      console.warn('[useWorkspace] Auto-save failed:', e);
+    }
   }, [getLayoutState]);
 
   /** Clear the current panes (close all backend sessions + reset layout tree). */
@@ -173,15 +204,12 @@ export function useWorkspace(
         break;
       }
       case 'switch': {
-        // Auto-save current if dirty
-        const active = ctx.activeWorkspace;
-        if (active?.dirty && active.filePath) {
-          await doSave(active.filePath);
-        }
+        // Always auto-save current workspace state before switching
+        await doAutoSave();
         await doClearPanes();
         bus.emit('workspace:reset', undefined);
         ctx.setActiveId(action.targetId);
-        // Load the target workspace
+        // Load the target workspace from its saved .ltw
         const target = ctx.workspaces.find(w => w.id === action.targetId);
         if (target?.filePath) {
           await doLoadWorkspace(target.filePath);
