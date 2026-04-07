@@ -2,15 +2,16 @@
 
 ## Architecture
 
-Five contexts split by change frequency (principle #1):
+Six contexts split by change frequency (principle #1):
 
 | Context | Change frequency |
 |---|---|
+| `WorkspaceContext` | Low (save/open/dirty flag) — outermost provider |
 | `SessionContext` | Low (session load/close) — internally split into 3 sub-contexts |
 | `ViewerContext` | Medium (search, navigation) — internally split into 3 sub-contexts |
 | `PipelineContext` | Mixed (processors stable, results fast) |
 | `TrackerContext` | Fast (~50ms during streaming) |
-| `ActionsContext` | Never (stable callbacks) |
+| `ActionsContext` | Never (stable callbacks, mutation tracking) |
 
 ### ViewerContext sub-context split
 
@@ -54,6 +55,34 @@ Domain hooks (`useLogViewer`, `usePipeline`, `useStateTracker`) are co-owners of
 2. Re-export from the barrel (`index.tsx`)
 3. Components import from the barrel: `import { useMySelector } from '../../context'`
 
-## ActionsContext pattern
+## WorkspaceContext — workspace identity and dirty tracking
 
-Default stubs (no-op functions) are defined in `ActionsContext.tsx`. `HookWiring` (in `index.tsx`) instantiates domain hooks and injects real implementations via `ActionsProvider`. This ensures components always have a valid actions reference, even during initialization.
+`WorkspaceContext.tsx` holds the workspace identity (`name`, `filePath`, `dirty` flag) and provides `markDirty()`, `markClean()`, `resetIdentity()`. It listens to the `workspace:mutated` bus event for component-local hooks that bypass `ActionsContext`.
+
+**Provider hierarchy:** `WorkspaceProvider` wraps all other providers (outermost). This ensures workspace lifecycle actions (new/open/save) can coordinate across all child contexts.
+
+**Title bar:** A `useEffect` in `WorkspaceProvider` updates the Tauri window title: `{name} — LogTapper` (clean) or `{name} * — LogTapper` (dirty).
+
+**Persistence:** Identity auto-saves to `localStorage` key `logtapper_workspace_identity` for crash recovery. The `.lts` file is the explicit user-controlled persistence.
+
+## ActionsContext — workspace action surface with mutation tracking
+
+`ActionsContext.tsx` defines two action categories:
+
+| Category | Interface | Tracked? | Examples |
+|---|---|---|---|
+| **WorkspaceMutationActions** | `WorkspaceMutationActions` | Yes — auto-wrapped by `trackMutations()` | `loadFile`, `closeSession`, `addToChain`, `reorderChain` |
+| **ViewActions** | `ViewActions` | No — pass through unchanged | `jumpToLine`, `setSearch`, `runPipeline`, `openTab` |
+
+**Enforcement mechanism:** `MUTATION_ACTION_KEYS` is the single registry of tracked actions. `trackMutations()` wraps each registered key with `tracked(fn, markDirty)`. Applied once in `HookWiring` — the single wiring point. No scattered `bus.emit('workspace:mutated')` needed for actions that flow through here.
+
+**Adding a new mutation action:**
+1. Add the method signature to `WorkspaceMutationActions` interface
+2. Add the key to `MUTATION_ACTION_KEYS`
+3. Wire the implementation in `HookWiring` (inside `rawActions`)
+4. Add to the relevant selector (`usePipelineActions`, `useViewerActions`, etc.)
+5. Dirty tracking is automatic — no additional code needed
+
+Default stubs (no-op functions) ensure components always have valid action references during initialization. `HookWiring` (in `index.tsx`) instantiates domain hooks and injects real implementations via `ActionsProvider`.
+
+**Component-local hooks exception:** `useBookmarks`, `useAnalysis`, `useWatches` bypass `ActionsContext` and call bridge commands directly. These must emit `bus.emit('workspace:mutated')` at each mutation point. This is documented and intentional — they will migrate to per-session context providers in a future phase.

@@ -27,7 +27,18 @@ Hooks must not depend on each other's internal state through effects in `App.tsx
 ### 7. Stable callback references
 Action callbacks (`onViewProcessor`, `onCloseSession`, `onOpenLibrary`) must be `useCallback` with stable deps and placed in a dedicated context that never changes. Consumers of these callbacks should never re-render due to unrelated state changes.
 
-### 8. Barrel exports control public API — never import internal modules directly
+### 8. All state mutations flow through the Workspace action surface
+Components must never mutate workspace state (sessions, pipeline chain, processors) by calling domain hooks directly. All mutations go through `ActionsContext`, which is the Workspace's action surface. This is enforced by the `trackMutations()` wrapper in `HookWiring` — mutation actions are automatically wrapped with dirty tracking at a single point.
+
+**Two categories of actions exist in `ActionsContext`:**
+- **WorkspaceMutationActions** — registered in `MUTATION_ACTION_KEYS`, automatically tracked. Adding a session, changing the pipeline chain, installing a processor.
+- **ViewActions** — not tracked. Navigation, search, focus changes, pipeline execution.
+
+To add a new mutation: add its key to `MUTATION_ACTION_KEYS` in `ActionsContext.tsx`, wire the implementation in `HookWiring`, and use it from components via a selector hook. The `tracked()` wrapper handles dirty marking automatically.
+
+**Exception:** Component-local hooks (`useBookmarks`, `useAnalysis`, `useWatches`) that bypass `ActionsContext` must emit `bus.emit('workspace:mutated')` at each mutation point. These will migrate to per-session context providers in a future phase.
+
+### 9. Barrel exports control public API — never import internal modules directly
 Every module directory (`cache/`, `viewport/`, `hooks/`) must have an `index.ts` barrel that defines its public API. Components and hooks outside a module must import from the barrel only, never from internal files. The barrel exports narrow interfaces and hooks — not implementation classes. Internal files import from each other directly within the same module. Test files may import internals for white-box testing.
 
 All frontend code lives in `src-next/`. The legacy `src/` directory has been removed.
