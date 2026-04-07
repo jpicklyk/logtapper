@@ -6,6 +6,7 @@ import {
   makeTab,
   nextEditorLabel,
   clamp,
+  defaultTree,
   findLeafByPaneId,
   updateLeaf,
   removeLeaf,
@@ -43,6 +44,8 @@ export interface CenterTreeHandle {
   setTabUnsaved: (tabId: string, isDirty: boolean) => void;
   openCenterTab: (type: CenterTabType, label?: string, filePath?: string, editorState?: { content: string; viewMode: string; wordWrap: boolean }) => void;
   dropTabOnPane: (tabId: string, fromPaneId: string, toPaneId: string, zone: DropZone) => void;
+  /** Reset the center tree to a single empty pane (for workspace clear/switch). */
+  clearTree: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -492,6 +495,11 @@ export function useCenterTree(
   // Return
   // ---------------------------------------------------------------------------
 
+  /** Reset the center tree to a single empty pane (for workspace clear/switch). */
+  const clearTree = useCallback(() => {
+    updateTree(() => defaultTree());
+  }, [updateTree]);
+
   return {
     centerTree,
     /** Synchronous ref — always reflects the latest tree, even mid-batch before React re-renders. */
@@ -505,5 +513,6 @@ export function useCenterTree(
     setTabUnsaved,
     openCenterTab,
     dropTabOnPane,
+    clearTree,
   };
 }

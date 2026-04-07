@@ -193,13 +193,20 @@ export function useWorkspaceLayout() {
       openCenterTabRef.current(e.type as CenterTabType, e.label, e.filePath);
     };
 
+    const onWorkspaceReset = () => {
+      centerTree.clearTree();
+      setActiveLogPaneId(null);
+    };
+
     bus.on('session:focused', onSessionFocused);
     bus.on('session:loaded', onSessionLoaded);
     bus.on('layout:open-tab', onOpenTab);
+    bus.on('workspace:reset', onWorkspaceReset);
     return () => {
       bus.off('session:focused', onSessionFocused);
       bus.off('session:loaded', onSessionLoaded);
       bus.off('layout:open-tab', onOpenTab);
+      bus.off('workspace:reset', onWorkspaceReset);
     };
   }, []);
 
@@ -237,6 +244,7 @@ export function useWorkspaceLayout() {
     setTabUnsaved: centerTree.setTabUnsaved,
     openCenterTab: centerTree.openCenterTab,
     dropTabOnPane: centerTree.dropTabOnPane,
+    clearTree: centerTree.clearTree,
 
     // Right pane
     rightPaneVisible: rightPane.visible,

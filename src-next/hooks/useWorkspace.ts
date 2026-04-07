@@ -86,10 +86,11 @@ export function useWorkspace(
     ctx.markClean(workspaceNameFromPath(destPath), destPath);
   }, [getLayoutState]);
 
-  /** Clear the current panes (close all backend sessions). */
+  /** Clear the current panes (close all backend sessions + reset layout tree). */
   const doClearPanes = useCallback(async () => {
     bus.emit('workspace:before-reset', undefined);
     await closeAllSessions();
+    // Layout tree is reset via the workspace:reset event listener in useWorkspaceLayout
   }, [closeAllSessions]);
 
   /** Load a workspace from a .ltw file into the active slot. */
@@ -178,6 +179,7 @@ export function useWorkspace(
           await doSave(active.filePath);
         }
         await doClearPanes();
+        bus.emit('workspace:reset', undefined);
         ctx.setActiveId(action.targetId);
         // Load the target workspace
         const target = ctx.workspaces.find(w => w.id === action.targetId);

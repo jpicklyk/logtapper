@@ -46,6 +46,8 @@ export interface WorkspaceLayoutState {
   setTabUnsaved: (tabId: string, isDirty: boolean) => void;
   openCenterTab: (type: CenterTabType, label?: string, filePath?: string, editorState?: { content: string; viewMode: string; wordWrap: boolean }) => void;
   dropTabOnPane: (tabId: string, fromPaneId: string, toPaneId: string, zone: DropZone) => void;
+  /** Reset the center tree to a single empty pane (for workspace clear/switch). */
+  clearTree: () => void;
 
   // Right pane
   rightPaneVisible: boolean;
