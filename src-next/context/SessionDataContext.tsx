@@ -92,9 +92,10 @@ export function SessionDataProvider({ sessionId, children }: SessionDataProvider
     ? (indexingProgressBySession.get(sessionId) ?? null)
     : null;
 
-  // Build context value with granular memoization.
-  // Each field is individually compared so that a change in pipeline results
-  // doesn't re-render components that only read tracker transitions.
+  // Build context value. All consumers of this context re-render together when
+  // any field changes. The isolation benefit is cross-SESSION (Session A changes
+  // don't re-render Session B), not cross-FIELD within a session.
+  // For field-level isolation, split into sub-contexts (future optimization).
   const value = useMemo<SessionDataContextValue>(() => ({
     sessionId,
     pipelineResults: pipelineState?.results ?? EMPTY_RESULTS,

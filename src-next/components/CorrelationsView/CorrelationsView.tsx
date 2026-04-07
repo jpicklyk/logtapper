@@ -6,8 +6,8 @@ import {
   useProcessors,
   useActiveProcessorIds,
   useViewerActions,
+  useSessionPipelineResults,
 } from '../../context';
-import { useSessionPipelineResults } from '../../context/SessionDataContext';
 import css from './CorrelationsView.module.css';
 
 /* ─── CorrelationPanel (internal) ─────────────────────────────────────────── */

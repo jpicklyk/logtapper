@@ -1,4 +1,4 @@
-import { createContext, useContext, useCallback, useMemo, type ReactNode } from 'react';
+import { createContext, useContext, useCallback, useMemo, useRef, type ReactNode } from 'react';
 import type {
   Bookmark, CreatedBy, AnalysisArtifact, AnalysisSection,
   FilterCriteria, WatchInfo,
@@ -15,9 +15,6 @@ import { bus } from '../events/bus';
 // ---------------------------------------------------------------------------
 
 export interface SessionActionsContextValue {
-  /** The session ID these actions operate on. Null when no session is bound. */
-  sessionId: string | null;
-
   // Bookmark mutations
   addBookmark: (
     lineNumber: number, label: string, note: string,
@@ -61,9 +58,9 @@ interface SessionActionsProviderProps {
  * Actions are stable callbacks (they read sessionId from a ref, not a dep).
  */
 export function SessionActionsProvider({ sessionId, children }: SessionActionsProviderProps) {
-  // Use a ref pattern so callbacks never need to be recreated when sessionId changes.
-  // This keeps the context value stable and prevents consumer re-renders.
-  const sessionIdRef = useMemo(() => ({ current: sessionId }), []);
+  // Ref pattern: callbacks read sessionId at call time, not creation time.
+  // This keeps the context value stable — no consumer re-renders when sessionId changes.
+  const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
 
   const markDirty = useCallback(() => {
@@ -161,8 +158,9 @@ export function SessionActionsProvider({ sessionId, children }: SessionActionsPr
 
   // --- Context value (stable — all callbacks use refs) ---
 
+  // All callbacks are stable (deps are [] or [markDirty] which is stable).
+  // No sessionId in deps — the value never changes after mount.
   const value = useMemo<SessionActionsContextValue>(() => ({
-    sessionId,
     addBookmark: addBookmarkAction,
     editBookmark: editBookmarkAction,
     removeBookmark: removeBookmarkAction,
@@ -171,7 +169,7 @@ export function SessionActionsProvider({ sessionId, children }: SessionActionsPr
     deleteSessionAnalysis: deleteSessionAnalysisAction,
     addWatch: addWatchAction,
     removeWatch: removeWatchAction,
-  }), [sessionId, addBookmarkAction, editBookmarkAction, removeBookmarkAction,
+  }), [addBookmarkAction, editBookmarkAction, removeBookmarkAction,
        publishSessionAnalysisAction, updateSessionAnalysisAction, deleteSessionAnalysisAction,
        addWatchAction, removeWatchAction]);
 
@@ -195,17 +193,18 @@ export function useSessionActions(): SessionActionsContextValue {
 /** Bookmark mutation actions for the enclosing session. */
 export function useSessionBookmarkActions() {
   const { addBookmark, editBookmark, removeBookmark } = useSessionActions();
-  return { addBookmark, editBookmark, removeBookmark };
+  return useMemo(() => ({ addBookmark, editBookmark, removeBookmark }), [addBookmark, editBookmark, removeBookmark]);
 }
 
 /** Analysis mutation actions for the enclosing session. */
 export function useSessionAnalysisActions() {
   const { publishSessionAnalysis, updateSessionAnalysis, deleteSessionAnalysis } = useSessionActions();
-  return { publishSessionAnalysis, updateSessionAnalysis, deleteSessionAnalysis };
+  return useMemo(() => ({ publishSessionAnalysis, updateSessionAnalysis, deleteSessionAnalysis }),
+    [publishSessionAnalysis, updateSessionAnalysis, deleteSessionAnalysis]);
 }
 
 /** Watch mutation actions for the enclosing session. */
 export function useSessionWatchActions() {
   const { addWatch, removeWatch } = useSessionActions();
-  return { addWatch, removeWatch };
+  return useMemo(() => ({ addWatch, removeWatch }), [addWatch, removeWatch]);
 }

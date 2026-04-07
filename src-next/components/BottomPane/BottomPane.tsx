@@ -3,8 +3,7 @@ import { StateTimeline } from '../StateTimeline';
 import { CorrelationsView } from '../CorrelationsView';
 import { WatchesPanel } from '../WatchesPanel';
 import { useFocusedSession } from '../../context';
-import { SessionDataProvider } from '../../context/SessionDataContext';
-import { SessionActionsProvider } from '../../context/SessionActionsContext';
+import { SessionProviders } from '../../context/SessionProviders';
 import styles from './BottomPane.module.css';
 
 export type BottomTabType = 'timeline' | 'correlations' | 'search-results' | 'watches' | 'filter-results';
@@ -16,8 +15,7 @@ interface Props {
 const BottomPane = React.memo(function BottomPane({ activeTab }: Props) {
   const session = useFocusedSession();
   return (
-    <SessionDataProvider sessionId={session?.sessionId ?? null}>
-    <SessionActionsProvider sessionId={session?.sessionId ?? null}>
+    <SessionProviders sessionId={session?.sessionId ?? null}>
     <div className={styles.root}>
       {activeTab === 'timeline' && <StateTimeline />}
       {activeTab === 'correlations' && <CorrelationsView />}
@@ -29,8 +27,7 @@ const BottomPane = React.memo(function BottomPane({ activeTab }: Props) {
         <div className={styles.placeholder}>Filter results</div>
       )}
     </div>
-    </SessionActionsProvider>
-    </SessionDataProvider>
+    </SessionProviders>
   );
 });
 

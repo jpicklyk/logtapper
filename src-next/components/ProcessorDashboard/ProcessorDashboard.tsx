@@ -8,8 +8,8 @@ import {
   useProcessors,
   useActiveProcessorIds,
   useViewerActions,
+  useSessionPipelineResults,
 } from '../../context';
-import { useSessionPipelineResults } from '../../context/SessionDataContext';
 import { usePipeline, useChartData } from '../../hooks';
 import { PROC_TYPE_ACCENT } from '../../ui';
 import { bus } from '../../events';

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { getLines } from '../../bridge/commands';
-import { useSessionBookmarkActions } from '../../context/SessionActionsContext';
+import { useSessionBookmarkActions } from '../../context';
 import { useSettings } from '../../hooks';
 import { Modal } from '../../ui';
 import styles from './BookmarkCreateDialog.module.css';

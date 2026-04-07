@@ -8,19 +8,7 @@ import { StreamFilterBar } from '../StreamFilterBar';
 import { BookmarkCreateDialog } from '../BookmarkPanel';
 import type { BookmarkCreateRequest } from '../BookmarkPanel';
 import { useSessionForPane, useIsLoadingForPane, useViewerActions, useStreamFilter, useFocusedSession, useIsActivePane } from '../../context';
-import { SessionDataProvider } from '../../context/SessionDataContext';
-import { SessionActionsProvider } from '../../context/SessionActionsContext';
-
-/** Combined per-session provider for data reads + mutation actions. */
-function SessionProviders({ sessionId, children }: { sessionId: string | null; children: React.ReactNode }) {
-  return (
-    <SessionDataProvider sessionId={sessionId}>
-      <SessionActionsProvider sessionId={sessionId}>
-        {children}
-      </SessionActionsProvider>
-    </SessionDataProvider>
-  );
-}
+import { SessionProviders } from '../../context/SessionProviders';
 import type { CenterPane } from '../../hooks';
 import { useLogViewerActions } from './useLogViewerActions';
 import { bus } from '../../events';

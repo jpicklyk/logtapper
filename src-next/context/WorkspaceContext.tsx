@@ -1,8 +1,9 @@
-import { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, useMemo, type ReactNode } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { bus } from '../events/bus';
 import type { WorkspaceIdentity } from '../bridge/workspaceTypes';
 import { createEmptyIdentity, WORKSPACE_STORAGE_KEY } from '../bridge/workspaceTypes';
+import { storageGetJSON, storageSetJSON } from '../utils';
 
 // ---------------------------------------------------------------------------
 // Context value
@@ -25,23 +26,13 @@ const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 // Persistence helpers (exported for testing)
 // ---------------------------------------------------------------------------
 
+/** Load workspace identity from localStorage (crash recovery). Preserves dirty flag. */
 export function loadPersistedIdentity(): WorkspaceIdentity {
-  try {
-    const raw = localStorage.getItem(WORKSPACE_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as WorkspaceIdentity;
-      // On app restart, a previously-dirty workspace stays dirty
-      // (crash recovery — user never saved)
-      return parsed;
-    }
-  } catch { /* ignore corrupt localStorage */ }
-  return createEmptyIdentity();
+  return storageGetJSON<WorkspaceIdentity>(WORKSPACE_STORAGE_KEY, createEmptyIdentity());
 }
 
 export function persistIdentity(identity: WorkspaceIdentity): void {
-  try {
-    localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(identity));
-  } catch { /* localStorage full — non-critical */ }
+  storageSetJSON(WORKSPACE_STORAGE_KEY, identity);
 }
 
 // ---------------------------------------------------------------------------
@@ -61,8 +52,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [identity, setIdentity] = useState<WorkspaceIdentity>(loadPersistedIdentity);
 
   // Persist on every identity change
-  const identityRef = useRef(identity);
-  identityRef.current = identity;
   useEffect(() => {
     persistIdentity(identity);
   }, [identity]);

@@ -4,7 +4,7 @@ import type { AnalysisArtifact, AnalysisSection, AnalysisSeverity } from '../../
 import { severityColor } from '../../bridge/types';
 import { useSession, useViewerActions } from '../../context';
 import { useAnalysis } from '../../hooks';
-import { useSessionAnalysisActions } from '../../context/SessionActionsContext';
+import { useSessionAnalysisActions } from '../../context';
 import { bus } from '../../events/bus';
 import styles from './AnalysisList.module.css';
 

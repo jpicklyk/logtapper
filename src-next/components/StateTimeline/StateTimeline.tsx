@@ -8,8 +8,8 @@ import {
   useProcessors,
   usePipelineChain,
   useViewerActions,
+  useSessionPipelineResults,
 } from '../../context';
-import { useSessionPipelineResults } from '../../context/SessionDataContext';
 import { useStateTracker, useBookmarks, useSettings } from '../../hooks';
 import { bus } from '../../events';
 import { clamp } from '../../utils';

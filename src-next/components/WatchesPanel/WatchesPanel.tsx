@@ -1,7 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { Plus } from 'lucide-react';
-import { useSession, useIsStreaming } from '../../context';
-import { useSessionWatchActions } from '../../context/SessionActionsContext';
+import { useSession, useIsStreaming, useSessionWatchActions } from '../../context';
 import { useWatches } from '../../hooks';
 import type { FilterCriteria } from '../../bridge/types';
 import { IconButton } from '../../ui';

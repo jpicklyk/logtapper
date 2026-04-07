@@ -27,13 +27,11 @@ import {
   useDisabledChainIds,
   usePipelineActions,
   usePipelineGlobalError,
-} from '../../context';
-import {
   useSessionPipelineResults,
   useSessionPipelineRunning,
   useSessionPipelineProgress,
   useSessionPipelineError,
-} from '../../context/SessionDataContext';
+} from '../../context';
 import { usePipeline } from '../../hooks';
 import { ProcessorLibrary } from '../ProcessorLibrary';
 import { bus } from '../../events';
@@ -574,7 +572,7 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
         removeFromChain(id);
       }
     },
-    [pipeline],
+    [removeFromChain],
   );
 
   // Filtered pack groups and standalone (apply chainFilter when active)

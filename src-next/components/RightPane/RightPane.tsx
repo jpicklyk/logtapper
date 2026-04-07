@@ -2,8 +2,7 @@ import React from 'react';
 import { ProcessorPanel } from '../ProcessorPanel';
 import { MarketplacePanel } from '../MarketplacePanel';
 import { useFocusedSession } from '../../context';
-import { SessionDataProvider } from '../../context/SessionDataContext';
-import { SessionActionsProvider } from '../../context/SessionActionsContext';
+import { SessionProviders } from '../../context/SessionProviders';
 import styles from './RightPane.module.css';
 
 export type RightPaneTab = 'processors' | 'marketplace';
@@ -15,14 +14,12 @@ interface Props {
 const RightPane = React.memo(function RightPane({ activeTab }: Props) {
   const session = useFocusedSession();
   return (
-    <SessionDataProvider sessionId={session?.sessionId ?? null}>
-    <SessionActionsProvider sessionId={session?.sessionId ?? null}>
+    <SessionProviders sessionId={session?.sessionId ?? null}>
     <div className={styles.root}>
       {activeTab === 'processors' && <ProcessorPanel />}
       {activeTab === 'marketplace' && <MarketplacePanel />}
     </div>
-    </SessionActionsProvider>
-    </SessionDataProvider>
+    </SessionProviders>
   );
 });
 

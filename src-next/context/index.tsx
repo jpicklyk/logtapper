@@ -2,7 +2,7 @@ import { useMemo, useCallback, useRef, type ReactNode } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { SessionProvider } from './SessionContext';
 import { useSessionCoreCtx, useSessionPaneCtx } from './SessionContext';
-import { saveLiveCapture } from '../bridge/commands';
+import { saveLiveCapture, loadProcessorYaml, uninstallProcessor } from '../bridge/commands';
 import { basename } from '../utils';
 import { ViewerProvider } from './ViewerContext';
 
@@ -56,6 +56,27 @@ function HookWiring({ children }: { children: ReactNode }) {
   }, [pipelineDispatch]);
   const toggleChainEnabled = useCallback((id: string) => {
     pipelineDispatch({ type: 'chain:toggle-enabled', id });
+  }, [pipelineDispatch]);
+
+  // Processor library mutations
+  const installProcessor = useCallback(async (yaml: string) => {
+    pipelineDispatch({ type: 'error:clear' });
+    try {
+      const processor = await loadProcessorYaml(yaml);
+      pipelineDispatch({ type: 'processor:installed', processor });
+    } catch (e) {
+      pipelineDispatch({ type: 'error:set', error: String(e) });
+      throw e;
+    }
+  }, [pipelineDispatch]);
+
+  const removeProcessor = useCallback(async (id: string) => {
+    try {
+      await uninstallProcessor(id);
+      pipelineDispatch({ type: 'processor:removed', id });
+    } catch (e) {
+      pipelineDispatch({ type: 'error:set', error: String(e) });
+    }
   }, [pipelineDispatch]);
 
   // Keep a ref so setActiveLogPane can read the current map without being
@@ -141,16 +162,13 @@ function HookWiring({ children }: { children: ReactNode }) {
 
   // Close all open sessions (for workspace new/open transitions).
   const closeAllSessions = useCallback(async () => {
-    const entries = [...paneSessionMapRef.current.entries()];
-    for (const [paneId] of entries) {
-      await logViewer.closeSession(paneId);
-    }
+    const paneIds = [...paneSessionMapRef.current.keys()];
+    await Promise.all(paneIds.map(paneId => logViewer.closeSession(paneId)));
   }, [logViewer.closeSession]);
 
   const workspace = useWorkspace(closeAllSessions, logViewer.loadFile);
   const { markDirty } = useWorkspaceContext();
 
-  // Build raw actions, then wrap mutations with automatic dirty tracking.
   const rawActions = useMemo<Partial<ActionsContextValue>>(() => ({
     // --- Workspace mutations (auto-tracked via trackMutations) ---
     loadFile: logViewer.loadFile,
@@ -158,6 +176,8 @@ function HookWiring({ children }: { children: ReactNode }) {
       deviceId, undefined, activeProcessorIdsRef.current, settingsRef.current.streamBackendLineMax,
     ),
     closeSession: logViewer.closeSession,
+    installProcessor,
+    removeProcessor,
     addToChain,
     addPackToChain,
     removeFromChain,
@@ -185,6 +205,7 @@ function HookWiring({ children }: { children: ReactNode }) {
     saveFileAs,
     exportSession,
   }), [logViewer.loadFile, logViewer.startStream, logViewer.stopStream, logViewer.closeSession,
+       installProcessor, removeProcessor,
        logViewer.jumpToLine, logViewer.jumpToMatch,
        logViewer.handleSearch, logViewer.setStreamFilter, logViewer.cancelStreamFilter,
        logViewer.setEffectiveLineNums,
@@ -273,6 +294,7 @@ export { useWorkspaceIdentity } from './WorkspaceContext';
 export { useWorkspaceContext } from './WorkspaceContext';
 
 // Re-export per-session context
+export { SessionProviders } from './SessionProviders';
 export { SessionDataProvider } from './SessionDataContext';
 export { SessionActionsProvider, useSessionActions,
   useSessionBookmarkActions, useSessionAnalysisActions, useSessionWatchActions,

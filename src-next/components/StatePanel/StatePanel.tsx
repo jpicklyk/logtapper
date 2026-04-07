@@ -5,8 +5,9 @@ import {
   useSession,
   useProcessors,
   usePipelineChain,
+  useSessionPipelineResults,
+  useSessionTrackerTransitions,
 } from '../../context';
-import { useSessionPipelineResults, useSessionTrackerTransitions } from '../../context/SessionDataContext';
 import { useStateTracker } from '../../hooks';
 import { bus } from '../../events';
 import type { AppEvents } from '../../events';

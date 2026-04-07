@@ -8,8 +8,8 @@ import {
   useIsStreamingForPane,
   useScrollTarget,
   useSearchQuery,
+  useSessionTrackerTransitions,
 } from '../../context';
-import { useSessionTrackerTransitions } from '../../context/SessionDataContext';
 import { useBookmarks, useBookmarkLines, useBookmarkLookup, useSettings } from '../../hooks';
 import { bus } from '../../events';
 import type { AppEvents } from '../../events';
