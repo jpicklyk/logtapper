@@ -2,22 +2,29 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import { ChevronDown, Plus, FolderOpen, X } from 'lucide-react';
 import clsx from 'clsx';
-import { useWorkspaceList, useActiveWorkspaceId, useWorkspaceActions } from '../../context';
+import { useWorkspaceList, useActiveWorkspaceId, useWorkspaceActions, useWorkspaceContext } from '../../context';
 import styles from './WorkspaceSwitcher.module.css';
 
 /**
  * Workspace switcher dropdown — shows the list of open workspaces with
  * active/dirty indicators and close buttons. Mounted in the Header brand area.
+ * Double-click a workspace name to rename it inline.
  */
 export const WorkspaceSwitcher = React.memo(function WorkspaceSwitcher() {
   const workspaces = useWorkspaceList();
   const activeId = useActiveWorkspaceId();
   const { newWorkspace, openWorkspace, closeWorkspace, switchWorkspace } = useWorkspaceActions();
+  const { renameWorkspace } = useWorkspaceContext();
 
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties | null>(null);
+
+  // Inline rename state
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   const activeWs = workspaces.find(w => w.id === activeId);
   const displayName = activeWs?.name ?? 'LogTapper';
@@ -93,6 +100,31 @@ export const WorkspaceSwitcher = React.memo(function WorkspaceSwitcher() {
     setOpen(false);
   }, [openWorkspace]);
 
+  const handleDoubleClick = useCallback((e: React.MouseEvent, id: string, name: string) => {
+    e.stopPropagation();
+    setRenamingId(id);
+    setRenameValue(name);
+    // Focus the input after React renders it
+    requestAnimationFrame(() => renameInputRef.current?.select());
+  }, []);
+
+  const commitRename = useCallback(() => {
+    if (renamingId && renameValue.trim()) {
+      renameWorkspace(renamingId, renameValue.trim());
+    }
+    setRenamingId(null);
+  }, [renamingId, renameValue, renameWorkspace]);
+
+  const handleRenameKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commitRename();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setRenamingId(null);
+    }
+  }, [commitRename]);
+
   return (
     <>
       <button
@@ -116,10 +148,23 @@ export const WorkspaceSwitcher = React.memo(function WorkspaceSwitcher() {
                   key={ws.id}
                   className={clsx(styles.workspaceItem, ws.id === activeId && styles.workspaceItemActive)}
                   onClick={() => handleSwitch(ws.id)}
+                  onDoubleClick={(e) => handleDoubleClick(e, ws.id, ws.name)}
                 >
                   <span className={ws.id === activeId ? styles.activeDot : styles.inactiveDot} />
-                  <span className={styles.wsName}>{ws.name}</span>
-                  {ws.dirty && <span className={styles.wsDirty}>*</span>}
+                  {renamingId === ws.id ? (
+                    <input
+                      ref={renameInputRef}
+                      className={styles.renameInput}
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onBlur={commitRename}
+                      onKeyDown={handleRenameKeyDown}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  ) : (
+                    <span className={styles.wsName}>{ws.name}</span>
+                  )}
+                  {ws.dirty && renamingId !== ws.id && <span className={styles.wsDirty}>*</span>}
                   <button
                     className={styles.closeBtn}
                     onClick={(e) => handleClose(e, ws.id)}

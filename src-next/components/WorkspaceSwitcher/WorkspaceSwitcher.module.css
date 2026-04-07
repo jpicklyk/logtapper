@@ -116,6 +116,19 @@
   flex-shrink: 0;
 }
 
+.renameInput {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 4px;
+  border: 1px solid var(--brand-accent);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  outline: none;
+}
+
 .closeBtn {
   display: flex;
   align-items: center;
