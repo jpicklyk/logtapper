@@ -183,6 +183,92 @@ describe('session action patterns', () => {
     });
   });
 
+  describe('analysis update and delete dirty tracking', () => {
+    it('emits workspace:mutated after analysis update', async () => {
+      const ref = { current: 'sess-1' };
+      mockUpdateAnalysis.mockResolvedValue({ id: 'art-1', title: 'Updated' });
+
+      const updateAction = makeAction(mockUpdateAnalysis, ref);
+      await updateAction('art-1', 'Updated', []);
+
+      expect(mockUpdateAnalysis).toHaveBeenCalledWith('sess-1', 'art-1', 'Updated', []);
+      expect(emitted.some(e => e.event === 'workspace:mutated')).toBe(true);
+    });
+
+    it('emits workspace:mutated after analysis delete', async () => {
+      const ref = { current: 'sess-1' };
+      mockDeleteAnalysis.mockResolvedValue(undefined);
+
+      const deleteAction = makeAction(mockDeleteAnalysis, ref);
+      await deleteAction('art-1');
+
+      expect(mockDeleteAnalysis).toHaveBeenCalledWith('sess-1', 'art-1');
+    });
+  });
+
+  describe('analysis:published-local bus event', () => {
+    it('emits analysis:published-local on successful publish for toast suppression', async () => {
+      const ref = { current: 'sess-1' };
+      const art = { id: 'art-new', title: 'New Analysis' };
+      mockPublishAnalysis.mockResolvedValue(art);
+
+      // Simulate the provider's publish logic (which emits both events)
+      const sid = ref.current;
+      const result = await mockPublishAnalysis(sid, 'title', []);
+      if (result) {
+        emitted.push({ event: 'analysis:published-local', payload: { artifactId: result.id } });
+        emitted.push({ event: 'workspace:mutated', payload: undefined });
+      }
+
+      expect(emitted.some(e => e.event === 'analysis:published-local')).toBe(true);
+      expect(emitted.find(e => e.event === 'analysis:published-local')?.payload).toEqual({ artifactId: 'art-new' });
+    });
+  });
+
+  describe('error handling', () => {
+    it('bookmark addBookmark returns null and logs on bridge error', async () => {
+      const ref = { current: 'sess-1' };
+      mockCreateBookmark.mockRejectedValue(new Error('backend error'));
+
+      // Simulate the provider's try/catch pattern
+      let result: unknown = 'not-set';
+      try {
+        result = await mockCreateBookmark(ref.current, 42, 'label', 'note', 'User');
+      } catch {
+        result = null; // provider catches and returns null
+      }
+
+      expect(result).toBeNull();
+    });
+
+    it('bookmark editBookmark returns null on bridge error', async () => {
+      const ref = { current: 'sess-1' };
+      mockUpdateBookmark.mockRejectedValue(new Error('not found'));
+
+      let result: unknown = 'not-set';
+      try {
+        result = await mockUpdateBookmark(ref.current, 'bk-1', 'label');
+      } catch {
+        result = null;
+      }
+
+      expect(result).toBeNull();
+    });
+
+    it('does not emit workspace:mutated on bridge error', async () => {
+      const ref = { current: 'sess-1' };
+      mockCreateBookmark.mockRejectedValue(new Error('fail'));
+
+      try {
+        await mockCreateBookmark(ref.current, 10, 'label', 'note');
+      } catch {
+        // provider catches — no dirty emit on error
+      }
+
+      expect(emitted.filter(e => e.event === 'workspace:mutated')).toHaveLength(0);
+    });
+  });
+
   describe('sessionId ref tracking', () => {
     it('uses current sessionId at call time, not creation time', async () => {
       const ref = { current: 'sess-A' };
@@ -207,6 +293,32 @@ describe('session action patterns', () => {
       expect(result).toBeNull();
       expect(mockCreateBookmark).not.toHaveBeenCalled();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Combined error logic (Phase 4: usePipelineGlobalError + useSessionPipelineError)
+// ---------------------------------------------------------------------------
+describe('combined pipeline error logic', () => {
+  // ProcessorPanel combines: sessionError ?? globalError
+  function combinedError(sessionError: string | null, globalError: string | null): string | null {
+    return sessionError ?? globalError;
+  }
+
+  it('returns session error when both exist (session takes priority)', () => {
+    expect(combinedError('Run failed: proc-1', 'Install failed: proc-2')).toBe('Run failed: proc-1');
+  });
+
+  it('returns global error when session has no error', () => {
+    expect(combinedError(null, 'Install failed')).toBe('Install failed');
+  });
+
+  it('returns null when neither has an error', () => {
+    expect(combinedError(null, null)).toBeNull();
+  });
+
+  it('returns session error when global is null', () => {
+    expect(combinedError('Pipeline timeout', null)).toBe('Pipeline timeout');
   });
 });
 

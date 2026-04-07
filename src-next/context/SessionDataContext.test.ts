@@ -176,6 +176,37 @@ describe('indexing progress slice extraction', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Empty defaults for absent sessions
+// ---------------------------------------------------------------------------
+describe('empty defaults', () => {
+  it('pipeline slice is undefined for absent session (provider uses EMPTY_RESULTS)', () => {
+    const map = new Map<string, SessionPipelineState>();
+    expect(extractPipelineSlice(map, 'sess-absent')).toBeUndefined();
+  });
+
+  it('tracker slice is undefined for absent session (provider uses EMPTY_TRACKER_*)', () => {
+    expect(extractTrackerSlice({}, 'sess-absent')).toBeUndefined();
+  });
+
+  it('filter slice returns full empty FilterState for absent session', () => {
+    const result = extractFilterSlice(new Map(), 'sess-absent');
+    expect(result).toEqual({
+      streamFilter: '',
+      timeFilterStart: '',
+      timeFilterEnd: '',
+      filterScanning: false,
+      filteredLineNums: null,
+      filterParseError: null,
+      sectionFilteredLineNums: null,
+    });
+  });
+
+  it('indexing progress is null for absent session', () => {
+    expect(extractIndexingSlice(new Map(), 'sess-absent')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Cross-session isolation (the key property)
 // ---------------------------------------------------------------------------
 describe('cross-session isolation', () => {
@@ -202,6 +233,28 @@ describe('cross-session isolation', () => {
     const sliceA2 = extractFilterSlice(updatedMap, 'sess-A');
 
     // Session A's slice is the same object — React.useMemo would bail out
+    expect(sliceA1).toBe(sliceA2);
+  });
+
+  it('changing session B tracker data does not affect session A slice reference', () => {
+    const trackerA: TrackerSessionData = {
+      updateCounts: { t1: 5 },
+      allLineNums: new Set([10, 20, 30]),
+      byLine: new Map([[10, ['t1']]]),
+    };
+    const data: Record<string, TrackerSessionData> = {
+      'sess-A': trackerA,
+      'sess-B': { updateCounts: { t1: 1 }, allLineNums: new Set([50]), byLine: new Map() },
+    };
+
+    const sliceA1 = extractTrackerSlice(data, 'sess-A');
+
+    // Simulate session B getting new transitions
+    const updatedData = { ...data, 'sess-B': { updateCounts: { t1: 10 }, allLineNums: new Set([50, 60]), byLine: new Map() } };
+
+    const sliceA2 = extractTrackerSlice(updatedData, 'sess-A');
+
+    // Session A's slice is the same reference
     expect(sliceA1).toBe(sliceA2);
   });
 
