@@ -76,10 +76,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [listState]);
 
   // Update window title when active workspace changes
-  const activeWs = getActiveWorkspace(listState);
+  const activeWsForTitle = getActiveWorkspace(listState);
   useEffect(() => {
-    getCurrentWindow().setTitle(formatTitle(activeWs));
-  }, [activeWs?.name, activeWs?.dirty]);
+    getCurrentWindow().setTitle(formatTitle(activeWsForTitle));
+  }, [activeWsForTitle?.name, activeWsForTitle?.dirty]);
 
   // --- Helpers ---
 
@@ -173,20 +173,22 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return () => { bus.off('workspace:mutated', markDirty); };
   }, [markDirty]);
 
-  const value = useMemo<WorkspaceContextValue>(() => ({
-    workspaces: listState.workspaces,
-    activeId: listState.activeId,
-    activeWorkspace: activeWs,
-    addWorkspace,
-    addWorkspaceEntry,
-    setActiveId,
-    removeWorkspace,
-    markDirty,
-    markClean,
-    renameWorkspace,
-    setWorkspacePath,
-  }), [listState.workspaces, listState.activeId, activeWs,
-       addWorkspace, addWorkspaceEntry, setActiveId, removeWorkspace,
+  const value = useMemo<WorkspaceContextValue>(() => {
+    const active = getActiveWorkspace(listState);
+    return {
+      workspaces: listState.workspaces,
+      activeId: listState.activeId,
+      activeWorkspace: active,
+      addWorkspace,
+      addWorkspaceEntry,
+      setActiveId,
+      removeWorkspace,
+      markDirty,
+      markClean,
+      renameWorkspace,
+      setWorkspacePath,
+    };
+  }, [listState, addWorkspace, addWorkspaceEntry, setActiveId, removeWorkspace,
        markDirty, markClean, renameWorkspace, setWorkspacePath]);
 
   return (

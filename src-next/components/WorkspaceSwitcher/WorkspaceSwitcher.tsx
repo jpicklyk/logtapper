@@ -78,17 +78,11 @@ export const WorkspaceSwitcher = React.memo(function WorkspaceSwitcher() {
     setOpen(false);
   }, [switchWorkspace]);
 
-  const handleClose = useCallback((e: React.MouseEvent, id: string) => {
-    e.stopPropagation(); // don't trigger switch
-    // If closing the active workspace, the context will auto-select the next one
-    if (id === activeId) {
-      closeWorkspace();
-    } else {
-      // TODO: close non-active workspace — for now only close active is supported
-      // This would need saveWorkspace for that specific workspace first
-    }
+  const handleClose = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    closeWorkspace();
     if (workspaces.length <= 1) setOpen(false);
-  }, [activeId, closeWorkspace, workspaces.length]);
+  }, [closeWorkspace, workspaces.length]);
 
   const handleNew = useCallback(() => {
     newWorkspace();
@@ -172,13 +166,15 @@ export const WorkspaceSwitcher = React.memo(function WorkspaceSwitcher() {
                   >
                     <Pencil size={11} />
                   </button>
-                  <button
-                    className={styles.closeBtn}
-                    onClick={(e) => handleClose(e, ws.id)}
-                    title="Close workspace"
-                  >
-                    <X size={12} />
-                  </button>
+                  {ws.id === activeId && (
+                    <button
+                      className={styles.closeBtn}
+                      onClick={handleClose}
+                      title="Close workspace"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
                 </button>
               ))}
             </>

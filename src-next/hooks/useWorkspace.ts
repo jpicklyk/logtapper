@@ -99,13 +99,7 @@ export function useWorkspace(
       const savedPath = await autoSaveWorkspace({
         workspaceId: active.id,
         workspaceName: active.name,
-        editorTabs: editorTabs.map(t => ({
-          label: t.label,
-          content: t.content,
-          viewMode: t.viewMode,
-          wordWrap: t.wordWrap,
-          filePath: t.filePath,
-        })),
+        editorTabs,
         layout,
         pipelineChain: [], // TODO: read from PipelineContext
         disabledChainIds: [], // TODO: read from PipelineContext
@@ -218,7 +212,7 @@ export function useWorkspace(
         break;
       }
     }
-  }, [doClearPanes, doLoadWorkspace, doSave, persistAppState]);
+  }, [doClearPanes, doAutoSave, doLoadWorkspace, persistAppState]);
 
   const handleSavePromptResult = useCallback(async (choice: SavePromptChoice) => {
     setShowSavePrompt(false);

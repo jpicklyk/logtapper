@@ -138,41 +138,32 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
   // For dashboard tabs, fall back to focused session (dashboard shows the focused session's results).
   const sessionId = session?.sessionId ?? focusedSession?.sessionId ?? null;
 
-  if (!activeTab) {
-    return (
-      <SessionProviders sessionId={sessionId}>
+  const renderContent = () => {
+    if (!activeTab) {
+      return (
         <div onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus} className="fullHeight">
           <EmptyStatePane />
         </div>
-        {bookmarkDialog}
-      </SessionProviders>
-    );
-  }
+      );
+    }
 
-  switch (activeTab.type) {
-    case 'logviewer':
-      if (!session && !isLoading) {
-        return (
-          <SessionProviders sessionId={sessionId}>
+    switch (activeTab.type) {
+      case 'logviewer':
+        if (!session && !isLoading) {
+          return (
             <div onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus} className="fullHeight">
               <EmptyStatePane />
             </div>
-            {bookmarkDialog}
-          </SessionProviders>
-        );
-      }
-      if (!session && isLoading) {
-        return (
-          <SessionProviders sessionId={sessionId}>
+          );
+        }
+        if (!session && isLoading) {
+          return (
             <div onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus} className="fullHeight">
               <EmptyStatePane loading />
             </div>
-            {bookmarkDialog}
-          </SessionProviders>
-        );
-      }
-      return (
-        <SessionProviders sessionId={sessionId}>
+          );
+        }
+        return (
           <div className={styles.logviewerPane} onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus}>
             {session && (
               <StreamFilterBar
@@ -196,47 +187,29 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
               lineNumbers={effectiveLineNums ?? undefined}
             />
           </div>
-          {bookmarkDialog}
-        </SessionProviders>
-      );
+        );
 
-    case 'dashboard':
-      // Dashboard displays results for the focused session — clicking it should
-      // NOT move the focus marker away from the logviewer tab that owns the session.
-      return (
-        <SessionProviders sessionId={sessionId}>
-          {focusedSession ? (
-            <>
-              <div className="fullHeight">
-                <ProcessorDashboard />
-              </div>
-              {bookmarkDialog}
-            </>
-          ) : (
-            <>
-              <div className={styles.placeholder}>
-                Open a log file to see the dashboard.
-              </div>
-              {bookmarkDialog}
-            </>
-          )}
-        </SessionProviders>
-      );
+      case 'dashboard':
+        return focusedSession ? (
+          <div className="fullHeight">
+            <ProcessorDashboard />
+          </div>
+        ) : (
+          <div className={styles.placeholder}>
+            Open a log file to see the dashboard.
+          </div>
+        );
 
-    case 'analysis':
-      return (
-        <SessionProviders sessionId={sessionId}>
+      case 'analysis':
+        return (
           <div className="fullHeight">
             <AnalysisReader />
           </div>
-          {bookmarkDialog}
-        </SessionProviders>
-      );
+        );
 
-    case 'editor':
-      return (
-        <SessionProviders sessionId={sessionId}>
-          {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
+      case 'editor':
+        return (
+          // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
           <div onClick={handleActivePaneFocus} onFocus={handleActivePaneFocus} className="fullHeight">
             <EditorTab
               tabId={activeTab.id}
@@ -246,13 +219,19 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
               onFilePathChanged={onFilePathChanged}
             />
           </div>
-          {bookmarkDialog}
-        </SessionProviders>
-      );
+        );
 
-    default:
-      return bookmarkDialog;
-  }
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <SessionProviders sessionId={sessionId}>
+      {renderContent()}
+      {bookmarkDialog}
+    </SessionProviders>
+  );
 });
 
 export default PaneContent;

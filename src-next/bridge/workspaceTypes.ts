@@ -38,10 +38,6 @@ export function createEmptyWorkspace(): WorkspaceIdentity {
   return { id: crypto.randomUUID(), name: 'Untitled', filePath: null, dirty: false };
 }
 
-export function createEmptyIdentity(): WorkspaceIdentity {
-  return createEmptyWorkspace();
-}
-
 export function createEmptyListState(): WorkspaceListState {
   return { workspaces: [], activeId: null };
 }
