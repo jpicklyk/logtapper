@@ -88,20 +88,20 @@ const BookmarkCreateDialog = React.memo(function BookmarkCreateDialog({
         let snippet: string[] | undefined;
         const { sessionId, lineNumber, lineNumberEnd } = request;
 
-        if (lineNumberEnd != null && lineNumberEnd > lineNumber) {
-          try {
-            const count = lineNumberEnd - lineNumber + 1;
-            const result = await getLines({
-              sessionId,
-              mode: { mode: 'Full' },
-              offset: lineNumber,
-              count,
-              context: 0,
-            });
-            snippet = result.lines.map((l) => l.raw);
-          } catch {
-            // proceed without snippet
-          }
+        try {
+          const count = lineNumberEnd != null && lineNumberEnd > lineNumber
+            ? lineNumberEnd - lineNumber + 1
+            : 1;
+          const result = await getLines({
+            sessionId,
+            mode: { mode: 'Full' },
+            offset: lineNumber,
+            count,
+            context: 0,
+          });
+          snippet = result.lines.map((l) => l.raw);
+        } catch {
+          // proceed without snippet
         }
 
         await addBookmark(
