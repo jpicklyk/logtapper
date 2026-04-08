@@ -13,7 +13,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import type { SplitNode, Tab } from './workspaceTypes';
-import { findLeafByPaneId, updateLeaf } from './splitTreeHelpers';
+import { findLeafByPaneId, updateLeaf, defaultTree, firstLeaf } from './splitTreeHelpers';
 import {
   applySessionLoading,
   applySessionLoaded,
@@ -172,6 +172,69 @@ function createTabSessionLifecycle(initialTree: SplitNode) {
     return sessionId;
   }
 
+  /** Replace the tree with a fresh defaultTree and clear all maps. */
+  function resetTree(): void {
+    tree = defaultTree();
+    tabSessionMap.clear();
+    paneSessionMap.clear();
+    focusedLogviewerTabId = null;
+  }
+
+  /**
+   * Simulate file-open with remap-awareness: if the paneId is stale (not in tree),
+   * the production fix detects the remap via layout:pane-session-remap and calls
+   * onSessionFocused with the actual pane id instead of the stale one.
+   */
+  function loadFileWithRemapAwareness(opts: {
+    paneId: string;
+    tabId: string;
+    sessionId: string;
+    sourceName: string;
+    sourceType?: string;
+    isNewTab: boolean;
+    previousSessionId?: string;
+    readOnly?: boolean;
+  }): SessionLoadedResult {
+    // Steps 1-3: identical to loadFile
+    onSessionLoading({
+      paneId: opts.paneId,
+      tabId: opts.tabId,
+      label: opts.sourceName,
+      isNewTab: opts.isNewTab,
+    });
+
+    if (!opts.isNewTab) {
+      paneSessionMap.set(opts.paneId, opts.sessionId);
+    }
+
+    const result = onSessionLoaded({
+      sourceName: opts.sourceName,
+      paneId: opts.paneId,
+      sourceType: opts.sourceType ?? 'Logcat',
+      sessionId: opts.sessionId,
+      tabId: opts.tabId,
+      isNewTab: opts.isNewTab,
+      previousSessionId: opts.previousSessionId,
+      readOnly: opts.readOnly,
+    });
+
+    if (result.emitTabActivated) {
+      paneSessionMap.set(result.emitTabActivated.paneId, result.emitTabActivated.sessionId);
+    }
+    if (result.emitPaneRemap) {
+      paneSessionMap.set(result.emitPaneRemap.actualPaneId, result.emitPaneRemap.sessionId);
+    }
+
+    // Step 4: remap-aware focus — use actualPaneId when remap detected
+    if (result.emitPaneRemap) {
+      onSessionFocused(result.emitPaneRemap.actualPaneId);
+    } else {
+      onSessionFocused(opts.paneId);
+    }
+
+    return result;
+  }
+
   return {
     get tree() { return tree; },
     get focusedLogviewerTabId() { return focusedLogviewerTabId; },
@@ -183,6 +246,8 @@ function createTabSessionLifecycle(initialTree: SplitNode) {
     onSessionFocused,
     onSessionLoading,
     onSessionLoaded,
+    resetTree,
+    loadFileWithRemapAwareness,
   };
 }
 
@@ -500,6 +565,113 @@ describe('focus marker (focusedLogviewerTabId)', () => {
       lc.onSessionFocused(PANE);
       expect(lc.focusedLogviewerTabId).toBe('tab-stream');
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Workspace reset + remap detection tests
+// ---------------------------------------------------------------------------
+
+describe('workspace reset + remap detection', () => {
+  it('loadFile after tree reset: stale paneId triggers remap', () => {
+    // Start with a known pane, load a file, then reset tree (new pane ID).
+    // loadFile with old pane => emitPaneRemap is non-null, session lands in new pane.
+    const PANE = 'pane-1';
+    const tree = makeTree(PANE, [makeLogviewerTab('default-tab')]);
+    const lc = createTabSessionLifecycle(tree);
+
+    lc.loadFile({ paneId: PANE, tabId: 'tab-A', sessionId: 'sess-A', sourceName: 'file.txt', isNewTab: false });
+    const oldPaneId = PANE;
+
+    lc.resetTree();
+    const newPaneId = firstLeaf(lc.tree).pane.id;
+    expect(newPaneId).not.toBe(oldPaneId);
+
+    const result = lc.loadFileWithRemapAwareness({
+      paneId: oldPaneId, // stale!
+      tabId: 'tab-B', sessionId: 'sess-B', sourceName: 'file2.txt', isNewTab: false,
+    });
+
+    expect(result.emitPaneRemap).not.toBeNull();
+    expect(result.emitPaneRemap!.actualPaneId).toBe(newPaneId);
+    expect(lc.tabSessionMap.get('tab-B')).toBe('sess-B');
+  });
+
+  it('loadFile after tree reset: focus marker uses remapped pane', () => {
+    const PANE = 'pane-1';
+    const tree = makeTree(PANE, [makeLogviewerTab('default-tab')]);
+    const lc = createTabSessionLifecycle(tree);
+
+    lc.loadFile({ paneId: PANE, tabId: 'tab-A', sessionId: 'sess-A', sourceName: 'f.txt', isNewTab: false });
+    lc.resetTree();
+
+    lc.loadFileWithRemapAwareness({
+      paneId: PANE, tabId: 'tab-B', sessionId: 'sess-B', sourceName: 'f2.txt', isNewTab: false,
+    });
+
+    // Focus marker should point to the new tab in the remapped pane, not null
+    expect(lc.focusedLogviewerTabId).toBe('tab-B');
+  });
+
+  it('loadFile after tree reset: stale paneId focus resolves to null', () => {
+    const PANE = 'pane-1';
+    const tree = makeTree(PANE, [makeLogviewerTab('default-tab')]);
+    const lc = createTabSessionLifecycle(tree);
+
+    lc.loadFile({ paneId: PANE, tabId: 'tab-A', sessionId: 'sess-A', sourceName: 'f.txt', isNewTab: false });
+    lc.resetTree();
+
+    // Load into new tree — the old pane no longer exists
+    lc.loadFileWithRemapAwareness({
+      paneId: PANE, tabId: 'tab-B', sessionId: 'sess-B', sourceName: 'f2.txt', isNewTab: false,
+    });
+
+    // Defense-in-depth: resolveFocusedTab with the stale pane => null
+    expect(resolveFocusedTab(lc.tree, PANE)).toBeNull();
+  });
+
+  it('loadFile with valid paneId: no remap, normal focus', () => {
+    const PANE = 'pane-1';
+    const tree = makeTree(PANE, [makeLogviewerTab('default-tab')]);
+    const lc = createTabSessionLifecycle(tree);
+
+    const result = lc.loadFileWithRemapAwareness({
+      paneId: PANE, tabId: 'tab-A', sessionId: 'sess-A', sourceName: 'f.txt', isNewTab: false,
+    });
+
+    expect(result.emitPaneRemap).toBeNull();
+    expect(lc.focusedLogviewerTabId).toBe('tab-A');
+  });
+
+  it('sequential loads after reset: first remaps, second reuses correct pane', () => {
+    const PANE = 'pane-1';
+    const tree = makeTree(PANE, [makeLogviewerTab('default-tab')]);
+    const lc = createTabSessionLifecycle(tree);
+
+    lc.loadFile({ paneId: PANE, tabId: 'tab-A', sessionId: 'sess-A', sourceName: 'f.txt', isNewTab: false });
+    lc.resetTree();
+    const newPaneId = firstLeaf(lc.tree).pane.id;
+
+    // First load: remaps stale PANE to newPaneId
+    const r1 = lc.loadFileWithRemapAwareness({
+      paneId: PANE, tabId: 'tab-B', sessionId: 'sess-B', sourceName: 'f2.txt', isNewTab: false,
+    });
+    expect(r1.emitPaneRemap).not.toBeNull();
+
+    // Second load: uses newPaneId directly (no remap needed)
+    const r2 = lc.loadFileWithRemapAwareness({
+      paneId: newPaneId, tabId: 'tab-C', sessionId: 'sess-C', sourceName: 'f3.txt',
+      isNewTab: true, previousSessionId: 'sess-B',
+    });
+    expect(r2.emitPaneRemap).toBeNull();
+    expect(lc.focusedLogviewerTabId).toBe('tab-C');
+  });
+
+  it('focus marker null for non-existent pane', () => {
+    const tree = makeTree('pane-1', [makeLogviewerTab('tab-1')]);
+    const lc = createTabSessionLifecycle(tree);
+    lc.onSessionFocused('bogus-pane-id');
+    expect(lc.focusedLogviewerTabId).toBeNull();
   });
 });
 
