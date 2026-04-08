@@ -1,4 +1,5 @@
 import type { LtsEditorTabPayload, LtwEditorTab } from '../../bridge/types';
+import { autoSaveWorkspace, saveWorkspaceV4 } from '../../bridge/commands';
 import type { BottomTabType, EditorTabState, LeftPaneTab, RightPaneTab, SplitNode } from './workspaceTypes';
 import { storageGet } from '../../utils';
 import { LS_CONTENT_PREFIX, LS_MODE_PREFIX, LS_WRAP_PREFIX, LS_FILEPATH_PREFIX } from '../../components/EditorTab';
@@ -181,6 +182,62 @@ export function collectEditorTabs(): LtsEditorTabPayload[] {
     }
   }
   return tabs;
+}
+
+/**
+ * Collect editor tabs already shaped as LtwEditorTab[] for save payloads.
+ * Wraps collectEditorTabs with the field projection.
+ */
+export function collectEditorTabsForSave(): LtwEditorTab[] {
+  return collectEditorTabs().map(t => ({
+    label: t.label,
+    content: t.content,
+    viewMode: t.viewMode,
+    wordWrap: t.wordWrap,
+    filePath: t.filePath,
+  }));
+}
+
+/**
+ * Route a save payload to the correct backend command.
+ * - Known .ltw path → saveWorkspaceV4 (explicit save path)
+ * - No path → autoSaveWorkspace (app_data_dir, returns saved path)
+ *
+ * Returns the saved path if autoSaveWorkspace was used, null otherwise.
+ */
+export async function performAutoSave(payload: {
+  workspaceName: string;
+  filePath: string | null;
+  editorTabs: LtwEditorTab[];
+  layout: unknown | null;
+  pipelineChain: string[];
+  disabledChainIds: string[];
+}): Promise<string | null> {
+  const { workspaceName, filePath, editorTabs, layout, pipelineChain, disabledChainIds } = payload;
+  if (filePath) {
+    await saveWorkspaceV4({ destPath: filePath, workspaceName, editorTabs, layout, pipelineChain, disabledChainIds });
+    return null;
+  }
+  return autoSaveWorkspace({ workspaceName, editorTabs, layout, pipelineChain, disabledChainIds });
+}
+
+/**
+ * Build an AppStateFile payload from workspace context state.
+ * Shared between persistAppState and useAppExitSave.
+ */
+export function buildAppStatePayload(
+  workspaces: ReadonlyArray<{ id: string; name: string; filePath: string | null; dirty: boolean }>,
+  activeId: string | null,
+): import('../../bridge/types').AppStateFile {
+  return {
+    workspaces: workspaces.map(w => ({
+      id: w.id,
+      name: w.name,
+      ltwPath: w.filePath,
+      dirty: w.dirty,
+    })),
+    activeWorkspaceId: activeId,
+  };
 }
 
 /**

@@ -48,23 +48,24 @@ fn collect_session_data(state: &AppState) -> Result<Vec<SessionEntry>, String> {
             .collect()
     };
 
-    // Snapshot all maps once (not per-session) to minimize lock acquisitions
-    let all_bookmarks = lock_or_err(&state.bookmarks, "bookmarks")?.clone();
-    let all_analyses = lock_or_err(&state.analyses, "analyses")?.clone();
-    let all_meta = lock_or_err(&state.session_pipeline_meta, "session_pipeline_meta")?.clone();
-
+    // Extract only the entries for sessions we're saving (not the entire map).
     let mut entries = Vec::with_capacity(session_info.len());
-    for (session_id, file_path, source_name, source_type) in session_info {
-        entries.push((
-            LtwManifestSession {
-                file_path,
-                source_name,
-                source_type,
-            },
-            all_bookmarks.get(&session_id).cloned().unwrap_or_default(),
-            all_analyses.get(&session_id).cloned().unwrap_or_default(),
-            all_meta.get(&session_id).cloned().unwrap_or_default(),
-        ));
+    {
+        let bm_guard = lock_or_err(&state.bookmarks, "bookmarks")?;
+        let an_guard = lock_or_err(&state.analyses, "analyses")?;
+        let meta_guard = lock_or_err(&state.session_pipeline_meta, "session_pipeline_meta")?;
+        for (session_id, file_path, source_name, source_type) in session_info {
+            entries.push((
+                LtwManifestSession {
+                    file_path,
+                    source_name,
+                    source_type,
+                },
+                bm_guard.get(&session_id).cloned().unwrap_or_default(),
+                an_guard.get(&session_id).cloned().unwrap_or_default(),
+                meta_guard.get(&session_id).cloned().unwrap_or_default(),
+            ));
+        }
     }
     Ok(entries)
 }

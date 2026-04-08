@@ -1,12 +1,12 @@
 import { useState, useCallback, useRef } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { useWorkspaceContext } from '../context/WorkspaceContext';
-import { saveWorkspaceV4, autoSaveWorkspace, loadWorkspaceV4, saveAppState, restoreWorkspaceSession } from '../bridge/commands';
-import type { LoadWorkspaceSessionData } from '../bridge/types';
+import { saveWorkspaceV4, loadWorkspaceV4, saveAppState, restoreWorkspaceSession } from '../bridge/commands';
 import type { WorkspaceIdentity } from '../bridge/workspaceTypes';
+
 import { bus } from '../events/bus';
 import { basename, dirname, storageGetJSON } from '../utils';
-import { collectEditorTabs, buildEditorTabEvents } from './workspace/workspacePersistence';
+import { collectEditorTabsForSave, buildEditorTabEvents, performAutoSave, buildAppStatePayload } from './workspace/workspacePersistence';
 import { STORAGE_KEY } from './workspace/workspaceTypes';
 
 /** Derive a workspace display name from a file path. */
@@ -77,14 +77,10 @@ export function useWorkspace(
 
   /** Build the save payload from current state. */
   const buildSavePayload = useCallback((destPath: string, name: string) => {
-    const editorTabs = collectEditorTabs();
     return {
       destPath,
       workspaceName: name,
-      editorTabs: editorTabs.map(t => ({
-        label: t.label, content: t.content, viewMode: t.viewMode,
-        wordWrap: t.wordWrap, filePath: t.filePath,
-      })),
+      editorTabs: collectEditorTabsForSave(),
       layout: getLayoutState(),
       pipelineChain: getPipelineChain?.() ?? [],
       disabledChainIds: getDisabledChainIds?.() ?? [],
@@ -100,25 +96,19 @@ export function useWorkspace(
     ctx.markClean(activeWs.name, destPath);
   }, [buildSavePayload]);
 
-  /** Auto-save the active workspace to app_data_dir for workspace switching. */
+  /** Auto-save the active workspace (for workspace switching). Not a user save — no markClean. */
   const doAutoSave = useCallback(async () => {
     const ctx = wsCtxRef.current;
     const active = ctx.activeWorkspace;
     if (!active) return;
 
-    // Save to existing path without markClean — auto-save is not a user save.
-    if (active.filePath) {
-      await saveWorkspaceV4(buildSavePayload(active.filePath, active.name));
-      return;
-    }
-
     const { workspaceName, editorTabs, layout, pipelineChain, disabledChainIds } =
       buildSavePayload('', active.name);
     try {
-      const savedPath = await autoSaveWorkspace({
-        workspaceName, editorTabs, layout, pipelineChain, disabledChainIds,
+      const savedPath = await performAutoSave({
+        workspaceName, filePath: active.filePath, editorTabs, layout, pipelineChain, disabledChainIds,
       });
-      ctx.setWorkspacePath(active.id, savedPath);
+      if (savedPath) ctx.setWorkspacePath(active.id, savedPath);
     } catch (e) {
       console.warn('[useWorkspace] Auto-save failed:', e);
     }
@@ -157,25 +147,15 @@ export function useWorkspace(
 
     // Restore per-session artifacts (bookmarks, analyses, pipeline meta).
     // Match by index: loadedSessionIds[i] corresponds to result.sessionData[i].
-    const restoreArtifacts = async (sessionId: string, data: LoadWorkspaceSessionData) => {
-      try {
-        await restoreWorkspaceSession({
-          sessionId,
-          bookmarks: data.bookmarks,
-          analyses: data.analyses,
-          activeProcessorIds: data.activeProcessorIds,
-          disabledProcessorIds: data.disabledProcessorIds,
-        });
-      } catch (e) {
-        console.warn(`[useWorkspace] Failed to restore artifacts for session ${sessionId}:`, e);
-      }
-    };
-    for (let i = 0; i < loadedSessionIds.length; i++) {
-      const data = result.sessionData[i];
-      if (data) {
-        await restoreArtifacts(loadedSessionIds[i], data);
-      }
-    }
+    // Restores are independent — run in parallel.
+    await Promise.all(
+      loadedSessionIds.map((sessionId, i) => {
+        const data = result.sessionData[i];
+        if (!data) return Promise.resolve();
+        return restoreWorkspaceSession({ sessionId, ...data })
+          .catch(e => console.warn(`[useWorkspace] Failed to restore artifacts for session ${sessionId}:`, e));
+      }),
+    );
 
     // Restore editor tabs from workspace
     for (const event of buildEditorTabEvents(result.editorTabs)) {
@@ -196,15 +176,8 @@ export function useWorkspace(
   /** Persist the workspace list to backend app-state.json. */
   const persistAppState = useCallback(async () => {
     const ctx = wsCtxRef.current;
-    await saveAppState({
-      workspaces: ctx.workspaces.map(w => ({
-        id: w.id,
-        name: w.name,
-        ltwPath: w.filePath,
-        dirty: w.dirty,
-      })),
-      activeWorkspaceId: ctx.activeId,
-    }).catch(e => console.warn('[useWorkspace] Failed to persist app state:', e));
+    await saveAppState(buildAppStatePayload(ctx.workspaces, ctx.activeId))
+      .catch(e => console.warn('[useWorkspace] Failed to persist app state:', e));
   }, []);
 
   // --- Prompt flow ---
