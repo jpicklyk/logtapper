@@ -12,9 +12,9 @@ import type { AutoSavePayload } from './useWorkspaceAutoSave';
  * Uses the StrictMode-safe async listener pattern from CLAUDE.md:
  * cancelled flag + conditional unlisten handles double-mount in dev mode.
  *
- * Routing:
- * - If the active workspace has a known .ltw path, saves there via saveWorkspaceV4.
- * - Otherwise saves to app_data_dir via autoSaveWorkspace.
+ * A `closingRef` guard prevents re-entrance — `destroy()` is used after
+ * save to bypass the close-requested event entirely (requires the
+ * `core:window:allow-destroy` capability).
  *
  * @param buildAutoSavePayload - Returns the auto-save payload, or null if
  *   there is no active workspace to save.
@@ -29,13 +29,15 @@ export function useAppExitSave(
   buildPayloadRef.current = buildAutoSavePayload;
   const getAppStateRef = useRef(getAppStatePayload);
   getAppStateRef.current = getAppStatePayload;
+  const closingRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     let unlisten: UnlistenFn | null = null;
 
     getCurrentWindow().onCloseRequested(async (event) => {
-      if (cancelled) return;
+      if (cancelled || closingRef.current) return;
+      closingRef.current = true;
       event.preventDefault();
 
       try {
@@ -56,8 +58,8 @@ export function useAppExitSave(
         console.warn('[useAppExitSave] Save failed on exit:', e);
       }
 
-      // Close even if save failed — never block the user from closing
-      await getCurrentWindow().close();
+      // destroy() bypasses onCloseRequested — no re-entrance
+      await getCurrentWindow().destroy();
     }).then((fn) => {
       if (cancelled) fn(); // cleanup already ran → immediately unregister
       else unlisten = fn;
