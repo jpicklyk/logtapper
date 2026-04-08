@@ -1,12 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import type { Bookmark, CreatedBy } from '../bridge/types';
-import {
-  createBookmark,
-  listBookmarks,
-  updateBookmark,
-  deleteBookmark,
-} from '../bridge/commands';
+import type { Bookmark } from '../bridge/types';
+import { listBookmarks } from '../bridge/commands';
 import { onBookmarkUpdate } from '../bridge/events';
 
 export interface BookmarkState {
@@ -86,61 +81,9 @@ export function useBookmarks(sessionId: string | null) {
     };
   }, []);
 
-  const addBookmark = useCallback(
-    async (
-      lineNumber: number,
-      label: string,
-      note: string,
-      createdBy: CreatedBy = 'User',
-      lineNumberEnd?: number,
-      snippet?: string[],
-      category?: string,
-      tags?: string[],
-    ): Promise<Bookmark | null> => {
-      if (!sessionId) return null;
-      try {
-        return await createBookmark(sessionId, lineNumber, label, note, createdBy, lineNumberEnd, snippet, category, tags);
-      } catch (e) {
-        console.error('[useBookmarks] addBookmark error:', e);
-        return null;
-      }
-    },
-    [sessionId],
-  );
-
-  const editBookmark = useCallback(
-    async (
-      bookmarkId: string,
-      label?: string,
-      note?: string,
-      category?: string,
-      tags?: string[],
-    ): Promise<Bookmark | null> => {
-      if (!sessionId) return null;
-      try {
-        return await updateBookmark(sessionId, bookmarkId, label, note, category, tags);
-      } catch (e) {
-        console.error('[useBookmarks] editBookmark error:', e);
-        return null;
-      }
-    },
-    [sessionId],
-  );
-
-  const removeBookmark = useCallback(
-    async (bookmarkId: string) => {
-      if (!sessionId) return;
-      await deleteBookmark(sessionId, bookmarkId);
-    },
-    [sessionId],
-  );
-
   return {
     bookmarks: state.bookmarks,
     bookmarksLoading: state.loading,
-    addBookmark,
-    editBookmark,
-    removeBookmark,
   };
 }
 

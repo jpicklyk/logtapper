@@ -1,15 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import type { AnalysisArtifact, AnalysisSection } from '../bridge/types';
-import {
-  publishAnalysis,
-  updateAnalysis,
-  listAnalyses,
-  getAnalysis,
-  deleteAnalysis,
-} from '../bridge/commands';
+import type { AnalysisArtifact } from '../bridge/types';
+import { listAnalyses, getAnalysis } from '../bridge/commands';
 import { onAnalysisUpdate } from '../bridge/events';
-import { bus } from '../events/bus';
 
 export interface AnalysisState {
   artifacts: AnalysisArtifact[];
@@ -93,41 +86,8 @@ export function useAnalysis(sessionId: string | null) {
     };
   }, []);
 
-  const publish = useCallback(
-    async (title: string, sections: AnalysisSection[]) => {
-      if (!sessionId) return null;
-      const art = await publishAnalysis(sessionId, title, sections);
-      // Notify toast hook so it can suppress the toast for this local publish
-      if (art) {
-        bus.emit('analysis:published-local', { artifactId: art.id });
-      }
-      return art;
-    },
-    [sessionId],
-  );
-
-  const update = useCallback(
-    async (artifactId: string, title?: string, sections?: AnalysisSection[]) => {
-      if (!sessionId) return null;
-      const art = await updateAnalysis(sessionId, artifactId, title, sections);
-      return art;
-    },
-    [sessionId],
-  );
-
-  const remove = useCallback(
-    async (artifactId: string) => {
-      if (!sessionId) return;
-      await deleteAnalysis(sessionId, artifactId);
-    },
-    [sessionId],
-  );
-
   return {
     artifacts: state.artifacts,
     analysisLoading: state.loading,
-    publishAnalysis: publish,
-    updateAnalysis: update,
-    deleteAnalysis: remove,
   };
 }
