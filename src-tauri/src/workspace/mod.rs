@@ -137,6 +137,64 @@ pub fn load_workspace(zip_path: &Path) -> Result<WorkspaceData, String> {
     })
 }
 
+/// Sanitize a workspace name for use as a filesystem-safe `.ltw` filename.
+///
+/// Rules:
+/// - Replace characters not in `[a-zA-Z0-9_. -]` with `-`
+/// - Collapse consecutive `-` into one
+/// - Trim leading/trailing `-` and whitespace
+/// - Limit to 64 characters
+/// - Empty result falls back to `"Untitled"`
+pub fn sanitize_workspace_name(name: &str) -> String {
+    // Replace disallowed characters with '-'
+    let replaced: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == ' ' || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+
+    // Collapse consecutive '-' into one
+    let mut collapsed = String::with_capacity(replaced.len());
+    let mut last_was_dash = false;
+    for c in replaced.chars() {
+        if c == '-' {
+            if !last_was_dash {
+                collapsed.push(c);
+            }
+            last_was_dash = true;
+        } else {
+            collapsed.push(c);
+            last_was_dash = false;
+        }
+    }
+
+    // Trim leading/trailing '-' and whitespace
+    let trimmed = collapsed.trim_matches(|c| c == '-' || c == ' ');
+
+    // Limit to 64 characters (on char boundary)
+    let limited = if trimmed.len() <= 64 {
+        trimmed.to_string()
+    } else {
+        // Truncate at char boundary
+        trimmed
+            .char_indices()
+            .take_while(|(i, _)| *i < 64)
+            .map(|(_, c)| c)
+            .collect::<String>()
+    };
+
+    if limited.is_empty() {
+        "Untitled".to_string()
+    } else {
+        limited
+    }
+}
+
 /// Derive a stable `.ltw` filename from a source file path.
 ///
 /// Takes the SHA-256 of the UTF-8 bytes of `file_path` and returns the first
@@ -285,6 +343,67 @@ mod tests {
         assert!(loaded.analyses.is_empty());
         assert!(loaded.session_meta.active_processor_ids.is_empty());
     }
+
+    // ─── sanitize_workspace_name tests ───────────────────────────────────────
+
+    #[test]
+    fn sanitize_normal_name() {
+        assert_eq!(sanitize_workspace_name("My Workspace"), "My Workspace");
+    }
+
+    #[test]
+    fn sanitize_special_chars() {
+        assert_eq!(sanitize_workspace_name("debug/crash:2024"), "debug-crash-2024");
+    }
+
+    #[test]
+    fn sanitize_unicode_falls_back() {
+        // Unicode chars are replaced with '-', then collapsed/trimmed
+        let result = sanitize_workspace_name("日本語テスト");
+        // All non-ASCII chars become '-', consecutive collapse, then trimmed → "Untitled"
+        assert_eq!(result, "Untitled");
+    }
+
+    #[test]
+    fn sanitize_empty_string() {
+        assert_eq!(sanitize_workspace_name(""), "Untitled");
+    }
+
+    #[test]
+    fn sanitize_whitespace_only() {
+        assert_eq!(sanitize_workspace_name("   "), "Untitled");
+    }
+
+    #[test]
+    fn sanitize_long_name_truncated_to_64() {
+        let long_name = "a".repeat(100);
+        let result = sanitize_workspace_name(&long_name);
+        assert_eq!(result.len(), 64);
+        assert!(result.chars().all(|c| c == 'a'));
+    }
+
+    #[test]
+    fn sanitize_leading_trailing_dashes() {
+        assert_eq!(sanitize_workspace_name("---name---"), "name");
+    }
+
+    #[test]
+    fn sanitize_consecutive_special_chars() {
+        assert_eq!(sanitize_workspace_name("a///b"), "a-b");
+    }
+
+    #[test]
+    fn sanitize_allowed_chars_preserved() {
+        assert_eq!(sanitize_workspace_name("My_Log.2024 Analysis"), "My_Log.2024 Analysis");
+    }
+
+    #[test]
+    fn sanitize_mixed_unicode_and_ascii() {
+        // "hello日本world" → "hello-world" (unicode collapsed to single dash)
+        assert_eq!(sanitize_workspace_name("hello日本world"), "hello-world");
+    }
+
+    // ─── path_to_workspace_name tests ────────────────────────────────────────
 
     /// `path_to_workspace_name` must return a consistent value for the same input.
     #[test]

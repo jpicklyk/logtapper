@@ -19,6 +19,8 @@ import { useLogViewer } from '../hooks/useLogViewer';
 import { useSettings } from '../hooks/useSettings';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { useWorkspaceAutoSave } from '../hooks/useWorkspaceAutoSave';
+import { useAppExitSave } from '../hooks/useAppExitSave';
+import type { AppStateFile } from '../bridge/types';
 import { collectEditorTabs } from '../hooks/workspace/workspacePersistence';
 import { STORAGE_KEY } from '../hooks/workspace/workspaceTypes';
 import { storageGetJSON } from '../utils';
@@ -41,11 +43,18 @@ function HookWiring({ children }: { children: ReactNode }) {
   settingsRef.current = settings;
 
   const pipelineCtx = usePipelineContext();
-  const { activeProcessorIds, dispatch: pipelineDispatch } = pipelineCtx;
+  const { activeProcessorIds, pipelineChain, disabledChainIds, dispatch: pipelineDispatch } = pipelineCtx;
   const activeProcessorIdsRef = useRef(activeProcessorIds);
   activeProcessorIdsRef.current = activeProcessorIds;
+  const pipelineChainRef = useRef(pipelineChain);
+  pipelineChainRef.current = pipelineChain;
+  const disabledChainIdsRef = useRef(disabledChainIds);
+  disabledChainIdsRef.current = disabledChainIds;
 
-  // Pipeline chain mutations — thin wrappers around dispatch, stable via useCallback.
+  const getPipelineChain = useCallback(() => pipelineChainRef.current, []);
+  const getDisabledChainIds = useCallback(() => disabledChainIdsRef.current, []);
+
+  // Pipeline chain mutations â thin wrappers around dispatch, stable via useCallback.
   const addToChain = useCallback((id: string) => {
     pipelineDispatch({ type: 'chain:add', id });
   }, [pipelineDispatch]);
@@ -89,7 +98,7 @@ function HookWiring({ children }: { children: ReactNode }) {
   const paneSessionMapRef = useRef(paneSessionMap);
   paneSessionMapRef.current = paneSessionMap;
 
-  // Refs for save callbacks — reads from narrow contexts without subscribing to progress.
+  // Refs for save callbacks â reads from narrow contexts without subscribing to progress.
   const sessionCoreRef = useRef(sessionCore);
   sessionCoreRef.current = sessionCore;
   const sessionPaneRef = useRef(sessionPane);
@@ -126,7 +135,7 @@ function HookWiring({ children }: { children: ReactNode }) {
 
   // All focus changes go through the bus so SessionContext and WorkspaceLayout
   // both update from a single emission point.
-  // Empty dep array — reads paneSessionMap via ref so the callback never needs
+  // Empty dep array â reads paneSessionMap via ref so the callback never needs
   // to be recreated, keeping ActionsContext stable across session changes.
   const setActiveLogPane = useCallback((paneId: string) => {
     const sessionId = paneSessionMapRef.current.get(paneId) ?? null;
@@ -179,10 +188,10 @@ function HookWiring({ children }: { children: ReactNode }) {
     return session?.filePath ? dirname(session.filePath) : undefined;
   }, []);
 
-  const workspace = useWorkspace(closeAllSessions, logViewer.loadFile, getDefaultDir);
+  const workspace = useWorkspace(closeAllSessions, logViewer.loadFile, getDefaultDir, getPipelineChain, getDisabledChainIds);
   const { markDirty } = useWorkspaceContext();
 
-  // Stable ref to workspace context — lets buildAutoSavePayload read the
+  // Stable ref to workspace context â lets buildAutoSavePayload read the
   // latest state without being recreated on every render.
   const wsCtxForAutoSave = useWorkspaceContext();
   const wsCtxForAutoSaveRef = useRef(wsCtxForAutoSave);
@@ -201,12 +210,28 @@ function HookWiring({ children }: { children: ReactNode }) {
         wordWrap: t.wordWrap, filePath: t.filePath,
       })),
       layout,
-      pipelineChain: [] as string[],
-      disabledChainIds: [] as string[],
+      pipelineChain: getPipelineChain(),
+      disabledChainIds: getDisabledChainIds(),
+    };
+  }, [getPipelineChain, getDisabledChainIds]);
+
+  useWorkspaceAutoSave(buildAutoSavePayload);
+
+  // Build the AppStateFile payload for exit save — reads workspace list from context.
+  const getAppStatePayload = useCallback((): AppStateFile => {
+    const ctx = wsCtxForAutoSaveRef.current;
+    return {
+      workspaces: ctx.workspaces.map(w => ({
+        id: w.id,
+        name: w.name,
+        ltwPath: w.filePath,
+        dirty: w.dirty,
+      })),
+      activeWorkspaceId: ctx.activeId,
     };
   }, []);
 
-  useWorkspaceAutoSave(buildAutoSavePayload);
+  useAppExitSave(buildAutoSavePayload, getAppStatePayload);
 
   const rawActions = useMemo<Partial<ActionsContextValue>>(() => ({
     // --- Workspace mutations (auto-tracked via trackMutations) ---
@@ -255,7 +280,7 @@ function HookWiring({ children }: { children: ReactNode }) {
        workspace.newWorkspace, workspace.openWorkspace, workspace.saveWorkspace, workspace.saveWorkspaceAs,
        workspace.closeWorkspace, workspace.switchWorkspace]);
 
-  // Wrap mutation actions with automatic dirty tracking — the single enforcement point.
+  // Wrap mutation actions with automatic dirty tracking â the single enforcement point.
   const actions = useMemo(
     () => trackMutations(rawActions, markDirty),
     [rawActions, markDirty],

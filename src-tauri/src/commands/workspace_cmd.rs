@@ -126,7 +126,6 @@ pub async fn save_workspace_v4(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AutoSaveWorkspaceOptions {
-    pub workspace_id: String,
     pub workspace_name: String,
     pub editor_tabs: Vec<LtwEditorTab>,
     pub layout: Option<LtwLayout>,
@@ -134,7 +133,7 @@ pub struct AutoSaveWorkspaceOptions {
     pub disabled_chain_ids: Vec<String>,
 }
 
-/// Auto-save the active workspace to `app_data_dir/workspaces/{workspace_id}.ltw`.
+/// Auto-save the active workspace to `app_data_dir/workspaces/{sanitized_name}.ltw`.
 /// Returns the path where it was saved.
 #[tauri::command]
 pub async fn auto_save_workspace(
@@ -143,7 +142,8 @@ pub async fn auto_save_workspace(
     options: AutoSaveWorkspaceOptions,
 ) -> Result<String, String> {
     let ws_dir = crate::workspace::workspace_dir(&app)?;
-    let dest = ws_dir.join(format!("{}.ltw", options.workspace_id));
+    let sanitized = crate::workspace::sanitize_workspace_name(&options.workspace_name);
+    let dest = ws_dir.join(format!("{sanitized}.ltw"));
 
     let entries = collect_session_data(&state)?;
     let chain = LtwPipelineChain {
@@ -169,6 +169,17 @@ pub async fn auto_save_workspace(
 // Load workspace (.ltw v4) — returns manifest for frontend orchestration
 // ---------------------------------------------------------------------------
 
+/// Per-session artifact data returned as part of `LoadWorkspaceResult`.
+/// Ordered to match `LoadWorkspaceResult::sessions` by index.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadWorkspaceSessionData {
+    pub bookmarks: Vec<crate::core::bookmark::Bookmark>,
+    pub analyses: Vec<crate::core::analysis::AnalysisArtifact>,
+    pub active_processor_ids: Vec<String>,
+    pub disabled_processor_ids: Vec<String>,
+}
+
 /// Result returned to the frontend after reading a `.ltw` v4 file.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -178,6 +189,8 @@ pub struct LoadWorkspaceResult {
     pub pipeline_chain: LtwPipelineChain,
     pub editor_tabs: Vec<LtwEditorTab>,
     pub layout: Option<LtwLayout>,
+    /// Per-session artifacts ordered to match `sessions` by index.
+    pub session_data: Vec<LoadWorkspaceSessionData>,
 }
 
 /// Read a `.ltw` v4 file and return its contents for frontend orchestration.
@@ -185,13 +198,68 @@ pub struct LoadWorkspaceResult {
 pub async fn load_workspace_v4(path: String) -> Result<LoadWorkspaceResult, String> {
     let data = ltw_v4::read_ltw(Path::new(&path))?;
 
+    let session_data = data.sessions.iter().map(|s| LoadWorkspaceSessionData {
+        bookmarks: s.bookmarks.clone(),
+        analyses: s.analyses.clone(),
+        active_processor_ids: s.session_meta.active_processor_ids.clone(),
+        disabled_processor_ids: s.session_meta.disabled_processor_ids.clone(),
+    }).collect();
+
     Ok(LoadWorkspaceResult {
         workspace_name: data.manifest.workspace_name,
         sessions: data.manifest.sessions,
         pipeline_chain: data.pipeline_chain,
         editor_tabs: data.editor_tabs,
         layout: data.layout,
+        session_data,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Restore per-session artifacts after workspace load
+// ---------------------------------------------------------------------------
+
+/// Options for restoring per-session artifacts into AppState.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreSessionOptions {
+    pub session_id: String,
+    pub bookmarks: Vec<crate::core::bookmark::Bookmark>,
+    pub analyses: Vec<crate::core::analysis::AnalysisArtifact>,
+    pub active_processor_ids: Vec<String>,
+    pub disabled_processor_ids: Vec<String>,
+}
+
+/// Restore bookmarks, analyses, and pipeline meta for a session that was just
+/// loaded as part of a `.ltw` workspace restore. Emits `workspace-restored`.
+#[tauri::command]
+pub async fn restore_workspace_session(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    options: RestoreSessionOptions,
+) -> Result<(), String> {
+    let meta = crate::workspace::SessionMeta {
+        active_processor_ids: options.active_processor_ids,
+        disabled_processor_ids: options.disabled_processor_ids,
+    };
+
+    let (bm_count, an_count) = crate::commands::files::restore_artifacts(
+        &state,
+        &options.session_id,
+        options.bookmarks,
+        options.analyses,
+    );
+
+    crate::commands::files::emit_workspace_restored(
+        &state,
+        &app,
+        &options.session_id,
+        bm_count,
+        an_count,
+        meta,
+    );
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

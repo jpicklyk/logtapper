@@ -1,7 +1,8 @@
 import { useState, useCallback, useRef } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { useWorkspaceContext } from '../context/WorkspaceContext';
-import { saveWorkspaceV4, autoSaveWorkspace, loadWorkspaceV4, saveAppState } from '../bridge/commands';
+import { saveWorkspaceV4, autoSaveWorkspace, loadWorkspaceV4, saveAppState, restoreWorkspaceSession } from '../bridge/commands';
+import type { LoadWorkspaceSessionData } from '../bridge/types';
 import type { WorkspaceIdentity } from '../bridge/workspaceTypes';
 import { bus } from '../events/bus';
 import { basename, dirname, storageGetJSON } from '../utils';
@@ -56,6 +57,8 @@ export function useWorkspace(
   closeAllSessions: () => Promise<void>,
   loadFile: (path: string) => Promise<void>,
   getDefaultDir?: () => string | undefined,
+  getPipelineChain?: () => string[],
+  getDisabledChainIds?: () => string[],
 ): WorkspaceActions {
   const wsCtx = useWorkspaceContext();
   const wsCtxRef = useRef(wsCtx);
@@ -83,10 +86,10 @@ export function useWorkspace(
         wordWrap: t.wordWrap, filePath: t.filePath,
       })),
       layout: getLayoutState(),
-      pipelineChain: [] as string[], // TODO: read from PipelineContext
-      disabledChainIds: [] as string[], // TODO: read from PipelineContext
+      pipelineChain: getPipelineChain?.() ?? [],
+      disabledChainIds: getDisabledChainIds?.() ?? [],
     };
-  }, [getLayoutState]);
+  }, [getLayoutState, getPipelineChain, getDisabledChainIds]);
 
   /** Save the active workspace to a .ltw v4 file. */
   const doSave = useCallback(async (destPath: string) => {
@@ -113,7 +116,6 @@ export function useWorkspace(
       buildSavePayload('', active.name);
     try {
       const savedPath = await autoSaveWorkspace({
-        workspaceId: active.id,
         workspaceName, editorTabs, layout, pipelineChain, disabledChainIds,
       });
       ctx.setWorkspacePath(active.id, savedPath);
@@ -133,6 +135,15 @@ export function useWorkspace(
   const doLoadWorkspace = useCallback(async (path: string) => {
     const result = await loadWorkspaceV4(path);
 
+    // Collect session IDs in order as each session:loaded event fires.
+    // session:loaded fires synchronously before loadFile's promise resolves,
+    // so by the time each await returns, the corresponding ID is queued.
+    const loadedSessionIds: string[] = [];
+    const onSessionLoaded = (payload: { sessionId: string }) => {
+      loadedSessionIds.push(payload.sessionId);
+    };
+    bus.on('session:loaded', onSessionLoaded);
+
     // Load each session by file path
     for (const session of result.sessions) {
       try {
@@ -142,12 +153,43 @@ export function useWorkspace(
       }
     }
 
+    bus.off('session:loaded', onSessionLoaded);
+
+    // Restore per-session artifacts (bookmarks, analyses, pipeline meta).
+    // Match by index: loadedSessionIds[i] corresponds to result.sessionData[i].
+    const restoreArtifacts = async (sessionId: string, data: LoadWorkspaceSessionData) => {
+      try {
+        await restoreWorkspaceSession({
+          sessionId,
+          bookmarks: data.bookmarks,
+          analyses: data.analyses,
+          activeProcessorIds: data.activeProcessorIds,
+          disabledProcessorIds: data.disabledProcessorIds,
+        });
+      } catch (e) {
+        console.warn(`[useWorkspace] Failed to restore artifacts for session ${sessionId}:`, e);
+      }
+    };
+    for (let i = 0; i < loadedSessionIds.length; i++) {
+      const data = result.sessionData[i];
+      if (data) {
+        await restoreArtifacts(loadedSessionIds[i], data);
+      }
+    }
+
     // Restore editor tabs from workspace
     for (const event of buildEditorTabEvents(result.editorTabs)) {
       bus.emit('layout:open-tab', event);
     }
 
-    // TODO: restore layout, pipeline chain from result
+    // Restore layout pane state (widths, visible panes, tab order, etc.)
+    if (result.layout) {
+      bus.emit('workspace:restore-layout', { layout: result.layout });
+    }
+
+    // Pipeline chain restore is handled by useWorkspaceRestore via the
+    // workspace-restored Tauri event emitted by the backend during session load.
+
     bus.emit('workspace:opened', { name: result.workspaceName, filePath: path });
   }, [loadFile]);
 

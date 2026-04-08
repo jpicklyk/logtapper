@@ -44,6 +44,7 @@ import type {
   LoadWorkspaceV4Result,
   LtwEditorTab,
   AppStateFile,
+  RestoreSessionOptions,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -610,7 +611,6 @@ export function saveWorkspaceV4(options: SaveWorkspaceV4Options): Promise<void> 
 }
 
 export interface AutoSaveWorkspaceOptions {
-  workspaceId: string;
   workspaceName: string;
   editorTabs: LtwEditorTab[];
   layout: unknown | null;
@@ -624,6 +624,10 @@ export function autoSaveWorkspace(options: AutoSaveWorkspaceOptions): Promise<st
 
 export function loadWorkspaceV4(path: string): Promise<LoadWorkspaceV4Result> {
   return invoke('load_workspace_v4', { path });
+}
+
+export function restoreWorkspaceSession(options: RestoreSessionOptions): Promise<void> {
+  return invoke('restore_workspace_session', { options });
 }
 
 export function getAppState(): Promise<AppStateFile> {
