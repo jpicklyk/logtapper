@@ -1,13 +1,12 @@
-import { memo, useState, useCallback, useRef, useMemo, useEffect } from 'react';
+import { memo, useState, useCallback, useRef, useMemo } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { ProcessorSummary, PackSummary } from '../../bridge/types';
 import { matchesAllTags, getBareId } from '../../bridge/types';
 import {
   loadProcessorFromFile,
-  listPacks,
 } from '../../bridge/commands';
 import { usePipeline } from '../../hooks';
-import { useProcessors, usePipelineChain, usePipelineActions } from '../../context';
+import { useProcessors, usePacks, usePipelineChain, usePipelineActions } from '../../context';
 import { Modal, ProcessorTypeIcon, PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY, Button } from '../../ui';
 import { ProcessorDetailCard } from '../ProcessorDetailCard';
 import css from './ProcessorLibrary.module.css';
@@ -46,7 +45,7 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set()); // pack IDs or standalone processor IDs
   const [activeTagFilters, setActiveTagFilters] = useState<Set<string>>(new Set());
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [packs, setPacks] = useState<PackSummary[]>([]);
+  const packs = usePacks();
 
   // YAML tab state
   const [yamlInput, setYamlInput] = useState('');
@@ -55,11 +54,6 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const chainSet = useMemo(() => new Set(pipelineChain), [pipelineChain]);
-
-  // Fetch packs on mount
-  useEffect(() => {
-    listPacks().then(setPacks).catch(() => setPacks([]));
-  }, [processors]);
 
   // Build processor lookup by bare ID (packs reference bare IDs like "wifi-state",
   // but installed processors use qualified IDs like "wifi-state@official")

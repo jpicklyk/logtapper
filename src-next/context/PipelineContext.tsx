@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, useReducer, type ReactNode } from 'react';
 import { arrayMove } from '@dnd-kit/sortable';
-import type { ProcessorSummary, PipelineRunSummary } from '../bridge/types';
+import type { ProcessorSummary, PipelineRunSummary, PackSummary } from '../bridge/types';
 
 /** Processor IDs that must always remain at the tail of the chain. */
 export const PINNED_TAIL_IDS = new Set(['__pii_anonymizer']);
@@ -59,6 +59,7 @@ function withSessionState(
 
 interface PipelineState {
   processors: ProcessorSummary[];
+  packs: PackSummary[];
   pipelineChain: string[];
   /** Processor IDs present in the chain but excluded from execution. */
   disabledChainIds: string[];
@@ -88,6 +89,7 @@ export type PipelineAction =
   | { type: 'processors:loaded'; processors: ProcessorSummary[]; initialChain?: string[]; initialDisabled?: string[] }
   | { type: 'processor:installed'; processor: ProcessorSummary }
   | { type: 'processor:removed'; id: string }
+  | { type: 'packs:loaded'; packs: PackSummary[] }
   // Chain management (PINNED_TAIL_IDS logic lives in the reducer, not at call sites)
   | { type: 'chain:add'; id: string }
   | { type: 'chain:add-pack'; processorIds: string[] }
@@ -108,6 +110,7 @@ export type PipelineAction =
 
 const initialState: PipelineState = {
   processors: [],
+  packs: [],
   pipelineChain: [],
   disabledChainIds: [],
   activeProcessorIds: [],
@@ -215,6 +218,9 @@ function pipelineReducer(state: PipelineState, action: PipelineAction): Pipeline
       const nextDisabled = state.disabledChainIds.filter((id) => id !== action.id);
       return withChain({ ...state, processors }, chain, nextDisabled);
     }
+
+    case 'packs:loaded':
+      return { ...state, packs: action.packs };
 
     // ── Chain management ─────────────────────────────────────────────────────
     case 'chain:add': {
@@ -333,6 +339,7 @@ function pipelineReducer(state: PipelineState, action: PipelineAction): Pipeline
 
 interface PipelineLibraryCtxValue {
   processors: ProcessorSummary[];
+  packs: PackSummary[];
   error: string | null;
   dispatch: React.Dispatch<PipelineAction>;
 }
@@ -365,9 +372,9 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(pipelineReducer, initialState);
 
   const libraryValue = useMemo<PipelineLibraryCtxValue>(
-    () => ({ processors: state.processors, error: state.error, dispatch }),
+    () => ({ processors: state.processors, packs: state.packs, error: state.error, dispatch }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state.processors, state.error],
+    [state.processors, state.packs, state.error],
   );
 
   const chainValue = useMemo<PipelineChainCtxValue>(
@@ -427,6 +434,7 @@ export function usePipelineContext(): PipelineContextValue {
   const results = usePipelineResultsCtx();
   return {
     processors: library.processors,
+    packs: library.packs,
     error: library.error,
     pipelineChain: chain.pipelineChain,
     disabledChainIds: chain.disabledChainIds,

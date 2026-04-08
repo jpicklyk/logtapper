@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { LoadResult, SearchQuery, SearchSummary, ProcessorSummary, Source, UpdateAvailable } from '../bridge/types';
+import type { LoadResult, SearchQuery, SearchSummary, ProcessorSummary, PackSummary, Source, UpdateAvailable } from '../bridge/types';
 import { useSessionCoreCtx, useSessionPaneCtx, useSessionProgressCtx, type IndexingProgress } from './SessionContext';
 import { useSearchCtx, useScrollCtx, useProcessorViewCtx } from './ViewerContext';
 import { usePipelineLibraryCtx, usePipelineChainCtx } from './PipelineContext';
@@ -141,6 +141,10 @@ export function useDisabledChainIds(): string[] {
 
 export function useProcessors(): ProcessorSummary[] {
   return usePipelineLibraryCtx().processors;
+}
+
+export function usePacks(): PackSummary[] {
+  return usePipelineLibraryCtx().packs;
 }
 
 // ---------------------------------------------------------------------------

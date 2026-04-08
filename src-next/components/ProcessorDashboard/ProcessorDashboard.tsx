@@ -1,18 +1,18 @@
 import React, { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
 import { ChevronRight } from 'lucide-react';
-import type { PipelineRunSummary, MatchedLine, VarMeta, StateTransition, StateSnapshot, CorrelatorResult, ProcessorSummary, PackSummary } from '../../bridge/types';
-import { getMatchedLines, getPiiMappings, getStateTransitions, getStateAtLine, getCorrelatorEvents, listPacks } from '../../bridge/commands';
+import type { PipelineRunSummary, MatchedLine, VarMeta, StateTransition, StateSnapshot, CorrelatorResult, ProcessorSummary } from '../../bridge/types';
+import { getMatchedLines, getPiiMappings, getStateTransitions, getStateAtLine, getCorrelatorEvents } from '../../bridge/commands';
 import { getBareId } from '../../bridge/types';
 import {
   useSession,
   useProcessors,
+  usePacks,
   useActiveProcessorIds,
   useViewerActions,
   useSessionPipelineResults,
 } from '../../context';
 import { usePipeline, useChartData } from '../../hooks';
 import { PROC_TYPE_ACCENT } from '../../ui';
-import { bus } from '../../events';
 import styles from './ProcessorDashboard.module.css';
 
 // ── Var rendering helpers ────────────────────────────────────────────────────
@@ -241,7 +241,7 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
   // Correlator detail
   const [correlatorResult, setCorrelatorResult] = useState<CorrelatorResult | null>(null);
   // Pack grouping
-  const [packs, setPacks] = useState<PackSummary[]>([]);
+  const packs = usePacks();
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   const sessionId = session?.sessionId ?? null;
@@ -253,21 +253,6 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
         .filter(Boolean) as NonNullable<(typeof processors)[0]>[],
     [activeProcessorIds, processors],
   );
-
-  // Fetch packs for grouping (mount + marketplace events only)
-  useEffect(() => {
-    listPacks().then(setPacks).catch(() => setPacks([]));
-  }, []);
-
-  useEffect(() => {
-    const refresh = () => { listPacks().then(setPacks).catch(() => setPacks([])); };
-    bus.on('marketplace:processor-installed', refresh);
-    bus.on('marketplace:processor-updated', refresh);
-    return () => {
-      bus.off('marketplace:processor-installed', refresh);
-      bus.off('marketplace:processor-updated', refresh);
-    };
-  }, []);
 
   // Group processors by pack (bare-ID join — packId on ProcessorSummary
   // is not reliably populated for marketplace processors)

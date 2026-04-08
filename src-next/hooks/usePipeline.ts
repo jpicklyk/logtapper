@@ -4,6 +4,7 @@ import type { AdbProcessorUpdate, PipelineProgress } from '../bridge/types';
 import { useSessionContext } from '../context/SessionContext';
 import {
   listProcessors,
+  listPacks,
   loadProcessorYaml,
   uninstallProcessor,
   runPipeline,
@@ -206,9 +207,14 @@ export function usePipeline(): PipelineActions {
     return () => { bus.off('session:closed', handleSessionClosed); };
   }, [dispatch]);
 
-  // Refresh processor list when a marketplace processor is installed or updated
+  // Refresh processor list and packs when a marketplace processor is installed or updated
   useEffect(() => {
-    const refresh = () => { listProcessors().then((list) => dispatch({ type: 'processors:loaded', processors: list })).catch(() => {}); };
+    const refresh = () => {
+      Promise.all([listProcessors(), listPacks()]).then(([list, packs]) => {
+        dispatch({ type: 'packs:loaded', packs });
+        dispatch({ type: 'processors:loaded', processors: list });
+      }).catch(() => {});
+    };
     bus.on('marketplace:processor-installed', refresh);
     bus.on('marketplace:processor-updated', refresh);
     return () => {
@@ -219,7 +225,8 @@ export function usePipeline(): PipelineActions {
 
   const loadProcessors = useCallback(async () => {
     try {
-      const list = await listProcessors();
+      const [list, packs] = await Promise.all([listProcessors(), listPacks()]);
+      dispatch({ type: 'packs:loaded', packs });
       if (!chainInitializedRef.current) {
         chainInitializedRef.current = true;
         if (hasRestoredChainRef.current) {

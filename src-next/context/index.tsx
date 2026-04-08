@@ -345,6 +345,7 @@ export {
   useDisabledChainIds,
   usePipelineGlobalError,
   useProcessors,
+  usePacks,
   useViewerActions,
   usePipelineActions,
   useTrackerActions,

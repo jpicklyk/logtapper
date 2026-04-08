@@ -2,10 +2,8 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import type { MarketplaceEntry, MarketplacePackEntry } from '../../bridge/types';
 import { makeQualifiedId, filterMarketplaceEntries, matchesAllTags } from '../../bridge/types';
 import type { MarketplaceState } from '../../hooks/useMarketplace';
-import { listPacks } from '../../bridge/commands';
-import type { PackSummary } from '../../bridge/types';
 import { usePipeline } from '../../hooks';
-import { useProcessors } from '../../context';
+import { useProcessors, usePacks } from '../../context';
 import { PROC_TYPE_LABELS } from '../../ui';
 import { MarketplaceEntryRow } from './MarketplaceEntryRow';
 import { ProcessorDetailCard } from '../ProcessorDetailCard';
@@ -36,6 +34,7 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
 
   const pipeline = usePipeline();
   const processors = useProcessors();
+  const installedPacks = usePacks();
   const [filter, setFilter] = useState('');
   const [activeTagFilters, setActiveTagFilters] = useState<Set<string>>(new Set());
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -43,7 +42,6 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
   const [installStatus, setInstallStatus] = useState<Record<string, InstallStatus>>({});
   const [installError, setInstallError] = useState<Record<string, string>>({});
   const [uninstallStatus, setUninstallStatus] = useState<Record<string, UninstallStatus>>({});
-  const [installedPacks, setInstalledPacks] = useState<PackSummary[]>([]);
 
   const enabledSources = useMemo(() => sources.filter((s) => s.enabled), [sources]);
   const installedIds = useMemo(() => new Set(processors.map((p) => p.id)), [processors]);
@@ -52,11 +50,6 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
     () => new Map(entries.map((e) => [e.id, e])),
     [entries],
   );
-
-  // Fetch installed packs on mount and after install/uninstall
-  useEffect(() => {
-    listPacks().then(setInstalledPacks).catch(() => setInstalledPacks([]));
-  }, [processors]); // re-check when processor list changes
 
   // All unique tags from current entries + packs for chip filters
   const allTags = useMemo(() => {

@@ -16,13 +16,13 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import type { PipelineRunSummary, PipelineProgress, PackSummary } from '../../bridge/types';
 import { getBareId } from '../../bridge/types';
-import { listPacks } from '../../bridge/commands';
 import PackGroup from './PackGroup';
 import packGroupStyles from './PackGroup.module.css';
 import {
   useSession,
   useIsStreaming,
   useProcessors,
+  usePacks,
   usePipelineChain,
   useDisabledChainIds,
   usePipelineActions,
@@ -384,23 +384,7 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
   }, []);
 
   // ── Pack grouping state ──
-  const [packs, setPacks] = useState<PackSummary[]>([]);
-
-  // Load packs on mount and when processor list changes
-  useEffect(() => {
-    listPacks().then(setPacks).catch(() => setPacks([]));
-  }, [processors]);
-
-  // Refresh packs when marketplace events fire
-  useEffect(() => {
-    const refresh = () => { listPacks().then(setPacks).catch(() => {}); };
-    bus.on('marketplace:processor-installed', refresh);
-    bus.on('marketplace:processor-updated', refresh);
-    return () => {
-      bus.off('marketplace:processor-installed', refresh);
-      bus.off('marketplace:processor-updated', refresh);
-    };
-  }, []);
+  const packs = usePacks();
 
   // Expanded packs state (persisted to localStorage)
   const [expandedPacks, setExpandedPacks] = useState<Set<string>>(() => {
