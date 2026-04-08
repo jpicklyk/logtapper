@@ -18,6 +18,10 @@ import { useCacheManager, useDataSourceRegistry } from '../cache';
 import { useLogViewer } from '../hooks/useLogViewer';
 import { useSettings } from '../hooks/useSettings';
 import { useWorkspace } from '../hooks/useWorkspace';
+import { useWorkspaceAutoSave } from '../hooks/useWorkspaceAutoSave';
+import { collectEditorTabs } from '../hooks/workspace/workspacePersistence';
+import { STORAGE_KEY } from '../hooks/workspace/workspaceTypes';
+import { storageGetJSON } from '../utils';
 import { bus } from '../events/bus';
 
 /**
@@ -177,6 +181,32 @@ function HookWiring({ children }: { children: ReactNode }) {
 
   const workspace = useWorkspace(closeAllSessions, logViewer.loadFile, getDefaultDir);
   const { markDirty } = useWorkspaceContext();
+
+  // Stable ref to workspace context — lets buildAutoSavePayload read the
+  // latest state without being recreated on every render.
+  const wsCtxForAutoSave = useWorkspaceContext();
+  const wsCtxForAutoSaveRef = useRef(wsCtxForAutoSave);
+  wsCtxForAutoSaveRef.current = wsCtxForAutoSave;
+
+  const buildAutoSavePayload = useCallback(() => {
+    const active = wsCtxForAutoSaveRef.current.activeWorkspace;
+    if (!active) return null;
+    const editorTabs = collectEditorTabs();
+    const layout = storageGetJSON<unknown>(STORAGE_KEY, null);
+    return {
+      workspaceName: active.name,
+      filePath: active.filePath,
+      editorTabs: editorTabs.map(t => ({
+        label: t.label, content: t.content, viewMode: t.viewMode,
+        wordWrap: t.wordWrap, filePath: t.filePath,
+      })),
+      layout,
+      pipelineChain: [] as string[],
+      disabledChainIds: [] as string[],
+    };
+  }, []);
+
+  useWorkspaceAutoSave(buildAutoSavePayload);
 
   const rawActions = useMemo<Partial<ActionsContextValue>>(() => ({
     // --- Workspace mutations (auto-tracked via trackMutations) ---
