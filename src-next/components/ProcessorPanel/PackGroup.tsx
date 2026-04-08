@@ -4,7 +4,7 @@ import styles from './PackGroup.module.css';
 import ppStyles from './ProcessorPanel.module.css';
 import badgeCss from '../../ui/processorBadge.module.css';
 import { PROC_TYPE_ACCENT, getProcTypeMeta as _getProcTypeMeta } from '../../ui';
-import { PINNED_TAIL_IDS } from '../../context/PipelineContext';
+import { PINNED_TAIL_IDS } from '../../context';
 
 // ── SVG Icons (local copies to keep PackGroup self-contained) ─────────────────
 

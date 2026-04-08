@@ -9,11 +9,8 @@ import type { ThemeMode } from '../../context';
 import { getFileAssociationStatus, setFileAssociation, openDefaultAppsSettings, startMcpBridge, stopMcpBridge } from '../../bridge/commands';
 import type { FileAssocEntry } from '../../bridge/types';
 import { useMcpStatus } from '../../hooks';
+import { formatNumber } from '../ProcessorDashboard/utils';
 import css from './SettingsPanel.module.css';
-
-function formatNumber(n: number): string {
-  return n.toLocaleString();
-}
 
 function estimateCacheMB(lines: number): string {
   const bytes = lines * 500;

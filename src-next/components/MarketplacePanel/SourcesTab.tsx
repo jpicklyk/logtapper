@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import type { Source } from '../../bridge/types';
-import type { MarketplaceState } from '../../hooks/useMarketplace';
+import type { MarketplaceState } from '../../hooks';
 import css from './MarketplacePanel.module.css';
 
 interface Props {

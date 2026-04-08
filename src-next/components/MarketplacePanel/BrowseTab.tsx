@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import type { MarketplaceEntry, MarketplacePackEntry } from '../../bridge/types';
 import { makeQualifiedId, filterMarketplaceEntries, matchesAllTags } from '../../bridge/types';
-import type { MarketplaceState } from '../../hooks/useMarketplace';
+import type { MarketplaceState } from '../../hooks';
 import { usePipeline } from '../../hooks';
 import { useProcessors, usePacks } from '../../context';
 import { PROC_TYPE_LABELS } from '../../ui';

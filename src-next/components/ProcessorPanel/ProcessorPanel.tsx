@@ -39,7 +39,7 @@ import { storageGet, storageSet } from '../../utils';
 import styles from './ProcessorPanel.module.css';
 import badgeCss from '../../ui/processorBadge.module.css';
 import { PROC_TYPE_ACCENT, getProcTypeMeta as _getProcTypeMeta } from '../../ui';
-import { PINNED_TAIL_IDS } from '../../context/PipelineContext';
+import { PINNED_TAIL_IDS } from '../../context';
 
 // ── Type metadata ────────────────────────────────────────────────────────────
 

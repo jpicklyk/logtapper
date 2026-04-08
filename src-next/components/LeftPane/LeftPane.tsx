@@ -3,8 +3,7 @@ import { StatePanel } from '../StatePanel';
 import { FileInfoPane } from '../FileInfoPanel';
 import { AnalysisList } from '../AnalysisPanel';
 import { BookmarkPanel } from '../BookmarkPanel';
-import { useFocusedSession } from '../../context';
-import { SessionProviders } from '../../context/SessionProviders';
+import { useFocusedSession, SessionProviders } from '../../context';
 import styles from './LeftPane.module.css';
 
 export type LeftPaneTab = 'info' | 'state' | 'bookmarks' | 'analysis';

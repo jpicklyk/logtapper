@@ -58,13 +58,11 @@ export function usePipeline(): PipelineActions {
 
   // Refs for stable access in callbacks without stale closures
   const processorsRef = useRef(processors);
-  useEffect(() => { processorsRef.current = processors; }, [processors]);
-
+  processorsRef.current = processors;
   const pipelineChainRef = useRef(pipelineChain);
-  useEffect(() => { pipelineChainRef.current = pipelineChain; }, [pipelineChain]);
-
+  pipelineChainRef.current = pipelineChain;
   const disabledChainIdsRef = useRef(disabledChainIds);
-  useEffect(() => { disabledChainIdsRef.current = disabledChainIds; }, [disabledChainIds]);
+  disabledChainIdsRef.current = disabledChainIds;
 
   const resultsBySessionRef = useRef(resultsBySession);
   resultsBySessionRef.current = resultsBySession;
@@ -244,7 +242,7 @@ export function usePipeline(): PipelineActions {
     } catch (e) {
       dispatch({ type: 'error:set', error: String(e) });
     }
-  }, [dispatch, hasRestoredChainRef]);
+  }, [dispatch]);
 
   const installFromYaml = useCallback(async (yaml: string) => {
     dispatch({ type: 'error:clear' });

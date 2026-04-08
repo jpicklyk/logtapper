@@ -1,8 +1,7 @@
 import React from 'react';
 import { ProcessorPanel } from '../ProcessorPanel';
 import { MarketplacePanel } from '../MarketplacePanel';
-import { useFocusedSession } from '../../context';
-import { SessionProviders } from '../../context/SessionProviders';
+import { useFocusedSession, SessionProviders } from '../../context';
 import styles from './RightPane.module.css';
 
 export type RightPaneTab = 'processors' | 'marketplace';

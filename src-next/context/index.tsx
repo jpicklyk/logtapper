@@ -346,6 +346,11 @@ export {
   usePipelineGlobalError,
   useProcessors,
   usePacks,
+} from './selectors';
+
+export { PINNED_TAIL_IDS } from './PipelineContext';
+
+export {
   useViewerActions,
   usePipelineActions,
   useTrackerActions,

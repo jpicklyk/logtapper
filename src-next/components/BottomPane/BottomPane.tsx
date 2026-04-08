@@ -2,8 +2,7 @@ import React from 'react';
 import { StateTimeline } from '../StateTimeline';
 import { CorrelationsView } from '../CorrelationsView';
 import { WatchesPanel } from '../WatchesPanel';
-import { useFocusedSession } from '../../context';
-import { SessionProviders } from '../../context/SessionProviders';
+import { useFocusedSession, SessionProviders } from '../../context';
 import styles from './BottomPane.module.css';
 
 export type BottomTabType = 'timeline' | 'correlations' | 'search-results' | 'watches' | 'filter-results';
