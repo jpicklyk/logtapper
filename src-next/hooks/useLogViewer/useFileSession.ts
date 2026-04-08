@@ -6,7 +6,7 @@ import { loadLogFile, closeSession as closeSessionCmd, getLines } from '../../br
 import { onFileIndexProgress, onFileIndexComplete } from '../../bridge/events';
 import { preSeedSession, clearPreSeed } from '../../cache';
 import { useSessionContext } from '../../context/SessionContext';
-import { bus } from '../../events/bus';
+import { bus, emitSessionLoadedWithFocus } from '../../events/bus';
 import { getStoredFirstPaneId, getStoredLogviewerTabs } from '../useWorkspaceLayout';
 import { storageGetJSON, storageSetJSON, storageRemove } from '../../utils';
 import type { CacheController } from '../../cache';
@@ -165,20 +165,20 @@ export function useFileSession(
 
       const tabPathsSave = readTabPaths(); tabPathsSave[tabId] = path; saveTabPaths(tabPathsSave);
 
-      // Emit session:loaded BEFORE session:focused so the tree has the new tab
-      // when onSessionFocused looks up the active tab for the focus marker.
       diag('bus', 'emitting session:loaded + session:focused');
-      bus.emit('session:loaded', {
-        sourceName: result.sourceName,
-        sourceType: result.sourceType as SourceType,
-        sessionId: result.sessionId,
-        paneId: targetPaneId,
-        tabId,
-        isNewTab,
-        previousSessionId,
-        readOnly: isBugreportLike(result.sourceType) ? true : undefined,
-      });
-      bus.emit('session:focused', { sessionId: result.sessionId, paneId: targetPaneId });
+      emitSessionLoadedWithFocus(
+        {
+          sourceName: result.sourceName,
+          sourceType: result.sourceType as SourceType,
+          sessionId: result.sessionId,
+          paneId: targetPaneId,
+          tabId,
+          isNewTab,
+          previousSessionId,
+          readOnly: isBugreportLike(result.sourceType) ? true : undefined,
+        },
+        { sessionId: result.sessionId, paneId: targetPaneId },
+      );
 
       if (isBugreportLike(result.sourceType)) {
         bus.emit('session:dumpstate:opened', {

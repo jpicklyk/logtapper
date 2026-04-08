@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { bus } from '../../events/bus';
-import type { CenterTabType, BottomTabType, CenterPane, DropZone, SplitNode } from './workspaceTypes';
+import type { CenterTabType, BottomTabType, CenterPane, DropZone, EditorTabState, SplitNode } from './workspaceTypes';
 import { TAB_LABELS } from './workspaceTypes';
 import {
   makeTab,
@@ -42,7 +42,7 @@ export interface CenterTreeHandle {
   resizeSplit: (splitNodeId: string, ratio: number) => void;
   renameTab: (tabId: string, label: string) => void;
   setTabUnsaved: (tabId: string, isDirty: boolean) => void;
-  openCenterTab: (type: CenterTabType, label?: string, filePath?: string, editorState?: { content: string; viewMode: string; wordWrap: boolean }) => void;
+  openCenterTab: (type: CenterTabType, label?: string, filePath?: string, editorState?: EditorTabState) => void;
   dropTabOnPane: (tabId: string, fromPaneId: string, toPaneId: string, zone: DropZone) => void;
   /** Reset the center tree to a single empty pane (for workspace clear/switch). */
   clearTree: () => void;
@@ -223,7 +223,7 @@ export function useCenterTree(
     if (isDirty) bus.emit('workspace:mutated', undefined);
   }, [updateTree]);
 
-  const openCenterTab = useCallback((type: CenterTabType, label?: string, filePath?: string, editorState?: { content: string; viewMode: string; wordWrap: boolean }) => {
+  const openCenterTab = useCallback((type: CenterTabType, label?: string, filePath?: string, editorState?: EditorTabState) => {
     updateTree((tree) => {
       // 1. If a tab of this type already exists (and no filePath — reuse tab), activate it
       if (!filePath) {

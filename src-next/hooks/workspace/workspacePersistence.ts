@@ -1,5 +1,5 @@
-import type { LtsEditorTabPayload } from '../../bridge/types';
-import type { BottomTabType, LeftPaneTab, RightPaneTab, SplitNode } from './workspaceTypes';
+import type { LtsEditorTabPayload, LtwEditorTab } from '../../bridge/types';
+import type { BottomTabType, EditorTabState, LeftPaneTab, RightPaneTab, SplitNode } from './workspaceTypes';
 import { storageGet } from '../../utils';
 import { LS_CONTENT_PREFIX, LS_MODE_PREFIX, LS_WRAP_PREFIX, LS_FILEPATH_PREFIX } from '../../components/EditorTab';
 import {
@@ -181,4 +181,22 @@ export function collectEditorTabs(): LtsEditorTabPayload[] {
     }
   }
   return tabs;
+}
+
+/**
+ * Map loaded editor tabs to layout:open-tab event payloads for restore.
+ * Pure function extracted from doLoadWorkspace for testability.
+ */
+export function buildEditorTabEvents(tabs: LtwEditorTab[]): Array<{
+  type: 'editor';
+  label: string;
+  filePath: string | undefined;
+  editorState: EditorTabState;
+}> {
+  return tabs.map((t) => ({
+    type: 'editor' as const,
+    label: t.label,
+    filePath: t.filePath ?? undefined,
+    editorState: { content: t.content, viewMode: t.viewMode, wordWrap: t.wordWrap },
+  }));
 }

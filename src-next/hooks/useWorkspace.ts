@@ -5,7 +5,7 @@ import { saveWorkspaceV4, autoSaveWorkspace, loadWorkspaceV4, saveAppState } fro
 import type { WorkspaceIdentity } from '../bridge/workspaceTypes';
 import { bus } from '../events/bus';
 import { basename, storageGetJSON } from '../utils';
-import { collectEditorTabs } from './workspace/workspacePersistence';
+import { collectEditorTabs, buildEditorTabEvents } from './workspace/workspacePersistence';
 import { STORAGE_KEY } from './workspace/workspaceTypes';
 
 /** Derive a workspace display name from a file path. */
@@ -92,6 +92,13 @@ export function useWorkspace(
     const active = ctx.activeWorkspace;
     if (!active) return;
 
+    // If the workspace already has a user-saved .ltw path, save there instead
+    // of creating a UUID auto-save — keeps the canonical path and name intact.
+    if (active.filePath) {
+      await doSave(active.filePath);
+      return;
+    }
+
     const editorTabs = collectEditorTabs();
     const layout = getLayoutState();
 
@@ -104,12 +111,12 @@ export function useWorkspace(
         pipelineChain: [], // TODO: read from PipelineContext
         disabledChainIds: [], // TODO: read from PipelineContext
       });
-      // Update the workspace entry with the auto-save path so we can restore
+      // Only set path for workspaces that don't have a user-saved path yet
       ctx.setWorkspacePath(active.id, savedPath);
     } catch (e) {
       console.warn('[useWorkspace] Auto-save failed:', e);
     }
-  }, [getLayoutState]);
+  }, [getLayoutState, doSave]);
 
   /** Clear the current panes (close all backend sessions + reset layout tree). */
   const doClearPanes = useCallback(async () => {
@@ -131,7 +138,12 @@ export function useWorkspace(
       }
     }
 
-    // TODO: restore layout, editor tabs, pipeline chain from result
+    // Restore editor tabs from workspace
+    for (const event of buildEditorTabEvents(result.editorTabs)) {
+      bus.emit('layout:open-tab', event);
+    }
+
+    // TODO: restore layout, pipeline chain from result
     bus.emit('workspace:opened', { name: result.workspaceName, filePath: path });
   }, [loadFile]);
 

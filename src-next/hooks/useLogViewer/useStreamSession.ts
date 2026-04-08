@@ -5,7 +5,7 @@ import { startAdbStream, stopAdbStream } from '../../bridge/commands';
 import { onAdbStreamStopped } from '../../bridge/events';
 import { useSessionContext } from '../../context/SessionContext';
 import { loadSettings } from '../../hooks';
-import { bus } from '../../events/bus';
+import { bus, emitSessionLoadedWithFocus } from '../../events/bus';
 import type { CacheController } from '../../cache';
 import type { StreamPusher } from '../../viewport';
 import type { SharedLogViewerRefs } from './types';
@@ -264,19 +264,18 @@ export function useStreamSession(
 
       setLoadingPane(targetPaneId, false);
 
-      // Emit session:loaded BEFORE session:focused so the tree has the new tab
-      // when onSessionFocused looks up the active tab for the focus marker.
-      bus.emit('session:loaded', {
-        sourceName: result.sourceName,
-        sourceType: result.sourceType as SourceType,
-        sessionId: result.sessionId,
-        paneId: targetPaneId,
-        tabId,
-        isNewTab,
-        previousSessionId,
-      });
-
-      bus.emit('session:focused', { sessionId: result.sessionId, paneId: targetPaneId });
+      emitSessionLoadedWithFocus(
+        {
+          sourceName: result.sourceName,
+          sourceType: result.sourceType as SourceType,
+          sessionId: result.sessionId,
+          paneId: targetPaneId,
+          tabId,
+          isNewTab,
+          previousSessionId,
+        },
+        { sessionId: result.sessionId, paneId: targetPaneId },
+      );
 
       bus.emit('stream:started', {
         sessionId: result.sessionId,

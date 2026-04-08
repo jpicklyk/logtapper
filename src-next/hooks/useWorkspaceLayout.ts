@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { isBugreportLike } from '../bridge/types';
 import { storageRemove } from '../utils';
 import { bus } from '../events/bus';
+import type { AppEvents } from '../events/events';
 import { useTogglePane } from './useTogglePane';
 import { useSessionContext } from '../context/SessionContext';
 import {
@@ -175,9 +176,16 @@ export function useWorkspaceLayout() {
 
   useEffect(() => {
     const onSessionFocused = (e: { paneId: string | null }) => {
+      if (!e.paneId) {
+        setActiveLogPaneId(null);
+        return;
+      }
+      // Stale event for a pane removed by workspace reset + remap — ignore.
+      if (!findLeafByPaneId(centerTreeSyncRef.current, e.paneId)) return;
       setActiveLogPaneId(e.paneId);
-      if (e.paneId) {
-        setFocusedLogviewerTabId(resolveFocusedTab(centerTreeSyncRef.current, e.paneId));
+      const tabId = resolveFocusedTab(centerTreeSyncRef.current, e.paneId);
+      if (tabId !== null) {
+        setFocusedLogviewerTabId(tabId);
       }
     };
 
@@ -189,13 +197,14 @@ export function useWorkspaceLayout() {
       }
     };
 
-    const onOpenTab = (e: { type: string; label?: string; filePath?: string }) => {
-      openCenterTabRef.current(e.type as CenterTabType, e.label, e.filePath);
+    const onOpenTab = (e: AppEvents['layout:open-tab']) => {
+      openCenterTabRef.current(e.type as CenterTabType, e.label, e.filePath, e.editorState);
     };
 
     const onWorkspaceReset = () => {
       centerTree.clearTree();
       setActiveLogPaneId(null);
+      setFocusedLogviewerTabId(null);
     };
 
     bus.on('session:focused', onSessionFocused);

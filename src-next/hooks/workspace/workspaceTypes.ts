@@ -9,6 +9,13 @@ export type RightPaneTab = 'processors' | 'marketplace';
 export type LayoutPreset = 'compact' | 'standard' | 'wide';
 export type DropZone = 'left' | 'right' | 'top' | 'bottom' | 'center';
 
+/** Editor tab state passed through layout:open-tab events and openCenterTab. */
+export interface EditorTabState {
+  content: string;
+  viewMode: string;
+  wordWrap: boolean;
+}
+
 export interface Tab {
   id: string;
   type: CenterTabType;
@@ -44,7 +51,7 @@ export interface WorkspaceLayoutState {
   resizeSplit: (splitNodeId: string, ratio: number) => void;
   renameTab: (tabId: string, label: string) => void;
   setTabUnsaved: (tabId: string, isDirty: boolean) => void;
-  openCenterTab: (type: CenterTabType, label?: string, filePath?: string, editorState?: { content: string; viewMode: string; wordWrap: boolean }) => void;
+  openCenterTab: (type: CenterTabType, label?: string, filePath?: string, editorState?: EditorTabState) => void;
   dropTabOnPane: (tabId: string, fromPaneId: string, toPaneId: string, zone: DropZone) => void;
   /** Reset the center tree to a single empty pane (for workspace clear/switch). */
   clearTree: () => void;

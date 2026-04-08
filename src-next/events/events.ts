@@ -1,4 +1,5 @@
 import type { AdbProcessorUpdate, AdbTrackerUpdate, SourceType } from '../bridge/types';
+import type { EditorTabState } from '../hooks/workspace/workspaceTypes';
 
 /** Typed event map for the internal application event bus. */
 export type AppEvents = {
@@ -59,7 +60,7 @@ export type AppEvents = {
   'pipeline:adb-tracker-update': AdbTrackerUpdate;
 
   // ── Layout / navigation ───────────────────────────────────────────────────
-  'layout:open-tab':        { type: string; label?: string; filePath?: string };
+  'layout:open-tab':        { type: string; label?: string; filePath?: string; editorState?: EditorTabState };
   /** Fired when a logviewer tab is explicitly closed via the UI tab bar. */
   'layout:logviewer-tab-closed': { tabId: string; paneId: string; sessionId: string };
   /** Fired when the user switches to a logviewer tab that has its own session.
