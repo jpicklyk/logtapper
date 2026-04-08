@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import type { PipelineRunSummary } from '../bridge/types';
-import { usePipelineContext, type SessionPipelineState } from './PipelineContext';
+import { usePipelineResultsCtx, type SessionPipelineState } from './PipelineContext';
 import { useTrackerContext, type TrackerSessionData } from './TrackerContext';
 import { useSessionProgressCtx, type IndexingProgress, type FilterState } from './SessionContext';
 
@@ -71,7 +71,7 @@ interface SessionDataProviderProps {
  */
 export function SessionDataProvider({ sessionId, children }: SessionDataProviderProps) {
   // Read from global contexts
-  const { resultsBySession } = usePipelineContext();
+  const { resultsBySession } = usePipelineResultsCtx();
   const { dataBySession } = useTrackerContext();
   const { indexingProgressBySession, filterStateBySession } = useSessionProgressCtx();
 

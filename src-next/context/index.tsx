@@ -8,7 +8,7 @@ import { ViewerProvider } from './ViewerContext';
 
 export { ThemeProvider, useTheme } from './ThemeContext';
 export type { ThemeMode, ResolvedTheme } from './ThemeContext';
-import { PipelineProvider, usePipelineContext } from './PipelineContext';
+import { PipelineProvider, usePipelineChainCtx } from './PipelineContext';
 import { TrackerProvider } from './TrackerContext';
 import { ActionsProvider, trackMutations, type ActionsContextValue } from './ActionsContext';
 import { MarketplaceProvider } from './MarketplaceContext';
@@ -16,12 +16,13 @@ import { WorkspaceProvider, useWorkspaceIdentity, useWorkspaceContext } from './
 import { SavePromptDialog } from '../ui/SavePromptDialog';
 import { useCacheManager, useDataSourceRegistry } from '../cache';
 import { useLogViewer } from '../hooks/useLogViewer';
+import { usePipeline } from '../hooks/usePipeline';
 import { useSettings } from '../hooks/useSettings';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { useWorkspaceAutoSave } from '../hooks/useWorkspaceAutoSave';
 import { useAppExitSave } from '../hooks/useAppExitSave';
 import type { AppStateFile } from '../bridge/types';
-import { collectEditorTabs } from '../hooks/workspace/workspacePersistence';
+import { collectEditorTabsForSave, buildAppStatePayload } from '../hooks/workspace/workspacePersistence';
 import { STORAGE_KEY } from '../hooks/workspace/workspaceTypes';
 import { storageGetJSON } from '../utils';
 import { bus } from '../events/bus';
@@ -42,8 +43,8 @@ function HookWiring({ children }: { children: ReactNode }) {
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
-  const pipelineCtx = usePipelineContext();
-  const { activeProcessorIds, pipelineChain, disabledChainIds, dispatch: pipelineDispatch } = pipelineCtx;
+  const pipelineChainCtx = usePipelineChainCtx();
+  const { activeProcessorIds, pipelineChain, disabledChainIds, dispatch: pipelineDispatch } = pipelineChainCtx;
   const activeProcessorIdsRef = useRef(activeProcessorIds);
   activeProcessorIdsRef.current = activeProcessorIds;
   const pipelineChainRef = useRef(pipelineChain);
@@ -188,28 +189,25 @@ function HookWiring({ children }: { children: ReactNode }) {
     return session?.filePath ? dirname(session.filePath) : undefined;
   }, []);
 
+  const pipeline = usePipeline();
+
   const workspace = useWorkspace(closeAllSessions, logViewer.loadFile, getDefaultDir, getPipelineChain, getDisabledChainIds);
-  const { markDirty } = useWorkspaceContext();
+  const wsCtx = useWorkspaceContext();
+  const { markDirty } = wsCtx;
 
   // Stable ref to workspace context â lets buildAutoSavePayload read the
   // latest state without being recreated on every render.
-  const wsCtxForAutoSave = useWorkspaceContext();
-  const wsCtxForAutoSaveRef = useRef(wsCtxForAutoSave);
-  wsCtxForAutoSaveRef.current = wsCtxForAutoSave;
+  const wsCtxRef = useRef(wsCtx);
+  wsCtxRef.current = wsCtx;
 
   const buildAutoSavePayload = useCallback(() => {
-    const active = wsCtxForAutoSaveRef.current.activeWorkspace;
+    const active = wsCtxRef.current.activeWorkspace;
     if (!active) return null;
-    const editorTabs = collectEditorTabs();
-    const layout = storageGetJSON<unknown>(STORAGE_KEY, null);
     return {
       workspaceName: active.name,
       filePath: active.filePath,
-      editorTabs: editorTabs.map(t => ({
-        label: t.label, content: t.content, viewMode: t.viewMode,
-        wordWrap: t.wordWrap, filePath: t.filePath,
-      })),
-      layout,
+      editorTabs: collectEditorTabsForSave(),
+      layout: storageGetJSON<unknown>(STORAGE_KEY, null),
       pipelineChain: getPipelineChain(),
       disabledChainIds: getDisabledChainIds(),
     };
@@ -219,16 +217,8 @@ function HookWiring({ children }: { children: ReactNode }) {
 
   // Build the AppStateFile payload for exit save — reads workspace list from context.
   const getAppStatePayload = useCallback((): AppStateFile => {
-    const ctx = wsCtxForAutoSaveRef.current;
-    return {
-      workspaces: ctx.workspaces.map(w => ({
-        id: w.id,
-        name: w.name,
-        ltwPath: w.filePath,
-        dirty: w.dirty,
-      })),
-      activeWorkspaceId: ctx.activeId,
-    };
+    const ctx = wsCtxRef.current;
+    return buildAppStatePayload(ctx.workspaces, ctx.activeId);
   }, []);
 
   useAppExitSave(buildAutoSavePayload, getAppStatePayload);

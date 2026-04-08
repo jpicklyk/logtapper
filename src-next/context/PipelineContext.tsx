@@ -329,35 +329,110 @@ function pipelineReducer(state: PipelineState, action: PipelineAction): Pipeline
   }
 }
 
-// ── Context ───────────────────────────────────────────────────────────────────
+// ── Sub-context value types ─────────────────────────────────────────────────
+
+interface PipelineLibraryCtxValue {
+  processors: ProcessorSummary[];
+  error: string | null;
+  dispatch: React.Dispatch<PipelineAction>;
+}
+
+interface PipelineChainCtxValue {
+  pipelineChain: string[];
+  disabledChainIds: string[];
+  activeProcessorIds: string[];
+  dispatch: React.Dispatch<PipelineAction>;
+}
+
+interface PipelineResultsCtxValue {
+  resultsBySession: Map<string, SessionPipelineState>;
+  dispatch: React.Dispatch<PipelineAction>;
+}
+
+// ── Public facade interface ──────────────────────────────────────────────────
 
 interface PipelineContextValue extends PipelineState {
   dispatch: React.Dispatch<PipelineAction>;
 }
 
-const PipelineContext = createContext<PipelineContextValue | null>(null);
+// ── Three internal sub-contexts (not exported from barrel) ──────────────────
+
+const PipelineLibraryCtx = createContext<PipelineLibraryCtxValue | null>(null);
+const PipelineChainCtx = createContext<PipelineChainCtxValue | null>(null);
+const PipelineResultsCtx = createContext<PipelineResultsCtxValue | null>(null);
 
 export function PipelineProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(pipelineReducer, initialState);
 
-  const value = useMemo<PipelineContextValue>(
-    () => ({ ...state, dispatch }),
-    // dispatch is stable — the only trigger for a new context value is state changing.
-    [state],
+  const libraryValue = useMemo<PipelineLibraryCtxValue>(
+    () => ({ processors: state.processors, error: state.error, dispatch }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [state.processors, state.error],
+  );
+
+  const chainValue = useMemo<PipelineChainCtxValue>(
+    () => ({
+      pipelineChain: state.pipelineChain,
+      disabledChainIds: state.disabledChainIds,
+      activeProcessorIds: state.activeProcessorIds,
+      dispatch,
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [state.pipelineChain, state.disabledChainIds, state.activeProcessorIds],
+  );
+
+  const resultsValue = useMemo<PipelineResultsCtxValue>(
+    () => ({ resultsBySession: state.resultsBySession, dispatch }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [state.resultsBySession],
   );
 
   return (
-    <PipelineContext.Provider value={value}>
-      {children}
-    </PipelineContext.Provider>
+    <PipelineLibraryCtx.Provider value={libraryValue}>
+      <PipelineChainCtx.Provider value={chainValue}>
+        <PipelineResultsCtx.Provider value={resultsValue}>
+          {children}
+        </PipelineResultsCtx.Provider>
+      </PipelineChainCtx.Provider>
+    </PipelineLibraryCtx.Provider>
   );
 }
 
-export function usePipelineContext(): PipelineContextValue {
-  const ctx = useContext(PipelineContext);
-  if (!ctx) {
-    throw new Error('usePipelineContext must be used within a PipelineProvider');
-  }
+// ── Narrow hooks (used by selectors.ts — not exported from barrel) ───────────
+
+export function usePipelineLibraryCtx(): PipelineLibraryCtxValue {
+  const ctx = useContext(PipelineLibraryCtx);
+  if (!ctx) throw new Error('usePipelineLibraryCtx must be used within PipelineProvider');
   return ctx;
+}
+
+export function usePipelineChainCtx(): PipelineChainCtxValue {
+  const ctx = useContext(PipelineChainCtx);
+  if (!ctx) throw new Error('usePipelineChainCtx must be used within PipelineProvider');
+  return ctx;
+}
+
+export function usePipelineResultsCtx(): PipelineResultsCtxValue {
+  const ctx = useContext(PipelineResultsCtx);
+  if (!ctx) throw new Error('usePipelineResultsCtx must be used within PipelineProvider');
+  return ctx;
+}
+
+// ── Facade — reads all 3 sub-contexts, returns combined interface ─────────────
+// Used by domain hooks (usePipeline, etc.) that need cross-context access.
+
+export function usePipelineContext(): PipelineContextValue {
+  const library = usePipelineLibraryCtx();
+  const chain = usePipelineChainCtx();
+  const results = usePipelineResultsCtx();
+  return {
+    processors: library.processors,
+    error: library.error,
+    pipelineChain: chain.pipelineChain,
+    disabledChainIds: chain.disabledChainIds,
+    activeProcessorIds: chain.activeProcessorIds,
+    resultsBySession: results.resultsBySession,
+    dispatch: chain.dispatch,
+  };
 }
 

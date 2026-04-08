@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import type { LoadResult, SearchQuery, SearchSummary, ProcessorSummary, Source, UpdateAvailable } from '../bridge/types';
 import { useSessionCoreCtx, useSessionPaneCtx, useSessionProgressCtx, type IndexingProgress } from './SessionContext';
 import { useSearchCtx, useScrollCtx, useProcessorViewCtx } from './ViewerContext';
-import { usePipelineContext } from './PipelineContext';
+import { usePipelineLibraryCtx, usePipelineChainCtx } from './PipelineContext';
 import { useActionsContext } from './ActionsContext';
 import { useMarketplaceContext } from './MarketplaceContext';
 
@@ -123,24 +123,24 @@ export function useScrollTarget(): { lineNum: number | null; seq: number; paneId
 // ---------------------------------------------------------------------------
 
 export function usePipelineChain(): string[] {
-  return usePipelineContext().pipelineChain;
+  return usePipelineChainCtx().pipelineChain;
 }
 
 export function useActiveProcessorIds(): string[] {
-  return usePipelineContext().activeProcessorIds;
+  return usePipelineChainCtx().activeProcessorIds;
 }
 
 /** Global error from processor install/remove operations (not per-session run errors). */
 export function usePipelineGlobalError(): string | null {
-  return usePipelineContext().error;
+  return usePipelineLibraryCtx().error;
 }
 
 export function useDisabledChainIds(): string[] {
-  return usePipelineContext().disabledChainIds;
+  return usePipelineChainCtx().disabledChainIds;
 }
 
 export function useProcessors(): ProcessorSummary[] {
-  return usePipelineContext().processors;
+  return usePipelineLibraryCtx().processors;
 }
 
 // ---------------------------------------------------------------------------
@@ -171,10 +171,10 @@ export function useWorkspaceActions() {
 
 export function usePipelineActions() {
   const { runPipeline, stopPipeline, clearResults, installProcessor,
-          removeProcessor, toggleProcessor,
+          removeProcessor,
           addToChain, addPackToChain, removeFromChain, reorderChain, toggleChainEnabled } = useActionsContext();
   return { runPipeline, stopPipeline, clearResults, installProcessor,
-           removeProcessor, toggleProcessor,
+           removeProcessor,
            addToChain, addPackToChain, removeFromChain, reorderChain, toggleChainEnabled };
 }
 
