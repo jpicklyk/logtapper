@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, Plus, FolderOpen, X, Pencil } from 'lucide-react';
+import { ChevronDown, Plus, FolderOpen, Save, X, Pencil } from 'lucide-react';
 import clsx from 'clsx';
 import { useWorkspaceList, useActiveWorkspaceId, useWorkspaceActions, useWorkspaceContext } from '../../context';
 import styles from './WorkspaceSwitcher.module.css';
@@ -13,7 +13,8 @@ import styles from './WorkspaceSwitcher.module.css';
 export const WorkspaceSwitcher = React.memo(function WorkspaceSwitcher() {
   const workspaces = useWorkspaceList();
   const activeId = useActiveWorkspaceId();
-  const { newWorkspace, openWorkspace, closeWorkspace, switchWorkspace } = useWorkspaceActions();
+  const { newWorkspace, openWorkspace, closeWorkspace, switchWorkspace,
+          saveWorkspace, saveWorkspaceAs } = useWorkspaceActions();
   const { renameWorkspace } = useWorkspaceContext();
 
   const [open, setOpen] = useState(false);
@@ -93,6 +94,16 @@ export const WorkspaceSwitcher = React.memo(function WorkspaceSwitcher() {
     openWorkspace();
     setOpen(false);
   }, [openWorkspace]);
+
+  const handleSave = useCallback(() => {
+    saveWorkspace();
+    setOpen(false);
+  }, [saveWorkspace]);
+
+  const handleSaveAs = useCallback(() => {
+    saveWorkspaceAs();
+    setOpen(false);
+  }, [saveWorkspaceAs]);
 
   const handleStartRename = useCallback((e: React.MouseEvent, id: string, name: string) => {
     e.stopPropagation();
@@ -179,6 +190,15 @@ export const WorkspaceSwitcher = React.memo(function WorkspaceSwitcher() {
               ))}
             </>
           )}
+          <div className={styles.separator} />
+          <button className={styles.actionItem} onClick={handleSave}>
+            <Save size={14} />
+            <span>Save Workspace</span>
+          </button>
+          <button className={styles.actionItem} onClick={handleSaveAs}>
+            <Save size={14} />
+            <span>Save Workspace As...</span>
+          </button>
           <div className={styles.separator} />
           <button className={styles.actionItem} onClick={handleNew}>
             <Plus size={14} />

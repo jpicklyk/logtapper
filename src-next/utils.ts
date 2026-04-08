@@ -12,6 +12,12 @@ export function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path;
 }
 
+/** Extract the parent directory from a path (handles both / and \ separators). */
+export function dirname(path: string): string {
+  const i = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+  return i > 0 ? path.slice(0, i) : path;
+}
+
 // ---------------------------------------------------------------------------
 // localStorage helpers — wrap try/catch so callers don't need to
 // ---------------------------------------------------------------------------

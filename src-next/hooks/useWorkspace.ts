@@ -4,13 +4,25 @@ import { useWorkspaceContext } from '../context/WorkspaceContext';
 import { saveWorkspaceV4, autoSaveWorkspace, loadWorkspaceV4, saveAppState } from '../bridge/commands';
 import type { WorkspaceIdentity } from '../bridge/workspaceTypes';
 import { bus } from '../events/bus';
-import { basename, storageGetJSON } from '../utils';
+import { basename, dirname, storageGetJSON } from '../utils';
 import { collectEditorTabs, buildEditorTabEvents } from './workspace/workspacePersistence';
 import { STORAGE_KEY } from './workspace/workspaceTypes';
 
 /** Derive a workspace display name from a file path. */
 export function workspaceNameFromPath(path: string): string {
   return basename(path).replace(/\.(ltw|lts)$/i, '');
+}
+
+/** Return a sensible default directory for file dialogs, or undefined. */
+function resolveDefaultDir(
+  ctx: { activeWorkspace: { filePath: string | null } | null },
+  getDefaultDir?: () => string | undefined,
+): string | undefined {
+  // Prefer the directory of the active workspace's .ltw file
+  const fp = ctx.activeWorkspace?.filePath;
+  if (fp) return dirname(fp);
+  // Fall back to caller-supplied default (e.g. directory of the focused session's source file)
+  return getDefaultDir?.();
 }
 
 export type SavePromptChoice = 'save' | 'discard' | 'cancel';
@@ -43,6 +55,7 @@ export interface WorkspaceActions {
 export function useWorkspace(
   closeAllSessions: () => Promise<void>,
   loadFile: (path: string) => Promise<void>,
+  getDefaultDir?: () => string | undefined,
 ): WorkspaceActions {
   const wsCtx = useWorkspaceContext();
   const wsCtxRef = useRef(wsCtx);
@@ -59,32 +72,30 @@ export function useWorkspace(
     return storageGetJSON<unknown>(STORAGE_KEY, null);
   }, []);
 
+  /** Build the save payload from current state. */
+  const buildSavePayload = useCallback((destPath: string, name: string) => {
+    const editorTabs = collectEditorTabs();
+    return {
+      destPath,
+      workspaceName: name,
+      editorTabs: editorTabs.map(t => ({
+        label: t.label, content: t.content, viewMode: t.viewMode,
+        wordWrap: t.wordWrap, filePath: t.filePath,
+      })),
+      layout: getLayoutState(),
+      pipelineChain: [] as string[], // TODO: read from PipelineContext
+      disabledChainIds: [] as string[], // TODO: read from PipelineContext
+    };
+  }, [getLayoutState]);
+
   /** Save the active workspace to a .ltw v4 file. */
   const doSave = useCallback(async (destPath: string) => {
     const ctx = wsCtxRef.current;
     const activeWs = ctx.activeWorkspace;
     if (!activeWs) return;
-
-    const editorTabs = collectEditorTabs();
-    const layout = getLayoutState();
-
-    await saveWorkspaceV4({
-      destPath,
-      workspaceName: activeWs.name,
-      editorTabs: editorTabs.map(t => ({
-        label: t.label,
-        content: t.content,
-        viewMode: t.viewMode,
-        wordWrap: t.wordWrap,
-        filePath: t.filePath,
-      })),
-      layout,
-      pipelineChain: [], // TODO: read from PipelineContext
-      disabledChainIds: [], // TODO: read from PipelineContext
-    });
-
-    ctx.markClean(workspaceNameFromPath(destPath), destPath);
-  }, [getLayoutState]);
+    await saveWorkspaceV4(buildSavePayload(destPath, activeWs.name));
+    ctx.markClean(activeWs.name, destPath);
+  }, [buildSavePayload]);
 
   /** Auto-save the active workspace to app_data_dir for workspace switching. */
   const doAutoSave = useCallback(async () => {
@@ -92,31 +103,24 @@ export function useWorkspace(
     const active = ctx.activeWorkspace;
     if (!active) return;
 
-    // If the workspace already has a user-saved .ltw path, save there instead
-    // of creating a UUID auto-save — keeps the canonical path and name intact.
+    // Save to existing path without markClean — auto-save is not a user save.
     if (active.filePath) {
-      await doSave(active.filePath);
+      await saveWorkspaceV4(buildSavePayload(active.filePath, active.name));
       return;
     }
 
-    const editorTabs = collectEditorTabs();
-    const layout = getLayoutState();
-
+    const { workspaceName, editorTabs, layout, pipelineChain, disabledChainIds } =
+      buildSavePayload('', active.name);
     try {
       const savedPath = await autoSaveWorkspace({
         workspaceId: active.id,
-        workspaceName: active.name,
-        editorTabs,
-        layout,
-        pipelineChain: [], // TODO: read from PipelineContext
-        disabledChainIds: [], // TODO: read from PipelineContext
+        workspaceName, editorTabs, layout, pipelineChain, disabledChainIds,
       });
-      // Only set path for workspaces that don't have a user-saved path yet
       ctx.setWorkspacePath(active.id, savedPath);
     } catch (e) {
       console.warn('[useWorkspace] Auto-save failed:', e);
     }
-  }, [getLayoutState, doSave]);
+  }, [buildSavePayload]);
 
   /** Clear the current panes (close all backend sessions + reset layout tree). */
   const doClearPanes = useCallback(async () => {
@@ -239,6 +243,7 @@ export function useWorkspace(
         await doSave(active.filePath);
       } else {
         const destPath = await save({
+          defaultPath: resolveDefaultDir(ctx, getDefaultDir),
           filters: [{ name: 'LogTapper Workspace', extensions: ['ltw'] }],
         });
         if (typeof destPath !== 'string') {
@@ -246,6 +251,7 @@ export function useWorkspace(
           return;
         }
         await doSave(destPath);
+        if (active) ctx.renameWorkspace(active.id, workspaceNameFromPath(destPath));
       }
     }
     await executePendingAction();
@@ -274,6 +280,7 @@ export function useWorkspace(
     if (!resolvedPath) {
       const selected = await open({
         multiple: false,
+        defaultPath: resolveDefaultDir(wsCtxRef.current, getDefaultDir),
         filters: [{ name: 'LogTapper Workspace', extensions: ['ltw'] }],
       });
       if (typeof selected !== 'string') return;
@@ -291,10 +298,13 @@ export function useWorkspace(
       await doSave(active.filePath);
     } else {
       const destPath = await save({
+        defaultPath: resolveDefaultDir(ctx, getDefaultDir),
         filters: [{ name: 'LogTapper Workspace', extensions: ['ltw'] }],
       });
       if (typeof destPath === 'string') {
         await doSave(destPath);
+        // User chose a new path — update name to match the filename
+        ctx.renameWorkspace(active.id, workspaceNameFromPath(destPath));
       }
     }
     await persistAppState();
@@ -302,10 +312,15 @@ export function useWorkspace(
 
   const saveWorkspaceAs = useCallback(async () => {
     const destPath = await save({
+      defaultPath: resolveDefaultDir(wsCtxRef.current, getDefaultDir),
       filters: [{ name: 'LogTapper Workspace', extensions: ['ltw'] }],
     });
     if (typeof destPath === 'string') {
       await doSave(destPath);
+      // User chose a new path — update name to match the filename
+      const ctx = wsCtxRef.current;
+      const active = ctx.activeWorkspace;
+      if (active) ctx.renameWorkspace(active.id, workspaceNameFromPath(destPath));
       await persistAppState();
     }
   }, [doSave, persistAppState]);

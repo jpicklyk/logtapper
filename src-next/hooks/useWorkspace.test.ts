@@ -210,6 +210,16 @@ describe('autoSave path decision', () => {
     expect(afterSave.name).toBe('MyLog');
     expect(afterSave.filePath).toBe('/logs/MyLog.ltw');
   });
+
+  it('save-to-existing with UUID path preserves name (not derived from path)', () => {
+    // Workspace has a UUID auto-save path from a prior session — name must NOT
+    // be derived from the filename or it would become the UUID.
+    const ws = { name: 'main', filePath: '/app_data/workspaces/fb4fec06-d16c-4ef8.ltw', dirty: true };
+    const decision = autoSaveDecision(ws);
+    expect(decision).toBe('save-existing');
+    const result = applyAutoSave(ws, decision);
+    expect(result.name).toBe('main');
+  });
 });
 
 // ---------------------------------------------------------------------------

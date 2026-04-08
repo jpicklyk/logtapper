@@ -3,7 +3,7 @@ import { open, save } from '@tauri-apps/plugin-dialog';
 import { SessionProvider } from './SessionContext';
 import { useSessionCoreCtx, useSessionPaneCtx } from './SessionContext';
 import { saveLiveCapture, loadProcessorYaml, uninstallProcessor } from '../bridge/commands';
-import { basename } from '../utils';
+import { basename, dirname } from '../utils';
 import { ViewerProvider } from './ViewerContext';
 
 export { ThemeProvider, useTheme } from './ThemeContext';
@@ -166,7 +166,16 @@ function HookWiring({ children }: { children: ReactNode }) {
     await Promise.all(paneIds.map(paneId => logViewer.closeSession(paneId)));
   }, [logViewer.closeSession]);
 
-  const workspace = useWorkspace(closeAllSessions, logViewer.loadFile);
+  // Default directory for file dialogs: directory of the focused session's source file.
+  const getDefaultDir = useCallback((): string | undefined => {
+    const { sessions, paneSessionMap: psMap } = sessionCoreRef.current;
+    const { activeLogPaneId: paneId } = sessionPaneRef.current;
+    const sessionId = paneId ? psMap.get(paneId) : undefined;
+    const session = sessionId ? sessions.get(sessionId) : undefined;
+    return session?.filePath ? dirname(session.filePath) : undefined;
+  }, []);
+
+  const workspace = useWorkspace(closeAllSessions, logViewer.loadFile, getDefaultDir);
   const { markDirty } = useWorkspaceContext();
 
   const rawActions = useMemo<Partial<ActionsContextValue>>(() => ({
