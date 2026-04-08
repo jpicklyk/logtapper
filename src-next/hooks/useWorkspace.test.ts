@@ -22,6 +22,7 @@ vi.mock('../components/EditorTab', () => ({
 }));
 
 import { workspaceNameFromPath } from './useWorkspace';
+import { buildEditorTabEvents } from './workspace/workspacePersistence';
 
 // ---------------------------------------------------------------------------
 // workspaceNameFromPath
@@ -142,5 +143,134 @@ describe('save prompt decision logic', () => {
     const result = resolvePrompt(state, 'save');
     expect(result.action).toBe('execute');
     expect(result.shouldSaveFirst).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// autoSave path decision
+// ---------------------------------------------------------------------------
+describe('autoSave path decision', () => {
+  // Models the doAutoSave branching: workspace with user-saved filePath
+  // delegates to doSave(filePath), workspace without filePath auto-saves
+  // to app_data_dir/{uuid}.ltw
+  function autoSaveDecision(active: { filePath: string | null }): 'save-existing' | 'auto-save' {
+    return active.filePath ? 'save-existing' : 'auto-save';
+  }
+
+  // Models the identity update after each path
+  function applyAutoSave(
+    ws: { name: string; filePath: string | null; dirty: boolean },
+    decision: 'save-existing' | 'auto-save',
+    autoSavePath?: string,
+  ): { name: string; filePath: string | null; dirty: boolean } {
+    if (decision === 'save-existing') {
+      // doSave calls markClean with existing name/path — identity preserved
+      return { ...ws, dirty: false };
+    }
+    // auto-save: setWorkspacePath replaces filePath with UUID path
+    return { ...ws, filePath: autoSavePath ?? ws.filePath, dirty: false };
+  }
+
+  it('workspace with filePath => save-to-existing', () => {
+    const decision = autoSaveDecision({ filePath: '/my-project.ltw' });
+    expect(decision).toBe('save-existing');
+  });
+
+  it('workspace without filePath => auto-save', () => {
+    const decision = autoSaveDecision({ filePath: null });
+    expect(decision).toBe('auto-save');
+  });
+
+  it('save-to-existing preserves workspace identity', () => {
+    const ws = { name: 'MyProject', filePath: '/my-project.ltw', dirty: true };
+    const decision = autoSaveDecision(ws);
+    const result = applyAutoSave(ws, decision);
+    expect(result.name).toBe('MyProject');
+    expect(result.filePath).toBe('/my-project.ltw');
+    expect(result.dirty).toBe(false);
+  });
+
+  it('auto-save sets filePath to UUID path', () => {
+    const ws = { name: 'Untitled', filePath: null, dirty: true };
+    const decision = autoSaveDecision(ws);
+    const result = applyAutoSave(ws, decision, '/app_data/abc-123.ltw');
+    expect(result.filePath).toBe('/app_data/abc-123.ltw');
+  });
+
+  it('switch workflow: saved workspace round-trips without rename', () => {
+    // Simulate: user saved to /my.ltw, then switches workspace
+    const ws = { name: 'MyLog', filePath: '/logs/MyLog.ltw', dirty: true };
+
+    // Step 1: doAutoSave during switch
+    const decision = autoSaveDecision(ws);
+    expect(decision).toBe('save-existing');
+
+    // Step 2: identity after save
+    const afterSave = applyAutoSave(ws, decision);
+    expect(afterSave.name).toBe('MyLog');
+    expect(afterSave.filePath).toBe('/logs/MyLog.ltw');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// editor tab restore mapping
+// ---------------------------------------------------------------------------
+describe('editor tab restore mapping', () => {
+  it('empty editor tabs => empty events', () => {
+    expect(buildEditorTabEvents([])).toEqual([]);
+  });
+
+  it('single editor tab => correct event shape', () => {
+    const events = buildEditorTabEvents([{
+      label: 'Notes',
+      content: '# My Notes',
+      viewMode: 'editor',
+      wordWrap: true,
+      filePath: null,
+    }]);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual({
+      type: 'editor',
+      label: 'Notes',
+      filePath: undefined,
+      editorState: { content: '# My Notes', viewMode: 'editor', wordWrap: true },
+    });
+  });
+
+  it('filePath null => filePath undefined in event', () => {
+    const events = buildEditorTabEvents([{
+      label: 'X', content: '', viewMode: 'editor', wordWrap: false, filePath: null,
+    }]);
+    expect(events[0].filePath).toBeUndefined();
+  });
+
+  it('filePath string => preserved in event', () => {
+    const events = buildEditorTabEvents([{
+      label: 'Config', content: 'data', viewMode: 'viewer', wordWrap: false, filePath: '/tmp/config.yaml',
+    }]);
+    expect(events[0].filePath).toBe('/tmp/config.yaml');
+  });
+
+  it('multiple tabs => one event per tab', () => {
+    const tabs = [
+      { label: 'A', content: 'aaa', viewMode: 'editor', wordWrap: false, filePath: null },
+      { label: 'B', content: 'bbb', viewMode: 'viewer', wordWrap: true, filePath: '/b.txt' },
+      { label: 'C', content: 'ccc', viewMode: 'editor', wordWrap: false, filePath: null },
+    ];
+    const events = buildEditorTabEvents(tabs);
+    expect(events).toHaveLength(3);
+    expect(events.map(e => e.label)).toEqual(['A', 'B', 'C']);
+  });
+
+  it('preserves all editorState fields', () => {
+    const events = buildEditorTabEvents([{
+      label: 'Test', content: 'hello world', viewMode: 'viewer', wordWrap: true, filePath: null,
+    }]);
+    expect(events[0].editorState).toEqual({
+      content: 'hello world',
+      viewMode: 'viewer',
+      wordWrap: true,
+    });
   });
 });
