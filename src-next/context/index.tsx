@@ -245,6 +245,18 @@ function HookWiring({ children }: { children: ReactNode }) {
     switchWorkspace: workspace.switchWorkspace,
 
     // --- View actions (not tracked) ---
+    runPipeline: async () => {
+      const sessionId = paneSessionMapRef.current.get(sessionPaneRef.current.activeLogPaneId ?? '') ?? null;
+      if (sessionId) await pipeline.run(sessionId);
+    },
+    stopPipeline: () => {
+      const sessionId = paneSessionMapRef.current.get(sessionPaneRef.current.activeLogPaneId ?? '') ?? null;
+      if (sessionId) pipeline.stop(sessionId);
+    },
+    clearResults: () => {
+      const sessionId = paneSessionMapRef.current.get(sessionPaneRef.current.activeLogPaneId ?? '') ?? null;
+      if (sessionId) pipeline.clearResults(sessionId);
+    },
     openFileDialog,
     openInEditorDialog,
     stopStream: logViewer.stopStream,
@@ -266,6 +278,7 @@ function HookWiring({ children }: { children: ReactNode }) {
        logViewer.handleSearch, logViewer.setStreamFilter, logViewer.cancelStreamFilter,
        logViewer.setEffectiveLineNums,
        addToChain, addPackToChain, removeFromChain, reorderChain, toggleChainEnabled,
+       pipeline.run, pipeline.stop, pipeline.clearResults,
        openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession,
        workspace.newWorkspace, workspace.openWorkspace, workspace.saveWorkspace, workspace.saveWorkspaceAs,
        workspace.closeWorkspace, workspace.switchWorkspace]);

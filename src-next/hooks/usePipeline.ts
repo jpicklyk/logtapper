@@ -37,13 +37,6 @@ export interface PipelineActions {
   loadProcessors: () => Promise<void>;
   installFromYaml: (yaml: string) => Promise<void>;
   removeProcessor: (id: string) => Promise<void>;
-  addToChain: (id: string) => void;
-  addPackToChain: (processorIds: string[]) => void;
-  removeFromChain: (id: string) => void;
-  reorderChain: (fromIndex: number, toIndex: number) => void;
-  toggleChainEnabled: (id: string) => void;
-  /** @deprecated Use addToChain / removeFromChain instead */
-  toggleProcessor: (id: string) => void;
   run: (sessionId: string, anonymize?: boolean) => Promise<void>;
   stop: (sessionId: string) => Promise<void>;
   getVars: (sessionId: string, processorId: string) => Promise<Record<string, unknown>>;
@@ -266,36 +259,6 @@ export function usePipeline(): PipelineActions {
     }
   }, [dispatch]);
 
-  // Chain mutations are also available via ActionsContext (with automatic dirty
-  // tracking). Components should prefer the context versions. These are kept
-  // for internal use within usePipeline (e.g., toggleProcessor).
-  const addToChain = useCallback((id: string) => {
-    dispatch({ type: 'chain:add', id });
-  }, [dispatch]);
-
-  const addPackToChain = useCallback((processorIds: string[]) => {
-    dispatch({ type: 'chain:add-pack', processorIds });
-  }, [dispatch]);
-
-  const removeFromChain = useCallback((id: string) => {
-    dispatch({ type: 'chain:remove', id });
-  }, [dispatch]);
-
-  const reorderChain = useCallback((fromIndex: number, toIndex: number) => {
-    dispatch({ type: 'chain:reorder', fromIndex, toIndex });
-  }, [dispatch]);
-
-  const toggleChainEnabled = useCallback((id: string) => {
-    dispatch({ type: 'chain:toggle-enabled', id });
-  }, [dispatch]);
-
-  const toggleProcessor = useCallback((id: string) => {
-    // Implemented via add/remove to keep logic in the reducer
-    dispatch(pipelineChainRef.current.includes(id)
-      ? { type: 'chain:remove', id }
-      : { type: 'chain:add', id });
-  }, [dispatch]);
-
   const run = useCallback(
     async (sessionId: string, anonymize = false) => {
       const chain = pipelineChainRef.current;
@@ -359,12 +322,6 @@ export function usePipeline(): PipelineActions {
     loadProcessors,
     installFromYaml,
     removeProcessor,
-    addToChain,
-    addPackToChain,
-    removeFromChain,
-    reorderChain,
-    toggleChainEnabled,
-    toggleProcessor,
     run,
     stop,
     getVars,

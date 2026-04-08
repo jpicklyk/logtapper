@@ -47,8 +47,6 @@ export interface ViewActions {
   runPipeline: () => Promise<void>;
   stopPipeline: () => void;
   clearResults: () => void;
-  /** @deprecated Use addToChain/removeFromChain instead. */
-  toggleProcessor: (id: string) => void;
   jumpToLine: (lineNum: number, paneId?: string) => void;
   jumpToMatch: (direction: 1 | -1) => void;
   setSearch: (query: SearchQuery | null) => void;
@@ -161,7 +159,6 @@ const DEFAULT_ACTIONS: ActionsContextValue = {
   runPipeline: () => noopAsync(),
   stopPipeline: noop,
   clearResults: noop,
-  toggleProcessor: (_id: string) => noop(),
   jumpToLine: (_lineNum: number, _paneId?: string) => noop(),
   jumpToMatch: (_direction: 1 | -1) => noop(),
   setSearch: (_query: SearchQuery | null) => noop(),
