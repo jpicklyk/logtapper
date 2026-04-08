@@ -817,12 +817,29 @@ export interface SaveWorkspaceV4Options {
   disabledChainIds: string[];
 }
 
+export interface LoadWorkspaceSessionData {
+  bookmarks: Bookmark[];
+  analyses: AnalysisArtifact[];
+  activeProcessorIds: string[];
+  disabledProcessorIds: string[];
+}
+
 export interface LoadWorkspaceV4Result {
   workspaceName: string;
   sessions: LtwManifestSession[];
   pipelineChain: LtwPipelineChain;
   editorTabs: LtwEditorTab[];
   layout: unknown | null;
+  /** Per-session artifacts ordered to match `sessions` by index. */
+  sessionData: LoadWorkspaceSessionData[];
+}
+
+export interface RestoreSessionOptions {
+  sessionId: string;
+  bookmarks: Bookmark[];
+  analyses: AnalysisArtifact[];
+  activeProcessorIds: string[];
+  disabledProcessorIds: string[];
 }
 
 // ---------------------------------------------------------------------------

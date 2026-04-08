@@ -502,6 +502,7 @@ pub fn run() {
             commands::workspace_cmd::save_workspace_v4,
             commands::workspace_cmd::auto_save_workspace,
             commands::workspace_cmd::load_workspace_v4,
+            commands::workspace_cmd::restore_workspace_session,
             commands::workspace_cmd::get_app_state,
             commands::workspace_cmd::save_app_state_cmd,
             // MCP bridge control

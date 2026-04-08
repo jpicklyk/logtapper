@@ -351,7 +351,7 @@ fn load_lts_file_inner(
 
 /// Store pipeline meta in AppState and emit `workspace-restored` event.
 /// Shared by both `.ltw` (`try_restore_workspace`) and `.lts` (`load_lts_file_inner`) paths.
-fn emit_workspace_restored(
+pub(crate) fn emit_workspace_restored(
     state: &AppState,
     app: &tauri::AppHandle,
     session_id: &str,
@@ -1330,7 +1330,7 @@ pub fn compute_search_highlights(raw: &str, query: &SearchQuery) -> Vec<Highligh
 // ---------------------------------------------------------------------------
 
 /// Restore bookmarks and analyses into AppState with session ID rewritten.
-fn restore_artifacts(
+pub(crate) fn restore_artifacts(
     state: &AppState,
     session_id: &str,
     bookmarks: Vec<crate::core::bookmark::Bookmark>,

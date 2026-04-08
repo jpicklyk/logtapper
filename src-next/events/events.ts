@@ -131,6 +131,9 @@ export type AppEvents = {
   'workspace:before-reset':  undefined;
   /** Fired after a workspace teardown completes. Hooks should reinitialize. */
   'workspace:reset':         undefined;
+  /** Fired after an .ltw workspace is loaded — signals layout consumers to
+   *  apply the saved layout blob (pane widths, visible panes, tabs, etc.). */
+  'workspace:restore-layout': { layout: unknown };
   /** Fired after an .lts workspace is fully restored. */
   'workspace:opened':        { name: string; filePath: string };
 

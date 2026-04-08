@@ -18,6 +18,7 @@ import {
   COMPACT_LEFT_WIDTH,
   STORAGE_KEY,
   findLeafByPaneId,
+  type PersistedState,
 } from './workspace';
 import type { CenterTabType } from './workspace';
 import { resolveFocusedTab } from './workspace/sessionTreeOps';
@@ -207,15 +208,34 @@ export function useWorkspaceLayout() {
       setFocusedLogviewerTabId(null);
     };
 
+    const onRestoreLayout = ({ layout }: { layout: unknown }) => {
+      // Write the saved layout blob to localStorage so loadPersistedState
+      // can sanitize and validate it, then apply each value to state setters.
+      savePersistedState(layout as PersistedState);
+      const restored = loadPersistedState();
+      if (restored.leftPaneWidth !== undefined) setLeftPaneWidth(restored.leftPaneWidth);
+      if (restored.leftPaneTab !== undefined) setLeftPaneTabRaw(restored.leftPaneTab);
+      if (restored.rightPaneVisible !== undefined) rightPane.setVisible(restored.rightPaneVisible);
+      if (restored.rightPaneWidth !== undefined) setRightPaneWidth(restored.rightPaneWidth);
+      if (restored.rightPaneTab !== undefined) rightPane.setTab(restored.rightPaneTab);
+      if (restored.bottomPaneVisible !== undefined) bottomPane.setVisible(restored.bottomPaneVisible);
+      if (restored.bottomPaneHeight !== undefined) setBottomPaneHeight(restored.bottomPaneHeight);
+      if (restored.bottomPaneTab !== undefined) bottomPane.setTab(restored.bottomPaneTab);
+      // Center tree is intentionally not restored here: it was already rebuilt
+      // by the session loading process and the saved IDs would be stale.
+    };
+
     bus.on('session:focused', onSessionFocused);
     bus.on('session:loaded', onSessionLoaded);
     bus.on('layout:open-tab', onOpenTab);
     bus.on('workspace:reset', onWorkspaceReset);
+    bus.on('workspace:restore-layout', onRestoreLayout);
     return () => {
       bus.off('session:focused', onSessionFocused);
       bus.off('session:loaded', onSessionLoaded);
       bus.off('layout:open-tab', onOpenTab);
       bus.off('workspace:reset', onWorkspaceReset);
+      bus.off('workspace:restore-layout', onRestoreLayout);
     };
   }, []);
 
