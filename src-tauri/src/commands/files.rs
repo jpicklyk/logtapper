@@ -205,10 +205,6 @@ pub async fn load_log_file(
         sessions.insert(session_id.clone(), session);
     }
 
-    // ── Workspace restore ────────────────────────────────────────────
-    // Check for a matching .ltw file and restore bookmarks/analyses.
-    let (_restored_bm, _restored_an) = try_restore_workspace(&state, &app, &session_id, &path);
-
     // Spawn background indexing task if there's more to scan.
     if is_indexing {
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
@@ -350,7 +346,7 @@ fn load_lts_file_inner(
 }
 
 /// Store pipeline meta in AppState and emit `workspace-restored` event.
-/// Shared by both `.ltw` (`try_restore_workspace`) and `.lts` (`load_lts_file_inner`) paths.
+/// Used by the `.lts` load path and the `restore_workspace_session` command.
 pub(crate) fn emit_workspace_restored(
     state: &AppState,
     app: &tauri::AppHandle,
@@ -396,7 +392,7 @@ fn close_stale_sessions(state: &AppState, app: Option<&tauri::AppHandle>, path: 
     Ok(())
 }
 
-fn close_session_inner(state: &AppState, app: Option<&tauri::AppHandle>, session_id: &str) -> Result<(), String> {
+fn close_session_inner(state: &AppState, _app: Option<&tauri::AppHandle>, session_id: &str) -> Result<(), String> {
     // 1. Cancel active ADB stream (if any)
     if let Some(cancel_tx) = lock_or_err(&state.stream_tasks, "stream_tasks")?.remove(session_id) {
         let _ = cancel_tx.send(());
@@ -405,39 +401,6 @@ fn close_session_inner(state: &AppState, app: Option<&tauri::AppHandle>, session
     // 2. Cancel active background indexing (if any)
     if let Some(cancel_tx) = lock_or_err(&state.indexing_tasks, "indexing_tasks")?.remove(session_id) {
         let _ = cancel_tx.send(());
-    }
-
-    // ── Workspace save (before session removal) ──────────────────────────────
-    // Cancel any pending debounced save for this session.
-    if let Ok(mut tasks) = state.workspace_save_tasks.lock() {
-        tasks.remove(session_id); // dropping the sender cancels the pending task
-    }
-
-    // Snapshot file_path under sessions lock, then drop it before acquiring
-    // bookmarks/analyses locks. Never hold sessions + bookmarks simultaneously
-    // (undefined lock ordering — see CLAUDE.md).
-    let file_path: Option<String> = {
-        let sessions = lock_or_err(&state.sessions, "sessions")?;
-        sessions.get(session_id).and_then(|s| s.file_path.clone())
-    };
-    let save_data = file_path.map(|fp| {
-        let bm = crate::commands::workspace_sync::snapshot_bookmarks(state, session_id);
-        let an = crate::commands::workspace_sync::snapshot_analyses(state, session_id);
-        let meta = crate::commands::workspace_sync::snapshot_pipeline_meta(state, session_id);
-        (fp, bm, an, meta)
-    });
-
-    if let (Some(app), Some((file_path, bookmarks, analyses, meta))) = (app, save_data) {
-        // Skip workspace save for .lts sessions — they're self-contained
-        if !file_path.ends_with(".lts") {
-            if let Ok(ws_path) = crate::workspace::workspace_path_for(app, &file_path) {
-                if let Err(e) = crate::workspace::save_workspace(&ws_path, &file_path, &bookmarks, &analyses, &meta) {
-                    log::warn!("Workspace save failed for session {session_id}: {e}");
-                } else if let Ok(dir) = crate::workspace::workspace_dir(app) {
-                    crate::workspace::evict_old_workspaces(&dir, 20);
-                }
-            }
-        }
     }
 
     // 3. Remove session (drops mmap / stream data)
@@ -1356,46 +1319,6 @@ pub(crate) fn restore_artifacts(
             map.insert(session_id.to_string(), an);
         }
     }
-    (bm_count, an_count)
-}
-
-// ---------------------------------------------------------------------------
-// try_restore_workspace
-// ---------------------------------------------------------------------------
-
-/// Attempt to restore bookmarks and analyses from a matching `.ltw` workspace.
-/// Returns (bookmark_count, analysis_count) on success, (0, 0) on failure or no workspace.
-fn try_restore_workspace(
-    state: &crate::commands::AppState,
-    app: &tauri::AppHandle,
-    session_id: &str,
-    file_path: &str,
-) -> (usize, usize) {
-    // 1. Compute workspace path
-    let Ok(ws_path) = crate::workspace::workspace_path_for(app, file_path) else {
-        return (0, 0);
-    };
-
-    // 2. Check if workspace file exists
-    if !ws_path.exists() {
-        return (0, 0);
-    }
-
-    // 3. Load workspace
-    let data = match crate::workspace::load_workspace(&ws_path) {
-        Ok(d) => d,
-        Err(e) => {
-            log::warn!("Failed to load workspace for '{file_path}': {e}");
-            return (0, 0);
-        }
-    };
-
-    // 4-6. Rewrite session IDs and insert into AppState
-    let (bm_count, an_count) = restore_artifacts(state, session_id, data.bookmarks, data.analyses);
-
-    // 7-8. Store pipeline meta + emit workspace-restored event
-    emit_workspace_restored(state, app, session_id, bm_count, an_count, data.session_meta);
-
     (bm_count, an_count)
 }
 

@@ -97,8 +97,6 @@ pub struct AppState {
     pub sources: Mutex<Vec<Source>>,
     /// Pending processor updates found by the startup check (for UI badges).
     pub pending_updates: Mutex<Vec<crate::commands::sources::UpdateAvailable>>,
-    /// Pending workspace auto-save cancellation senders: session_id → cancel sender.
-    pub workspace_save_tasks: Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
     /// Pipeline chain per session, pushed by the frontend via set_session_pipeline_meta.
     /// Used by workspace save sites to persist SessionMeta with the actual chain state.
     pub session_pipeline_meta: Mutex<HashMap<String, crate::workspace::SessionMeta>>,
@@ -157,7 +155,6 @@ impl AppState {
             active_watches: Mutex::new(HashMap::new()),
             sources: Mutex::new(Vec::new()),
             pending_updates: Mutex::new(Vec::new()),
-            workspace_save_tasks: Mutex::new(HashMap::new()),
             session_pipeline_meta: Mutex::new(HashMap::new()),
             packs: Mutex::new(Vec::new()),
             startup_file_path: Mutex::new(None),

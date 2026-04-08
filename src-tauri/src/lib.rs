@@ -511,11 +511,9 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error building tauri application")
-        .run(|app_handle, event| {
+        .run(|#[allow(unused_variables)] app_handle, event| {
             match event {
-                tauri::RunEvent::Exit => {
-                    commands::workspace_sync::flush_all_workspaces(app_handle);
-                }
+                tauri::RunEvent::Exit => {}
                 #[cfg(target_os = "macos")]
                 tauri::RunEvent::Opened { urls } => {
                     // macOS sends file paths as file:// URLs via this event.

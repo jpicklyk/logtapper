@@ -53,8 +53,6 @@ pub fn create_bookmark(
             .push(bookmark.clone());
     }
 
-    crate::commands::workspace_sync::schedule_workspace_save(&app, &state, &session_id);
-
     use tauri::Emitter;
     let _ = app.emit(
         "bookmark-update",
@@ -117,8 +115,6 @@ pub fn update_bookmark(
     let updated = bm.clone();
     drop(bookmarks);
 
-    crate::commands::workspace_sync::schedule_workspace_save(&app, &state, &session_id);
-
     use tauri::Emitter;
     let _ = app.emit(
         "bookmark-update",
@@ -152,8 +148,6 @@ pub fn delete_bookmark(
 
     let removed = list.remove(idx);
     drop(bookmarks);
-
-    crate::commands::workspace_sync::schedule_workspace_save(&app, &state, &session_id);
 
     use tauri::Emitter;
     let _ = app.emit(
