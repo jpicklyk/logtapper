@@ -59,8 +59,6 @@ export function useFileInfo(paneId: string | null): FileInfoData {
   // Restore from cache on session switch, or start fresh.
   const cached = sessionId ? metadataCache.get(sessionId) : undefined;
 
-  const [totalLines, setTotalLines] = useState<number | undefined>(undefined);
-  const [fileSize, setFileSize] = useState<number | undefined>(undefined);
   const [firstTimestamp, setFirstTimestamp] = useState<number | null | undefined>(cached?.firstTimestamp);
   const [lastTimestamp, setLastTimestamp] = useState<number | null | undefined>(cached?.lastTimestamp);
   const [sections, setSections] = useState<SectionEntry[]>(cached?.sections ?? []);
@@ -88,8 +86,6 @@ export function useFileInfo(paneId: string | null): FileInfoData {
   // Reset base metadata and fetch device info whenever the session changes.
   useEffect(() => {
     if (!sessionId || !session) {
-      setTotalLines(undefined);
-      setFileSize(undefined);
       setFirstTimestamp(undefined);
       setLastTimestamp(undefined);
       setSections([]);
@@ -101,8 +97,6 @@ export function useFileInfo(paneId: string | null): FileInfoData {
     // Restore from cache if available, otherwise reset and fetch.
     const c = metadataCache.get(sessionId);
 
-    setTotalLines(session.totalLines);
-    setFileSize(session.fileSize);
     setFirstTimestamp(c?.firstTimestamp ?? session.firstTimestamp ?? null);
     setLastTimestamp(c?.lastTimestamp ?? session.lastTimestamp ?? null);
     setSections(c?.sections ?? []);
@@ -192,33 +186,6 @@ export function useFileInfo(paneId: string | null): FileInfoData {
     return () => { cancelled = true; };
   }, [sessionId, indexingProgress]);
 
-  // For streaming sessions, keep size/timestamp local state in sync with the
-  // session context. SessionContext is updated on every batch by useStreamSession
-  // via updateSession — no separate event listener needed now that adb-batch is
-  // delivered via Channel<T>, not as a global broadcast event.
-  useEffect(() => {
-    if (!session?.isStreaming) return;
-    setTotalLines(session.totalLines);
-    setFileSize(session.fileSize);
-    if (session.firstTimestamp != null) {
-      setFirstTimestamp((prev) => prev ?? session.firstTimestamp!);
-    }
-    if (session.lastTimestamp != null) {
-      setLastTimestamp(session.lastTimestamp);
-    }
-   
-  }, [session?.isStreaming, session?.totalLines, session?.fileSize,
-      session?.firstTimestamp, session?.lastTimestamp]);
-
-  // Update totalLines whenever session.totalLines changes during or after indexing.
-  // indexingProgress is kept in deps so the effect also fires when indexing completes
-  // (transitioning from non-null to null) and session.totalLines holds the final count.
-  useEffect(() => {
-    if (session) {
-      setTotalLines(session.totalLines);
-    }
-  }, [session?.totalLines, indexingProgress]);
-
   // Track user line selection via event bus — drives section highlighting
   // when the user clicks lines in the log viewer (not just programmatic jumps).
   // Cleared when a programmatic jump fires so jumpToLine always wins.
@@ -233,15 +200,12 @@ export function useFileInfo(paneId: string | null): FileInfoData {
     return () => { bus.off('selection:changed', handler); };
   }, [paneId]);
 
-  // Clear selectedLine when a programmatic jump fires (search, section click)
-  // so that effectiveScrollToLine takes over for section tracking.
-  useEffect(() => {
-    if (effectiveScrollToLine != null) {
-      setSelectedLine(null);
-    }
-  }, [effectiveScrollToLine]);
+  // When a programmatic jump is active, suppress the user's selected line so
+  // effectiveScrollToLine takes over for section tracking. Derived at render time
+  // rather than via a useEffect to avoid an extra commit/re-render cycle.
+  const effectiveSelectedLine = effectiveScrollToLine != null ? null : selectedLine;
 
-  const trackingLine = selectedLine ?? effectiveScrollToLine;
+  const trackingLine = effectiveSelectedLine ?? effectiveScrollToLine;
 
   // Reverse iteration prefers the most specific (child) section when ranges overlap.
   // Children come after parents in the array and have narrower ranges, so the last
@@ -340,9 +304,15 @@ export function useFileInfo(paneId: string | null): FileInfoData {
     [jumpToLine, paneId],
   );
 
-  // For streaming sessions, timestamps are updated every batch via updateSession
-  // but the local state is only set once (on sessionId change). Read directly
-  // from the live session object so FROM/TO stay current during streaming.
+  // totalLines and fileSize are read directly from the session object.
+  // Session is updated reactively via updateSession (indexing progress, streaming
+  // batches) so no local useState mirror is needed — reading session directly
+  // avoids an extra setState + commit on every batch.
+  //
+  // firstTimestamp and lastTimestamp still use local state because they may be
+  // refreshed from getSessionMetadata after indexing completes (the initial
+  // LoadResult only covers the first 1 MB chunk for large files). For streaming
+  // sessions, prefer the live session value so timestamps stay current.
   const isStreaming = session?.isStreaming ?? false;
   const effectiveFirstTs = isStreaming ? (session?.firstTimestamp ?? firstTimestamp) : firstTimestamp;
   const effectiveLastTs = isStreaming ? (session?.lastTimestamp ?? lastTimestamp) : lastTimestamp;
@@ -350,8 +320,8 @@ export function useFileInfo(paneId: string | null): FileInfoData {
   return {
     sourceName: session?.sourceName,
     sourceType: session?.sourceType,
-    totalLines: isStreaming ? (session?.totalLines ?? totalLines) : totalLines,
-    fileSize: isStreaming ? (session?.fileSize ?? fileSize) : fileSize,
+    totalLines: session?.totalLines,
+    fileSize: session?.fileSize,
     firstTimestamp: effectiveFirstTs,
     lastTimestamp: effectiveLastTs,
     sections,
