@@ -23,7 +23,6 @@ import { PaneContent } from '../../components/PaneContent';
 import { SettingsPanel } from '../../components/SettingsPanel';
 import { useSettings, useAnonymizerConfig, useToast, useAnalysisToast, useWatchToast, useWorkspaceRestoreToast, useFileShortcuts, useStartupFile } from '../../hooks';
 import { startMcpBridge } from '../../bridge/commands';
-import { useCacheManager } from '../../cache';
 import { Toast } from '../../ui';
 import { findTabAcrossTree, allPanes } from '../../hooks/workspace/splitTreeHelpers';
 import { usePendingUpdateCount, useViewerActions } from '../../context';
@@ -60,7 +59,6 @@ const RIGHT_BOTTOM_ITEMS: { id: string; icon: React.ComponentType<{ size?: numbe
 export const AppShell = React.memo(function AppShell({ workspace }: AppShellProps) {
   const settingsHook = useSettings();
   const anonymizerConfig = useAnonymizerConfig();
-  const cacheManager = useCacheManager();
   const { toasts, addToast, dismissToast } = useToast();
   useAnalysisToast(addToast);
   useWatchToast(addToast);
@@ -160,10 +158,11 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
     [workspace.centerTree],
   );
 
-  // Sync fileCacheBudget setting → CacheManager whenever it changes
-  useEffect(() => {
-    cacheManager.setTotalBudget(settingsHook.settings.fileCacheBudget);
-  }, [cacheManager, settingsHook.settings.fileCacheBudget]);
+  // Destructure stable callbacks from workspace so PaneContent's React.memo
+  // compares the actual function refs (stable useCallback refs from useCenterTree)
+  // rather than fields of a freshly-created workspace object.
+  // renameTab and setTabUnsaved are useCallback([]) — they never change.
+  const { setTabUnsaved, renameTab } = workspace;
 
   // -- Left toolbar handlers --
   const handleLeftTopToggle = useCallback(
@@ -400,8 +399,8 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
         return createPortal(
           <PaneContent
             pane={pane}
-            onDirtyChanged={workspace.setTabUnsaved}
-            onFilePathChanged={workspace.renameTab}
+            onDirtyChanged={setTabUnsaved}
+            onFilePathChanged={renameTab}
           />,
           container,
           pane.id,
