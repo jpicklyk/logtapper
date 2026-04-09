@@ -76,11 +76,11 @@ export interface WorkspaceLayoutState {
   containerRef: React.RefObject<HTMLDivElement>;
   resetLayout: () => void;
 
-  // Focus tracking — updated directly on every tab/pane activation (no bus event)
+  // Focus tracking — activeLogPaneId is read from SessionContext (canonical source).
+  // All focus changes flow through the session:focused bus event.
   activeLogPaneId: string | null;
-  setActiveLogPaneId: (paneId: string) => void;
-  /** Focus a specific logviewer tab as the active session source. Sets both
-   *  activeLogPaneId and focusedLogviewerTabId in one call. */
+  /** Focus a specific logviewer tab as the active session source. Emits session:focused
+   *  bus event so SessionContext (the canonical owner) and WorkspaceLayout both update. */
   focusLogviewerTab: (tabId: string, paneId: string) => void;
   /** Active tab type in the focused pane, or null if no pane is focused. */
   focusedActiveTabType: CenterTabType | null;

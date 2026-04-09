@@ -4,7 +4,7 @@ import { storageRemove } from '../utils';
 import { bus } from '../events/bus';
 import type { AppEvents } from '../events/events';
 import { useTogglePane } from './useTogglePane';
-import { useSessionContext } from '../context/SessionContext';
+import { useSessionContext, useSessionPaneCtx } from '../context/SessionContext';
 import {
   useCenterTree,
   useLayoutPreset,
@@ -56,24 +56,30 @@ export function useWorkspaceLayout() {
   const [leftPaneWidth, setLeftPaneWidth] = useState(saved.leftPaneWidth ?? DEFAULT_LEFT_WIDTH);
   const [leftPaneTab, setLeftPaneTabRaw] = useState<LeftPaneTab>(saved.leftPaneTab ?? 'info');
 
-  // Focus tracking — synced from session:focused bus event
-  const [activeLogPaneId, setActiveLogPaneId] = useState<string | null>(null);
+  // Focus tracking — activeLogPaneId is the canonical value from SessionContext
+  // (updated via session:focused bus event). We keep a ref for synchronous reads
+  // inside useCenterTree and event handlers without subscribing to the broader
+  // SessionContext updates from this hook.
+  const { activeLogPaneId } = useSessionPaneCtx();
   const activeLogPaneIdRef = useRef<string | null>(activeLogPaneId);
   activeLogPaneIdRef.current = activeLogPaneId;
+
+  // paneSessionMap from SessionContext
+  const { paneSessionMap, activateSessionForPane } = useSessionContext();
+  const paneSessionMapRef = useRef(paneSessionMap);
+  paneSessionMapRef.current = paneSessionMap;
 
   // The specific logviewer tab showing the focus marker (blue underline).
   // Updated when a logviewer tab is activated or when focus moves to a new pane.
   const [focusedLogviewerTabId, setFocusedLogviewerTabId] = useState<string | null>(null);
 
   const focusLogviewerTab = useCallback((tabId: string, paneId: string) => {
-    setActiveLogPaneId(paneId);
+    // Emit session:focused so SessionContext (the canonical owner) updates.
+    // Look up sessionId via ref (avoids stale closure, keeps callback stable).
+    const sessionId = paneSessionMapRef.current.get(paneId) ?? null;
+    bus.emit('session:focused', { sessionId, paneId });
     setFocusedLogviewerTabId(tabId);
   }, []);
-
-  // paneSessionMap from SessionContext
-  const { paneSessionMap, activateSessionForPane } = useSessionContext();
-  const paneSessionMapRef = useRef(paneSessionMap);
-  paneSessionMapRef.current = paneSessionMap;
 
   // Right pane
   const rightPane = useTogglePane<RightPaneTab>(
@@ -177,16 +183,10 @@ export function useWorkspaceLayout() {
 
   useEffect(() => {
     const onSessionFocused = (e: { paneId: string | null }) => {
-      if (!e.paneId) {
-        setActiveLogPaneId(null);
-        return;
-      }
-      // Stale event for a pane removed by workspace reset + remap — ignore.
-      if (!findLeafByPaneId(centerTreeSyncRef.current, e.paneId)) return;
-      setActiveLogPaneId(e.paneId);
-      const tabId = resolveFocusedTab(centerTreeSyncRef.current, e.paneId);
-      if (tabId !== null) {
-        setFocusedLogviewerTabId(tabId);
+      // activeLogPaneId is owned by SessionContext — no local state to update here.
+      // Only update the focused tab marker (blue underline) which is layout-local.
+      if (e.paneId) {
+        setFocusedLogviewerTabId(resolveFocusedTab(centerTreeSyncRef.current, e.paneId));
       }
     };
 
@@ -297,7 +297,6 @@ export function useWorkspaceLayout() {
 
     // Focus tracking
     activeLogPaneId,
-    setActiveLogPaneId,
     focusLogviewerTab,
     focusedActiveTabType: activeTab?.type ?? null,
     focusedLogviewerTabId,
