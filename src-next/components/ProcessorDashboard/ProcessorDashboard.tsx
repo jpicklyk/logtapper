@@ -289,14 +289,16 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
     return { packGroups: groups, standaloneProcessors: standalone };
   }, [activeProcessors, packs]);
 
-  const toggleGroup = useCallback((groupId: string) => {
+  // Plain function — toggleGroup is only used via inline arrow on a plain button,
+  // so useCallback provides no memo benefit here.
+  const toggleGroup = (groupId: string) => {
     setCollapsedGroups((prev) => {
       const next = new Set(prev);
       if (next.has(groupId)) next.delete(groupId);
       else next.add(groupId);
       return next;
     });
-  }, []);
+  };
 
   const selected = selectedId ?? activeProcessors[0]?.id ?? null;
   const selectedProc = activeProcessors.find((p) => p.id === selected);

@@ -124,11 +124,14 @@ export interface PackGroupProps {
   processors: ProcessorSummary[];
   expanded: boolean;
   compact: boolean;
-  onToggleExpand: () => void;
+  /** Called with the packId when the header is clicked to expand/collapse. */
+  onToggleExpand: (packId: string) => void;
   allEnabled: boolean;
   someDisabled: boolean;
-  onTogglePackEnabled: () => void;
-  onRemovePack: () => void;
+  /** Called with the packId to toggle all processors in the pack enabled/disabled. */
+  onTogglePackEnabled: (packId: string) => void;
+  /** Called with the packId to remove all processors in the pack from the chain. */
+  onRemovePack: (packId: string) => void;
   onToggleProcessor: (id: string) => void;
   onRemoveProcessor: (id: string) => void;
   disabledIds: Set<string>;
@@ -137,6 +140,7 @@ export interface PackGroupProps {
 }
 
 const PackGroup = React.memo(function PackGroup({
+  packId,
   packName,
   processors,
   expanded,
@@ -166,13 +170,18 @@ const PackGroup = React.memo(function PackGroup({
     return PROC_TYPE_ACCENT[dominant] ?? 'var(--accent)';
   }, [processors]);
   const handleRemovePack = useCallback(
-    (e: React.MouseEvent) => { e.stopPropagation(); onRemovePack(); },
-    [onRemovePack],
+    (e: React.MouseEvent) => { e.stopPropagation(); onRemovePack(packId); },
+    [onRemovePack, packId],
   );
 
   const handleTogglePack = useCallback(
-    (e: React.MouseEvent) => { e.stopPropagation(); onTogglePackEnabled(); },
-    [onTogglePackEnabled],
+    (e: React.MouseEvent) => { e.stopPropagation(); onTogglePackEnabled(packId); },
+    [onTogglePackEnabled, packId],
+  );
+
+  const handleToggleExpand = useCallback(
+    () => onToggleExpand(packId),
+    [onToggleExpand, packId],
   );
 
   const eyeIcon = allEnabled ? EyeSvg : someDisabled ? EyePartialSvg : EyeOffSvg;
@@ -185,8 +194,8 @@ const PackGroup = React.memo(function PackGroup({
   return (
     <div className={`${styles.packGroup}${compact ? ` ${styles.packGroupCompact}` : ''}`}>
       {/* Pack header */}
-      <div className={styles.packHeader} onClick={onToggleExpand} role="button" tabIndex={0}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggleExpand(); } }}
+      <div className={styles.packHeader} onClick={handleToggleExpand} role="button" tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleToggleExpand(); } }}
         style={{ '--pack-accent': packAccentColor } as React.CSSProperties}>
         <span className={styles.packAccent} />
         <span className={styles.packName}>{packName}</span>
