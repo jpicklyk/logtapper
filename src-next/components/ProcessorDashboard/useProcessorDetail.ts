@@ -146,7 +146,7 @@ export function useProcessorDetail({
       if (fetchSeqRef.current !== seq) return;
       setMatchedLines([]);
     } finally {
-      if (fetchSeqRef.current === seq && showLoading) setMatchesLoading(false);
+      if (fetchSeqRef.current === seq) setMatchesLoading(false);
     }
   }, [selectedId, sessionId]);
 

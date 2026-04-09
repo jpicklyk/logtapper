@@ -1,36 +1,98 @@
-work_item_schemas:
+note_schemas:
 
-  feature-implementation:
-    lifecycle: auto
-    notes:
-      - key: requirements
-        role: queue
-        required: true
-        description: "Problem statement, acceptance criteria, and non-goals."
-        guidance: "Consult .claude/skills/spec-framework/ for the full guide. State the problem with quantified impact. List 2-5 testable acceptance criteria. Name at least one non-goal (a reasonable expectation you deliberately exclude)."
-        skill: "spec-framework"
+  feature:
+    - key: requirements
+      role: queue
+      required: true
+      description: "Problem statement, acceptance criteria, and non-goals."
+      guidance: "Consult .claude/skills/spec-framework/ for the full guide. State the problem with quantified impact. List 2-5 testable acceptance criteria. Name at least one non-goal (a reasonable expectation you deliberately exclude)."
+      skill: "spec-framework"
 
-      - key: design
-        role: queue
-        required: true
-        description: "Approach, alternatives considered, affected modules."
-        guidance: "Consult .claude/skills/spec-framework/ for the full guide. Describe the proposed approach and which layers it touches (Rust backend, frontend modules, MCP bridge). List 2+ real alternatives with specific trade-offs explaining why each was rejected. Identify affected files and check cross-cutting concerns (concurrency, StrictMode, frontend isolation, pre-filter)."
-        skill: "spec-framework"
+    - key: design
+      role: queue
+      required: true
+      description: "Approach, alternatives considered, affected modules."
+      guidance: "Consult .claude/skills/spec-framework/ for the full guide. Describe the proposed approach and which layers it touches (Rust backend, frontend modules, MCP bridge). List 2+ real alternatives with specific trade-offs explaining why each was rejected. Identify affected files and check cross-cutting concerns (concurrency, StrictMode, frontend isolation, pre-filter)."
+      skill: "spec-framework"
 
-      - key: implementation-notes
-        role: work
-        required: true
-        description: "Decisions, deviations from design, surprises."
-        guidance: "Document key decisions made during implementation that weren't in the design. Note any deviations from the plan and why. Record surprises, wrong turns, and reusable patterns discovered. This is not a git log — explain the why, not the what."
+    - key: implementation-notes
+      role: work
+      required: true
+      description: "Decisions, deviations from design, surprises."
+      guidance: "Document key decisions made during implementation that weren't in the design. Note any deviations from the plan and why. Record surprises, wrong turns, and reusable patterns discovered. This is not a git log — explain the why, not the what."
 
-      - key: test-results
-        role: work
-        required: true
-        description: "Test pass/fail counts, new tests added, manual verification."
-        guidance: "Report cargo test results (count, pass/fail), clippy status, and npm run build status. List any new tests by name. For UI changes, describe manual verification performed. Distinguish pre-existing failures from new ones."
+    - key: test-results
+      role: work
+      required: true
+      description: "Test pass/fail counts, new tests added, manual verification."
+      guidance: "Report cargo test results (count, pass/fail), clippy status, and npm run build status. List any new tests by name. For UI changes, describe manual verification performed. Distinguish pre-existing failures from new ones."
 
-      - key: verification
-        role: review
-        required: false
-        description: "Rebuild confirmed, feature works end-to-end."
-        guidance: "Confirm npx tauri dev runs successfully. Verify the feature works end-to-end in the running app. Note any edge cases tested manually. If MCP bridge was affected, confirm /mcp reconnect works."
+    - key: session-tracking
+      role: work
+      required: true
+      description: "Session context for retrospective."
+      guidance: "Record outcome, files changed, deviations from plan, friction encountered, and test results. This feeds /session-retrospective — focus on what future sessions need to know."
+
+    - key: verification
+      role: review
+      required: false
+      description: "Rebuild confirmed, feature works end-to-end."
+      guidance: "Confirm npx tauri dev runs successfully. Verify the feature works end-to-end in the running app. Note any edge cases tested manually. If MCP bridge was affected, confirm /mcp reconnect works."
+      skill: "simplify"
+
+  feature-task:
+    - key: task-scope
+      role: queue
+      required: true
+      description: "What to build — target files, acceptance criteria, constraints."
+      guidance: "Define the narrow scope. Include: what to build, target files, acceptance criteria, constraints. The parent feature spec covers the 'why' — don't repeat it here. Map the interaction surface: list every existing code path that reads or writes state you will touch (effects, callbacks, reset/cleanup paths, callers with different parameter combinations). The implementation must account for all of them."
+
+    - key: implementation-notes
+      role: work
+      required: true
+      description: "Context handoff — deviations, surprises, decisions affecting dependent work."
+      guidance: "Document decisions not in the task scope. Focus on what downstream agents or the next session needs to know."
+
+    - key: session-tracking
+      role: work
+      required: true
+      description: "Session context for retrospective."
+      guidance: "Record outcome, files changed, deviations, friction, test results."
+
+    - key: review-checklist
+      role: review
+      required: true
+      description: "Task-level quality gate — scope alignment and test coverage."
+      guidance: "Verify scope alignment, test coverage, no unintended side effects. No /simplify here — that happens at the parent feature level."
+
+  bug-fix:
+    - key: reproduction-steps
+      role: queue
+      required: true
+      description: "Step-by-step reproduction with expected vs actual result."
+      guidance: "Include the exact steps or tool call that triggers the bug. State expected output and actual output. Note environment details if relevant (Windows/MSYS2 gotchas, StrictMode double-mount, etc.)."
+
+    - key: root-cause
+      role: queue
+      required: true
+      description: "Why it happens — file, line, and condition."
+      guidance: "Identify the specific file and function. Explain the condition that triggers it. Reference CLAUDE.md gotchas if applicable (Rhai scripting, pre-filter, LineContext Arc<str>, etc.). Map the interaction surface: list every code path that reads or writes the affected state (effects, callbacks, reset/cleanup paths, external callers with different parameter combinations). The fix must account for all of them, not just the direct call path."
+
+    - key: fix-summary
+      role: work
+      required: true
+      description: "What was changed and which files were modified."
+      guidance: "List each file changed and summarize the change. Note if the fix required changes beyond the root cause location (e.g., callers, tests, types)."
+
+    - key: test-verification
+      role: work
+      required: true
+      description: "How the fix was verified and test results after fix."
+      guidance: "Run tests and report results. Note if a new test was added to cover the fix. For UI bugs, describe manual verification performed."
+
+  container:
+    - key: container-summary
+      role: queue
+      required: false
+      description: "Optional high-level description of what this container organizes."
+      guidance: "Brief description of the container's purpose and scope. Not required — containers exist to group work items, not to carry implementation detail."
