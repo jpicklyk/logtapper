@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
-import type { SearchQuery } from '../bridge/types';
+import type { SearchQuery, ExportAllOptions, ProcessorSummary } from '../bridge/types';
 
 // ---------------------------------------------------------------------------
 // Action categories
@@ -19,6 +19,7 @@ export interface WorkspaceMutationActions {
   // Processor library
   installProcessor: (yaml: string) => Promise<void>;
   removeProcessor: (id: string) => Promise<void>;
+  loadProcessorFromFile: (filePath: string) => Promise<ProcessorSummary>;
 
   // Pipeline chain
   addToChain: (id: string) => void;
@@ -59,6 +60,13 @@ export interface ViewActions {
   saveFile: () => Promise<void>;
   saveFileAs: () => Promise<void>;
   exportSession: () => void;
+
+  // System / export actions
+  setFileAssociation: (ext: string, enabled: boolean) => Promise<void>;
+  openDefaultAppsSettings: () => Promise<void>;
+  startMcpBridge: () => Promise<void>;
+  stopMcpBridge: () => Promise<void>;
+  exportAllSessions: (options: ExportAllOptions) => Promise<void>;
 }
 
 export interface ActionsContextValue extends WorkspaceMutationActions, ViewActions {}
@@ -78,6 +86,7 @@ export const MUTATION_ACTION_KEYS: ReadonlySet<keyof WorkspaceMutationActions> =
   'closeSession',
   'installProcessor',
   'removeProcessor',
+  'loadProcessorFromFile',
   'addToChain',
   'addPackToChain',
   'removeFromChain',
@@ -140,6 +149,7 @@ const DEFAULT_ACTIONS: ActionsContextValue = {
   closeSession: (_paneId?: string) => noopAsync(),
   installProcessor: (_yaml: string) => noopAsync(),
   removeProcessor: (_id: string) => noopAsync(),
+  loadProcessorFromFile: (_filePath: string) => Promise.resolve({} as ProcessorSummary),
   addToChain: (_id: string) => noop(),
   addPackToChain: (_processorIds: string[]) => noop(),
   removeFromChain: (_id: string) => noop(),
@@ -171,6 +181,13 @@ const DEFAULT_ACTIONS: ActionsContextValue = {
   saveFile: () => noopAsync(),
   saveFileAs: () => noopAsync(),
   exportSession: noop,
+
+  // System / export actions
+  setFileAssociation: (_ext: string, _enabled: boolean) => noopAsync(),
+  openDefaultAppsSettings: () => noopAsync(),
+  startMcpBridge: () => noopAsync(),
+  stopMcpBridge: () => noopAsync(),
+  exportAllSessions: (_options: ExportAllOptions) => noopAsync(),
 };
 
 const ActionsContext = createContext<ActionsContextValue | null>(null);

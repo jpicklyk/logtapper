@@ -157,20 +157,25 @@ export function useViewerActions() {
           openTab, setActiveLogPane, setActivePane, setEffectiveLineNums,
           saveFile, saveFileAs, exportSession,
           newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs,
-          closeWorkspace, switchWorkspace } = useActionsContext();
+          closeWorkspace, switchWorkspace,
+          setFileAssociation, openDefaultAppsSettings, startMcpBridge, stopMcpBridge, exportAllSessions,
+        } = useActionsContext();
   return useMemo(
     () => ({ loadFile, openFileDialog, openInEditorDialog, startStream, stopStream, closeSession,
              jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
              openTab, setActiveLogPane, setActivePane, setEffectiveLineNums,
              saveFile, saveFileAs, exportSession,
              newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs,
-             closeWorkspace, switchWorkspace }),
+             closeWorkspace, switchWorkspace,
+             setFileAssociation, openDefaultAppsSettings, startMcpBridge, stopMcpBridge, exportAllSessions,
+           }),
     [loadFile, openFileDialog, openInEditorDialog, startStream, stopStream, closeSession,
      jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
      openTab, setActiveLogPane, setActivePane, setEffectiveLineNums,
      saveFile, saveFileAs, exportSession,
      newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs,
-     closeWorkspace, switchWorkspace],
+     closeWorkspace, switchWorkspace,
+     setFileAssociation, openDefaultAppsSettings, startMcpBridge, stopMcpBridge, exportAllSessions],
   );
 }
 
@@ -187,14 +192,14 @@ export function useWorkspaceActions() {
 
 export function usePipelineActions() {
   const { runPipeline, stopPipeline, clearResults, installProcessor,
-          removeProcessor,
+          removeProcessor, loadProcessorFromFile,
           addToChain, addPackToChain, removeFromChain, reorderChain, toggleChainEnabled } = useActionsContext();
   return useMemo(
     () => ({ runPipeline, stopPipeline, clearResults, installProcessor,
-             removeProcessor,
+             removeProcessor, loadProcessorFromFile,
              addToChain, addPackToChain, removeFromChain, reorderChain, toggleChainEnabled }),
     [runPipeline, stopPipeline, clearResults, installProcessor,
-     removeProcessor,
+     removeProcessor, loadProcessorFromFile,
      addToChain, addPackToChain, removeFromChain, reorderChain, toggleChainEnabled],
   );
 }

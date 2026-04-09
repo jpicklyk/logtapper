@@ -6,7 +6,8 @@ import { useTheme } from '../../context';
 import { SegmentedControl, Button, IconButton } from '../../ui';
 import type { SegmentedOption } from '../../ui';
 import type { ThemeMode } from '../../context';
-import { getFileAssociationStatus, setFileAssociation, openDefaultAppsSettings, startMcpBridge, stopMcpBridge } from '../../bridge/commands';
+import { getFileAssociationStatus } from '../../bridge/commands';
+import { useViewerActions } from '../../context';
 import type { FileAssocEntry } from '../../bridge/types';
 import { useMcpStatus } from '../../hooks';
 import { formatNumber } from '../ProcessorDashboard/utils';
@@ -195,6 +196,7 @@ export const GeneralTab = memo(function GeneralTab({ settings, onUpdate }: Gener
 
 const McpIntegrationSection = memo(function McpIntegrationSection({ settings, onUpdate }: GeneralTabProps) {
   const { connState, port } = useMcpStatus();
+  const { startMcpBridge, stopMcpBridge } = useViewerActions();
   const [pending, setPending] = useState(false);
 
   const handleToggle = useCallback(async (checked: boolean) => {
@@ -212,7 +214,7 @@ const McpIntegrationSection = memo(function McpIntegrationSection({ settings, on
     } finally {
       setPending(false);
     }
-  }, [onUpdate]);
+  }, [startMcpBridge, stopMcpBridge, onUpdate]);
 
   let statusText: string;
   let statusClass: string;
@@ -378,6 +380,7 @@ const STATIC_ASSOCS = [
 ];
 
 function FileAssociationsSection() {
+  const { setFileAssociation, openDefaultAppsSettings } = useViewerActions();
   const [entries, setEntries] = useState<FileAssocEntry[]>([]);
   const [pending, setPending] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -400,11 +403,11 @@ function FileAssociationsSection() {
     } finally {
       setPending(null);
     }
-  }, [refresh]);
+  }, [setFileAssociation, refresh]);
 
   const handleOpenDefaults = useCallback(() => {
     openDefaultAppsSettings().catch(() => {});
-  }, []);
+  }, [openDefaultAppsSettings]);
 
   const isWindows = loaded && entries.length > 0;
 

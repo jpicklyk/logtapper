@@ -2,7 +2,11 @@ import { useMemo, useCallback, useRef, useEffect, type ReactNode } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { SessionProvider } from './SessionContext';
 import { useSessionCoreCtx, useSessionPaneCtx } from './SessionContext';
-import { saveLiveCapture, loadProcessorYaml, uninstallProcessor } from '../bridge/commands';
+import { saveLiveCapture, loadProcessorYaml, uninstallProcessor,
+  loadProcessorFromFile as bridgeLoadProcessorFromFile,
+  setFileAssociation, openDefaultAppsSettings,
+  startMcpBridge, stopMcpBridge, exportAllSessions,
+} from '../bridge/commands';
 import { basename, dirname } from '../utils';
 import { ViewerProvider } from './ViewerContext';
 
@@ -90,6 +94,18 @@ function HookWiring({ children }: { children: ReactNode }) {
       pipelineDispatch({ type: 'processor:removed', id });
     } catch (e) {
       pipelineDispatch({ type: 'error:set', error: String(e) });
+    }
+  }, [pipelineDispatch]);
+
+  const loadProcessorFromFile = useCallback(async (filePath: string) => {
+    pipelineDispatch({ type: 'error:clear' });
+    try {
+      const processor = await bridgeLoadProcessorFromFile(filePath);
+      pipelineDispatch({ type: 'processor:installed', processor });
+      return processor;
+    } catch (e) {
+      pipelineDispatch({ type: 'error:set', error: String(e) });
+      throw e;
     }
   }, [pipelineDispatch]);
 
@@ -239,6 +255,7 @@ function HookWiring({ children }: { children: ReactNode }) {
     closeSession: logViewer.closeSession,
     installProcessor,
     removeProcessor,
+    loadProcessorFromFile,
     addToChain,
     addPackToChain,
     removeFromChain,
@@ -279,8 +296,13 @@ function HookWiring({ children }: { children: ReactNode }) {
     saveFile,
     saveFileAs,
     exportSession,
+    setFileAssociation,
+    openDefaultAppsSettings,
+    startMcpBridge,
+    stopMcpBridge,
+    exportAllSessions,
   }), [logViewer.loadFile, logViewer.startStream, logViewer.stopStream, logViewer.closeSession,
-       installProcessor, removeProcessor,
+       installProcessor, removeProcessor, loadProcessorFromFile,
        logViewer.jumpToLine, logViewer.jumpToMatch,
        logViewer.handleSearch, logViewer.setStreamFilter, logViewer.cancelStreamFilter,
        logViewer.setEffectiveLineNums,

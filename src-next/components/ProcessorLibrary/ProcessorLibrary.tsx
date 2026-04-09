@@ -2,9 +2,6 @@ import { memo, useState, useCallback, useRef, useMemo } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { ProcessorSummary, PackSummary } from '../../bridge/types';
 import { matchesAllTags, getBareId } from '../../bridge/types';
-import {
-  loadProcessorFromFile,
-} from '../../bridge/commands';
 import { usePipeline } from '../../hooks';
 import { useProcessors, usePacks, usePipelineChain, usePipelineActions } from '../../context';
 import { Modal, ProcessorTypeIcon, PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY, Button } from '../../ui';
@@ -38,7 +35,7 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
   const pipeline = usePipeline();
   const processors = useProcessors();
   const pipelineChain = usePipelineChain();
-  const { addToChain, addPackToChain } = usePipelineActions();
+  const { addToChain, addPackToChain, loadProcessorFromFile } = usePipelineActions();
 
   const [tab, setTab] = useState<Tab>('installed');
   const [query, setQuery] = useState('');
@@ -107,7 +104,7 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
       }
     }
     onClose();
-  }, [selected, packs, processorsByBareId, pipeline, onClose]);
+  }, [selected, packs, processorsByBareId, addPackToChain, addToChain, onClose]);
 
   const switchTab = useCallback((t: Tab) => {
     setTab(t);
@@ -233,13 +230,12 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
     setYamlError(null);
     try {
       const summary = await loadProcessorFromFile(sel);
-      await pipeline.loadProcessors();
       addToChain(summary.id);
       onClose();
     } catch (e) {
       setYamlError(String(e));
     }
-  }, [pipeline, onClose]);
+  }, [loadProcessorFromFile, addToChain, onClose]);
 
   const handleYamlInstall = useCallback(async () => {
     if (!yamlInput.trim()) return;

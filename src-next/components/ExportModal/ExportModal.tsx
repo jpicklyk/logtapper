@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { save } from '@tauri-apps/plugin-dialog';
 import { Modal } from '../../ui';
 import { Spinner, Button } from '../../ui';
-import { getExportAllSessionsInfo, exportAllSessions } from '../../bridge/commands';
+import { getExportAllSessionsInfo } from '../../bridge/commands';
+import { useViewerActions } from '../../context';
 import type { ExportAllSessionsInfo } from '../../bridge/types';
 import { allPanes, STORAGE_KEY, collectEditorTabs } from '../../hooks/workspace';
 import { storageGetJSON } from '../../utils';
@@ -27,6 +28,7 @@ interface ExportModalProps {
 }
 
 export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ open, onClose }) {
+  const { exportAllSessions } = useViewerActions();
   const [info, setInfo] = useState<ExportAllSessionsInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -89,7 +91,7 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
     } finally {
       setExporting(false);
     }
-  }, [info, includeBookmarks, includeAnalyses, includeProcessors, onClose]);
+  }, [info, includeBookmarks, includeAnalyses, includeProcessors, onClose, exportAllSessions]);
 
   const multiSession = info && info.sessions.length > 1;
   const title = multiSession ? 'Export Sessions' : 'Export Session';
