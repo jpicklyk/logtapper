@@ -204,7 +204,7 @@ export function useWorkspaceLayout() {
 
     const onWorkspaceReset = () => {
       centerTree.clearTree();
-      setActiveLogPaneId(null);
+      bus.emit('session:focused', { sessionId: null, paneId: null });
       setFocusedLogviewerTabId(null);
     };
 

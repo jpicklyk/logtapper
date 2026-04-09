@@ -148,10 +148,13 @@ export const WorkspaceSwitcher = React.memo(function WorkspaceSwitcher() {
             <>
               <div className={styles.sectionLabel}>Workspaces</div>
               {workspaces.map(ws => (
-                <button
+                <div
                   key={ws.id}
+                  role="button"
+                  tabIndex={0}
                   className={clsx(styles.workspaceItem, ws.id === activeId && styles.workspaceItemActive)}
                   onClick={() => renamingId !== ws.id && handleSwitch(ws.id)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && renamingId !== ws.id) handleSwitch(ws.id); }}
                 >
                   <span className={ws.id === activeId ? styles.activeDot : styles.inactiveDot} />
                   {renamingId === ws.id ? (
@@ -186,7 +189,7 @@ export const WorkspaceSwitcher = React.memo(function WorkspaceSwitcher() {
                       <X size={12} />
                     </button>
                   )}
-                </button>
+                </div>
               ))}
             </>
           )}
