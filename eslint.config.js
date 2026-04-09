@@ -23,6 +23,7 @@ export default tseslint.config(
     plugins: {
       'react-hooks': reactHooks,
       'react-refresh': reactRefresh,
+      'local-rules': localRules,
     },
     languageOptions: {
       ecmaVersion: 2022,
@@ -45,6 +46,9 @@ export default tseslint.config(
 
       // Disable rules that overlap with tsconfig strict checks
       '@typescript-eslint/no-unused-vars': 'off',
+
+      // No side effects (IPC, localStorage, bus.emit, fetch) inside setState updaters
+      'local-rules/no-side-effects-in-updater': 'error',
 
       // ── Convention 1: No direct 'Bugreport'/'Dumpstate' comparisons ─
       // Use isBugreportLike() from bridge/types instead
