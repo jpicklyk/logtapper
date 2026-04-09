@@ -218,17 +218,27 @@ export function useViewerActions() {
           jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
           openTab, setActiveLogPane, setActivePane, setEffectiveLineNums,
           saveFile, saveFileAs, exportSession } = useActionsContext();
-  return { loadFile, openFileDialog, openInEditorDialog, startStream, stopStream, closeSession,
-           jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
-           openTab, setActiveLogPane, setActivePane, setEffectiveLineNums,
-           saveFile, saveFileAs, exportSession };
+  return useMemo(
+    () => ({ loadFile, openFileDialog, openInEditorDialog, startStream, stopStream, closeSession,
+             jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
+             openTab, setActiveLogPane, setActivePane, setEffectiveLineNums,
+             saveFile, saveFileAs, exportSession }),
+    [loadFile, openFileDialog, openInEditorDialog, startStream, stopStream, closeSession,
+     jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
+     openTab, setActiveLogPane, setActivePane, setEffectiveLineNums,
+     saveFile, saveFileAs, exportSession],
+  );
 }
 
 export function usePipelineActions() {
   const { runPipeline, stopPipeline, clearResults, installProcessor,
           removeProcessor, toggleProcessor } = useActionsContext();
-  return { runPipeline, stopPipeline, clearResults, installProcessor,
-           removeProcessor, toggleProcessor };
+  return useMemo(
+    () => ({ runPipeline, stopPipeline, clearResults, installProcessor,
+             removeProcessor, toggleProcessor }),
+    [runPipeline, stopPipeline, clearResults, installProcessor,
+     removeProcessor, toggleProcessor],
+  );
 }
 
 export function useTrackerActions() {
