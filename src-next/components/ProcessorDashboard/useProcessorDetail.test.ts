@@ -8,17 +8,16 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
+import type { MatchedLine } from '../../bridge/types';
 
 // ---------------------------------------------------------------------------
 // Mocks — must be set up before importing the hook
 // ---------------------------------------------------------------------------
 
 const mockGetVars = vi.fn<(sid: string, pid: string) => Promise<Record<string, unknown>>>();
-const mockFetchCharts = vi.fn<(sid: string, pid: string) => Promise<void>>();
 
 vi.mock('../../hooks', () => ({
   usePipeline: () => ({ getVars: mockGetVars }),
-  useChartData: () => ({ fetchCharts: mockFetchCharts }),
 }));
 
 vi.mock('../../bridge/commands', () => ({
@@ -63,7 +62,6 @@ const BASE_PROPS = {
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetVars.mockResolvedValue({});
-  mockFetchCharts.mockResolvedValue(undefined);
   mockGetPiiMappings.mockResolvedValue({});
 });
 
@@ -163,6 +161,116 @@ describe('getPiiMappings race protection', () => {
 
     await waitFor(() => {
       expect(result.current.piiMappings).toEqual({ current_token: 'CURRENT' });
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Race protection: fetchMatches sequence counter
+// ---------------------------------------------------------------------------
+
+describe('fetchMatches race protection', () => {
+  it('discards stale fetchMatches response when selectedId changes before resolution', async () => {
+    const { getMatchedLines } = await import('../../bridge/commands');
+    const mockGetMatchedLines = getMatchedLines as ReturnType<typeof vi.fn>;
+
+    const deferredA = deferred<MatchedLine[]>();
+    const deferredB = deferred<MatchedLine[]>();
+
+    // First render: proc-A
+    mockGetMatchedLines.mockReturnValueOnce(deferredA.promise);
+    const { result, rerender } = renderHook(
+      (props) => useProcessorDetail(props),
+      { initialProps: BASE_PROPS },
+    );
+
+    // Toggle matches on — triggers fetchMatches for proc-A
+    await act(async () => { result.current.handleToggleMatches(); });
+
+    // Switch to proc-B before A resolves
+    mockGetMatchedLines.mockReturnValueOnce(deferredB.promise);
+    rerender({ ...BASE_PROPS, selectedId: 'proc-B' });
+
+    // Toggle matches on for proc-B
+    await act(async () => { result.current.handleToggleMatches(); });
+
+    // Resolve A (stale) — should be discarded by sequence counter
+    const staleMatches: MatchedLine[] = [{ lineNum: 10, raw: 'stale' }];
+    await act(async () => { deferredA.resolve(staleMatches); });
+
+    expect(result.current.matchedLines).not.toEqual(staleMatches);
+
+    // Resolve B (current) — should be applied
+    const currentMatches: MatchedLine[] = [{ lineNum: 20, raw: 'current' }];
+    await act(async () => { deferredB.resolve(currentMatches); });
+
+    await waitFor(() => {
+      expect(result.current.matchedLines).toEqual(currentMatches);
+    });
+  });
+
+  it('discards in-flight fetchMatches when selectedId changes without a follow-up toggle', async () => {
+    // Covers the gap where the reset effect does NOT bump fetchSeqRef:
+    // proc-A fetch is in flight → selectedId changes (reset fires) → proc-A
+    // response resolves → must be discarded even though proc-B never called
+    // fetchMatches yet.
+    const { getMatchedLines } = await import('../../bridge/commands');
+    const mockGetMatchedLines = getMatchedLines as ReturnType<typeof vi.fn>;
+
+    const deferredA = deferred<MatchedLine[]>();
+
+    // First render: proc-A, matches visible
+    mockGetMatchedLines.mockReturnValueOnce(deferredA.promise);
+    const { result, rerender } = renderHook(
+      (props) => useProcessorDetail(props),
+      { initialProps: BASE_PROPS },
+    );
+
+    // Toggle matches on — in-flight fetch for proc-A
+    await act(async () => { result.current.handleToggleMatches(); });
+
+    // Switch to proc-B — reset effect fires; no new fetchMatches triggered
+    rerender({ ...BASE_PROPS, selectedId: 'proc-B' });
+
+    // proc-A response arrives late
+    const staleMatches: MatchedLine[] = [{ lineNum: 99, raw: 'proc-a-stale' }];
+    await act(async () => { deferredA.resolve(staleMatches); });
+
+    // matchedLines must remain empty (reset cleared it; stale response discarded)
+    expect(result.current.matchedLines).toEqual([]);
+    // showMatches was reset by the selectedId change
+    expect(result.current.showMatches).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// showMatchesRef: streaming refetch reads current value
+// ---------------------------------------------------------------------------
+
+describe('streaming refetch reads current showMatches via ref', () => {
+  it('calls fetchMatches when showMatches is toggled on before runCount increments', async () => {
+    const { getMatchedLines } = await import('../../bridge/commands');
+    const mockGetMatchedLines = getMatchedLines as ReturnType<typeof vi.fn>;
+    mockGetMatchedLines.mockResolvedValue([]);
+
+    const { result, rerender } = renderHook(
+      (props) => useProcessorDetail(props),
+      { initialProps: BASE_PROPS },
+    );
+
+    // Toggle matches on
+    await act(async () => { result.current.handleToggleMatches(); });
+    expect(result.current.showMatches).toBe(true);
+
+    // Clear call count after the initial toggle fetch
+    mockGetMatchedLines.mockClear();
+    mockGetMatchedLines.mockResolvedValue([]);
+
+    // Increment runCount — streaming refetch should fire because showMatchesRef.current is true
+    rerender({ ...BASE_PROPS, runCount: 2 });
+
+    await waitFor(() => {
+      expect(mockGetMatchedLines).toHaveBeenCalledWith('sess-1', 'proc-A');
     });
   });
 });

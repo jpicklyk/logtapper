@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { MatchedLine, StateTransition, StateSnapshot, CorrelatorResult } from '../../bridge/types';
 import { getMatchedLines, getPiiMappings, getStateTransitions, getStateAtLine, getCorrelatorEvents } from '../../bridge/commands';
-import { usePipeline, useChartData } from '../../hooks';
+import { usePipeline } from '../../hooks';
 
 export interface UseProcessorDetailParams {
   selectedId: string | null;
@@ -32,7 +32,6 @@ export function useProcessorDetail({
   processorType,
 }: UseProcessorDetailParams): UseProcessorDetailResult {
   const pipeline = usePipeline();
-  const { fetchCharts } = useChartData();
 
   const [vars, setVars] = useState<Record<string, unknown> | null>(null);
   const [piiMappings, setPiiMappings] = useState<Record<string, string>>({});
@@ -44,8 +43,19 @@ export function useProcessorDetail({
   const [trackerSnapshot, setTrackerSnapshot] = useState<StateSnapshot | null>(null);
   const [correlatorResult, setCorrelatorResult] = useState<CorrelatorResult | null>(null);
 
-  // Reset match state when the selected processor changes
+  // Without a ref, the streaming effect closes over the initial showMatches=false
+  // and never sees it become true (its dep array is [runCount] only).
+  const showMatchesRef = useRef(false);
+  showMatchesRef.current = showMatches;
+
+  // Sequence counter to prevent stale fetchMatches overwrites
+  const fetchSeqRef = useRef(0);
+
+  // Reset match state when the selected processor changes.
+  // Also bump fetchSeqRef so any in-flight fetchMatches from the previous
+  // processor is treated as stale and discarded when it resolves.
   useEffect(() => {
+    fetchSeqRef.current++;
     setShowMatches(false);
     setMatchedLines([]);
     setMatchSearch('');
@@ -66,13 +76,6 @@ export function useProcessorDetail({
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, sessionId, runCount]);
-
-  // Fetch charts
-  useEffect(() => {
-    if (selectedId && sessionId && runCount > 0) {
-      fetchCharts(sessionId, selectedId);
-    }
-  }, [selectedId, sessionId, runCount, fetchCharts]);
 
   // PII mappings
   useEffect(() => {
@@ -123,9 +126,11 @@ export function useProcessorDetail({
 
   const fetchMatches = useCallback(async (showLoading = true) => {
     if (!selectedId || !sessionId) return;
+    const seq = ++fetchSeqRef.current;
     if (showLoading) setMatchesLoading(true);
     try {
       const next = await getMatchedLines(sessionId, selectedId);
+      if (fetchSeqRef.current !== seq) return; // stale — discard
       // Referential bail-out: skip update if the line count and last entry
       // are unchanged — avoids re-rendering the list (and losing scroll
       // position) during streaming when no new matches have arrived.
@@ -138,9 +143,10 @@ export function useProcessorDetail({
         return next;
       });
     } catch {
+      if (fetchSeqRef.current !== seq) return;
       setMatchedLines([]);
     } finally {
-      if (showLoading) setMatchesLoading(false);
+      if (fetchSeqRef.current === seq && showLoading) setMatchesLoading(false);
     }
   }, [selectedId, sessionId]);
 
@@ -153,7 +159,7 @@ export function useProcessorDetail({
   // Silent refetch during streaming — no loading indicator, referential
   // bail-out prevents re-render when matches haven't changed.
   useEffect(() => {
-    if (showMatches && runCount > 0) fetchMatches(false);
+    if (showMatchesRef.current && runCount > 0) fetchMatches(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runCount]);
 
