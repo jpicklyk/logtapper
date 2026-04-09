@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useRef, type ReactNode } from 'react';
+import { useMemo, useCallback, useRef, useEffect, type ReactNode } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { SessionProvider } from './SessionContext';
 import { useSessionCoreCtx, useSessionPaneCtx } from './SessionContext';
@@ -222,6 +222,13 @@ function HookWiring({ children }: { children: ReactNode }) {
   }, []);
 
   useAppExitSave(buildAutoSavePayload, getAppStatePayload);
+
+  // Sync fileCacheBudget setting → CacheManager whenever it changes.
+  // Kept here (not in AppShell) because this is business logic — wiring a
+  // settings value to the cache subsystem — not structural layout concern.
+  useEffect(() => {
+    cacheManager.setTotalBudget(settings.fileCacheBudget);
+  }, [cacheManager, settings.fileCacheBudget]);
 
   const rawActions = useMemo<Partial<ActionsContextValue>>(() => ({
     // --- Workspace mutations (auto-tracked via trackMutations) ---
