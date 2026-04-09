@@ -45,10 +45,10 @@ export function useWorkspaceRestore(
       const { sessionId, activeProcessorIds, disabledProcessorIds } = event.payload;
       if (!activeProcessorIds || activeProcessorIds.length === 0) return;
 
-      // Filter to only installed processors
+      // Filter to only installed processors, allowing session-scoped .lts processors through.
       const installedIds = new Set(processorsRef.current.map((p) => p.id));
-      const validActive = activeProcessorIds.filter((id) => installedIds.has(id));
-      const validDisabled = (disabledProcessorIds ?? []).filter((id) => installedIds.has(id));
+      const validActive = activeProcessorIds.filter((id) => installedIds.has(id) || id.includes('@lts-'));
+      const validDisabled = (disabledProcessorIds ?? []).filter((id) => installedIds.has(id) || id.includes('@lts-'));
       if (validActive.length === 0) return;
 
       // Signal that a workspace restore set the chain (prevents localStorage override)

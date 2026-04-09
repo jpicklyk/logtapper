@@ -106,6 +106,10 @@ pub struct AppState {
     pub startup_file_path: Mutex<Option<String>>,
     /// Shutdown sender for the MCP HTTP bridge. Send `()` to stop the server.
     pub mcp_bridge_shutdown: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    /// YAML content for session-scoped processors imported from .lts files.
+    /// Keyed by scoped ID like `wifi-state@lts-{session-uuid}`.
+    /// Ephemeral — removed when the session closes.
+    pub lts_processor_yamls: Mutex<HashMap<String, String>>,
 }
 
 impl Default for AppState {
@@ -159,6 +163,7 @@ impl AppState {
             packs: Mutex::new(Vec::new()),
             startup_file_path: Mutex::new(None),
             mcp_bridge_shutdown: Mutex::new(None),
+            lts_processor_yamls: Mutex::new(HashMap::new()),
         }
     }
 }

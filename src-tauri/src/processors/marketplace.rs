@@ -278,8 +278,12 @@ pub fn resolve_processor_id<V>(store: &std::collections::HashMap<String, V>, id:
         return Some(id.to_string());
     }
     for key in store.keys() {
-        let (bare, _) = split_qualified_id(key);
+        let (bare, ns) = split_qualified_id(key);
         if bare == id {
+            // Skip session-scoped .lts entries — they must be resolved by exact key only.
+            if ns.is_some_and(|n| n.starts_with("lts-")) {
+                continue;
+            }
             return Some(key.clone());
         }
     }
@@ -445,6 +449,34 @@ mcp:
                 assert!(proc_ids.contains(pid.as_str()), "pack '{}' references unknown processor '{}'", pack.id, pid);
             }
         }
+    }
+
+    #[test]
+    fn resolve_processor_id_excludes_lts_scoped() {
+        let mut store: std::collections::HashMap<String, ()> = std::collections::HashMap::new();
+        store.insert("wifi-state@lts-abc-123".to_string(), ());
+
+        // Bare lookup should NOT match lts-scoped entry.
+        assert_eq!(resolve_processor_id(&store, "wifi-state"), None);
+
+        // Exact lookup should still work.
+        assert_eq!(
+            resolve_processor_id(&store, "wifi-state@lts-abc-123"),
+            Some("wifi-state@lts-abc-123".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_processor_id_prefers_non_lts_over_lts() {
+        let mut store: std::collections::HashMap<String, ()> = std::collections::HashMap::new();
+        store.insert("wifi-state@lts-abc-123".to_string(), ());
+        store.insert("wifi-state@official".to_string(), ());
+
+        // Bare lookup should resolve to the non-lts entry.
+        assert_eq!(
+            resolve_processor_id(&store, "wifi-state"),
+            Some("wifi-state@official".to_string())
+        );
     }
 
     #[test]

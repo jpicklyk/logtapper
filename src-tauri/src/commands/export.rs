@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use memmap2::Mmap;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::{lock_or_err, AppState};
 use crate::core::log_source::{FileLogSource, ZipLogSource, StreamLogSource};
@@ -27,6 +27,8 @@ pub fn read_processor_yaml(app: &AppHandle, processor_id: &str) -> Option<String
 
 /// Returns active non-builtin processor IDs for a session.
 /// Excludes built-in processors (IDs starting with `__`) and disabled ones.
+/// Session-scoped `.lts` processors (e.g. `wifi-state@lts-{uuid}`) are returned
+/// as their bare IDs (e.g. `wifi-state`) for consistent export naming.
 pub(crate) fn active_custom_processor_ids(state: &AppState, session_id: &str) -> Vec<String> {
     let Ok(meta_guard) = state.session_pipeline_meta.lock() else {
         return vec![];
@@ -38,7 +40,15 @@ pub(crate) fn active_custom_processor_ids(state: &AppState, session_id: &str) ->
     meta.active_processor_ids
         .iter()
         .filter(|id| !id.starts_with("__") && !disabled.contains(id.as_str()))
-        .cloned()
+        .map(|id| {
+            // Strip session-scoped `.lts` namespace for export (bare ID is canonical).
+            let (bare, ns) = crate::processors::marketplace::split_qualified_id(id);
+            if ns.is_some_and(|n| n.starts_with("lts-")) {
+                bare.to_string()
+            } else {
+                id.clone()
+            }
+        })
         .collect()
 }
 
@@ -212,6 +222,30 @@ pub async fn export_all_sessions(
         Stream(Vec<u8>),
     }
 
+    // 0. Stop any active ADB streams so no new lines arrive mid-export.
+    let stopped_sessions: Vec<String> = {
+        let mut tasks = lock_or_err(&state.stream_tasks, "stream_tasks")?;
+        tasks
+            .drain()
+            .map(|(id, tx)| {
+                let _ = tx.send(());
+                id
+            })
+            .collect()
+    };
+    if !stopped_sessions.is_empty() {
+        tokio::task::yield_now().await;
+        for sid in &stopped_sessions {
+            let _ = app.emit(
+                "adb-stream-stopped",
+                super::adb::AdbStreamStopped {
+                    session_id: sid.clone(),
+                    reason: "export".to_string(),
+                },
+            );
+        }
+    }
+
     // 1. Collect all session IDs and snapshot source references under brief lock.
     let session_snapshots: Vec<(String, String, SourceRef)> = {
         let sessions = lock_or_err(&state.sessions, "sessions")?;
@@ -281,12 +315,24 @@ pub async fn export_all_sessions(
     }
 
     // 3. Collect deduplicated processor YAMLs (if requested).
+    // `all_active_custom_processor_ids` already strips @lts-* namespaces to bare IDs.
+    // For bare IDs that aren't on disk (imported from .lts), fall back to the in-memory cache.
     let processor_yamls: Vec<(String, String, String)> = if options.include_processors {
         let proc_ids = all_active_custom_processor_ids(&state, &session_ids);
         proc_ids
             .into_iter()
             .filter_map(|id| {
-                let yaml = read_processor_yaml(&app, &id)?;
+                // Try disk first; fall back to in-memory .lts YAML cache for scoped processors.
+                let yaml = read_processor_yaml(&app, &id).or_else(|| {
+                    let lts_yamls = state.lts_processor_yamls.lock().ok()?;
+                    lts_yamls
+                        .iter()
+                        .find(|(k, _)| {
+                            let (bare, ns) = crate::processors::marketplace::split_qualified_id(k);
+                            bare == id && ns.is_some_and(|n| n.starts_with("lts-"))
+                        })
+                        .map(|(_, v)| v.clone())
+                })?;
                 let filename = crate::processors::marketplace::id_to_filename(&id);
                 Some((id, format!("{filename}.yaml"), yaml))
             })
@@ -306,91 +352,64 @@ pub async fn export_all_sessions(
 // T7 — Resolve processors from imported .lts file
 // ---------------------------------------------------------------------------
 
-/// Resolve processors from an imported .lts file.
+/// Resolve processors from an imported .lts file under session-scoped IDs.
 ///
-/// For each processor in the .lts manifest:
-/// - If already installed locally with matching content hash → skip
-/// - If missing or hash mismatch → install from the bundled YAML (global install for v1)
+/// For each processor in the .lts manifest, registers it in `AppState` under a
+/// scoped ID `{proc-id}@lts-{session_id}`. These are ephemeral — they are
+/// removed when the session closes and never written to disk.
 ///
-/// Returns the list of processor IDs that were installed or already present.
-///
-/// TODO: Future versions should use session-namespaced IDs to avoid overwriting
-/// the user's globally installed processor with the session's version.
+/// Returns a vec of `(bare_id, scoped_id)` pairs for remapping active_processor_ids.
 pub fn resolve_lts_processors(
     state: &AppState,
-    app: &tauri::AppHandle,
     lts: &crate::workspace::lts::LtsData,
-) -> Vec<String> {
-    resolve_lts_processors_raw(state, app, &lts.processor_manifest, &lts.processor_yamls)
+    session_id: &str,
+) -> Vec<(String, String)> {
+    resolve_lts_processors_raw(state, &lts.processor_manifest, &lts.processor_yamls, session_id)
 }
 
 /// Low-level variant that accepts the processor manifest and YAML map directly.
 /// Used by `load_lts_file_inner` where `LtsData` has been partially consumed.
 pub fn resolve_lts_processors_raw(
     state: &AppState,
-    app: &tauri::AppHandle,
     processor_manifest: &crate::workspace::lts::LtsProcessorManifest,
     processor_yamls: &std::collections::HashMap<String, String>,
-) -> Vec<String> {
-    let mut resolved_ids = Vec::new();
+    session_id: &str,
+) -> Vec<(String, String)> {
+    let mut result = Vec::new();
 
     for entry in &processor_manifest.processors {
         let Some(bundled_yaml) = processor_yamls.get(&entry.id) else {
             continue;
         };
 
-        // Parse bundled YAML to get version for comparison.
-        let bundled_proc = match crate::processors::AnyProcessor::from_yaml(bundled_yaml) {
+        // Parse bundled YAML to validate it and get the definition.
+        let mut bundled_proc = match crate::processors::AnyProcessor::from_yaml(bundled_yaml) {
             Ok(p) => p,
             Err(e) => {
                 log::warn!("Failed to parse processor {} from .lts: {e}", entry.id);
                 continue;
             }
         };
-        let bundled_version = &bundled_proc.meta.version;
 
-        // Check if exact qualified ID exists locally.
-        let local_yaml = read_processor_yaml(app, &entry.id);
-        if let Some(local_content) = local_yaml {
-            let local_version = match crate::processors::AnyProcessor::from_yaml(&local_content) {
-                Ok(p) => p.meta.version,
-                Err(e) => {
-                    // Local YAML is corrupt — replace it with the bundled version.
-                    log::warn!(
-                        "Local processor '{}' YAML is malformed ({e}) — replacing with bundled version",
-                        entry.id
-                    );
-                    String::new()
-                }
-            };
+        // Generate session-scoped ID and override the processor's meta.id.
+        let scoped_id = format!("{}@lts-{}", entry.id, session_id);
+        bundled_proc.meta.id = scoped_id.clone();
 
-            if !crate::commands::sources::is_newer(&local_version, bundled_version) {
-                log::info!(
-                    "Processor '{}' v{} already installed (bundled v{}) — skipping",
-                    entry.id, local_version, bundled_version
-                );
-                resolved_ids.push(entry.id.clone());
-                continue;
-            }
-
-            log::info!(
-                "Upgrading processor '{}' from v{} to v{} (from .lts)",
-                entry.id, local_version, bundled_version
-            );
-        }
-
-        // Install: either new processor or an upgrade of same-namespace version.
-        let id = bundled_proc.meta.id.clone();
+        // Insert into processors registry under the scoped key.
         if let Ok(mut procs) = state.processors.lock() {
-            procs.insert(id.clone(), bundled_proc);
+            procs.insert(scoped_id.clone(), bundled_proc);
         }
-        if let Err(e) = crate::commands::processors::persist_processor(app, &id, bundled_yaml) {
-            log::warn!("Failed to persist processor {id} from .lts: {e}");
+
+        // Cache the original YAML for re-export purposes.
+        if let Ok(mut lts_yamls) = state.lts_processor_yamls.lock() {
+            lts_yamls.insert(scoped_id.clone(), bundled_yaml.clone());
         }
-        resolved_ids.push(id);
+
+        log::info!("Scoped processor '{}' as '{}'", entry.id, scoped_id);
+        result.push((entry.id.clone(), scoped_id));
     }
 
-    resolved_ids
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -496,5 +515,63 @@ mod tests {
         );
 
         assert!(ids.is_empty(), "expected empty vec for sessions with no pipeline meta");
+    }
+
+    /// `resolve_lts_processors_raw` creates scoped keys and does NOT install under bare ID.
+    #[test]
+    fn resolve_lts_processors_raw_creates_scoped_keys() {
+        use crate::workspace::lts::{LtsProcessorManifest, LtsProcessorEntry};
+
+        let state = AppState::new();
+        let manifest = LtsProcessorManifest {
+            processors: vec![LtsProcessorEntry {
+                id: "test-proc".to_string(),
+                filename: "test-proc.yaml".to_string(),
+                sha256: "abc123".to_string(),
+            }],
+        };
+
+        // Minimal valid reporter YAML (meta layout).
+        let yaml = "meta:\n  id: test-proc\n  name: Test Proc\n  version: \"1.0.0\"\n";
+        let mut yamls = HashMap::new();
+        yamls.insert("test-proc".to_string(), yaml.to_string());
+
+        let result = resolve_lts_processors_raw(&state, &manifest, &yamls, "sess-123");
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, "test-proc");
+        assert_eq!(result[0].1, "test-proc@lts-sess-123");
+
+        // Verify it's in state.processors under the scoped key only.
+        let procs = state.processors.lock().unwrap();
+        assert!(procs.contains_key("test-proc@lts-sess-123"), "scoped key must exist");
+        assert!(!procs.contains_key("test-proc"), "bare key must NOT exist");
+
+        // Verify it's in lts_processor_yamls.
+        drop(procs);
+        let lts_yamls = state.lts_processor_yamls.lock().unwrap();
+        assert!(lts_yamls.contains_key("test-proc@lts-sess-123"), "YAML cache must contain scoped key");
+    }
+
+    /// `active_custom_processor_ids` strips @lts-* namespace for export.
+    #[test]
+    fn active_custom_processor_ids_strips_lts_namespace() {
+        let state = make_state_with_sessions(vec![(
+            "sess-1".to_string(),
+            SessionMeta {
+                active_processor_ids: vec![
+                    "wifi-state@lts-sess-abc".to_string(),
+                    "regular-proc".to_string(),
+                ],
+                disabled_processor_ids: vec![],
+            },
+        )]);
+
+        let ids = active_custom_processor_ids(&state, "sess-1");
+
+        // lts-scoped ID must be returned as its bare form; regular ID unchanged.
+        assert!(ids.contains(&"wifi-state".to_string()), "lts ID should be stripped to bare");
+        assert!(ids.contains(&"regular-proc".to_string()), "regular ID should be unchanged");
+        assert!(!ids.iter().any(|id| id.contains("@lts-")), "no lts namespace in output");
     }
 }
