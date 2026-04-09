@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import type { MarketplaceEntry, MarketplacePackEntry } from '../../bridge/types';
 import { makeQualifiedId, filterMarketplaceEntries, matchesAllTags } from '../../bridge/types';
-import type { MarketplaceState } from '../../hooks/useMarketplace';
+import type { MarketplaceState } from '../../hooks';
 import { listPacks } from '../../bridge/commands';
 import type { PackSummary } from '../../bridge/types';
 import { usePipeline } from '../../hooks';
@@ -357,7 +357,7 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
                 </div>
               )}
               {installError[pack.id] && (
-                <div className={css.errorBar} style={{ marginTop: 4 }}>{installError[pack.id]}</div>
+                <div className={`${css.errorBar} ${css.errorBarSpaced}`}>{installError[pack.id]}</div>
               )}
               {showProcessors && (
                 <div className={css.packProcessorList}>

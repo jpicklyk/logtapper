@@ -110,18 +110,8 @@ const BookmarkMarkers = React.memo(function BookmarkMarkers({
         return (
           <div
             key={b.id}
-            style={{
-              position: 'absolute',
-              left: linePct(b.lineNumber, maxLine, vpS, vpSpan),
-              top: 0,
-              bottom: 0,
-              width: 2,
-              backgroundColor: color,
-              opacity: 0.7,
-              cursor: 'pointer',
-              zIndex: 3, // TODO: use z-index token once CSS var() works in inline styles
-              pointerEvents: 'auto',
-            }}
+            className={styles.bookmarkMarker}
+            style={{ left: linePct(b.lineNumber, maxLine, vpS, vpSpan), backgroundColor: color }}
             title={b.label}
             onClick={(e) => { e.stopPropagation(); jumpToLine(b.lineNumber); }}
           />
@@ -507,7 +497,7 @@ function TimelineTrack({
       {tooltip && (
         <div
           className={styles.tooltip}
-          style={{ position: 'fixed', left: tooltip.cx, top: tooltip.cy - 40, transform: 'translateX(-50%)' }}
+          style={{ left: tooltip.cx, top: tooltip.cy - 40 }}
         >
           {tooltip.label}
         </div>
@@ -648,7 +638,7 @@ function SparklineTrack({
         <span className={styles.ymin}>{minLabel}</span>
       </div>
       {tooltip && (
-        <div className={styles.tooltip} style={{ position: 'fixed', left: tooltip.cx, top: tooltip.cy - 40, transform: 'translateX(-50%)' }}>
+        <div className={styles.tooltip} style={{ left: tooltip.cx, top: tooltip.cy - 40 }}>
           {tooltip.label}
         </div>
       )}

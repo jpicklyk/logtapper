@@ -6,7 +6,7 @@ import { useSession, useIsStreaming, useViewerActions } from '../../context';
 import { listAdbDevices } from '../../bridge/commands';
 import type { AdbDevice } from '../../bridge/types';
 import { isMac } from '../../bridge/platform';
-import { Modal } from '../../ui/Modal/Modal';
+import { Modal } from '../../ui';
 import { DropdownMenu } from '../../ui';
 import type { MenuItem } from '../../ui';
 import { SearchBar } from '../SearchBar';

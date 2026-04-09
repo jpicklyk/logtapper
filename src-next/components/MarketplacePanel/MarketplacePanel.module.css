@@ -515,6 +515,10 @@
   line-height: 1.4;
 }
 
+.errorBarSpaced {
+  margin-top: 4px;
+}
+
 /* ── Spinner ─────────────────────────────────────────────────────────────── */
 
 .spinner {

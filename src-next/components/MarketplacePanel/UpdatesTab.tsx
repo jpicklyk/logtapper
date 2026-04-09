@@ -1,5 +1,5 @@
 import React, { useMemo, useCallback } from 'react';
-import type { MarketplaceState } from '../../hooks/useMarketplace';
+import type { MarketplaceState } from '../../hooks';
 import css from './MarketplacePanel.module.css';
 
 interface Props {

@@ -13,8 +13,7 @@ import { TrackerProvider } from './TrackerContext';
 import { ActionsProvider, type ActionsContextValue } from './ActionsContext';
 import { MarketplaceProvider } from './MarketplaceContext';
 import { useCacheManager, useDataSourceRegistry } from '../cache';
-import { useLogViewer } from '../hooks/useLogViewer';
-import { useSettings } from '../hooks/useSettings';
+import { useLogViewer, useSettings } from '../hooks';
 import { bus } from '../events/bus';
 
 /**
