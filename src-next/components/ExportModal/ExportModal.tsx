@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { save } from '@tauri-apps/plugin-dialog';
-import { Modal } from '../../ui/Modal/Modal';
+import { Modal } from '../../ui';
 import { Spinner, Button } from '../../ui';
 import { getExportAllSessionsInfo, exportAllSessions } from '../../bridge/commands';
 import type { ExportAllSessionsInfo } from '../../bridge/types';

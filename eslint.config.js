@@ -154,6 +154,19 @@ export default tseslint.config(
             group: ['**/cache/FetchScheduler*'],
             message: 'Import from cache barrel (cache/index.ts), not FetchScheduler directly.',
           },
+          // Convention 8: Barrel imports for ui/ and hooks/ internals
+          {
+            group: ['**/ui/Modal/Modal'],
+            message: "Import Modal from the ui barrel ('../../ui'), not from ui/Modal/Modal directly.",
+          },
+          {
+            group: ['**/ui/processorBadgeTypes'],
+            message: "Import from the ui barrel ('../../ui'), not from ui/processorBadgeTypes directly.",
+          },
+          {
+            group: ['**/hooks/useMarketplace'],
+            message: "Import from the hooks barrel ('../../hooks'), not from hooks/useMarketplace directly.",
+          },
         ],
       }],
     },

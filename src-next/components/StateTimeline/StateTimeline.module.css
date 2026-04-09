@@ -170,6 +170,17 @@
   pointer-events: none;
 }
 
+.bookmarkMarker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  opacity: 0.7;
+  cursor: pointer;
+  z-index: 3;
+  pointer-events: auto;
+}
+
 .cursor {
   position: absolute;
   top: 0;
@@ -180,6 +191,8 @@
 }
 
 .tooltip {
+  position: fixed;
+  transform: translateX(-50%);
   padding: 4px 8px;
   border-radius: var(--radius-sm);
   background: var(--bg-overlay);

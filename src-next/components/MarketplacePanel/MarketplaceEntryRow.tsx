@@ -2,7 +2,7 @@ import React from 'react';
 import type { MarketplaceEntry } from '../../bridge/types';
 import css from './MarketplacePanel.module.css';
 import badgeCss from '../../ui/processorBadge.module.css';
-import { PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY } from '../../ui/processorBadgeTypes';
+import { PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY } from '../../ui';
 
 interface Props {
   entry: MarketplaceEntry;
@@ -75,7 +75,7 @@ export const MarketplaceEntryRow = React.memo(function MarketplaceEntryRow({
           </div>
         )}
         {installError && (
-          <div className={css.errorBar} style={{ marginTop: 4 }}>{installError}</div>
+          <div className={`${css.errorBar} ${css.errorBarSpaced}`}>{installError}</div>
         )}
       </div>
       <div
