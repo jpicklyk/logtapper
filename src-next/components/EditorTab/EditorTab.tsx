@@ -19,16 +19,16 @@ export type EditorViewMode = 'editor' | 'split' | 'preview';
 
 interface EditorTabProps {
   tabId: string;
+  paneId: string;
   tabLabel?: string;
-  isFocused?: boolean;
   onDirtyChanged?: (tabId: string, isDirty: boolean) => void;
   onFilePathChanged?: (tabId: string, newLabel: string) => void;
 }
 
 const EditorTab = React.memo(function EditorTab({
   tabId,
+  paneId,
   tabLabel = 'Untitled',
-  isFocused = false,
   onDirtyChanged,
   onFilePathChanged,
 }: EditorTabProps) {
@@ -53,9 +53,11 @@ const EditorTab = React.memo(function EditorTab({
 
   // On mount, load from disk if a file path was persisted (overrides stale localStorage).
   useEffect(() => {
+    let cancelled = false;
     const fp = filePathRef.current;
     if (fp) {
       readTextFile(fp).then(content => {
+        if (cancelled) return;
         setValue(content);
         savedContentRef.current = content;
         setIsDirty(false);
@@ -63,6 +65,7 @@ const EditorTab = React.memo(function EditorTab({
         // File may have been moved or deleted — fall back to localStorage content.
       });
     }
+    return () => { cancelled = true; };
   }, [tabId]);
 
   // When the active editor tab switches, flush the outgoing tab's content
@@ -151,18 +154,18 @@ const EditorTab = React.memo(function EditorTab({
     }
   }, [handleSaveAs]);
 
-  // Subscribe to bus save events. All editor tabs subscribe; only the focused
-  // one acts. Refs keep the subscription stable (subscribed once on mount).
+  // Subscribe to bus save events. Events carry paneId for explicit targeting —
+  // only the EditorTab in the addressed pane acts.
   const handleSaveRef = useRef(handleSave);
   handleSaveRef.current = handleSave;
   const handleSaveAsRef = useRef(handleSaveAs);
   handleSaveAsRef.current = handleSaveAs;
-  const isFocusedRef = useRef(isFocused);
-  isFocusedRef.current = isFocused;
+  const paneIdRef = useRef(paneId);
+  paneIdRef.current = paneId;
 
   useEffect(() => {
-    const onSave = () => { if (isFocusedRef.current) void handleSaveRef.current(); };
-    const onSaveAs = () => { if (isFocusedRef.current) void handleSaveAsRef.current(); };
+    const onSave = (e: { paneId: string }) => { if (e.paneId === paneIdRef.current) void handleSaveRef.current(); };
+    const onSaveAs = (e: { paneId: string }) => { if (e.paneId === paneIdRef.current) void handleSaveAsRef.current(); };
     bus.on('file:save-request', onSave);
     bus.on('file:save-as-request', onSaveAs);
     return () => {

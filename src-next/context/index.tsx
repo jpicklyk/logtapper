@@ -176,14 +176,17 @@ function HookWiring({ children }: { children: ReactNode }) {
         await saveLiveCapture(sessionId, outputPath);
         bus.emit('stream:saved', { sessionId, path: outputPath });
       }
-    } else {
-      // Static file / editor tab: emit bus event for the focused EditorTab to handle
-      bus.emit('file:save-request', undefined);
+    } else if (activePaneId) {
+      // Static file / editor tab: emit targeted save event for the specific pane
+      bus.emit('file:save-request', { paneId: activePaneId });
     }
   }, []);
 
   const saveFileAs = useCallback(async () => {
-    bus.emit('file:save-as-request', undefined);
+    const { activePaneId } = sessionPaneRef.current;
+    if (activePaneId) {
+      bus.emit('file:save-as-request', { paneId: activePaneId });
+    }
   }, []);
 
   const exportSession = useCallback(() => {

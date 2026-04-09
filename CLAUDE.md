@@ -24,6 +24,8 @@ State that only one component subtree needs must stay local to that subtree — 
 ### 6. No cross-hook orchestration in render components
 Hooks must not depend on each other's internal state through effects in `App.tsx`. Use a typed event bus or explicit orchestration layer so hooks react to events independently (e.g., `pipeline:run-complete` → tracker refreshes itself) rather than App.tsx watching one hook and calling another.
 
+**Bus events must be targeted, not broadcast.** When a bus event is intended for a specific consumer (e.g., a particular pane or session), the event payload must carry an identifier (`paneId`, `sessionId`) and the consumer must match on it. Never broadcast to all subscribers and rely on each checking a ref or prop to decide whether to act — that pattern is fragile under concurrent rendering and rapid state changes (the ref can be stale by the time the event fires).
+
 ### 7. Stable callback references
 Action callbacks (`onViewProcessor`, `onCloseSession`, `onOpenLibrary`) must be `useCallback` with stable deps and placed in a dedicated context that never changes. Consumers of these callbacks should never re-render due to unrelated state changes.
 

@@ -140,10 +140,10 @@ export type AppEvents = {
   // ── File operations ──────────────────────────────────────────────────────
   /** Fired when an .lts file import is skipped because it's already open. */
   'file:lts-already-open': { label: string };
-  /** Emitted when user triggers Save. Focused EditorTab should handle. */
-  'file:save-request':    undefined;
-  /** Emitted when user triggers Save As. Focused EditorTab should handle. */
-  'file:save-as-request': undefined;
+  /** Emitted when user triggers Save. Targeted EditorTab (by paneId) handles. */
+  'file:save-request':    { paneId: string };
+  /** Emitted when user triggers Save As. Targeted EditorTab (by paneId) handles. */
+  'file:save-as-request': { paneId: string };
   /** Fired when Export Session is requested (menu or shortcut). Header shows the export modal. */
   'layout:export-session-requested': undefined;
   /** Fired when the user clicks the Settings button in the Header. AppShell opens the modal. */
