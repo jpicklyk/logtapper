@@ -101,6 +101,9 @@ export default tseslint.config(
     rules: {
       // Convention 3: Exported components must be wrapped in React.memo()
       'local-rules/require-memo': 'error',
+      // No writes to module-level Maps/Sets/singletons during render.
+      // Move .set()/.add() calls into useEffect to avoid concurrent-mode issues.
+      'local-rules/no-map-write-in-render': 'error',
     },
   },
   {
