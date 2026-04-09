@@ -14,6 +14,7 @@ import { useBookmarks, useBookmarkLines, useBookmarkLookup, useSettings } from '
 import { bus } from '../../events';
 import type { AppEvents } from '../../events';
 import { absoluteLineToFilteredIndex } from './scrollMapping';
+import { useSearchCacheInvalidation } from './useSearchCacheInvalidation';
 import styles from './LogViewer.module.css';
 
 interface Props {
@@ -75,15 +76,26 @@ const LogViewer = React.memo(function LogViewer({
   // during its render) whenever the session changes, then persist it to the
   // global sessionScrollPositions singleton so any pane — including a fresh
   // mount after a drag — can restore the correct position.
-  const prevSessionIdRef = useRef<string | null>(null);
+  //
+  // The save is performed in a useEffect cleanup rather than during render to
+  // avoid writing module-level state during the render phase, which is unsafe
+  // in concurrent mode and StrictMode (render without commit / double render).
   const virtualBaseOutRef = useRef<number>(0);
 
-  if (prevSessionIdRef.current !== sessionId) {
-    if (prevSessionIdRef.current !== null) {
-      sessionScrollPositions.set(prevSessionIdRef.current, virtualBaseOutRef.current);
-    }
-    prevSessionIdRef.current = sessionId;
-  }
+  useEffect(() => {
+    // Capture sessionId at effect-setup time.
+    const savedSessionId = sessionId;
+    return () => {
+      // On cleanup (sessionId change or unmount): persist position for the
+      // session that just became inactive so it can be restored on re-mount.
+      // Reading virtualBaseOutRef.current in cleanup is intentional — we want
+      // the latest scroll position at teardown time, not the value at setup.
+      if (savedSessionId !== null) {
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        sessionScrollPositions.set(savedSessionId, virtualBaseOutRef.current);
+      }
+    };
+  }, [sessionId]);
 
   const initialVirtualBase = sessionScrollPositions.get(sessionId ?? '');
 
@@ -140,27 +152,9 @@ const LogViewer = React.memo(function LogViewer({
     }
   }, [totalLines]);
 
-  // When the search query changes, evict stale cached lines so the viewport
-  // re-fetches them with the new query (and receives correct highlight spans).
-  //
-  // Two guards prevent spurious clears:
-  // 1. isStreaming — streaming lines never carry search highlights (they come
-  //    from flush_batch, not getLines), so clearing is pointless and would
-  //    destroy cached history that tailMode can never re-fetch.
-  // 2. prevSearchRef identity — skips the clear when isStreaming→false fires
-  //    the effect without an actual search change, and on fresh mounts where
-  //    prevSearch === search (both null) and we haven't opened a new query.
-  const prevSearchRef = useRef<typeof search | null>(null);
-  useEffect(() => {
-    const prevSearch = prevSearchRef.current;
-    prevSearchRef.current = search;
-    if (isStreaming) return;
-    if (prevSearch === search) return;
-    if (!sessionId) return;
-    cacheManager.clearSession(sessionId);
-    dataSourceRef.current?.invalidate();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, isStreaming]);
+  // Delegate the search→cache invalidation concern to a dedicated hook.
+  // Principle 6: no cross-hook orchestration in render components.
+  useSearchCacheInvalidation(search, isStreaming, sessionId, cacheManager, dataSourceRef);
 
   // Gutter columns: line number + transition dot + bookmark dot
   const gutterColumns = useMemo<GutterColumnDef[]>(() => {
