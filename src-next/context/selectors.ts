@@ -158,28 +158,45 @@ export function useViewerActions() {
           saveFile, saveFileAs, exportSession,
           newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs,
           closeWorkspace, switchWorkspace } = useActionsContext();
-  return { loadFile, openFileDialog, openInEditorDialog, startStream, stopStream, closeSession,
-           jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
-           openTab, setActiveLogPane, setActivePane, setEffectiveLineNums,
-           saveFile, saveFileAs, exportSession,
-           newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs,
-           closeWorkspace, switchWorkspace };
+  return useMemo(
+    () => ({ loadFile, openFileDialog, openInEditorDialog, startStream, stopStream, closeSession,
+             jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
+             openTab, setActiveLogPane, setActivePane, setEffectiveLineNums,
+             saveFile, saveFileAs, exportSession,
+             newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs,
+             closeWorkspace, switchWorkspace }),
+    [loadFile, openFileDialog, openInEditorDialog, startStream, stopStream, closeSession,
+     jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
+     openTab, setActiveLogPane, setActivePane, setEffectiveLineNums,
+     saveFile, saveFileAs, exportSession,
+     newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs,
+     closeWorkspace, switchWorkspace],
+  );
 }
 
 export function useWorkspaceActions() {
   const { newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs,
           closeWorkspace, switchWorkspace } = useActionsContext();
-  return { newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs,
-           closeWorkspace, switchWorkspace };
+  return useMemo(
+    () => ({ newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs,
+             closeWorkspace, switchWorkspace }),
+    [newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs,
+     closeWorkspace, switchWorkspace],
+  );
 }
 
 export function usePipelineActions() {
   const { runPipeline, stopPipeline, clearResults, installProcessor,
           removeProcessor,
           addToChain, addPackToChain, removeFromChain, reorderChain, toggleChainEnabled } = useActionsContext();
-  return { runPipeline, stopPipeline, clearResults, installProcessor,
-           removeProcessor,
-           addToChain, addPackToChain, removeFromChain, reorderChain, toggleChainEnabled };
+  return useMemo(
+    () => ({ runPipeline, stopPipeline, clearResults, installProcessor,
+             removeProcessor,
+             addToChain, addPackToChain, removeFromChain, reorderChain, toggleChainEnabled }),
+    [runPipeline, stopPipeline, clearResults, installProcessor,
+     removeProcessor,
+     addToChain, addPackToChain, removeFromChain, reorderChain, toggleChainEnabled],
+  );
 }
 
 export function useTrackerActions() {

@@ -71,8 +71,7 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
   }, []);
 
   // ── Inline pane notice (auto-dismissing banner with enter/exit animation) ──
-  const [noticeText, setNoticeText] = useState<string | null>(null);
-  const [noticePhase, setNoticePhase] = useState<'entering' | 'exiting' | null>(null);
+  const [notice, setNotice] = useState<{ text: string; phase: 'entering' | 'exiting' } | null>(null);
   const noticeDismissRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const noticeExitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -82,15 +81,13 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
       // Clear any pending timers from a previous notice.
       if (noticeDismissRef.current) clearTimeout(noticeDismissRef.current);
       if (noticeExitRef.current) clearTimeout(noticeExitRef.current);
-      setNoticeText(message);
-      setNoticePhase('entering');
+      setNotice({ text: message, phase: 'entering' });
       // After the visible duration, start the exit animation.
       noticeDismissRef.current = setTimeout(() => {
-        setNoticePhase('exiting');
+        setNotice((prev) => prev ? { text: prev.text, phase: 'exiting' } : null);
         // After the exit animation completes, unmount.
         noticeExitRef.current = setTimeout(() => {
-          setNoticeText(null);
-          setNoticePhase(null);
+          setNotice(null);
         }, NOTICE_EXIT_MS);
       }, NOTICE_VISIBLE_MS);
     };
@@ -175,9 +172,9 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
                 scanning={filterScanning}
               />
             )}
-            {noticeText && (
-              <div className={`${styles.paneNotice} ${noticePhase === 'exiting' ? styles.paneNoticeExit : ''}`}>
-                {noticeText}
+            {notice && (
+              <div className={`${styles.paneNotice} ${notice.phase === 'exiting' ? styles.paneNoticeExit : ''}`}>
+                {notice.text}
               </div>
             )}
             <LogViewer
