@@ -60,7 +60,6 @@ describe('L7: treeRef write is outside the setState updater', () => {
     // Both are equivalent in value but are DIFFERENT object references.
     let callCount = 0;
     const simulateOldPattern = (fn: (prev: SplitNode) => SplitNode) => {
-      let resultFromUpdater: SplitNode;
       // StrictMode calls updater twice
       const result1 = fn(initialTree);
       treeRefCurrent = result1; // WRONG: first (discarded) result
@@ -68,8 +67,7 @@ describe('L7: treeRef write is outside the setState updater', () => {
       const result2 = fn(initialTree);
       treeRefCurrent = result2; // Overwritten by second (kept) result
       callCount++;
-      resultFromUpdater = result2; // React keeps the second
-      return resultFromUpdater;
+      return result2; // React keeps the second
     };
 
     // Simulate the NEW (correct) pattern: capture result outside, write after.
@@ -314,7 +312,7 @@ describe('L1 + L7: render-time sync ensures treeRef reflects committed state', (
 
     // Simulate a sequence: some intermediate writes to treeRef (e.g., from
     // concurrent events), then a re-render that syncs treeRef to committed state.
-    let treeRef = { current: tree1 };
+    const treeRef = { current: tree1 };
 
     // Simulate some intermediate / stale write (e.g., from a discarded updater)
     treeRef.current = tree2; // stale

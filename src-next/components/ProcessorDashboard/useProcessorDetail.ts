@@ -49,6 +49,7 @@ export function useProcessorDetail({
     setShowMatches(false);
     setMatchedLines([]);
     setMatchSearch('');
+    setPiiMappings({});
   }, [selectedId]);
 
   // Fetch vars
@@ -57,10 +58,12 @@ export function useProcessorDetail({
       setVars(null);
       return;
     }
+    let cancelled = false;
     pipeline
       .getVars(sessionId, selectedId)
-      .then(setVars)
-      .catch(() => setVars(null));
+      .then((v) => { if (!cancelled) setVars(v); })
+      .catch(() => { if (!cancelled) setVars(null); });
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, sessionId, runCount]);
 
@@ -74,9 +77,11 @@ export function useProcessorDetail({
   // PII mappings
   useEffect(() => {
     if (selectedId === '__pii_anonymizer' && sessionId && runCount > 0) {
+      let cancelled = false;
       getPiiMappings(sessionId)
-        .then(setPiiMappings)
-        .catch(() => setPiiMappings({}));
+        .then((m) => { if (!cancelled) setPiiMappings(m); })
+        .catch(() => { if (!cancelled) setPiiMappings({}); });
+      return () => { cancelled = true; };
     }
   }, [selectedId, sessionId, runCount]);
 

@@ -1,32 +1,36 @@
-note_schemas:
+work_item_schemas:
 
   feature-implementation:
-    - key: requirements
-      role: queue
-      required: true
-      description: "Problem statement, acceptance criteria, and non-goals."
-      guidance: "Consult .claude/skills/spec-framework/ for the full guide. State the problem with quantified impact. List 2-5 testable acceptance criteria. Name at least one non-goal (a reasonable expectation you deliberately exclude)."
+    lifecycle: auto
+    notes:
+      - key: requirements
+        role: queue
+        required: true
+        description: "Problem statement, acceptance criteria, and non-goals."
+        guidance: "Consult .claude/skills/spec-framework/ for the full guide. State the problem with quantified impact. List 2-5 testable acceptance criteria. Name at least one non-goal (a reasonable expectation you deliberately exclude)."
+        skill: "spec-framework"
 
-    - key: design
-      role: queue
-      required: true
-      description: "Approach, alternatives considered, affected modules."
-      guidance: "Consult .claude/skills/spec-framework/ for the full guide. Describe the proposed approach and which layers it touches (Rust backend, frontend modules, MCP bridge). List 2+ real alternatives with specific trade-offs explaining why each was rejected. Identify affected files and check cross-cutting concerns (concurrency, StrictMode, frontend isolation, pre-filter)."
+      - key: design
+        role: queue
+        required: true
+        description: "Approach, alternatives considered, affected modules."
+        guidance: "Consult .claude/skills/spec-framework/ for the full guide. Describe the proposed approach and which layers it touches (Rust backend, frontend modules, MCP bridge). List 2+ real alternatives with specific trade-offs explaining why each was rejected. Identify affected files and check cross-cutting concerns (concurrency, StrictMode, frontend isolation, pre-filter)."
+        skill: "spec-framework"
 
-    - key: implementation-notes
-      role: work
-      required: true
-      description: "Decisions, deviations from design, surprises."
-      guidance: "Document key decisions made during implementation that weren't in the design. Note any deviations from the plan and why. Record surprises, wrong turns, and reusable patterns discovered. This is not a git log — explain the why, not the what."
+      - key: implementation-notes
+        role: work
+        required: true
+        description: "Decisions, deviations from design, surprises."
+        guidance: "Document key decisions made during implementation that weren't in the design. Note any deviations from the plan and why. Record surprises, wrong turns, and reusable patterns discovered. This is not a git log — explain the why, not the what."
 
-    - key: test-results
-      role: work
-      required: true
-      description: "Test pass/fail counts, new tests added, manual verification."
-      guidance: "Report cargo test results (count, pass/fail), clippy status, and npm run build status. List any new tests by name. For UI changes, describe manual verification performed. Distinguish pre-existing failures from new ones."
+      - key: test-results
+        role: work
+        required: true
+        description: "Test pass/fail counts, new tests added, manual verification."
+        guidance: "Report cargo test results (count, pass/fail), clippy status, and npm run build status. List any new tests by name. For UI changes, describe manual verification performed. Distinguish pre-existing failures from new ones."
 
-    - key: verification
-      role: review
-      required: false
-      description: "Rebuild confirmed, feature works end-to-end."
-      guidance: "Confirm npx tauri dev runs successfully. Verify the feature works end-to-end in the running app. Note any edge cases tested manually. If MCP bridge was affected, confirm /mcp reconnect works."
+      - key: verification
+        role: review
+        required: false
+        description: "Rebuild confirmed, feature works end-to-end."
+        guidance: "Confirm npx tauri dev runs successfully. Verify the feature works end-to-end in the running app. Note any edge cases tested manually. If MCP bridge was affected, confirm /mcp reconnect works."
