@@ -261,15 +261,15 @@ fn load_lts_file_inner(
     for session_data in sessions {
         let session_id = uuid::Uuid::new_v4().to_string();
 
-        // 2. Resolve bundled processors per session under scoped IDs (e.g. `wifi-state@lts-{uuid}`).
-        // These are ephemeral — never written to disk, removed on session close.
+        // Resolve bundled processors under session-scoped IDs so they don't
+        // collide with the user's globally installed versions.
         let bare_to_scoped: std::collections::HashMap<String, String> =
             crate::commands::export::resolve_lts_processors_raw(
                 state,
                 &processor_manifest,
                 &processor_yamls,
                 &session_id,
-            )
+            )?
             .into_iter()
             .collect();
 
@@ -327,18 +327,12 @@ fn load_lts_file_inner(
         let (bm_count, an_count) =
             restore_artifacts(state, &session_id, session_data.bookmarks, session_data.analyses);
 
-        // Remap bundled processor IDs to their session-scoped versions.
         let mut meta: crate::workspace::SessionMeta = session_data.session_meta.into();
-        meta.active_processor_ids = meta
-            .active_processor_ids
-            .iter()
-            .map(|id| bare_to_scoped.get(id).cloned().unwrap_or_else(|| id.clone()))
-            .collect();
-        meta.disabled_processor_ids = meta
-            .disabled_processor_ids
-            .iter()
-            .map(|id| bare_to_scoped.get(id).cloned().unwrap_or_else(|| id.clone()))
-            .collect();
+        let remap = |ids: &[String]| -> Vec<String> {
+            ids.iter().map(|id| bare_to_scoped.get(id).cloned().unwrap_or_else(|| id.clone())).collect()
+        };
+        meta.active_processor_ids = remap(&meta.active_processor_ids);
+        meta.disabled_processor_ids = remap(&meta.disabled_processor_ids);
 
         // Store pipeline meta and emit workspace-restored event.
         emit_workspace_restored(
@@ -451,26 +445,22 @@ fn close_session_inner(state: &AppState, _app: Option<&tauri::AppHandle>, sessio
     lock_or_err(&state.mcp_anonymizers, "mcp_anonymizers")?.remove(session_id);
 
     // 13. Clean up bookmarks, analyses, and pipeline meta.
-    if let Ok(mut bookmarks) = state.bookmarks.lock() {
-        bookmarks.remove(session_id);
-    }
-    if let Ok(mut analyses) = state.analyses.lock() {
-        analyses.remove(session_id);
-    }
-    if let Ok(mut meta) = state.session_pipeline_meta.lock() {
-        meta.remove(session_id);
-    }
+    lock_or_err(&state.bookmarks, "bookmarks")?.remove(session_id);
+    lock_or_err(&state.analyses, "analyses")?.remove(session_id);
+    lock_or_err(&state.session_pipeline_meta, "session_pipeline_meta")?.remove(session_id);
 
     // 14. Remove session-scoped processors imported from .lts files.
-    let lts_suffix = format!("@lts-{session_id}");
-    if let Ok(mut procs) = state.processors.lock() {
-        procs.retain(|key, _| !key.ends_with(&lts_suffix));
-    }
+    let lts_suffix = format!("{}{}{}",
+        crate::processors::marketplace::NAMESPACE_SEP,
+        crate::processors::marketplace::LTS_NS_PREFIX,
+        session_id,
+    );
+    lock_or_err(&state.processors, "processors")?
+        .retain(|key, _| !key.ends_with(&lts_suffix));
 
     // 15. Remove cached .lts processor YAMLs.
-    if let Ok(mut lts_yamls) = state.lts_processor_yamls.lock() {
-        lts_yamls.retain(|key, _| !key.ends_with(&lts_suffix));
-    }
+    lock_or_err(&state.lts_processor_yamls, "lts_processor_yamls")?
+        .retain(|key, _| !key.ends_with(&lts_suffix));
 
     Ok(())
 }

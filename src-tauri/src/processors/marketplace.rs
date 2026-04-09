@@ -237,6 +237,16 @@ pub const NAMESPACE_SEP: char = '@';
 /// On-disk filename replacement for `@` (Windows filesystem safety).
 pub const NAMESPACE_DISK_ESC: &str = "__at__";
 
+/// Namespace prefix for session-scoped processors imported from .lts files.
+/// IDs take the form `{bare_id}@lts-{session_uuid}`.
+pub const LTS_NS_PREFIX: &str = "lts-";
+
+/// Returns `true` if the qualified ID is a session-scoped .lts processor.
+pub fn is_lts_scoped(qid: &str) -> bool {
+    let (_, ns) = split_qualified_id(qid);
+    ns.is_some_and(|n| n.starts_with(LTS_NS_PREFIX))
+}
+
 /// Category taxonomy — standardized values for `meta.category`.
 pub const CATEGORIES: &[&str] = &[
     "memory", "network", "battery", "process", "storage",
@@ -281,7 +291,7 @@ pub fn resolve_processor_id<V>(store: &std::collections::HashMap<String, V>, id:
         let (bare, ns) = split_qualified_id(key);
         if bare == id {
             // Skip session-scoped .lts entries — they must be resolved by exact key only.
-            if ns.is_some_and(|n| n.starts_with("lts-")) {
+            if ns.is_some_and(|n| n.starts_with(LTS_NS_PREFIX)) {
                 continue;
             }
             return Some(key.clone());

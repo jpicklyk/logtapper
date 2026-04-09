@@ -27,8 +27,8 @@ pub fn read_processor_yaml(app: &AppHandle, processor_id: &str) -> Option<String
 
 /// Returns active non-builtin processor IDs for a session.
 /// Excludes built-in processors (IDs starting with `__`) and disabled ones.
-/// Session-scoped `.lts` processors (e.g. `wifi-state@lts-{uuid}`) are returned
-/// as their bare IDs (e.g. `wifi-state`) for consistent export naming.
+/// Session-scoped `.lts` processors are stripped to bare IDs so exported
+/// `.lts` files remain portable across different sessions.
 pub(crate) fn active_custom_processor_ids(state: &AppState, session_id: &str) -> Vec<String> {
     let Ok(meta_guard) = state.session_pipeline_meta.lock() else {
         return vec![];
@@ -41,9 +41,8 @@ pub(crate) fn active_custom_processor_ids(state: &AppState, session_id: &str) ->
         .iter()
         .filter(|id| !id.starts_with("__") && !disabled.contains(id.as_str()))
         .map(|id| {
-            // Strip session-scoped `.lts` namespace for export (bare ID is canonical).
-            let (bare, ns) = crate::processors::marketplace::split_qualified_id(id);
-            if ns.is_some_and(|n| n.starts_with("lts-")) {
+            let (bare, _) = crate::processors::marketplace::split_qualified_id(id);
+            if crate::processors::marketplace::is_lts_scoped(id) {
                 bare.to_string()
             } else {
                 id.clone()
@@ -315,21 +314,20 @@ pub async fn export_all_sessions(
     }
 
     // 3. Collect deduplicated processor YAMLs (if requested).
-    // `all_active_custom_processor_ids` already strips @lts-* namespaces to bare IDs.
-    // For bare IDs that aren't on disk (imported from .lts), fall back to the in-memory cache.
     let processor_yamls: Vec<(String, String, String)> = if options.include_processors {
         let proc_ids = all_active_custom_processor_ids(&state, &session_ids);
         proc_ids
             .into_iter()
             .filter_map(|id| {
-                // Try disk first; fall back to in-memory .lts YAML cache for scoped processors.
+                // Disk-installed processors are found directly; .lts-imported processors
+                // exist only in memory, so fall back to the in-memory YAML cache.
                 let yaml = read_processor_yaml(&app, &id).or_else(|| {
                     let lts_yamls = state.lts_processor_yamls.lock().ok()?;
                     lts_yamls
                         .iter()
                         .find(|(k, _)| {
-                            let (bare, ns) = crate::processors::marketplace::split_qualified_id(k);
-                            bare == id && ns.is_some_and(|n| n.starts_with("lts-"))
+                            let (bare, _) = crate::processors::marketplace::split_qualified_id(k);
+                            bare == id && crate::processors::marketplace::is_lts_scoped(k)
                         })
                         .map(|(_, v)| v.clone())
                 })?;
@@ -354,16 +352,16 @@ pub async fn export_all_sessions(
 
 /// Resolve processors from an imported .lts file under session-scoped IDs.
 ///
-/// For each processor in the .lts manifest, registers it in `AppState` under a
-/// scoped ID `{proc-id}@lts-{session_id}`. These are ephemeral — they are
-/// removed when the session closes and never written to disk.
+/// Registers each bundled processor in `AppState` under a scoped ID
+/// `{proc-id}@lts-{session_id}`. These are ephemeral — removed when the
+/// session closes and never written to disk.
 ///
-/// Returns a vec of `(bare_id, scoped_id)` pairs for remapping active_processor_ids.
+/// Returns `(bare_id, scoped_id)` pairs for remapping active_processor_ids.
 pub fn resolve_lts_processors(
     state: &AppState,
     lts: &crate::workspace::lts::LtsData,
     session_id: &str,
-) -> Vec<(String, String)> {
+) -> Result<Vec<(String, String)>, String> {
     resolve_lts_processors_raw(state, &lts.processor_manifest, &lts.processor_yamls, session_id)
 }
 
@@ -374,7 +372,9 @@ pub fn resolve_lts_processors_raw(
     processor_manifest: &crate::workspace::lts::LtsProcessorManifest,
     processor_yamls: &std::collections::HashMap<String, String>,
     session_id: &str,
-) -> Vec<(String, String)> {
+) -> Result<Vec<(String, String)>, String> {
+    use crate::processors::marketplace::{LTS_NS_PREFIX, qualified_id};
+
     let mut result = Vec::new();
 
     for entry in &processor_manifest.processors {
@@ -382,7 +382,6 @@ pub fn resolve_lts_processors_raw(
             continue;
         };
 
-        // Parse bundled YAML to validate it and get the definition.
         let mut bundled_proc = match crate::processors::AnyProcessor::from_yaml(bundled_yaml) {
             Ok(p) => p,
             Err(e) => {
@@ -391,25 +390,20 @@ pub fn resolve_lts_processors_raw(
             }
         };
 
-        // Generate session-scoped ID and override the processor's meta.id.
-        let scoped_id = format!("{}@lts-{}", entry.id, session_id);
+        let scoped_id = qualified_id(&entry.id, &format!("{LTS_NS_PREFIX}{session_id}"));
         bundled_proc.meta.id = scoped_id.clone();
 
-        // Insert into processors registry under the scoped key.
-        if let Ok(mut procs) = state.processors.lock() {
-            procs.insert(scoped_id.clone(), bundled_proc);
-        }
+        lock_or_err(&state.processors, "processors")?
+            .insert(scoped_id.clone(), bundled_proc);
 
-        // Cache the original YAML for re-export purposes.
-        if let Ok(mut lts_yamls) = state.lts_processor_yamls.lock() {
-            lts_yamls.insert(scoped_id.clone(), bundled_yaml.clone());
-        }
+        lock_or_err(&state.lts_processor_yamls, "lts_processor_yamls")?
+            .insert(scoped_id.clone(), bundled_yaml.clone());
 
         log::info!("Scoped processor '{}' as '{}'", entry.id, scoped_id);
         result.push((entry.id.clone(), scoped_id));
     }
 
-    result
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------
@@ -536,7 +530,7 @@ mod tests {
         let mut yamls = HashMap::new();
         yamls.insert("test-proc".to_string(), yaml.to_string());
 
-        let result = resolve_lts_processors_raw(&state, &manifest, &yamls, "sess-123");
+        let result = resolve_lts_processors_raw(&state, &manifest, &yamls, "sess-123").unwrap();
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].0, "test-proc");
