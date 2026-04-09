@@ -102,6 +102,11 @@ export function useViewCache(viewId: string | null, sessionId?: string | null): 
   const mgr = ctx?.manager ?? null;
   const prevIdRef = useRef<string | null>(null);
   const handleRef = useRef<WritableViewCache | null>(null);
+  // Tracks whether the current render allocated a new handle that may have a
+  // pre-seed waiting. We capture this during render (read-only) and apply it
+  // in useEffect (committed render only) so StrictMode double-render does not
+  // consume the pre-seed on the first (discarded) pass.
+  const pendingPreSeedSessionRef = useRef<string | null>(null);
 
   if (!mgr || !viewId) {
     // Manager unavailable or viewId cleared — null out local ref.
@@ -111,6 +116,7 @@ export function useViewCache(viewId: string | null, sessionId?: string | null): 
       console.debug('[useViewCache] nulling handle (no mgr or no viewId)', { viewId, prevId: prevIdRef.current });
     }
     handleRef.current = null;
+    pendingPreSeedSessionRef.current = null;
   } else if (prevIdRef.current !== viewId) {
     // Allocate on first call or when viewId changes (tab switch).
     // Do NOT release the previous handle — the inactive tab should keep its
@@ -118,15 +124,10 @@ export function useViewCache(viewId: string | null, sessionId?: string | null): 
     console.debug('[useViewCache] allocating handle (viewId changed)', { viewId, prevId: prevIdRef.current });
     handleRef.current = mgr.allocateView(viewId, sessionId ?? undefined);
     prevIdRef.current = viewId;
-    // Consume any pre-seeded lines that arrived before this handle was allocated.
-    if (sessionId) {
-      const preSeed = preSeedStore.get(sessionId);
-      if (preSeed) {
-        console.debug('[useViewCache] consuming pre-seed', { sessionId, lineCount: preSeed.length });
-        handleRef.current!.put(preSeed);
-        preSeedStore.delete(sessionId);
-      }
-    }
+    // Mark that this session may have pre-seeded lines waiting.
+    // The actual consumption happens in useEffect (committed render only) to
+    // survive StrictMode double-render — the pre-seed is NOT deleted here.
+    pendingPreSeedSessionRef.current = sessionId ?? null;
   } else if (handleRef.current === null) {
     // viewId matches prevId but the local ref was cleared during a brief null
     // interlude (e.g. pane move before paneSessionMap updates: viewId goes
@@ -135,6 +136,23 @@ export function useViewCache(viewId: string | null, sessionId?: string | null): 
     console.debug('[useViewCache] re-acquiring handle after null interlude', { viewId });
     handleRef.current = mgr.allocateView(viewId, sessionId ?? undefined);
   }
+
+  // Consume pre-seeded lines in useEffect (runs only on committed render).
+  // StrictMode calls render twice but effect only once per committed mount —
+  // so the pre-seed survives the first (discarded) render pass.
+  useEffect(() => {
+    const pendingSessionId = pendingPreSeedSessionRef.current;
+    if (!pendingSessionId || !handleRef.current) return;
+    pendingPreSeedSessionRef.current = null;
+    const preSeed = preSeedStore.get(pendingSessionId);
+    if (preSeed) {
+      console.debug('[useViewCache] consuming pre-seed', { sessionId: pendingSessionId, lineCount: preSeed.length });
+      handleRef.current.put(preSeed);
+      preSeedStore.delete(pendingSessionId);
+    }
+  // viewId and sessionId are the dependencies that trigger new handle allocation.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewId, sessionId]);
 
   // NOTE: No unmount cleanup here — handles are released by releaseSessionViews()
   // when a session is explicitly closed. Since viewId = 'view-${sessionId}' is
