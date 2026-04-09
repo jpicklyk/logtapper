@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useMarketplace } from '../../hooks';
 import { BrowseTab } from './BrowseTab';
 import { UpdatesTab } from './UpdatesTab';
@@ -15,8 +15,6 @@ export const MarketplacePanel = React.memo(function MarketplacePanel() {
     marketplace.loadSources();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const switchTab = useCallback((t: SubTab) => setTab(t), []);
-
   return (
     <div className={css.root}>
       <div className={css.tabs}>
@@ -24,7 +22,7 @@ export const MarketplacePanel = React.memo(function MarketplacePanel() {
           <button
             key={t}
             className={`${css.tab}${tab === t ? ` ${css.tabActive}` : ''}`}
-            onClick={() => switchTab(t)}
+            onClick={() => setTab(t)}
           >
             {t === 'browse' ? 'Browse' : t === 'updates' ? 'Updates' : 'Sources'}
             {t === 'updates' && marketplace.pendingUpdates.length > 0 && (

@@ -414,10 +414,15 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
       const next = new Set(prev);
       if (next.has(packId)) next.delete(packId);
       else next.add(packId);
-      try { localStorage.setItem(LS_EXPANDED_PACKS_KEY, JSON.stringify([...next])); } catch { /* ignore */ }
       return next;
     });
   }, []);
+
+  // Persist expandedPacks to localStorage via effect (not inside the updater —
+  // updaters are called twice in StrictMode, so side effects must live here).
+  useEffect(() => {
+    try { localStorage.setItem(LS_EXPANDED_PACKS_KEY, JSON.stringify([...expandedPacks])); } catch { /* ignore */ }
+  }, [expandedPacks]);
 
   // ── Chain filter (local ephemeral state) ──
   const [chainFilter, setChainFilter] = useState('');
@@ -533,9 +538,18 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
     return { packGroups: groups, standaloneProcessors: standalone };
   }, [sortableProcessors, packs]);
 
-  // Pack-level handlers
+  // Stable lookup: packId → processor IDs (qualified), used by pack-level handlers.
+  // Keyed by packId so handlers don't need to close over per-pack data.
+  const packProcessorIdsMap = useMemo(
+    () => new Map(packGroups.map((g) => [g.pack.id, g.processors.map((p) => p.id)])),
+    [packGroups],
+  );
+
+  // Pack-level handlers — accept packId so they can be passed as stable useCallback
+  // refs to PackGroup without creating per-pack inline arrows in the render loop.
   const handleTogglePackEnabled = useCallback(
-    (packProcessorIds: string[]) => {
+    (packId: string) => {
+      const packProcessorIds = packProcessorIdsMap.get(packId) ?? [];
       // If all are enabled, disable all; otherwise enable all
       const allEnabled = packProcessorIds.every((id) => !disabledSet.has(id));
       for (const id of packProcessorIds) {
@@ -547,16 +561,17 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
         }
       }
     },
-    [disabledSet, pipeline],
+    [packProcessorIdsMap, disabledSet, pipeline],
   );
 
   const handleRemovePack = useCallback(
-    (packProcessorIds: string[]) => {
+    (packId: string) => {
+      const packProcessorIds = packProcessorIdsMap.get(packId) ?? [];
       for (const id of packProcessorIds) {
         removeFromChain(id);
       }
     },
-    [removeFromChain],
+    [packProcessorIdsMap, removeFromChain],
   );
 
   // Filtered pack groups and standalone (apply chainFilter when active)
@@ -718,11 +733,11 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
                     processors={g.processors}
                     expanded={expandedPacks.has(g.pack.id)}
                     compact={compact}
-                    onToggleExpand={() => handleTogglePackExpand(g.pack.id)}
+                    onToggleExpand={handleTogglePackExpand}
                     allEnabled={allEnabled}
                     someDisabled={someDisabled}
-                    onTogglePackEnabled={() => handleTogglePackEnabled(packIds)}
-                    onRemovePack={() => handleRemovePack(packIds)}
+                    onTogglePackEnabled={handleTogglePackEnabled}
+                    onRemovePack={handleRemovePack}
                     onToggleProcessor={toggleChainEnabled}
                     onRemoveProcessor={removeFromChain}
                     disabledIds={disabledSet}
