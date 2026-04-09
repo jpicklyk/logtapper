@@ -62,19 +62,28 @@ export function useCenterTree(
   // identity (creates/destroys tabs), so it is the right place to track this.
   const tabSessionMapRef = useRef<Map<string, string>>(new Map());
 
-  // Keep treeRef in sync
-  useEffect(() => { treeRef.current = centerTree; }, [centerTree]);
+  // Sync treeRef during render — direct assignment is safe for refs (no side effects).
+  // This ensures the ref reflects committed state on the same render, unlike useEffect
+  // which fires one render late (L1 fix).
+  treeRef.current = centerTree;
 
   // ---------------------------------------------------------------------------
   // Tree updater
   // ---------------------------------------------------------------------------
 
   const updateTree = useCallback((fn: (prev: SplitNode) => SplitNode) => {
+    // Capture the next value outside the updater so we can write to treeRef after
+    // setCenterTree — not inside the updater. StrictMode calls updaters twice and
+    // discards the first result; writing treeRef inside would leave it briefly holding
+    // the discarded value (L7 fix). The render-time assignment treeRef.current = centerTree
+    // (L1 fix) also covers this, but we write here too for synchronous reads within
+    // the same event flush, before the next render.
+    let next: SplitNode | undefined;
     setCenterTree((prev) => {
-      const next = fn(prev);
-      treeRef.current = next;
+      next = fn(prev);
       return next;
     });
+    if (next !== undefined) treeRef.current = next;
   }, []);
 
   // ---------------------------------------------------------------------------
@@ -360,36 +369,40 @@ export function useCenterTree(
   useEffect(() => {
     const onSessionLoaded = (e: { sourceName: string; paneId: string; sourceType: string; sessionId: string;
                                    tabId: string; isNewTab?: boolean; previousSessionId?: string; readOnly?: boolean }) => {
-      // Compute from prev inside the updater so React's bailout works when the
-      // tree is unchanged (e.g. session:loading already set up the tab).
-      let result: ReturnType<typeof applySessionLoaded> | null = null;
-      setCenterTree((prev) => {
-        result = applySessionLoaded(prev, e, paneSessionMapRef.current);
-        treeRef.current = result.tree;
-        return result.tree;
-      });
+      // Compute result using treeRef.current (synchronously current committed state)
+      // outside the setState updater. This avoids the L10 pattern where result is
+      // computed inside the updater and StrictMode calls it twice — the bus.emit would
+      // fire after the second (kept) run, but the result variable would have been
+      // assigned twice, making the code fragile and misleading.
+      const result = applySessionLoaded(treeRef.current, e, paneSessionMapRef.current);
+      setCenterTree(() => result.tree);
+      treeRef.current = result.tree;
 
-      // Side effects run after setCenterTree — result is guaranteed set by the
-      // synchronous updater call above.
+      // Side effects run after setCenterTree with the result computed above.
       tabSessionMapRef.current.set(e.tabId, e.sessionId);
-      if (result!.tabIdToDelete) tabSessionMapRef.current.delete(result!.tabIdToDelete);
-      if (result!.emitTabActivated) bus.emit('layout:logviewer-tab-activated', result!.emitTabActivated);
-      if (result!.emitPaneRemap) bus.emit('layout:pane-session-remap', result!.emitPaneRemap);
+      if (result.tabIdToDelete) tabSessionMapRef.current.delete(result.tabIdToDelete);
+      if (result.emitTabActivated) bus.emit('layout:logviewer-tab-activated', result.emitTabActivated);
+      if (result.emitPaneRemap) bus.emit('layout:pane-session-remap', result.emitPaneRemap);
     };
 
     const onPipelineCompleted = (e: { sessionId: string; hasReporters: boolean; hasTrackers: boolean; hasCorrelators: boolean }) => {
       if (e.hasReporters) {
-        setCenterTree((prev) => {
-          const existing = findTabByType(prev, 'dashboard');
-          if (existing) {
-            if (existing.pane.activeTabId === existing.tab.id) return prev;
-            const next = updateLeaf(prev, existing.pane.id, (pane) => ({
+        // Compute the next tree from treeRef.current outside the updater to avoid
+        // writing treeRef inside the updater (StrictMode double-call issue, L7 pattern).
+        const prev = treeRef.current;
+        const existing = findTabByType(prev, 'dashboard');
+        let next: SplitNode;
+        if (existing) {
+          if (existing.pane.activeTabId === existing.tab.id) {
+            // Nothing to do — dashboard tab already active
+            next = prev;
+          } else {
+            next = updateLeaf(prev, existing.pane.id, (pane) => ({
               ...pane,
               activeTabId: existing.tab.id,
             }));
-            treeRef.current = next;
-            return next;
           }
+        } else {
           // Place the dashboard tab in the pane that owns the completed session,
           // falling back to the first leaf if the pane can't be found.
           const sessionPane = allPanes(prev).find(
@@ -397,14 +410,16 @@ export function useCenterTree(
           );
           const target = (sessionPane && findLeafByPaneId(prev, sessionPane.id)) ?? firstLeaf(prev);
           const tab = makeTab('dashboard');
-          const next = updateLeaf(prev, target.pane.id, (pane) => ({
+          next = updateLeaf(prev, target.pane.id, (pane) => ({
             ...pane,
             tabs: [...pane.tabs, tab],
             activeTabId: tab.id,
           }));
+        }
+        if (next !== prev) {
           treeRef.current = next;
-          return next;
-        });
+          setCenterTree(() => next);
+        }
       }
       if (e.hasTrackers) {
         openBottomPane('timeline');
@@ -417,32 +432,31 @@ export function useCenterTree(
       // When a tabId is provided, target that specific tab. If the tab was already
       // removed from the tree (normal tab-close path), the find returns undefined
       // and this becomes a no-op — preventing the remaining tab from being renamed.
-      setCenterTree((prev) => {
-        const leaf = findLeafByPaneId(prev, e.paneId);
-        if (!leaf) return prev;
-        const logviewerTab = e.tabId
-          ? leaf.pane.tabs.find((t) => t.id === e.tabId)
-          : leaf.pane.tabs.find((t) => t.type === 'logviewer');
-        if (!logviewerTab || logviewerTab.label === TAB_LABELS.logviewer) return prev;
-        const next = updateLeaf(prev, e.paneId, (pane) => ({
-          ...pane,
-          tabs: pane.tabs.map((t) =>
-            t.id === logviewerTab.id ? { ...t, label: TAB_LABELS.logviewer } : t,
-          ),
-        }));
-        treeRef.current = next;
-        return next;
-      });
+      // Computed outside the updater (L7 pattern — avoid treeRef write inside updater).
+      const prev = treeRef.current;
+      const leaf = findLeafByPaneId(prev, e.paneId);
+      if (!leaf) return;
+      const logviewerTab = e.tabId
+        ? leaf.pane.tabs.find((t) => t.id === e.tabId)
+        : leaf.pane.tabs.find((t) => t.type === 'logviewer');
+      if (!logviewerTab || logviewerTab.label === TAB_LABELS.logviewer) return;
+      const next = updateLeaf(prev, e.paneId, (pane) => ({
+        ...pane,
+        tabs: pane.tabs.map((t) =>
+          t.id === logviewerTab.id ? { ...t, label: TAB_LABELS.logviewer } : t,
+        ),
+      }));
+      treeRef.current = next;
+      setCenterTree(() => next);
     };
 
     // Create a placeholder tab immediately when a file load starts so the user
     // sees feedback while the backend decompresses/indexes the file.
+    // Computed outside the updater (L7 pattern — avoid treeRef write inside updater).
     const onSessionLoading = (e: { paneId: string; tabId: string; label: string; isNewTab: boolean }) => {
-      setCenterTree((prev) => {
-        const next = applySessionLoading(prev, e);
-        treeRef.current = next;
-        return next;
-      });
+      const next = applySessionLoading(treeRef.current, e);
+      treeRef.current = next;
+      setCenterTree(() => next);
     };
 
     // When a live capture is saved, register the file path so the tab

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 /**
  * Manages a togglable pane with tab switching.
@@ -29,10 +29,13 @@ export function useTogglePane<T extends string>(
   const [visible, setVisible] = useState(initialVisible);
   const [tab, setTab] = useState<T>(initialTab);
 
+  // Sync refs during render — no useEffect needed; refs are mutable and this
+  // has no side effects. This ensures refs always reflect the committed state
+  // on the same render (unlike useEffect which fires one render late).
   const visibleRef = useRef(visible);
   const tabRef = useRef(tab);
-  useEffect(() => { visibleRef.current = visible; }, [visible]);
-  useEffect(() => { tabRef.current = tab; }, [tab]);
+  visibleRef.current = visible;
+  tabRef.current = tab;
 
   const toggle = useCallback((t?: T) => {
     if (t === undefined) {
