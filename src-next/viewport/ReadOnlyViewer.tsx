@@ -58,7 +58,12 @@ export default function ReadOnlyViewer({
   initialVirtualBase,
   virtualBaseOutRef,
 }: ReadOnlyViewerProps) {
-  const parentRef = useRef<HTMLDivElement>(null);
+  const parentRef = useRef<HTMLDivElement | null>(null);
+  const [scrollContainer, setScrollContainer] = useState<HTMLDivElement | null>(null);
+  const parentCallbackRef = useCallback((el: HTMLDivElement | null) => {
+    parentRef.current = el;
+    setScrollContainer(el);
+  }, []);
   const charWidthRef = useRef(7.2);
   const gutterWidthRef = useRef(0);
 
@@ -123,10 +128,9 @@ export default function ReadOnlyViewer({
     autoScrollRef,
     newLinesCount,
     liveTotalLines,
-    lastSetScrollTopRef,
     resetAutoScroll,
     disableAutoScroll,
-  } = useScrollControls(parentRef as React.RefObject<HTMLDivElement>, tailMode, totalLines, dataSource, bumpCacheVersion);
+  } = useScrollControls(scrollContainer, tailMode, totalLines, dataSource, bumpCacheVersion);
 
   const effectiveCount = clamp(totalLines - virtualBase, 0, MAX_VIRTUAL_LINES);
   const liveEffectiveCount = clamp(liveTotalLines - virtualBase, 0, MAX_VIRTUAL_LINES);
@@ -202,24 +206,19 @@ export default function ReadOnlyViewer({
   // ── Auto-scroll to bottom when new streaming lines arrive ────────────────
   // Kept here (not in useScrollControls) because liveEffectiveCount depends
   // on virtualBase which comes from useVirtualBase.
+  //
+  // Deferred to rAF so queued input events (wheel-up, key-up) can set
+  // autoScrollRef=false before the scroll executes. Without this, a pending
+  // effect from a just-arrived batch overrides the user's scroll-away.
   useEffect(() => {
     if (!tailMode || !autoScrollRef.current || liveEffectiveCount === 0) return;
     const el = parentRef.current;
     if (!el) return;
 
-    // Drift detection: if the element scrolled away from where we put it,
-    // the user is manually scrolling — disable auto-scroll.
-    if (lastSetScrollTopRef.current >= 0) {
-      const drift = Math.abs(el.scrollTop - lastSetScrollTopRef.current);
-      if (drift > 2) {
-        disableAutoScroll();
-        lastSetScrollTopRef.current = -1;
-        return;
-      }
-    }
-
-    el.scrollTop = el.scrollHeight;
-    lastSetScrollTopRef.current = el.scrollTop;
+    requestAnimationFrame(() => {
+      if (!autoScrollRef.current) return;
+      el.scrollTop = el.scrollHeight;
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveEffectiveCount]);
 
@@ -404,7 +403,7 @@ export default function ReadOnlyViewer({
         </button>
       )}
       <div
-        ref={parentRef}
+        ref={parentCallbackRef}
         className={styles.viewer}
         onPointerDown={(e) => {
           const { lineNum, col } = getLineColFromPointer(e.clientX, e.clientY);

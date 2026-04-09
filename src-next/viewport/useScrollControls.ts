@@ -1,5 +1,4 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
-import type React from 'react';
 import type { DataSource } from './DataSource';
 
 const AT_BOTTOM_THRESHOLD = 60;
@@ -16,9 +15,14 @@ const AT_BOTTOM_THRESHOLD = 60;
  *
  * Does NOT handle: auto-scroll-to-bottom (lives in ReadOnlyViewer because it
  * requires liveEffectiveCount which depends on virtualBase from useVirtualBase).
+ *
+ * Accepts the scroll container element directly (not a ref) so the listener
+ * effect re-runs when the element becomes available. This is required because
+ * ReadOnlyViewer conditionally renders the scroll container — it doesn't exist
+ * on the first mount when liveTotalLines === 0.
  */
 export function useScrollControls(
-  parentRef: React.RefObject<HTMLDivElement>,
+  scrollContainer: HTMLDivElement | null,
   tailMode: boolean | undefined,
   totalLines: number,
   dataSource: DataSource,
@@ -28,7 +32,6 @@ export function useScrollControls(
   autoScrollRef: React.MutableRefObject<boolean>;
   newLinesCount: number;
   liveTotalLines: number;
-  lastSetScrollTopRef: React.MutableRefObject<number>;
   userScrollingDownRef: React.MutableRefObject<boolean>;
   resetAutoScroll: () => void;
   disableAutoScroll: () => void;
@@ -38,8 +41,8 @@ export function useScrollControls(
   const [streamTotal, setStreamTotal] = useState(dataSource.totalLines);
 
   const autoScrollRef = useRef(true);
-  const lastSetScrollTopRef = useRef(-1);
   const userScrollingDownRef = useRef(false);
+  const pointerIsDownRef = useRef(false);
 
   // tailMode: use streamTotal (updated by onAppend, faster than context propagation)
   // file mode: use totalLines from prop (authoritative count from session context)
@@ -56,9 +59,10 @@ export function useScrollControls(
   }, [tailMode]);
 
   // ── Scroll / interaction listeners ──────────────────────────────────────
+  // Depends on scrollContainer so listeners are re-attached when the element
+  // appears (e.g. after the "no data" early return is replaced by the viewer).
   useEffect(() => {
-    const el = parentRef.current;
-    if (!el) return;
+    if (!scrollContainer) return;
 
     const onWheel = (e: WheelEvent) => {
       if (e.deltaY < 0) {
@@ -80,11 +84,22 @@ export function useScrollControls(
       }
     };
 
+    const onPointerDown = () => { pointerIsDownRef.current = true; };
+    const onPointerUp = () => { pointerIsDownRef.current = false; };
+
     const onScroll = () => {
       const nearBottom =
-        el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_THRESHOLD;
+        scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight < AT_BOTTOM_THRESHOLD;
 
-      if (nearBottom && !autoScrollRef.current && userScrollingDownRef.current) {
+      // Scrollbar drags produce no wheel/keyboard events — use pointer state
+      // as a proxy to detect user-initiated scrollbar interaction.
+      if (pointerIsDownRef.current && !nearBottom && autoScrollRef.current) {
+        autoScrollRef.current = false;
+        setAutoScroll(false);
+      }
+
+      // Re-enable: user scrolled (wheel/key/scrollbar drag) back to bottom.
+      if (nearBottom && !autoScrollRef.current && (userScrollingDownRef.current || pointerIsDownRef.current)) {
         userScrollingDownRef.current = false;
         autoScrollRef.current = true;
         setAutoScroll(true);
@@ -92,16 +107,21 @@ export function useScrollControls(
       }
     };
 
-    el.addEventListener('wheel', onWheel, { passive: true });
-    el.addEventListener('keydown', onKeyDown);
-    el.addEventListener('scroll', onScroll, { passive: true });
+    scrollContainer.addEventListener('wheel', onWheel, { passive: true });
+    scrollContainer.addEventListener('keydown', onKeyDown);
+    scrollContainer.addEventListener('scroll', onScroll, { passive: true });
+    scrollContainer.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
     return () => {
-      el.removeEventListener('wheel', onWheel);
-      el.removeEventListener('keydown', onKeyDown);
-      el.removeEventListener('scroll', onScroll);
+      scrollContainer.removeEventListener('wheel', onWheel);
+      scrollContainer.removeEventListener('keydown', onKeyDown);
+      scrollContainer.removeEventListener('scroll', onScroll);
+      scrollContainer.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerUp);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [scrollContainer]);
 
   // ── Subscribe to streaming appends ──────────────────────────────────────
   useEffect(() => {
@@ -131,12 +151,10 @@ export function useScrollControls(
     autoScrollRef.current = true;
     setAutoScroll(true);
     setNewLinesCount(0);
-    const el = parentRef.current;
-    if (el) {
-      el.scrollTop = el.scrollHeight;
-      lastSetScrollTopRef.current = el.scrollTop;
+    if (scrollContainer) {
+      scrollContainer.scrollTop = scrollContainer.scrollHeight;
     }
-  }, [parentRef]);
+  }, [scrollContainer]);
 
   const disableAutoScroll = useCallback(() => {
     autoScrollRef.current = false;
@@ -148,7 +166,6 @@ export function useScrollControls(
     autoScrollRef,
     newLinesCount,
     liveTotalLines,
-    lastSetScrollTopRef,
     userScrollingDownRef,
     resetAutoScroll,
     disableAutoScroll,
