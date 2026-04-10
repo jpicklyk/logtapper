@@ -176,6 +176,7 @@ export function useFileSession(
           isNewTab,
           previousSessionId,
           readOnly: isBugreportLike(result.sourceType) ? true : undefined,
+          isIndexing: result.isIndexing,
         },
         { sessionId: result.sessionId, paneId: targetPaneId },
       );
@@ -222,6 +223,7 @@ export function useFileSession(
               isNewTab: true,
               previousSessionId: action.previousSessionId,
               readOnly: action.readOnly || undefined,
+              isIndexing: action.session.isIndexing,
             });
             break;
           case 'persistTabPath': {

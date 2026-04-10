@@ -296,11 +296,7 @@ export function usePipeline(): PipelineActions {
   );
 
   // ── Workspace restore: set chain from .ltw and auto-rerun ────────────────
-  const getIsIndexing = useCallback(
-    (sessionId: string) => sessionsRef.current.get(sessionId)?.isIndexing ?? false,
-    [],
-  );
-  useWorkspaceRestore(dispatch, processors, run, getIsIndexing, hasRestoredChainRef);
+  useWorkspaceRestore(dispatch, processors, run, hasRestoredChainRef);
 
   const clearResults = useCallback((sessionId: string) => {
     dispatch({ type: 'results:cleared', sessionId });

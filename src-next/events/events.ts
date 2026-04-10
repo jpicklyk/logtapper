@@ -27,7 +27,8 @@ export type AppEvents = {
    * logviewer tab's mapping intact.
    */
   'session:loaded':         { sessionId: string; paneId: string; sourceName: string; sourceType: SourceType;
-                              tabId: string; isNewTab?: boolean; previousSessionId?: string; readOnly?: boolean };
+                              tabId: string; isNewTab?: boolean; previousSessionId?: string; readOnly?: boolean;
+                              isIndexing?: boolean };
   'session:closed':         { sessionId: string; paneId: string; sourceType: SourceType; tabId?: string };
   'session:focused':        { sessionId: string | null; paneId: string | null };
   'session:indexing-complete': { sessionId: string; totalLines: number };

@@ -11,6 +11,7 @@ export interface ImportedSession {
   sessionId: string;
   sourceName: string;
   sourceType: string;
+  isIndexing?: boolean;
 }
 
 /** An action the hook should execute after computing the import plan. */

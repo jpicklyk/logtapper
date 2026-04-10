@@ -22,15 +22,12 @@ export function useWorkspaceRestore(
   dispatch: React.Dispatch<PipelineAction>,
   processors: ProcessorSummary[],
   run: (sessionId: string) => Promise<void>,
-  getIsIndexing: (sessionId: string) => boolean,
   hasRestoredRef: React.MutableRefObject<boolean>,
 ): void {
   const processorsRef = useRef(processors);
   processorsRef.current = processors;
   const runRef = useRef(run);
   runRef.current = run;
-  const getIsIndexingRef = useRef(getIsIndexing);
-  getIsIndexingRef.current = getIsIndexing;
 
   // Maps keyed by sessionId so multi-session .lts restores don't clobber each other
   const pendingIndexingHandlersRef = useRef(new Map<string, (e: { sessionId: string }) => void>());
@@ -62,9 +59,8 @@ export function useWorkspaceRestore(
 
       // Auto-run: always subscribe to indexing-complete as the primary trigger,
       // since workspace-restored fires during load_log_file before the session
-      // is registered in the frontend context (getIsIndexing can't resolve it yet).
-      // Also attempt an immediate run if the session is already fully indexed
-      // (small files that complete before this event is delivered).
+      // is registered in the frontend context. Also use session:loaded as a
+      // fallback for files already fully indexed (isIndexing carried in payload).
       const autoRun = () => { runRef.current(sessionId).catch(() => {}); };
 
       // Remove any existing handlers for this sessionId before registering new ones
@@ -97,24 +93,20 @@ export function useWorkspaceRestore(
 
       // For files that are already fully indexed (isIndexing was false in
       // LoadResult), session:indexing-complete will never fire. Use
-      // session:loaded as a fallback — it fires after the session is
-      // registered in context and indexing status is known.
-      const loadedHandler = (e: { sessionId: string; sourceType: string; paneId: string }) => {
+      // session:loaded as a fallback — it carries isIndexing directly in
+      // the payload, so no context lookup or setTimeout is needed.
+      const loadedHandler = (e: { sessionId: string; sourceType: string; paneId: string; isIndexing?: boolean }) => {
         // Scope to the specific sessionId — don't act on other sessions' load events
         if (e.sessionId !== sessionId) return;
         bus.off('session:loaded', loadedHandler);
         pendingLoadedHandlersRef.current.delete(sessionId);
-        // Small delay to let the session context settle
-        setTimeout(() => {
-          if (cancelled) return;
-          if (!getIsIndexingRef.current(sessionId)) {
-            // Already indexed — indexing-complete won't fire, so run now
-            bus.off('session:indexing-complete', handler);
-            pendingIndexingHandlersRef.current.delete(sessionId);
-            autoRun();
-          }
-          // else: still indexing — indexing-complete handler will fire later
-        }, 100);
+        if (!e.isIndexing) {
+          // Already indexed — indexing-complete won't fire, so run now
+          bus.off('session:indexing-complete', handler);
+          pendingIndexingHandlersRef.current.delete(sessionId);
+          if (!cancelled) autoRun();
+        }
+        // else: still indexing — indexing-complete handler will fire later
       };
       pendingLoadedHandlersRef.current.set(sessionId, loadedHandler);
       bus.on('session:loaded', loadedHandler);
