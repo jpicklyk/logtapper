@@ -351,9 +351,7 @@ mod tests {
     use super::validate_processor;
     use crate::processors::{AnyProcessor, ProcessorKind, ProcessorMeta};
     use crate::processors::transformer::schema::{TransformerDef, TransformOp};
-    use crate::processors::reporter::schema::{
-        ReporterDef, AggType, AggregateGroup, AggregateStage, PipelineStage,
-    };
+    use crate::processors::reporter::schema::{ReporterDef, AggType};
 
     fn make_meta(id: &str) -> ProcessorMeta {
         ProcessorMeta {

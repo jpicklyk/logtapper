@@ -1063,7 +1063,7 @@ mod tests {
 
     #[test]
     fn transformer_does_not_disable_prefilter() {
-        use crate::processors::reporter::schema::{FilterRule, FilterStage, PipelineStage, ReporterDef};
+        use crate::processors::reporter::schema::ReporterDef;
         use crate::processors::transformer::schema::TransformerDef;
 
         // A reporter with a tag filter
@@ -1100,7 +1100,7 @@ pipeline:
 
     #[test]
     fn tag_content_prefilter_decoupled() {
-        use crate::processors::reporter::schema::{FilterRule, FilterStage, PipelineStage, ReporterDef};
+        use crate::processors::reporter::schema::ReporterDef;
 
         // Reporter with NO tag filter but WITH a message_contains filter
         let reporter_yaml = r#"

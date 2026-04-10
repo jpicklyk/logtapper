@@ -361,9 +361,6 @@ mod tests {
             &*line.message
         );
 
-        // Extract the token that was assigned
-        let token = line.message.trim_end().to_string();
-
         // Save continuous state and verify PII mappings are included
         let state = run.into_continuous_state(1);
         assert!(state.pii_mappings.is_some(), "Expected pii_mappings to be Some");
