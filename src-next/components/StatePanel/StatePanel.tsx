@@ -307,10 +307,10 @@ const StatePanel = React.memo(function StatePanel() {
                   <div className={styles.skelRows}>
                     {[55, 40, 65].map((w, i) => (
                       <div key={i} className={styles.skelRow}>
-                        <div className={styles.skelKey} style={{ width: `${w}%` }} />
+                        <div className={styles.skelKey} style={{ '--skel-w': `${w}%` } as React.CSSProperties} />
                         <div
                           className={styles.skelVal}
-                          style={{ width: `${100 - w - 15}%` }}
+                          style={{ '--skel-w': `${100 - w - 15}%` } as React.CSSProperties}
                         />
                       </div>
                     ))}

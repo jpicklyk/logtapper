@@ -151,6 +151,7 @@ export function usePacks(): PackSummary[] {
 // Action selectors
 // ---------------------------------------------------------------------------
 
+/** @deprecated Use focused hooks: useNavigationActions, useFileActions, usePaneActions, useSettingsActions */
 export function useViewerActions() {
   const { loadFile, openFileDialog, openInEditorDialog, startStream, stopStream, closeSession,
           jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
@@ -176,6 +177,42 @@ export function useViewerActions() {
      newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs,
      closeWorkspace, switchWorkspace,
      setFileAssociation, openDefaultAppsSettings, startMcpBridge, stopMcpBridge, exportAllSessions],
+  );
+}
+
+export function useNavigationActions() {
+  const { jumpToLine, jumpToMatch } = useActionsContext();
+  return useMemo(() => ({ jumpToLine, jumpToMatch }), [jumpToLine, jumpToMatch]);
+}
+
+export function useFileActions() {
+  const { loadFile, openFileDialog, openInEditorDialog, saveFile, saveFileAs,
+          exportSession, exportAllSessions, startStream, stopStream, closeSession,
+        } = useActionsContext();
+  return useMemo(
+    () => ({ loadFile, openFileDialog, openInEditorDialog, saveFile, saveFileAs,
+             exportSession, exportAllSessions, startStream, stopStream, closeSession }),
+    [loadFile, openFileDialog, openInEditorDialog, saveFile, saveFileAs,
+     exportSession, exportAllSessions, startStream, stopStream, closeSession],
+  );
+}
+
+export function usePaneActions() {
+  const { setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter,
+          setEffectiveLineNums, openTab, setSearch } = useActionsContext();
+  return useMemo(
+    () => ({ setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter,
+             setEffectiveLineNums, openTab, setSearch }),
+    [setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter,
+     setEffectiveLineNums, openTab, setSearch],
+  );
+}
+
+export function useSettingsActions() {
+  const { startMcpBridge, stopMcpBridge, setFileAssociation, openDefaultAppsSettings } = useActionsContext();
+  return useMemo(
+    () => ({ startMcpBridge, stopMcpBridge, setFileAssociation, openDefaultAppsSettings }),
+    [startMcpBridge, stopMcpBridge, setFileAssociation, openDefaultAppsSettings],
   );
 }
 

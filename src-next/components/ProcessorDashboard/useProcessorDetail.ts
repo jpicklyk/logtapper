@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { MatchedLine, StateTransition, StateSnapshot, CorrelatorResult } from '../../bridge/types';
-import { getMatchedLines, getPiiMappings, getStateTransitions, getStateAtLine, getCorrelatorEvents } from '../../bridge/commands';
-import { usePipeline } from '../../hooks';
+import { getMatchedLines, getPiiMappings, getStateTransitions, getStateAtLine } from '../../bridge/commands';
+import { usePipeline, useCorrelatorResult } from '../../hooks';
 
 export interface UseProcessorDetailParams {
   selectedId: string | null;
@@ -41,7 +41,12 @@ export function useProcessorDetail({
   const [matchSearch, setMatchSearch] = useState('');
   const [trackerTransitions, setTrackerTransitions] = useState<StateTransition[]>([]);
   const [trackerSnapshot, setTrackerSnapshot] = useState<StateSnapshot | null>(null);
-  const [correlatorResult, setCorrelatorResult] = useState<CorrelatorResult | null>(null);
+
+  const { result: correlatorResult } = useCorrelatorResult(
+    processorType === 'correlator' ? sessionId : null,
+    processorType === 'correlator' ? selectedId : null,
+    runCount,
+  );
 
   // Without a ref, the streaming effect closes over the initial showMatches=false
   // and never sees it become true (its dep array is [runCount] only).
@@ -108,19 +113,6 @@ export function useProcessorDetail({
       setTrackerTransitions([]);
       setTrackerSnapshot(null);
     });
-    return () => { cancelled = true; };
-  }, [selectedId, sessionId, runCount, processorType]);
-
-  // Fetch correlator events
-  useEffect(() => {
-    if (!selectedId || !sessionId || runCount === 0 || processorType !== 'correlator') {
-      setCorrelatorResult(null);
-      return;
-    }
-    let cancelled = false;
-    getCorrelatorEvents(sessionId, selectedId)
-      .then((result) => { if (!cancelled) setCorrelatorResult(result); })
-      .catch(() => { if (!cancelled) setCorrelatorResult(null); });
     return () => { cancelled = true; };
   }, [selectedId, sessionId, runCount, processorType]);
 

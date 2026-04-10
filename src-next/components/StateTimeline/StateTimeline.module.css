@@ -113,6 +113,7 @@
 
 .trackBody {
   flex: 1;
+  height: 40px;
   min-height: 28px;
   position: relative;
   overflow: hidden;

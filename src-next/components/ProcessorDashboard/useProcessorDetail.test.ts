@@ -18,6 +18,7 @@ const mockGetVars = vi.fn<(sid: string, pid: string) => Promise<Record<string, u
 
 vi.mock('../../hooks', () => ({
   usePipeline: () => ({ getVars: mockGetVars }),
+  useCorrelatorResult: () => ({ result: null, loading: false, error: null }),
 }));
 
 vi.mock('../../bridge/commands', () => ({

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import clsx from 'clsx';
 import { Search, X, ChevronUp, ChevronDown } from 'lucide-react';
-import { useSearch, useViewerActions } from '../../context';
+import { useSearch, usePaneActions, useNavigationActions } from '../../context';
 import { IconButton, Button } from '../../ui';
 import styles from './SearchBar.module.css';
 
@@ -21,7 +21,8 @@ export const SearchBar = React.memo<SearchBarProps>(function SearchBar({
   timeFilterCount,
 }) {
   const { summary, matchIndex } = useSearch();
-  const { setSearch, jumpToMatch } = useViewerActions();
+  const { setSearch } = usePaneActions();
+  const { jumpToMatch } = useNavigationActions();
 
   const [text, setText] = useState('');
   const [isRegex, setIsRegex] = useState(false);

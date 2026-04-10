@@ -3,7 +3,7 @@ import { save } from '@tauri-apps/plugin-dialog';
 import { Modal } from '../../ui';
 import { Spinner, Button } from '../../ui';
 import { getExportAllSessionsInfo } from '../../bridge/commands';
-import { useViewerActions } from '../../context';
+import { useFileActions } from '../../context';
 import type { ExportAllSessionsInfo } from '../../bridge/types';
 import { allPanes, STORAGE_KEY, collectEditorTabs } from '../../hooks/workspace';
 import { storageGetJSON } from '../../utils';
@@ -28,7 +28,7 @@ interface ExportModalProps {
 }
 
 export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ open, onClose }) {
-  const { exportAllSessions } = useViewerActions();
+  const { exportAllSessions } = useFileActions();
   const [info, setInfo] = useState<ExportAllSessionsInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);

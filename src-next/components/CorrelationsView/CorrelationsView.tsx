@@ -1,13 +1,13 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { getCorrelatorEvents } from '../../bridge/commands';
+import React, { useState } from 'react';
 import type { CorrelationEvent } from '../../bridge/types';
 import {
   useSession,
   useProcessors,
   useActiveProcessorIds,
-  useViewerActions,
+  useNavigationActions,
   useSessionPipelineResults,
 } from '../../context';
+import { useCorrelatorResult } from '../../hooks';
 import css from './CorrelationsView.module.css';
 
 /* ─── CorrelationPanel (internal) ─────────────────────────────────────────── */
@@ -27,33 +27,12 @@ const CorrelationPanel = React.memo(function CorrelationPanel({
   onJumpToLine,
   refreshKey,
 }: PanelProps) {
-  const [events, setEvents] = useState<CorrelationEvent[]>([]);
-  const [guidance, setGuidance] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { result, loading, error } = useCorrelatorResult(sessionId, correlatorId, refreshKey);
+  const events: CorrelationEvent[] = result?.events ?? [];
+  const guidance = result?.guidance ?? null;
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
-  const hasDataRef = useRef(false);
 
-  const fetchEvents = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await getCorrelatorEvents(sessionId, correlatorId);
-      setGuidance(result.guidance);
-      setEvents(result.events);
-      hasDataRef.current = true;
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [sessionId, correlatorId]);
-
-  useEffect(() => {
-    fetchEvents();
-  }, [fetchEvents, refreshKey]);
-
-  if (loading && !hasDataRef.current) {
+  if (loading && events.length === 0) {
     return <div className={css.panelEmpty}>Loading...</div>;
   }
 
@@ -170,7 +149,7 @@ const CorrelationsView = React.memo(function CorrelationsView() {
   const processors = useProcessors();
   const activeProcessorIds = useActiveProcessorIds();
   const { runCount } = useSessionPipelineResults();
-  const { jumpToLine } = useViewerActions();
+  const { jumpToLine } = useNavigationActions();
 
   const sessionId = session?.sessionId ?? '';
   const activeIdSet = new Set(activeProcessorIds);

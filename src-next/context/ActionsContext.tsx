@@ -38,8 +38,11 @@ export interface WorkspaceMutationActions {
 }
 
 /**
- * View actions — navigation, search, focus, execution, UI state.
- * These do NOT mark the workspace dirty.
+ * Non-mutation actions — navigation, search, focus, execution, system, UI state.
+ * These do NOT mark the workspace dirty. The name "ViewActions" is historical;
+ * the interface includes system operations (MCP bridge, file associations) and
+ * file I/O (save, export) alongside true view actions (jump, search, focus).
+ * The grouping criterion is: not tracked by `trackMutations()`.
  */
 export interface ViewActions {
   openFileDialog: () => Promise<void>;

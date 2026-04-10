@@ -241,16 +241,15 @@ const SplitContainer = React.memo(function SplitContainer({
     [isHorizontal, onSplitResize, nodeId],
   );
 
-  const flexDir = isHorizontal ? 'row' : 'column';
+  const splitDirClass = isHorizontal ? styles.splitRow : styles.splitCol;
   const handleOrientation = isHorizontal ? 'vertical' : 'horizontal';
 
   return (
     <div
       ref={containerRef}
-      className={styles.split}
-      style={{ flexDirection: flexDir as 'row' | 'column' }}
+      className={`${styles.split} ${splitDirClass}`}
     >
-      <div style={{ flexBasis: firstPercent }} className={styles.splitChild}>
+      <div style={{ '--split-basis': firstPercent } as React.CSSProperties} className={styles.splitChild}>
         <SplitNodeRenderer
           node={first}
           focusedLogviewerTabId={focusedLogviewerTabId}
@@ -265,7 +264,7 @@ const SplitContainer = React.memo(function SplitContainer({
         />
       </div>
       <DragHandle orientation={handleOrientation} onDrag={handleDrag} />
-      <div style={{ flexBasis: secondPercent }} className={styles.splitChild}>
+      <div style={{ '--split-basis': secondPercent } as React.CSSProperties} className={styles.splitChild}>
         <SplitNodeRenderer
           node={second}
           focusedLogviewerTabId={focusedLogviewerTabId}

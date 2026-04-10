@@ -2,7 +2,7 @@ import React, { useCallback, useMemo } from 'react';
 import { Trash2, ExternalLink, MapPin } from 'lucide-react';
 import type { AnalysisArtifact, AnalysisSection, AnalysisSeverity } from '../../bridge/types';
 import { severityColor } from '../../bridge/types';
-import { useSession, useViewerActions } from '../../context';
+import { useSession, usePaneActions } from '../../context';
 import { useAnalysis } from '../../hooks';
 import { useSessionAnalysisActions } from '../../context';
 import { bus } from '../../events/bus';
@@ -189,7 +189,7 @@ const AnalysisList = React.memo(function AnalysisList() {
   const sessionId = session?.sessionId ?? null;
   const { artifacts, analysisLoading } = useAnalysis(sessionId);
   const { deleteSessionAnalysis } = useSessionAnalysisActions();
-  const { openTab } = useViewerActions();
+  const { openTab } = usePaneActions();
 
   const handleOpen = useCallback((artifactId: string) => {
     bus.emit('analysis:open', { artifactId });

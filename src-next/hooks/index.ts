@@ -48,6 +48,8 @@ export { useMcpStatus } from './useMcpStatus';
 export type { McpConnState, McpStatusInfo } from './useMcpStatus';
 export { useStatusBarSelection } from './useStatusBarSelection';
 export type { StatusBarSelection } from './useStatusBarSelection';
+export { useCorrelatorResult } from './useCorrelatorResult';
+export type { UseCorrelatorResultReturn } from './useCorrelatorResult';
 export { useStartupFile } from './useStartupFile';
 export { useEditorTabRestore } from './useEditorTabRestore';
 export { useWorkspace } from './useWorkspace';

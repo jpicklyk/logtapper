@@ -7,7 +7,7 @@ import {
   useProcessors,
   usePacks,
   useActiveProcessorIds,
-  useViewerActions,
+  useNavigationActions,
   useSessionPipelineResults,
 } from '../../context';
 import { PROC_TYPE_ACCENT } from '../../ui';
@@ -23,7 +23,7 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
   const processors = useProcessors();
   const activeProcessorIds = useActiveProcessorIds();
   const { results: lastResults, runCount } = useSessionPipelineResults();
-  const { jumpToLine } = useViewerActions();
+  const { jumpToLine } = useNavigationActions();
   const packs = usePacks();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);

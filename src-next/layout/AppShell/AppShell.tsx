@@ -25,7 +25,7 @@ import { useSettings, useAnonymizerConfig, useToast, useAnalysisToast, useWatchT
 import { startMcpBridge } from '../../bridge/commands';
 import { Toast } from '../../ui';
 import { findTabAcrossTree, allPanes } from '../../hooks/workspace/splitTreeHelpers';
-import { usePendingUpdateCount, useViewerActions } from '../../context';
+import { usePendingUpdateCount, useFileActions, useWorkspaceActions } from '../../context';
 import { bus } from '../../events';
 import { onWatchMatch } from '../../bridge/events';
 import type {
@@ -73,7 +73,8 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
     return () => { bus.off('layout:settings-requested', handler); };
   }, []);
   const updateBadgeCount = usePendingUpdateCount();
-  const { openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession, newWorkspace, saveWorkspace } = useViewerActions();
+  const { openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession } = useFileActions();
+  const { newWorkspace, saveWorkspace } = useWorkspaceActions();
   useFileShortcuts({ openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession, newWorkspace, saveWorkspace });
   useStartupFile();
   useEditorTabRestore(workspace.openCenterTab);

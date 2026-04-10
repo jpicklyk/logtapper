@@ -68,6 +68,12 @@ export function storageSetJSON<T>(key: string, value: T): void {
   }
 }
 
+/** Format a number with locale-appropriate separators and up to 2 decimal places. */
+export function formatNumber(n: number): string {
+  if (Number.isInteger(n)) return n.toLocaleString();
+  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
 /** Format a byte count as a human-readable string (B, KB, MB, GB). */
 export function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

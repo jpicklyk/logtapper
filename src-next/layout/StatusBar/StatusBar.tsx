@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { useSessionForPane, useIsStreamingForPane, useViewerActions } from '../../context';
+import { useSessionForPane, useIsStreamingForPane, useNavigationActions } from '../../context';
 import { useStatusBarSelection } from '../../hooks';
 import { bus } from '../../events';
 import type { AppEvents } from '../../events/events';
@@ -48,7 +48,7 @@ export const StatusBar = React.memo(function StatusBar({ activeLogPaneId }: Stat
   const session = useSessionForPane(activeLogPaneId);
   const isStreaming = useIsStreamingForPane(activeLogPaneId);
   const selection = useStatusBarSelection(activeLogPaneId);
-  const { jumpToLine } = useViewerActions();
+  const { jumpToLine } = useNavigationActions();
 
   const filePath = session?.filePath ?? null;
   const sourceType = session?.sourceType ?? null;

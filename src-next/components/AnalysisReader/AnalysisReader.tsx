@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { FileSearch } from 'lucide-react';
 import type { AnalysisArtifact } from '../../bridge/types';
-import { useSession, useViewerActions } from '../../context';
+import { useSession, useNavigationActions } from '../../context';
 import { useAnalysis } from '../../hooks';
 import { bus } from '../../events/bus';
 import MarkdownSection from './MarkdownSection';
@@ -21,7 +21,7 @@ const AnalysisReader = React.memo(function AnalysisReader() {
   const session = useSession();
   const sessionId = session?.sessionId ?? null;
   const { artifacts } = useAnalysis(sessionId);
-  const { jumpToLine } = useViewerActions();
+  const { jumpToLine } = useNavigationActions();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // Listen for analysis:open events from the left pane list

@@ -73,6 +73,7 @@ export default tseslint.config(
 
       // ── Convention 4: No direct invoke()/Channel outside bridge ─────
       // ── Convention 5: No direct listen() outside bridge + 2 hooks ───
+      // ── Convention 9: No deprecated useViewerActions ────────────────
       'no-restricted-imports': ['error', {
         patterns: [
           {
@@ -84,6 +85,11 @@ export default tseslint.config(
             group: ['@tauri-apps/api/event'],
             importNames: ['listen'],
             message: 'Use bridge/events wrappers instead of direct listen().',
+          },
+          {
+            group: ['**/context', '**/context/index*'],
+            importNames: ['useViewerActions'],
+            message: 'useViewerActions is deprecated. Use useNavigationActions, useFileActions, usePaneActions, or useSettingsActions instead.',
           },
         ],
       }],
@@ -122,6 +128,12 @@ export default tseslint.config(
             group: ['@tauri-apps/api/event'],
             importNames: ['listen'],
             message: 'Use bridge/events wrappers instead of direct listen().',
+          },
+          // Convention 9: No deprecated useViewerActions
+          {
+            group: ['**/context', '**/context/index*'],
+            importNames: ['useViewerActions'],
+            message: 'useViewerActions is deprecated. Use useNavigationActions, useFileActions, usePaneActions, or useSettingsActions instead.',
           },
           // Convention 2: No raw context hook imports in components
           {

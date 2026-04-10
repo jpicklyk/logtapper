@@ -200,7 +200,7 @@ const LogViewer = React.memo(function LogViewer({
           return (
             <span
               className={styles.bookmarkDot}
-              style={{ backgroundColor: color }}
+              style={{ '--bookmark-color': color } as React.CSSProperties}
               title={bookmark?.label ?? 'Bookmark'}
             />
           );

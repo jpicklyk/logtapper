@@ -7,7 +7,7 @@ import {
   useSession,
   useProcessors,
   usePipelineChain,
-  useViewerActions,
+  useNavigationActions,
   useSessionPipelineResults,
 } from '../../context';
 import { useStateTracker, useBookmarks, useSettings } from '../../hooks';
@@ -148,7 +148,7 @@ const StateTimeline = React.memo(function StateTimeline() {
   const processors = useProcessors();
   const pipelineChain = usePipelineChain();
   const { runCount } = useSessionPipelineResults();
-  const { jumpToLine } = useViewerActions();
+  const { jumpToLine } = useNavigationActions();
   const stateTracker = useStateTracker();
   const { bookmarks } = useBookmarks(session?.sessionId ?? null);
   const { settings } = useSettings();
@@ -619,7 +619,7 @@ function SparklineTrack({
       <div className={styles.trackLabel} title={`${series.processorName}: ${series.label}`} style={{ color }}>
         {series.processorName}: {series.label}
       </div>
-      <div className={styles.trackBody} style={{ height: TRACK_HEIGHT }}>
+      <div className={styles.trackBody}>
         <svg
           ref={svgRef}
           className={styles.sparklineSvg}

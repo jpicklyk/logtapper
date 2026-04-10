@@ -350,7 +350,7 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
                 </div>
               )}
               {installError[pack.id] && (
-                <div className={css.errorBar} style={{ marginTop: 4 }}>{installError[pack.id]}</div>
+                <div className={`${css.errorBar} ${css.errorBarSpaced}`}>{installError[pack.id]}</div>
               )}
               {showProcessors && (
                 <div className={css.packProcessorList}>

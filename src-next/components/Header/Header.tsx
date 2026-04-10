@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import clsx from 'clsx';
 import { FolderOpen, FilePen, Menu, Radio, Square, Smartphone, Download, Settings, Minus, Copy, X } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { useSession, useIsStreaming, useViewerActions } from '../../context';
+import { useSession, useIsStreaming, useFileActions } from '../../context';
 import { listAdbDevices } from '../../bridge/commands';
 import type { AdbDevice } from '../../bridge/types';
 import { isMac } from '../../bridge/platform';
@@ -63,7 +63,7 @@ const WindowControls = React.memo(function WindowControls() {
 export const Header = React.memo(function Header() {
   const session = useSession();
   const isStreaming = useIsStreaming();
-  const { openFileDialog, openInEditorDialog, startStream, stopStream, saveFile, saveFileAs } = useViewerActions();
+  const { openFileDialog, openInEditorDialog, startStream, stopStream, saveFile, saveFileAs } = useFileActions();
 
   const [fileMenuOpen, setFileMenuOpen] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);

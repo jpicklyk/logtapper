@@ -1,7 +1,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { ChevronRight, Download } from 'lucide-react';
 import type { Bookmark } from '../../bridge/types';
-import { useFocusedSession, useViewerActions, useSessionBookmarkActions } from '../../context';
+import { useFocusedSession, useNavigationActions, useSessionBookmarkActions } from '../../context';
 import { useBookmarks, useSettings } from '../../hooks';
 import type { BookmarkCategoryDef } from '../../hooks';
 import BookmarkItem from './BookmarkItem';
@@ -85,7 +85,7 @@ const BookmarkPanel = React.memo(function BookmarkPanel() {
   const sessionId = session?.sessionId ?? null;
   const { bookmarks, bookmarksLoading } = useBookmarks(sessionId);
   const { editBookmark, removeBookmark } = useSessionBookmarkActions();
-  const { jumpToLine } = useViewerActions();
+  const { jumpToLine } = useNavigationActions();
   const { settings } = useSettings();
   const categories = settings.bookmarkCategories;
   const [exportLabel, setExportLabel] = useState<'export' | 'copied'>('export');

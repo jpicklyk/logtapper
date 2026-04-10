@@ -7,7 +7,7 @@ import { EditorTab } from '../EditorTab';
 import { StreamFilterBar } from '../StreamFilterBar';
 import { BookmarkCreateDialog } from '../BookmarkPanel';
 import type { BookmarkCreateRequest } from '../BookmarkPanel';
-import { useSessionForPane, useIsLoadingForPane, useViewerActions, useStreamFilter, useFocusedSession, SessionProviders } from '../../context';
+import { useSessionForPane, useIsLoadingForPane, usePaneActions, useStreamFilter, useFocusedSession, SessionProviders } from '../../context';
 import type { CenterPane } from '../../hooks';
 import { useLogViewerActions } from './useLogViewerActions';
 import { bus } from '../../events';
@@ -46,7 +46,7 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
   const session = useSessionForPane(pane.id);
   const focusedSession = useFocusedSession();
   const isLoading = useIsLoadingForPane(pane.id);
-  const { setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter, setEffectiveLineNums } = useViewerActions();
+  const { setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter, setEffectiveLineNums } = usePaneActions();
   const { fetchLines } = useLogViewerActions(pane.id);
   const { value: filterValue, scanning: filterScanning, filteredLineNums, parseError: filterParseError, sectionFilteredLineNums } = useStreamFilter(pane.id);
 

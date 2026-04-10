@@ -31,6 +31,7 @@
   height: 8px;
   border-radius: 50%;
   opacity: 0.85;
+  background-color: var(--bookmark-color, var(--text-dimmed));
 }
 
 .transitionDot {

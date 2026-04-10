@@ -14,9 +14,19 @@
   overflow: hidden;
 }
 
+.splitRow {
+  flex-direction: row;
+}
+
+.splitCol {
+  flex-direction: column;
+}
+
 .splitChild {
   display: flex;
-  flex: 1;
+  flex-basis: var(--split-basis, 50%);
+  flex-grow: 0;
+  flex-shrink: 0;
   min-width: 0;
   min-height: 0;
   overflow: hidden;

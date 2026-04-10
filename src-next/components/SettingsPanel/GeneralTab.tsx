@@ -7,10 +7,10 @@ import { SegmentedControl, Button, IconButton } from '../../ui';
 import type { SegmentedOption } from '../../ui';
 import type { ThemeMode } from '../../context';
 import { getFileAssociationStatus } from '../../bridge/commands';
-import { useViewerActions } from '../../context';
+import { useSettingsActions } from '../../context';
 import type { FileAssocEntry } from '../../bridge/types';
 import { useMcpStatus } from '../../hooks';
-import { formatNumber } from '../ProcessorDashboard/utils';
+import { formatNumber } from '../../utils';
 import css from './SettingsPanel.module.css';
 
 function estimateCacheMB(lines: number): string {
@@ -196,7 +196,7 @@ export const GeneralTab = memo(function GeneralTab({ settings, onUpdate }: Gener
 
 const McpIntegrationSection = memo(function McpIntegrationSection({ settings, onUpdate }: GeneralTabProps) {
   const { connState, port } = useMcpStatus();
-  const { startMcpBridge, stopMcpBridge } = useViewerActions();
+  const { startMcpBridge, stopMcpBridge } = useSettingsActions();
   const [pending, setPending] = useState(false);
 
   const handleToggle = useCallback(async (checked: boolean) => {
@@ -380,7 +380,7 @@ const STATIC_ASSOCS = [
 ];
 
 function FileAssociationsSection() {
-  const { setFileAssociation, openDefaultAppsSettings } = useViewerActions();
+  const { setFileAssociation, openDefaultAppsSettings } = useSettingsActions();
   const [entries, setEntries] = useState<FileAssocEntry[]>([]);
   const [pending, setPending] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import { useViewerActions } from '../context';
+import { useFileActions, useWorkspaceActions } from '../context';
 import { getStartupFile } from '../bridge/commands';
 import { onOpenFile } from '../bridge/events';
 
@@ -16,7 +16,8 @@ function isLtsFile(path: string): boolean {
  * All other files are routed through loadFile() (add to current workspace).
  */
 export function useStartupFile() {
-  const { loadFile, openWorkspace } = useViewerActions();
+  const { loadFile } = useFileActions();
+  const { openWorkspace } = useWorkspaceActions();
 
   // Ref so the persistent listener always calls the latest callbacks.
   const actionsRef = useRef({ loadFile, openWorkspace });

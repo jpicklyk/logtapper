@@ -384,6 +384,10 @@ export { PINNED_TAIL_IDS } from './PipelineContext';
 
 export {
   useViewerActions,
+  useNavigationActions,
+  useFileActions,
+  usePaneActions,
+  useSettingsActions,
   usePipelineActions,
   useTrackerActions,
   useProcessorId,
