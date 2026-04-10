@@ -15,7 +15,7 @@
  * - Consumption must happen AFTER the render is committed (not during render)
  * - Double-render (simulating StrictMode) must leave preSeed intact for committed render
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import type { ViewLine } from '../bridge/types';
 
 /** Create a minimal ViewLine for testing. */

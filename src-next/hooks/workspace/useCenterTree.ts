@@ -18,7 +18,7 @@ import {
 } from './splitTreeHelpers';
 import { LS_FILEPATH_PREFIX, LS_CONTENT_PREFIX, LS_MODE_PREFIX, LS_WRAP_PREFIX } from '../../components/EditorTab';
 import { storageSet } from '../../utils';
-import { applySessionLoading, applySessionLoaded, type SessionLoadedResult } from './sessionTreeOps';
+import { applySessionLoading, applySessionLoaded } from './sessionTreeOps';
 
 // ---------------------------------------------------------------------------
 // Types

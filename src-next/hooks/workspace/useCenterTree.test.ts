@@ -16,15 +16,13 @@
  * applySessionLoading) directly to verify the correct behavior without needing
  * a React renderer.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import type { SplitNode, Tab } from './workspaceTypes';
 import { findLeafByPaneId, updateLeaf } from './splitTreeHelpers';
 import {
   applySessionLoaded,
-  applySessionLoading,
   type SessionLoadedEvent,
 } from './sessionTreeOps';
-import { makeTab, firstLeaf, findTabByType } from './splitTreeHelpers';
 
 // ---------------------------------------------------------------------------
 // Tree factories

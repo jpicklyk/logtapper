@@ -16,7 +16,7 @@
  * - A session:focused bus event is the ONLY mutation path for activeLogPaneId
  * - focusLogviewerTab must emit session:focused (not mutate state directly)
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { bus } from '../../events/bus';
 
 // ---------------------------------------------------------------------------

@@ -142,7 +142,7 @@ describe('MUTATION_ACTION_KEYS', () => {
   it('contains only valid WorkspaceMutationActions keys', () => {
     // Ensure the set is non-empty and has the expected size
     expect(MUTATION_ACTION_KEYS.size).toBeGreaterThan(0);
-    expect(MUTATION_ACTION_KEYS.size).toBe(10);
+    expect(MUTATION_ACTION_KEYS.size).toBe(11);
   });
 
   it('does not contain workspace lifecycle actions', () => {

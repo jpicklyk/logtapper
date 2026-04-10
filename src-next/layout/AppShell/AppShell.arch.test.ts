@@ -10,19 +10,18 @@
  *     underlying pure tree operations to document the contract.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
+
+import appShellSource from './AppShell.tsx?raw';
+
+import hookWiringSource from '../../context/index.tsx?raw';
+
+import centerTreeSource from '../../hooks/workspace/useCenterTree.ts?raw';
 
 // ---------------------------------------------------------------------------
 // M5 — AppShell must not import useCacheManager
 // ---------------------------------------------------------------------------
 
 describe('M5: AppShell cache budget sync moved to HookWiring', () => {
-  const appShellSource = readFileSync(
-    resolve(__dirname, 'AppShell.tsx'),
-    'utf-8',
-  );
-
   it('AppShell.tsx does not import useCacheManager', () => {
     expect(appShellSource).not.toContain('useCacheManager');
   });
@@ -33,17 +32,12 @@ describe('M5: AppShell cache budget sync moved to HookWiring', () => {
 
   it('AppShell.tsx does not import from cache module', () => {
     // The cache import was removed — AppShell is now pure layout
-    const cacheImportMatch = appShellSource.match(/from ['"]\.\.\/\.\.\/cache['"]/);
+    const cacheImportMatch = (appShellSource as string).match(/from ['"]\.\.\/\.\.\/cache['"]/);
     expect(cacheImportMatch).toBeNull();
   });
 });
 
 describe('M5: HookWiring contains cache budget sync', () => {
-  const hookWiringSource = readFileSync(
-    resolve(__dirname, '../../context/index.tsx'),
-    'utf-8',
-  );
-
   it('context/index.tsx imports useSettings', () => {
     expect(hookWiringSource).toContain('useSettings');
   });
@@ -57,8 +51,9 @@ describe('M5: HookWiring contains cache budget sync', () => {
     expect(hookWiringSource).toContain('setTotalBudget');
     expect(hookWiringSource).toContain('useEffect');
     // Ensure the pattern is: useEffect + setTotalBudget (not just coincidental)
-    const effectIndex = hookWiringSource.indexOf('useEffect(() => {');
-    const budgetIndex = hookWiringSource.indexOf('setTotalBudget');
+    const src = hookWiringSource as string;
+    const effectIndex = src.indexOf('useEffect(() => {');
+    const budgetIndex = src.indexOf('setTotalBudget');
     expect(effectIndex).toBeGreaterThan(-1);
     expect(budgetIndex).toBeGreaterThan(effectIndex);
   });
@@ -69,11 +64,6 @@ describe('M5: HookWiring contains cache budget sync', () => {
 // ---------------------------------------------------------------------------
 
 describe('M8: PaneContent receives destructured stable callback refs', () => {
-  const appShellSource = readFileSync(
-    resolve(__dirname, 'AppShell.tsx'),
-    'utf-8',
-  );
-
   it('AppShell destructures setTabUnsaved and renameTab from workspace before portal render', () => {
     // Destructuring makes the ref stability explicit and safe
     expect(appShellSource).toContain('const { setTabUnsaved, renameTab } = workspace');
@@ -93,11 +83,6 @@ describe('M8: PaneContent receives destructured stable callback refs', () => {
 // ---------------------------------------------------------------------------
 
 describe('M8: useCenterTree callback stability contract', () => {
-  const centerTreeSource = readFileSync(
-    resolve(__dirname, '../../hooks/workspace/useCenterTree.ts'),
-    'utf-8',
-  );
-
   it('updateTree has an empty dependency array (stable root)', () => {
     // updateTree is the root dep for renameTab and setTabUnsaved
     // Empty dep array means it's created once and never recreated
@@ -107,14 +92,14 @@ describe('M8: useCenterTree callback stability contract', () => {
 
   it('renameTab depends only on updateTree (inherits stability)', () => {
     // renameTab = useCallback(..., [updateTree]) → stable as long as updateTree is stable
-    const renameTabMatch = centerTreeSource.match(
+    const renameTabMatch = (centerTreeSource as string).match(
       /const renameTab = useCallback[\s\S]*?}, \[updateTree\]\);/,
     );
     expect(renameTabMatch).not.toBeNull();
   });
 
   it('setTabUnsaved depends only on updateTree (inherits stability)', () => {
-    const setTabUnsavedMatch = centerTreeSource.match(
+    const setTabUnsavedMatch = (centerTreeSource as string).match(
       /const setTabUnsaved = useCallback[\s\S]*?}, \[updateTree\]\);/,
     );
     expect(setTabUnsavedMatch).not.toBeNull();

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import type { SearchQuery } from '../../bridge/types';
 import type { CacheDataSource } from '../../viewport';
 import type { CacheController } from '../../cache';
 
@@ -22,13 +23,13 @@ import type { CacheController } from '../../cache';
  *    prevSearch === search (both null) and we haven't opened a new query.
  */
 export function useSearchCacheInvalidation(
-  search: string | null,
+  search: SearchQuery | null,
   isStreaming: boolean,
   sessionId: string | null,
   cacheManager: CacheController,
   dataSourceRef: React.RefObject<CacheDataSource | null>,
 ): void {
-  const prevSearchRef = useRef<string | null>(null);
+  const prevSearchRef = useRef<SearchQuery | null>(null);
 
   useEffect(() => {
     const prevSearch = prevSearchRef.current;
