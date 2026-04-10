@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { ChevronRight } from 'lucide-react';
 import type { PipelineRunSummary, ProcessorSummary } from '../../bridge/types';
 import { getBareId } from '../../bridge/types';
