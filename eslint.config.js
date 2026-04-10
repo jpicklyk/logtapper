@@ -121,6 +121,10 @@ export default tseslint.config(
       // No writes to module-level Maps/Sets/singletons during render.
       // Move .set()/.add() calls into useEffect to avoid concurrent-mode issues.
       'local-rules/no-map-write-in-render': 'error',
+      // Keep component files focused. Files over 400 meaningful lines are a
+      // signal to split into sub-components or extract hooks. Warn (not error)
+      // for gradual adoption — existing large files get warnings, not failures.
+      'max-lines': ['warn', { max: 400, skipBlankLines: true, skipComments: true }],
     },
   },
   {
