@@ -20,6 +20,17 @@ interface TrackerState {
   loading: boolean;
 }
 
+/** Cheap structural equality for StateSnapshot — avoids JSON.stringify on large `fields`. */
+function snapshotsEqual(a: StateSnapshot | null, b: StateSnapshot | null): boolean {
+  if (a === b) return true;
+  if (a == null || b == null) return false;
+  return (
+    a.lineNum === b.lineNum &&
+    a.timestamp === b.timestamp &&
+    a.initializedFields.length === b.initializedFields.length
+  );
+}
+
 const FieldValue = React.memo(function FieldValue({
   value,
   initialized,
@@ -190,11 +201,7 @@ const StatePanel = React.memo(function StatePanel() {
       setTrackerStates((prev) => {
         if (
           prev.length === next.length &&
-          prev.every(
-            (p, i) =>
-              p.snapshot === next[i].snapshot ||
-              JSON.stringify(p.snapshot) === JSON.stringify(next[i].snapshot),
-          )
+          prev.every((p, i) => snapshotsEqual(p.snapshot, next[i].snapshot))
         ) {
           return prev;
         }

@@ -69,6 +69,17 @@ export default tseslint.config(
           selector: "BinaryExpression[operator='!=='] > Literal[value='Dumpstate']",
           message: "Do not compare directly against 'Dumpstate'. Use isBugreportLike() from bridge/types instead.",
         },
+        // ── No JSON.stringify equality comparisons ───────────────────
+        // JSON.stringify(a) === JSON.stringify(b) is O(n) serialization;
+        // use structural comparison on known fields instead.
+        {
+          selector: "BinaryExpression[operator='==='] > CallExpression > MemberExpression[object.name='JSON'][property.name='stringify']",
+          message: 'Do not use JSON.stringify() for equality comparisons — use structural comparison on known fields instead.',
+        },
+        {
+          selector: "BinaryExpression[operator='!=='] > CallExpression > MemberExpression[object.name='JSON'][property.name='stringify']",
+          message: 'Do not use JSON.stringify() for equality comparisons — use structural comparison on known fields instead.',
+        },
       ],
 
       // ── Convention 4: No direct invoke()/Channel outside bridge ─────
