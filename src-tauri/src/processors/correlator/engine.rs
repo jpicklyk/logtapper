@@ -26,7 +26,7 @@ pub struct CorrelationEvent {
     /// Raw log line text for the trigger line.
     pub trigger_raw_line: String,
     /// Non-trigger source matches available within the window at trigger time.
-    pub matched_sources: HashMap<String, Vec<SourceMatchRecord>>,
+    pub matched_sources: HashMap<String, Vec<ArcSourceMatchRecord>>,
     /// Human-readable message formatted from `CorrelateDef::emit` template.
     pub message: String,
 }
@@ -42,6 +42,9 @@ pub struct SourceMatchRecord {
     pub raw_line: String,
 }
 
+/// Shared ownership alias used in ring buffers and `CorrelationEvent::matched_sources`.
+pub type ArcSourceMatchRecord = std::sync::Arc<SourceMatchRecord>;
+
 // ---------------------------------------------------------------------------
 // CorrelatorRun — stateful accumulator for one pass
 // ---------------------------------------------------------------------------
@@ -49,7 +52,7 @@ pub struct SourceMatchRecord {
 pub struct CorrelatorRun<'a> {
     def: &'a CorrelatorDef,
     /// Ring buffers of recent matches per non-trigger source ID.
-    source_buffers: HashMap<String, VecDeque<SourceMatchRecord>>,
+    source_buffers: HashMap<String, VecDeque<ArcSourceMatchRecord>>,
     /// Emitted correlation events.
     events: Vec<CorrelationEvent>,
     /// Compiled regex cache.
@@ -113,12 +116,12 @@ impl<'a> CorrelatorRun<'a> {
         // Process matches: non-triggers go into ring buffers; trigger checks correlations.
         for (src_id, fields) in source_matches {
             if src_id != trigger_id {
-                let record = SourceMatchRecord {
+                let record = std::sync::Arc::new(SourceMatchRecord {
                     line_num: line.source_line_num,
                     timestamp: line.timestamp,
-                    fields: fields.clone(),
+                    fields,
                     raw_line: line.raw.to_string(),
-                };
+                });
                 if let Some(buf) = self.source_buffers.get_mut(&src_id) {
                     buf.push_back(record);
                 }
@@ -149,10 +152,10 @@ impl<'a> CorrelatorRun<'a> {
 
                 if all_matched && !self.source_buffers.is_empty() {
                     // Collect the best (most recent) match from each non-trigger source.
-                    let mut matched_sources: HashMap<String, Vec<SourceMatchRecord>> =
+                    let mut matched_sources: HashMap<String, Vec<ArcSourceMatchRecord>> =
                         HashMap::new();
                     for (sid, buf) in &self.source_buffers {
-                        let records: Vec<SourceMatchRecord> = buf.iter().cloned().collect();
+                        let records: Vec<ArcSourceMatchRecord> = buf.iter().cloned().collect();
                         matched_sources.insert(sid.clone(), records);
                     }
 
@@ -308,7 +311,7 @@ impl<'a> CorrelatorRun<'a> {
         template: &str,
         trigger_id: &str,
         trigger_fields: &HashMap<String, JsonValue>,
-        matched_sources: &HashMap<String, Vec<SourceMatchRecord>>,
+        matched_sources: &HashMap<String, Vec<ArcSourceMatchRecord>>,
     ) -> String {
         let mut result = template.to_string();
 
@@ -355,7 +358,7 @@ pub struct CorrelatorResult {
 // ---------------------------------------------------------------------------
 
 pub struct ContinuousCorrelatorState {
-    pub source_buffers: HashMap<String, VecDeque<SourceMatchRecord>>,
+    pub source_buffers: HashMap<String, VecDeque<ArcSourceMatchRecord>>,
     pub events: Vec<CorrelationEvent>,
 }
 
