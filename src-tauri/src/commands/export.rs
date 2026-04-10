@@ -97,23 +97,7 @@ pub(crate) fn all_active_custom_processor_ids(
 /// joining with newlines. Returns the complete log content as UTF-8 bytes.
 pub(crate) fn snapshot_stream_bytes(source: &StreamLogSource) -> Vec<u8> {
     let mut buf: Vec<u8> = Vec::new();
-
-    // Spill lines first (oldest evicted lines)
-    if let Some(ref spill) = source.spill {
-        for i in 0..spill.total_spilled() {
-            if let Some(line) = spill.read_line(i) {
-                buf.extend_from_slice(line.as_bytes());
-                buf.push(b'\n');
-            }
-        }
-    }
-
-    // Then retained in-memory lines
-    for raw in &source.raw_lines {
-        buf.extend_from_slice(raw.as_bytes());
-        buf.push(b'\n');
-    }
-
+    let _ = source.write_stream_lines(&mut buf);
     buf
 }
 
@@ -415,6 +399,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use crate::commands::AppState;
+    use crate::core::log_source::StreamLogSource;
     use crate::workspace::SessionMeta;
 
     fn make_state_with_sessions(
@@ -567,5 +552,62 @@ mod tests {
         assert!(ids.contains(&"wifi-state".to_string()), "lts ID should be stripped to bare");
         assert!(ids.contains(&"regular-proc".to_string()), "regular ID should be unchanged");
         assert!(!ids.iter().any(|id| id.contains("@lts-")), "no lts namespace in output");
+    }
+
+    // ---------------------------------------------------------------------------
+    // snapshot_stream_bytes tests
+    // ---------------------------------------------------------------------------
+
+    /// Helper: construct a StreamLogSource with the given retained lines and no spill.
+    /// `tag` is appended to the session ID to ensure spill-file isolation between tests.
+    fn make_stream_source(tag: &str, lines: &[&str]) -> StreamLogSource {
+        let mut src = StreamLogSource::new(
+            format!("test-id-{tag}"),
+            "test-stream".into(),
+            format!("test-session-{tag}"),
+            std::env::temp_dir(),
+        );
+        for line in lines {
+            src.push_raw_line((*line).to_string());
+        }
+        src
+    }
+
+    /// Empty stream (no lines) → empty byte vec.
+    #[test]
+    fn snapshot_stream_bytes_empty() {
+        let src = make_stream_source("empty", &[]);
+        let bytes = snapshot_stream_bytes(&src);
+        assert!(bytes.is_empty(), "snapshot of empty stream must be empty");
+    }
+
+    /// Only retained in-memory lines (no spill) → correct content with newlines.
+    #[test]
+    fn snapshot_stream_bytes_retained_only() {
+        let src = make_stream_source("retained", &["line-a", "line-b", "line-c"]);
+        let bytes = snapshot_stream_bytes(&src);
+        let text = std::str::from_utf8(&bytes).expect("bytes must be valid UTF-8");
+        assert_eq!(text, "line-a\nline-b\nline-c\n");
+    }
+
+    /// Spill + retained: spill lines appear before retained lines.
+    #[test]
+    fn snapshot_stream_bytes_spill_then_retained() {
+        let mut src = make_stream_source("spill-mix", &["evict-0", "evict-1", "retain-0", "retain-1"]);
+        // Evict the first 2 lines — they go to the spill file.
+        src.evict(2);
+        let bytes = snapshot_stream_bytes(&src);
+        let text = std::str::from_utf8(&bytes).expect("bytes must be valid UTF-8");
+        assert_eq!(text, "evict-0\nevict-1\nretain-0\nretain-1\n");
+    }
+
+    /// All lines evicted (only spill, no retained) → spill content returned.
+    #[test]
+    fn snapshot_stream_bytes_all_spilled() {
+        let mut src = make_stream_source("all-spilled", &["spill-a", "spill-b"]);
+        src.evict(2);
+        let bytes = snapshot_stream_bytes(&src);
+        let text = std::str::from_utf8(&bytes).expect("bytes must be valid UTF-8");
+        assert_eq!(text, "spill-a\nspill-b\n");
     }
 }

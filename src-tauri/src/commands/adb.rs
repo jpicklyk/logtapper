@@ -1227,25 +1227,7 @@ pub fn save_live_capture(
         .map_err(|e| format!("Failed to create file: {e}"))?;
     let mut writer = std::io::BufWriter::new(file);
 
-    let mut count = 0u32;
-
-    // If there's a spill file, copy spilled lines first.
-    if let Some(ref spill) = source.spill {
-        for i in 0..spill.total_spilled() {
-            if let Some(line) = spill.read_line(i) {
-                writer.write_all(line.as_bytes()).map_err(|e| format!("Write error: {e}"))?;
-                writer.write_all(b"\n").map_err(|e| format!("Write error: {e}"))?;
-                count += 1;
-            }
-        }
-    }
-
-    // Then write in-memory (retained) lines.
-    for raw in &source.raw_lines {
-        writer.write_all(raw.as_bytes()).map_err(|e| format!("Write error: {e}"))?;
-        writer.write_all(b"\n").map_err(|e| format!("Write error: {e}"))?;
-        count += 1;
-    }
+    let count = source.write_stream_lines(&mut writer)?;
     writer.flush().map_err(|e| format!("Flush error: {e}"))?;
 
     Ok(count)

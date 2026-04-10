@@ -760,6 +760,27 @@ impl StreamLogSource {
         self.evicted_count += count;
     }
 
+    /// Write all lines (spill first, then retained) to `writer`, each followed
+    /// by a newline.  Returns the number of lines written.
+    pub fn write_stream_lines(&self, writer: &mut impl std::io::Write) -> Result<u32, String> {
+        let mut count = 0u32;
+        if let Some(ref spill) = self.spill {
+            for i in 0..spill.total_spilled() {
+                if let Some(line) = spill.read_line(i) {
+                    writer.write_all(line.as_bytes()).map_err(|e| format!("Write error: {e}"))?;
+                    writer.write_all(b"\n").map_err(|e| format!("Write error: {e}"))?;
+                    count += 1;
+                }
+            }
+        }
+        for raw in &self.raw_lines {
+            writer.write_all(raw.as_bytes()).map_err(|e| format!("Write error: {e}"))?;
+            writer.write_all(b"\n").map_err(|e| format!("Write error: {e}"))?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
     /// Whether a spill file exists (evicted lines are recoverable).
     pub fn has_spill(&self) -> bool {
         self.spill.is_some()
