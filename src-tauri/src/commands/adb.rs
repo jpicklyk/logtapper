@@ -403,12 +403,12 @@ pub async fn update_stream_processors(
             .map_or(0, super::super::core::log_source::LogSource::total_lines)
     };
 
-    // Clone the defs we need for any new processors.
-    let new_proc_defs: HashMap<String, ReporterDef> = {
+    // Clone the Arc pointers for any new processors (O(1) per def).
+    let new_proc_defs: HashMap<String, std::sync::Arc<ReporterDef>> = {
         let procs = lock_or_err(&state.processors, "processors")?;
         processor_ids
             .iter()
-            .filter_map(|id| procs.get(id).and_then(|p| p.as_reporter()).map(|d| (id.clone(), d.clone())))
+            .filter_map(|id| procs.get(id).and_then(crate::processors::AnyProcessor::as_reporter_arc).map(|arc| (id.clone(), arc)))
             .collect()
     };
 
@@ -451,10 +451,10 @@ pub async fn update_stream_trackers(
             .map_or(0, super::super::core::log_source::LogSource::total_lines)
     };
 
-    let tracker_defs: HashMap<String, crate::processors::state_tracker::schema::StateTrackerDef> = {
+    let tracker_defs: HashMap<String, std::sync::Arc<crate::processors::state_tracker::schema::StateTrackerDef>> = {
         let procs = lock_or_err(&state.processors, "processors")?;
         tracker_ids.iter()
-            .filter_map(|id| procs.get(id).and_then(|p| p.as_state_tracker()).map(|d| (id.clone(), d.clone())))
+            .filter_map(|id| procs.get(id).and_then(crate::processors::AnyProcessor::as_state_tracker_arc).map(|arc| (id.clone(), arc)))
             .collect()
     };
 
@@ -808,12 +808,12 @@ fn flush_batch(
         };
 
         if !transformer_ids.is_empty() {
-            let transformer_defs: Vec<(String, crate::processors::transformer::schema::TransformerDef)> = {
+            let transformer_defs: Vec<(String, std::sync::Arc<crate::processors::transformer::schema::TransformerDef>)> = {
                 match state.processors.lock() {
                     Ok(procs) => transformer_ids.iter()
                         .filter_map(|id| procs.get(id.as_str())
-                            .and_then(|p| p.as_transformer())
-                            .map(|d| (id.clone(), d.clone())))
+                            .and_then(crate::processors::AnyProcessor::as_transformer_arc)
+                            .map(|arc| (id.clone(), arc)))
                         .collect(),
                     Err(e) => {
                         eprintln!("[adb flush_batch] processors lock poisoned (transformers): {e}");
@@ -843,7 +843,7 @@ fn flush_batch(
                 let mut transformer_runs: Vec<(String, crate::processors::transformer::engine::TransformerRun)> =
                     transformer_defs.iter().map(|(t_id, def)| {
                         let cont = transformer_states.remove(t_id).unwrap_or_default();
-                        let run = crate::processors::transformer::engine::TransformerRun::new_seeded(def, cont);
+                        let run = crate::processors::transformer::engine::TransformerRun::new_seeded(def.as_ref(), cont);
                         (t_id.clone(), run)
                     }).collect();
 
@@ -972,19 +972,19 @@ fn flush_batch(
 
         // Only proceed if there are active processors
         if !tracker_ids.is_empty() || !reporter_ids.is_empty() {
-            // Clone processor defs (brief lock)
+            // Clone Arc pointers for processor defs (O(1) per def, brief lock)
             let partitioned = {
                 match state.processors.lock() {
                     Ok(procs) => {
                         let reporter_defs: Vec<_> = reporter_ids.iter()
                             .filter_map(|id| procs.get(id.as_str())
-                                .and_then(|p| p.as_reporter())
-                                .map(|d| (id.clone(), d.clone())))
+                                .and_then(crate::processors::AnyProcessor::as_reporter_arc)
+                                .map(|arc| (id.clone(), arc)))
                             .collect();
                         let tracker_defs: Vec<_> = tracker_ids.iter()
                             .filter_map(|id| procs.get(id.as_str())
-                                .and_then(|p| p.as_state_tracker())
-                                .map(|d| (id.clone(), d.clone())))
+                                .and_then(crate::processors::AnyProcessor::as_state_tracker_arc)
+                                .map(|arc| (id.clone(), arc)))
                             .collect();
                         Some(PartitionedDefs {
                             transformer_defs: Vec::new(), // transformers already applied above

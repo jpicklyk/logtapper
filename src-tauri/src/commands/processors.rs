@@ -392,7 +392,7 @@ pipeline:
 })).unwrap();
         AnyProcessor {
             meta: make_meta("test_reporter"),
-            kind: ProcessorKind::Reporter(def),
+            kind: ProcessorKind::Reporter(std::sync::Arc::new(def)),
             schema: None,
             source: None,
         }
@@ -412,7 +412,7 @@ pipeline:
         };
         let proc = AnyProcessor {
             meta: make_meta("__test_transformer"),
-            kind: ProcessorKind::Transformer(def),
+            kind: ProcessorKind::Transformer(std::sync::Arc::new(def)),
             schema: None,
             source: None,
         };
@@ -434,7 +434,7 @@ pipeline:
         };
         let proc = AnyProcessor {
             meta: make_meta("__test_transformer"),
-            kind: ProcessorKind::Transformer(def),
+            kind: ProcessorKind::Transformer(std::sync::Arc::new(def)),
             schema: None,
             source: None,
         };

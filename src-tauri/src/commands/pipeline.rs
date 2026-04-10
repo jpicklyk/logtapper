@@ -162,10 +162,10 @@ pub fn execute_pipeline(
                 .unwrap_or_else(|| id.clone());
             if let Some(p) = procs.get(resolved.as_str()) {
                 match &p.kind {
-                    ProcessorKind::Transformer(d) => defs.transformer_defs.push((resolved, d.clone())),
-                    ProcessorKind::Reporter(d) => defs.reporter_defs.push((resolved, d.clone())),
-                    ProcessorKind::StateTracker(d) => defs.tracker_defs.push((resolved, d.clone())),
-                    ProcessorKind::Correlator(d) => defs.correlator_defs.push((resolved, d.clone())),
+                    ProcessorKind::Transformer(d) => defs.transformer_defs.push((resolved, Arc::clone(d))),
+                    ProcessorKind::Reporter(d) => defs.reporter_defs.push((resolved, Arc::clone(d))),
+                    ProcessorKind::StateTracker(d) => defs.tracker_defs.push((resolved, Arc::clone(d))),
+                    ProcessorKind::Correlator(d) => defs.correlator_defs.push((resolved, Arc::clone(d))),
                 }
             }
         }

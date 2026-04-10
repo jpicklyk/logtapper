@@ -9,6 +9,7 @@ pub mod state_tracker;
 pub mod transformer;
 
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 pub use marketplace::SchemaContract;
 pub use pack::{PackMeta, PackSummary};
@@ -60,10 +61,10 @@ fn default_version() -> String {
 
 #[derive(Debug, Clone)]
 pub enum ProcessorKind {
-    Reporter(ReporterDef),
-    Transformer(TransformerDef),
-    StateTracker(StateTrackerDef),
-    Correlator(CorrelatorDef),
+    Reporter(Arc<ReporterDef>),
+    Transformer(Arc<TransformerDef>),
+    StateTracker(Arc<StateTrackerDef>),
+    Correlator(Arc<CorrelatorDef>),
 }
 
 #[derive(Debug, Clone)]
@@ -102,9 +103,23 @@ impl AnyProcessor {
         }
     }
 
+    pub fn as_reporter_arc(&self) -> Option<Arc<ReporterDef>> {
+        match &self.kind {
+            ProcessorKind::Reporter(def) => Some(Arc::clone(def)),
+            _ => None,
+        }
+    }
+
     pub fn as_transformer(&self) -> Option<&TransformerDef> {
         match &self.kind {
             ProcessorKind::Transformer(def) => Some(def),
+            _ => None,
+        }
+    }
+
+    pub fn as_transformer_arc(&self) -> Option<Arc<TransformerDef>> {
+        match &self.kind {
+            ProcessorKind::Transformer(def) => Some(Arc::clone(def)),
             _ => None,
         }
     }
@@ -116,9 +131,23 @@ impl AnyProcessor {
         }
     }
 
+    pub fn as_state_tracker_arc(&self) -> Option<Arc<StateTrackerDef>> {
+        match &self.kind {
+            ProcessorKind::StateTracker(def) => Some(Arc::clone(def)),
+            _ => None,
+        }
+    }
+
     pub fn as_correlator(&self) -> Option<&CorrelatorDef> {
         match &self.kind {
             ProcessorKind::Correlator(def) => Some(def),
+            _ => None,
+        }
+    }
+
+    pub fn as_correlator_arc(&self) -> Option<Arc<CorrelatorDef>> {
+        match &self.kind {
+            ProcessorKind::Correlator(def) => Some(Arc::clone(def)),
             _ => None,
         }
     }
@@ -262,7 +291,7 @@ impl AnyProcessor {
                 let mut def: ReporterDef = serde_yaml::from_str(yaml)
                     .map_err(|e| format!("Reporter YAML parse error: {e}"))?;
                 def.prepare_tag_sets();
-                ProcessorKind::Reporter(def)
+                ProcessorKind::Reporter(Arc::new(def))
             }
             "transformer" => {
                 // Only built-in transformers (id prefix `__`) are allowed.
@@ -275,19 +304,19 @@ impl AnyProcessor {
                 let mut def: TransformerDef = serde_yaml::from_str(yaml)
                     .map_err(|e| format!("Transformer YAML parse error: {e}"))?;
                 def.prepare_tag_sets();
-                ProcessorKind::Transformer(def)
+                ProcessorKind::Transformer(Arc::new(def))
             }
             "state_tracker" => {
                 let mut def: StateTrackerDef = serde_yaml::from_str(yaml)
                     .map_err(|e| format!("StateTracker YAML parse error: {e}"))?;
                 def.compile_filter_rules();
-                ProcessorKind::StateTracker(def)
+                ProcessorKind::StateTracker(Arc::new(def))
             }
             "correlator" => {
                 let mut def: CorrelatorDef = serde_yaml::from_str(yaml)
                     .map_err(|e| format!("Correlator YAML parse error: {e}"))?;
                 def.prepare_tag_sets();
-                ProcessorKind::Correlator(def)
+                ProcessorKind::Correlator(Arc::new(def))
             }
             other => return Err(format!("Unknown processor type: '{other}'")),
         };

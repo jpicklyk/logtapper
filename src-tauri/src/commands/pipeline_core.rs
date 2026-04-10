@@ -42,10 +42,10 @@ pub struct PreFilter {
 impl PreFilter {
     /// Build a pre-filter from the active processor definitions.
     fn build(
-        reporter_defs: &[(String, ReporterDef)],
-        tracker_defs: &[(String, StateTrackerDef)],
-        correlator_defs: &[(String, CorrelatorDef)],
-        _transformer_defs: &[(String, TransformerDef)],
+        reporter_defs: &[(String, Arc<ReporterDef>)],
+        tracker_defs: &[(String, Arc<StateTrackerDef>)],
+        correlator_defs: &[(String, Arc<CorrelatorDef>)],
+        _transformer_defs: &[(String, Arc<TransformerDef>)],
     ) -> Self {
         let desc = collect_prefilter_info(reporter_defs, tracker_defs, correlator_defs);
 
@@ -135,11 +135,13 @@ pub struct PipelineCore<'a> {
 }
 
 /// Definitions partitioned by processor kind, ready for pipeline construction.
+/// Each def is stored behind `Arc` so callers can clone the pointer (O(1))
+/// instead of deep-copying the definition on every pipeline run.
 pub struct PartitionedDefs {
-    pub transformer_defs: Vec<(String, TransformerDef)>,
-    pub reporter_defs: Vec<(String, ReporterDef)>,
-    pub tracker_defs: Vec<(String, StateTrackerDef)>,
-    pub correlator_defs: Vec<(String, CorrelatorDef)>,
+    pub transformer_defs: Vec<(String, Arc<TransformerDef>)>,
+    pub reporter_defs: Vec<(String, Arc<ReporterDef>)>,
+    pub tracker_defs: Vec<(String, Arc<StateTrackerDef>)>,
+    pub correlator_defs: Vec<(String, Arc<CorrelatorDef>)>,
 }
 
 /// All results produced by a pipeline run.
@@ -202,7 +204,7 @@ impl<'a> PipelineCore<'a> {
             .reporter_defs
             .iter()
             .zip(section_ranges)
-            .map(|((id, def), ranges)| (id.clone(), ProcessorRun::new(def), ranges))
+            .map(|((id, def), ranges)| (id.clone(), ProcessorRun::new(def.as_ref()), ranges))
             .collect();
 
         let tracker_section_ranges = compute_tracker_section_ranges(&defs.tracker_defs, sections);
@@ -212,14 +214,14 @@ impl<'a> PipelineCore<'a> {
             .zip(tracker_section_ranges)
             .map(|((tid, def), ranges)| {
                 let section_names: Vec<String> = def.section_names().into_iter().map(str::to_string).collect();
-                (tid.clone(), StateTrackerRun::new(tid, def), ranges, section_names, def.mode)
+                (tid.clone(), StateTrackerRun::new(tid, def.as_ref()), ranges, section_names, def.mode)
             })
             .collect();
 
         let correlator_runs: Vec<(String, CorrelatorRun<'a>)> = defs
             .correlator_defs
             .iter()
-            .map(|(cid, def)| (cid.clone(), CorrelatorRun::new(def)))
+            .map(|(cid, def)| (cid.clone(), CorrelatorRun::new(def.as_ref())))
             .collect();
 
         PipelineCore {
@@ -253,7 +255,7 @@ impl<'a> PipelineCore<'a> {
                     .transformer_states
                     .remove(id)
                     .unwrap_or_default();
-                (id.clone(), TransformerRun::new_seeded(def, cont))
+                (id.clone(), TransformerRun::new_seeded(def.as_ref(), cont))
             })
             .collect();
 
@@ -263,9 +265,9 @@ impl<'a> PipelineCore<'a> {
             .iter()
             .map(|(id, def)| {
                 if let Some(cont) = state.reporter_states.remove(id) {
-                    (id.clone(), ProcessorRun::new_seeded(def, cont), None)
+                    (id.clone(), ProcessorRun::new_seeded(def.as_ref(), cont), None)
                 } else {
-                    (id.clone(), ProcessorRun::new(def), None)
+                    (id.clone(), ProcessorRun::new(def.as_ref()), None)
                 }
             })
             .collect();
@@ -279,7 +281,7 @@ impl<'a> PipelineCore<'a> {
                     .tracker_states
                     .remove(tid)
                     .unwrap_or_default();
-                (tid.clone(), StateTrackerRun::new_seeded(tid, def, cont), None, vec![], def.mode)
+                (tid.clone(), StateTrackerRun::new_seeded(tid, def.as_ref(), cont), None, vec![], def.mode)
             })
             .collect();
 
@@ -289,9 +291,9 @@ impl<'a> PipelineCore<'a> {
             .map(|(cid, def)| {
                 let cont = state.correlator_states.remove(cid);
                 if let Some(cs) = cont {
-                    (cid.clone(), CorrelatorRun::new_seeded(def, cs))
+                    (cid.clone(), CorrelatorRun::new_seeded(def.as_ref(), cs))
                 } else {
-                    (cid.clone(), CorrelatorRun::new(def))
+                    (cid.clone(), CorrelatorRun::new(def.as_ref()))
                 }
             })
             .collect();
@@ -575,7 +577,7 @@ fn anonymize_tracker_result(
 /// Compute section ranges parallel to reporter_defs, used for section-filtered
 /// reporters (bugreport sections).
 fn compute_section_ranges(
-    reporter_defs: &[(String, ReporterDef)],
+    reporter_defs: &[(String, Arc<ReporterDef>)],
     sections: &[SectionInfo],
 ) -> Vec<Option<Vec<(usize, usize)>>> {
     reporter_defs
@@ -613,7 +615,7 @@ fn compute_section_ranges(
 /// Compute section ranges parallel to tracker_defs using each def's declared
 /// section names resolved against the parsed section metadata.
 fn compute_tracker_section_ranges(
-    tracker_defs: &[(String, StateTrackerDef)],
+    tracker_defs: &[(String, Arc<StateTrackerDef>)],
     sections: &[SectionInfo],
 ) -> Vec<Option<Vec<(usize, usize)>>> {
     tracker_defs
@@ -759,9 +761,9 @@ struct PreFilterDescriptor {
 /// Transformers are excluded — they run in Layer 1 on all lines and must not influence
 /// the pre-filter (an unfiltered transformer would disable the whole pre-filter).
 fn collect_prefilter_info(
-    reporter_defs: &[(String, ReporterDef)],
-    tracker_defs: &[(String, StateTrackerDef)],
-    correlator_defs: &[(String, CorrelatorDef)],
+    reporter_defs: &[(String, Arc<ReporterDef>)],
+    tracker_defs: &[(String, Arc<StateTrackerDef>)],
+    correlator_defs: &[(String, Arc<CorrelatorDef>)],
 ) -> PreFilterDescriptor {
     let mut tag_union: HashSet<String> = HashSet::new();
     let mut has_tag_unfiltered = false;
@@ -1076,7 +1078,7 @@ pipeline:
         tags: [ActivityManager]
 "#;
         let reporter_def: ReporterDef = serde_yaml::from_str(reporter_yaml).unwrap();
-        let reporter_defs = vec![("test_reporter".to_string(), reporter_def)];
+        let reporter_defs = vec![("test_reporter".to_string(), Arc::new(reporter_def))];
 
         // A transformer with NO tag filter (no filter at all)
         let transformer_def = TransformerDef {
@@ -1084,7 +1086,7 @@ pipeline:
             transforms: vec![],
             builtin: None,
         };
-        let transformer_defs = vec![("test_transformer".to_string(), transformer_def)];
+        let transformer_defs = vec![("test_transformer".to_string(), Arc::new(transformer_def))];
 
         let desc = collect_prefilter_info(&reporter_defs, &[], &[]);
         // Transformers are excluded — should not set has_tag_unfiltered
@@ -1112,7 +1114,7 @@ pipeline:
         value: "ERROR"
 "#;
         let reporter_def: ReporterDef = serde_yaml::from_str(reporter_yaml).unwrap();
-        let reporter_defs = vec![("test_reporter".to_string(), reporter_def)];
+        let reporter_defs = vec![("test_reporter".to_string(), Arc::new(reporter_def))];
 
         let desc = collect_prefilter_info(&reporter_defs, &[], &[]);
         // No tag filter → has_tag_unfiltered = true
@@ -1142,7 +1144,7 @@ pipeline:
         }
     }
 
-    fn load_battery_health_def() -> crate::processors::state_tracker::schema::StateTrackerDef {
+    fn load_battery_health_def() -> Arc<crate::processors::state_tracker::schema::StateTrackerDef> {
         let yaml = include_str!("../../../marketplace/processors/battery_health.yaml");
         let proc = crate::processors::AnyProcessor::from_yaml(yaml)
             .expect("battery_health.yaml parses");

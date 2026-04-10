@@ -235,7 +235,7 @@ mod tests {
     };
     use serde_json::json;
 
-    fn load_battery_def() -> StateTrackerDef {
+    fn load_battery_def() -> std::sync::Arc<StateTrackerDef> {
         let yaml = include_str!("../../../../marketplace/processors/battery_state.yaml");
         let proc: crate::processors::AnyProcessor =
             crate::processors::AnyProcessor::from_yaml(yaml).expect("battery_state.yaml parses");
