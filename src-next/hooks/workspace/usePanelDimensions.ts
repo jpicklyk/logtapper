@@ -1,20 +1,19 @@
 import { useCallback, useState } from 'react';
 import { useTogglePane } from '../useTogglePane';
 import type { TogglePaneState } from '../useTogglePane';
+import { clamp } from './splitTreeHelpers';
 import {
-  clamp,
   MIN_LEFT_WIDTH, MAX_LEFT_WIDTH, DEFAULT_LEFT_WIDTH,
   MIN_RIGHT_WIDTH, MAX_RIGHT_WIDTH, DEFAULT_RIGHT_WIDTH,
   MIN_BOTTOM_HEIGHT, MAX_BOTTOM_HEIGHT, DEFAULT_BOTTOM_HEIGHT,
-} from './index';
+} from './workspaceTypes';
 import type { LeftPaneTab, RightPaneTab, BottomTabType } from './workspaceTypes';
 import type { PersistedState } from './workspacePersistence';
 
 export interface PanelDimensionsHandle {
   leftPaneWidth: number;
   leftPaneTab: LeftPaneTab;
-  setLeftPaneTab: (tab: LeftPaneTab) => void;
-  setLeftPaneTabRaw: React.Dispatch<React.SetStateAction<LeftPaneTab>>;
+  setLeftPaneTab: React.Dispatch<React.SetStateAction<LeftPaneTab>>;
   setLeftPaneWidth: React.Dispatch<React.SetStateAction<number>>;
   resizeLeftPane: (delta: number) => void;
   rightPane: TogglePaneState<RightPaneTab>;
@@ -28,18 +27,15 @@ export interface PanelDimensionsHandle {
 }
 
 export function usePanelDimensions(saved: Partial<PersistedState>): PanelDimensionsHandle {
-  // Left pane
   const [leftPaneWidth, setLeftPaneWidth] = useState(saved.leftPaneWidth ?? DEFAULT_LEFT_WIDTH);
-  const [leftPaneTab, setLeftPaneTabRaw] = useState<LeftPaneTab>(saved.leftPaneTab ?? 'info');
+  const [leftPaneTab, setLeftPaneTab] = useState<LeftPaneTab>(saved.leftPaneTab ?? 'info');
 
-  // Right pane
   const rightPane = useTogglePane<RightPaneTab>(
     saved.rightPaneVisible ?? false,
     saved.rightPaneTab ?? 'processors',
   );
   const [rightPaneWidth, setRightPaneWidth] = useState(saved.rightPaneWidth ?? DEFAULT_RIGHT_WIDTH);
 
-  // Bottom pane
   const bottomPane = useTogglePane<BottomTabType>(
     saved.bottomPaneVisible ?? false,
     saved.bottomPaneTab ?? 'timeline',
@@ -61,8 +57,7 @@ export function usePanelDimensions(saved: Partial<PersistedState>): PanelDimensi
   return {
     leftPaneWidth,
     leftPaneTab,
-    setLeftPaneTab: setLeftPaneTabRaw,
-    setLeftPaneTabRaw,
+    setLeftPaneTab,
     setLeftPaneWidth,
     resizeLeftPane,
     rightPane,

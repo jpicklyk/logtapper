@@ -13,6 +13,7 @@ import {
   savePersistedState,
   defaultTree,
   COMPACT_LEFT_WIDTH,
+  DEFAULT_LEFT_WIDTH,
   STORAGE_KEY,
   findLeafByPaneId,
   type PersistedState,
@@ -79,19 +80,20 @@ export function useWorkspaceLayout() {
     saved.centerTree ?? defaultTree(),
   );
 
+  const setLeftPaneWidth = panels.setLeftPaneWidth;
   const rightSetVisible = panels.rightPane.setVisible;
   const bottomSetVisible = panels.bottomPane.setVisible;
 
   const { containerRef, preset } = useLayoutPreset({
     onEnterCompact: useCallback(() => {
-      panels.setLeftPaneWidth(COMPACT_LEFT_WIDTH);
+      setLeftPaneWidth(COMPACT_LEFT_WIDTH);
       rightSetVisible(false);
       bottomSetVisible(false);
-    }, [rightSetVisible, bottomSetVisible]),
+    }, [setLeftPaneWidth, rightSetVisible, bottomSetVisible]),
     onLeaveCompact: useCallback(() => {
       const restored = loadPersistedState();
-      panels.setLeftPaneWidth(restored.leftPaneWidth ?? panels.leftPaneWidth);
-    }, []),
+      setLeftPaneWidth(restored.leftPaneWidth ?? DEFAULT_LEFT_WIDTH);
+    }, [setLeftPaneWidth]),
   });
 
   // ---------------------------------------------------------------------------
@@ -142,7 +144,7 @@ export function useWorkspaceLayout() {
     // (Tree mutations for session:loaded are handled inside useCenterTree.)
     const onSessionLoaded = (e: { sourceType: string; paneId: string }) => {
       if (isBugreportLike(e.sourceType) && e.paneId === activeLogPaneIdRef.current) {
-        panels.setLeftPaneTabRaw('info');
+        panels.setLeftPaneTab('info');
       }
     };
 
@@ -162,7 +164,7 @@ export function useWorkspaceLayout() {
       savePersistedState(layout as PersistedState);
       const restored = loadPersistedState();
       if (restored.leftPaneWidth !== undefined) panels.setLeftPaneWidth(restored.leftPaneWidth);
-      if (restored.leftPaneTab !== undefined) panels.setLeftPaneTabRaw(restored.leftPaneTab);
+      if (restored.leftPaneTab !== undefined) panels.setLeftPaneTab(restored.leftPaneTab);
       if (restored.rightPaneVisible !== undefined) panels.rightPane.setVisible(restored.rightPaneVisible);
       if (restored.rightPaneWidth !== undefined) panels.setRightPaneWidth(restored.rightPaneWidth);
       if (restored.rightPaneTab !== undefined) panels.rightPane.setTab(restored.rightPaneTab);
