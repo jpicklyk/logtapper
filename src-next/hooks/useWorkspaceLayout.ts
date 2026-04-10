@@ -1,20 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { isBugreportLike } from '../bridge/types';
 import { storageRemove } from '../utils';
 import { bus } from '../events/bus';
 import type { AppEvents } from '../events/events';
-import { useTogglePane } from './useTogglePane';
 import { useSessionContext, useSessionPaneCtx } from '../context/SessionContext';
 import {
   useCenterTree,
   useLayoutPreset,
+  usePanelDimensions,
+  useFocusTracking,
   loadPersistedState,
   savePersistedState,
   defaultTree,
-  clamp,
-  MIN_LEFT_WIDTH, MAX_LEFT_WIDTH, DEFAULT_LEFT_WIDTH,
-  MIN_RIGHT_WIDTH, MAX_RIGHT_WIDTH, DEFAULT_RIGHT_WIDTH,
-  MIN_BOTTOM_HEIGHT, MAX_BOTTOM_HEIGHT, DEFAULT_BOTTOM_HEIGHT,
   COMPACT_LEFT_WIDTH,
   STORAGE_KEY,
   findLeafByPaneId,
@@ -40,7 +37,7 @@ export type {
   WorkspaceLayoutState,
 } from './workspace';
 
-import type { LeftPaneTab, RightPaneTab, BottomTabType, WorkspaceLayoutState } from './workspace';
+import type { WorkspaceLayoutState } from './workspace';
 
 export { getStoredFirstPaneId, getStoredLogviewerTabs } from './workspace';
 
@@ -51,10 +48,6 @@ export { getStoredFirstPaneId, getStoredLogviewerTabs } from './workspace';
 export function useWorkspaceLayout() {
   // Load persisted state once on mount
   const saved = useRef(loadPersistedState()).current;
-
-  // Left pane
-  const [leftPaneWidth, setLeftPaneWidth] = useState(saved.leftPaneWidth ?? DEFAULT_LEFT_WIDTH);
-  const [leftPaneTab, setLeftPaneTabRaw] = useState<LeftPaneTab>(saved.leftPaneTab ?? 'info');
 
   // Focus tracking — activeLogPaneId is the canonical value from SessionContext
   // (updated via session:focused bus event). We keep a ref for synchronous reads
@@ -69,82 +62,37 @@ export function useWorkspaceLayout() {
   const paneSessionMapRef = useRef(paneSessionMap);
   paneSessionMapRef.current = paneSessionMap;
 
-  // The specific logviewer tab showing the focus marker (blue underline).
-  // Updated when a logviewer tab is activated or when focus moves to a new pane.
-  const [focusedLogviewerTabId, setFocusedLogviewerTabId] = useState<string | null>(null);
-
-  const focusLogviewerTab = useCallback((tabId: string, paneId: string) => {
-    // Emit session:focused so SessionContext (the canonical owner) updates.
-    // Look up sessionId via ref (avoids stale closure, keeps callback stable).
-    const sessionId = paneSessionMapRef.current.get(paneId) ?? null;
-    bus.emit('session:focused', { sessionId, paneId });
-    setFocusedLogviewerTabId(tabId);
-  }, []);
-
-  // Right pane
-  const rightPane = useTogglePane<RightPaneTab>(
-    saved.rightPaneVisible ?? false,
-    saved.rightPaneTab ?? 'processors',
-  );
-  const [rightPaneWidth, setRightPaneWidth] = useState(saved.rightPaneWidth ?? DEFAULT_RIGHT_WIDTH);
-
-  // Bottom pane
-  const bottomPane = useTogglePane<BottomTabType>(
-    saved.bottomPaneVisible ?? false,
-    saved.bottomPaneTab ?? 'timeline',
-  );
-  const [bottomPaneHeight, setBottomPaneHeight] = useState(saved.bottomPaneHeight ?? DEFAULT_BOTTOM_HEIGHT);
-
   // ---------------------------------------------------------------------------
   // Sub-hooks
   // ---------------------------------------------------------------------------
+
+  const panels = usePanelDimensions(saved);
+  const focus = useFocusTracking(paneSessionMapRef);
 
   const centerTree = useCenterTree(
     {
       activeLogPaneIdRef,
       paneSessionMapRef,
       activateSessionForPane,
-      openBottomPane: bottomPane.open,
+      openBottomPane: panels.bottomPane.open,
     },
     saved.centerTree ?? defaultTree(),
   );
 
-  const rightSetVisible = rightPane.setVisible;
-  const bottomSetVisible = bottomPane.setVisible;
+  const rightSetVisible = panels.rightPane.setVisible;
+  const bottomSetVisible = panels.bottomPane.setVisible;
 
   const { containerRef, preset } = useLayoutPreset({
     onEnterCompact: useCallback(() => {
-      setLeftPaneWidth(COMPACT_LEFT_WIDTH);
+      panels.setLeftPaneWidth(COMPACT_LEFT_WIDTH);
       rightSetVisible(false);
       bottomSetVisible(false);
     }, [rightSetVisible, bottomSetVisible]),
     onLeaveCompact: useCallback(() => {
       const restored = loadPersistedState();
-      setLeftPaneWidth(restored.leftPaneWidth ?? DEFAULT_LEFT_WIDTH);
+      panels.setLeftPaneWidth(restored.leftPaneWidth ?? panels.leftPaneWidth);
     }, []),
   });
-
-  // ---------------------------------------------------------------------------
-  // Left pane actions
-  // ---------------------------------------------------------------------------
-
-  const setLeftPaneTab = setLeftPaneTabRaw;
-
-  const resizeLeftPane = useCallback((delta: number) => {
-    setLeftPaneWidth((prev) => clamp(prev + delta, MIN_LEFT_WIDTH, MAX_LEFT_WIDTH));
-  }, []);
-
-  // ---------------------------------------------------------------------------
-  // Right / Bottom pane resize
-  // ---------------------------------------------------------------------------
-
-  const resizeRightPane = useCallback((delta: number) => {
-    setRightPaneWidth((prev) => clamp(prev + delta, MIN_RIGHT_WIDTH, MAX_RIGHT_WIDTH));
-  }, []);
-
-  const resizeBottomPane = useCallback((delta: number) => {
-    setBottomPaneHeight((prev) => clamp(prev + delta, MIN_BOTTOM_HEIGHT, MAX_BOTTOM_HEIGHT));
-  }, []);
 
   // ---------------------------------------------------------------------------
   // Persistence effect (skip in compact — transient viewport state)
@@ -157,16 +105,16 @@ export function useWorkspaceLayout() {
     if (presetRef.current === 'compact') return;
     savePersistedState({
       centerTree: centerTree.centerTree,
-      leftPaneWidth,
-      leftPaneTab,
-      rightPaneVisible: rightPane.visible,
-      rightPaneWidth,
-      rightPaneTab: rightPane.tab,
-      bottomPaneVisible: bottomPane.visible,
-      bottomPaneHeight,
-      bottomPaneTab: bottomPane.tab,
+      leftPaneWidth: panels.leftPaneWidth,
+      leftPaneTab: panels.leftPaneTab,
+      rightPaneVisible: panels.rightPane.visible,
+      rightPaneWidth: panels.rightPaneWidth,
+      rightPaneTab: panels.rightPane.tab,
+      bottomPaneVisible: panels.bottomPane.visible,
+      bottomPaneHeight: panels.bottomPaneHeight,
+      bottomPaneTab: panels.bottomPane.tab,
     });
-  }, [centerTree.centerTree, leftPaneWidth, leftPaneTab, rightPane.visible, rightPaneWidth, rightPane.tab, bottomPane.visible, bottomPaneHeight, bottomPane.tab]);
+  }, [centerTree.centerTree, panels.leftPaneWidth, panels.leftPaneTab, panels.rightPane.visible, panels.rightPaneWidth, panels.rightPane.tab, panels.bottomPane.visible, panels.bottomPaneHeight, panels.bottomPane.tab]);
 
   // ---------------------------------------------------------------------------
   // Event bus subscriptions (cross-cutting — not owned by any sub-hook)
@@ -186,7 +134,7 @@ export function useWorkspaceLayout() {
       // activeLogPaneId is owned by SessionContext — no local state to update here.
       // Only update the focused tab marker (blue underline) which is layout-local.
       if (e.paneId) {
-        setFocusedLogviewerTabId(resolveFocusedTab(centerTreeSyncRef.current, e.paneId));
+        focus.setFocusedLogviewerTabId(resolveFocusedTab(centerTreeSyncRef.current, e.paneId));
       }
     };
 
@@ -194,7 +142,7 @@ export function useWorkspaceLayout() {
     // (Tree mutations for session:loaded are handled inside useCenterTree.)
     const onSessionLoaded = (e: { sourceType: string; paneId: string }) => {
       if (isBugreportLike(e.sourceType) && e.paneId === activeLogPaneIdRef.current) {
-        setLeftPaneTabRaw('info');
+        panels.setLeftPaneTabRaw('info');
       }
     };
 
@@ -205,7 +153,7 @@ export function useWorkspaceLayout() {
     const onWorkspaceReset = () => {
       centerTree.clearTree();
       bus.emit('session:focused', { sessionId: null, paneId: null });
-      setFocusedLogviewerTabId(null);
+      focus.setFocusedLogviewerTabId(null);
     };
 
     const onRestoreLayout = ({ layout }: { layout: unknown }) => {
@@ -213,14 +161,14 @@ export function useWorkspaceLayout() {
       // can sanitize and validate it, then apply each value to state setters.
       savePersistedState(layout as PersistedState);
       const restored = loadPersistedState();
-      if (restored.leftPaneWidth !== undefined) setLeftPaneWidth(restored.leftPaneWidth);
-      if (restored.leftPaneTab !== undefined) setLeftPaneTabRaw(restored.leftPaneTab);
-      if (restored.rightPaneVisible !== undefined) rightPane.setVisible(restored.rightPaneVisible);
-      if (restored.rightPaneWidth !== undefined) setRightPaneWidth(restored.rightPaneWidth);
-      if (restored.rightPaneTab !== undefined) rightPane.setTab(restored.rightPaneTab);
-      if (restored.bottomPaneVisible !== undefined) bottomPane.setVisible(restored.bottomPaneVisible);
-      if (restored.bottomPaneHeight !== undefined) setBottomPaneHeight(restored.bottomPaneHeight);
-      if (restored.bottomPaneTab !== undefined) bottomPane.setTab(restored.bottomPaneTab);
+      if (restored.leftPaneWidth !== undefined) panels.setLeftPaneWidth(restored.leftPaneWidth);
+      if (restored.leftPaneTab !== undefined) panels.setLeftPaneTabRaw(restored.leftPaneTab);
+      if (restored.rightPaneVisible !== undefined) panels.rightPane.setVisible(restored.rightPaneVisible);
+      if (restored.rightPaneWidth !== undefined) panels.setRightPaneWidth(restored.rightPaneWidth);
+      if (restored.rightPaneTab !== undefined) panels.rightPane.setTab(restored.rightPaneTab);
+      if (restored.bottomPaneVisible !== undefined) panels.bottomPane.setVisible(restored.bottomPaneVisible);
+      if (restored.bottomPaneHeight !== undefined) panels.setBottomPaneHeight(restored.bottomPaneHeight);
+      if (restored.bottomPaneTab !== undefined) panels.bottomPane.setTab(restored.bottomPaneTab);
       // Center tree is intentionally not restored here: it was already rebuilt
       // by the session loading process and the saved IDs would be stale.
     };
@@ -257,10 +205,10 @@ export function useWorkspaceLayout() {
 
   return {
     // Left pane
-    leftPaneWidth,
-    leftPaneTab,
-    setLeftPaneTab,
-    resizeLeftPane,
+    leftPaneWidth: panels.leftPaneWidth,
+    leftPaneTab: panels.leftPaneTab,
+    setLeftPaneTab: panels.setLeftPaneTab,
+    resizeLeftPane: panels.resizeLeftPane,
 
     // Center area (from useCenterTree)
     centerTree: centerTree.centerTree,
@@ -276,19 +224,19 @@ export function useWorkspaceLayout() {
     clearTree: centerTree.clearTree,
 
     // Right pane
-    rightPaneVisible: rightPane.visible,
-    rightPaneWidth,
-    rightPaneTab: rightPane.tab,
-    toggleRightPane: rightPane.toggle,
-    resizeRightPane,
+    rightPaneVisible: panels.rightPane.visible,
+    rightPaneWidth: panels.rightPaneWidth,
+    rightPaneTab: panels.rightPane.tab,
+    toggleRightPane: panels.rightPane.toggle,
+    resizeRightPane: panels.resizeRightPane,
 
     // Bottom pane
-    bottomPaneVisible: bottomPane.visible,
-    bottomPaneHeight,
-    bottomPaneTab: bottomPane.tab,
-    toggleBottomPane: bottomPane.toggle,
-    resizeBottomPane,
-    openBottomTab: bottomPane.open,
+    bottomPaneVisible: panels.bottomPane.visible,
+    bottomPaneHeight: panels.bottomPaneHeight,
+    bottomPaneTab: panels.bottomPane.tab,
+    toggleBottomPane: panels.bottomPane.toggle,
+    resizeBottomPane: panels.resizeBottomPane,
+    openBottomTab: panels.bottomPane.open,
 
     // General
     preset,
@@ -297,8 +245,8 @@ export function useWorkspaceLayout() {
 
     // Focus tracking
     activeLogPaneId,
-    focusLogviewerTab,
+    focusLogviewerTab: focus.focusLogviewerTab,
     focusedActiveTabType: activeTab?.type ?? null,
-    focusedLogviewerTabId,
+    focusedLogviewerTabId: focus.focusedLogviewerTabId,
   } satisfies WorkspaceLayoutState;
 }

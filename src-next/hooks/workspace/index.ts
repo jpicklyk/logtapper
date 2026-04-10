@@ -5,3 +5,7 @@ export { useCenterTree } from './useCenterTree';
 export type { UseCenterTreeOptions, CenterTreeHandle } from './useCenterTree';
 export { useLayoutPreset } from './useLayoutPreset';
 export type { UseLayoutPresetOptions, UseLayoutPresetResult } from './useLayoutPreset';
+export { usePanelDimensions } from './usePanelDimensions';
+export type { PanelDimensionsHandle } from './usePanelDimensions';
+export { useFocusTracking } from './useFocusTracking';
+export type { FocusTrackingHandle } from './useFocusTracking';
