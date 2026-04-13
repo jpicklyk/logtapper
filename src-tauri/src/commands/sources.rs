@@ -191,11 +191,27 @@ pub struct UpdateAvailable {
     pub entry: MarketplaceEntryDto,
 }
 
+/// A pack that has a newer version available (new processors or version bump).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackUpdateAvailable {
+    pub pack_id: String,
+    pub pack_name: String,
+    pub source_name: String,
+    pub installed_version: String,
+    pub available_version: String,
+    /// New processor IDs present in marketplace version but absent from installed pack.
+    pub new_processor_ids: Vec<String>,
+    /// The full marketplace pack entry, for driving install_pack_from_marketplace.
+    pub entry: MarketplacePackEntryDto,
+}
+
 /// Result of a check_updates call.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateCheckResult {
     pub updates: Vec<UpdateAvailable>,
+    pub pack_updates: Vec<PackUpdateAvailable>,
     /// Sources that failed to fetch (name -> error message).
     pub errors: Vec<SourceError>,
 }
@@ -232,6 +248,40 @@ pub(crate) fn is_newer(installed: &str, available: &str) -> bool {
     }
 }
 
+/// Compare installed packs against marketplace packs. Returns detected updates.
+pub(crate) fn detect_pack_updates(
+    installed_packs: &std::collections::HashMap<String, (String, Vec<String>)>,
+    marketplace_packs: &[marketplace::MarketplacePackEntry],
+    source_name: &str,
+) -> Vec<PackUpdateAvailable> {
+    let mut results = Vec::new();
+    for market_pack in marketplace_packs {
+        if let Some((inst_ver, inst_procs)) = installed_packs.get(&market_pack.id) {
+            let version_bumped = is_newer(inst_ver, &market_pack.version);
+            let inst_set: std::collections::HashSet<&str> =
+                inst_procs.iter().map(String::as_str).collect();
+            let new_procs: Vec<String> = market_pack
+                .processor_ids
+                .iter()
+                .filter(|pid| !inst_set.contains(pid.as_str()))
+                .cloned()
+                .collect();
+            if version_bumped || !new_procs.is_empty() {
+                results.push(PackUpdateAvailable {
+                    pack_id: market_pack.id.clone(),
+                    pack_name: market_pack.name.clone(),
+                    source_name: source_name.to_string(),
+                    installed_version: inst_ver.clone(),
+                    available_version: market_pack.version.clone(),
+                    new_processor_ids: new_procs,
+                    entry: MarketplacePackEntryDto::from(market_pack.clone()),
+                });
+            }
+        }
+    }
+    results
+}
+
 // ---------------------------------------------------------------------------
 // Update commands
 // ---------------------------------------------------------------------------
@@ -258,8 +308,17 @@ pub async fn check_updates(
             })
             .collect()
     };
+    // HashMap<pack_id, (installed_version, processor_ids)> for pack update detection.
+    let installed_packs: std::collections::HashMap<String, (String, Vec<String>)> = {
+        let packs = lock_or_err(&state.packs, "packs")?;
+        packs
+            .iter()
+            .map(|p| (p.id.clone(), (p.version.clone(), p.processors.clone())))
+            .collect()
+    };
 
     let mut updates = Vec::new();
+    let mut pack_updates = Vec::new();
     let mut errors = Vec::new();
 
     for source in &sources {
@@ -292,6 +351,8 @@ pub async fn check_updates(
             }
         }
 
+        pack_updates.extend(detect_pack_updates(&installed_packs, &index.packs, &source.name));
+
         // Update last_checked timestamp for this source.
         if let Ok(mut srcs) = state.sources.lock() {
             if let Some(s) = srcs.iter_mut().find(|s| s.name == source.name) {
@@ -300,7 +361,7 @@ pub async fn check_updates(
         }
     }
 
-    Ok(UpdateCheckResult { updates, errors })
+    Ok(UpdateCheckResult { updates, pack_updates, errors })
 }
 
 /// Update a single processor from its marketplace source.
@@ -460,6 +521,18 @@ pub async fn get_pending_updates(
     state: State<'_, AppState>,
 ) -> Result<Vec<UpdateAvailable>, String> {
     let mut pending = lock_or_err(&state.pending_updates, "pending_updates")?;
+    let result = pending.clone();
+    pending.clear();
+    Ok(result)
+}
+
+/// Get pending pack updates discovered by the startup check.
+/// Returns and clears the pending list (UI consumes once, then uses check_updates for refresh).
+#[tauri::command]
+pub async fn get_pending_pack_updates(
+    state: State<'_, AppState>,
+) -> Result<Vec<PackUpdateAvailable>, String> {
+    let mut pending = lock_or_err(&state.pending_pack_updates, "pending_pack_updates")?;
     let result = pending.clone();
     pending.clear();
     Ok(result)
@@ -627,17 +700,19 @@ pub async fn install_pack_from_marketplace(
     for proc_id in &pack_entry.processor_ids {
         let qualified_id = marketplace::qualified_id(proc_id, &source_name);
 
-        // Skip if already installed.
-        {
-            let procs = lock_or_err(&state.processors, "processors")?;
-            if procs.contains_key(&qualified_id) {
-                continue;
-            }
-        }
-
         let entry = proc_map
             .get(proc_id.as_str())
             .ok_or_else(|| format!("Processor '{proc_id}' not found in marketplace index for source '{source_name}'"))?;
+
+        // Skip only if installed version is >= marketplace version.
+        {
+            let procs = lock_or_err(&state.processors, "processors")?;
+            if let Some(installed) = procs.get(&qualified_id) {
+                if !is_newer(&installed.meta.version, &entry.version) {
+                    continue;
+                }
+            }
+        }
 
         download_and_install_processor(&state, &app, &source, entry, &qualified_id).await?;
     }
@@ -1106,5 +1181,134 @@ mod tests {
     fn github_source_constructs_correct_pack_url() {
         let url = registry::github_raw_url("jpicklyk/logtapper", "main", "marketplace/packs/device-health.pack.yaml");
         assert_eq!(url, "https://raw.githubusercontent.com/jpicklyk/logtapper/main/marketplace/packs/device-health.pack.yaml");
+    }
+
+    // -----------------------------------------------------------------------
+    // Pack update detection
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn pack_update_detected_on_version_bump() {
+        use crate::processors::marketplace::MarketplacePackEntry;
+        let mut installed = std::collections::HashMap::new();
+        installed.insert("wifi-diag".to_string(), ("1.0.0".to_string(), vec!["wifi-state".to_string(), "wlan-events".to_string()]));
+        let market = vec![MarketplacePackEntry {
+            id: "wifi-diag".to_string(),
+            name: "WiFi Diagnostics".to_string(),
+            version: "2.0.0".to_string(),
+            description: None,
+            path: "packs/wifi-diag.pack.yaml".to_string(),
+            tags: vec![],
+            sha256: String::new(),
+            category: None,
+            processor_ids: vec!["wifi-state".to_string(), "wlan-events".to_string()],
+        }];
+        let results = detect_pack_updates(&installed, &market, "official");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].installed_version, "1.0.0");
+        assert_eq!(results[0].available_version, "2.0.0");
+        assert!(results[0].new_processor_ids.is_empty());
+    }
+
+    #[test]
+    fn pack_update_detected_on_new_processors() {
+        use crate::processors::marketplace::MarketplacePackEntry;
+        let mut installed = std::collections::HashMap::new();
+        installed.insert("wifi-diag".to_string(), ("1.0.0".to_string(), vec!["wifi-state".to_string()]));
+        let market = vec![MarketplacePackEntry {
+            id: "wifi-diag".to_string(),
+            name: "WiFi Diagnostics".to_string(),
+            version: "1.0.0".to_string(),
+            description: None,
+            path: "packs/wifi-diag.pack.yaml".to_string(),
+            tags: vec![],
+            sha256: String::new(),
+            category: None,
+            processor_ids: vec!["wifi-state".to_string(), "p2p-tracker".to_string()],
+        }];
+        let results = detect_pack_updates(&installed, &market, "official");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].new_processor_ids, vec!["p2p-tracker"]);
+    }
+
+    #[test]
+    fn pack_update_not_detected_when_unchanged() {
+        use crate::processors::marketplace::MarketplacePackEntry;
+        let mut installed = std::collections::HashMap::new();
+        installed.insert("wifi-diag".to_string(), ("1.0.0".to_string(), vec!["wifi-state".to_string()]));
+        let market = vec![MarketplacePackEntry {
+            id: "wifi-diag".to_string(),
+            name: "WiFi Diagnostics".to_string(),
+            version: "1.0.0".to_string(),
+            description: None,
+            path: "packs/wifi-diag.pack.yaml".to_string(),
+            tags: vec![],
+            sha256: String::new(),
+            category: None,
+            processor_ids: vec!["wifi-state".to_string()],
+        }];
+        let results = detect_pack_updates(&installed, &market, "official");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn pack_update_skips_uninstalled_packs() {
+        use crate::processors::marketplace::MarketplacePackEntry;
+        let installed = std::collections::HashMap::new(); // nothing installed
+        let market = vec![MarketplacePackEntry {
+            id: "wifi-diag".to_string(),
+            name: "WiFi Diagnostics".to_string(),
+            version: "2.0.0".to_string(),
+            description: None,
+            path: "packs/wifi-diag.pack.yaml".to_string(),
+            tags: vec![],
+            sha256: String::new(),
+            category: None,
+            processor_ids: vec!["wifi-state".to_string()],
+        }];
+        let results = detect_pack_updates(&installed, &market, "official");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn pack_update_available_serialization() {
+        let update = PackUpdateAvailable {
+            pack_id: "wifi-diag".to_string(),
+            pack_name: "WiFi Diagnostics".to_string(),
+            source_name: "official".to_string(),
+            installed_version: "1.0.0".to_string(),
+            available_version: "2.0.0".to_string(),
+            new_processor_ids: vec!["p2p-tracker".to_string()],
+            entry: MarketplacePackEntryDto {
+                id: "wifi-diag".to_string(),
+                name: "WiFi Diagnostics".to_string(),
+                version: "2.0.0".to_string(),
+                description: None,
+                path: "packs/wifi-diag.pack.yaml".to_string(),
+                tags: vec![],
+                sha256: String::new(),
+                category: None,
+                processor_ids: vec!["wifi-state".to_string()],
+            },
+        };
+        let json = serde_json::to_string(&update).unwrap();
+        assert!(json.contains("\"packId\""));
+        assert!(json.contains("\"packName\""));
+        assert!(json.contains("\"newProcessorIds\""));
+        assert!(json.contains("\"installedVersion\""));
+        assert!(json.contains("\"availableVersion\""));
+    }
+
+    #[test]
+    fn update_check_result_includes_pack_updates() {
+        let result = UpdateCheckResult {
+            updates: vec![],
+            pack_updates: vec![],
+            errors: vec![],
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"packUpdates\""));
+        assert!(json.contains("\"updates\""));
+        assert!(json.contains("\"errors\""));
     }
 }

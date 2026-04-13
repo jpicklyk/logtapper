@@ -137,8 +137,16 @@ async fn startup_update_check(handle: tauri::AppHandle) {
             })
             .collect()
     };
+    let installed_packs: std::collections::HashMap<String, (String, Vec<String>)> = {
+        let Ok(packs) = state.packs.lock() else { return };
+        packs
+            .iter()
+            .map(|p| (p.id.clone(), (p.version.clone(), p.processors.clone())))
+            .collect()
+    };
 
     let mut pending = Vec::new();
+    let mut pending_packs = Vec::new();
 
     for source in &sources {
         let Ok(index) = registry::fetch_marketplace(&state.http_client, source).await else {
@@ -185,6 +193,12 @@ async fn startup_update_check(handle: tauri::AppHandle) {
             }
         }
 
+        pending_packs.extend(commands::sources::detect_pack_updates(
+            &installed_packs,
+            &index.packs,
+            &source.name,
+        ));
+
         // Update last_checked.
         if let Ok(mut srcs) = state.sources.lock() {
             if let Some(s) = srcs.iter_mut().find(|s| s.name == source.name) {
@@ -197,6 +211,13 @@ async fn startup_update_check(handle: tauri::AppHandle) {
     if !pending.is_empty() {
         if let Ok(mut pu) = state.pending_updates.lock() {
             *pu = pending;
+        }
+    }
+
+    // Store pending pack updates.
+    if !pending_packs.is_empty() {
+        if let Ok(mut ppu) = state.pending_pack_updates.lock() {
+            *ppu = pending_packs;
         }
     }
 
@@ -490,6 +511,7 @@ pub fn run() {
             commands::sources::update_all_from_source,
             commands::sources::save_sources_to_disk,
             commands::sources::get_pending_updates,
+            commands::sources::get_pending_pack_updates,
             commands::sources::install_from_marketplace,
             commands::sources::install_pack_from_marketplace,
             commands::sources::uninstall_pack_from_marketplace,
