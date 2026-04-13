@@ -1,4 +1,4 @@
-import React, { Fragment, useEffect, useCallback, useState } from 'react';
+import React, { Fragment, useEffect, useCallback, useMemo, useState } from 'react';
 import { Button } from '../../ui';
 import {
   DndContext,
@@ -12,7 +12,7 @@ import {
   SortableContext,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import PackGroup from './PackGroup';
+import PackGroup, { type PackGroupActions } from './PackGroup';
 import packGroupStyles from './PackGroup.module.css';
 import {
   useSession,
@@ -99,6 +99,15 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
     removeFromChain,
     toggleChainEnabled,
   });
+
+  const packActions = useMemo<PackGroupActions>(() => ({
+    onToggleExpand: handleTogglePackExpand,
+    onTogglePackEnabled: handleTogglePackEnabled,
+    onRemovePack: handleRemovePack,
+    onToggleProcessor: toggleChainEnabled,
+    onRemoveProcessor: removeFromChain,
+  }), [handleTogglePackExpand, handleTogglePackEnabled, handleRemovePack,
+    toggleChainEnabled, removeFromChain]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -239,33 +248,22 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
         ) : (
           <>
             {/* Pack groups */}
-            {filteredPackGroups.map((g) => {
-              const packIds = g.processors.map((p) => p.id);
-              const allEnabled = packIds.every((id) => !disabledSet.has(id));
-              const someDisabled = !allEnabled && packIds.some((id) => disabledSet.has(id));
-              return (
-                <Fragment key={g.pack.id}>
-                  <ChainConnector isActive={isActive} compact={compact} />
-                  <PackGroup
-                    packId={g.pack.id}
-                    packName={g.pack.name}
-                    processors={g.processors}
-                    expanded={expandedPacks.has(g.pack.id)}
-                    compact={compact}
-                    onToggleExpand={handleTogglePackExpand}
-                    allEnabled={allEnabled}
-                    someDisabled={someDisabled}
-                    onTogglePackEnabled={handleTogglePackEnabled}
-                    onRemovePack={handleRemovePack}
-                    onToggleProcessor={toggleChainEnabled}
-                    onRemoveProcessor={removeFromChain}
-                    disabledIds={disabledSet}
-                    resultsByProcessor={resultMap}
-                    pipelineRunning={running}
-                  />
-                </Fragment>
-              );
-            })}
+            {filteredPackGroups.map((g) => (
+              <Fragment key={g.pack.id}>
+                <ChainConnector isActive={isActive} compact={compact} />
+                <PackGroup
+                  packId={g.pack.id}
+                  packName={g.pack.name}
+                  processors={g.processors}
+                  expanded={expandedPacks.has(g.pack.id)}
+                  compact={compact}
+                  actions={packActions}
+                  disabledIds={disabledSet}
+                  resultsByProcessor={resultMap}
+                  pipelineRunning={running}
+                />
+              </Fragment>
+            ))}
 
             {/* Separator between packs and standalone processors */}
             {filteredPackGroups.length > 0 && filteredStandalone.length > 0 && (

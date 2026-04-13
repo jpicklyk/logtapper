@@ -118,22 +118,21 @@ const ProcessorRow = React.memo(function ProcessorRow({
 
 // ── PackGroup ─────────────────────────────────────────────────────────────────
 
+export interface PackGroupActions {
+  onToggleExpand: (packId: string) => void;
+  onTogglePackEnabled: (packId: string) => void;
+  onRemovePack: (packId: string) => void;
+  onToggleProcessor: (id: string) => void;
+  onRemoveProcessor: (id: string) => void;
+}
+
 export interface PackGroupProps {
   packId: string;
   packName: string;
   processors: ProcessorSummary[];
   expanded: boolean;
   compact: boolean;
-  /** Called with the packId when the header is clicked to expand/collapse. */
-  onToggleExpand: (packId: string) => void;
-  allEnabled: boolean;
-  someDisabled: boolean;
-  /** Called with the packId to toggle all processors in the pack enabled/disabled. */
-  onTogglePackEnabled: (packId: string) => void;
-  /** Called with the packId to remove all processors in the pack from the chain. */
-  onRemovePack: (packId: string) => void;
-  onToggleProcessor: (id: string) => void;
-  onRemoveProcessor: (id: string) => void;
+  actions: PackGroupActions;
   disabledIds: Set<string>;
   resultsByProcessor: Map<string, PipelineRunSummary>;
   pipelineRunning: boolean;
@@ -145,13 +144,7 @@ const PackGroup = React.memo(function PackGroup({
   processors,
   expanded,
   compact,
-  onToggleExpand,
-  allEnabled,
-  someDisabled,
-  onTogglePackEnabled,
-  onRemovePack,
-  onToggleProcessor,
-  onRemoveProcessor,
+  actions,
   disabledIds,
   resultsByProcessor,
   pipelineRunning,
@@ -169,19 +162,26 @@ const PackGroup = React.memo(function PackGroup({
     }
     return PROC_TYPE_ACCENT[dominant] ?? 'var(--accent)';
   }, [processors]);
+
+  const allEnabled = React.useMemo(
+    () => processors.every((p) => !disabledIds.has(p.id)),
+    [processors, disabledIds],
+  );
+  const someDisabled = !allEnabled && processors.some((p) => !disabledIds.has(p.id));
+
   const handleRemovePack = useCallback(
-    (e: React.MouseEvent) => { e.stopPropagation(); onRemovePack(packId); },
-    [onRemovePack, packId],
+    (e: React.MouseEvent) => { e.stopPropagation(); actions.onRemovePack(packId); },
+    [actions, packId],
   );
 
   const handleTogglePack = useCallback(
-    (e: React.MouseEvent) => { e.stopPropagation(); onTogglePackEnabled(packId); },
-    [onTogglePackEnabled, packId],
+    (e: React.MouseEvent) => { e.stopPropagation(); actions.onTogglePackEnabled(packId); },
+    [actions, packId],
   );
 
   const handleToggleExpand = useCallback(
-    () => onToggleExpand(packId),
-    [onToggleExpand, packId],
+    () => actions.onToggleExpand(packId),
+    [actions, packId],
   );
 
   const eyeIcon = allEnabled ? EyeSvg : someDisabled ? EyePartialSvg : EyeOffSvg;
@@ -233,8 +233,8 @@ const PackGroup = React.memo(function PackGroup({
               result={resultsByProcessor.get(proc.id)}
               disabled={disabledIds.has(proc.id)}
               running={pipelineRunning}
-              onToggle={onToggleProcessor}
-              onRemove={onRemoveProcessor}
+              onToggle={actions.onToggleProcessor}
+              onRemove={actions.onRemoveProcessor}
             />
           ))}
         </div>

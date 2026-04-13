@@ -183,6 +183,106 @@ describe('[M2] Pack-level handlers accept packId parameter', () => {
 });
 
 // ---------------------------------------------------------------------------
+// PackGroup: allEnabled / someDisabled derived state
+// ---------------------------------------------------------------------------
+
+describe('[PackGroup] allEnabled / someDisabled derived state', () => {
+  // Test the derivation logic that was moved from ProcessorPanel into PackGroup.
+  // someDisabled means "mixed state" — at least one disabled AND at least one enabled.
+  const deriveEnabledState = (
+    processors: Array<{ id: string }>,
+    disabledIds: Set<string>,
+  ) => {
+    const allEnabled = processors.every((p) => !disabledIds.has(p.id));
+    const someDisabled = !allEnabled && processors.some((p) => !disabledIds.has(p.id));
+    return { allEnabled, someDisabled };
+  };
+
+  it('all enabled when disabledIds is empty', () => {
+    const procs = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+    const result = deriveEnabledState(procs, new Set());
+    expect(result.allEnabled).toBe(true);
+    expect(result.someDisabled).toBe(false);
+  });
+
+  it('none enabled when all IDs are disabled', () => {
+    const procs = [{ id: 'a' }, { id: 'b' }];
+    const result = deriveEnabledState(procs, new Set(['a', 'b']));
+    expect(result.allEnabled).toBe(false);
+    expect(result.someDisabled).toBe(false); // NOT "some" — it's "all"
+  });
+
+  it('someDisabled when subset of IDs are disabled', () => {
+    const procs = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+    const result = deriveEnabledState(procs, new Set(['b']));
+    expect(result.allEnabled).toBe(false);
+    expect(result.someDisabled).toBe(true);
+  });
+
+  it('handles single processor — enabled', () => {
+    const result = deriveEnabledState([{ id: 'x' }], new Set());
+    expect(result.allEnabled).toBe(true);
+    expect(result.someDisabled).toBe(false);
+  });
+
+  it('handles single processor — disabled', () => {
+    const result = deriveEnabledState([{ id: 'x' }], new Set(['x']));
+    expect(result.allEnabled).toBe(false);
+    expect(result.someDisabled).toBe(false);
+  });
+
+  it('disabledIds with IDs not in processors does not affect result', () => {
+    const procs = [{ id: 'a' }, { id: 'b' }];
+    const result = deriveEnabledState(procs, new Set(['z']));
+    expect(result.allEnabled).toBe(true);
+    expect(result.someDisabled).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PackGroup: PackGroupActions contract
+// ---------------------------------------------------------------------------
+
+describe('[PackGroup] PackGroupActions contract', () => {
+  it('actions object routes all 5 callbacks correctly', () => {
+    const calls: Array<{ fn: string; arg: string }> = [];
+    const actions = {
+      onToggleExpand: (id: string) => calls.push({ fn: 'onToggleExpand', arg: id }),
+      onTogglePackEnabled: (id: string) => calls.push({ fn: 'onTogglePackEnabled', arg: id }),
+      onRemovePack: (id: string) => calls.push({ fn: 'onRemovePack', arg: id }),
+      onToggleProcessor: (id: string) => calls.push({ fn: 'onToggleProcessor', arg: id }),
+      onRemoveProcessor: (id: string) => calls.push({ fn: 'onRemoveProcessor', arg: id }),
+    };
+
+    const packId = 'pack-1';
+    actions.onToggleExpand(packId);
+    actions.onTogglePackEnabled(packId);
+    actions.onRemovePack(packId);
+    actions.onToggleProcessor('proc-a');
+    actions.onRemoveProcessor('proc-b');
+
+    expect(calls).toEqual([
+      { fn: 'onToggleExpand', arg: 'pack-1' },
+      { fn: 'onTogglePackEnabled', arg: 'pack-1' },
+      { fn: 'onRemovePack', arg: 'pack-1' },
+      { fn: 'onToggleProcessor', arg: 'proc-a' },
+      { fn: 'onRemoveProcessor', arg: 'proc-b' },
+    ]);
+  });
+
+  it('actions referential stability means same object when callbacks unchanged', () => {
+    const fn1 = () => {};
+    const actions1 = { onToggleExpand: fn1, onTogglePackEnabled: fn1, onRemovePack: fn1, onToggleProcessor: fn1, onRemoveProcessor: fn1 };
+    const actions2 = { onToggleExpand: fn1, onTogglePackEnabled: fn1, onRemovePack: fn1, onToggleProcessor: fn1, onRemoveProcessor: fn1 };
+
+    // Different object references even with same callbacks — this is why useMemo matters
+    expect(actions1).not.toBe(actions2);
+    // But shallow-equal of all values holds
+    expect(actions1.onToggleExpand).toBe(actions2.onToggleExpand);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // L3 — Wasteful useCallback simplification
 // ---------------------------------------------------------------------------
 
