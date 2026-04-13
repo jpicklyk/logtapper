@@ -1,15 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
   FileText,
   Activity,
   Bookmark,
   PenLine,
-  Clock,
-  Zap,
-  Eye,
-  Cpu,
-  Store,
 } from 'lucide-react';
 import { ToolBar } from '../ToolBar';
 import { ToolPane } from '../ToolPane';
@@ -21,18 +16,14 @@ import { RightPane } from '../../components/RightPane';
 import { BottomPane } from '../../components/BottomPane';
 import { PaneContent } from '../../components/PaneContent';
 import { SettingsPanel } from '../../components/SettingsPanel';
-import { useSettings, useAnonymizerConfig, useToast, useAnalysisToast, useWatchToast, useWorkspaceRestoreToast, useLtsImportToast, useFileShortcuts, useStartupFile, useEditorTabRestore } from '../../hooks';
-import { startMcpBridge } from '../../bridge/commands';
 import { Toast } from '../../ui';
-import { findTabAcrossTree, allPanes } from '../../hooks/workspace/splitTreeHelpers';
-import { usePendingUpdateCount, useFileActions, useWorkspaceActions } from '../../context';
-import { bus } from '../../events';
-import { onWatchMatch } from '../../bridge/events';
+import { useAppShellSetup } from './useAppShellSetup';
+import { useToolbarItems } from './useToolbarItems';
+import { useCenterPortals } from './useCenterPortals';
 import type {
   WorkspaceLayoutState,
   LeftPaneTab,
   BottomTabType,
-  DropZone,
 } from '../../hooks';
 import styles from './AppShell.module.css';
 
@@ -49,117 +40,24 @@ const LEFT_TOP_ITEMS = [
   { id: 'analysis', icon: PenLine, label: 'Analysis' },
 ];
 
-const LEFT_BOTTOM_ITEMS_STATIC = [
-  { id: 'timeline', icon: Clock, label: 'Timeline' },
-  { id: 'correlations', icon: Zap, label: 'Correlations' },
-];
-
 const RIGHT_BOTTOM_ITEMS: { id: string; icon: React.ComponentType<{ size?: number | string }>; label: string }[] = [];
 
 export const AppShell = React.memo(function AppShell({ workspace }: AppShellProps) {
-  const settingsHook = useSettings();
-  const anonymizerConfig = useAnonymizerConfig();
-  const { toasts, addToast, dismissToast } = useToast();
-  useAnalysisToast(addToast);
-  useWatchToast(addToast);
-  useWorkspaceRestoreToast(addToast);
-  useLtsImportToast(addToast);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const { settingsHook, anonymizerConfig, settingsOpen, closeSettings, toasts, dismissToast } =
+    useAppShellSetup({ openCenterTab: workspace.openCenterTab });
 
-  // Listen for settings-requested event from Header
-  useEffect(() => {
-    const handler = () => { setSettingsOpen(true); };
-    bus.on('layout:settings-requested', handler);
-    return () => { bus.off('layout:settings-requested', handler); };
-  }, []);
-  const updateBadgeCount = usePendingUpdateCount();
-  const { openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession } = useFileActions();
-  const { newWorkspace, saveWorkspace } = useWorkspaceActions();
-  useFileShortcuts({ openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession, newWorkspace, saveWorkspace });
-  useStartupFile();
-  useEditorTabRestore(workspace.openCenterTab);
+  const { leftBottomItems, rightTopItems } = useToolbarItems({
+    bottomPaneVisible: workspace.bottomPaneVisible,
+    bottomPaneTab: workspace.bottomPaneTab,
+  });
 
-  // Start MCP bridge on mount if the user has it enabled.
-  useEffect(() => {
-    if (settingsHook.settings.mcpBridgeEnabled) {
-      startMcpBridge().catch(() => {});
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // intentionally empty — run once on mount only
-
-  // -- Watch badge (unacknowledged match count on Eye icon) --
-  const [watchBadge, setWatchBadge] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | null = null;
-
-    onWatchMatch((event) => {
-      if (cancelled) return;
-      setWatchBadge((prev) => prev + event.newMatches);
-    }).then((fn) => {
-      if (cancelled) fn();
-      else unlisten = fn;
+  const { contentRefsRef, handleContentRef, currentPanes, handleTabActivate, handleTabAdd } =
+    useCenterPortals({
+      centerTree: workspace.centerTree,
+      setActiveTab: workspace.setActiveTab,
+      focusLogviewerTab: workspace.focusLogviewerTab,
+      addCenterTab: workspace.addCenterTab,
     });
-
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
-
-  // Clear badge when watches tab is visible
-  useEffect(() => {
-    if (workspace.bottomPaneVisible && workspace.bottomPaneTab === 'watches') {
-      setWatchBadge(0);
-    }
-  }, [workspace.bottomPaneVisible, workspace.bottomPaneTab]);
-
-  const leftBottomItems = useMemo(
-    () => [
-      ...LEFT_BOTTOM_ITEMS_STATIC,
-      { id: 'watches', icon: Eye, label: 'Watches', badge: watchBadge > 0 ? watchBadge : undefined },
-    ],
-    [watchBadge],
-  );
-
-  const rightTopItems = useMemo(
-    () => [
-      { id: 'processors', icon: Cpu, label: 'Processors' },
-      { id: 'marketplace', icon: Store, label: 'Marketplace', badge: updateBadgeCount > 0 ? updateBadgeCount : undefined },
-    ],
-    [updateBadgeCount],
-  );
-
-  const centerTreeRef = useRef(workspace.centerTree);
-  centerTreeRef.current = workspace.centerTree;
-
-  // -- Portal mount points --
-  // Map pane.id → the mount div inside each LeafPane.
-  // PaneContent components are rendered here (AppShell level) and portaled in,
-  // so structural tree changes (1→2 panes, 2→1) never unmount them.
-  const contentRefsRef = useRef<Map<string, HTMLDivElement>>(new Map());
-  const [, forcePortals] = useReducer((x: number) => x + 1, 0);
-
-  const handleContentRef = useCallback((paneId: string, el: HTMLDivElement | null) => {
-    if (el) {
-      contentRefsRef.current.set(paneId, el);
-      // Only trigger re-render when a mount div becomes available (el !== null).
-      // Skipping forcePortals on null prevents PaneContent from unmounting during
-      // React StrictMode's cleanup→remount cycle, which caused an apparent
-      // performance regression (file reload on every initial mount).
-      // The portal stays pointed at the now-detached div until the next natural
-      // re-render (triggered by the subsequent el !== null callback) updates it.
-      forcePortals();
-    } else {
-      contentRefsRef.current.delete(paneId);
-    }
-  }, []);
-
-  const currentPanes = useMemo(
-    () => allPanes(workspace.centerTree),
-    [workspace.centerTree],
-  );
 
   // Destructure stable callbacks from workspace so PaneContent's React.memo
   // compares the actual function refs (stable useCallback refs from useCenterTree)
@@ -193,87 +91,6 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
   const handleRightBottomToggle = useCallback((_id: string) => {
     // No right-bottom items currently — settings moved to Header
   }, []);
-
-  // -- Resize handlers --
-  const handleLeftResize = useCallback(
-    (delta: number) => {
-      workspace.resizeLeftPane(delta);
-    },
-    [workspace.resizeLeftPane],
-  );
-
-  const handleRightResize = useCallback(
-    (delta: number) => {
-      workspace.resizeRightPane(delta);
-    },
-    [workspace.resizeRightPane],
-  );
-
-  const handleBottomResize = useCallback(
-    (delta: number) => {
-      workspace.resizeBottomPane(delta);
-    },
-    [workspace.resizeBottomPane],
-  );
-
-  // -- Center area callbacks --
-  const handleTabActivate = useCallback(
-    (tabId: string, paneId: string) => {
-      workspace.setActiveTab(tabId, paneId);
-      // Only move focus when activating a logviewer tab — utility tabs
-      // (dashboard, editor) display data for the already-focused session
-      // and should not steal the focus marker from the logviewer tab.
-      const found = findTabAcrossTree(centerTreeRef.current, tabId);
-      if (found?.tab.type === 'logviewer') {
-        workspace.focusLogviewerTab(tabId, paneId);
-      }
-    },
-    [workspace.setActiveTab, workspace.focusLogviewerTab],
-  );
-
-  const handleTabClose = useCallback(
-    (tabId: string, paneId: string) => {
-      workspace.closeTab(tabId, paneId);
-    },
-    [workspace.closeTab],
-  );
-
-  const handleTabAdd = useCallback(
-    (paneId: string) => {
-      workspace.addCenterTab(paneId, 'editor');
-    },
-    [workspace.addCenterTab],
-  );
-
-  const handleSplitResize = useCallback(
-    (nodeId: string, ratio: number) => {
-      workspace.resizeSplit(nodeId, ratio);
-    },
-    [workspace.resizeSplit],
-  );
-
-  const handleTabDrop = useCallback(
-    (tabId: string, fromPaneId: string, toPaneId: string, zone: DropZone) => {
-      workspace.dropTabOnPane(tabId, fromPaneId, toPaneId, zone);
-    },
-    [workspace.dropTabOnPane],
-  );
-
-  const handleTabRename = useCallback(
-    (tabId: string, newLabel: string) => {
-      workspace.renameTab(tabId, newLabel);
-    },
-    [workspace.renameTab],
-  );
-
-  const handleTabReorder = useCallback(
-    (paneId: string, fromIndex: number, toIndex: number) => {
-      workspace.reorderTab(paneId, fromIndex, toIndex);
-    },
-    [workspace.reorderTab],
-  );
-
-  // renderCenterContent removed — pane content is now rendered as portals below.
 
   // -- Active bottom tab id for left toolbar bottom group --
   const activeBottomId = useMemo(() => {
@@ -314,7 +131,7 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
           position="left"
           visible={true}
           size={workspace.leftPaneWidth}
-          onResize={handleLeftResize}
+          onResize={workspace.resizeLeftPane}
         >
           <LeftPane
             activeTab={workspace.leftPaneTab}
@@ -330,12 +147,12 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
           focusedLogviewerTabId={workspace.focusedLogviewerTabId}
           onContentRef={handleContentRef}
           onTabActivate={handleTabActivate}
-          onTabClose={handleTabClose}
+          onTabClose={workspace.closeTab}
           onTabAdd={handleTabAdd}
-          onTabRename={handleTabRename}
-          onSplitResize={handleSplitResize}
-          onTabDrop={handleTabDrop}
-          onTabReorder={handleTabReorder}
+          onTabRename={workspace.renameTab}
+          onSplitResize={workspace.resizeSplit}
+          onTabDrop={workspace.dropTabOnPane}
+          onTabReorder={workspace.reorderTab}
         />
       </div>
 
@@ -345,7 +162,7 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
           position="right"
           visible={workspace.rightPaneVisible}
           size={workspace.rightPaneWidth}
-          onResize={handleRightResize}
+          onResize={workspace.resizeRightPane}
         >
           <RightPane activeTab={workspace.rightPaneTab} />
         </ToolPane>
@@ -370,7 +187,7 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
           settings={settingsHook.settings}
           onUpdate={settingsHook.updateSetting}
           onReset={settingsHook.resetSettings}
-          onClose={() => setSettingsOpen(false)}
+          onClose={closeSettings}
           anonymizerConfig={anonymizerConfig}
         />
       )}
@@ -381,7 +198,7 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
           position="bottom"
           visible={workspace.bottomPaneVisible}
           size={workspace.bottomPaneHeight}
-          onResize={handleBottomResize}
+          onResize={workspace.resizeBottomPane}
         >
           <BottomPane activeTab={workspace.bottomPaneTab} />
         </ToolPane>
