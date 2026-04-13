@@ -227,8 +227,6 @@ export function useChainGroups({
     resultMap,
     allChainProcessors,
     filteredPinned,
-    packGroups,
-    packProcessorIdsMap,
     handleTogglePackEnabled,
     handleRemovePack,
     filteredPackGroups,

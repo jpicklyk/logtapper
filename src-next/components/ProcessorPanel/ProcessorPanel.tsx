@@ -12,7 +12,6 @@ import {
   SortableContext,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import type { PackSummary } from '../../bridge/types';
 import PackGroup from './PackGroup';
 import packGroupStyles from './PackGroup.module.css';
 import {
@@ -71,7 +70,7 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
     });
   }, []);
 
-  const packs = usePacks() as PackSummary[];
+  const packs = usePacks();
 
   const {
     expandedPacks,
