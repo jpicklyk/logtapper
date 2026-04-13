@@ -1,4 +1,4 @@
-import React, { Fragment, useEffect, useCallback, useState, useMemo } from 'react';
+import React, { Fragment, useEffect, useCallback, useState } from 'react';
 import { Button } from '../../ui';
 import {
   DndContext,
@@ -10,12 +10,9 @@ import {
 } from '@dnd-kit/core';
 import {
   SortableContext,
-  useSortable,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
-import type { PipelineRunSummary, PipelineProgress, PackSummary } from '../../bridge/types';
-import { getBareId } from '../../bridge/types';
+import type { PackSummary } from '../../bridge/types';
 import PackGroup from './PackGroup';
 import packGroupStyles from './PackGroup.module.css';
 import {
@@ -37,323 +34,10 @@ import { ProcessorLibrary } from '../ProcessorLibrary';
 import { bus } from '../../events';
 import { storageGet, storageSet } from '../../utils';
 import styles from './ProcessorPanel.module.css';
-import badgeCss from '../../ui/processorBadge.module.css';
-import { PROC_TYPE_ACCENT, getProcTypeMeta as _getProcTypeMeta } from '../../ui';
-import { PINNED_TAIL_IDS } from '../../context';
-
-// ── Type metadata ────────────────────────────────────────────────────────────
-
-/** Resolves [label, cssClass] — wraps the shared helper with CSS module lookup. */
-function getProcTypeMeta(type: string): [string, string] {
-  const [label, classKey] = _getProcTypeMeta(type);
-  return [label, badgeCss[classKey as keyof typeof badgeCss] ?? ''];
-}
-
-// PII anonymizer is the only transformer — show a dedicated badge instead
-// of the generic "Transformer" label.
-const PII_TYPE_META: [string, string] = [
-  'PII',
-  badgeCss['typeTransformer' as keyof typeof badgeCss] ?? '',
-];
+import { ChainNode, PinnedChainNode, ChainConnector } from './ChainNode';
+import { useChainGroups } from './useChainGroups';
 
 const LS_COMPACT_KEY = 'logtapper_pipeline_compact';
-const LS_EXPANDED_PACKS_KEY = 'logtapper_pipeline_expanded_packs';
-
-// ── SVG Icons ────────────────────────────────────────────────────────────────
-
-const DragHandleSvg = (
-  <svg width="10" height="14" viewBox="0 0 10 14" fill="none">
-    <circle cx="3" cy="2.5" r="1.2" fill="currentColor" />
-    <circle cx="7" cy="2.5" r="1.2" fill="currentColor" />
-    <circle cx="3" cy="7" r="1.2" fill="currentColor" />
-    <circle cx="7" cy="7" r="1.2" fill="currentColor" />
-    <circle cx="3" cy="11.5" r="1.2" fill="currentColor" />
-    <circle cx="7" cy="11.5" r="1.2" fill="currentColor" />
-  </svg>
-);
-
-const LockSvg = (
-  <svg width="10" height="12" viewBox="0 0 10 12" fill="none">
-    <rect x="2" y="5.5" width="6" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.2" />
-    <path d="M3 5.5V3.5a2 2 0 014 0v2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-  </svg>
-);
-
-const RemoveSvg = (
-  <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
-    <path d="M1 1l8 8M9 1L1 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-  </svg>
-);
-
-// Eye icon (enabled)
-const EyeSvg = (
-  <svg width="12" height="10" viewBox="0 0 16 12" fill="none">
-    <path d="M1 6s3-5 7-5 7 5 7 5-3 5-7 5-7-5-7-5z" stroke="currentColor" strokeWidth="1.3" />
-    <circle cx="8" cy="6" r="2" stroke="currentColor" strokeWidth="1.3" />
-  </svg>
-);
-
-// Eye-off icon (disabled)
-const EyeOffSvg = (
-  <svg width="12" height="10" viewBox="0 0 16 12" fill="none">
-    <path d="M1 6s3-5 7-5 7 5 7 5-3 5-7 5-7-5-7-5z" stroke="currentColor" strokeWidth="1.3" />
-    <path d="M3 1l10 10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-  </svg>
-);
-
-// ── ChainConnector ───────────────────────────────────────────────────────────
-
-const ChainConnector = React.memo(function ChainConnector({
-  isActive,
-  compact,
-}: {
-  isActive: boolean;
-  compact: boolean;
-}) {
-  const cls = `${styles.connector}${isActive ? ` ${styles.connectorActive}` : ''}${compact ? ` ${styles.connectorCompact}` : ''}`;
-  return (
-    <div className={cls}>
-      <div className={styles.connectorDot} />
-      <div className={styles.connectorDot} />
-      <div className={styles.connectorDot} />
-    </div>
-  );
-});
-
-// ── StatLine ─────────────────────────────────────────────────────────────────
-
-function StatLine({
-  processorType,
-  result,
-  progress,
-  running,
-}: {
-  processorType: string;
-  result?: PipelineRunSummary;
-  progress?: PipelineProgress;
-  running: boolean;
-}) {
-  if (running && progress) {
-    return (
-      <div className={styles.nodeStat}>
-        <div className={styles.nodeProgress}>
-          <div className={styles.nodeProgressFill} style={{ width: `${progress.percent.toFixed(0)}%` }} />
-          <div className={styles.progressShimmer} />
-        </div>
-      </div>
-    );
-  }
-  if (!result) return null;
-
-  if (processorType === 'state_tracker') {
-    return <div className={styles.nodeStat}>{result.matchedLines.toLocaleString()} transitions</div>;
-  }
-  if (processorType === 'transformer') {
-    return <div className={styles.nodeStat}>PII anonymization active</div>;
-  }
-  return (
-    <div className={styles.nodeStat}>
-      {result.matchedLines.toLocaleString()} matched
-      {result.emissionCount > 0 && ` . ${result.emissionCount.toLocaleString()} emitted`}
-    </div>
-  );
-}
-
-/** Format a compact stat string from a result. */
-function compactStatText(result?: PipelineRunSummary): string {
-  if (!result) return '';
-  return result.matchedLines.toLocaleString();
-}
-
-// ── Toggle button ────────────────────────────────────────────────────────────
-
-function ToggleEnabledBtn({
-  disabled,
-  onClick,
-}: {
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      className={`${styles.toggleBtn}${disabled ? ` ${styles.toggleBtnOff}` : ''}`}
-      title={disabled ? 'Enable processor' : 'Disable processor'}
-      onClick={(e) => { e.stopPropagation(); onClick(); }}
-    >
-      {disabled ? EyeOffSvg : EyeSvg}
-    </button>
-  );
-}
-
-// ── ChainNode ────────────────────────────────────────────────────────────────
-
-interface ChainNodeProps {
-  id: string;
-  name: string;
-  processorType: string;
-  builtin: boolean;
-  result?: PipelineRunSummary;
-  progress?: PipelineProgress;
-  running: boolean;
-  compact: boolean;
-  disabled: boolean;
-  onRemove: (id: string) => void;
-  onToggleEnabled: (id: string) => void;
-}
-
-const ChainNode = React.memo(function ChainNode({
-  id,
-  name,
-  processorType,
-  builtin,
-  result,
-  progress,
-  running,
-  compact,
-  disabled,
-  onRemove,
-  onToggleEnabled,
-}: ChainNodeProps) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
-
-  const accentColor = PROC_TYPE_ACCENT[processorType] ?? 'var(--proc-reporter)';
-
-  if (compact) {
-    const style: React.CSSProperties = {
-      transform: CSS.Transform.toString(transform),
-      transition,
-      opacity: isDragging ? 0.5 : 1,
-      '--proc-accent': accentColor,
-    } as React.CSSProperties;
-
-    const cls = `${styles.chainNodeCompact}${isDragging ? ` ${styles.chainNodeDragging}` : ''}${disabled ? ` ${styles.nodeDisabled}` : ''}`;
-
-    return (
-      <div ref={setNodeRef} style={style} className={cls} {...attributes} {...listeners}>
-        <div className={styles.compactDot} />
-        <span className={styles.compactName}>{name}</span>
-        {result && <span className={styles.compactStat}>{compactStatText(result)}</span>}
-        <ToggleEnabledBtn disabled={disabled} onClick={() => onToggleEnabled(id)} />
-        <Button variant="ghost" size="sm" className={styles.nodeRemove} title="Remove from chain" onClick={(e) => { e.stopPropagation(); onRemove(id); }}>
-          {RemoveSvg}
-        </Button>
-      </div>
-    );
-  }
-
-  // Detailed mode
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-    '--proc-accent': accentColor,
-  } as React.CSSProperties;
-
-  const [typeLabel, typeBadgeClass] = (PINNED_TAIL_IDS.has(id) ? PII_TYPE_META : null)
-    ?? getProcTypeMeta(processorType);
-
-  const cls = `${styles.chainNode}${isDragging ? ` ${styles.chainNodeDragging}` : ''}${disabled ? ` ${styles.nodeDisabled}` : ''}`;
-
-  return (
-    <div ref={setNodeRef} style={style} className={cls}>
-      <div className={styles.nodeHandle} {...attributes} {...listeners} title="Drag to reorder">
-        {DragHandleSvg}
-      </div>
-      <div className={styles.nodeAccent} />
-      <div className={styles.nodeBody}>
-        <div className={styles.nodeName}>{name}</div>
-        <div className={styles.nodeMeta}>
-          <span className={`${badgeCss.typeBadge} ${typeBadgeClass}`}>{typeLabel}</span>
-          {builtin && <span className={styles.builtinBadge}>built-in</span>}
-        </div>
-        <StatLine processorType={processorType} result={result} progress={progress} running={running} />
-      </div>
-      <div className={styles.nodeActions}>
-        <ToggleEnabledBtn disabled={disabled} onClick={() => onToggleEnabled(id)} />
-      </div>
-      <Button variant="ghost" size="sm" className={styles.nodeRemove} title="Remove from chain" onClick={() => onRemove(id)}>
-        {RemoveSvg}
-      </Button>
-    </div>
-  );
-});
-
-// ── PinnedChainNode ──────────────────────────────────────────────────────────
-
-const PinnedChainNode = React.memo(function PinnedChainNode({
-  id,
-  name,
-  processorType,
-  builtin,
-  result,
-  progress,
-  running,
-  compact,
-  disabled,
-  onRemove,
-  onToggleEnabled,
-}: ChainNodeProps) {
-  const accentColor = PROC_TYPE_ACCENT[processorType] ?? 'var(--proc-reporter)';
-
-  if (compact) {
-    const style: React.CSSProperties = {
-      '--proc-accent': accentColor,
-    } as React.CSSProperties;
-
-    const cls = `${styles.chainNodeCompact} ${styles.chainNodePinned}${disabled ? ` ${styles.nodeDisabled}` : ''}`;
-
-    return (
-      <div style={style} className={cls}>
-        <span className={styles.compactLock}>{LockSvg}</span>
-        <div className={styles.compactDot} />
-        <span className={styles.compactName}>{name}</span>
-        {result && <span className={styles.compactStat}>{compactStatText(result)}</span>}
-        <ToggleEnabledBtn disabled={disabled} onClick={() => onToggleEnabled(id)} />
-        <Button variant="ghost" size="sm" className={styles.nodeRemove} title="Remove from chain" onClick={(e) => { e.stopPropagation(); onRemove(id); }}>
-          {RemoveSvg}
-        </Button>
-      </div>
-    );
-  }
-
-  // Detailed mode
-  const style: React.CSSProperties = {
-    '--proc-accent': accentColor,
-  } as React.CSSProperties;
-
-  const [typeLabel, typeBadgeClass] = (PINNED_TAIL_IDS.has(id) ? PII_TYPE_META : null)
-    ?? getProcTypeMeta(processorType);
-
-  const cls = `${styles.chainNode} ${styles.chainNodePinned}${disabled ? ` ${styles.nodeDisabled}` : ''}`;
-
-  return (
-    <>
-      <div className={styles.outputGateSep}>
-        <span className={styles.outputGateLabel}>output gate</span>
-      </div>
-      <div style={style} className={cls}>
-        <div className={`${styles.nodeHandle} ${styles.nodeHandleLocked}`} title="Pinned to end">
-          {LockSvg}
-        </div>
-        <div className={styles.nodeAccent} />
-        <div className={styles.nodeBody}>
-          <div className={styles.nodeName}>{name}</div>
-          <div className={styles.nodeMeta}>
-            <span className={`${badgeCss.typeBadge} ${typeBadgeClass}`}>{typeLabel}</span>
-            {builtin && <span className={styles.builtinBadge}>built-in</span>}
-          </div>
-          <StatLine processorType={processorType} result={result} progress={progress} running={running} />
-        </div>
-        <div className={styles.nodeActions}>
-          <ToggleEnabledBtn disabled={disabled} onClick={() => onToggleEnabled(id)} />
-        </div>
-        <button className={styles.nodeRemove} title="Remove from chain" onClick={() => onRemove(id)}>
-          {RemoveSvg}
-        </button>
-      </div>
-    </>
-  );
-});
 
 // ── ProcessorPanel ───────────────────────────────────────────────────────────
 
@@ -373,6 +57,10 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
   const pipeline = usePipeline();
   const { removeFromChain, reorderChain, toggleChainEnabled } = usePipelineActions();
 
+  const isActive = running || isStreaming;
+  const sessionId = session?.sessionId ?? null;
+  const canRun = pipelineChain.length > 0 && !!sessionId && !running;
+
   // ── Compact mode (persisted to localStorage) ──
   const [compact, setCompact] = useState(() => storageGet(LS_COMPACT_KEY) === '1');
   const handleToggleCompact = useCallback(() => {
@@ -383,49 +71,35 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
     });
   }, []);
 
-  // ── Pack grouping state ──
-  const packs = usePacks();
+  const packs = usePacks() as PackSummary[];
 
-  // Expanded packs state (persisted to localStorage)
-  const [expandedPacks, setExpandedPacks] = useState<Set<string>>(() => {
-    try {
-      const raw = localStorage.getItem(LS_EXPANDED_PACKS_KEY);
-      if (raw) return new Set<string>(JSON.parse(raw));
-    } catch { /* ignore */ }
-    // Default: all expanded
-    return new Set<string>();
+  const {
+    expandedPacks,
+    handleTogglePackExpand,
+    chainFilter,
+    setChainFilter,
+    disabledSet,
+    resultMap,
+    allChainProcessors,
+    filteredPinned,
+    filteredPackGroups,
+    filteredStandalone,
+    filteredStandaloneIds,
+    filteredTotal,
+    progressMap,
+    handleTogglePackEnabled,
+    handleRemovePack,
+  } = useChainGroups({
+    processors,
+    pipelineChain,
+    disabledChainIds,
+    packs,
+    lastResults,
+    progress,
+    sessionId,
+    removeFromChain,
+    toggleChainEnabled,
   });
-
-  // After packs load, auto-expand all if expandedPacks is empty (first visit)
-  const [expandedPacksInitialized, setExpandedPacksInitialized] = useState(false);
-  useEffect(() => {
-    if (!expandedPacksInitialized && packs.length > 0) {
-      setExpandedPacksInitialized(true);
-      setExpandedPacks((prev) => {
-        if (prev.size > 0) return prev;
-        // All packs expanded by default
-        return new Set(packs.map((p) => p.id));
-      });
-    }
-  }, [packs, expandedPacksInitialized]);
-
-  const handleTogglePackExpand = useCallback((packId: string) => {
-    setExpandedPacks((prev) => {
-      const next = new Set(prev);
-      if (next.has(packId)) next.delete(packId);
-      else next.add(packId);
-      return next;
-    });
-  }, []);
-
-  // Persist expandedPacks to localStorage via effect (not inside the updater —
-  // updaters are called twice in StrictMode, so side effects must live here).
-  useEffect(() => {
-    try { localStorage.setItem(LS_EXPANDED_PACKS_KEY, JSON.stringify([...expandedPacks])); } catch { /* ignore */ }
-  }, [expandedPacks]);
-
-  // ── Chain filter (local ephemeral state) ──
-  const [chainFilter, setChainFilter] = useState('');
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -449,10 +123,9 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
   );
 
   const handleRun = useCallback(async () => {
-    const sessionId = session?.sessionId;
     if (!sessionId) return;
     await pipeline.run(sessionId);
-  }, [session, pipeline]);
+  }, [sessionId, pipeline]);
 
   const [libraryOpen, setLibraryOpen] = useState(false);
 
@@ -469,159 +142,6 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
   const handleCloseLibrary = useCallback(() => {
     setLibraryOpen(false);
   }, []);
-
-  const disabledSet = useMemo(() => new Set(disabledChainIds), [disabledChainIds]);
-
-  const resultMap = useMemo(
-    () =>
-      new Map<string, PipelineRunSummary>(
-        (lastResults as PipelineRunSummary[]).map((r) => [r.processorId, r]),
-      ),
-    [lastResults],
-  );
-
-  const processorsById = useMemo(
-    () => new Map(processors.map((p) => [p.id, p])),
-    [processors],
-  );
-
-  const allChainProcessors = useMemo(
-    () =>
-      pipelineChain
-        .map((id) => processorsById.get(id))
-        .filter(Boolean) as NonNullable<(typeof processors)[0]>[],
-    [pipelineChain, processorsById],
-  );
-
-  const sortableProcessors = useMemo(
-    () => allChainProcessors.filter((p) => !PINNED_TAIL_IDS.has(p.id)),
-    [allChainProcessors],
-  );
-  const pinnedProcessors = useMemo(
-    () => allChainProcessors.filter((p) => PINNED_TAIL_IDS.has(p.id)),
-    [allChainProcessors],
-  );
-
-  // ── Filtered pinned processors (chain filter for pinned tail nodes) ──
-  const filteredPinned = useMemo(() => {
-    if (!chainFilter) return pinnedProcessors;
-    const q = chainFilter.toLowerCase();
-    return pinnedProcessors.filter((p) => p.name.toLowerCase().includes(q));
-  }, [pinnedProcessors, chainFilter]);
-
-  // ── Pack grouping ──
-
-  // Build pack groups from packs that have at least one processor in the sortable chain.
-  // Pack manifests use bare IDs ("wifi-state") but chain uses qualified IDs ("wifi-state@official").
-  const { packGroups, standaloneProcessors } = useMemo(() => {
-    // Map bare ID → chain processor for pack resolution
-    const chainByBareId = new Map(
-      sortableProcessors.map((p) => [getBareId(p.id), p]),
-    );
-
-    const groups: Array<{ pack: PackSummary; processors: NonNullable<typeof processors>[0][] }> = [];
-    const usedIds = new Set<string>();
-
-    for (const pack of packs) {
-      const packProcs = pack.processorIds
-        .map((bareId) => chainByBareId.get(bareId))
-        .filter(Boolean) as NonNullable<typeof processors>[0][];
-      if (packProcs.length > 0) {
-        groups.push({ pack, processors: packProcs });
-        packProcs.forEach((p) => usedIds.add(p.id));
-      }
-    }
-
-    // Standalone = in sortable chain but not belonging to any pack
-    const standalone = sortableProcessors.filter((p) => !usedIds.has(p.id));
-
-    return { packGroups: groups, standaloneProcessors: standalone };
-  }, [sortableProcessors, packs]);
-
-  // Stable lookup: packId → processor IDs (qualified), used by pack-level handlers.
-  // Keyed by packId so handlers don't need to close over per-pack data.
-  const packProcessorIdsMap = useMemo(
-    () => new Map(packGroups.map((g) => [g.pack.id, g.processors.map((p) => p.id)])),
-    [packGroups],
-  );
-
-  // Pack-level handlers — accept packId so they can be passed as stable useCallback
-  // refs to PackGroup without creating per-pack inline arrows in the render loop.
-  const handleTogglePackEnabled = useCallback(
-    (packId: string) => {
-      const packProcessorIds = packProcessorIdsMap.get(packId) ?? [];
-      // If all are enabled, disable all; otherwise enable all
-      const allEnabled = packProcessorIds.every((id) => !disabledSet.has(id));
-      for (const id of packProcessorIds) {
-        const isDisabled = disabledSet.has(id);
-        if (allEnabled && !isDisabled) {
-          toggleChainEnabled(id);
-        } else if (!allEnabled && isDisabled) {
-          toggleChainEnabled(id);
-        }
-      }
-    },
-    [packProcessorIdsMap, disabledSet, pipeline],
-  );
-
-  const handleRemovePack = useCallback(
-    (packId: string) => {
-      const packProcessorIds = packProcessorIdsMap.get(packId) ?? [];
-      for (const id of packProcessorIds) {
-        removeFromChain(id);
-      }
-    },
-    [packProcessorIdsMap, removeFromChain],
-  );
-
-  // Filtered pack groups and standalone (apply chainFilter when active)
-  const { filteredPackGroups, filteredStandalone } = useMemo(() => {
-    if (!chainFilter) {
-      return { filteredPackGroups: packGroups, filteredStandalone: standaloneProcessors };
-    }
-    const q = chainFilter.toLowerCase();
-    const filteredGroups = packGroups
-      .map((g) => ({
-        ...g,
-        processors: g.processors.filter((p) => p.name.toLowerCase().includes(q)),
-      }))
-      .filter((g) => g.processors.length > 0);
-    const filteredStandaloneArr = standaloneProcessors.filter((p) =>
-      p.name.toLowerCase().includes(q),
-    );
-    return { filteredPackGroups: filteredGroups, filteredStandalone: filteredStandaloneArr };
-  }, [packGroups, standaloneProcessors, chainFilter]);
-
-  const filteredStandaloneIds = useMemo(
-    () => filteredStandalone.map((p) => p.id),
-    [filteredStandalone],
-  );
-
-  // Total filtered count for chain filter display
-  const filteredTotal = useMemo(() => {
-    const packCount = filteredPackGroups.reduce((sum, g) => sum + g.processors.length, 0);
-    return packCount + filteredStandalone.length + filteredPinned.length;
-  }, [filteredPackGroups, filteredStandalone, filteredPinned]);
-
-  const isActive = running || isStreaming;
-  const sessionId = session?.sessionId ?? null;
-  const canRun = pipelineChain.length > 0 && !!sessionId && !running;
-
-  // Progress map from context
-  const progressMap = useMemo(() => {
-    if (!progress) return {};
-    const map: Record<string, PipelineProgress> = {};
-    for (const id of pipelineChain) {
-      map[id] = {
-        sessionId: sessionId ?? '',
-        processorId: id,
-        linesProcessed: progress.current,
-        totalLines: progress.total,
-        percent: progress.total > 0 ? (progress.current / progress.total) * 100 : 0,
-      };
-    }
-    return map;
-  }, [progress, pipelineChain]);
 
   return (
     <div className={styles.root}>
