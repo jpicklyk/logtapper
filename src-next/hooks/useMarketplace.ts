@@ -4,6 +4,7 @@ import type {
   MarketplaceEntry,
   MarketplacePackEntry,
   UpdateAvailable,
+  PackUpdateAvailable,
   UpdateCheckResult,
   UpdateResult,
   ProcessorSummary,
@@ -49,17 +50,19 @@ export interface MarketplaceState {
 
   // Updates
   pendingUpdates: UpdateAvailable[];
+  pendingPackUpdates: PackUpdateAvailable[];
   updatesLoading: boolean;
   updateResults: Map<string, UpdateResult>;
   checkUpdates(): Promise<void>;
   updateOne(processorId: string): Promise<void>;
   updateAllFromSource(sourceName: string): Promise<void>;
+  updatePack(sourceName: string, packEntry: MarketplacePackEntry): Promise<void>;
 }
 
 export function useMarketplace(): MarketplaceState {
   // Shared state from context (survives panel unmount)
   const ctx = useMarketplaceContext();
-  const { sources, sourcesLoading, pendingUpdates, updatesLoading, dispatch, setSources } = ctx;
+  const { sources, sourcesLoading, pendingUpdates, pendingPackUpdates, updatesLoading, dispatch, setSources } = ctx;
 
   // Browse (local — only needed while MarketplacePanel is mounted)
   const [selectedSource, setSelectedSource] = useState<string | null>(null);
@@ -162,6 +165,7 @@ export function useMarketplace(): MarketplaceState {
     try {
       const result: UpdateCheckResult = await checkUpdatesCmd();
       dispatch({ type: 'updates:loaded', updates: result.updates });
+      dispatch({ type: 'pack-updates:loaded', packUpdates: result.packUpdates });
       await saveSourcesToDisk();
       // Refresh sources to get updated last_checked timestamps
       const refreshed = await listSources();
@@ -236,6 +240,21 @@ export function useMarketplace(): MarketplaceState {
     }
   }, []);
 
+  const updatePack = useCallback(async (sourceName: string, packEntry: MarketplacePackEntry) => {
+    await installPackCmd(sourceName, {
+      id: packEntry.id,
+      name: packEntry.name,
+      version: packEntry.version,
+      description: packEntry.description,
+      path: packEntry.path,
+      tags: packEntry.tags,
+      sha256: packEntry.sha256,
+      category: packEntry.category,
+      processor_ids: packEntry.processorIds,
+    });
+    bus.emit('marketplace:pack-updated', { packId: packEntry.id, sourceName });
+  }, []);
+
   return {
     sources,
     sourcesLoading,
@@ -254,10 +273,12 @@ export function useMarketplace(): MarketplaceState {
     installPack,
     uninstallPack,
     pendingUpdates,
+    pendingPackUpdates,
     updatesLoading,
     updateResults,
     checkUpdates,
     updateOne,
     updateAllFromSource,
+    updatePack,
   };
 }

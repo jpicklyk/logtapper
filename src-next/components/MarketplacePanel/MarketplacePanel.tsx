@@ -25,8 +25,8 @@ export const MarketplacePanel = React.memo(function MarketplacePanel() {
             onClick={() => setTab(t)}
           >
             {t === 'browse' ? 'Browse' : t === 'updates' ? 'Updates' : 'Sources'}
-            {t === 'updates' && marketplace.pendingUpdates.length > 0 && (
-              <span className={css.tabCount}>{marketplace.pendingUpdates.length}</span>
+            {t === 'updates' && (marketplace.pendingUpdates.length + marketplace.pendingPackUpdates.length) > 0 && (
+              <span className={css.tabCount}>{marketplace.pendingUpdates.length + marketplace.pendingPackUpdates.length}</span>
             )}
             {t === 'sources' && marketplace.sources.length > 0 && (
               <span className={css.tabCount}>{marketplace.sources.length}</span>

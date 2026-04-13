@@ -1,6 +1,6 @@
 import { createContext, useContext, useReducer, useCallback, useEffect, useMemo, type ReactNode } from 'react';
-import type { Source, UpdateAvailable } from '../bridge/types';
-import { getPendingUpdates, checkUpdates as checkUpdatesCmd, listSources } from '../bridge/commands';
+import type { Source, UpdateAvailable, PackUpdateAvailable } from '../bridge/types';
+import { getPendingUpdates, getPendingPackUpdates, checkUpdates as checkUpdatesCmd, listSources } from '../bridge/commands';
 import { bus } from '../events/bus';
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -9,6 +9,7 @@ interface MarketplaceState {
   sources: Source[];
   sourcesLoading: boolean;
   pendingUpdates: UpdateAvailable[];
+  pendingPackUpdates: PackUpdateAvailable[];
   updatesLoading: boolean;
 }
 
@@ -16,6 +17,7 @@ const initialState: MarketplaceState = {
   sources: [],
   sourcesLoading: false,
   pendingUpdates: [],
+  pendingPackUpdates: [],
   updatesLoading: false,
 };
 
@@ -28,7 +30,9 @@ type MarketplaceAction =
   | { type: 'updates:loading' }
   | { type: 'updates:loaded'; updates: UpdateAvailable[] }
   | { type: 'updates:loaded-error' }
-  | { type: 'updates:decremented'; processorId: string };
+  | { type: 'updates:decremented'; processorId: string }
+  | { type: 'pack-updates:loaded'; packUpdates: PackUpdateAvailable[] }
+  | { type: 'pack-updates:decremented'; packId: string };
 
 // ── Reducer ───────────────────────────────────────────────────────────────────
 
@@ -50,6 +54,13 @@ function marketplaceReducer(state: MarketplaceState, action: MarketplaceAction):
       const next = state.pendingUpdates.filter((u) => u.processorId !== action.processorId);
       if (next.length === state.pendingUpdates.length) return state;
       return { ...state, pendingUpdates: next };
+    }
+    case 'pack-updates:loaded':
+      return { ...state, pendingPackUpdates: action.packUpdates };
+    case 'pack-updates:decremented': {
+      const next = state.pendingPackUpdates.filter((u) => u.packId !== action.packId);
+      if (next.length === state.pendingPackUpdates.length) return state;
+      return { ...state, pendingPackUpdates: next };
     }
     default:
       return state;
@@ -78,6 +89,10 @@ export function MarketplaceProvider({ children }: { children: ReactNode }) {
       .then((updates) => { if (!cancelled) dispatch({ type: 'updates:loaded', updates }); })
       .catch(() => { if (!cancelled) dispatch({ type: 'updates:loaded-error' }); });
 
+    getPendingPackUpdates()
+      .then((packUpdates) => { if (!cancelled) dispatch({ type: 'pack-updates:loaded', packUpdates }); })
+      .catch(() => {});
+
     listSources()
       .then((sources) => { if (!cancelled) dispatch({ type: 'sources:loaded', sources }); })
       .catch(() => { if (!cancelled) dispatch({ type: 'sources:loaded-error' }); });
@@ -93,7 +108,12 @@ export function MarketplaceProvider({ children }: { children: ReactNode }) {
       if (cancelled) return;
       dispatch({ type: 'updates:loading' });
       checkUpdatesCmd()
-        .then((result) => { if (!cancelled) dispatch({ type: 'updates:loaded', updates: result.updates }); })
+        .then((result) => {
+          if (!cancelled) {
+            dispatch({ type: 'updates:loaded', updates: result.updates });
+            dispatch({ type: 'pack-updates:loaded', packUpdates: result.packUpdates });
+          }
+        })
         .catch(() => { if (!cancelled) dispatch({ type: 'updates:loaded-error' }); });
       // Also refresh sources list (last_checked timestamps may have changed)
       listSources()
@@ -110,19 +130,31 @@ export function MarketplaceProvider({ children }: { children: ReactNode }) {
       if (cancelled) return;
       // Refresh updates after install — new processor may have different version landscape
       checkUpdatesCmd()
-        .then((result) => { if (!cancelled) dispatch({ type: 'updates:loaded', updates: result.updates }); })
+        .then((result) => {
+          if (!cancelled) {
+            dispatch({ type: 'updates:loaded', updates: result.updates });
+            dispatch({ type: 'pack-updates:loaded', packUpdates: result.packUpdates });
+          }
+        })
         .catch(() => {});
+    };
+
+    const handlePackUpdated = (e: { packId: string }) => {
+      if (cancelled) return;
+      dispatch({ type: 'pack-updates:decremented', packId: e.packId });
     };
 
     bus.on('marketplace:sources-changed', handleSourcesChanged);
     bus.on('marketplace:processor-updated', handleProcessorUpdated);
     bus.on('marketplace:processor-installed', handleProcessorInstalled);
+    bus.on('marketplace:pack-updated', handlePackUpdated);
 
     return () => {
       cancelled = true;
       bus.off('marketplace:sources-changed', handleSourcesChanged);
       bus.off('marketplace:processor-updated', handleProcessorUpdated);
       bus.off('marketplace:processor-installed', handleProcessorInstalled);
+      bus.off('marketplace:pack-updated', handlePackUpdated);
     };
   }, []);
 
@@ -150,3 +182,6 @@ export function useMarketplaceContext(): MarketplaceContextValue {
   }
   return ctx;
 }
+
+// @visibleForTesting
+export { marketplaceReducer, initialState };

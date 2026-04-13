@@ -37,6 +37,7 @@ import type {
   UpdateCheckResult,
   UpdateResult,
   UpdateAvailable,
+  PackUpdateAvailable,
   ExportAllSessionsInfo,
   ExportAllOptions,
   FileAssocEntry,
@@ -491,6 +492,10 @@ export function updateAllFromSource(sourceName: string): Promise<UpdateResult[]>
 
 export function getPendingUpdates(): Promise<UpdateAvailable[]> {
   return invoke('get_pending_updates');
+}
+
+export function getPendingPackUpdates(): Promise<PackUpdateAvailable[]> {
+  return invoke('get_pending_pack_updates');
 }
 
 export function saveSourcesToDisk(): Promise<void> {

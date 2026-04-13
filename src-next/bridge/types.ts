@@ -739,8 +739,19 @@ export interface SourceError {
   error: string;
 }
 
+export interface PackUpdateAvailable {
+  packId: string;
+  packName: string;
+  sourceName: string;
+  installedVersion: string;
+  availableVersion: string;
+  newProcessorIds: string[];
+  entry: MarketplacePackEntry;
+}
+
 export interface UpdateCheckResult {
   updates: UpdateAvailable[];
+  packUpdates: PackUpdateAvailable[];
   errors: SourceError[];
 }
 

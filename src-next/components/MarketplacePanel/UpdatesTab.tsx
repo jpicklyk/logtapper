@@ -1,5 +1,6 @@
 import React, { useMemo, useCallback } from 'react';
 import type { MarketplaceState } from '../../hooks';
+import type { PackUpdateAvailable } from '../../bridge/types';
 import css from './MarketplacePanel.module.css';
 
 interface Props {
@@ -7,7 +8,7 @@ interface Props {
 }
 
 export const UpdatesTab = React.memo(function UpdatesTab({ marketplace }: Props) {
-  const { pendingUpdates, updatesLoading, updateResults, checkUpdates, updateOne, updateAllFromSource } = marketplace;
+  const { pendingUpdates, pendingPackUpdates, updatesLoading, updateResults, checkUpdates, updateOne, updateAllFromSource, updatePack } = marketplace;
 
   const grouped = useMemo(() => {
     const map = new Map<string, typeof pendingUpdates>();
@@ -19,7 +20,18 @@ export const UpdatesTab = React.memo(function UpdatesTab({ marketplace }: Props)
     return map;
   }, [pendingUpdates]);
 
+  const groupedPackUpdates = useMemo(() => {
+    const map = new Map<string, typeof pendingPackUpdates>();
+    for (const u of pendingPackUpdates) {
+      const group = map.get(u.sourceName) ?? [];
+      group.push(u);
+      map.set(u.sourceName, group);
+    }
+    return map;
+  }, [pendingPackUpdates]);
+
   const [updating, setUpdating] = React.useState<Set<string>>(new Set());
+  const [updatingPacks, setUpdatingPacks] = React.useState<Set<string>>(new Set());
 
   const handleUpdateOne = useCallback(
     async (processorId: string) => {
@@ -58,13 +70,32 @@ export const UpdatesTab = React.memo(function UpdatesTab({ marketplace }: Props)
     [grouped, updateAllFromSource],
   );
 
+  const handleUpdatePack = useCallback(
+    async (update: PackUpdateAvailable) => {
+      setUpdatingPacks((prev) => new Set(prev).add(update.packId));
+      try {
+        await updatePack(update.sourceName, update.entry);
+      } finally {
+        setUpdatingPacks((prev) => {
+          const next = new Set(prev);
+          next.delete(update.packId);
+          return next;
+        });
+      }
+    },
+    [updatePack],
+  );
+
   return (
     <>
       <div className={css.toolbar}>
         <span className={css.updateSummary}>
-          {pendingUpdates.length === 0
-            ? 'All processors up to date'
-            : `${pendingUpdates.length} update${pendingUpdates.length !== 1 ? 's' : ''} available`}
+          {(() => {
+            const totalUpdates = pendingUpdates.length + pendingPackUpdates.length;
+            return totalUpdates === 0
+              ? 'All processors up to date'
+              : `${totalUpdates} update${totalUpdates !== 1 ? 's' : ''} available`;
+          })()}
         </span>
         <button
           className={`${css.fetchBtn}${updatesLoading ? ` ${css.fetchBtnLoading}` : ''}`}
@@ -80,10 +111,49 @@ export const UpdatesTab = React.memo(function UpdatesTab({ marketplace }: Props)
       </div>
 
       <div className={css.scroll}>
-        {pendingUpdates.length === 0 && !updatesLoading && (
+        {pendingUpdates.length === 0 && pendingPackUpdates.length === 0 && !updatesLoading && (
           <div className={css.empty}>
             No pending updates. Click <strong>Check for updates</strong> to scan all sources.
           </div>
+        )}
+
+        {pendingPackUpdates.length > 0 && (
+          Array.from(groupedPackUpdates.entries()).map(([sourceName, packs]) => (
+            <div key={`packs-${sourceName}`} className={css.updateGroup}>
+              <div className={css.updateGroupHeader}>
+                <span>{sourceName} — Packs</span>
+              </div>
+              {packs.map((u) => {
+                const isUpdating = updatingPacks.has(u.packId);
+                return (
+                  <div key={u.packId} className={css.updateRow}>
+                    <div className={css.updateInfo}>
+                      <span className={css.entryName}>{u.packName}</span>
+                      <span className={css.versionDiff}>
+                        <span className={css.oldVersion}>{u.installedVersion}</span>
+                        <span className={css.arrow}>&rarr;</span>
+                        <span className={css.newVersion}>{u.availableVersion}</span>
+                      </span>
+                      {u.newProcessorIds.length > 0 && (
+                        <span className={css.entryDesc}>
+                          {u.newProcessorIds.length} new processor{u.newProcessorIds.length !== 1 ? 's' : ''}
+                        </span>
+                      )}
+                    </div>
+                    <div className={css.updateAction}>
+                      <button
+                        className={css.actionBtnSmall}
+                        onClick={() => handleUpdatePack(u)}
+                        disabled={isUpdating}
+                      >
+                        {isUpdating ? <span className={css.spinner} /> : 'Update Pack'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))
         )}
 
         {Array.from(grouped.entries()).map(([sourceName, updates]) => (

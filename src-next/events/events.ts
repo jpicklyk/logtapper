@@ -120,6 +120,7 @@ export type AppEvents = {
   'marketplace:processor-updated':     { processorId: string; oldVersion: string; newVersion: string };
   'marketplace:processor-uninstalled': { processorId: string };
   'marketplace:sources-changed':       undefined;
+  'marketplace:pack-updated':          { packId: string; sourceName: string };
 
   // ── Workspace ──────────────────────────────────────────────────────────
   /** Fired by component-local hooks (bookmarks, analyses, editor dirty) that
