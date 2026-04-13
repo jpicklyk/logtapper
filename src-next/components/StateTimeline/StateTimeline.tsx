@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { StateTransition, TimelineSeriesData, ProcessorSummary, Bookmark } from '../../bridge/types';
+import type { TimelineSeriesData, ProcessorSummary, Bookmark } from '../../bridge/types';
 import type { AppEvents } from '../../events/events';
 import { getTimelineData } from '../../bridge/commands';
 import { Button } from '../../ui';
@@ -14,48 +14,19 @@ import { useStateTracker, useBookmarks, useSettings } from '../../hooks';
 import { bus } from '../../events';
 import { clamp } from '../../utils';
 import styles from './StateTimeline.module.css';
-
-type Viewport = readonly [number, number];
-
-interface TrackerTimeline {
-  trackerId: string;
-  trackerName: string;
-  transitions: StateTransition[];
-}
-
-// ── Utilities ────────────────────────────────────────────────────────────────
-
-function formatTs(tsNanos: number, includeDate = false): string {
-  const d = new Date(tsNanos / 1_000_000);
-  const time = [
-    d.getUTCHours().toString().padStart(2, '0'),
-    d.getUTCMinutes().toString().padStart(2, '0'),
-    d.getUTCSeconds().toString().padStart(2, '0'),
-  ].join(':') + '.' + d.getUTCMilliseconds().toString().padStart(3, '0');
-  if (!includeDate) return time;
-  const month = (d.getUTCMonth() + 1).toString().padStart(2, '0');
-  const day = d.getUTCDate().toString().padStart(2, '0');
-  return `${month}-${day} ${time}`;
-}
-
-function fmtDuration(nanos: number): string {
-  if (nanos < 1e6) return `${(nanos / 1e3).toFixed(1)}us`;
-  if (nanos < 1e9) return `${(nanos / 1e6).toFixed(0)}ms`;
-  if (nanos < 60e9) return `${(nanos / 1e9).toFixed(2)}s`;
-  if (nanos < 3600e9) return `${(nanos / 60e9).toFixed(1)}m`;
-  return `${(nanos / 3600e9).toFixed(2)}h`;
-}
-
-/** Convert a line number to a CSS percentage position within the viewport. */
-function linePct(lineNum: number, maxLine: number, vpS: number, vpSpan: number): string {
-  return `${((lineNum / maxLine - vpS) / vpSpan * 100).toFixed(4)}%`;
-}
-
-function niceLineStep(raw: number): number {
-  const steps = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000];
-  for (const s of steps) if (s >= raw) return s;
-  return steps[steps.length - 1];
-}
+import {
+  type Viewport,
+  type TrackerTimeline,
+  formatTs,
+  fmtDuration,
+  linePct,
+  doZoom,
+  doPan,
+  LABEL_W,
+} from './timelineUtils';
+import TimelineTrack from './TimelineTrack';
+import SparklineTrack from './SparklineTrack';
+import LineRuler from './LineRuler';
 
 /** Selection cursor overlay — spans the full height of the interact area.
  *  The overlay div covers the track body area (left: LABEL_W, right: 0)
@@ -74,9 +45,9 @@ function SelectionCursors({
   if (!selectedRange) return null;
   return (
     <div className={styles.cursorOverlay}>
-      <div className={styles.cursor} style={{ left: linePct(selectedRange[0], maxLine, vpS, vpSpan) }} />
+      <div className={styles.cursor} style={{ '--cursor-pos': linePct(selectedRange[0], maxLine, vpS, vpSpan) } as React.CSSProperties} />
       {selectedRange[0] !== selectedRange[1] && (
-        <div className={styles.cursor} style={{ left: linePct(selectedRange[1], maxLine, vpS, vpSpan) }} />
+        <div className={styles.cursor} style={{ '--cursor-pos': linePct(selectedRange[1], maxLine, vpS, vpSpan) } as React.CSSProperties} />
       )}
     </div>
   );
@@ -111,7 +82,7 @@ const BookmarkMarkers = React.memo(function BookmarkMarkers({
           <div
             key={b.id}
             className={styles.bookmarkMarker}
-            style={{ left: linePct(b.lineNumber, maxLine, vpS, vpSpan), backgroundColor: color }}
+            style={{ '--marker-pos': linePct(b.lineNumber, maxLine, vpS, vpSpan), '--marker-color': color } as React.CSSProperties}
             title={b.label}
             onClick={(e) => { e.stopPropagation(); jumpToLine(b.lineNumber); }}
           />
@@ -120,26 +91,6 @@ const BookmarkMarkers = React.memo(function BookmarkMarkers({
     </div>
   );
 });
-
-function doZoom([s, e]: Viewport, xFrac: number, zoomIn: boolean): Viewport {
-  const span = e - s;
-  const factor = zoomIn ? 0.6 : 1 / 0.6;
-  const newSpan = clamp(span * factor, 0.0005, 1);
-  const center = s + xFrac * span;
-  let ns = center - xFrac * newSpan;
-  let ne = ns + newSpan;
-  if (ns < 0) { ns = 0; ne = newSpan; }
-  if (ne > 1) { ne = 1; ns = 1 - newSpan; }
-  return [ns, ne];
-}
-
-function doPan([s, e]: Viewport, deltaNorm: number): Viewport {
-  const span = e - s;
-  const ns = clamp(s + deltaNorm, 0, 1 - span);
-  return [ns, ns + span];
-}
-
-const LABEL_W = 130;
 
 // ── Main component ───────────────────────────────────────────────────────────
 
@@ -441,287 +392,3 @@ const StateTimeline = React.memo(function StateTimeline() {
 
 export default StateTimeline;
 
-// ── TimelineTrack ────────────────────────────────────────────────────────────
-
-function TimelineTrack({
-  timeline,
-  vp,
-  totalLines,
-  onJump,
-  showDate = false,
-}: {
-  timeline: TrackerTimeline;
-  vp: Viewport;
-  totalLines: number;
-  onJump: (line: number) => void;
-  showDate?: boolean;
-}) {
-  const [tooltip, setTooltip] = useState<{ cx: number; cy: number; label: string } | null>(null);
-
-  const [vpS, vpE] = vp;
-  const vpSpan = Math.max(vpE - vpS, 1e-9);
-  const maxLine = Math.max(totalLines - 1, 1);
-
-  const visible = timeline.transitions.filter((t) => {
-    const norm = t.lineNum / maxLine;
-    return norm >= vpS - 0.01 && norm <= vpE + 0.01;
-  });
-
-  return (
-    <div className={styles.track}>
-      <div className={styles.trackLabel} title={timeline.trackerName}>
-        {timeline.trackerName}
-      </div>
-      <div className={styles.trackBody}>
-        <div className={styles.rail} />
-        {visible.map((t) => (
-          <button
-            key={t.lineNum}
-            className={`${styles.tick}${t.timestamp === 0 ? ` ${styles.tickNoTs}` : ''}`}
-            style={{ left: linePct(t.lineNum, maxLine, vpS, vpSpan) }}
-            onMouseEnter={(e) =>
-              setTooltip({
-                cx: e.clientX,
-                cy: e.clientY,
-                label: t.timestamp > 0
-                  ? `${t.transitionName} . ${formatTs(t.timestamp, showDate)} . L${(t.lineNum + 1).toLocaleString()}`
-                  : `${t.transitionName} . L${(t.lineNum + 1).toLocaleString()} (no timestamp)`,
-              })
-            }
-            onMouseMove={(e) => setTooltip((prev) => (prev ? { ...prev, cx: e.clientX, cy: e.clientY } : prev))}
-            onMouseLeave={() => setTooltip(null)}
-            onClick={() => onJump(t.lineNum)}
-          />
-        ))}
-      </div>
-      {tooltip && (
-        <div
-          className={styles.tooltip}
-          style={{ left: tooltip.cx, top: tooltip.cy - 40 }}
-        >
-          {tooltip.label}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── SparklineTrack ───────────────────────────────────────────────────────────
-
-function SparklineTrack({
-  series,
-  vp,
-  totalLines,
-  onJump,
-  minTs,
-  tsRange,
-  hasTimeData,
-  showDate = false,
-}: {
-  series: TimelineSeriesData;
-  vp: Viewport;
-  totalLines: number;
-  onJump: (line: number) => void;
-  minTs: number;
-  tsRange: number;
-  hasTimeData: boolean;
-  showDate?: boolean;
-}) {
-  const [tooltip, setTooltip] = useState<{ cx: number; cy: number; label: string } | null>(null);
-  const svgRef = useRef<SVGSVGElement>(null);
-
-  const [vpS, vpE] = vp;
-  const vpSpan = Math.max(vpE - vpS, 1e-9);
-  const maxLine = Math.max(totalLines - 1, 1);
-  const color = series.color ?? 'var(--accent)';
-  const TRACK_HEIGHT = 40;
-  const PADDING_Y = 4;
-  const drawH = TRACK_HEIGHT - PADDING_Y * 2;
-  const valRange = series.maxValue - series.minValue;
-  const effectiveRange = valRange > 0 ? valRange : 1;
-
-  const pathData = useMemo(() => {
-    const pts = series.points;
-    if (pts.length === 0) return { linePath: '', areaPath: '' };
-    const margin = vpSpan * 0.02;
-    const visiblePts = pts.filter((p) => {
-      const norm = p.lineNum / maxLine;
-      return norm >= vpS - margin && norm <= vpE + margin;
-    });
-    if (visiblePts.length === 0) return { linePath: '', areaPath: '' };
-    const toX = (lineNum: number) => {
-      const norm = lineNum / maxLine;
-      return ((norm - vpS) / vpSpan) * 100;
-    };
-    const toY = (val: number) => {
-      const normalized = (val - series.minValue) / effectiveRange;
-      return PADDING_Y + drawH * (1 - normalized);
-    };
-    const lineSegments = visiblePts.map((p) => `${toX(p.lineNum).toFixed(3)},${toY(p.value).toFixed(2)}`);
-    const linePath = `M${lineSegments.join(' L')}`;
-    const firstX = toX(visiblePts[0].lineNum).toFixed(3);
-    const lastX = toX(visiblePts[visiblePts.length - 1].lineNum).toFixed(3);
-    const bottomY = TRACK_HEIGHT.toFixed(2);
-    const areaPath = `${linePath} L${lastX},${bottomY} L${firstX},${bottomY} Z`;
-    return { linePath, areaPath };
-  }, [series.points, vpS, vpE, vpSpan, maxLine, series.minValue, effectiveRange, drawH]);
-
-  const handleMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    const xFrac = (e.clientX - rect.left) / rect.width;
-    const lineAtCursor = (vpS + xFrac * vpSpan) * maxLine;
-    let nearest = series.points[0];
-    let bestDist = Infinity;
-    for (const p of series.points) {
-      const dist = Math.abs(p.lineNum - lineAtCursor);
-      if (dist < bestDist) { bestDist = dist; nearest = p; }
-    }
-    if (nearest) {
-      const formattedVal = Number.isInteger(nearest.value)
-        ? nearest.value.toLocaleString()
-        : nearest.value.toFixed(1);
-      let tsLabel = '';
-      if (hasTimeData && tsRange > 0) {
-        const norm = nearest.lineNum / maxLine;
-        const approxTs = minTs + norm * tsRange;
-        tsLabel = ` . ~${formatTs(approxTs, showDate)}`;
-      }
-      setTooltip({
-        cx: e.clientX,
-        cy: e.clientY,
-        label: `${series.label}: ${formattedVal} . L${(nearest.lineNum + 1).toLocaleString()}${tsLabel}`,
-      });
-    }
-  }, [series.points, series.label, vpS, vpSpan, maxLine, hasTimeData, tsRange, minTs, showDate]);
-
-  const handleClick = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    const xFrac = (e.clientX - rect.left) / rect.width;
-    const lineAtCursor = (vpS + xFrac * vpSpan) * maxLine;
-    let nearest = series.points[0];
-    let bestDist = Infinity;
-    for (const p of series.points) {
-      const dist = Math.abs(p.lineNum - lineAtCursor);
-      if (dist < bestDist) { bestDist = dist; nearest = p; }
-    }
-    if (nearest) onJump(nearest.lineNum);
-  }, [series.points, vpS, vpSpan, maxLine, onJump]);
-
-  const minLabel = Number.isInteger(series.minValue) ? series.minValue.toLocaleString() : series.minValue.toFixed(1);
-  const maxLabel = Number.isInteger(series.maxValue) ? series.maxValue.toLocaleString() : series.maxValue.toFixed(1);
-
-  return (
-    <div className={styles.track}>
-      <div className={styles.trackLabel} title={`${series.processorName}: ${series.label}`} style={{ color }}>
-        {series.processorName}: {series.label}
-      </div>
-      <div className={styles.trackBody}>
-        <svg
-          ref={svgRef}
-          className={styles.sparklineSvg}
-          viewBox={`0 0 100 ${TRACK_HEIGHT}`}
-          preserveAspectRatio="none"
-          onMouseMove={handleMouseMove}
-          onMouseLeave={() => setTooltip(null)}
-          onClick={handleClick}
-        >
-          {pathData.areaPath && <path d={pathData.areaPath} fill={color} opacity="0.12" />}
-          {pathData.linePath && (
-            <path d={pathData.linePath} fill="none" stroke={color} strokeWidth="0.4" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
-          )}
-        </svg>
-        <span className={styles.ymax}>{maxLabel}</span>
-        <span className={styles.ymin}>{minLabel}</span>
-      </div>
-      {tooltip && (
-        <div className={styles.tooltip} style={{ left: tooltip.cx, top: tooltip.cy - 40 }}>
-          {tooltip.label}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── LineRuler ─────────────────────────────────────────────────────────────────
-
-function LineRuler({
-  vp,
-  totalLines,
-  onPan,
-}: {
-  vp: Viewport;
-  totalLines: number;
-  onPan: (deltaNorm: number) => void;
-}) {
-  const bodyRef = useRef<HTMLDivElement>(null);
-  const [bodyW, setBodyW] = useState(0);
-
-  useEffect(() => {
-    const el = bodyRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(([e]) => setBodyW(e.contentRect.width));
-    ro.observe(el);
-    setBodyW(el.clientWidth);
-    return () => ro.disconnect();
-  }, []);
-
-  const [vpS, vpE] = vp;
-  const vpSpan = Math.max(vpE - vpS, 1e-9);
-  const maxLine = Math.max(totalLines - 1, 1);
-
-  const normPct = (norm: number) => linePct(norm * maxLine, maxLine, vpS, vpSpan);
-
-  const lineTicks = (() => {
-    const visMinLine = vpS * maxLine;
-    const visDurLine = vpSpan * maxLine;
-    const count = Math.max(2, Math.floor(bodyW / 70));
-    const step = niceLineStep(visDurLine / count);
-    const first = Math.ceil(visMinLine / step) * step;
-    const result: { norm: number; label: string }[] = [];
-    for (let ln = first; ln <= visMinLine + visDurLine; ln += step) {
-      result.push({ norm: ln / maxLine, label: (ln + 1).toLocaleString() });
-      if (result.length > 200) break;
-    }
-    return result;
-  })();
-
-  const onMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    let lastX = e.clientX;
-    const w = bodyRef.current?.getBoundingClientRect().width ?? 1;
-    const span = vpSpan;
-    const onMove = (ev: MouseEvent) => {
-      const dx = ev.clientX - lastX;
-      lastX = ev.clientX;
-      onPan(-(dx / w) * span);
-    };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  };
-
-  return (
-    <div className={styles.ruler}>
-      <div className={styles.rulerSpacer}>
-        <div className={styles.rulerAxisLabel}>Line #</div>
-      </div>
-      <div className={styles.rulerBody} ref={bodyRef} onMouseDown={onMouseDown}>
-        <div className={styles.rulerRow}>
-          {lineTicks.map((tick, i) => (
-            <div key={i} className={styles.rulerTick} style={{ left: normPct(tick.norm) }}>
-              <span className={styles.rulerLabel}>{tick.label}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}

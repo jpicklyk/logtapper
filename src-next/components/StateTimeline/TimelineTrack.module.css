@@ -1,0 +1,37 @@
+.rail {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--border);
+}
+
+.tick {
+  position: absolute;
+  left: var(--tick-pos);
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  margin-top: -4px;
+  margin-left: -4px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  border: 1px solid var(--bg-base);
+  cursor: pointer;
+  z-index: 1;
+  transition: transform var(--transition-fast);
+}
+
+.tick:hover {
+  transform: scale(1.4);
+}
+
+.tick:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.tickNoTs {
+  background: var(--text-dimmed);
+}

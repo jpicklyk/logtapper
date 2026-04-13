@@ -1,0 +1,24 @@
+.sparklineSvg {
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+}
+
+.ymax,
+.ymin {
+  position: absolute;
+  right: 4px;
+  font-size: 8px;
+  color: var(--text-dimmed);
+  opacity: 0.5;
+  font-family: var(--font-mono);
+  pointer-events: none;
+}
+
+.ymax {
+  top: 2px;
+}
+
+.ymin {
+  bottom: 2px;
+}

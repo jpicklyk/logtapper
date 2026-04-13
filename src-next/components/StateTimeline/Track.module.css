@@ -1,0 +1,45 @@
+/* Shared track classes used by TimelineTrack and SparklineTrack */
+
+.track {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+}
+
+.trackLabel {
+  width: 128px;
+  flex-shrink: 0;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: var(--track-color, var(--text-dimmed));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+}
+
+.trackBody {
+  flex: 1;
+  height: 40px;
+  min-height: 28px;
+  position: relative;
+  overflow: hidden;
+}
+
+.tooltip {
+  position: fixed;
+  left: var(--tt-x);
+  top: var(--tt-y);
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-overlay);
+  color: var(--text);
+  font-size: 10px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: var(--z-tooltip);
+  box-shadow: var(--shadow-popover);
+}
