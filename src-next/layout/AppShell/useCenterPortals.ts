@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useReducer, useRef } from 'react';
-import { findTabAcrossTree, allPanes } from '../../hooks/workspace/splitTreeHelpers';
+import { findTabAcrossTree, allPanes } from '../../hooks/workspace';
 import type { SplitNode, CenterPane, WorkspaceLayoutState } from '../../hooks';
 
 interface UseCenterPortalsParams {

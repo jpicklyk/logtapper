@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
   FileText,
@@ -39,8 +39,6 @@ const LEFT_TOP_ITEMS = [
   { id: 'bookmarks', icon: Bookmark, label: 'Bookmarks' },
   { id: 'analysis', icon: PenLine, label: 'Analysis' },
 ];
-
-const RIGHT_BOTTOM_ITEMS: { id: string; icon: React.ComponentType<{ size?: number | string }>; label: string }[] = [];
 
 export const AppShell = React.memo(function AppShell({ workspace }: AppShellProps) {
   const { settingsHook, anonymizerConfig, settingsOpen, closeSettings, toasts, dismissToast } =
@@ -88,31 +86,18 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
     [workspace.toggleRightPane],
   );
 
-  const handleRightBottomToggle = useCallback((_id: string) => {
-    // No right-bottom items currently — settings moved to Header
-  }, []);
-
-  // -- Active bottom tab id for left toolbar bottom group --
-  const activeBottomId = useMemo(() => {
-    return workspace.bottomPaneVisible ? workspace.bottomPaneTab : null;
-  }, [workspace.bottomPaneVisible, workspace.bottomPaneTab]);
-
-  // -- Active right tab id --
-  const activeRightId = useMemo(() => {
-    return workspace.rightPaneVisible ? workspace.rightPaneTab : null;
-  }, [workspace.rightPaneVisible, workspace.rightPaneTab]);
+  const activeBottomId = workspace.bottomPaneVisible ? workspace.bottomPaneTab : null;
+  const activeRightId = workspace.rightPaneVisible ? workspace.rightPaneTab : null;
 
   return (
     <div
       className={styles.shell}
       style={{ '--left-pane-width': `${workspace.leftPaneWidth}px` } as React.CSSProperties}
     >
-      {/* Header */}
       <div className={styles.header}>
         <Header />
       </div>
 
-      {/* Left toolbar */}
       <div className={styles.ltoolbar}>
         <ToolBar
           topItems={LEFT_TOP_ITEMS}
@@ -125,7 +110,6 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
         />
       </div>
 
-      {/* Left pane */}
       <div className={styles.left}>
         <ToolPane
           position="left"
@@ -140,7 +124,6 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
         </ToolPane>
       </div>
 
-      {/* Center area */}
       <div className={styles.center}>
         <CenterArea
           tree={workspace.centerTree}
@@ -156,7 +139,6 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
         />
       </div>
 
-      {/* Right pane */}
       <div className={styles.right}>
         <ToolPane
           position="right"
@@ -168,20 +150,16 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
         </ToolPane>
       </div>
 
-      {/* Right toolbar */}
       <div className={styles.rtoolbar}>
         <ToolBar
           topItems={rightTopItems}
-          bottomItems={RIGHT_BOTTOM_ITEMS}
           activeTopId={activeRightId}
           activeBottomId={null}
           onTopToggle={handleRightTopToggle}
-          onBottomToggle={handleRightBottomToggle}
           position="right"
         />
       </div>
 
-      {/* Settings modal */}
       {settingsOpen && (
         <SettingsPanel
           settings={settingsHook.settings}
@@ -192,7 +170,6 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
         />
       )}
 
-      {/* Bottom pane */}
       <div className={styles.bottom}>
         <ToolPane
           position="bottom"
@@ -204,7 +181,6 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
         </ToolPane>
       </div>
 
-      {/* Status bar: always show info for the last-focused log pane */}
       <div className={styles.status}>
         <StatusBar activeLogPaneId={workspace.activeLogPaneId} />
       </div>
@@ -227,7 +203,6 @@ export const AppShell = React.memo(function AppShell({ workspace }: AppShellProp
         );
       })}
 
-      {/* Toast notifications (e.g. MCP-published analyses) */}
       <Toast toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
