@@ -276,6 +276,9 @@ const StateTimeline = React.memo(function StateTimeline() {
   const zoomBy = useCallback((zoomIn: boolean) => {
     setVp((prev) => doZoom(prev, 0.5, zoomIn));
   }, []);
+  const handlePan = useCallback((d: number) => {
+    setVp((prev) => doPan(prev, d));
+  }, []);
 
 
   const visMinTs = minTs + vp[0] * tsRange;
@@ -370,7 +373,7 @@ const StateTimeline = React.memo(function StateTimeline() {
         <LineRuler
           vp={vp}
           totalLines={totalLines}
-          onPan={(d) => setVp((prev) => doPan(prev, d))}
+          onPan={handlePan}
         />
 
         {/* Selection cursors span the full height of the interact area (all tracks + ruler) */}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import type { Viewport, TrackerTimeline } from './timelineUtils';
 import { linePct, formatTs } from './timelineUtils';
 import trackStyles from './Track.module.css';
@@ -25,10 +25,10 @@ const TimelineTrack = React.memo(function TimelineTrack({
   const vpSpan = Math.max(vpE - vpS, 1e-9);
   const maxLine = Math.max(totalLines - 1, 1);
 
-  const visible = timeline.transitions.filter((t) => {
+  const visible = useMemo(() => timeline.transitions.filter((t) => {
     const norm = t.lineNum / maxLine;
     return norm >= vpS - 0.01 && norm <= vpE + 0.01;
-  });
+  }), [timeline.transitions, vpS, vpE, maxLine]);
 
   return (
     <div className={trackStyles.track}>

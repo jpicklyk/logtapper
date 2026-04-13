@@ -65,9 +65,9 @@ const SparklineTrack = React.memo(function SparklineTrack({
     return { linePath, areaPath };
   }, [series.points, vpS, vpE, vpSpan, maxLine, series.minValue, effectiveRange, drawH]);
 
-  const handleMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+  const nearestAtEvent = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
     const svg = svgRef.current;
-    if (!svg) return;
+    if (!svg) return null;
     const rect = svg.getBoundingClientRect();
     const xFrac = (e.clientX - rect.left) / rect.width;
     const lineAtCursor = (vpS + xFrac * vpSpan) * maxLine;
@@ -77,38 +77,32 @@ const SparklineTrack = React.memo(function SparklineTrack({
       const dist = Math.abs(p.lineNum - lineAtCursor);
       if (dist < bestDist) { bestDist = dist; nearest = p; }
     }
-    if (nearest) {
-      const formattedVal = Number.isInteger(nearest.value)
-        ? nearest.value.toLocaleString()
-        : nearest.value.toFixed(1);
-      let tsLabel = '';
-      if (hasTimeData && tsRange > 0) {
-        const norm = nearest.lineNum / maxLine;
-        const approxTs = minTs + norm * tsRange;
-        tsLabel = ` . ~${formatTs(approxTs, showDate)}`;
-      }
-      setTooltip({
-        cx: e.clientX,
-        cy: e.clientY,
-        label: `${series.label}: ${formattedVal} . L${(nearest.lineNum + 1).toLocaleString()}${tsLabel}`,
-      });
+    return nearest ?? null;
+  }, [series.points, vpS, vpSpan, maxLine]);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    const nearest = nearestAtEvent(e);
+    if (!nearest) return;
+    const formattedVal = Number.isInteger(nearest.value)
+      ? nearest.value.toLocaleString()
+      : nearest.value.toFixed(1);
+    let tsLabel = '';
+    if (hasTimeData && tsRange > 0) {
+      const norm = nearest.lineNum / maxLine;
+      const approxTs = minTs + norm * tsRange;
+      tsLabel = ` . ~${formatTs(approxTs, showDate)}`;
     }
-  }, [series.points, series.label, vpS, vpSpan, maxLine, hasTimeData, tsRange, minTs, showDate]);
+    setTooltip({
+      cx: e.clientX,
+      cy: e.clientY,
+      label: `${series.label}: ${formattedVal} . L${(nearest.lineNum + 1).toLocaleString()}${tsLabel}`,
+    });
+  }, [nearestAtEvent, series.label, maxLine, hasTimeData, tsRange, minTs, showDate]);
 
   const handleClick = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    const xFrac = (e.clientX - rect.left) / rect.width;
-    const lineAtCursor = (vpS + xFrac * vpSpan) * maxLine;
-    let nearest = series.points[0];
-    let bestDist = Infinity;
-    for (const p of series.points) {
-      const dist = Math.abs(p.lineNum - lineAtCursor);
-      if (dist < bestDist) { bestDist = dist; nearest = p; }
-    }
+    const nearest = nearestAtEvent(e);
     if (nearest) onJump(nearest.lineNum);
-  }, [series.points, vpS, vpSpan, maxLine, onJump]);
+  }, [nearestAtEvent, onJump]);
 
   const minLabel = Number.isInteger(series.minValue) ? series.minValue.toLocaleString() : series.minValue.toFixed(1);
   const maxLabel = Number.isInteger(series.maxValue) ? series.maxValue.toLocaleString() : series.maxValue.toFixed(1);

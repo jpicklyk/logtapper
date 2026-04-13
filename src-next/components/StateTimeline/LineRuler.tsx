@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { Viewport } from './timelineUtils';
 import { linePct, niceLineStep } from './timelineUtils';
 import styles from './LineRuler.module.css';
@@ -28,7 +28,7 @@ const LineRuler = React.memo(function LineRuler({ vp, totalLines, onPan }: LineR
 
   const normPct = (norm: number) => linePct(norm * maxLine, maxLine, vpS, vpSpan);
 
-  const lineTicks = (() => {
+  const lineTicks = useMemo(() => {
     const visMinLine = vpS * maxLine;
     const visDurLine = vpSpan * maxLine;
     const count = Math.max(2, Math.floor(bodyW / 70));
@@ -40,7 +40,7 @@ const LineRuler = React.memo(function LineRuler({ vp, totalLines, onPan }: LineR
       if (result.length > 200) break;
     }
     return result;
-  })();
+  }, [vpS, vpSpan, maxLine, bodyW]);
 
   const onMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
