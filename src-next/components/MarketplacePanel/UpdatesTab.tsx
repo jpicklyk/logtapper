@@ -86,17 +86,15 @@ export const UpdatesTab = React.memo(function UpdatesTab({ marketplace }: Props)
     [updatePack],
   );
 
+  const totalUpdates = pendingUpdates.length + pendingPackUpdates.length;
+  const summaryText = totalUpdates === 0
+    ? 'All processors up to date'
+    : `${totalUpdates} update${totalUpdates !== 1 ? 's' : ''} available`;
+
   return (
     <>
       <div className={css.toolbar}>
-        <span className={css.updateSummary}>
-          {(() => {
-            const totalUpdates = pendingUpdates.length + pendingPackUpdates.length;
-            return totalUpdates === 0
-              ? 'All processors up to date'
-              : `${totalUpdates} update${totalUpdates !== 1 ? 's' : ''} available`;
-          })()}
-        </span>
+        <span className={css.updateSummary}>{summaryText}</span>
         <button
           className={`${css.fetchBtn}${updatesLoading ? ` ${css.fetchBtnLoading}` : ''}`}
           onClick={checkUpdates}
@@ -111,7 +109,7 @@ export const UpdatesTab = React.memo(function UpdatesTab({ marketplace }: Props)
       </div>
 
       <div className={css.scroll}>
-        {pendingUpdates.length === 0 && pendingPackUpdates.length === 0 && !updatesLoading && (
+        {totalUpdates === 0 && !updatesLoading && (
           <div className={css.empty}>
             No pending updates. Click <strong>Check for updates</strong> to scan all sources.
           </div>

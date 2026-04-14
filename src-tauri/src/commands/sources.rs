@@ -521,9 +521,7 @@ pub async fn get_pending_updates(
     state: State<'_, AppState>,
 ) -> Result<Vec<UpdateAvailable>, String> {
     let mut pending = lock_or_err(&state.pending_updates, "pending_updates")?;
-    let result = pending.clone();
-    pending.clear();
-    Ok(result)
+    Ok(std::mem::take(&mut *pending))
 }
 
 /// Get pending pack updates discovered by the startup check.
@@ -533,9 +531,7 @@ pub async fn get_pending_pack_updates(
     state: State<'_, AppState>,
 ) -> Result<Vec<PackUpdateAvailable>, String> {
     let mut pending = lock_or_err(&state.pending_pack_updates, "pending_pack_updates")?;
-    let result = pending.clone();
-    pending.clear();
-    Ok(result)
+    Ok(std::mem::take(&mut *pending))
 }
 
 // ---------------------------------------------------------------------------

@@ -91,7 +91,7 @@ export function MarketplaceProvider({ children }: { children: ReactNode }) {
 
     getPendingPackUpdates()
       .then((packUpdates) => { if (!cancelled) dispatch({ type: 'pack-updates:loaded', packUpdates }); })
-      .catch(() => {});
+      .catch(() => { /* startup pending packs are best-effort — check_updates is the primary path */ });
 
     listSources()
       .then((sources) => { if (!cancelled) dispatch({ type: 'sources:loaded', sources }); })
@@ -104,9 +104,7 @@ export function MarketplaceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
 
-    const handleSourcesChanged = () => {
-      if (cancelled) return;
-      dispatch({ type: 'updates:loading' });
+    const refreshUpdates = (onError?: () => void) => {
       checkUpdatesCmd()
         .then((result) => {
           if (!cancelled) {
@@ -114,7 +112,13 @@ export function MarketplaceProvider({ children }: { children: ReactNode }) {
             dispatch({ type: 'pack-updates:loaded', packUpdates: result.packUpdates });
           }
         })
-        .catch(() => { if (!cancelled) dispatch({ type: 'updates:loaded-error' }); });
+        .catch(() => { if (!cancelled) onError?.(); });
+    };
+
+    const handleSourcesChanged = () => {
+      if (cancelled) return;
+      dispatch({ type: 'updates:loading' });
+      refreshUpdates(() => dispatch({ type: 'updates:loaded-error' }));
       // Also refresh sources list (last_checked timestamps may have changed)
       listSources()
         .then((sources) => { if (!cancelled) dispatch({ type: 'sources:loaded', sources }); })
@@ -128,15 +132,7 @@ export function MarketplaceProvider({ children }: { children: ReactNode }) {
 
     const handleProcessorInstalled = () => {
       if (cancelled) return;
-      // Refresh updates after install — new processor may have different version landscape
-      checkUpdatesCmd()
-        .then((result) => {
-          if (!cancelled) {
-            dispatch({ type: 'updates:loaded', updates: result.updates });
-            dispatch({ type: 'pack-updates:loaded', packUpdates: result.packUpdates });
-          }
-        })
-        .catch(() => {});
+      refreshUpdates();
     };
 
     const handlePackUpdated = (e: { packId: string }) => {
