@@ -62,7 +62,11 @@ export interface MarketplaceState {
 export function useMarketplace(): MarketplaceState {
   // Shared state from context (survives panel unmount)
   const ctx = useMarketplaceContext();
-  const { sources, sourcesLoading, pendingUpdates, pendingPackUpdates, updatesLoading, setSources, setSourcesLoading, setSourcesError, setUpdatesLoading, setUpdates, setPackUpdates, setUpdatesError } = ctx;
+  const {
+    sources, sourcesLoading, pendingUpdates, pendingPackUpdates, updatesLoading,
+    setSources, setSourcesLoading, setSourcesError,
+    setUpdatesLoading, setUpdates, setPackUpdates, setUpdatesError,
+  } = ctx;
 
   // Browse (local — only needed while MarketplacePanel is mounted)
   const [selectedSource, setSelectedSource] = useState<string | null>(null);

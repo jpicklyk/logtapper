@@ -85,6 +85,7 @@ export default tseslint.config(
       // ── Convention 4: No direct invoke()/Channel outside bridge ─────
       // ── Convention 5: No direct listen() outside bridge + 2 hooks ───
       // ── Convention 9: No deprecated useViewerActions ────────────────
+      // ── Convention 10: No deprecated useSessionContext ──────────────
       'no-restricted-imports': ['error', {
         patterns: [
           {
@@ -101,6 +102,11 @@ export default tseslint.config(
             group: ['**/context', '**/context/index*'],
             importNames: ['useViewerActions'],
             message: 'useViewerActions is deprecated. Use useNavigationActions, useFileActions, usePaneActions, or useSettingsActions instead.',
+          },
+          {
+            group: ['**/context/SessionContext*'],
+            importNames: ['useSessionContext'],
+            message: 'useSessionContext is deprecated. Use useSessionCoreCtx, useSessionPaneCtx, or useSessionProgressCtx directly.',
           },
         ],
       }],
@@ -149,6 +155,12 @@ export default tseslint.config(
             group: ['**/context', '**/context/index*'],
             importNames: ['useViewerActions'],
             message: 'useViewerActions is deprecated. Use useNavigationActions, useFileActions, usePaneActions, or useSettingsActions instead.',
+          },
+          // Convention 10: No deprecated useSessionContext
+          {
+            group: ['**/context/SessionContext*'],
+            importNames: ['useSessionContext'],
+            message: 'useSessionContext is deprecated. Use useSessionCoreCtx, useSessionPaneCtx, or useSessionProgressCtx directly.',
           },
           // Convention 2: No raw context hook imports in components
           {
@@ -236,9 +248,9 @@ export default tseslint.config(
     },
   },
 
-  // hooks/usePipeline.ts, hooks/useStateTracker.ts — allowed listen() but NOT invoke()
+  // hooks/usePipeline.ts — allowed listen() but NOT invoke()
   {
-    files: ['src-next/hooks/usePipeline.ts', 'src-next/hooks/useStateTracker.ts'],
+    files: ['src-next/hooks/usePipeline.ts'],
     rules: {
       'no-restricted-imports': ['error', {
         patterns: [
@@ -247,7 +259,12 @@ export default tseslint.config(
             importNames: ['invoke', 'Channel'],
             message: 'Use bridge/commands wrappers instead of direct invoke()/Channel.',
           },
-          // listen() is allowed for these two hooks — omitted from patterns
+          // listen() is allowed for this hook — omitted from patterns
+          {
+            group: ['**/context/SessionContext*'],
+            importNames: ['useSessionContext'],
+            message: 'useSessionContext is deprecated. Use useSessionCoreCtx, useSessionPaneCtx, or useSessionProgressCtx directly.',
+          },
         ],
       }],
     },
