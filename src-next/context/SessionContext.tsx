@@ -418,6 +418,7 @@ export function useSessionProgressCtx(): SessionProgressValue {
 // ── Facade — reads all 3 sub-contexts, returns combined interface ───────────
 // Used by domain hooks (useLogViewer, etc.) that need cross-context access.
 
+/** @deprecated Use useSessionCoreCtx, useSessionPaneCtx, or useSessionProgressCtx directly. */
 export function useSessionContext(): SessionContextValue {
   const core = useSessionCoreCtx();
   const pane = useSessionPaneCtx();

@@ -1,6 +1,6 @@
 import { useCallback, useRef, useEffect } from 'react';
 import type { SearchQuery, LoadResult, LineWindow } from '../../bridge/types';
-import { useSessionContext } from '../../context/SessionContext';
+import { useSessionCoreCtx, useSessionPaneCtx } from '../../context/SessionContext';
 import { useViewerContext } from '../../context/ViewerContext';
 import type { CacheController } from '../../cache';
 import type { StreamPusher } from '../../viewport';
@@ -42,11 +42,8 @@ export interface LogViewerActions {
 }
 
 export function useLogViewer(cacheManager: CacheController, registry: StreamPusher): LogViewerActions {
-  const {
-    sessions,
-    paneSessionMap,
-    activeLogPaneId,
-  } = useSessionContext();
+  const { sessions, paneSessionMap } = useSessionCoreCtx();
+  const { activeLogPaneId } = useSessionPaneCtx();
 
   const {
     setSearch,

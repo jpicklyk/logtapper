@@ -1,7 +1,7 @@
 import { useCallback, useRef, useEffect } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { AdbProcessorUpdate, PipelineProgress } from '../bridge/types';
-import { useSessionContext } from '../context/SessionContext';
+import { useSessionCoreCtx, useSessionPaneCtx } from '../context/SessionContext';
 import {
   listProcessors,
   listPacks,
@@ -48,7 +48,8 @@ export function usePipeline(): PipelineActions {
   const { processors, pipelineChain, disabledChainIds, resultsBySession, dispatch } = usePipelineContext();
 
   // Track the focused pane so session:pre-load can resolve the outgoing sessionId.
-  const { activeLogPaneId, paneSessionMap, sessions } = useSessionContext();
+  const { paneSessionMap, sessions } = useSessionCoreCtx();
+  const { activeLogPaneId } = useSessionPaneCtx();
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
   const activeLogPaneIdRef = useRef(activeLogPaneId);

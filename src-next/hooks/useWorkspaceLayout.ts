@@ -3,7 +3,7 @@ import { isBugreportLike } from '../bridge/types';
 import { storageRemove } from '../utils';
 import { bus } from '../events/bus';
 import type { AppEvents } from '../events/events';
-import { useSessionContext, useSessionPaneCtx } from '../context/SessionContext';
+import { useSessionCoreCtx, useSessionPaneCtx } from '../context/SessionContext';
 import {
   useCenterTree,
   useLayoutPreset,
@@ -59,7 +59,7 @@ export function useWorkspaceLayout() {
   activeLogPaneIdRef.current = activeLogPaneId;
 
   // paneSessionMap from SessionContext
-  const { paneSessionMap, activateSessionForPane } = useSessionContext();
+  const { paneSessionMap, activateSessionForPane } = useSessionCoreCtx();
   const paneSessionMapRef = useRef(paneSessionMap);
   paneSessionMapRef.current = paneSessionMap;
 

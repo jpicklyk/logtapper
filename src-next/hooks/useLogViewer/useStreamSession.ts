@@ -3,7 +3,7 @@ import type { AdbBatchPayload, AdbProcessorUpdate, AdbStreamEvent, SourceType } 
 import { matchesFilter } from '../../filter';
 import { startAdbStream, stopAdbStream } from '../../bridge/commands';
 import { onAdbStreamStopped } from '../../bridge/events';
-import { useSessionContext } from '../../context/SessionContext';
+import { useSessionCoreCtx } from '../../context/SessionContext';
 import { loadSettings } from '../../hooks';
 import { bus, emitSessionLoadedWithFocus } from '../../events/bus';
 import type { CacheController } from '../../cache';
@@ -38,7 +38,7 @@ export function useStreamSession(
     setErrorPane,
     setStreamingSession,
     updateSession,
-  } = useSessionContext();
+  } = useSessionCoreCtx();
 
   // Guard flag: set false when the stream is stopped/detached so late-arriving
   // Channel messages are ignored. This replaces the need for an unlisten() call

@@ -5,7 +5,7 @@ import { isBugreportLike } from '../../bridge/types';
 import { loadLogFile, closeSession as closeSessionCmd, getLines } from '../../bridge/commands';
 import { onFileIndexProgress, onFileIndexComplete } from '../../bridge/events';
 import { preSeedSession, clearPreSeed } from '../../cache';
-import { useSessionContext } from '../../context/SessionContext';
+import { useSessionCoreCtx, useSessionProgressCtx } from '../../context/SessionContext';
 import { bus, emitSessionLoadedWithFocus } from '../../events/bus';
 import { getStoredFirstPaneId, getStoredLogviewerTabs } from '../useWorkspaceLayout';
 import { storageGetJSON, storageSetJSON, storageRemove } from '../../utils';
@@ -49,8 +49,8 @@ export function useFileSession(
     activateSessionForPane,
     setLoadingPane,
     setErrorPane,
-    setIndexingProgress: setIndexingProgressCtx,
-  } = useSessionContext();
+  } = useSessionCoreCtx();
+  const { setIndexingProgress: setIndexingProgressCtx } = useSessionProgressCtx();
 
   // Keep a stable ref for terminateSession so loadFile can use it without
   // being re-created every time terminateSession identity changes.

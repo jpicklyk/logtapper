@@ -2,7 +2,7 @@ import { useCallback, useRef, useEffect } from 'react';
 import type { SourceType } from '../../bridge/types';
 import { getLines, closeSession as closeSessionCmd } from '../../bridge/commands';
 import { updateStreamProcessors, updateStreamTrackers, updateStreamTransformers } from '../../bridge/commands';
-import { useSessionContext } from '../../context/SessionContext';
+import { useSessionCoreCtx, useSessionPaneCtx, useSessionProgressCtx } from '../../context/SessionContext';
 import { useViewerContext } from '../../context/ViewerContext';
 import { bus } from '../../events/bus';
 import { sessionScrollPositions } from '../../viewport';
@@ -35,13 +35,9 @@ export function useSessionTabManager(
   refs: SharedLogViewerRefs,
   deps: TabManagerDeps,
 ): SessionTabManagerResult {
-  const {
-    activeLogPaneId,
-    unregisterSession,
-    terminateSession,
-    setIndexingProgress: setIndexingProgressCtx,
-    activateSessionForPane,
-  } = useSessionContext();
+  const { unregisterSession, terminateSession, activateSessionForPane } = useSessionCoreCtx();
+  const { activeLogPaneId } = useSessionPaneCtx();
+  const { setIndexingProgress: setIndexingProgressCtx } = useSessionProgressCtx();
 
   const {
     setProcessorId,

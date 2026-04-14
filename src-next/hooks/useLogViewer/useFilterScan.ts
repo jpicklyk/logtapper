@@ -10,7 +10,7 @@ import {
 } from '../../bridge/commands';
 import { onFilterProgress } from '../../bridge/events';
 import { parseFilter, matchesFilter, extractPackageNames, FilterParseError, type FilterNode } from '../../filter';
-import { useSessionContext } from '../../context/SessionContext';
+import { useSessionCoreCtx, useSessionPaneCtx, useSessionProgressCtx } from '../../context/SessionContext';
 import type { CacheController } from '../../cache';
 import type { SharedLogViewerRefs } from './types';
 import type { FilterCriteria, LogLevel } from '../../bridge/types';
@@ -176,14 +176,9 @@ function buildBackendFilter(node: FilterNode): BackendFilter | null {
 // ---------------------------------------------------------------------------
 
 export function useFilterScan(cacheManager: CacheController, refs: SharedLogViewerRefs): FilterScanResult {
-  const {
-    filterStateBySession,
-    paneSessionMap,
-    activeLogPaneId,
-    setSessionFilter,
-    resetSessionFilter,
-    appendSessionFilterMatches,
-  } = useSessionContext();
+  const { paneSessionMap } = useSessionCoreCtx();
+  const { activeLogPaneId } = useSessionPaneCtx();
+  const { filterStateBySession, setSessionFilter, resetSessionFilter, appendSessionFilterMatches } = useSessionProgressCtx();
 
   // Read the focused session's current filter state for reactive return values.
   const focusedSessionId = activeLogPaneId ? (paneSessionMap.get(activeLogPaneId) ?? null) : null;

@@ -4,7 +4,7 @@ import type { StateSnapshot, StateTransition } from '../bridge/types';
 import { onAdbTrackerUpdate } from '../bridge/events';
 import { getAllTransitionLines, getStateAtLine, getStateTransitions } from '../bridge/commands';
 import { useTrackerContext } from '../context/TrackerContext';
-import { useSessionContext } from '../context/SessionContext';
+import { useSessionCoreCtx } from '../context/SessionContext';
 import { bus } from '../events/bus';
 
 export interface StateTrackerActions {
@@ -23,7 +23,7 @@ export function useStateTracker(): StateTrackerActions {
     clearSessionData,
   } = useTrackerContext();
 
-  const { paneSessionMap } = useSessionContext();
+  const { paneSessionMap } = useSessionCoreCtx();
 
   const paneSessionMapRef = useRef(paneSessionMap);
   paneSessionMapRef.current = paneSessionMap;
