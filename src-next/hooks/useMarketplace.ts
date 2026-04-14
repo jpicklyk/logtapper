@@ -62,7 +62,7 @@ export interface MarketplaceState {
 export function useMarketplace(): MarketplaceState {
   // Shared state from context (survives panel unmount)
   const ctx = useMarketplaceContext();
-  const { sources, sourcesLoading, pendingUpdates, pendingPackUpdates, updatesLoading, dispatch, setSources } = ctx;
+  const { sources, sourcesLoading, pendingUpdates, pendingPackUpdates, updatesLoading, setSources, setSourcesLoading, setSourcesError, setUpdatesLoading, setUpdates, setPackUpdates, setUpdatesError } = ctx;
 
   // Browse (local — only needed while MarketplacePanel is mounted)
   const [selectedSource, setSelectedSource] = useState<string | null>(null);
@@ -79,14 +79,14 @@ export function useMarketplace(): MarketplaceState {
   pendingUpdatesRef.current = pendingUpdates;
 
   const loadSources = useCallback(async () => {
-    dispatch({ type: 'sources:loading' });
+    setSourcesLoading();
     try {
       const result = await listSources();
       setSources(result);
     } catch {
-      dispatch({ type: 'sources:loaded-error' });
+      setSourcesError();
     }
-  }, [dispatch, setSources]);
+  }, [setSourcesLoading, setSourcesError, setSources]);
 
   const addSource = useCallback(async (source: Source) => {
     await addSourceCmd(source);
@@ -161,19 +161,19 @@ export function useMarketplace(): MarketplaceState {
   }, []);
 
   const checkUpdates = useCallback(async () => {
-    dispatch({ type: 'updates:loading' });
+    setUpdatesLoading();
     try {
       const result: UpdateCheckResult = await checkUpdatesCmd();
-      dispatch({ type: 'updates:loaded', updates: result.updates });
-      dispatch({ type: 'pack-updates:loaded', packUpdates: result.packUpdates });
+      setUpdates(result.updates);
+      setPackUpdates(result.packUpdates);
       await saveSourcesToDisk();
       // Refresh sources to get updated last_checked timestamps
       const refreshed = await listSources();
       setSources(refreshed);
     } catch {
-      dispatch({ type: 'updates:loaded-error' });
+      setUpdatesError();
     }
-  }, [dispatch, setSources]);
+  }, [setUpdatesLoading, setUpdates, setPackUpdates, setUpdatesError, setSources]);
 
   const updateOne = useCallback(async (processorId: string) => {
     const update = pendingUpdatesRef.current.find((u) => u.processorId === processorId);

@@ -70,8 +70,13 @@ function marketplaceReducer(state: MarketplaceState, action: MarketplaceAction):
 // ── Context ───────────────────────────────────────────────────────────────────
 
 export interface MarketplaceContextValue extends MarketplaceState {
-  dispatch: React.Dispatch<MarketplaceAction>;
   setSources: (sources: Source[]) => void;
+  setSourcesLoading: () => void;
+  setSourcesError: () => void;
+  setUpdatesLoading: () => void;
+  setUpdates: (updates: UpdateAvailable[]) => void;
+  setPackUpdates: (packUpdates: PackUpdateAvailable[]) => void;
+  setUpdatesError: () => void;
 }
 
 const MarketplaceContext = createContext<MarketplaceContextValue | null>(null);
@@ -159,9 +164,16 @@ export function MarketplaceProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const setSourcesLoading = useCallback(() => dispatch({ type: 'sources:loading' }), []);
+  const setSourcesError = useCallback(() => dispatch({ type: 'sources:loaded-error' }), []);
+  const setUpdatesLoading = useCallback(() => dispatch({ type: 'updates:loading' }), []);
+  const setUpdates = useCallback((updates: UpdateAvailable[]) => dispatch({ type: 'updates:loaded', updates }), []);
+  const setPackUpdates = useCallback((packUpdates: PackUpdateAvailable[]) => dispatch({ type: 'pack-updates:loaded', packUpdates }), []);
+  const setUpdatesError = useCallback(() => dispatch({ type: 'updates:loaded-error' }), []);
+
   const value = useMemo<MarketplaceContextValue>(
-    () => ({ ...state, dispatch, setSources }),
-    [state, dispatch, setSources],
+    () => ({ ...state, setSources, setSourcesLoading, setSourcesError, setUpdatesLoading, setUpdates, setPackUpdates, setUpdatesError }),
+    [state, setSources, setSourcesLoading, setSourcesError, setUpdatesLoading, setUpdates, setPackUpdates, setUpdatesError],
   );
 
   return (
