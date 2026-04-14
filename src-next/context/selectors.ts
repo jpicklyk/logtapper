@@ -16,16 +16,7 @@ export function useFocusedSession(): LoadResult | null {
   const { activeLogPaneId } = useSessionPaneCtx();
   if (!activeLogPaneId) return null;
   const sessionId = paneSessionMap.get(activeLogPaneId);
-  if (!sessionId) {
-    if (sessions.size > 0) {
-      console.warn('[useFocusedSession] paneSessionMap miss — activeLogPaneId not mapped', {
-        activeLogPaneId,
-        paneMap: [...paneSessionMap.entries()],
-        sessionIds: [...sessions.keys()],
-      });
-    }
-    return null;
-  }
+  if (!sessionId) return null;
   return sessions.get(sessionId) ?? null;
 }
 

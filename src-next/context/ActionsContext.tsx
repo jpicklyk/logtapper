@@ -127,15 +127,14 @@ export function trackMutations(
   actions: Partial<ActionsContextValue>,
   markDirty: () => void,
 ): Partial<ActionsContextValue> {
-  const result: Partial<ActionsContextValue> = { ...actions };
+  const result = { ...actions } as Record<string, unknown>;
   for (const key of MUTATION_ACTION_KEYS) {
     const fn = actions[key];
     if (typeof fn === 'function') {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (result as any)[key] = tracked(fn as (...args: never[]) => unknown, markDirty);
+      result[key] = tracked(fn as (...args: never[]) => unknown, markDirty);
     }
   }
-  return result;
+  return result as Partial<ActionsContextValue>;
 }
 
 // ---------------------------------------------------------------------------

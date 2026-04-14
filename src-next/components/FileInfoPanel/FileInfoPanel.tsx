@@ -1,18 +1,22 @@
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import {
-  FileText, Smartphone, Clock, HardDrive, Layers, Hash, ChevronRight, Search,
+  FileText, Smartphone, Clock, HardDrive, Layers, Hash, Search,
 } from 'lucide-react';
-import type { DumpstateMetadata, SourceType } from '../../bridge/types';
+import type { DumpstateMetadata } from '../../bridge/types';
 import { isBugreportLike } from '../../bridge/types';
 import type { IndexingProgress } from '../../context';
 import { Input } from '../../ui';
 import { formatFileSize } from '../../utils';
 import styles from './FileInfoPanel.module.css';
-import { getSectionDescription } from './sectionDescriptions';
 import { filterSections, buildSectionTree } from './sectionTree';
-import type { SectionEntry, SectionRow } from './sectionTree';
+import type { SectionEntry } from './sectionTree';
 import { formatTimestamp, formatDuration } from './formatters';
+import SectionsScanning from './SectionsScanning';
+import SectionItem from './SectionItem';
+import SectionGroup from './SectionGroup';
+import ParentSection from './ParentSection';
+import listStyles from './SectionList.module.css';
 
 export type { SectionEntry } from './sectionTree';
 
@@ -34,16 +38,6 @@ interface FileInfoPanelProps {
   onToggleGroup?: (indices: number[]) => void;
   onClearSectionFilter?: () => void;
   isSectionFilterActive?: boolean;
-}
-
-
-function sourceTypeColor(type: SourceType | undefined): string {
-  switch (type) {
-    case 'Bugreport':  return 'var(--warning)';
-    case 'Logcat':     return 'var(--success)';
-    case 'Kernel':     return 'var(--android)';
-    default:           return 'var(--text-dimmed)';
-  }
 }
 
 // ── Stat cell ────────────────────────────────────────────────────────────────
@@ -80,391 +74,6 @@ const DeviceField = memo<{ label: string; value: string | null | undefined }>(
   },
 );
 
-// ── Tape reader (scanning animation) ─────────────────────────────────────────
-
-const TAPE_LINES: Array<[string, number]> = [
-  ['92%', 0.40], ['65%', 0.15], ['100%', 0.55], ['48%', 0.20], ['88%', 0.38],
-  ['30%', 0.10], ['76%', 0.45], ['55%', 0.25], ['100%', 0.60], ['40%', 0.12],
-  ['82%', 0.38], ['68%', 0.30], ['95%', 0.52], ['22%', 0.08], ['74%', 0.40],
-  ['58%', 0.22], ['100%', 0.55], ['43%', 0.15], ['87%', 0.42], ['62%', 0.28],
-  ['78%', 0.35], ['35%', 0.12], ['91%', 0.48], ['52%', 0.18], ['100%', 0.58],
-  ['44%', 0.14], ['83%', 0.42], ['61%', 0.22], ['97%', 0.50], ['28%', 0.09],
-  ['70%', 0.36], ['56%', 0.20], ['100%', 0.62], ['38%', 0.11], ['85%', 0.44],
-  ['64%', 0.26], ['93%', 0.52], ['47%', 0.16], ['79%', 0.40], ['33%', 0.10],
-];
-const TAPE_DOUBLED = [...TAPE_LINES, ...TAPE_LINES];
-
-const SectionsScanning = memo(function SectionsScanning({
-  progress,
-}: {
-  progress: IndexingProgress | null;
-}) {
-  const pct = progress != null ? progress.percent : null;
-  return (
-    <div className={styles.scanning}>
-      <span className={styles.scanTitle}>Scanning sections</span>
-      <div className={styles.tapeReader}>
-        <div className={styles.tapeTrack}>
-          {TAPE_DOUBLED.map(([w, o], i) => (
-            <div key={i} className={styles.tapeLine} style={{ width: w, opacity: o }} />
-          ))}
-        </div>
-        <div className={styles.scanGlowAbove} />
-        <div className={styles.scanHead} />
-        <div className={styles.scanGlowBelow} />
-      </div>
-      <div className={styles.scanInfo}>
-        <span className={styles.scanCounter}>
-          {progress ? progress.linesIndexed.toLocaleString() : '\u2014'}
-        </span>
-        <span className={styles.scanSuffix}> lines</span>
-      </div>
-      {pct !== null && (
-        <div className={styles.scanBar}>
-          <div className={styles.scanBarFill} style={{ width: `${pct.toFixed(1)}%` }} />
-        </div>
-      )}
-    </div>
-  );
-});
-
-// ── Section item ─────────────────────────────────────────────────────────────
-
-interface SectionItemProps {
-  section: SectionEntry;
-  isActive: boolean;
-  jumpSeq: number;
-  startLine: number;
-  onJump: ((line: number) => void) | undefined;
-  isChild?: boolean;
-  originalIndex: number;
-  isSelected?: boolean;
-  onToggle?: (index: number) => void;
-}
-
-const SectionItem = memo<SectionItemProps>(function SectionItem({
-  section,
-  isActive,
-  jumpSeq,
-  startLine,
-  onJump,
-  isChild = false,
-  originalIndex,
-  isSelected,
-  onToggle,
-}) {
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const handleClick = useCallback(() => onJump?.(startLine), [onJump, startLine]);
-  const handleCheckboxChange = useCallback(() => onToggle?.(originalIndex), [onToggle, originalIndex]);
-  const stopProp = useCallback((e: React.MouseEvent) => e.stopPropagation(), []);
-
-  useEffect(() => {
-    if (!isActive || !btnRef.current) return;
-    const el = btnRef.current;
-    el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    el.style.animation = 'none';
-    void el.offsetHeight;
-    el.style.animation = '';
-  }, [isActive, jumpSeq]);
-
-  const lineCount = section.endLine - section.startLine + 1;
-  const description = getSectionDescription(section.name);
-  const tooltip = description
-    ? `${description}\nLines ${section.startLine + 1}\u2013${section.endLine + 1} (${lineCount.toLocaleString()} lines)`
-    : `Lines ${section.startLine + 1}\u2013${section.endLine + 1} (${lineCount.toLocaleString()} lines)`;
-
-  return (
-    <button
-      ref={btnRef}
-      className={clsx(
-        styles.sectionItem,
-        isActive && styles.sectionItemActive,
-        isChild && styles.sectionItemChild,
-        isSelected && styles.sectionItemSelected,
-      )}
-      onClick={handleClick}
-      title={tooltip}
-    >
-      {onToggle && (
-        <input
-          type="checkbox"
-          className={styles.sectionCheckbox}
-          checked={isSelected ?? false}
-          onChange={handleCheckboxChange}
-          onClick={stopProp}
-        />
-      )}
-      <span className={styles.sectionName}>{section.name}</span>
-      <span className={styles.sectionLine}>{lineCount.toLocaleString()}</span>
-    </button>
-  );
-});
-
-// ── Parent DUMPSYS section ────────────────────────────────────────────────────
-
-const EXPAND_PAGE_SIZE = 50;
-
-interface ParentSectionProps {
-  section: SectionEntry;
-  children: { section: SectionEntry; index: number }[];
-  totalLines: number;
-  activeStartLine: number;
-  jumpSeq: number;
-  onJump: ((line: number) => void) | undefined;
-  selectedSectionIndices?: Set<number>;
-  onToggleSection?: (index: number) => void;
-  onToggleGroup?: (indices: number[]) => void;
-  startLineToOrigIdx: Map<number, number>;
-}
-
-const ParentSection = memo<ParentSectionProps>(function ParentSection({
-  section,
-  children,
-  totalLines,
-  activeStartLine,
-  jumpSeq,
-  onJump,
-  selectedSectionIndices,
-  onToggleSection,
-  onToggleGroup,
-  startLineToOrigIdx,
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const [visibleCount, setVisibleCount] = useState(EXPAND_PAGE_SIZE);
-
-  const isParentActive = section.startLine === activeStartLine;
-  const hasActiveChild = children.some(c => c.section.startLine === activeStartLine);
-
-  // Compute group original indices for tri-state checkbox
-  const parentOrigIdx = startLineToOrigIdx.get(section.startLine) ?? -1;
-  const childOrigIndices = useMemo(
-    () => children.map(c => startLineToOrigIdx.get(c.section.startLine) ?? -1).filter(i => i >= 0),
-    [children, startLineToOrigIdx],
-  );
-  const allIndices = useMemo(
-    () => (parentOrigIdx >= 0 ? [parentOrigIdx, ...childOrigIndices] : childOrigIndices),
-    [parentOrigIdx, childOrigIndices],
-  );
-  const allChecked = onToggleGroup != null && allIndices.length > 0
-    && allIndices.every(i => selectedSectionIndices?.has(i));
-  const someChecked = !allChecked && allIndices.some(i => selectedSectionIndices?.has(i));
-
-  const groupCheckboxRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (groupCheckboxRef.current) groupCheckboxRef.current.indeterminate = someChecked;
-  }, [someChecked]);
-
-  const handleGroupToggle = useCallback(() => onToggleGroup?.(allIndices), [onToggleGroup, allIndices]);
-  const stopGroupProp = useCallback((e: React.MouseEvent) => e.stopPropagation(), []);
-
-  // Auto-expand when active child exists
-  useEffect(() => {
-    if (hasActiveChild) setExpanded(true);
-  }, [hasActiveChild]);
-
-  const toggle = useCallback(() => {
-    setExpanded(v => !v);
-    setVisibleCount(EXPAND_PAGE_SIZE);
-  }, []);
-
-  const showMore = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    setVisibleCount(v => v + EXPAND_PAGE_SIZE);
-  }, []);
-
-  const visible = expanded ? children.slice(0, visibleCount) : [];
-  const hasMore = expanded && visibleCount < children.length;
-
-  return (
-    <div className={styles.parentGroup}>
-      <button
-        className={clsx(
-          styles.parentHeader,
-          (isParentActive || hasActiveChild) && styles.parentHeaderActive,
-        )}
-        onClick={toggle}
-        type="button"
-        title={`${section.name} — ${children.length} services, ${totalLines.toLocaleString()} lines`}
-      >
-        {onToggleGroup && (
-          <input
-            ref={groupCheckboxRef}
-            type="checkbox"
-            className={styles.sectionCheckbox}
-            checked={allChecked}
-            onChange={handleGroupToggle}
-            onClick={stopGroupProp}
-          />
-        )}
-        <span className={styles.sectionGroupAccent} />
-        <span className={styles.parentName}>{section.name}</span>
-        <span className={styles.sectionGroupBadge}>{children.length}</span>
-        <span className={styles.sectionLine}>{totalLines.toLocaleString()}</span>
-        <ChevronRight
-          size={12}
-          className={clsx(styles.sectionGroupChevron, expanded && styles.sectionGroupChevronOpen)}
-        />
-      </button>
-      {expanded && (
-        <div className={styles.parentChildren}>
-          {visible.map(c => {
-            const origIdx = startLineToOrigIdx.get(c.section.startLine) ?? -1;
-            return (
-              <SectionItem
-                key={c.section.startLine}
-                section={c.section}
-                isActive={c.section.startLine === activeStartLine}
-                jumpSeq={jumpSeq}
-                startLine={c.section.startLine}
-                onJump={onJump}
-                isChild={true}
-                originalIndex={origIdx}
-                isSelected={origIdx >= 0 ? selectedSectionIndices?.has(origIdx) : false}
-                onToggle={onToggleSection}
-              />
-            );
-          })}
-          {hasMore && (
-            <button className={styles.showMoreBtn} onClick={showMore} type="button">
-              Show more ({children.length - visibleCount} remaining)
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-});
-
-// ── Collapsed prefix section group ───────────────────────────────────────────
-
-interface SectionGroupProps {
-  prefix: string;
-  sections: { section: SectionEntry; index: number }[];
-  totalLines: number;
-  activeStartLine: number;
-  jumpSeq: number;
-  onJump: ((line: number) => void) | undefined;
-  selectedSectionIndices?: Set<number>;
-  onToggleSection?: (index: number) => void;
-  onToggleGroup?: (indices: number[]) => void;
-  startLineToOrigIdx: Map<number, number>;
-}
-
-const SectionGroup = memo<SectionGroupProps>(function SectionGroup({
-  prefix,
-  sections,
-  totalLines,
-  activeStartLine,
-  jumpSeq,
-  onJump,
-  selectedSectionIndices,
-  onToggleSection,
-  onToggleGroup,
-  startLineToOrigIdx,
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const [visibleCount, setVisibleCount] = useState(EXPAND_PAGE_SIZE);
-
-  // Check if any section in this group is the active one
-  const hasActive = sections.some((item) => item.section.startLine === activeStartLine);
-
-  // Compute group original indices for tri-state checkbox
-  const groupOrigIndices = useMemo(
-    () => sections.map(item => startLineToOrigIdx.get(item.section.startLine) ?? -1).filter(i => i >= 0),
-    [sections, startLineToOrigIdx],
-  );
-  const allChecked = onToggleGroup != null && groupOrigIndices.length > 0
-    && groupOrigIndices.every(i => selectedSectionIndices?.has(i));
-  const someChecked = !allChecked && groupOrigIndices.some(i => selectedSectionIndices?.has(i));
-
-  const groupCheckboxRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (groupCheckboxRef.current) groupCheckboxRef.current.indeterminate = someChecked;
-  }, [someChecked]);
-
-  const handleGroupToggle = useCallback(() => onToggleGroup?.(groupOrigIndices), [onToggleGroup, groupOrigIndices]);
-  const stopGroupProp = useCallback((e: React.MouseEvent) => e.stopPropagation(), []);
-
-  // Auto-expand when the active section is inside this group
-  useEffect(() => {
-    if (hasActive) setExpanded(true);
-  }, [hasActive]);
-
-  const toggle = useCallback(() => {
-    setExpanded((v) => !v);
-    setVisibleCount(EXPAND_PAGE_SIZE);
-  }, []);
-
-  const showMore = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    setVisibleCount((v) => v + EXPAND_PAGE_SIZE);
-  }, []);
-
-  const visibleItems = expanded
-    ? (visibleCount >= sections.length ? sections : sections.slice(0, visibleCount))
-    : [];
-  const hasMore = expanded && visibleCount < sections.length;
-
-  return (
-    <div className={styles.sectionGroup}>
-      <button
-        className={clsx(styles.sectionGroupHeader, hasActive && styles.sectionGroupActive)}
-        onClick={toggle}
-        type="button"
-      >
-        {onToggleGroup && (
-          <input
-            ref={groupCheckboxRef}
-            type="checkbox"
-            className={styles.sectionCheckbox}
-            checked={allChecked}
-            onChange={handleGroupToggle}
-            onClick={stopGroupProp}
-          />
-        )}
-        <span className={styles.sectionGroupAccent} />
-        <span className={styles.sectionGroupPrefix}>{prefix.trim()}</span>
-        <span className={styles.sectionGroupBadge}>{sections.length}</span>
-        <span className={styles.sectionLine}>{totalLines.toLocaleString()}</span>
-        <ChevronRight
-          size={12}
-          className={clsx(styles.sectionGroupChevron, expanded && styles.sectionGroupChevronOpen)}
-        />
-      </button>
-      {expanded && (
-        <div className={styles.sectionGroupItems}>
-          {visibleItems.map((item) => {
-            const origIdx = startLineToOrigIdx.get(item.section.startLine) ?? -1;
-            return (
-              <SectionItem
-                key={item.section.startLine}
-                section={item.section}
-                isActive={item.section.startLine === activeStartLine}
-                jumpSeq={jumpSeq}
-                startLine={item.section.startLine}
-                onJump={onJump}
-                isChild={false}
-                originalIndex={origIdx}
-                isSelected={origIdx >= 0 ? selectedSectionIndices?.has(origIdx) : false}
-                onToggle={onToggleSection}
-              />
-            );
-          })}
-          {hasMore && (
-            <button
-              className={styles.showMoreBtn}
-              onClick={showMore}
-              type="button"
-            >
-              Show more ({sections.length - visibleCount} remaining)
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-});
-
 // ── Main panel ───────────────────────────────────────────────────────────────
 
 export const FileInfoPanel = React.memo<FileInfoPanelProps>(
@@ -490,7 +99,6 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
     const isScanning = !!sourceType && isBugreportLike(sourceType) && indexingProgress !== null;
     const duration = formatDuration(firstTimestamp, lastTimestamp);
     const meta = dumpstateMetadata;
-    const typeColor = sourceTypeColor(sourceType as SourceType | undefined);
 
     // ── Search state (local per principle #5) ──────────────────────────────
     const [searchQuery, setSearchQuery] = useState('');
@@ -540,10 +148,7 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
             </span>
           </div>
           {sourceType && (
-            <span
-              className={styles.typeBadge}
-              style={{ color: typeColor, borderColor: typeColor }}
-            >
+            <span className={styles.typeBadge} data-source-type={sourceType}>
               {sourceType}
             </span>
           )}
@@ -666,7 +271,7 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
                   </button>
                 </div>
               )}
-              <div className={clsx(styles.sectionList, isSectionFilterActive && styles.sectionFilterActive)}>
+              <div className={clsx(styles.sectionList, isSectionFilterActive && listStyles.sectionFilterActive)}>
                 {groupedSections.map((row) => {
                   switch (row.kind) {
                     case 'single': {

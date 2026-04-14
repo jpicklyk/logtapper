@@ -1,0 +1,132 @@
+/* ── Sections scanning progress indicator ─────────────────────────────────── */
+
+.scanning {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 8px 10px;
+  margin: 6px 6px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+
+.scanTitle {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.tapeReader {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+}
+
+.tapeTrack {
+  position: absolute;
+  top: 0;
+  left: 10px;
+  right: 10px;
+  height: 200%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-evenly;
+  padding: 4px 0;
+  animation: tape-scroll 4s linear infinite;
+  will-change: transform;
+}
+
+@keyframes tape-scroll {
+  from { transform: translateY(0); }
+  to   { transform: translateY(-50%); }
+}
+
+.tapeLine {
+  height: 2px;
+  flex-shrink: 0;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+.scanHead {
+  position: absolute;
+  top: 58%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--accent);
+  box-shadow: 0 0 8px 2px var(--accent);
+  z-index: 2;
+}
+
+.scanGlowAbove {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 58%;
+  background: linear-gradient(
+    to bottom,
+    transparent 50%,
+    color-mix(in srgb, var(--accent) 7%, transparent) 100%
+  );
+  z-index: 1;
+  pointer-events: none;
+}
+
+.scanGlowBelow {
+  position: absolute;
+  top: calc(58% + 1px);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--bg-base) 55%, transparent);
+  z-index: 1;
+  pointer-events: none;
+}
+
+.scanInfo {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+}
+
+.scanCounter {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.scanSuffix {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.scanBar {
+  height: 3px;
+  background: var(--border-subtle);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.scanBarFill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width var(--duration-slow) var(--easing-exit);
+}

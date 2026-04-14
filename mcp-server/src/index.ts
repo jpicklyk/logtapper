@@ -262,6 +262,10 @@ server.tool(
     "  level   — minimum level: V D I W E F\n" +
     "  tag     — exact tag string\n" +
     "  message — substring match against the raw line\n" +
+    "\nWhen any filter is active, the tool switches to full-scan mode (up to " +
+    "100k lines) to avoid missing rare events. The chosen strategy still " +
+    "controls scan ordering. A 'strategyNote' field in the response explains " +
+    "the fallback.\n" +
     "\nRange restriction:\n" +
     "  start_line / end_line — restrict sampling/scanning to a line range\n" +
     "  time_start / time_end — restrict to a timestamp range (ISO 8601)",
@@ -488,7 +492,10 @@ server.tool(
     "state). These events are the pre-digested signal layer — use them to " +
     "understand what happened before diving into raw lines. " +
     "\nNote: events are only available after running the pipeline " +
-    "(or during a live ADB stream with trackers active).",
+    "(or during a live ADB stream with trackers active)." +
+    "\nNote: `timestamp` is 0 for events from non-logcat bugreport sections " +
+    "(e.g. DUMPSYS content) where no per-line timestamp exists. Use `lineNum` " +
+    "for relative ordering of zero-timestamp events.",
   {
     session_id: z.string().describe("Session ID"),
     limit: z
@@ -520,7 +527,10 @@ server.tool(
     "optional paginated emissions with extracted fields, matched line numbers. " +
     "For state trackers: full transition list. Use include_emissions=true to see " +
     "emission data. Use include_line_text=true to include raw log line snippets " +
-    "(avoids separate logtapper_query calls).",
+    "(avoids separate logtapper_query calls)." +
+    "\nNote: state tracker transitions from non-logcat bugreport sections " +
+    "(e.g. DUMPSYS content) have `timestamp: 0` — no per-line timestamp exists. " +
+    "Use `lineNum` for relative ordering.",
   {
     session_id: z.string().describe("Session ID"),
     processor_id: z.string().describe("Processor ID to drill into (qualified or bare — bare IDs are resolved automatically)"),

@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Trash2, MessageSquare } from 'lucide-react';
 import type { Bookmark } from '../../bridge/types';
 import styles from './BookmarkPanel.module.css';
@@ -50,9 +50,12 @@ const BookmarkItem = React.memo(function BookmarkItem({
     e.stopPropagation();
     setEditValue(bookmark.label);
     setEditing(true);
-    // Focus input after render
-    setTimeout(() => inputRef.current?.select(), 0);
   }, [bookmark.label]);
+
+  // Select all text when entering edit mode (autoFocus handles focus)
+  useEffect(() => {
+    if (editing) inputRef.current?.select();
+  }, [editing]);
 
   const handleEditSave = useCallback(() => {
     const trimmed = editValue.trim();
@@ -75,8 +78,12 @@ const BookmarkItem = React.memo(function BookmarkItem({
     e.stopPropagation();
     setNoteValue(bookmark.note ?? '');
     setEditingNote(true);
-    setTimeout(() => noteRef.current?.focus(), 0);
   }, [bookmark.note]);
+
+  // Focus note textarea when entering note edit mode
+  useEffect(() => {
+    if (editingNote) noteRef.current?.focus();
+  }, [editingNote]);
 
   const handleNoteSave = useCallback(() => {
     const trimmed = noteValue.trim();

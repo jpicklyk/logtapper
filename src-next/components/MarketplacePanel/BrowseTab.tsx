@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import type { MarketplaceEntry, MarketplacePackEntry } from '../../bridge/types';
+import type { MarketplaceEntry, MarketplacePackEntry, ProcessorSummary } from '../../bridge/types';
 import { makeQualifiedId, filterMarketplaceEntries, matchesAllTags } from '../../bridge/types';
 import type { MarketplaceState } from '../../hooks';
 import { usePipeline } from '../../hooks';
@@ -384,8 +384,8 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
           // Resolve which processorId to uninstall (prefer qualified)
           const installedProcId = installedIds.has(qualifiedId) ? qualifiedId : entry.id;
           const isExpanded = expandedId === entry.id;
-          // Build a partial ProcessorSummary-compatible shape for ProcessorDetailCard
-          const detailProxy = {
+          // Build a ProcessorSummary-compatible shape for ProcessorDetailCard
+          const detailProxy: ProcessorSummary = {
             id: entry.id,
             name: entry.name,
             version: entry.version,
@@ -415,8 +415,7 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
                 expanded={isExpanded}
               />
               {isExpanded && (
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                <ProcessorDetailCard processor={detailProxy as any} />
+                <ProcessorDetailCard processor={detailProxy} />
               )}
             </React.Fragment>
           );

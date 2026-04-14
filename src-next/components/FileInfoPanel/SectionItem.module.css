@@ -1,0 +1,56 @@
+/* Section rows — consistent 28px height for scan-friendly density. */
+.sectionItem {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  margin: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  line-height: 1.35;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  min-height: 28px;
+  transition: background var(--transition-fast);
+  overflow: hidden;
+  z-index: 0;
+}
+
+.sectionItem:hover {
+  background: var(--state-hover);
+}
+
+.sectionItem:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.sectionItemActive {
+  background: var(--bg-overlay);
+  color: var(--accent);
+  animation: section-flash 600ms ease-out;
+  border-left: 2px solid var(--accent);
+  padding-left: 6px;
+}
+
+.sectionItemSelected {
+  background: var(--state-selected);
+}
+
+.sectionItemSelected:hover {
+  background: var(--state-hover);
+}
+
+.sectionName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}

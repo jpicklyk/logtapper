@@ -1,0 +1,87 @@
+/* ── Collapsed section group ──────────────────────────────────────────────── */
+
+.sectionGroup {
+  margin: 2px 0;
+}
+
+.sectionGroupHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.sectionGroupHeader:hover {
+  background: var(--state-hover);
+  border-color: var(--accent);
+}
+
+.sectionGroupHeader:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.sectionGroupAccent {
+  width: 3px;
+  height: 12px;
+  border-radius: 1px;
+  flex-shrink: 0;
+  background: var(--warning, #e89b30);
+}
+
+.sectionGroupActive {
+  color: var(--accent);
+}
+
+.sectionGroupChevron {
+  flex-shrink: 0;
+  color: var(--text-dimmed);
+  transition: transform var(--transition-normal);
+}
+
+.sectionGroupChevronOpen {
+  transform: rotate(90deg);
+}
+
+.sectionGroupPrefix {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.sectionGroupBadge {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 600;
+  min-width: 18px;
+  height: 16px;
+  line-height: 16px;
+  text-align: center;
+  border-radius: var(--radius-lg);
+  background: var(--bg-overlay);
+  color: var(--text-muted);
+}
+
+.sectionGroupItems {
+  padding-left: 8px;
+  margin-top: 2px;
+  margin-left: 9px;
+  border-left: 1px solid var(--border-subtle, var(--border));
+  display: flex;
+  flex-direction: column;
+  animation: expandIn 150ms ease;
+}

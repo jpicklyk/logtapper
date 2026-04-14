@@ -621,17 +621,24 @@ async fn h_query(
         .collect();
 
     let count = lines.len();
-    Json(json!({
+    let mut result = json!({
         "sessionId": session_id,
         "totalLinesInSession": total_lines,
         "sampledCount": count,
-        "strategy": if has_filter { "scan" } else { strategy },
+        "strategy": strategy,
         "lines": lines,
         "stats": {
             "tagCounts": tag_counts,
             "levelCounts": level_counts,
         },
-    }))
+    });
+    if has_filter {
+        result["strategyNote"] = json!(format!(
+            "Filters active — switched to full scan mode using '{}' ordering (scanned up to {} lines)",
+            strategy, SCAN_CAP
+        ));
+    }
+    Json(result)
 }
 
 // ---------------------------------------------------------------------------

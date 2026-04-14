@@ -71,8 +71,8 @@ const BookmarkCreateDialog = React.memo(function BookmarkCreateDialog({
         });
     }
 
-    // Focus the label input after render
-    setTimeout(() => labelRef.current?.select(), 30);
+    // Focus the label input after next paint
+    requestAnimationFrame(() => labelRef.current?.select());
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request]);
 
