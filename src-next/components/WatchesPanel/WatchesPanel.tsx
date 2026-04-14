@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { Plus } from 'lucide-react';
 import { useSession, useIsStreaming, useSessionWatchActions } from '../../context';
-import { useWatches } from '../../hooks';
+import { useWatchList } from '../../hooks';
 import type { FilterCriteria } from '../../bridge/types';
 import { IconButton } from '../../ui';
 import { WatchRow } from './WatchRow';
@@ -11,7 +11,7 @@ import styles from './WatchesPanel.module.css';
 export const WatchesPanel = React.memo(function WatchesPanel() {
   const session = useSession();
   const isStreaming = useIsStreaming();
-  const { watches, refreshWatches } = useWatches();
+  const { watches, refreshWatches } = useWatchList();
   const { addWatch, removeWatch } = useSessionWatchActions();
   const [showCreate, setShowCreate] = useState(false);
 

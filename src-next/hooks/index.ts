@@ -33,8 +33,8 @@ export { useBookmarks, useBookmarkLines, useBookmarkLookup } from './useBookmark
 export type { BookmarkState } from './useBookmarks';
 export { useAnalysis } from './useAnalysis';
 export type { AnalysisState } from './useAnalysis';
-export { useWatches } from './useWatches';
-export type { UseWatchesReturn } from './useWatches';
+export { useWatchList } from './useWatchList';
+export type { UseWatchListReturn } from './useWatchList';
 export { useMarketplace } from './useMarketplace';
 export type { MarketplaceState } from './useMarketplace';
 export { useToast } from './useToast';
