@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import type { CorrelationEvent } from '../../bridge/types';
 import {
   useSession,
@@ -152,11 +152,10 @@ const CorrelationsView = React.memo(function CorrelationsView() {
   const { jumpToLine } = useNavigationActions();
 
   const sessionId = session?.sessionId ?? '';
-  const activeIdSet = new Set(activeProcessorIds);
-
-  const activeCorrelators = processors.filter(
-    (p) => p.processorType === 'correlator' && activeIdSet.has(p.id),
-  );
+  const activeCorrelators = useMemo(() => {
+    const idSet = new Set(activeProcessorIds);
+    return processors.filter(p => p.processorType === 'correlator' && idSet.has(p.id));
+  }, [processors, activeProcessorIds]);
 
   if (!session) {
     return (
