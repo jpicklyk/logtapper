@@ -37,8 +37,8 @@ export interface WorkspaceActions {
   saveWorkspace: () => Promise<void>;
   /** Save the active workspace to a new .ltw path. */
   saveWorkspaceAs: () => Promise<void>;
-  /** Close the active workspace. Prompts to save if dirty. */
-  closeWorkspace: () => void;
+  /** Close a workspace by ID. Prompts to save if the target is dirty. */
+  closeWorkspace: (targetId: string) => void;
   /** Switch to a different workspace by ID. Auto-saves the current one. */
   switchWorkspace: (targetId: string) => void;
   /** Whether the save prompt dialog should be shown. */
@@ -66,7 +66,7 @@ export function useWorkspace(
 
   // Save prompt state
   const [showSavePrompt, setShowSavePrompt] = useState(false);
-  const pendingActionRef = useRef<{ type: 'new' } | { type: 'open'; path: string } | { type: 'close' } | { type: 'switch'; targetId: string } | null>(null);
+  const pendingActionRef = useRef<{ type: 'new' } | { type: 'open'; path: string } | { type: 'switch'; targetId: string } | null>(null);
 
   // --- Internal helpers ---
 
@@ -215,19 +215,6 @@ export function useWorkspace(
         await persistAppState();
         break;
       }
-      case 'close': {
-        const activeId = ctx.activeId;
-        if (!activeId) break;
-        await doClearPanes();
-        ctx.removeWorkspace(activeId);
-        // If there's a next workspace, load it
-        // (removeWorkspace auto-selects the next one)
-        // We need to wait for the state update, then load
-        // For now, emit reset — the next render will pick up the new active
-        await persistAppState();
-        bus.emit('workspace:reset', undefined);
-        break;
-      }
       case 'switch': {
         // Always auto-save current workspace state before switching
         await doAutoSave();
@@ -340,9 +327,13 @@ export function useWorkspace(
     }
   }, [doSave, persistAppState]);
 
-  const closeWorkspace = useCallback(() => {
-    guardedAction({ type: 'close' });
-  }, [guardedAction]);
+  const closeWorkspace = useCallback((targetId: string) => {
+    const ctx = wsCtxRef.current;
+    if (targetId === ctx.activeId) return; // Cannot close the active workspace
+    // Non-active workspaces are auto-saved on switch — skip dirty guard
+    ctx.removeWorkspace(targetId);
+    persistAppState();
+  }, [persistAppState]);
 
   const switchWorkspace = useCallback((targetId: string) => {
     const ctx = wsCtxRef.current;
