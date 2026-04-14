@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { AdbStreamStopped, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress, BookmarkUpdateEvent, AnalysisUpdateEvent, WatchMatchEvent } from './types';
+import type { AdbStreamStopped, AdbTrackerUpdate, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress, BookmarkUpdateEvent, AnalysisUpdateEvent, WatchMatchEvent } from './types';
 
 // ---------------------------------------------------------------------------
 // ADB streaming events
@@ -8,6 +8,12 @@ import type { AdbStreamStopped, FileIndexProgress, FileIndexComplete, SearchProg
 // NOTE: adb-batch and adb-processor-update are no longer emitted as Tauri
 // broadcast events — they arrive via the Channel<AdbStreamEvent> passed to
 // start_adb_stream. See commands.ts startAdbStream and useStreamSession.
+
+export function onAdbTrackerUpdate(
+  cb: (payload: AdbTrackerUpdate) => void,
+): Promise<UnlistenFn> {
+  return listen<AdbTrackerUpdate>('adb-tracker-update', (e) => cb(e.payload));
+}
 
 export function onAdbStreamStopped(
   cb: (payload: AdbStreamStopped) => void,

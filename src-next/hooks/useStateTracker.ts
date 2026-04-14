@@ -1,6 +1,7 @@
 import { useCallback, useRef, useEffect } from 'react';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { AdbTrackerUpdate, StateSnapshot, StateTransition } from '../bridge/types';
+import type { UnlistenFn } from '@tauri-apps/api/event';
+import type { StateSnapshot, StateTransition } from '../bridge/types';
+import { onAdbTrackerUpdate } from '../bridge/events';
 import { getAllTransitionLines, getStateAtLine, getStateTransitions } from '../bridge/commands';
 import { useTrackerContext } from '../context/TrackerContext';
 import { useSessionContext } from '../context/SessionContext';
@@ -29,28 +30,9 @@ export function useStateTracker(): StateTrackerActions {
 
   const unlistenRef = useRef<UnlistenFn | null>(null);
 
-  // Subscribe to adb-tracker-update events (StrictMode-safe).
-  // Updates the streaming session's update counts and forwards to bus
-  // so usePipeline can bump runCount for dashboard rendering.
-  useEffect(() => {
-    let cancelled = false;
-    listen<AdbTrackerUpdate>('adb-tracker-update', (event) => {
-      if (cancelled) return;
-      const { trackerId, transitionCount, sessionId } = event.payload;
-      setSessionUpdateCounts(sessionId, (prev) => ({
-        ...prev,
-        [trackerId]: transitionCount,
-      }));
-      bus.emit('pipeline:adb-tracker-update', { sessionId, trackerId, transitionCount });
-    }).then((fn) => {
-      if (cancelled) fn();
-      else unlistenRef.current = fn;
-    });
-    return () => {
-      cancelled = true;
-      unlistenRef.current?.();
-    };
-  }, [setSessionUpdateCounts]);
+  // Throttled transition line refresh for streaming — at most once per 3s.
+  const transitionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingTransitionRefreshRef = useRef<string | null>(null);
 
   const refreshTransitionLines = useCallback(async (sessionId: string) => {
     try {
@@ -77,9 +59,46 @@ export function useStateTracker(): StateTrackerActions {
     }
   }, [setSessionTransitionData]);
 
-  // Throttled transition line refresh for streaming — at most once per 3s.
-  const transitionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingTransitionRefreshRef = useRef<string | null>(null);
+  // Subscribe to adb-tracker-update events (StrictMode-safe).
+  // Updates the streaming session's update counts and forwards to bus
+  // so usePipeline can bump runCount for dashboard rendering.
+  // Also drives the throttled refreshTransitionLines call directly,
+  // eliminating the intermediate bus hop.
+  useEffect(() => {
+    let cancelled = false;
+    onAdbTrackerUpdate((payload) => {
+      if (cancelled) return;
+      const { trackerId, transitionCount, sessionId } = payload;
+      setSessionUpdateCounts(sessionId, (prev) => ({
+        ...prev,
+        [trackerId]: transitionCount,
+      }));
+      bus.emit('pipeline:adb-tracker-update', { sessionId, trackerId, transitionCount });
+      // Throttled transition line refresh during streaming
+      pendingTransitionRefreshRef.current = sessionId;
+      if (!transitionRefreshTimerRef.current) {
+        transitionRefreshTimerRef.current = setTimeout(() => {
+          transitionRefreshTimerRef.current = null;
+          const sid = pendingTransitionRefreshRef.current;
+          if (sid) {
+            pendingTransitionRefreshRef.current = null;
+            refreshTransitionLines(sid);
+          }
+        }, 3000);
+      }
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlistenRef.current = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlistenRef.current?.();
+      if (transitionRefreshTimerRef.current) {
+        clearTimeout(transitionRefreshTimerRef.current);
+        transitionRefreshTimerRef.current = null;
+      }
+    };
+  }, [setSessionUpdateCounts, refreshTransitionLines]);
 
   // Subscribe to bus events
   useEffect(() => {
@@ -100,35 +119,14 @@ export function useStateTracker(): StateTrackerActions {
       clearSessionData(e.sessionId);
     };
 
-    // Throttled refresh during streaming so timeline updates without flooding.
-    const handleTrackerUpdate = (e: { sessionId: string }) => {
-      pendingTransitionRefreshRef.current = e.sessionId;
-      if (!transitionRefreshTimerRef.current) {
-        transitionRefreshTimerRef.current = setTimeout(() => {
-          transitionRefreshTimerRef.current = null;
-          const sid = pendingTransitionRefreshRef.current;
-          if (sid) {
-            pendingTransitionRefreshRef.current = null;
-            refreshTransitionLines(sid);
-          }
-        }, 3000);
-      }
-    };
-
     bus.on('session:pre-load', handlePreLoad);
     bus.on('pipeline:completed', handlePipelineCompleted);
     bus.on('session:closed', handleSessionClosed);
-    bus.on('pipeline:adb-tracker-update', handleTrackerUpdate);
 
     return () => {
       bus.off('session:pre-load', handlePreLoad);
       bus.off('pipeline:completed', handlePipelineCompleted);
       bus.off('session:closed', handleSessionClosed);
-      bus.off('pipeline:adb-tracker-update', handleTrackerUpdate);
-      if (transitionRefreshTimerRef.current) {
-        clearTimeout(transitionRefreshTimerRef.current);
-        transitionRefreshTimerRef.current = null;
-      }
     };
   }, [clearSessionData, refreshTransitionLines]);
 
