@@ -79,10 +79,10 @@ export const WorkspaceSwitcher = React.memo(function WorkspaceSwitcher() {
     setOpen(false);
   }, [switchWorkspace]);
 
-  const handleClose = useCallback((e: React.MouseEvent) => {
+  const handleClose = useCallback((e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    closeWorkspace();
-    if (workspaces.length <= 1) setOpen(false);
+    closeWorkspace(id);
+    if (workspaces.length <= 2) setOpen(false);
   }, [closeWorkspace, workspaces.length]);
 
   const handleNew = useCallback(() => {
@@ -180,10 +180,10 @@ export const WorkspaceSwitcher = React.memo(function WorkspaceSwitcher() {
                   >
                     <Pencil size={11} />
                   </button>
-                  {ws.id === activeId && (
+                  {ws.id !== activeId && (
                     <button
                       className={styles.closeBtn}
-                      onClick={handleClose}
+                      onClick={(e) => handleClose(e, ws.id)}
                       title="Close workspace"
                     >
                       <X size={12} />

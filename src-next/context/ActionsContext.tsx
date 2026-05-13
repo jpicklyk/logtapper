@@ -33,7 +33,7 @@ export interface WorkspaceMutationActions {
   openWorkspace: (path?: string) => void;
   saveWorkspace: () => Promise<void>;
   saveWorkspaceAs: () => Promise<void>;
-  closeWorkspace: () => void;
+  closeWorkspace: (targetId: string) => void;
   switchWorkspace: (targetId: string) => void;
 }
 
@@ -161,7 +161,7 @@ const DEFAULT_ACTIONS: ActionsContextValue = {
   openWorkspace: (_path?: string) => noop(),
   saveWorkspace: () => noopAsync(),
   saveWorkspaceAs: () => noopAsync(),
-  closeWorkspace: noop,
+  closeWorkspace: (_targetId: string) => noop(),
   switchWorkspace: (_targetId: string) => noop(),
 
   // View actions
