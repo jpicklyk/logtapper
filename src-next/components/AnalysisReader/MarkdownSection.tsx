@@ -1,5 +1,6 @@
 import React from 'react';
 import Markdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { AnalysisSection } from '../../bridge/types';
 import { severityColor } from '../../bridge/types';
@@ -10,6 +11,16 @@ interface Props {
   section: AnalysisSection;
   onJumpToLine: (lineNum: number) => void;
 }
+
+const markdownComponents: Components = {
+  table({ children }) {
+    return (
+      <div className={styles.tableWrapper}>
+        <table>{children}</table>
+      </div>
+    );
+  },
+};
 
 const MarkdownSection = React.memo(function MarkdownSection({ section, onJumpToLine }: Props) {
   const borderColor = section.severity
@@ -29,9 +40,6 @@ const MarkdownSection = React.memo(function MarkdownSection({ section, onJumpToL
           </span>
         )}
       </div>
-      <div className={styles.sectionBody}>
-        <Markdown remarkPlugins={[remarkGfm]}>{section.body}</Markdown>
-      </div>
       {section.references.length > 0 && (
         <div className={styles.references}>
           {section.references.map((ref, i) => (
@@ -43,6 +51,9 @@ const MarkdownSection = React.memo(function MarkdownSection({ section, onJumpToL
           ))}
         </div>
       )}
+      <div className={styles.sectionBody}>
+        <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{section.body}</Markdown>
+      </div>
     </div>
   );
 });

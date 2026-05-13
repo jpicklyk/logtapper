@@ -14,7 +14,7 @@
 }
 
 .content {
-  max-width: 720px;
+  max-width: 960px;
   margin: 0 auto;
   padding: 28px 24px 48px;
 }
@@ -43,6 +43,31 @@
 .timestamp {
   font-size: 11px;
   color: var(--text-dimmed);
+}
+
+.summaryBar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.summaryCount {
+  font-size: 11px;
+  color: var(--text-dimmed);
+}
+
+.summaryPill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: var(--radius-xl);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  border: 1px solid currentColor;
+  opacity: 0.85;
 }
 
 /* ── Section card ────────────────────────────────────────────────────────── */
@@ -142,10 +167,19 @@
   margin-bottom: 3px;
 }
 
+.tableWrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 8px 0;
+}
+
+.tableWrapper table {
+  margin: 0;
+}
+
 .sectionBody table {
   width: 100%;
   border-collapse: collapse;
-  margin: 8px 0;
   font-size: 12px;
 }
 
@@ -205,9 +239,9 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .lineRef {
