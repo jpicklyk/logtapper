@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { FileSearch } from 'lucide-react';
-import type { AnalysisArtifact } from '../../bridge/types';
+import type { AnalysisArtifact, AnalysisSeverity } from '../../bridge/types';
+import { severityColor } from '../../bridge/types';
 import { useSession, useNavigationActions } from '../../context';
 import { useAnalysis } from '../../hooks';
 import { bus } from '../../events/bus';
@@ -47,6 +48,17 @@ const AnalysisReader = React.memo(function AnalysisReader() {
     jumpToLine(lineNum);
   }, [jumpToLine]);
 
+  const severityCounts = useMemo(() => {
+    if (!artifact) return {} as Partial<Record<AnalysisSeverity, number>>;
+    const counts: Partial<Record<AnalysisSeverity, number>> = {};
+    for (const s of artifact.sections) {
+      if (s.severity) counts[s.severity] = (counts[s.severity] ?? 0) + 1;
+    }
+    return counts;
+  }, [artifact]);
+
+  const SEVERITY_ORDER: AnalysisSeverity[] = ['Critical', 'Error', 'Warning', 'Info'];
+
   if (!sessionId) {
     return (
       <div className={styles.emptyState}>
@@ -83,6 +95,24 @@ const AnalysisReader = React.memo(function AnalysisReader() {
           <header className={styles.titleCard}>
             <h2 className={styles.title}>{artifact.title}</h2>
             <span className={styles.timestamp}>{formatDate(artifact.createdAt)}</span>
+            <div className={styles.summaryBar}>
+              <span className={styles.summaryCount}>
+                {artifact.sections.length} section{artifact.sections.length !== 1 ? 's' : ''}
+              </span>
+              {SEVERITY_ORDER.map((sev) => {
+                const count = severityCounts[sev];
+                if (!count) return null;
+                return (
+                  <span
+                    key={sev}
+                    className={styles.summaryPill}
+                    style={{ color: severityColor(sev) }}
+                  >
+                    {count} {sev}
+                  </span>
+                );
+              })}
+            </div>
           </header>
 
           {artifact.sections.map((section, i) => (
