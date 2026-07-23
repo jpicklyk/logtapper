@@ -136,6 +136,14 @@ export interface McpStatus {
   idleSecs: number | null;
 }
 
+/** Directories an MCP client is permitted to open files from via
+ *  `logtapper_open_file`, plus the allow-all bypass. Mirrors
+ *  `McpOpenAllowlist` in `src-tauri/src/commands/bridge_access.rs`. */
+export interface McpOpenAllowlist {
+  allowedDirs: string[];
+  allowAll: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // ADB streaming types
 // ---------------------------------------------------------------------------

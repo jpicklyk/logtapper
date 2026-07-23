@@ -791,3 +791,68 @@
 .mcpStatusChecking {
   background: var(--text-dimmed);
 }
+
+/* ── MCP file access allowlist ───────────────────────────────────────────── */
+
+.mcpAllowAllNote {
+  font-size: 11px;
+  color: var(--warning);
+  background: var(--warning-muted-bg);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  margin: 8px 0;
+  line-height: 1.4;
+}
+
+.mcpDirList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  width: 100%;
+  margin-top: 8px;
+  transition: opacity var(--transition-normal);
+}
+
+.mcpDirListDisabled {
+  opacity: 0.5;
+}
+
+.mcpDirList > .labelHint {
+  padding: 7px 10px;
+  background: var(--bg-base);
+}
+
+.mcpDirRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-base);
+}
+
+.mcpDirRow:hover {
+  background: var(--bg-overlay);
+}
+
+.mcpDirPath {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcpDirDelBtn {
+  flex-shrink: 0;
+  color: var(--text-dimmed);
+}
+
+.mcpDirDelBtn:hover {
+  color: var(--danger);
+}

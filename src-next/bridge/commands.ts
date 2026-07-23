@@ -41,6 +41,7 @@ import type {
   ExportAllSessionsInfo,
   ExportAllOptions,
   FileAssocEntry,
+  McpOpenAllowlist,
   SaveWorkspaceV4Options,
   SyncWorkspaceEnvelopeOptions,
   LoadWorkspaceV4Result,
@@ -664,4 +665,16 @@ export function startMcpBridge(): Promise<void> {
 
 export function stopMcpBridge(): Promise<void> {
   return invoke('stop_mcp_bridge');
+}
+
+// ---------------------------------------------------------------------------
+// MCP open-file allowlist
+// ---------------------------------------------------------------------------
+
+export function getMcpOpenAllowlist(): Promise<McpOpenAllowlist> {
+  return invoke('get_mcp_open_allowlist');
+}
+
+export function setMcpOpenAllowlist(dirs: string[], allowAll: boolean): Promise<void> {
+  return invoke('set_mcp_open_allowlist', { dirs, allowAll });
 }

@@ -1,4 +1,5 @@
-import { memo, useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { open as openDirectoryDialog } from '@tauri-apps/plugin-dialog';
 import { ExternalLink, Moon, Monitor, Plus, Sun, Trash2 } from 'lucide-react';
 import type { AppSettings, UseSettingsResult, BookmarkCategoryDef } from '../../hooks';
 import { SETTING_DEFAULTS, DEFAULT_BOOKMARK_CATEGORIES } from '../../hooks';
@@ -6,9 +7,13 @@ import { useTheme } from '../../context';
 import { SegmentedControl, Button, IconButton } from '../../ui';
 import type { SegmentedOption } from '../../ui';
 import type { ThemeMode } from '../../context';
-import { getFileAssociationStatus } from '../../bridge/commands';
+import {
+  getFileAssociationStatus,
+  getMcpOpenAllowlist,
+  setMcpOpenAllowlist,
+} from '../../bridge/commands';
 import { useSettingsActions } from '../../context';
-import type { FileAssocEntry } from '../../bridge/types';
+import type { FileAssocEntry, McpOpenAllowlist } from '../../bridge/types';
 import { useMcpStatus } from '../../hooks';
 import { formatNumber } from '../../utils';
 import css from './SettingsPanel.module.css';
@@ -145,6 +150,8 @@ export const GeneralTab = memo(function GeneralTab({ settings, onUpdate }: Gener
 
       <McpIntegrationSection settings={settings} onUpdate={onUpdate} />
 
+      <McpFileAccessSection />
+
       <FileAssociationsSection />
 
       <div className={css.section}>
@@ -268,6 +275,140 @@ const McpIntegrationSection = memo(function McpIntegrationSection({ settings, on
     </div>
   );
 });
+
+// ── MCP file access allowlist section ─────────────────────────────────────
+//
+// App-config UI: local component state + the two allowlist Tauri commands
+// directly. Not routed through ActionsContext / SessionActionsContext -- the
+// allowlist is backend-owned config, not a workspace or session mutation.
+
+function McpFileAccessSection() {
+  const [allowlist, setAllowlistState] = useState<McpOpenAllowlist | null>(null);
+  const [pending, setPending] = useState(false);
+
+  // Ref mirror for stable callbacks (see hooks/CLAUDE.md domain hook pattern)
+  // -- reading via ref keeps handlers free of an `allowlist` dependency, and
+  // avoids performing the persist() side effect inside a setState updater
+  // (StrictMode double-invokes updater functions, which would double-fire
+  // the IPC call).
+  const allowlistRef = useRef<McpOpenAllowlist | null>(null);
+  allowlistRef.current = allowlist;
+
+  // StrictMode-safe async load: guard against setState after unmount/re-mount.
+  useEffect(() => {
+    let cancelled = false;
+    getMcpOpenAllowlist()
+      .then((cfg) => { if (!cancelled) setAllowlistState(cfg); })
+      .catch(() => { if (!cancelled) setAllowlistState({ allowedDirs: [], allowAll: false }); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Applies live: every mutation (add/remove dir, toggle) persists to the
+  // backend immediately, which updates the in-memory allowlist with no
+  // restart required. On failure, resync from the backend rather than
+  // leaving optimistic local state that doesn't match what's enforced.
+  const persist = useCallback((next: McpOpenAllowlist) => {
+    setAllowlistState(next);
+    setPending(true);
+    setMcpOpenAllowlist(next.allowedDirs, next.allowAll)
+      .catch(() => {
+        getMcpOpenAllowlist().then(setAllowlistState).catch(() => {});
+      })
+      .finally(() => setPending(false));
+  }, []);
+
+  const handleToggleAllowAll = useCallback((checked: boolean) => {
+    const prev = allowlistRef.current;
+    if (!prev) return;
+    persist({ ...prev, allowAll: checked });
+  }, [persist]);
+
+  const handleRemoveDir = useCallback((dir: string) => {
+    const prev = allowlistRef.current;
+    if (!prev) return;
+    persist({ ...prev, allowedDirs: prev.allowedDirs.filter((d) => d !== dir) });
+  }, [persist]);
+
+  const handleAddDir = useCallback(async () => {
+    let selected: string | null = null;
+    try {
+      const result = await openDirectoryDialog({ directory: true, multiple: false });
+      if (typeof result === 'string') selected = result;
+    } catch {
+      // Dialog unavailable -- no-op (nothing to add).
+    }
+    if (!selected) return;
+    const prev = allowlistRef.current;
+    if (!prev || prev.allowedDirs.includes(selected)) return;
+    persist({ ...prev, allowedDirs: [...prev.allowedDirs, selected] });
+  }, [persist]);
+
+  if (!allowlist) {
+    return (
+      <div className={css.section}>
+        <div className={css.sectionTitle}>MCP File Access</div>
+        <span className={css.labelHint}>Loading...</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className={css.section}>
+      <div className={css.sectionTitle}>MCP File Access</div>
+      <span className={css.labelHint}>
+        Directories the MCP agent may open files from via logtapper_open_file.
+        Changes apply immediately -- no restart needed.
+      </span>
+
+      <div className={css.row}>
+        <div className={css.label}>
+          <span className={css.labelText}>Allow any path</span>
+          <span className={css.labelHint}>
+            Bypass the allowlist entirely and let the agent open any readable path.
+          </span>
+        </div>
+        <div className={css.control}>
+          <input
+            type="checkbox"
+            checked={allowlist.allowAll}
+            disabled={pending}
+            onChange={(e) => handleToggleAllowAll(e.target.checked)}
+          />
+        </div>
+      </div>
+
+      {allowlist.allowAll && (
+        <div className={css.mcpAllowAllNote}>
+          Any readable path can be opened by the agent. The list below is not enforced.
+        </div>
+      )}
+
+      <div className={`${css.mcpDirList} ${allowlist.allowAll ? css.mcpDirListDisabled : ''}`}>
+        {allowlist.allowedDirs.length === 0 ? (
+          <span className={css.labelHint}>No directories allowlisted.</span>
+        ) : (
+          allowlist.allowedDirs.map((dir) => (
+            <div key={dir} className={css.mcpDirRow}>
+              <span className={css.mcpDirPath} title={dir}>{dir}</span>
+              <IconButton
+                icon={Trash2}
+                size={12}
+                type="button"
+                className={css.mcpDirDelBtn}
+                onClick={() => handleRemoveDir(dir)}
+                title="Remove directory"
+              />
+            </div>
+          ))
+        )}
+      </div>
+
+      <Button variant="ghost" size="sm" className={css.linkBtn} type="button" onClick={handleAddDir}>
+        <Plus size={12} /> Add directory
+      </Button>
+    </div>
+  );
+}
 
 // ── Category settings helpers ─────────────────────────────────────────────
 
