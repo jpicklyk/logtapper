@@ -97,21 +97,34 @@ impl PipelineContext {
 
 /// Look up which section a given line belongs to via binary search.
 /// Returns the section name, or "" if the line is not in any section.
-pub fn section_for_line(sections: &[SectionInfo], line_num: usize) -> &str {
+/// Index of the section containing `line_num`, or `None` when the line falls
+/// before the first section or into a gap between sections.
+///
+/// Resolves to the **innermost** section. Sections are ordered by `start_line`
+/// and a dumpsys subsection starts after its parent, so the last section
+/// starting at or before the line is the most specific one covering it. This is
+/// the same resolution `filter.section` performs in processor YAML — a rule
+/// naming a parent section will not match lines that sit inside one of its
+/// subsections.
+pub fn section_index_for_line(sections: &[SectionInfo], line_num: usize) -> Option<usize> {
     if sections.is_empty() {
-        return "";
+        return None;
     }
     // Find the last section whose start_line <= line_num
     let pos = sections.partition_point(|s| s.start_line <= line_num);
     if pos == 0 {
-        return ""; // line_num is before the first section
+        return None; // line_num is before the first section
     }
-    let section = &sections[pos - 1];
-    if line_num <= section.end_line {
-        &section.name
+    let idx = pos - 1;
+    if line_num <= sections[idx].end_line {
+        Some(idx)
     } else {
-        "" // line_num is between sections (gap)
+        None // line_num is between sections (gap)
     }
+}
+
+pub fn section_for_line(sections: &[SectionInfo], line_num: usize) -> &str {
+    section_index_for_line(sections, line_num).map_or("", |i| sections[i].name.as_str())
 }
 
 /// Full parsed representation of a single log line — used by processors/scripts.
@@ -297,6 +310,103 @@ mod tests {
     #[test]
     fn section_for_line_empty_sections() {
         assert_eq!(section_for_line(&[], 42), "");
+    }
+
+    // ── section_index_for_line ───────────────────────────────────────────────
+    // Resolution is innermost-wins, which is what `filter.section` matches
+    // against. A processor rule naming a parent will never match a line inside
+    // one of its subsections — the defect that made two marketplace processors
+    // silently produce zero results.
+
+    /// A dumpsys parent with two subsections nested inside its line range.
+    fn nested_sections() -> Vec<SectionInfo> {
+        vec![
+            SectionInfo { name: "SYSTEM LOG".into(), start_line: 0, end_line: 99, parent_index: None },
+            SectionInfo { name: "DUMPSYS NORMAL".into(), start_line: 100, end_line: 999, parent_index: None },
+            SectionInfo { name: "wifi".into(), start_line: 200, end_line: 299, parent_index: Some(1) },
+            SectionInfo { name: "thermalservice".into(), start_line: 400, end_line: 499, parent_index: Some(1) },
+        ]
+    }
+
+    #[test]
+    fn section_index_resolves_to_innermost_subsection() {
+        let s = nested_sections();
+        // Inside the wifi subsection — not its DUMPSYS NORMAL parent.
+        assert_eq!(section_index_for_line(&s, 250), Some(2));
+        assert_eq!(section_for_line(&s, 250), "wifi");
+        assert_eq!(section_index_for_line(&s, 450), Some(3));
+        assert_eq!(section_for_line(&s, 450), "thermalservice");
+    }
+
+    #[test]
+    fn section_resolves_to_parent_only_before_the_first_subsection() {
+        let s = nested_sections();
+        // Line 150 is inside DUMPSYS NORMAL and before the wifi subsection, so
+        // the parent is the last section starting at or before it.
+        assert_eq!(section_for_line(&s, 150), "DUMPSYS NORMAL");
+    }
+
+    #[test]
+    fn section_does_not_fall_back_to_parent_after_a_subsection_ends() {
+        // LANDMINE, pinned deliberately. Line 350 is inside DUMPSYS NORMAL
+        // (100..=999) but after wifi (200..=299) ended. Resolution takes the
+        // last section *starting* at or before the line — wifi — then finds the
+        // line past wifi's end and gives up rather than walking outward to the
+        // parent. So the line belongs to no section at all.
+        //
+        // Consequence for processors: `filter.section: "DUMPSYS NORMAL"` matches
+        // only the sliver of lines before the first subsection begins. Every
+        // line after that resolves either to a subsection or to nothing. This
+        // makes a parent-section filter even less useful than it appears, and is
+        // why the two marketplace processors that used one silently matched zero
+        // lines. Changing this to walk outward would alter matching for every
+        // installed processor, so it is documented rather than "fixed" here.
+        let s = nested_sections();
+        assert_eq!(section_index_for_line(&s, 350), None);
+        assert_eq!(section_for_line(&s, 350), "");
+    }
+
+    #[test]
+    fn section_index_at_subsection_boundaries() {
+        let s = nested_sections();
+        assert_eq!(section_for_line(&s, 199), "DUMPSYS NORMAL");
+        assert_eq!(section_for_line(&s, 200), "wifi");
+        assert_eq!(section_for_line(&s, 299), "wifi");
+        // Immediately past the subsection: no section, per the landmine above.
+        assert_eq!(section_for_line(&s, 300), "");
+    }
+
+    #[test]
+    fn section_index_none_outside_all_sections() {
+        let s = make_sections();
+        assert_eq!(section_index_for_line(&s, 5), None);   // before first
+        assert_eq!(section_index_for_line(&s, 55), None);  // gap
+        assert_eq!(section_index_for_line(&s, 250), None); // after last
+        assert_eq!(section_index_for_line(&[], 0), None);
+    }
+
+    #[test]
+    fn section_index_and_name_agree_everywhere() {
+        // The endpoint reports the index; processors match on the name. They
+        // must never disagree, so section_for_line delegates to the index fn.
+        let s = nested_sections();
+        for line in 0..1100 {
+            let by_name = section_for_line(&s, line);
+            match section_index_for_line(&s, line) {
+                Some(i) => assert_eq!(by_name, s[i].name, "line {line}"),
+                None => assert_eq!(by_name, "", "line {line}"),
+            }
+        }
+    }
+
+    #[test]
+    fn section_index_walks_parents_to_the_root() {
+        let s = nested_sections();
+        let idx = section_index_for_line(&s, 250).unwrap();
+        assert_eq!(s[idx].name, "wifi");
+        let parent = s[idx].parent_index.unwrap();
+        assert_eq!(s[parent].name, "DUMPSYS NORMAL");
+        assert_eq!(s[parent].parent_index, None);
     }
 
     #[test]

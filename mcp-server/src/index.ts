@@ -247,6 +247,46 @@ server.tool(
   }
 );
 
+// ── 3b. logtapper_section_at ────────────────────────────────────────────
+
+server.tool(
+  "logtapper_section_at",
+  "Resolve which section of a bugreport/dumpstate contains a given line. " +
+    "Answers the question 'what section is line N in?' directly, instead of " +
+    "paging through logtapper_get_sections and cross-referencing parentIndex " +
+    "against line ranges by hand.\n\n" +
+    "Returns two distinct things, and the difference matters:\n" +
+    "• `containingSections` — every section whose line range covers the line, " +
+    "outermost first. This is where the line actually sits.\n" +
+    "• `matchesFilterSection` — the ONE name a processor's `filter.section` " +
+    "must use to match this line, or null if no rule can target it by section.\n\n" +
+    "These disagree more often than you would expect. Section resolution takes " +
+    "the last section STARTING at or before the line and stops if the line is " +
+    "past that section's end — it does not walk outward to an enclosing parent. " +
+    "So a line inside DUMPSYS NORMAL but after the `wifi` subsection ended " +
+    "matches no section at all. Use this before writing any `section:` filter.",
+  {
+    session_id: z.string().describe("Session ID"),
+    line: z
+      .number()
+      .int()
+      .min(0)
+      .describe("0-based line number to resolve"),
+  },
+  async ({ session_id, line }) => {
+    try {
+      return ok(
+        await bridgeGet(
+          `/mcp/sessions/${encodeURIComponent(session_id)}/section_at`,
+          { line }
+        )
+      );
+    } catch (err) {
+      return ok({ error: String(err) });
+    }
+  }
+);
+
 // ── 4. logtapper_query ──────────────────────────────────────────────────
 
 server.tool(
@@ -349,7 +389,13 @@ server.tool(
     "flag. More powerful than logtapper_query's substring matching — use for " +
     "pattern-based investigation like finding all crash signatures or " +
     "specific error sequences. Use offset for pagination through large " +
-    "result sets (skip first N matches).",
+    "result sets (skip first N matches).\n\n" +
+    "Response fields: `matchCount` is the TRUE total number of matches across " +
+    "the whole search range, independent of max_results and offset — use it to " +
+    "decide whether to paginate. `returned` is how many are in this page. " +
+    "Lines are truncated to `maxLineChars` (default 500) with a trailing '...'; " +
+    "wide dumpsys status lines exceed that and lose their trailing fields, so " +
+    "raise max_line_chars when a value you need may sit past the cut.",
   {
     session_id: z.string().describe("Session ID"),
     query: z.string().describe("Regex pattern to search for"),
@@ -389,8 +435,19 @@ server.tool(
       .min(0)
       .optional()
       .describe("Restrict search to lines < end_line (0-based, exclusive)"),
+    max_line_chars: z
+      .number()
+      .int()
+      .min(1)
+      .max(8000)
+      .optional()
+      .describe(
+        "Max characters per returned line before truncation (default 500, max 8000). " +
+          "Raise this when the field you need may sit past the default cut — wide " +
+          "dumpsys status lines routinely exceed 500 characters."
+      ),
   },
-  async ({ session_id, query, max_results, context_lines, case_insensitive, offset, start_line, end_line }) => {
+  async ({ session_id, query, max_results, context_lines, case_insensitive, offset, start_line, end_line, max_line_chars }) => {
     try {
       return ok(
         await bridgeGet(
@@ -403,6 +460,7 @@ server.tool(
             offset,
             start_line,
             end_line,
+            max_line_chars,
           }
         )
       );
