@@ -17,6 +17,7 @@
 //! never across an `.await`).
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -75,12 +76,26 @@ pub fn cache_envelope(state: &AppState, envelope: WorkspaceEnvelope) {
 /// (an `unbounded_send`); callable from any handler after it mutates state.
 /// No-op if the scheduler has not been spawned yet (should not happen after
 /// setup) or the channel is closed.
+///
+/// Also bumps `autosave_generation` (before sending) so `has_pending_flush`
+/// can tell, synchronously and without touching the channel, whether this
+/// mutation has been durably flushed yet — the exit handler relies on this.
 pub fn schedule_autosave(state: &AppState) {
+    state.autosave_generation.fetch_add(1, Ordering::Relaxed);
     if let Ok(guard) = state.autosave_tx.lock() {
         if let Some(tx) = guard.as_ref() {
             let _ = tx.send(());
         }
     }
+}
+
+/// True if a mutation has been scheduled since the last successful flush
+/// (periodic or exit-time). Lock-free; safe to call from the sync
+/// `RunEvent::Exit` handler to decide whether an exit-time flush is worth
+/// doing at all — a clean exit must not pay for a disk write it doesn't need.
+pub fn has_pending_flush(state: &AppState) -> bool {
+    state.autosave_generation.load(Ordering::Relaxed)
+        != state.autosave_flushed_generation.load(Ordering::Relaxed)
 }
 
 /// Spawn the background scheduler task and return its sender. Called once from
@@ -135,6 +150,11 @@ pub fn flush_dest(envelope: &WorkspaceEnvelope, ws_dir: &Path) -> PathBuf {
 
 async fn flush(app: &AppHandle) {
     let state = app.state::<AppState>();
+
+    // Captured before any of the snapshot work below, so that a mutation
+    // racing this flush (landing after the snapshot but before completion)
+    // is correctly left "dirty" — see `has_pending_flush`.
+    let generation_at_start = state.autosave_generation.load(Ordering::Relaxed);
 
     // (a) Clone the envelope under a brief lock, then drop the guard. No
     //     envelope → log and skip. NEVER fabricate a partial one: writing empty
@@ -202,6 +222,9 @@ async fn flush(app: &AppHandle) {
     match join.await {
         // (e) Emit so the frontend records the recovery path + timestamp.
         Ok(Ok((path, saved_at))) => {
+            state
+                .autosave_flushed_generation
+                .store(generation_at_start, Ordering::Relaxed);
             let _ = app.emit(
                 "workspace-auto-saved",
                 serde_json::json!({
@@ -217,6 +240,86 @@ async fn flush(app: &AppHandle) {
         }
         Ok(Err(e)) => log::warn!("[autosave] flush write failed: {e}"),
         Err(e) => log::warn!("[autosave] flush task join error: {e}"),
+    }
+}
+
+/// Synchronous counterpart to `flush()`, for the `RunEvent::Exit` handler.
+///
+/// By the time `RunEvent::Exit` fires the async scheduler's debounce window
+/// (and the tokio runtime driving it) is on its way out, so there is no
+/// `.await` or `spawn_blocking` to lean on — everything here runs inline on
+/// the exit-handler's thread. Mirrors `flush()` step for step (same envelope
+/// snapshot, same `collect_session_data`, same `write_flush_blocking` core —
+/// see the module doc for the lock discipline shared with the command path
+/// and the periodic flusher), just without the async offload.
+///
+/// No-op if nothing is dirty (`has_pending_flush` is false) — a clean exit
+/// must not pay for a disk write it doesn't need. Callers should check that
+/// first; this function does not re-check it, so it always attempts a flush
+/// when called.
+pub fn flush_now_blocking(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let generation_at_start = state.autosave_generation.load(Ordering::Relaxed);
+
+    let envelope = {
+        let Ok(guard) = state.workspace_envelope.lock() else {
+            log::warn!("[autosave] exit flush skipped: workspace_envelope lock poisoned");
+            return;
+        };
+        match guard.as_ref() {
+            Some(e) => e.clone(),
+            None => {
+                log::debug!("[autosave] exit flush skipped: no workspace envelope cached yet");
+                return;
+            }
+        }
+    };
+
+    let entries = match collect_session_data(&state) {
+        Ok(e) => e,
+        Err(e) => {
+            log::warn!("[autosave] exit flush skipped: collect_session_data failed: {e}");
+            return;
+        }
+    };
+
+    let ws_dir = match crate::workspace::workspace_dir(app) {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("[autosave] exit flush skipped: {e}");
+            return;
+        }
+    };
+    let app_state_path = match crate::workspace::app_state::app_state_path(app) {
+        Ok(p) => p,
+        Err(e) => {
+            log::warn!("[autosave] exit flush skipped: {e}");
+            return;
+        }
+    };
+    let dest = flush_dest(&envelope, &ws_dir);
+    let workspace_id = envelope.workspace_id.clone();
+
+    match write_flush_blocking(
+        &dest,
+        &ws_dir,
+        &app_state_path,
+        &envelope,
+        &entries,
+        &state.ltw_write_lock,
+        &state.app_state_write_lock,
+        EVICT_KEEP,
+    ) {
+        Ok(_saved_at) => {
+            state
+                .autosave_flushed_generation
+                .store(generation_at_start, Ordering::Relaxed);
+            log::info!(
+                "[autosave] exit flush: persisted workspace {workspace_id} to {}",
+                dest.display()
+            );
+        }
+        Err(e) => log::warn!("[autosave] exit flush write failed: {e}"),
     }
 }
 
@@ -372,6 +475,77 @@ mod tests {
 
         drop(tx);
         handle.await.unwrap();
+    }
+
+    // --- Exit-flush dirty tracking (Q5) ------------------------------------
+    //
+    // `flush_now_blocking` itself needs a real `AppHandle` (no mock-app
+    // pattern exists in this codebase), so it can only be exercised via the
+    // full Tauri app runtime. What's unit-testable — and is the actual new
+    // logic this fix adds — is the generation-counter dirty tracking that
+    // `has_pending_flush` / `schedule_autosave` share with `flush()` and
+    // `flush_now_blocking`. These tests drive that bookkeeping directly.
+
+    #[test]
+    fn has_pending_flush_false_on_fresh_state() {
+        let state = AppState::new();
+        assert!(!has_pending_flush(&state), "nothing scheduled yet → not dirty");
+    }
+
+    #[test]
+    fn schedule_autosave_marks_dirty_until_flushed_generation_catches_up() {
+        let state = AppState::new();
+        assert!(!has_pending_flush(&state));
+
+        schedule_autosave(&state);
+        assert!(has_pending_flush(&state), "a scheduled mutation must read as dirty");
+
+        // Mirrors what a successful flush() / flush_now_blocking() does on
+        // success: record the generation it captured at the start.
+        let generation = state.autosave_generation.load(Ordering::Relaxed);
+        state.autosave_flushed_generation.store(generation, Ordering::Relaxed);
+        assert!(!has_pending_flush(&state), "recording the flushed generation clears dirty");
+    }
+
+    #[test]
+    fn mutation_racing_an_in_flight_flush_stays_dirty() {
+        let state = AppState::new();
+
+        // A flush begins and captures "nothing pending yet" at this instant...
+        let generation_at_flush_start = state.autosave_generation.load(Ordering::Relaxed);
+
+        // ...but another mutation is scheduled before that flush completes.
+        schedule_autosave(&state);
+
+        // The in-flight flush finishes and records the *stale* generation it
+        // captured at start (exactly what flush()/flush_now_blocking() do) —
+        // never the current one, since it never saw the later mutation.
+        state
+            .autosave_flushed_generation
+            .store(generation_at_flush_start, Ordering::Relaxed);
+
+        assert!(
+            has_pending_flush(&state),
+            "a mutation racing an in-flight flush must not be silently marked clean"
+        );
+    }
+
+    #[test]
+    fn repeated_schedules_between_flushes_stay_dirty_until_recorded() {
+        let state = AppState::new();
+
+        schedule_autosave(&state);
+        schedule_autosave(&state);
+        schedule_autosave(&state);
+        assert!(has_pending_flush(&state));
+
+        let generation = state.autosave_generation.load(Ordering::Relaxed);
+        state.autosave_flushed_generation.store(generation, Ordering::Relaxed);
+        assert!(!has_pending_flush(&state));
+
+        // A later, independent mutation must be picked up again.
+        schedule_autosave(&state);
+        assert!(has_pending_flush(&state));
     }
 
     // --- flush_dest -------------------------------------------------------

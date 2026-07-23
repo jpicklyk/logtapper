@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
 
 use crate::anonymizer::config::AnonymizerConfig;
@@ -134,6 +134,15 @@ pub struct AppState {
     /// the background flush's read-modify-write (a torn file parses as empty,
     /// silently dropping the workspace list).
     pub app_state_write_lock: Arc<Mutex<()>>,
+    /// Q5 — incremented by every `schedule_autosave` call; a cheap, lock-free
+    /// "dirty" signal. Compared against `autosave_flushed_generation` so the
+    /// `RunEvent::Exit` handler can tell, synchronously, whether any mutation
+    /// is still unflushed and worth a blocking exit-time flush.
+    pub autosave_generation: AtomicU64,
+    /// Q5 — the `autosave_generation` value as of the last successful flush
+    /// (periodic or exit-time). `autosave_generation != autosave_flushed_generation`
+    /// means a mutation happened since the last durable write.
+    pub autosave_flushed_generation: AtomicU64,
 }
 
 impl Default for AppState {
@@ -194,6 +203,8 @@ impl AppState {
             autosave_tx: Mutex::new(None),
             ltw_write_lock: Arc::new(Mutex::new(())),
             app_state_write_lock: Arc::new(Mutex::new(())),
+            autosave_generation: AtomicU64::new(0),
+            autosave_flushed_generation: AtomicU64::new(0),
         }
     }
 }

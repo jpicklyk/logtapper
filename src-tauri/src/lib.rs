@@ -563,7 +563,19 @@ pub fn run() {
         .expect("error building tauri application")
         .run(|#[allow(unused_variables)] app_handle, event| {
             match event {
-                tauri::RunEvent::Exit => {}
+                tauri::RunEvent::Exit => {
+                    // Q5 — the async auto-save scheduler's debounce window (up
+                    // to DEBOUNCE_MS) dies with the tokio runtime on exit, so
+                    // any mutation scheduled in that window and not yet
+                    // flushed would otherwise be lost. `RunEvent::Exit` (not
+                    // `ExitRequested`, which can be vetoed) is the final exit
+                    // path, so this fires exactly once for a real quit.
+                    let state = app_handle.state::<AppState>();
+                    if workspace::autosave::has_pending_flush(&state) {
+                        log::info!("[autosave] pending mutation(s) on exit; flushing synchronously");
+                        workspace::autosave::flush_now_blocking(app_handle);
+                    }
+                }
                 #[cfg(target_os = "macos")]
                 tauri::RunEvent::Opened { urls } => {
                     // macOS sends file paths as file:// URLs via this event.
