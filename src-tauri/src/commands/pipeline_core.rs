@@ -574,6 +574,28 @@ fn anonymize_tracker_result(
 // Section range computation
 // ---------------------------------------------------------------------------
 
+/// Resolve declared section names to the line ranges they cover.
+///
+/// A name can occur more than once in a bugreport/dumpstate — "DUMPSYS" repeats
+/// for each dump block, for instance — so every section carrying the name
+/// contributes a range. Resolving only the first occurrence would silently drop
+/// all later ones from the gate, and lines there would reach no processor.
+fn resolve_section_ranges(names: &[&str], sections: &[SectionInfo]) -> Option<Vec<(usize, usize)>> {
+    if names.is_empty() {
+        return None;
+    }
+    let ranges: Vec<(usize, usize)> = names
+        .iter()
+        .flat_map(|name| {
+            sections
+                .iter()
+                .filter(move |s| s.name == *name)
+                .map(|s| (s.start_line, s.end_line))
+        })
+        .collect();
+    if ranges.is_empty() { None } else { Some(ranges) }
+}
+
 /// Compute section ranges parallel to reporter_defs, used for section-filtered
 /// reporters (bugreport sections).
 fn compute_section_ranges(
@@ -598,16 +620,7 @@ fn compute_section_ranges(
                 }
             }
 
-            if section_names.is_empty() {
-                None
-            } else {
-                let r: Vec<(usize, usize)> = section_names
-                    .iter()
-                    .filter_map(|name| sections.iter().find(|s| s.name == *name))
-                    .map(|s| (s.start_line, s.end_line))
-                    .collect();
-                if r.is_empty() { None } else { Some(r) }
-            }
+            resolve_section_ranges(&section_names, sections)
         })
         .collect()
 }
@@ -620,19 +633,7 @@ fn compute_tracker_section_ranges(
 ) -> Vec<Option<Vec<(usize, usize)>>> {
     tracker_defs
         .iter()
-        .map(|(_, def)| {
-            let names = def.section_names();
-            if names.is_empty() {
-                None
-            } else {
-                let r: Vec<(usize, usize)> = names
-                    .iter()
-                    .filter_map(|name| sections.iter().find(|s| s.name == *name))
-                    .map(|s| (s.start_line, s.end_line))
-                    .collect();
-                if r.is_empty() { None } else { Some(r) }
-            }
-        })
+        .map(|(_, def)| resolve_section_ranges(&def.section_names(), sections))
         .collect()
 }
 
@@ -1310,5 +1311,96 @@ pipeline:
         // State should reflect both updates
         assert_eq!(tracker.current_state["health"], serde_json::json!("2"));
         assert_eq!(tracker.current_state["protect_mode"], serde_json::json!(true));
+    }
+
+    // ── Section range resolution ─────────────────────────────────────────────
+
+    /// Sections mimicking a dumpstate where one name repeats — "DUMPSYS" opens a
+    /// new block several times in a real capture.
+    fn repeated_name_sections() -> Vec<SectionInfo> {
+        vec![
+            SectionInfo { name: "SYSTEM LOG".into(), start_line: 100, end_line: 199, parent_index: None },
+            SectionInfo { name: "DUMPSYS".into(), start_line: 200, end_line: 299, parent_index: None },
+            SectionInfo { name: "DUMPSYS".into(), start_line: 400, end_line: 499, parent_index: None },
+            SectionInfo { name: "DUMPSYS".into(), start_line: 600, end_line: 699, parent_index: None },
+        ]
+    }
+
+    /// The gate applied in `run_layer2_parallel` — a line is processed when it
+    /// falls inside any resolved range.
+    fn passes_gate(ranges: &Option<Vec<(usize, usize)>>, line: usize) -> bool {
+        match ranges {
+            Some(r) => r.iter().any(|(start, end)| line >= *start && line <= *end),
+            None => true,
+        }
+    }
+
+    #[test]
+    fn resolve_section_ranges_collects_every_occurrence() {
+        let sections = repeated_name_sections();
+        let ranges = resolve_section_ranges(&["DUMPSYS"], &sections).unwrap();
+        assert_eq!(ranges, vec![(200, 299), (400, 499), (600, 699)]);
+    }
+
+    #[test]
+    fn resolve_section_ranges_unknown_name_yields_none() {
+        let sections = repeated_name_sections();
+        assert!(resolve_section_ranges(&["NO SUCH SECTION"], &sections).is_none());
+        assert!(resolve_section_ranges(&[], &sections).is_none());
+    }
+
+    #[test]
+    fn tracker_gate_admits_lines_in_later_occurrences() {
+        let yaml = r#"
+sections:
+  - "DUMPSYS"
+state:
+  - name: seen
+    type: bool
+transitions:
+  - name: anything
+    filter:
+      message_contains: "x"
+    set:
+      seen: true
+"#;
+        let def: StateTrackerDef = serde_yaml::from_str(yaml).unwrap();
+        let defs = vec![("t".to_string(), Arc::new(def))];
+        let ranges = compute_tracker_section_ranges(&defs, &repeated_name_sections());
+        assert_eq!(ranges.len(), 1);
+
+        // First occurrence was already admitted before the fix.
+        assert!(passes_gate(&ranges[0], 250));
+        // Second and third occurrences are the regression this guards.
+        assert!(passes_gate(&ranges[0], 450), "line in 2nd DUMPSYS block must pass the gate");
+        assert!(passes_gate(&ranges[0], 650), "line in 3rd DUMPSYS block must pass the gate");
+        // Lines outside every occurrence still gated out.
+        assert!(!passes_gate(&ranges[0], 150));
+        assert!(!passes_gate(&ranges[0], 350));
+    }
+
+    #[test]
+    fn reporter_gate_admits_lines_in_later_occurrences() {
+        // Uses a `section_is` rule rather than top-level `sections:` so the
+        // other half of compute_section_ranges is covered too.
+        let yaml = r#"
+meta:
+  id: test
+  name: Test
+pipeline:
+  - stage: filter
+    rules:
+      - type: section_is
+        section: "DUMPSYS"
+"#;
+        let def = ReporterDef::from_yaml(yaml).unwrap();
+        let defs = vec![("r".to_string(), Arc::new(def))];
+        let ranges = compute_section_ranges(&defs, &repeated_name_sections());
+        assert_eq!(ranges.len(), 1);
+
+        assert!(passes_gate(&ranges[0], 250));
+        assert!(passes_gate(&ranges[0], 450), "line in 2nd DUMPSYS block must pass the gate");
+        assert!(passes_gate(&ranges[0], 650), "line in 3rd DUMPSYS block must pass the gate");
+        assert!(!passes_gate(&ranges[0], 150));
     }
 }
