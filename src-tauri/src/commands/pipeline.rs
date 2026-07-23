@@ -45,9 +45,21 @@ pub struct PipelineRunSummary {
     /// First script error message for diagnostics (reporters only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub first_script_error: Option<String>,
+    /// Absolute line number of the first line scanned in this run (see
+    /// `SourceSnapshot::scanned_from`). Zero for files and streams that
+    /// haven't evicted; equals the stream's `evicted_count` at snapshot time
+    /// otherwise, so callers can tell that lines before this one were
+    /// excluded (spilled to disk, never read into the run) rather than just
+    /// not matching.
+    #[serde(skip_serializing_if = "is_zero_usize")]
+    pub scanned_from: usize,
 }
 
 fn is_zero_u32(v: &u32) -> bool {
+    *v == 0
+}
+
+fn is_zero_usize(v: &usize) -> bool {
     *v == 0
 }
 
@@ -65,6 +77,11 @@ enum SourceSnapshot {
     },
     Stream {
         raw_lines: Vec<String>,
+        /// Absolute line number of `raw_lines[0]` at snapshot time — the
+        /// stream's `evicted_count`. Lines before this offset were already
+        /// spilled to disk and are intentionally excluded from this run (the
+        /// spill file is never read into the snapshot).
+        evicted_offset: usize,
     },
     Zip {
         data: Arc<Vec<u8>>,
@@ -80,10 +97,23 @@ impl SourceSnapshot {
             SourceSnapshot::File { line_index, .. } => {
                 if line_index.is_empty() { 0 } else { line_index.len() - 1 }
             }
-            SourceSnapshot::Stream { raw_lines } => raw_lines.len(),
+            SourceSnapshot::Stream { raw_lines, .. } => raw_lines.len(),
             SourceSnapshot::Zip { line_index, .. } => {
                 if line_index.len() > 1 { line_index.len() - 1 } else { 0 }
             }
+        }
+    }
+
+    /// Absolute line number of the first line included in this snapshot.
+    /// Zero for files/zips and streams with no eviction; equals the stream's
+    /// `evicted_count` at snapshot time otherwise. Everything this snapshot
+    /// produces (`raw_line` input, `parse_line` output `source_line_num`) is
+    /// numbered starting from this offset, mirroring the absolute,
+    /// eviction-transparent semantics of `StreamLogSource::raw_line`/`meta_at`.
+    fn scanned_from(&self) -> usize {
+        match self {
+            SourceSnapshot::Stream { evicted_offset, .. } => *evicted_offset,
+            SourceSnapshot::File { .. } | SourceSnapshot::Zip { .. } => 0,
         }
     }
 
@@ -100,8 +130,12 @@ impl SourceSnapshot {
                 }
                 decode_line_bytes(mmap.as_ref(), start, end, *encoding)
             }
-            SourceSnapshot::Stream { raw_lines } => {
-                raw_lines.get(n).map(|s| std::borrow::Cow::Borrowed(s.as_str()))
+            SourceSnapshot::Stream { raw_lines, evicted_offset } => {
+                // `n` is absolute (mirrors StreamLogSource::raw_line). Lines
+                // before the snapshot's evicted offset were never cloned in —
+                // they were spilled to disk and are out of scope for this run.
+                let local = n.checked_sub(*evicted_offset)?;
+                raw_lines.get(local).map(|s| std::borrow::Cow::Borrowed(s.as_str()))
             }
             SourceSnapshot::Zip { data, line_index, encoding } => {
                 if n + 1 >= line_index.len() {
@@ -196,10 +230,14 @@ pub fn execute_pipeline(
                 encoding: src_encoding,
             }
         } else {
-            // StreamLogSource — clone the raw lines
+            // StreamLogSource — clone the retained raw lines. Evicted lines
+            // stay on disk (spill file) and are intentionally excluded from
+            // this run; the evicted offset is captured so every line number
+            // this snapshot produces stays absolute.
             let stream_src = session.stream_source().ok_or("Source is neither File nor Stream")?;
             SourceSnapshot::Stream {
                 raw_lines: stream_src.raw_lines.clone(),
+                evicted_offset: stream_src.evicted_count(),
             }
         };
 
@@ -239,6 +277,7 @@ pub fn execute_pipeline(
     };
 
     let total_lines = source_snapshot.total_lines();
+    let scanned_from = source_snapshot.scanned_from();
     let parser = parser_for(&source_type);
 
     // ── Snapshot anonymizer config ───────────────────────────────────────────
@@ -254,13 +293,20 @@ pub fn execute_pipeline(
     // ── Chunked processing loop ──────────────────────────────────────────────
     let mut lines_processed = 0usize;
 
-    for chunk_start in (0..total_lines).step_by(CHUNK_SIZE) {
+    // Absolute line numbers: for files/zips `scanned_from` is 0 so this loop
+    // behaves exactly as before. For streams it starts at the snapshot's
+    // evicted offset so every produced `source_line_num` (and hence every
+    // matched line, emission, state-tracker transition, and correlation
+    // event) stays absolute — consistent with `StreamLogSource::raw_line`.
+    let scan_end = scanned_from + total_lines;
+
+    for chunk_start in (scanned_from..scan_end).step_by(CHUNK_SIZE) {
         // Check cancellation
         if cancel.load(Ordering::Relaxed) {
             break;
         }
 
-        let chunk_end = (chunk_start + CHUNK_SIZE).min(total_lines);
+        let chunk_end = (chunk_start + CHUNK_SIZE).min(scan_end);
 
         // ── Pre-filter: build list of lines worth parsing ────────────────────
         let line_indices: Vec<usize> = if core.prefilter.is_active() {
@@ -345,6 +391,7 @@ pub fn execute_pipeline(
             emission_count: result.emissions.len(),
             script_errors: result.script_errors,
             first_script_error: result.first_script_error.clone(),
+            scanned_from,
         });
         session_pipeline_results.insert(proc_id.clone(), result.clone());
     }
@@ -360,6 +407,7 @@ pub fn execute_pipeline(
                         emission_count: 0,
                         script_errors: 0,
                         first_script_error: None,
+                        scanned_from,
                     });
                 }
             }
@@ -374,6 +422,7 @@ pub fn execute_pipeline(
             emission_count: 0,
             script_errors: 0,
             first_script_error: None,
+            scanned_from,
         });
     }
 
@@ -388,6 +437,7 @@ pub fn execute_pipeline(
                         emission_count: result.events.len(),
                         script_errors: 0,
                         first_script_error: None,
+                        scanned_from,
                     });
                 }
             }
@@ -430,4 +480,214 @@ pub fn set_session_pipeline_meta(
     let mut map = lock_or_err(&state.session_pipeline_meta, "session_pipeline_meta")?;
     map.insert(session_id, meta);
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Tests — SourceSnapshot::Stream absolute line numbering after eviction
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::anonymizer::config::AnonymizerConfig;
+    use crate::core::line::{LineMeta, LogLevel};
+    use crate::core::log_source::StreamLogSource;
+    use crate::core::session::SourceType;
+    use crate::processors::reporter::schema::ReporterDef;
+
+    /// Build a StreamLogSource with `n` lines pushed, then evict the first
+    /// `evicted` of them (writing them to a real spill file, exactly like a
+    /// live ADB capture hitting its retention cap). Each retained line embeds
+    /// its own absolute line number as `seq=<n>` so tests can verify content
+    /// stayed aligned with the number stamped onto it.
+    ///
+    /// `label` must be unique per caller — the spill file path is derived
+    /// from the session id, and tests run in parallel, so two tests sharing
+    /// one id would race on the same temp file.
+    fn make_evicted_stream(label: &str, n: usize, evicted: usize) -> StreamLogSource {
+        let mut src = StreamLogSource::new(
+            "test-src".into(),
+            "test-src".into(),
+            format!("test-session-{label}"),
+            std::env::temp_dir(),
+        );
+        for i in 0..n {
+            src.push_raw_line(format!(
+                "03-13 11:33:42.{:03}  1000  2723  5261 D PingTag: PING seq={i}",
+                i % 1000
+            ));
+            src.push_meta(LineMeta {
+                level: LogLevel::Debug,
+                tag_id: 0,
+                timestamp: i as i64,
+                byte_offset: 0,
+                byte_len: 0,
+                is_section_boundary: false,
+            });
+        }
+        if evicted > 0 {
+            src.evict(evicted);
+        }
+        src
+    }
+
+    /// Build the same `SourceSnapshot::Stream` execute_pipeline builds under
+    /// the sessions lock, from an already-evicted StreamLogSource.
+    fn snapshot_of(src: &StreamLogSource) -> SourceSnapshot {
+        SourceSnapshot::Stream {
+            raw_lines: src.raw_lines.clone(),
+            evicted_offset: src.evicted_count(),
+        }
+    }
+
+    #[test]
+    fn stream_snapshot_scanned_from_matches_evicted_count() {
+        let src = make_evicted_stream("scanned-from", 10, 4);
+        let snap = snapshot_of(&src);
+
+        assert_eq!(snap.scanned_from(), 4, "scanned_from must equal the evicted offset");
+        assert_eq!(snap.total_lines(), 6, "only the 6 retained lines are in the snapshot");
+    }
+
+    #[test]
+    fn stream_snapshot_raw_line_uses_absolute_indices() {
+        let src = make_evicted_stream("raw-line", 10, 4);
+        let snap = snapshot_of(&src);
+
+        // Evicted lines (0..4) were never cloned into the snapshot — they
+        // live only in the spill file, which run_pipeline intentionally
+        // never reads. Absolute indices below the offset must miss.
+        for n in 0..4 {
+            assert!(
+                snap.raw_line(n).is_none(),
+                "line {n} was evicted and must not resolve from the snapshot"
+            );
+        }
+
+        // Retained lines (4..10) must resolve by their ABSOLUTE line number,
+        // not a snapshot-relative index — this is the crux of the bug fix.
+        for n in 4..10 {
+            let raw = snap.raw_line(n).expect("retained line must resolve");
+            assert!(
+                raw.contains(&format!("seq={n}")),
+                "raw_line({n}) returned {raw:?}, expected the line whose seq matches its own absolute number"
+            );
+        }
+    }
+
+    #[test]
+    fn stream_snapshot_parse_line_stamps_absolute_source_line_num() {
+        let src = make_evicted_stream("parse-line", 10, 4);
+        let snap = snapshot_of(&src);
+        let parser = parser_for(&SourceType::Logcat);
+
+        let scanned_from = snap.scanned_from();
+        let total_lines = snap.total_lines();
+
+        // Mirrors exactly what execute_pipeline's chunk loop does: iterate
+        // the absolute range and parse each raw line at its absolute number.
+        for n in scanned_from..(scanned_from + total_lines) {
+            let raw = snap.raw_line(n).expect("retained line must resolve");
+            let raw_str = raw.as_ref();
+            let ctx = parser.parse_line(raw_str, "test-src", n)
+                .expect("threadtime-format line must parse");
+            assert_eq!(
+                ctx.source_line_num, n,
+                "parse_line must stamp the ABSOLUTE line number, not a snapshot-relative one"
+            );
+            assert!(
+                ctx.message.contains(&format!("seq={n}")),
+                "line content must still match its own absolute number: {:?}",
+                ctx.message
+            );
+        }
+    }
+
+    #[test]
+    fn stream_snapshot_reporter_matches_are_absolute_and_exclude_evicted_lines() {
+        // 500_000-scale eviction offsets are realistic for a long capture,
+        // but any nonzero offset exercises the bug — keep it small for a
+        // fast, readable test.
+        let evicted = 1_000;
+        let retained = 5;
+        let src = make_evicted_stream("reporter", evicted + retained, evicted);
+        let snap = snapshot_of(&src);
+        let parser = parser_for(&SourceType::Logcat);
+
+        let yaml = r#"
+meta:
+  id: ping_reporter
+  name: Ping Reporter
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains
+        value: "PING"
+"#;
+        let reporter_def = ReporterDef::from_yaml(yaml).expect("reporter yaml parses");
+        let defs = PartitionedDefs {
+            transformer_defs: Vec::new(),
+            reporter_defs: vec![("ping_reporter".to_string(), Arc::new(reporter_def))],
+            tracker_defs: Vec::new(),
+            correlator_defs: Vec::new(),
+        };
+
+        let pipeline_ctx = PipelineContext {
+            source_type: SourceType::Logcat,
+            source_name: Arc::from("test-src"),
+            is_streaming: true,
+            sections: Arc::from([]),
+        };
+
+        let anonymizer_config = AnonymizerConfig::with_defaults();
+        let mut core = PipelineCore::new(&defs, pipeline_ctx, &[], &anonymizer_config);
+
+        let scanned_from = snap.scanned_from();
+        let total_lines = snap.total_lines();
+        let mut parsed_chunk: Vec<Option<crate::core::line::LineContext>> =
+            (scanned_from..(scanned_from + total_lines))
+                .map(|n| {
+                    let raw = snap.raw_line(n).unwrap();
+                    parser.parse_line(raw.as_ref(), "test-src", n)
+                })
+                .collect();
+        core.process_batch(&mut parsed_chunk);
+
+        let output = core.finish(&HashMap::new());
+        let result = output.reporter_results.get("ping_reporter").expect("reporter ran");
+
+        let expected: Vec<usize> = (evicted..(evicted + retained)).collect();
+        let mut matched = result.matched_line_nums.clone();
+        matched.sort_unstable();
+        assert_eq!(
+            matched, expected,
+            "matched_line_nums must be absolute line numbers starting at the evicted offset, \
+             with every evicted line excluded from the run"
+        );
+    }
+
+    #[test]
+    fn pipeline_run_summary_scanned_from_skips_serialization_when_zero() {
+        let zero = PipelineRunSummary {
+            processor_id: "p".into(),
+            matched_lines: 0,
+            emission_count: 0,
+            script_errors: 0,
+            first_script_error: None,
+            scanned_from: 0,
+        };
+        let json = serde_json::to_value(&zero).unwrap();
+        assert!(json.get("scannedFrom").is_none(), "scannedFrom must be omitted when zero (files, unevicted streams)");
+
+        let nonzero = PipelineRunSummary {
+            processor_id: "p".into(),
+            matched_lines: 0,
+            emission_count: 0,
+            script_errors: 0,
+            first_script_error: None,
+            scanned_from: 1234,
+        };
+        let json = serde_json::to_value(&nonzero).unwrap();
+        assert_eq!(json.get("scannedFrom").and_then(|v| v.as_u64()), Some(1234));
+    }
 }

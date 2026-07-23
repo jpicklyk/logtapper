@@ -333,6 +333,13 @@ export interface PipelineRunSummary {
   emissionCount: number;
   scriptErrors?: number;
   firstScriptError?: string;
+  /** Absolute line number of the first line scanned in this run. Omitted
+   * (undefined) when 0 — i.e. for file sources and streams that haven't
+   * evicted yet. When present, lines before this number were excluded from
+   * the run because they'd already been evicted from the stream's in-memory
+   * buffer (spilled to disk, not read back in for the pipeline scan). Not
+   * currently rendered in the UI. */
+  scannedFrom?: number;
 }
 
 export interface MatchedLine {
