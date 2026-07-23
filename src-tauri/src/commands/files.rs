@@ -152,8 +152,11 @@ pub async fn load_log_file(
         .map(|m| m.len())
         .unwrap_or(0);
 
-    // Derive stable IDs from the original path (not the temp extraction)
-    let session_id = uuid::Uuid::new_v4().to_string();
+    // Derive stable IDs from the original path (not the temp extraction).
+    // Deterministic per (canonical path, length, content prefix) so an unchanged
+    // file keeps its id across restarts — MCP handles survive, restore
+    // diagnostics correlate. See core::session_identity (design §Q5).
+    let session_id = crate::core::session_identity::derive_file_session_id_from_disk(path_obj);
     let source_id = path_obj
         .file_stem()
         .and_then(|s| s.to_str())
@@ -258,8 +261,12 @@ fn load_lts_file_inner(
     // 3. Create one AnalysisSession per embedded session.
     let mut results = Vec::with_capacity(sessions.len());
 
-    for session_data in sessions {
-        let session_id = uuid::Uuid::new_v4().to_string();
+    for (entry_index, session_data) in sessions.into_iter().enumerate() {
+        // Deterministic per (canonical .lts path, entry index). All entries share
+        // one file_path, so the index disambiguates; it is stable because .lts
+        // files are immutable after export. See core::session_identity (design §Q5).
+        let session_id =
+            crate::core::session_identity::derive_lts_session_id(path_obj, entry_index);
 
         // Resolve bundled processors under session-scoped IDs so they don't
         // collide with the user's globally installed versions.
@@ -1709,6 +1716,48 @@ mod tests {
 
         assert!(state.sessions.lock().unwrap().contains_key("sess-keep"),
             "non-matching session must not be removed");
+    }
+
+    // -------------------------------------------------------------------------
+    // Q5 — deterministic session identity, integration.
+    //
+    // load_log_file needs an AppHandle (indexing + event emit) so it can't be
+    // called in a unit test; this replicates its id-derive + close_stale + insert
+    // sequence (files.rs) with a real temp file, mirroring the stale-session
+    // tests above, to prove: loading the SAME unchanged file twice yields the
+    // SAME session id and leaves exactly ONE live session for that path.
+    // -------------------------------------------------------------------------
+    #[test]
+    fn load_same_file_twice_yields_same_id_and_one_live_session() {
+        use std::io::Write;
+
+        let mut tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        writeln!(tmp, "01-01 00:00:01.000  100  101 I Tag: hello").unwrap();
+        tmp.flush().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        let path_obj = tmp.path();
+
+        let state = make_state();
+
+        // First load: derive id, close stale (none yet), register.
+        let id1 = crate::core::session_identity::derive_file_session_id_from_disk(path_obj);
+        close_stale_sessions(&state, None, &path).unwrap();
+        insert_session(&state, &id1, Some(&path));
+
+        // Second load of the SAME unchanged file: same deterministic id;
+        // close_stale_sessions closes the first before the second registers.
+        let id2 = crate::core::session_identity::derive_file_session_id_from_disk(path_obj);
+        assert_eq!(id1, id2, "same unchanged file must derive the same session id");
+        close_stale_sessions(&state, None, &path).unwrap();
+        insert_session(&state, &id2, Some(&path));
+
+        let sessions = state.sessions.lock().unwrap();
+        let for_path: Vec<_> = sessions
+            .values()
+            .filter(|s| s.file_path.as_deref() == Some(path.as_str()))
+            .collect();
+        assert_eq!(for_path.len(), 1, "exactly one live session must remain for the file path");
+        assert_eq!(for_path[0].id, id1, "the live session carries the deterministic id");
     }
 
     // -------------------------------------------------------------------------
