@@ -1,6 +1,8 @@
 import { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import type { UnlistenFn } from '@tauri-apps/api/event';
 import { bus } from '../events/bus';
+import { onWorkspaceAutoSaved } from '../bridge/events';
 import type { WorkspaceIdentity, WorkspaceListState } from '../bridge/workspaceTypes';
 import {
   createEmptyWorkspace, createEmptyListState,
@@ -201,15 +203,21 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [updateWorkspace]);
 
   const recordAutoSave = useCallback((id: string, autoSavePath: string, savedAt: number) => {
-    updateWorkspace(id, ws => ({
-      ...ws,
-      // Point filePath at the recovery file so a workspace switch can reload it
-      // (only reached when the workspace had no explicit .ltw, i.e. filePath was
-      // null). Deliberately does not touch `dirty` — this is not a user save.
-      filePath: autoSavePath,
-      autoSavePath,
-      lastAutoSaveAt: savedAt,
-    }));
+    updateWorkspace(id, ws =>
+      // Idempotent: the frontend's own performAutoSave path and the backend
+      // flusher's forwarded Tauri event both feed this sink, so double-handling
+      // the same values must be a true no-op (no redundant re-render / disk write).
+      (ws.filePath === autoSavePath && ws.autoSavePath === autoSavePath && ws.lastAutoSaveAt === savedAt)
+        ? ws
+        : {
+            ...ws,
+            // Point filePath at the recovery file so a workspace switch can reload it
+            // (only reached when the workspace had no explicit .ltw, i.e. filePath was
+            // null). Deliberately does not touch `dirty` — this is not a user save.
+            filePath: autoSavePath,
+            autoSavePath,
+            lastAutoSaveAt: savedAt,
+          });
   }, [updateWorkspace]);
 
   // --- Startup hydration: app-state.json is authoritative (option 1C) ---
@@ -264,6 +272,23 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     bus.on('workspace:auto-saved', onAutoSaved);
     return () => { bus.off('workspace:auto-saved', onAutoSaved); };
   }, [recordAutoSave]);
+
+  // Forward the backend flusher's Tauri "workspace-auto-saved" event onto the
+  // frontend bus, so the recordAutoSave listener above is the single sink for
+  // both the frontend's own performAutoSave path and the backend flush.
+  // StrictMode-safe via the cancelled guard (CLAUDE.md async-listener pattern).
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: UnlistenFn | null = null;
+    onWorkspaceAutoSaved((payload) => {
+      if (cancelled) return;
+      bus.emit('workspace:auto-saved', payload);
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => { cancelled = true; unlisten?.(); };
+  }, []);
 
   const value = useMemo<WorkspaceContextValue>(() => {
     const active = getActiveWorkspace(listState);

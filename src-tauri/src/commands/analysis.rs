@@ -50,6 +50,9 @@ pub fn publish_analysis(
         },
     );
 
+    // Q4 — durable backend flush (covers MCP-path writers too, by construction).
+    crate::workspace::autosave::schedule_autosave(&state);
+
     Ok(artifact)
 }
 
@@ -92,6 +95,8 @@ pub fn update_analysis(
             artifact_id: updated.id.clone(),
         },
     );
+
+    crate::workspace::autosave::schedule_autosave(&state);
 
     Ok(updated)
 }
@@ -154,6 +159,8 @@ pub fn delete_analysis(
             artifact_id,
         },
     );
+
+    crate::workspace::autosave::schedule_autosave(&state);
 
     Ok(())
 }

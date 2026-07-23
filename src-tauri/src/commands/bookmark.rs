@@ -63,6 +63,9 @@ pub fn create_bookmark(
         },
     );
 
+    // Q4 — durable backend flush (covers MCP-path writers too, by construction).
+    crate::workspace::autosave::schedule_autosave(&state);
+
     Ok(bookmark)
 }
 
@@ -125,6 +128,8 @@ pub fn update_bookmark(
         },
     );
 
+    crate::workspace::autosave::schedule_autosave(&state);
+
     Ok(updated)
 }
 
@@ -158,6 +163,8 @@ pub fn delete_bookmark(
             bookmark: removed,
         },
     );
+
+    crate::workspace::autosave::schedule_autosave(&state);
 
     Ok(())
 }

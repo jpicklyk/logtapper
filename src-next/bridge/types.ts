@@ -820,8 +820,24 @@ export interface LtwEditorTab {
 }
 
 export interface SaveWorkspaceV4Options {
+  /** Stable workspace id — cached into the backend envelope so a background
+   *  flush can update this workspace's app-state.json entry. */
+  workspaceId: string;
   destPath: string;
   workspaceName: string;
+  editorTabs: LtwEditorTab[];
+  layout: unknown | null;
+  pipelineChain: string[];
+  disabledChainIds: string[];
+}
+
+/** Options for `sync_workspace_envelope` — a lightweight backend cache refresh
+ *  (no file write). Mirrors the save options but carries the workspace's
+ *  explicit `.ltw` path (if any) rather than a save destination. */
+export interface SyncWorkspaceEnvelopeOptions {
+  workspaceId: string;
+  workspaceName: string;
+  ltwPath: string | null;
   editorTabs: LtwEditorTab[];
   layout: unknown | null;
   pipelineChain: string[];

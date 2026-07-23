@@ -42,6 +42,7 @@ import type {
   ExportAllOptions,
   FileAssocEntry,
   SaveWorkspaceV4Options,
+  SyncWorkspaceEnvelopeOptions,
   LoadWorkspaceV4Result,
   LtwEditorTab,
   AppStateFile,
@@ -628,6 +629,13 @@ export interface AutoSaveWorkspaceOptions {
 
 export function autoSaveWorkspace(options: AutoSaveWorkspaceOptions): Promise<string> {
   return invoke('auto_save_workspace', { options });
+}
+
+/** Refresh the backend workspace-envelope cache without writing a file. Pushed
+ *  after a workspace open/switch (so the envelope exists before any MCP artifact
+ *  write) and when the active workspace's identity changes (rename / path). */
+export function syncWorkspaceEnvelope(options: SyncWorkspaceEnvelopeOptions): Promise<void> {
+  return invoke('sync_workspace_envelope', { options });
 }
 
 export function loadWorkspaceV4(path: string): Promise<LoadWorkspaceV4Result> {

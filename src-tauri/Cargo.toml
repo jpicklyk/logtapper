@@ -66,6 +66,11 @@ tauri-plugin-window-state = "2"
 winreg = "0.52"
 windows-sys = { version = "0.59", features = ["Win32_UI_Shell"] }
 
+[dev-dependencies]
+# `test-util` enables tokio::time::pause / #[tokio::test(start_paused = true)]
+# used by the Q4 auto-save debounce tests in workspace/autosave.rs.
+tokio = { version = "1", features = ["full", "test-util"] }
+
 [lints.clippy]
 # === Deny (safety-critical, zero tolerance) ===
 await_holding_lock = "deny"

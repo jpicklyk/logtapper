@@ -2096,6 +2096,10 @@ async fn h_create_bookmark(
         },
     );
 
+    // Q4 — schedule a durable backend flush: this write bypassed the frontend
+    // entirely, so nothing else would persist it.
+    crate::workspace::autosave::schedule_autosave(&state);
+
     Json(json!(bookmark))
 }
 
@@ -2122,6 +2126,8 @@ async fn h_delete_bookmark(
                     bookmark: removed,
                 },
             );
+
+            crate::workspace::autosave::schedule_autosave(&state);
 
             return Json(json!({"ok": true}));
         }
@@ -2175,6 +2181,8 @@ async fn h_update_bookmark(
                     bookmark: updated.clone(),
                 },
             );
+
+            crate::workspace::autosave::schedule_autosave(&state);
 
             return Json(json!(updated));
         }
@@ -2244,6 +2252,10 @@ async fn h_publish_analysis(
         },
     );
 
+    // Q4 — schedule a durable backend flush: this publish bypassed the frontend
+    // entirely, so nothing else would persist it (the loss this fixes).
+    crate::workspace::autosave::schedule_autosave(&state);
+
     Json(json!(artifact))
 }
 
@@ -2299,6 +2311,8 @@ async fn h_update_analysis(
                 },
             );
 
+            crate::workspace::autosave::schedule_autosave(&state);
+
             return Json(json!(updated));
         }
     }
@@ -2329,6 +2343,8 @@ async fn h_delete_analysis(
                     artifact_id,
                 },
             );
+
+            crate::workspace::autosave::schedule_autosave(&state);
 
             return Json(json!({"ok": true}));
         }

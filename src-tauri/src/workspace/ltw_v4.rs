@@ -112,6 +112,10 @@ pub struct LtwData {
 // Write
 // ---------------------------------------------------------------------------
 
+/// Write a `.ltw` v4 file. Returns the `saved_at` epoch-millis stamped into the
+/// manifest, so a caller (e.g. the Q4 background flush) can record the exact
+/// same value into `app-state.json` — Q3's trust check compares the two and
+/// tolerates only a small skew.
 pub fn write_ltw(
     dest: &Path,
     workspace_name: &str,
@@ -119,11 +123,12 @@ pub fn write_ltw(
     pipeline_chain: &LtwPipelineChain,
     editor_tabs: &[LtwEditorTab],
     layout: Option<&LtwLayout>,
-) -> Result<(), String> {
+) -> Result<i64, String> {
+    let saved_at = now_ms();
     let manifest = LtwManifest {
         format_version: LTW_V4_FORMAT_VERSION,
         workspace_name: workspace_name.to_string(),
-        saved_at: now_ms(),
+        saved_at,
         sessions: session_entries.iter().map(|(m, _, _, _)| m.clone()).collect(),
     };
 
@@ -155,7 +160,7 @@ pub fn write_ltw(
         .finish()
         .map_err(|e| format!("Failed to finalise workspace zip: {e}"))?;
 
-    Ok(())
+    Ok(saved_at)
 }
 
 // ---------------------------------------------------------------------------

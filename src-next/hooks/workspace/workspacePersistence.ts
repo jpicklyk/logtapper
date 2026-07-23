@@ -216,7 +216,7 @@ export async function performAutoSave(payload: {
 }): Promise<string | null> {
   const { workspaceId, workspaceName, filePath, editorTabs, layout, pipelineChain, disabledChainIds } = payload;
   if (filePath) {
-    await saveWorkspaceV4({ destPath: filePath, workspaceName, editorTabs, layout, pipelineChain, disabledChainIds });
+    await saveWorkspaceV4({ workspaceId, destPath: filePath, workspaceName, editorTabs, layout, pipelineChain, disabledChainIds });
     return null;
   }
   // No explicit path → auto-save to app_data_dir/workspaces/{workspaceId}.ltw.

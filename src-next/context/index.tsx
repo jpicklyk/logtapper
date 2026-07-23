@@ -6,6 +6,7 @@ import { saveLiveCapture, loadProcessorYaml, uninstallProcessor,
   loadProcessorFromFile as bridgeLoadProcessorFromFile,
   setFileAssociation, openDefaultAppsSettings,
   startMcpBridge, stopMcpBridge, exportAllSessions,
+  syncWorkspaceEnvelope,
 } from '../bridge/commands';
 import { basename, dirname } from '../utils';
 import { ViewerProvider } from './ViewerContext';
@@ -234,6 +235,37 @@ function HookWiring({ children }: { children: ReactNode }) {
   }, [getPipelineChain, getDisabledChainIds]);
 
   useWorkspaceAutoSave(buildAutoSavePayload);
+
+  // Q4 — keep the backend workspace envelope's identity fields fresh when the
+  // ACTIVE workspace is renamed or its path changes (save-as / recordAutoSave).
+  // Such changes don't go through a save command, so nothing else refreshes the
+  // cached name/ltwPath. Runs post-commit (fresh values) and deliberately skips
+  // workspace *switches* (id change) — those are covered by doLoadWorkspace's
+  // own end-of-restore envelope push.
+  const prevIdentityRef = useRef<{ id: string | null; name: string | null; filePath: string | null }>(
+    { id: null, name: null, filePath: null },
+  );
+  const activeWs = wsCtx.activeWorkspace;
+  useEffect(() => {
+    const prev = prevIdentityRef.current;
+    const curr = { id: activeWs?.id ?? null, name: activeWs?.name ?? null, filePath: activeWs?.filePath ?? null };
+    prevIdentityRef.current = curr;
+    if (!wsCtxRef.current.hydrated) return;
+    // Only refresh for an in-place identity change on the same active workspace.
+    if (curr.id === null || prev.id !== curr.id) return;
+    if (prev.name === curr.name && prev.filePath === curr.filePath) return;
+    const payload = buildAutoSavePayload();
+    if (!payload) return;
+    syncWorkspaceEnvelope({
+      workspaceId: payload.workspaceId,
+      workspaceName: payload.workspaceName,
+      ltwPath: payload.filePath,
+      editorTabs: payload.editorTabs,
+      layout: payload.layout,
+      pipelineChain: payload.pipelineChain,
+      disabledChainIds: payload.disabledChainIds,
+    }).catch((e: unknown) => console.warn('[HookWiring] Envelope identity sync failed:', e));
+  }, [activeWs?.id, activeWs?.name, activeWs?.filePath, buildAutoSavePayload]);
 
   // Build the AppStateFile payload for exit save — reads workspace list from context.
   const getAppStatePayload = useCallback((): AppStateFile => {

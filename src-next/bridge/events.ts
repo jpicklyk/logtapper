@@ -143,3 +143,22 @@ export function onOpenFile(
   return listen<string>('open-file', (e) => cb(e.payload));
 }
 
+// ---------------------------------------------------------------------------
+// Workspace auto-saved (Q4 — backend flush)
+// ---------------------------------------------------------------------------
+
+/** Payload emitted by the backend auto-save flusher after it writes the `.ltw`.
+ *  Shape matches the frontend `workspace:auto-saved` bus event so it can be
+ *  forwarded directly. */
+export interface WorkspaceAutoSavedPayload {
+  workspaceId: string;
+  path: string;
+  savedAt: number;
+}
+
+export function onWorkspaceAutoSaved(
+  cb: (payload: WorkspaceAutoSavedPayload) => void,
+): Promise<UnlistenFn> {
+  return listen<WorkspaceAutoSavedPayload>('workspace-auto-saved', (e) => cb(e.payload));
+}
+
