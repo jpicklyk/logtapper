@@ -185,10 +185,7 @@ pub async fn start_adb_stream(
     // from .ltw saves, so cross-restart stability is moot; the epoch suffix keeps
     // a stop/start cycle from aliasing the previous run's pipeline results.
     // See core::session_identity (design §Q5).
-    let start_epoch_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
+    let start_epoch_ms = crate::workspace::now_ms() as u128;
     let session_id = crate::core::session_identity::derive_adb_session_id(&serial, start_epoch_ms);
     let source_id = format!("adb-{}", serial.replace(':', "-"));
     let device_label = format!("ADB: {serial}");

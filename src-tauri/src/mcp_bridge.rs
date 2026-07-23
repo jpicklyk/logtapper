@@ -1628,6 +1628,21 @@ struct SectionAtParams {
     line: usize,
 }
 
+/// Serialize a section into the `{name, startLine, endLine, parentIndex?}`
+/// object shared by `h_sections` and `h_section_at`. `parentIndex` is omitted
+/// for top-level sections. Kept in one place so both endpoints stay byte-identical.
+fn section_json(s: &crate::core::session::SectionInfo) -> Value {
+    let mut obj = json!({
+        "name": s.name,
+        "startLine": s.start_line,
+        "endLine": s.end_line,
+    });
+    if let Some(pi) = s.parent_index {
+        obj["parentIndex"] = json!(pi);
+    }
+    obj
+}
+
 /// GET /mcp/sessions/{session_id}/section_at?line=N
 ///
 /// Resolves which section contains a line. Returns the **innermost** section —
@@ -1652,18 +1667,7 @@ async fn h_section_at(
     let total_lines = source.total_lines();
     let line = params.line;
 
-    let describe = |i: usize| {
-        let s: &crate::core::session::SectionInfo = &sections[i];
-        let mut obj = json!({
-            "name": s.name,
-            "startLine": s.start_line,
-            "endLine": s.end_line,
-        });
-        if let Some(pi) = s.parent_index {
-            obj["parentIndex"] = json!(pi);
-        }
-        obj
-    };
+    let describe = |i: usize| section_json(&sections[i]);
 
     // Every section whose line range covers this line, outermost first. This is
     // the honest "where am I" answer.
@@ -1733,17 +1737,7 @@ async fn h_sections(
     let page: Vec<Value> = filtered.iter()
         .skip(offset)
         .take(limit)
-        .map(|s| {
-            let mut obj = json!({
-                "name": s.name,
-                "startLine": s.start_line,
-                "endLine": s.end_line,
-            });
-            if let Some(pi) = s.parent_index {
-                obj["parentIndex"] = json!(pi);
-            }
-            obj
-        })
+        .map(|&s| section_json(s))
         .collect();
 
     Json(json!({
@@ -2055,85 +2049,33 @@ async fn h_create_bookmark(
     Path(session_id): Path<String>,
     Json(body): Json<CreateBookmarkBody>,
 ) -> Json<Value> {
-    use crate::core::bookmark::{Bookmark, BookmarkUpdateEvent, CreatedBy};
+    use crate::core::bookmark::CreatedBy;
 
-    let state = handle.state::<AppState>();
-
-    verify_session_exists!(state, session_id);
-
-    let bookmark = Bookmark {
-        id: uuid::Uuid::new_v4().to_string(),
-        session_id: session_id.clone(),
-        line_number: body.line_number,
-        line_number_end: body.line_number_end,
-        snippet: body.snippet,
-        category: body.category,
-        tags: body.tags,
-        label: body.label,
-        note: body.note,
-        created_by: CreatedBy::Agent,
-        created_at: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64,
-    };
-
-    {
-        let mut bookmarks = state.bookmarks.lock().unwrap();
-        bookmarks
-            .entry(session_id.clone())
-            .or_default()
-            .push(bookmark.clone());
+    match crate::commands::artifact_mutations::add_bookmark(
+        &handle,
+        session_id,
+        body.line_number,
+        body.label,
+        body.note,
+        CreatedBy::Agent,
+        body.line_number_end,
+        body.snippet,
+        body.category,
+        body.tags,
+    ) {
+        Ok(bookmark) => Json(json!(bookmark)),
+        Err(e) => Json(json!({ "error": e })),
     }
-
-    use tauri::Emitter;
-    let _ = handle.emit(
-        "bookmark-update",
-        BookmarkUpdateEvent {
-            session_id,
-            action: "created".to_string(),
-            bookmark: bookmark.clone(),
-        },
-    );
-
-    // Q4 — schedule a durable backend flush: this write bypassed the frontend
-    // entirely, so nothing else would persist it.
-    crate::workspace::autosave::schedule_autosave(&state);
-
-    Json(json!(bookmark))
 }
 
 async fn h_delete_bookmark(
     State(handle): State<Handle>,
     Path((session_id, bookmark_id)): Path<(String, String)>,
 ) -> Json<Value> {
-    use crate::core::bookmark::BookmarkUpdateEvent;
-
-    let state = handle.state::<AppState>();
-    let mut bookmarks = state.bookmarks.lock().unwrap();
-
-    if let Some(list) = bookmarks.get_mut(&session_id) {
-        if let Some(idx) = list.iter().position(|b| b.id == bookmark_id) {
-            let removed = list.remove(idx);
-            drop(bookmarks);
-
-            use tauri::Emitter;
-            let _ = handle.emit(
-                "bookmark-update",
-                BookmarkUpdateEvent {
-                    session_id,
-                    action: "deleted".to_string(),
-                    bookmark: removed,
-                },
-            );
-
-            crate::workspace::autosave::schedule_autosave(&state);
-
-            return Json(json!({"ok": true}));
-        }
+    match crate::commands::artifact_mutations::remove_bookmark(&handle, session_id, bookmark_id) {
+        Ok(_) => Json(json!({ "ok": true })),
+        Err(e) => Json(json!({ "error": e })),
     }
-
-    Json(json!({"error": format!("Bookmark not found: {bookmark_id}")}))
 }
 
 #[derive(Deserialize)]
@@ -2150,45 +2092,18 @@ async fn h_update_bookmark(
     Path((session_id, bookmark_id)): Path<(String, String)>,
     Json(body): Json<UpdateBookmarkBody>,
 ) -> Json<Value> {
-    use crate::core::bookmark::BookmarkUpdateEvent;
-
-    let state = handle.state::<AppState>();
-    let mut bookmarks = state.bookmarks.lock().unwrap();
-
-    if let Some(list) = bookmarks.get_mut(&session_id) {
-        if let Some(bm) = list.iter_mut().find(|b| b.id == bookmark_id) {
-            if let Some(l) = body.label {
-                bm.label = l;
-            }
-            if let Some(n) = body.note {
-                bm.note = n;
-            }
-            if let Some(c) = body.category {
-                bm.category = Some(c);
-            }
-            if let Some(t) = body.tags {
-                bm.tags = Some(t);
-            }
-            let updated = bm.clone();
-            drop(bookmarks);
-
-            use tauri::Emitter;
-            let _ = handle.emit(
-                "bookmark-update",
-                BookmarkUpdateEvent {
-                    session_id,
-                    action: "updated".to_string(),
-                    bookmark: updated.clone(),
-                },
-            );
-
-            crate::workspace::autosave::schedule_autosave(&state);
-
-            return Json(json!(updated));
-        }
+    match crate::commands::artifact_mutations::update_bookmark(
+        &handle,
+        session_id,
+        bookmark_id,
+        body.label,
+        body.note,
+        body.category,
+        body.tags,
+    ) {
+        Ok(updated) => Json(json!(updated)),
+        Err(e) => Json(json!({ "error": e })),
     }
-
-    Json(json!({"error": format!("Bookmark not found: {bookmark_id}")}))
 }
 
 // ---------------------------------------------------------------------------
@@ -2217,46 +2132,15 @@ async fn h_publish_analysis(
     Path(session_id): Path<String>,
     Json(body): Json<PublishAnalysisBody>,
 ) -> Json<Value> {
-    use crate::core::analysis::{AnalysisArtifact, AnalysisUpdateEvent};
-
-    let state = handle.state::<AppState>();
-
-    verify_session_exists!(state, session_id);
-
-    let artifact = AnalysisArtifact {
-        id: uuid::Uuid::new_v4().to_string(),
-        session_id: session_id.clone(),
-        title: body.title,
-        created_at: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64,
-        sections: body.sections,
-    };
-
-    {
-        let mut analyses = state.analyses.lock().unwrap();
-        analyses
-            .entry(session_id.clone())
-            .or_default()
-            .push(artifact.clone());
+    match crate::commands::artifact_mutations::publish_analysis(
+        &handle,
+        session_id,
+        body.title,
+        body.sections,
+    ) {
+        Ok(artifact) => Json(json!(artifact)),
+        Err(e) => Json(json!({ "error": e })),
     }
-
-    use tauri::Emitter;
-    let _ = handle.emit(
-        "analysis-update",
-        AnalysisUpdateEvent {
-            session_id,
-            action: "published".to_string(),
-            artifact_id: artifact.id.clone(),
-        },
-    );
-
-    // Q4 — schedule a durable backend flush: this publish bypassed the frontend
-    // entirely, so nothing else would persist it (the loss this fixes).
-    crate::workspace::autosave::schedule_autosave(&state);
-
-    Json(json!(artifact))
 }
 
 async fn h_get_analysis(
@@ -2285,72 +2169,26 @@ async fn h_update_analysis(
     Path((session_id, artifact_id)): Path<(String, String)>,
     Json(body): Json<UpdateAnalysisBody>,
 ) -> Json<Value> {
-    use crate::core::analysis::AnalysisUpdateEvent;
-
-    let state = handle.state::<AppState>();
-    let mut analyses = state.analyses.lock().unwrap();
-
-    if let Some(list) = analyses.get_mut(&session_id) {
-        if let Some(art) = list.iter_mut().find(|a| a.id == artifact_id) {
-            if let Some(t) = body.title {
-                art.title = t;
-            }
-            if let Some(s) = body.sections {
-                art.sections = s;
-            }
-            let updated = art.clone();
-            drop(analyses);
-
-            use tauri::Emitter;
-            let _ = handle.emit(
-                "analysis-update",
-                AnalysisUpdateEvent {
-                    session_id,
-                    action: "updated".to_string(),
-                    artifact_id: updated.id.clone(),
-                },
-            );
-
-            crate::workspace::autosave::schedule_autosave(&state);
-
-            return Json(json!(updated));
-        }
+    match crate::commands::artifact_mutations::update_analysis(
+        &handle,
+        session_id,
+        artifact_id,
+        body.title,
+        body.sections,
+    ) {
+        Ok(updated) => Json(json!(updated)),
+        Err(e) => Json(json!({ "error": e })),
     }
-
-    Json(json!({"error": format!("Analysis not found: {artifact_id}")}))
 }
 
 async fn h_delete_analysis(
     State(handle): State<Handle>,
     Path((session_id, artifact_id)): Path<(String, String)>,
 ) -> Json<Value> {
-    use crate::core::analysis::AnalysisUpdateEvent;
-
-    let state = handle.state::<AppState>();
-    let mut analyses = state.analyses.lock().unwrap();
-
-    if let Some(list) = analyses.get_mut(&session_id) {
-        if let Some(idx) = list.iter().position(|a| a.id == artifact_id) {
-            list.remove(idx);
-            drop(analyses);
-
-            use tauri::Emitter;
-            let _ = handle.emit(
-                "analysis-update",
-                AnalysisUpdateEvent {
-                    session_id,
-                    action: "deleted".to_string(),
-                    artifact_id,
-                },
-            );
-
-            crate::workspace::autosave::schedule_autosave(&state);
-
-            return Json(json!({"ok": true}));
-        }
+    match crate::commands::artifact_mutations::remove_analysis(&handle, session_id, artifact_id) {
+        Ok(()) => Json(json!({ "ok": true })),
+        Err(e) => Json(json!({ "error": e })),
     }
-
-    Json(json!({"error": format!("Analysis not found: {artifact_id}")}))
 }
 
 // ---------------------------------------------------------------------------

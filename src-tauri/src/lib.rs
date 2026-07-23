@@ -64,7 +64,7 @@ pub(crate) fn resolve_dev_marketplace_path() -> String {
 
 /// Canonicalize a path, stripping the Windows `\\?\` extended-length prefix if present.
 /// Falls back to the original path if canonicalization fails.
-fn simplified_path(p: &std::path::Path) -> std::path::PathBuf {
+pub(crate) fn simplified_path(p: &std::path::Path) -> std::path::PathBuf {
     match p.canonicalize() {
         Ok(canonical) => {
             // On Windows, canonicalize() produces \\?\C:\... — strip the prefix

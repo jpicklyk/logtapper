@@ -19,6 +19,7 @@ use crate::processors::correlator::engine::CorrelatorResult;
 pub mod adb;
 pub mod analysis;
 pub mod anonymizer;
+pub mod artifact_mutations;
 pub mod bookmark;
 pub mod charts;
 pub mod claude;

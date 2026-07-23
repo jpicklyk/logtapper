@@ -30,25 +30,13 @@ const ID_HEX_LEN: usize = 16;
 /// artifacts / MCP handles do not silently attach to different data.
 const FILE_PREFIX_BYTES: usize = 64 * 1024;
 
-/// Strip the Windows `\\?\` extended-length (UNC) prefix that
-/// `std::fs::canonicalize` emits. Matches `lib.rs::simplified_path`, the
-/// codebase's established handling — the prefix breaks string comparisons and
-/// some file-read APIs. A no-op on non-Windows / already-simple paths.
-fn strip_unc_prefix(s: &str) -> &str {
-    s.strip_prefix(r"\\?\").unwrap_or(s)
-}
-
-/// Canonicalize `path` and strip the `\\?\` prefix. Falls back to the lossy
-/// string of the original path when canonicalization fails (e.g. the file no
-/// longer exists) — determinism for a given input is preserved either way.
+/// Canonicalize `path` (stripping the Windows `\\?\` extended-length prefix) via
+/// the codebase's shared [`crate::simplified_path`], as a lossy `String`.
+/// `simplified_path` falls back to the original path when canonicalization fails
+/// (e.g. the file no longer exists) — determinism for a given input is preserved
+/// either way.
 fn canonical_path_string(path: &Path) -> String {
-    match path.canonicalize() {
-        Ok(canonical) => {
-            let s = canonical.to_string_lossy();
-            strip_unc_prefix(&s).to_string()
-        }
-        Err(_) => path.to_string_lossy().into_owned(),
-    }
+    crate::simplified_path(path).to_string_lossy().into_owned()
 }
 
 /// First `ID_HEX_LEN` hex chars of a digest.
@@ -140,18 +128,6 @@ pub fn derive_adb_session_id(serial: &str, start_epoch_ms: u128) -> String {
 mod tests {
     use super::*;
     use std::path::Path;
-
-    // ── UNC-prefix stripping ────────────────────────────────────────────────
-    #[test]
-    fn strip_unc_prefix_removes_windows_extended_prefix() {
-        assert_eq!(strip_unc_prefix(r"\\?\C:\logs\a.txt"), r"C:\logs\a.txt");
-    }
-
-    #[test]
-    fn strip_unc_prefix_is_noop_without_prefix() {
-        assert_eq!(strip_unc_prefix(r"C:\logs\a.txt"), r"C:\logs\a.txt");
-        assert_eq!(strip_unc_prefix("/home/user/a.txt"), "/home/user/a.txt");
-    }
 
     // ── File id: determinism ────────────────────────────────────────────────
     #[test]
