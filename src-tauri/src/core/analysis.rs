@@ -36,6 +36,10 @@ pub struct SourceReference {
 pub struct AnalysisSection {
     pub heading: String,
     pub body: String,
+    /// Optional — a prose-only section (a conclusion, a recommendations list)
+    /// legitimately has no line anchors. The MCP schema advertises this as
+    /// optional, so the deserializer must accept its absence.
+    #[serde(default)]
     pub references: Vec<SourceReference>,
     pub severity: Option<Severity>,
 }
@@ -108,6 +112,56 @@ mod tests {
         assert_eq!(parsed.title, "FD Leak Analysis");
         assert_eq!(parsed.sections.len(), 2);
         assert_eq!(parsed.sections[1].references.len(), 2);
+    }
+
+    // ── Optional fields the MCP schema advertises as optional ────────────────
+    // A publish whose section omits `references` previously failed with
+    // HTTP 422 "missing field `references`". Prose-only sections (a conclusion,
+    // a recommendations list) have no line anchors and must deserialize.
+
+    #[test]
+    fn section_deserializes_without_references() {
+        let json = r#"{"heading":"Conclusion","body":"Signal integrity, not power.","severity":"Critical"}"#;
+        let section: AnalysisSection = serde_json::from_str(json).unwrap();
+        assert_eq!(section.heading, "Conclusion");
+        assert!(section.references.is_empty());
+        assert_eq!(section.severity, Some(Severity::Critical));
+    }
+
+    #[test]
+    fn section_deserializes_without_references_or_severity() {
+        let json = r#"{"heading":"Next steps","body":"Swap the cable first."}"#;
+        let section: AnalysisSection = serde_json::from_str(json).unwrap();
+        assert!(section.references.is_empty());
+        assert!(section.severity.is_none());
+    }
+
+    #[test]
+    fn artifact_deserializes_with_mixed_reference_presence() {
+        // Mirrors a real publish: anchored sections alongside prose-only ones.
+        let json = r#"{
+            "id":"a1","sessionId":"s1","title":"USB","createdAt":1,
+            "sections":[
+                {"heading":"Conclusion","body":"..."},
+                {"heading":"Evidence","body":"...","references":[
+                    {"lineNumber":60345,"label":"enumerated","highlightType":"Anchor"}
+                ]}
+            ]
+        }"#;
+        let art: AnalysisArtifact = serde_json::from_str(json).unwrap();
+        assert_eq!(art.sections.len(), 2);
+        assert!(art.sections[0].references.is_empty());
+        assert_eq!(art.sections[1].references.len(), 1);
+        assert_eq!(art.sections[1].references[0].line_number, 60345);
+    }
+
+    #[test]
+    fn reference_deserializes_without_highlight_type_or_end_line() {
+        let json = r#"{"lineNumber":42,"label":"here"}"#;
+        let r: SourceReference = serde_json::from_str(json).unwrap();
+        assert_eq!(r.line_number, 42);
+        assert!(r.end_line.is_none());
+        assert_eq!(r.highlight_type, HighlightType::default());
     }
 
     #[test]

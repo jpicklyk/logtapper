@@ -206,6 +206,7 @@ export function collectEditorTabsForSave(): LtwEditorTab[] {
  * Returns the saved path if autoSaveWorkspace was used, null otherwise.
  */
 export async function performAutoSave(payload: {
+  workspaceId: string;
   workspaceName: string;
   filePath: string | null;
   editorTabs: LtwEditorTab[];
@@ -213,32 +214,23 @@ export async function performAutoSave(payload: {
   pipelineChain: string[];
   disabledChainIds: string[];
 }): Promise<string | null> {
-  const { workspaceName, filePath, editorTabs, layout, pipelineChain, disabledChainIds } = payload;
+  const { workspaceId, workspaceName, filePath, editorTabs, layout, pipelineChain, disabledChainIds } = payload;
   if (filePath) {
-    await saveWorkspaceV4({ destPath: filePath, workspaceName, editorTabs, layout, pipelineChain, disabledChainIds });
+    await saveWorkspaceV4({ workspaceId, destPath: filePath, workspaceName, editorTabs, layout, pipelineChain, disabledChainIds });
     return null;
   }
-  return autoSaveWorkspace({ workspaceName, editorTabs, layout, pipelineChain, disabledChainIds });
+  // No explicit path → auto-save to app_data_dir/workspaces/{workspaceId}.ltw.
+  // The id keys the filename so two same-named workspaces don't collide.
+  return autoSaveWorkspace({ workspaceId, workspaceName, editorTabs, layout, pipelineChain, disabledChainIds });
 }
 
 /**
- * Build an AppStateFile payload from workspace context state.
- * Shared between persistAppState and useAppExitSave.
+ * Re-exported from the dependency-light `appStatePayload` module so existing
+ * importers (`useWorkspace`, `context/index`) keep their import path, while
+ * `WorkspaceContext` can pull `buildAppStatePayload` without this module's
+ * EditorTab/theme graph.
  */
-export function buildAppStatePayload(
-  workspaces: ReadonlyArray<{ id: string; name: string; filePath: string | null; dirty: boolean }>,
-  activeId: string | null,
-): import('../../bridge/types').AppStateFile {
-  return {
-    workspaces: workspaces.map(w => ({
-      id: w.id,
-      name: w.name,
-      ltwPath: w.filePath,
-      dirty: w.dirty,
-    })),
-    activeWorkspaceId: activeId,
-  };
-}
+export { buildAppStatePayload } from './appStatePayload';
 
 /**
  * Map loaded editor tabs to layout:open-tab event payloads for restore.

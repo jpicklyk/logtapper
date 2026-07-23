@@ -36,6 +36,13 @@ pub const LTW_V4_FORMAT_VERSION: u32 = 4;
 pub struct LtwManifest {
     pub format_version: u32,
     pub workspace_name: String,
+    /// Stable workspace identifier (Q3). Additive and optional:
+    /// `#[serde(default)]` means files written before this field existed parse
+    /// as `None` — no format-version bump. Q3's trust gate matches this against
+    /// the workspace entry's id; a `None` here marks a *legacy* file, which the
+    /// gate trusts only if its session paths still intersect the open tabs.
+    #[serde(default)]
+    pub workspace_id: Option<String>,
     pub saved_at: i64,
     pub sessions: Vec<LtwManifestSession>,
 }
@@ -112,18 +119,25 @@ pub struct LtwData {
 // Write
 // ---------------------------------------------------------------------------
 
+/// Write a `.ltw` v4 file. Returns the `saved_at` epoch-millis stamped into the
+/// manifest, so a caller (e.g. the Q4 background flush) can record the exact
+/// same value into `app-state.json` — Q3's trust check compares the two and
+/// tolerates only a small skew.
 pub fn write_ltw(
     dest: &Path,
     workspace_name: &str,
+    workspace_id: Option<&str>,
     session_entries: &[(LtwManifestSession, &[Bookmark], &[AnalysisArtifact], &SessionMeta)],
     pipeline_chain: &LtwPipelineChain,
     editor_tabs: &[LtwEditorTab],
     layout: Option<&LtwLayout>,
-) -> Result<(), String> {
+) -> Result<i64, String> {
+    let saved_at = now_ms();
     let manifest = LtwManifest {
         format_version: LTW_V4_FORMAT_VERSION,
         workspace_name: workspace_name.to_string(),
-        saved_at: now_ms(),
+        workspace_id: workspace_id.map(str::to_string),
+        saved_at,
         sessions: session_entries.iter().map(|(m, _, _, _)| m.clone()).collect(),
     };
 
@@ -155,7 +169,7 @@ pub fn write_ltw(
         .finish()
         .map_err(|e| format!("Failed to finalise workspace zip: {e}"))?;
 
-    Ok(())
+    Ok(saved_at)
 }
 
 // ---------------------------------------------------------------------------
@@ -254,6 +268,7 @@ mod tests {
         write_ltw(
             path,
             "Empty",
+            None,
             &[],
             &LtwPipelineChain::default(),
             &[],
@@ -264,6 +279,7 @@ mod tests {
         let data = read_ltw(path).unwrap();
         assert_eq!(data.manifest.format_version, LTW_V4_FORMAT_VERSION);
         assert_eq!(data.manifest.workspace_name, "Empty");
+        assert!(data.manifest.workspace_id.is_none());
         assert!(data.sessions.is_empty());
         assert!(data.pipeline_chain.chain.is_empty());
         assert!(data.editor_tabs.is_empty());
@@ -326,12 +342,13 @@ mod tests {
             "leftPaneWidth": 280
         });
 
-        write_ltw(path, "wifi-debug", &session_entries, &chain, &editors, Some(&layout)).unwrap();
+        write_ltw(path, "wifi-debug", Some("ws-wifi-debug"), &session_entries, &chain, &editors, Some(&layout)).unwrap();
 
         let data = read_ltw(path).unwrap();
 
         // Manifest
         assert_eq!(data.manifest.workspace_name, "wifi-debug");
+        assert_eq!(data.manifest.workspace_id.as_deref(), Some("ws-wifi-debug"));
         assert_eq!(data.manifest.sessions.len(), 2);
         assert_eq!(data.manifest.sessions[0].file_path, "/logs/device-a.log");
         assert_eq!(data.manifest.sessions[0].source_type, "Logcat");
@@ -369,7 +386,7 @@ mod tests {
         let path = tmp.path();
 
         // Write a v4 file then tamper with the version
-        write_ltw(path, "test", &[], &LtwPipelineChain::default(), &[], None).unwrap();
+        write_ltw(path, "test", None, &[], &LtwPipelineChain::default(), &[], None).unwrap();
 
         // Read it back, modify manifest version, rewrite
         let file = File::open(path).unwrap();
@@ -396,7 +413,7 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         let path = tmp.path();
 
-        write_ltw(path, "no-layout", &[], &LtwPipelineChain::default(), &[], None).unwrap();
+        write_ltw(path, "no-layout", None, &[], &LtwPipelineChain::default(), &[], None).unwrap();
 
         let data = read_ltw(path).unwrap();
         assert!(data.layout.is_none());
@@ -408,10 +425,53 @@ mod tests {
         let path = tmp.path();
         let before = now_ms();
 
-        write_ltw(path, "timing", &[], &LtwPipelineChain::default(), &[], None).unwrap();
+        write_ltw(path, "timing", None, &[], &LtwPipelineChain::default(), &[], None).unwrap();
 
         let data = read_ltw(path).unwrap();
         assert!(data.manifest.saved_at >= before);
         assert!(data.manifest.saved_at <= now_ms());
+    }
+
+    #[test]
+    fn round_trip_workspace_id_present_and_absent() {
+        // With an id (the modern writer path — both save commands and the
+        // backend flusher pass their workspace id).
+        let with_id = NamedTempFile::new().unwrap();
+        write_ltw(with_id.path(), "ws", Some("ws-42"), &[], &LtwPipelineChain::default(), &[], None).unwrap();
+        assert_eq!(read_ltw(with_id.path()).unwrap().manifest.workspace_id.as_deref(), Some("ws-42"));
+
+        // Without an id (writer explicitly passes None) — round-trips to None.
+        let no_id = NamedTempFile::new().unwrap();
+        write_ltw(no_id.path(), "ws", None, &[], &LtwPipelineChain::default(), &[], None).unwrap();
+        assert!(read_ltw(no_id.path()).unwrap().manifest.workspace_id.is_none());
+    }
+
+    #[test]
+    fn legacy_manifest_without_workspace_id_field_parses() {
+        // A manifest.json written before `workspaceId` existed omits the field
+        // entirely. `#[serde(default)]` must let it parse (as None) rather than
+        // failing — that legacy file is exactly what Q3's trust gate guards.
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path();
+
+        let legacy_manifest = serde_json::json!({
+            "formatVersion": LTW_V4_FORMAT_VERSION,
+            "workspaceName": "Untitled",
+            "savedAt": 1_700_000_000_000i64,
+            "sessions": []
+            // note: no "workspaceId" key
+        });
+
+        let out = File::create(path).unwrap();
+        let mut writer = zip::ZipWriter::new(out);
+        let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        zip_write_json(&mut writer, "manifest.json", opts, &legacy_manifest).unwrap();
+        zip_write_json(&mut writer, "pipeline-chain.json", opts, &LtwPipelineChain::default()).unwrap();
+        zip_write_json(&mut writer, "editor-tabs.json", opts, &Vec::<LtwEditorTab>::new()).unwrap();
+        writer.finish().unwrap();
+
+        let data = read_ltw(path).unwrap();
+        assert_eq!(data.manifest.workspace_name, "Untitled");
+        assert!(data.manifest.workspace_id.is_none());
     }
 }

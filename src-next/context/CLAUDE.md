@@ -105,7 +105,11 @@ Domain hooks (`useLogViewer`, `usePipeline`, `useStateTracker`) are co-owners of
 | **WorkspaceMutationActions** | `WorkspaceMutationActions` | Yes — auto-wrapped by `trackMutations()` | `loadFile`, `closeSession`, `addToChain`, `reorderChain` |
 | **ViewActions** | `ViewActions` | No — pass through unchanged | `jumpToLine`, `setSearch`, `runPipeline`, `openTab` |
 
-**Enforcement mechanism:** `MUTATION_ACTION_KEYS` is the single registry of tracked actions. `trackMutations()` wraps each registered key with `tracked(fn, markDirty)`. Applied once in `HookWiring` — the single wiring point. No scattered `bus.emit('workspace:mutated')` needed for actions that flow through here.
+**Enforcement mechanism:** `MUTATION_ACTION_KEYS` is the single registry of tracked actions. `trackMutations()` wraps each registered key so it fires **both** halves of the dirty signal: `markDirty()` (WorkspaceContext flag → title bar, close prompt) and `bus.emit('workspace:mutated')` (schedules the debounced auto-save). Applied once in `HookWiring` — the single wiring point. No scattered `bus.emit('workspace:mutated')` needed for actions that flow through here.
+
+These two used to diverge: `trackMutations` called only `markDirty`, while `useWorkspaceAutoSave` subscribes only to the bus. The result was that opening a file, editing the pipeline chain, or installing a processor marked the workspace dirty and then **never persisted it** — only session-layer mutations reached the auto-saver.
+
+**Restore suppression:** because `loadFile` is a tracked mutation, restoring a workspace would otherwise schedule an auto-save of itself — and if the restore only partially succeeded, overwrite the good `.ltw` with the partial set. Restore paths bracket their work in `workspace:restore-begin` / `workspace:restore-end`; `useWorkspaceAutoSave` holds a reference-counted gate (`hooks/workspace/autoSaveGate.ts`) and drops any pending save on begin. Emit the `end` in a `finally` — a missed end suppresses auto-save for the rest of the session.
 
 **Adding a new mutation action:**
 1. Add the method signature to `WorkspaceMutationActions` interface
@@ -117,3 +121,5 @@ Domain hooks (`useLogViewer`, `usePipeline`, `useStateTracker`) are co-owners of
 Default stubs (no-op functions) ensure components always have valid action references during initialization. `HookWiring` (in `index.tsx`) instantiates domain hooks and injects real implementations via `ActionsProvider`.
 
 **Session-layer hooks:** `useBookmarks`, `useAnalysis`, `useWatches` are session-scoped and operate below the workspace action surface. They call bridge commands directly and emit `bus.emit('workspace:mutated')` at each mutation point. This is the correct pattern for their scope — they will migrate to per-session context providers with their own action surface in a future phase.
+
+**Backend-originated mutations:** `useBookmarks` and `useAnalysis` also emit `workspace:mutated` from their `bookmark-update` / `analysis-update` listeners, **before** the focused-session guard. An artifact created over the MCP bridge is written straight into `AppState` by the bridge handler — no frontend action runs, so nothing else marks the workspace dirty — and it frequently targets a session that is not focused, so emitting after the guard would miss it. This is an interim fix; the durable answer is a backend-side flush trigger so any future non-frontend writer is covered by construction (work item `59b23f93`).

@@ -10,5 +10,6 @@ pub mod logcat_parser;
 pub mod parser;
 pub mod pipeline;
 pub mod session;
+pub mod session_identity;
 pub mod timeline;
 pub mod watch;

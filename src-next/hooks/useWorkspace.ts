@@ -1,13 +1,15 @@
 import { useState, useCallback, useRef } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { useWorkspaceContext } from '../context/WorkspaceContext';
-import { saveWorkspaceV4, loadWorkspaceV4, saveAppState, restoreWorkspaceSession } from '../bridge/commands';
+import { saveWorkspaceV4, loadWorkspaceV4, saveAppState, syncWorkspaceEnvelope } from '../bridge/commands';
 import type { WorkspaceIdentity } from '../bridge/workspaceTypes';
 
 import { bus } from '../events/bus';
 import { basename, dirname, storageGetJSON } from '../utils';
-import { collectEditorTabsForSave, buildEditorTabEvents, performAutoSave, buildAppStatePayload } from './workspace/workspacePersistence';
+import { collectEditorTabsForSave, performAutoSave, buildAppStatePayload } from './workspace/workspacePersistence';
 import { STORAGE_KEY } from './workspace/workspaceTypes';
+import { planExplicitOpen } from './workspace/restorePlan';
+import { restoreWorkspace, type RestoreIo } from './workspace/restoreCore';
 
 /** Derive a workspace display name from a file path. */
 export function workspaceNameFromPath(path: string): string {
@@ -55,7 +57,8 @@ export interface WorkspaceActions {
  */
 export function useWorkspace(
   closeAllSessions: () => Promise<void>,
-  loadFile: (path: string) => Promise<void>,
+  loadFile: (path: string, paneId?: string, existingTabId?: string) => Promise<void>,
+  scheduleAutoRun: (sessionId: string, isIndexing: boolean | undefined, chain: string[], disabled: string[]) => void,
   getDefaultDir?: () => string | undefined,
   getPipelineChain?: () => string[],
   getDisabledChainIds?: () => string[],
@@ -76,8 +79,9 @@ export function useWorkspace(
   }, []);
 
   /** Build the save payload from current state. */
-  const buildSavePayload = useCallback((destPath: string, name: string) => {
+  const buildSavePayload = useCallback((workspaceId: string, destPath: string, name: string) => {
     return {
+      workspaceId,
       destPath,
       workspaceName: name,
       editorTabs: collectEditorTabsForSave(),
@@ -87,12 +91,30 @@ export function useWorkspace(
     };
   }, [getLayoutState, getPipelineChain, getDisabledChainIds]);
 
+  /** Push the active workspace shell to the backend envelope cache (no file
+   *  write) so a backend flush can rebuild it before the frontend's own
+   *  debounced auto-save runs. */
+  const pushEnvelope = useCallback((ws: WorkspaceIdentity, override?: {
+    workspaceName?: string; editorTabs?: ReturnType<typeof collectEditorTabsForSave>;
+    layout?: unknown; pipelineChain?: string[]; disabledChainIds?: string[];
+  }) => {
+    return syncWorkspaceEnvelope({
+      workspaceId: ws.id,
+      workspaceName: override?.workspaceName ?? ws.name,
+      ltwPath: ws.filePath,
+      editorTabs: override?.editorTabs ?? collectEditorTabsForSave(),
+      layout: override?.layout ?? getLayoutState(),
+      pipelineChain: override?.pipelineChain ?? (getPipelineChain?.() ?? []),
+      disabledChainIds: override?.disabledChainIds ?? (getDisabledChainIds?.() ?? []),
+    }).catch(e => console.warn('[useWorkspace] Failed to sync workspace envelope:', e));
+  }, [getLayoutState, getPipelineChain, getDisabledChainIds]);
+
   /** Save the active workspace to a .ltw v4 file. */
   const doSave = useCallback(async (destPath: string) => {
     const ctx = wsCtxRef.current;
     const activeWs = ctx.activeWorkspace;
     if (!activeWs) return;
-    await saveWorkspaceV4(buildSavePayload(destPath, activeWs.name));
+    await saveWorkspaceV4(buildSavePayload(activeWs.id, destPath, activeWs.name));
     ctx.markClean(activeWs.name, destPath);
   }, [buildSavePayload]);
 
@@ -103,12 +125,16 @@ export function useWorkspace(
     if (!active) return;
 
     const { workspaceName, editorTabs, layout, pipelineChain, disabledChainIds } =
-      buildSavePayload('', active.name);
+      buildSavePayload(active.id, '', active.name);
     try {
       const savedPath = await performAutoSave({
+        workspaceId: active.id,
         workspaceName, filePath: active.filePath, editorTabs, layout, pipelineChain, disabledChainIds,
       });
-      if (savedPath) ctx.setWorkspacePath(active.id, savedPath);
+      // A non-null path means the workspace was auto-saved to the app-data dir
+      // (no explicit .ltw). Record the recovery path + timestamp so switch-back
+      // can reload it and app-state.json carries the Q3 linkage fields.
+      if (savedPath) ctx.recordAutoSave(active.id, savedPath, Date.now());
     } catch (e) {
       console.warn('[useWorkspace] Auto-save failed:', e);
     }
@@ -125,53 +151,42 @@ export function useWorkspace(
   const doLoadWorkspace = useCallback(async (path: string) => {
     const result = await loadWorkspaceV4(path);
 
-    // Collect session IDs in order as each session:loaded event fires.
-    // session:loaded fires synchronously before loadFile's promise resolves,
-    // so by the time each await returns, the corresponding ID is queued.
-    const loadedSessionIds: string[] = [];
-    const onSessionLoaded = (payload: { sessionId: string }) => {
-      loadedSessionIds.push(payload.sessionId);
-    };
-    bus.on('session:loaded', onSessionLoaded);
-
-    // Load each session by file path
-    for (const session of result.sessions) {
-      try {
-        await loadFile(session.filePath);
-      } catch (e) {
-        console.warn(`[useWorkspace] Failed to load session ${session.filePath}:`, e);
-      }
-    }
-
-    bus.off('session:loaded', onSessionLoaded);
-
-    // Restore per-session artifacts (bookmarks, analyses, pipeline meta).
-    // Match by index: loadedSessionIds[i] corresponds to result.sessionData[i].
-    // Restores are independent — run in parallel.
-    await Promise.all(
-      loadedSessionIds.map((sessionId, i) => {
-        const data = result.sessionData[i];
-        if (!data) return Promise.resolve();
-        return restoreWorkspaceSession({ sessionId, ...data })
-          .catch(e => console.warn(`[useWorkspace] Failed to restore artifacts for session ${sessionId}:`, e));
-      }),
+    // Explicit open: the `.ltw` is the whole truth (no localStorage tabs
+    // participate) and its view-state is always applied. The shared core owns the
+    // restore-begin/end bracket, per-entry keyed pairing, artifact restore, the
+    // targeted auto-run, view-state replay, and `workspace:opened`.
+    const io: RestoreIo = { loadFile, scheduleAutoRun };
+    const plan = planExplicitOpen(result.sessions);
+    const warnings = await restoreWorkspace(
+      {
+        workspaceName: result.workspaceName,
+        filePath: path,
+        sessionData: result.sessionData,
+        editorTabs: result.editorTabs,
+        layout: result.layout,
+      },
+      plan,
+      io,
     );
+    if (warnings.length > 0) bus.emit('workspace:restore-warnings', { warnings });
 
-    // Restore editor tabs from workspace
-    for (const event of buildEditorTabEvents(result.editorTabs)) {
-      bus.emit('layout:open-tab', event);
+    // Push the freshly-loaded shell to the backend envelope cache so a backend
+    // flush (e.g. an MCP artifact write against a just-restored session) can
+    // rebuild this workspace even before the frontend's own auto-save runs.
+    // Read the active id at the END, after the active workspace has settled.
+    const active = wsCtxRef.current.activeWorkspace;
+    if (active) {
+      void syncWorkspaceEnvelope({
+        workspaceId: active.id,
+        workspaceName: result.workspaceName,
+        ltwPath: path,
+        editorTabs: result.editorTabs,
+        layout: result.layout,
+        pipelineChain: result.pipelineChain.chain,
+        disabledChainIds: result.pipelineChain.disabledIds,
+      }).catch(e => console.warn('[useWorkspace] Failed to sync workspace envelope:', e));
     }
-
-    // Restore layout pane state (widths, visible panes, tab order, etc.)
-    if (result.layout) {
-      bus.emit('workspace:restore-layout', { layout: result.layout });
-    }
-
-    // Pipeline chain restore is handled by useWorkspaceRestore via the
-    // workspace-restored Tauri event emitted by the backend during session load.
-
-    bus.emit('workspace:opened', { name: result.workspaceName, filePath: path });
-  }, [loadFile]);
+  }, [loadFile, scheduleAutoRun]);
 
   /** Persist the workspace list to backend app-state.json. */
   const persistAppState = useCallback(async () => {
@@ -224,13 +239,17 @@ export function useWorkspace(
         // Load the target workspace from its saved .ltw
         const target = ctx.workspaces.find(w => w.id === action.targetId);
         if (target?.filePath) {
-          await doLoadWorkspace(target.filePath);
+          await doLoadWorkspace(target.filePath); // pushes the envelope at its end
+        } else if (target) {
+          // Empty target (never saved, no sessions to restore): still register
+          // its identity as the active envelope so a later flush targets it.
+          await pushEnvelope(target);
         }
         await persistAppState();
         break;
       }
     }
-  }, [doClearPanes, doAutoSave, doLoadWorkspace, persistAppState]);
+  }, [doClearPanes, doAutoSave, doLoadWorkspace, persistAppState, pushEnvelope]);
 
   const handleSavePromptResult = useCallback(async (choice: SavePromptChoice) => {
     setShowSavePrompt(false);

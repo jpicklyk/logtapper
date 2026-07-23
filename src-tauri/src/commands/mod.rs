@@ -112,6 +112,20 @@ pub struct AppState {
     /// Keyed by scoped ID like `wifi-state@lts-{session-uuid}`.
     /// Ephemeral — removed when the session closes.
     pub lts_processor_yamls: Mutex<HashMap<String, String>>,
+    /// Q4 — last frontend-supplied workspace envelope (name / editor tabs /
+    /// layout / chain). The background flusher merges it with a fresh session
+    /// snapshot; `None` until the first frontend push (flush then log-and-skips).
+    pub workspace_envelope: Mutex<Option<crate::workspace::autosave::WorkspaceEnvelope>>,
+    /// Q4 — sender to the background auto-save scheduler. Set during `lib.rs`
+    /// setup once the `AppHandle` exists; `schedule_autosave` sends on it.
+    pub autosave_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<()>>>,
+    /// Q4 — serialises `.ltw` file writes between the command-path save handlers
+    /// and the background flush so they never interleave on the same file.
+    pub ltw_write_lock: Arc<Mutex<()>>,
+    /// Q4 — serialises `app-state.json` writes between `save_app_state_cmd` and
+    /// the background flush's read-modify-write (a torn file parses as empty,
+    /// silently dropping the workspace list).
+    pub app_state_write_lock: Arc<Mutex<()>>,
 }
 
 impl Default for AppState {
@@ -167,6 +181,10 @@ impl AppState {
             startup_file_path: Mutex::new(None),
             mcp_bridge_shutdown: Mutex::new(None),
             lts_processor_yamls: Mutex::new(HashMap::new()),
+            workspace_envelope: Mutex::new(None),
+            autosave_tx: Mutex::new(None),
+            ltw_write_lock: Arc::new(Mutex::new(())),
+            app_state_write_lock: Arc::new(Mutex::new(())),
         }
     }
 }

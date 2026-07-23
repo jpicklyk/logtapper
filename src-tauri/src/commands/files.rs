@@ -152,8 +152,11 @@ pub async fn load_log_file(
         .map(|m| m.len())
         .unwrap_or(0);
 
-    // Derive stable IDs from the original path (not the temp extraction)
-    let session_id = uuid::Uuid::new_v4().to_string();
+    // Derive stable IDs from the original path (not the temp extraction).
+    // Deterministic per (canonical path, length, content prefix) so an unchanged
+    // file keeps its id across restarts — MCP handles survive, restore
+    // diagnostics correlate. See core::session_identity (design §Q5).
+    let session_id = crate::core::session_identity::derive_file_session_id_from_disk(path_obj);
     let source_id = path_obj
         .file_stem()
         .and_then(|s| s.to_str())
@@ -258,8 +261,12 @@ fn load_lts_file_inner(
     // 3. Create one AnalysisSession per embedded session.
     let mut results = Vec::with_capacity(sessions.len());
 
-    for session_data in sessions {
-        let session_id = uuid::Uuid::new_v4().to_string();
+    for (entry_index, session_data) in sessions.into_iter().enumerate() {
+        // Deterministic per (canonical .lts path, entry index). All entries share
+        // one file_path, so the index disambiguates; it is stable because .lts
+        // files are immutable after export. See core::session_identity (design §Q5).
+        let session_id =
+            crate::core::session_identity::derive_lts_session_id(path_obj, entry_index);
 
         // Resolve bundled processors under session-scoped IDs so they don't
         // collide with the user's globally installed versions.
@@ -334,7 +341,9 @@ fn load_lts_file_inner(
         meta.active_processor_ids = remap(&meta.active_processor_ids);
         meta.disabled_processor_ids = remap(&meta.disabled_processor_ids);
 
-        // Store pipeline meta and emit workspace-restored event.
+        // Store pipeline meta and emit workspace-restored event. `source: "lts"`
+        // tells the frontend this session was recreated from the .lts archive, so
+        // useWorkspaceRestore (not the .ltw restore core) owns its auto-run.
         emit_workspace_restored(
             state,
             app,
@@ -342,6 +351,7 @@ fn load_lts_file_inner(
             bm_count,
             an_count,
             meta,
+            "lts",
         );
 
         results.push(result);
@@ -358,6 +368,14 @@ fn load_lts_file_inner(
 
 /// Store pipeline meta in AppState and emit `workspace-restored` event.
 /// Used by the `.lts` load path and the `restore_workspace_session` command.
+///
+/// `source` distinguishes the two emitters so the frontend can decide who owns
+/// the auto-run: `"lts"` (this session was recreated mid-`load_log_file` from a
+/// `.lts` archive — `useWorkspaceRestore` owns its auto-run) vs `"workspace"`
+/// (emitted by `restore_workspace_session` on the `.ltw` path — the restore
+/// orchestrator's core owns those). Without the tag the frontend cannot tell a
+/// `.lts`-backed session apart from a `.ltw` manifest session and would either
+/// double-run it or silently drop its auto-run.
 pub(crate) fn emit_workspace_restored(
     state: &AppState,
     app: &tauri::AppHandle,
@@ -365,6 +383,7 @@ pub(crate) fn emit_workspace_restored(
     bm_count: usize,
     an_count: usize,
     meta: crate::workspace::SessionMeta,
+    source: &str,
 ) {
     let has_chain = !meta.active_processor_ids.is_empty();
     if has_chain {
@@ -380,6 +399,7 @@ pub(crate) fn emit_workspace_restored(
             "analysisCount": an_count,
             "activeProcessorIds": meta.active_processor_ids,
             "disabledProcessorIds": meta.disabled_processor_ids,
+            "source": source,
         }));
     }
 }
@@ -461,6 +481,22 @@ fn close_session_inner(state: &AppState, _app: Option<&tauri::AppHandle>, sessio
     // 15. Remove cached .lts processor YAMLs.
     lock_or_err(&state.lts_processor_yamls, "lts_processor_yamls")?
         .retain(|key, _| !key.ends_with(&lts_suffix));
+
+    // 16. Remove watches targeting the closed session.
+    lock_or_err(&state.active_watches, "active_watches")?.remove(session_id);
+
+    // 17. Remove filters targeting the closed session. active_filters is keyed
+    //     by filter_id, so match on each filter's session_id. Cancel before
+    //     dropping so the background scan task stops and the filter's status
+    //     reads Cancelled rather than Complete.
+    lock_or_err(&state.active_filters, "active_filters")?.retain(|_, filter| {
+        if filter.session_id == session_id {
+            filter.cancel();
+            false
+        } else {
+            true
+        }
+    });
 
     Ok(())
 }
@@ -1622,6 +1658,80 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
+    // Watches and filters cleanup
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn close_session_inner_removes_watches() {
+        use crate::core::filter::FilterCriteria;
+        use crate::core::watch::WatchSession;
+
+        let state = make_state();
+        insert_session(&state, "sess-w", None);
+        insert_session(&state, "sess-w-other", None);
+
+        {
+            let mut watches = state.active_watches.lock().unwrap();
+            watches.insert("sess-w".to_string(), vec![Arc::new(WatchSession::new(
+                "watch-1".to_string(),
+                "sess-w".to_string(),
+                FilterCriteria::default(),
+            ))]);
+            watches.insert("sess-w-other".to_string(), vec![Arc::new(WatchSession::new(
+                "watch-2".to_string(),
+                "sess-w-other".to_string(),
+                FilterCriteria::default(),
+            ))]);
+        }
+
+        close_session_inner(&state, None, "sess-w").unwrap();
+
+        let watches = state.active_watches.lock().unwrap();
+        assert!(!watches.contains_key("sess-w"),
+            "watches must be removed on close");
+        assert!(watches.contains_key("sess-w-other"),
+            "watches for other sessions must be preserved");
+    }
+
+    #[test]
+    fn close_session_inner_removes_and_cancels_filters() {
+        use crate::core::filter::{FilterCriteria, FilterSession};
+
+        let state = make_state();
+        insert_session(&state, "sess-f", None);
+
+        let closed_filter = Arc::new(FilterSession::new(
+            "filter-1".to_string(),
+            "sess-f".to_string(),
+            FilterCriteria::default(),
+            100,
+        ));
+        let other_filter = Arc::new(FilterSession::new(
+            "filter-2".to_string(),
+            "sess-f-other".to_string(),
+            FilterCriteria::default(),
+            100,
+        ));
+        {
+            let mut filters = state.active_filters.lock().unwrap();
+            filters.insert("filter-1".to_string(), Arc::clone(&closed_filter));
+            filters.insert("filter-2".to_string(), Arc::clone(&other_filter));
+        }
+
+        close_session_inner(&state, None, "sess-f").unwrap();
+
+        let filters = state.active_filters.lock().unwrap();
+        assert!(!filters.contains_key("filter-1"),
+            "filters targeting the closed session must be removed");
+        assert!(closed_filter.is_cancelled(),
+            "removed filter must be cancelled so its background scan stops");
+        assert!(filters.contains_key("filter-2"),
+            "filters for other sessions must be preserved");
+        assert!(!other_filter.is_cancelled(),
+            "filters for other sessions must not be cancelled");
+    }
+
+    // -------------------------------------------------------------------------
     // Stale session cleanup — close_stale_sessions
     // -------------------------------------------------------------------------
 
@@ -1696,6 +1806,48 @@ mod tests {
 
         assert!(state.sessions.lock().unwrap().contains_key("sess-keep"),
             "non-matching session must not be removed");
+    }
+
+    // -------------------------------------------------------------------------
+    // Q5 — deterministic session identity, integration.
+    //
+    // load_log_file needs an AppHandle (indexing + event emit) so it can't be
+    // called in a unit test; this replicates its id-derive + close_stale + insert
+    // sequence (files.rs) with a real temp file, mirroring the stale-session
+    // tests above, to prove: loading the SAME unchanged file twice yields the
+    // SAME session id and leaves exactly ONE live session for that path.
+    // -------------------------------------------------------------------------
+    #[test]
+    fn load_same_file_twice_yields_same_id_and_one_live_session() {
+        use std::io::Write;
+
+        let mut tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        writeln!(tmp, "01-01 00:00:01.000  100  101 I Tag: hello").unwrap();
+        tmp.flush().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        let path_obj = tmp.path();
+
+        let state = make_state();
+
+        // First load: derive id, close stale (none yet), register.
+        let id1 = crate::core::session_identity::derive_file_session_id_from_disk(path_obj);
+        close_stale_sessions(&state, None, &path).unwrap();
+        insert_session(&state, &id1, Some(&path));
+
+        // Second load of the SAME unchanged file: same deterministic id;
+        // close_stale_sessions closes the first before the second registers.
+        let id2 = crate::core::session_identity::derive_file_session_id_from_disk(path_obj);
+        assert_eq!(id1, id2, "same unchanged file must derive the same session id");
+        close_stale_sessions(&state, None, &path).unwrap();
+        insert_session(&state, &id2, Some(&path));
+
+        let sessions = state.sessions.lock().unwrap();
+        let for_path: Vec<_> = sessions
+            .values()
+            .filter(|s| s.file_path.as_deref() == Some(path.as_str()))
+            .collect();
+        assert_eq!(for_path.len(), 1, "exactly one live session must remain for the file path");
+        assert_eq!(for_path[0].id, id1, "the live session carries the deterministic id");
     }
 
     // -------------------------------------------------------------------------

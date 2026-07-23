@@ -138,6 +138,34 @@ export type AppEvents = {
   'workspace:restore-layout': { layout: unknown };
   /** Fired after an .lts workspace is fully restored. */
   'workspace:opened':        { name: string; filePath: string };
+  /** Fired when a restore begins. Suppresses auto-save until the matching
+   *  `workspace:restore-end`, so loading a workspace does not immediately
+   *  persist it back. Without this, a restore that only partially succeeds
+   *  would overwrite the good .ltw with the partial state. Reference-counted,
+   *  so overlapping restores are safe. */
+  'workspace:restore-begin': undefined;
+  /** Fired when a restore finishes, successfully or not. Must be emitted in a
+   *  `finally` — a missed end would suppress auto-save for the rest of the
+   *  session. */
+  'workspace:restore-end':   undefined;
+  /** Fired after a background/debounced auto-save writes the app-data-dir
+   *  `.ltw` (i.e. the workspace had no explicit path). WorkspaceContext records
+   *  the path + timestamp onto the entry so app-state.json can point at the
+   *  crash-recovery file. Targeted by `workspaceId`. */
+  'workspace:auto-saved':    { workspaceId: string; path: string; savedAt: number };
+  /** Fired by Q2's startup restore when the active workspace's candidate
+   *  auto-save `.ltw` failed Q3's trust gate (`assessRestoreCandidate` returned
+   *  `untrusted`). The app has already fallen back to the plain-localStorage
+   *  plan (no regression); this drives a non-blocking notice offering to open
+   *  the file as a NEW workspace. `savedAt` dates it, `reasons` are the machine
+   *  codes from the assessment, `candidatePath` is what "Open it" loads. */
+  'workspace:untrusted-autosave': { workspaceId: string; candidatePath: string; savedAt: number; reasons: string[] };
+  /** Fired by Q2's startup/open restore when the plan diverged from a clean
+   *  match — a manifest file has moved/is missing (its artifacts were skipped,
+   *  not misattached), a stored tab was not in the workspace file, or a `.lts`
+   *  reference was deduped. Surfaced as a non-blocking notice so these are not
+   *  swallowed into `console.warn`. Reuses the existing toast surface. */
+  'workspace:restore-warnings': { warnings: string[] };
 
   // ── File operations ──────────────────────────────────────────────────────
   /** Fired when an .lts file import is skipped because it's already open. */

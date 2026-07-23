@@ -1,12 +1,18 @@
-import { createContext, useContext, useState, useCallback, useEffect, useMemo, type ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import type { UnlistenFn } from '@tauri-apps/api/event';
 import { bus } from '../events/bus';
+import { onWorkspaceAutoSaved } from '../bridge/events';
 import type { WorkspaceIdentity, WorkspaceListState } from '../bridge/workspaceTypes';
 import {
   createEmptyWorkspace, createEmptyListState,
   getActiveWorkspace, formatTitle, WORKSPACE_STORAGE_KEY,
 } from '../bridge/workspaceTypes';
 import { storageGetJSON, storageSetJSON } from '../utils';
+import { getAppState, saveAppState } from '../bridge/commands';
+import { reconcileWorkspaceList } from '../hooks/workspace/reconcileWorkspaceList';
+import { buildAppStatePayload } from '../hooks/workspace/appStatePayload';
+import type { AppStateFile } from '../bridge/types';
 
 // ---------------------------------------------------------------------------
 // Context value
@@ -39,6 +45,19 @@ export interface WorkspaceContextValue {
   renameWorkspace: (id: string, name: string) => void;
   /** Update the ltwPath of a workspace after save. */
   setWorkspacePath: (id: string, ltwPath: string) => void;
+  /** Record a completed auto-save: sets filePath (so switch-back can reload)
+   *  plus the `autoSavePath` / `lastAutoSaveAt` recovery fields. Does not touch
+   *  the dirty flag — an auto-save is not a user save. */
+  recordAutoSave: (id: string, autoSavePath: string, savedAt: number) => void;
+
+  // Startup hydration (option 1C — app-state.json is authoritative)
+  /** True once the one-shot disk hydration has resolved. The startup restore
+   *  orchestrator (Q2) must await this before reading any `.ltw`. */
+  hydrated: boolean;
+  /** Reconcile the current in-memory list against the authoritative on-disk
+   *  state and apply the result. Normally driven by the internal hydration
+   *  effect; exposed for the orchestrator. */
+  hydrateFromDisk: (diskState: AppStateFile) => void;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
@@ -70,10 +89,27 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return persisted;
   });
 
-  // Persist on every list change
+  // True once the one-shot disk hydration below has resolved.
+  const [hydrated, setHydrated] = useState(false);
+
+  // Lets the hydration effect read the current (synchronously-seeded) list
+  // without adding listState to its dependency array (it must run once).
+  const listStateRef = useRef(listState);
+  listStateRef.current = listState;
+
+  // Persist on every list change. localStorage is the fast bootstrap mirror
+  // (kept exactly as before); after hydration we ALSO write through to the
+  // authoritative app-state.json so every list change (rename, dirty flip,
+  // setWorkspacePath, recordAutoSave) reaches disk — not just the six lifecycle
+  // ops. The disk write is gated on `hydrated` so the synchronous localStorage
+  // seed cannot clobber the authoritative disk state before it is read.
   useEffect(() => {
     persistList(listState);
-  }, [listState]);
+    if (hydrated) {
+      saveAppState(buildAppStatePayload(listState.workspaces, listState.activeId))
+        .catch((e: unknown) => console.warn('[WorkspaceProvider] Failed to write app-state.json:', e));
+    }
+  }, [listState, hydrated]);
 
   // Update window title when active workspace changes
   const activeWsForTitle = getActiveWorkspace(listState);
@@ -166,12 +202,93 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     updateWorkspace(id, ws => ws.filePath === ltwPath ? ws : { ...ws, filePath: ltwPath });
   }, [updateWorkspace]);
 
+  const recordAutoSave = useCallback((id: string, autoSavePath: string, savedAt: number) => {
+    updateWorkspace(id, ws =>
+      // Idempotent: the frontend's own performAutoSave path and the backend
+      // flusher's forwarded Tauri event both feed this sink, so double-handling
+      // the same values must be a true no-op (no redundant re-render / disk write).
+      (ws.filePath === autoSavePath && ws.autoSavePath === autoSavePath && ws.lastAutoSaveAt === savedAt)
+        ? ws
+        : {
+            ...ws,
+            // Point filePath at the recovery file so a workspace switch can reload it
+            // (only reached when the workspace had no explicit .ltw, i.e. filePath was
+            // null). Deliberately does not touch `dirty` — this is not a user save.
+            filePath: autoSavePath,
+            autoSavePath,
+            lastAutoSaveAt: savedAt,
+          });
+  }, [updateWorkspace]);
+
+  // --- Startup hydration: app-state.json is authoritative (option 1C) ---
+
+  const hydrateFromDisk = useCallback((diskState: AppStateFile) => {
+    const { state, migrated, createDefault } = reconcileWorkspaceList(listStateRef.current, diskState);
+    // createDefault means both sides were empty. The synchronous seed above
+    // already created the default workspace, so keep it as-is.
+    if (!createDefault) setListState(state);
+    if (migrated) {
+      // Disk was empty but memory had a list (every existing user, and fresh
+      // installs whose default we just seeded): write it through once. Idempotent.
+      saveAppState(buildAppStatePayload(state.workspaces, state.activeId))
+        .catch((e: unknown) => console.warn('[WorkspaceProvider] Initial app-state write failed:', e));
+    }
+    setHydrated(true);
+  }, []);
+
+  // One-shot: read the authoritative disk state and reconcile. StrictMode-safe
+  // via the cancelled guard (CLAUDE.md async-listener pattern) so the double
+  // mount does not apply hydration twice.
+  useEffect(() => {
+    let cancelled = false;
+    getAppState()
+      .then((diskState) => {
+        if (cancelled) return;
+        hydrateFromDisk(diskState);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        // Even on failure, signal completion so the startup orchestrator (Q2)
+        // is not left waiting forever; the localStorage seed stands.
+        console.warn('[WorkspaceProvider] Disk hydration failed:', e);
+        setHydrated(true);
+      });
+    return () => { cancelled = true; };
+  }, [hydrateFromDisk]);
+
   // --- Listen for workspace:mutated events ---
 
   useEffect(() => {
     bus.on('workspace:mutated', markDirty);
     return () => { bus.off('workspace:mutated', markDirty); };
   }, [markDirty]);
+
+  // --- Record background auto-saves onto the workspace entry ---
+
+  useEffect(() => {
+    const onAutoSaved = (payload: { workspaceId: string; path: string; savedAt: number }) => {
+      recordAutoSave(payload.workspaceId, payload.path, payload.savedAt);
+    };
+    bus.on('workspace:auto-saved', onAutoSaved);
+    return () => { bus.off('workspace:auto-saved', onAutoSaved); };
+  }, [recordAutoSave]);
+
+  // Forward the backend flusher's Tauri "workspace-auto-saved" event onto the
+  // frontend bus, so the recordAutoSave listener above is the single sink for
+  // both the frontend's own performAutoSave path and the backend flush.
+  // StrictMode-safe via the cancelled guard (CLAUDE.md async-listener pattern).
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: UnlistenFn | null = null;
+    onWorkspaceAutoSaved((payload) => {
+      if (cancelled) return;
+      bus.emit('workspace:auto-saved', payload);
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => { cancelled = true; unlisten?.(); };
+  }, []);
 
   const value = useMemo<WorkspaceContextValue>(() => {
     const active = getActiveWorkspace(listState);
@@ -187,9 +304,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       markClean,
       renameWorkspace,
       setWorkspacePath,
+      recordAutoSave,
+      hydrated,
+      hydrateFromDisk,
     };
   }, [listState, addWorkspace, addWorkspaceEntry, setActiveId, removeWorkspace,
-       markDirty, markClean, renameWorkspace, setWorkspacePath]);
+       markDirty, markClean, renameWorkspace, setWorkspacePath, recordAutoSave,
+       hydrated, hydrateFromDisk]);
 
   return (
     <WorkspaceContext.Provider value={value}>

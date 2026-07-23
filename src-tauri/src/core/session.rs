@@ -1868,7 +1868,9 @@ mod tests {
 
         // Verify every line has correct content
         for i in 0..10 {
-            let content = src.raw_line(i).expect(&format!("line {} should exist", i));
+            let content = src
+                .raw_line(i)
+                .unwrap_or_else(|| panic!("line {} should exist", i));
             assert_eq!(
                 &*content,
                 &format!("line {}", i),

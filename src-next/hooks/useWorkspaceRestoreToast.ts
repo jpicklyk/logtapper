@@ -3,6 +3,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
 import { listen } from '@tauri-apps/api/event';
 import type { ToastItem } from '../ui';
 import type { WorkspaceRestoredPayload } from '../bridge/types';
+import { bus } from '../events/bus';
 
 let toastCounter = 0;
 
@@ -68,4 +69,22 @@ export function useWorkspaceRestoreToast(addToast: (toast: ToastItem) => void) {
       }
     };
   }, [addToast]);
+
+  // Q2 restore divergences (moved/missing manifest files, extra/deduped tabs).
+  // Skip-and-warn already protected the data (artifacts are never misattached);
+  // this surfaces the notes instead of leaving them in console.warn only.
+  const addToastRef = useRef(addToast);
+  addToastRef.current = addToast;
+  useEffect(() => {
+    const onWarnings = ({ warnings }: { warnings: string[] }) => {
+      if (warnings.length === 0) return;
+      addToastRef.current({
+        id: `workspace-restore-warning-${++toastCounter}`,
+        title: 'Workspace restored with warnings',
+        message: warnings.join('\n'),
+      });
+    };
+    bus.on('workspace:restore-warnings', onWarnings);
+    return () => { bus.off('workspace:restore-warnings', onWarnings); };
+  }, []);
 }

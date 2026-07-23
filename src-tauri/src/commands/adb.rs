@@ -181,7 +181,15 @@ pub async fn start_adb_stream(
     };
 
     // ── Create session ────────────────────────────────────────────────────────
-    let session_id = uuid::Uuid::new_v4().to_string();
+    // Deterministic per (sanitized serial, start epoch). Streams are excluded
+    // from .ltw saves, so cross-restart stability is moot; the epoch suffix keeps
+    // a stop/start cycle from aliasing the previous run's pipeline results.
+    // See core::session_identity (design §Q5).
+    let start_epoch_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let session_id = crate::core::session_identity::derive_adb_session_id(&serial, start_epoch_ms);
     let source_id = format!("adb-{}", serial.replace(':', "-"));
     let device_label = format!("ADB: {serial}");
 

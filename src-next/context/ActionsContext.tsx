@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
+import { bus } from '../events/bus';
 import type { SearchQuery, ExportAllOptions, ProcessorSummary } from '../bridge/types';
 
 // ---------------------------------------------------------------------------
@@ -121,17 +122,32 @@ export function tracked<T extends (...args: never[]) => unknown>(
  * Takes raw action implementations and wraps all mutation actions with
  * automatic dirty tracking. View actions pass through unchanged.
  *
- * This is the single enforcement point — no scattered bus emissions needed.
+ * This is the single enforcement point for both halves of the dirty signal:
+ * `markDirty()` updates the WorkspaceContext flag (title bar, close prompt),
+ * and `workspace:mutated` schedules the debounced auto-save.
+ *
+ * These used to diverge — `trackMutations` called only `markDirty`, while
+ * `useWorkspaceAutoSave` subscribes only to the bus. The result was that
+ * opening a file, editing the pipeline chain, or installing a processor marked
+ * the workspace dirty and then never persisted it. Only session-layer
+ * mutations (bookmarks, analyses) reached the auto-saver.
+ *
+ * Restore paths bracket their work in `workspace:restore-begin`/`-end`, which
+ * suppresses auto-save so a restore does not immediately re-persist itself.
  */
 export function trackMutations(
   actions: Partial<ActionsContextValue>,
   markDirty: () => void,
 ): Partial<ActionsContextValue> {
+  const onMutate = () => {
+    markDirty();
+    bus.emit('workspace:mutated');
+  };
   const result = { ...actions } as Record<string, unknown>;
   for (const key of MUTATION_ACTION_KEYS) {
     const fn = actions[key];
     if (typeof fn === 'function') {
-      result[key] = tracked(fn as (...args: never[]) => unknown, markDirty);
+      result[key] = tracked(fn as (...args: never[]) => unknown, onMutate);
     }
   }
   return result as Partial<ActionsContextValue>;

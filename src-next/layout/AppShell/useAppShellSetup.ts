@@ -7,6 +7,7 @@ import {
   useWatchToast,
   useWorkspaceRestoreToast,
   useLtsImportToast,
+  useUntrustedAutoSaveToast,
   useFileShortcuts,
   useStartupFile,
   useEditorTabRestore,
@@ -28,6 +29,9 @@ export function useAppShellSetup({ openCenterTab }: UseAppShellSetupParams) {
   useWatchToast(addToast);
   useWorkspaceRestoreToast(addToast);
   useLtsImportToast(addToast);
+  // Q3 notice for an auto-save that failed the trust gate. Idle until Q2's
+  // useStartupRestore emits `workspace:untrusted-autosave`.
+  useUntrustedAutoSaveToast(addToast);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
 

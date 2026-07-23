@@ -700,6 +700,11 @@ export interface WorkspaceRestoredPayload {
   analysisCount: number;
   activeProcessorIds?: string[];
   disabledProcessorIds?: string[];
+  /** Which backend emitted this: `"lts"` (recreated from a `.lts` archive mid
+   *  `load_log_file` — `useWorkspaceRestore` owns its auto-run) or `"workspace"`
+   *  (from `restore_workspace_session` on the `.ltw` path — the restore core owns
+   *  it). Optional so payloads from older backends still parse. */
+  source?: 'lts' | 'workspace';
 }
 
 // ---------------------------------------------------------------------------
@@ -820,8 +825,24 @@ export interface LtwEditorTab {
 }
 
 export interface SaveWorkspaceV4Options {
+  /** Stable workspace id — cached into the backend envelope so a background
+   *  flush can update this workspace's app-state.json entry. */
+  workspaceId: string;
   destPath: string;
   workspaceName: string;
+  editorTabs: LtwEditorTab[];
+  layout: unknown | null;
+  pipelineChain: string[];
+  disabledChainIds: string[];
+}
+
+/** Options for `sync_workspace_envelope` — a lightweight backend cache refresh
+ *  (no file write). Mirrors the save options but carries the workspace's
+ *  explicit `.ltw` path (if any) rather than a save destination. */
+export interface SyncWorkspaceEnvelopeOptions {
+  workspaceId: string;
+  workspaceName: string;
+  ltwPath: string | null;
   editorTabs: LtwEditorTab[];
   layout: unknown | null;
   pipelineChain: string[];
@@ -837,6 +858,11 @@ export interface LoadWorkspaceSessionData {
 
 export interface LoadWorkspaceV4Result {
   workspaceName: string;
+  /** Stable workspace id from the manifest, or null for legacy files. Fed to
+   *  Q3's `assessRestoreCandidate` as the candidate's `workspaceId`. */
+  workspaceId: string | null;
+  /** Manifest savedAt epoch-ms — Q3's timestamp check against `lastAutoSaveAt`. */
+  savedAt: number;
   sessions: LtwManifestSession[];
   pipelineChain: LtwPipelineChain;
   editorTabs: LtwEditorTab[];
@@ -862,6 +888,13 @@ export interface WorkspaceEntry {
   name: string;
   ltwPath: string | null;
   dirty: boolean;
+  /** Path to the app-data-dir auto-save `.ltw` (`workspaces/{id}.ltw`), or null
+   *  if never auto-saved. Distinct from `ltwPath` (explicit user save). Optional
+   *  because app-state.json files written before this field parse without it. */
+  autoSavePath?: string | null;
+  /** Epoch-millis timestamp of the last completed auto-save, or null. Paired
+   *  with `autoSavePath`. Optional for the same backward-compat reason. */
+  lastAutoSaveAt?: number | null;
 }
 
 export interface AppStateFile {

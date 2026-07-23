@@ -424,6 +424,14 @@ pub fn run() {
                 }
             }
 
+            // Q4 — spawn the background auto-save scheduler and store its sender
+            // so any handler (Tauri command or MCP bridge) can schedule a durable
+            // flush after mutating AppState.
+            let autosave_tx = workspace::autosave::spawn_scheduler(app.handle().clone());
+            if let Ok(mut tx) = state.autosave_tx.lock() {
+                *tx = Some(autosave_tx);
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -523,6 +531,7 @@ pub fn run() {
             // Workspace v4 commands
             commands::workspace_cmd::save_workspace_v4,
             commands::workspace_cmd::auto_save_workspace,
+            commands::workspace_cmd::sync_workspace_envelope,
             commands::workspace_cmd::load_workspace_v4,
             commands::workspace_cmd::restore_workspace_session,
             commands::workspace_cmd::get_app_state,

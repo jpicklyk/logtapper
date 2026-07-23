@@ -9,10 +9,11 @@ use tauri::State;
 
 use crate::commands::{lock_or_err, AppState};
 use crate::workspace::app_state::{self, AppStateFile};
+use crate::workspace::autosave::{self, WorkspaceEnvelope};
 use crate::workspace::ltw_v4::{
     self, LtwEditorTab, LtwLayout, LtwManifestSession, LtwPipelineChain,
 };
-use crate::workspace::SessionMeta;
+use crate::workspace::{now_ms, SessionMeta};
 
 use serde::{Deserialize, Serialize};
 
@@ -20,7 +21,7 @@ use serde::{Deserialize, Serialize};
 // Shared helper: collect session data from AppState
 // ---------------------------------------------------------------------------
 
-type SessionEntry = (
+pub(crate) type SessionEntry = (
     LtwManifestSession,
     Vec<crate::core::bookmark::Bookmark>,
     Vec<crate::core::analysis::AnalysisArtifact>,
@@ -29,7 +30,7 @@ type SessionEntry = (
 
 /// Snapshot all open sessions and their artifacts from AppState.
 /// Acquires locks briefly: sessions once, bookmarks/analyses/meta once each.
-fn collect_session_data(state: &AppState) -> Result<Vec<SessionEntry>, String> {
+pub(crate) fn collect_session_data(state: &AppState) -> Result<Vec<SessionEntry>, String> {
     // Snapshot session info under brief lock
     let session_info: Vec<(String, String, String, String)> = {
         let sessions = lock_or_err(&state.sessions, "sessions")?;
@@ -71,7 +72,7 @@ fn collect_session_data(state: &AppState) -> Result<Vec<SessionEntry>, String> {
 }
 
 /// Build entry refs from collected data (for write_ltw's borrow signature).
-fn entry_refs(entries: &[SessionEntry]) -> Vec<(
+pub(crate) fn entry_refs(entries: &[SessionEntry]) -> Vec<(
     LtwManifestSession,
     &[crate::core::bookmark::Bookmark],
     &[crate::core::analysis::AnalysisArtifact],
@@ -90,6 +91,9 @@ fn entry_refs(entries: &[SessionEntry]) -> Vec<(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveWorkspaceOptions {
+    /// Stable workspace identifier — cached into the backend envelope so a
+    /// background flush can update this workspace's `app-state.json` entry.
+    pub workspace_id: String,
     pub dest_path: String,
     pub workspace_name: String,
     pub editor_tabs: Vec<LtwEditorTab>,
@@ -104,20 +108,40 @@ pub async fn save_workspace_v4(
     state: State<'_, AppState>,
     options: SaveWorkspaceOptions,
 ) -> Result<(), String> {
-    let entries = collect_session_data(&state)?;
     let chain = LtwPipelineChain {
         chain: options.pipeline_chain,
         disabled_ids: options.disabled_chain_ids,
     };
 
+    // Cache the envelope before writing so a backend flush can rebuild this
+    // workspace shell (explicit save → ltw_path is the chosen path).
+    autosave::cache_envelope(
+        &state,
+        WorkspaceEnvelope {
+            workspace_id: options.workspace_id.clone(),
+            workspace_name: options.workspace_name.clone(),
+            ltw_path: Some(options.dest_path.clone()),
+            editor_tabs: options.editor_tabs.clone(),
+            layout: options.layout.clone(),
+            pipeline_chain: chain.clone(),
+            updated_at: now_ms(),
+        },
+    );
+
+    let entries = collect_session_data(&state)?;
+
+    // Serialise against the background flush's write on the same file.
+    let _guard = state.ltw_write_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     ltw_v4::write_ltw(
         Path::new(&options.dest_path),
         &options.workspace_name,
+        Some(&options.workspace_id),
         &entry_refs(&entries),
         &chain,
         &options.editor_tabs,
         options.layout.as_ref(),
-    )
+    )?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +151,10 @@ pub async fn save_workspace_v4(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AutoSaveWorkspaceOptions {
+    /// Stable workspace identifier — keys the auto-save filename so two
+    /// distinct workspaces that happen to share a name (e.g. both "Untitled")
+    /// no longer collide onto the same file.
+    pub workspace_id: String,
     pub workspace_name: String,
     pub editor_tabs: Vec<LtwEditorTab>,
     pub layout: Option<LtwLayout>,
@@ -134,8 +162,13 @@ pub struct AutoSaveWorkspaceOptions {
     pub disabled_chain_ids: Vec<String>,
 }
 
-/// Auto-save the active workspace to `app_data_dir/workspaces/{sanitized_name}.ltw`.
+/// Auto-save the active workspace to `app_data_dir/workspaces/{workspace_id}.ltw`.
 /// Returns the path where it was saved.
+///
+/// Keyed by workspace id, not sanitized name: two "Untitled" workspaces used to
+/// derive the same `Untitled.ltw` and overwrite each other. Legacy name-keyed
+/// files left over from before this change are deliberately not migrated or
+/// touched here.
 #[tauri::command]
 pub async fn auto_save_workspace(
     state: State<'_, AppState>,
@@ -143,27 +176,95 @@ pub async fn auto_save_workspace(
     options: AutoSaveWorkspaceOptions,
 ) -> Result<String, String> {
     let ws_dir = crate::workspace::workspace_dir(&app)?;
-    let sanitized = crate::workspace::sanitize_workspace_name(&options.workspace_name);
-    let dest = ws_dir.join(format!("{sanitized}.ltw"));
+    let dest = ws_dir.join(format!("{}.ltw", options.workspace_id));
 
-    let entries = collect_session_data(&state)?;
     let chain = LtwPipelineChain {
         chain: options.pipeline_chain,
         disabled_ids: options.disabled_chain_ids,
     };
 
-    ltw_v4::write_ltw(
-        &dest,
-        &options.workspace_name,
-        &entry_refs(&entries),
-        &chain,
-        &options.editor_tabs,
-        options.layout.as_ref(),
-    )?;
+    // Cache the envelope before writing. ltw_path is None: this is the id-keyed
+    // auto-save, so a backend flush recomputes `workspaces/{id}.ltw` itself.
+    autosave::cache_envelope(
+        &state,
+        WorkspaceEnvelope {
+            workspace_id: options.workspace_id.clone(),
+            workspace_name: options.workspace_name.clone(),
+            ltw_path: None,
+            editor_tabs: options.editor_tabs.clone(),
+            layout: options.layout.clone(),
+            pipeline_chain: chain.clone(),
+            updated_at: now_ms(),
+        },
+    );
+
+    let entries = collect_session_data(&state)?;
+
+    {
+        // Serialise against the background flush's write on the same file.
+        let _guard = state.ltw_write_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        ltw_v4::write_ltw(
+            &dest,
+            &options.workspace_name,
+            Some(&options.workspace_id),
+            &entry_refs(&entries),
+            &chain,
+            &options.editor_tabs,
+            options.layout.as_ref(),
+        )?;
+    }
 
     dest.to_str()
         .map(str::to_string)
         .ok_or_else(|| "Failed to convert path to string".to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Sync workspace envelope (Q4) — lightweight backend cache refresh, no I/O
+// ---------------------------------------------------------------------------
+
+/// Options for `sync_workspace_envelope`. Mirrors the save options but carries
+/// the workspace's explicit `.ltw` path (if any) rather than a dest, and never
+/// writes a file.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncWorkspaceEnvelopeOptions {
+    pub workspace_id: String,
+    pub workspace_name: String,
+    /// The workspace's explicit `.ltw` path, or null if it only auto-saves to
+    /// the id-keyed `workspaces/{id}.ltw`.
+    pub ltw_path: Option<String>,
+    pub editor_tabs: Vec<LtwEditorTab>,
+    pub layout: Option<LtwLayout>,
+    pub pipeline_chain: Vec<String>,
+    pub disabled_chain_ids: Vec<String>,
+}
+
+/// Refresh the backend workspace-envelope cache from the frontend without
+/// writing any file. Pushed at the end of a workspace open/switch (so the
+/// envelope exists before any MCP artifact write can occur) and whenever the
+/// active workspace's identity changes (rename / path update).
+#[tauri::command]
+pub async fn sync_workspace_envelope(
+    state: State<'_, AppState>,
+    options: SyncWorkspaceEnvelopeOptions,
+) -> Result<(), String> {
+    autosave::cache_envelope(
+        &state,
+        WorkspaceEnvelope {
+            workspace_id: options.workspace_id,
+            workspace_name: options.workspace_name,
+            ltw_path: options.ltw_path,
+            editor_tabs: options.editor_tabs,
+            layout: options.layout,
+            pipeline_chain: LtwPipelineChain {
+                chain: options.pipeline_chain,
+                disabled_ids: options.disabled_chain_ids,
+            },
+            updated_at: now_ms(),
+        },
+    );
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +287,13 @@ pub struct LoadWorkspaceSessionData {
 #[serde(rename_all = "camelCase")]
 pub struct LoadWorkspaceResult {
     pub workspace_name: String,
+    /// Stable workspace id from the manifest, or null for legacy files. Q3's
+    /// trust gate (`assessRestoreCandidate`) matches this against the app-state
+    /// entry's id before a silent restore.
+    pub workspace_id: Option<String>,
+    /// Manifest `savedAt` (epoch-ms). Q3 compares it against the recorded
+    /// `lastAutoSaveAt` when the candidate is the auto-save.
+    pub saved_at: i64,
     pub sessions: Vec<LtwManifestSession>,
     pub pipeline_chain: LtwPipelineChain,
     pub editor_tabs: Vec<LtwEditorTab>,
@@ -208,6 +316,8 @@ pub async fn load_workspace_v4(path: String) -> Result<LoadWorkspaceResult, Stri
 
     Ok(LoadWorkspaceResult {
         workspace_name: data.manifest.workspace_name,
+        workspace_id: data.manifest.workspace_id,
+        saved_at: data.manifest.saved_at,
         sessions: data.manifest.sessions,
         pipeline_chain: data.pipeline_chain,
         editor_tabs: data.editor_tabs,
@@ -258,6 +368,7 @@ pub async fn restore_workspace_session(
         bm_count,
         an_count,
         meta,
+        "workspace",
     );
 
     Ok(())
@@ -276,8 +387,16 @@ pub async fn get_app_state(app: tauri::AppHandle) -> Result<AppStateFile, String
 #[tauri::command]
 pub async fn save_app_state_cmd(
     app: tauri::AppHandle,
+    app_state: State<'_, AppState>,
     state: AppStateFile,
 ) -> Result<(), String> {
     let path = app_state::app_state_path(&app)?;
+    // Serialise against the background flush's read-modify-write of the same
+    // file so the two writers never tear it (a corrupt app-state.json parses as
+    // the empty default, which would silently drop the whole workspace list).
+    let _guard = app_state
+        .app_state_write_lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     app_state::save_app_state(&path, &state)
 }

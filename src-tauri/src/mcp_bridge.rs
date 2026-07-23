@@ -131,6 +131,7 @@ pub async fn start(handle: Handle, shutdown_rx: tokio::sync::oneshot::Receiver<(
         .route("/mcp/sessions/{session_id}/search", get(h_search))
         .route("/mcp/sessions/{session_id}/metadata", get(h_metadata))
         .route("/mcp/sessions/{session_id}/sections", get(h_sections))
+        .route("/mcp/sessions/{session_id}/section_at", get(h_section_at))
         .route("/mcp/sessions/{session_id}/tag-stats", get(h_tag_stats))
         .route("/mcp/sessions/{session_id}/lines_around", get(h_lines_around))
         .route("/mcp/sessions/{session_id}/search_with_context", get(h_search_with_context))
@@ -1621,6 +1622,90 @@ struct SectionsParams {
     query: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct SectionAtParams {
+    /// 0-based line number to resolve.
+    line: usize,
+}
+
+/// GET /mcp/sessions/{session_id}/section_at?line=N
+///
+/// Resolves which section contains a line. Returns the **innermost** section —
+/// the value `filter.section` matches against in processor YAML — plus the
+/// enclosing chain from outermost to innermost.
+///
+/// The chain matters: a dumpsys subsection like `wifi` lives inside
+/// `DUMPSYS NORMAL`, and a processor rule naming the parent will never match a
+/// line inside the child. Without this endpoint the only way to establish that
+/// was to page through `sections` and cross-reference `parentIndex` against
+/// line ranges by hand.
+async fn h_section_at(
+    State(handle): State<Handle>,
+    Path(session_id): Path<String>,
+    Query(params): Query<SectionAtParams>,
+) -> Json<Value> {
+    let state = handle.state::<AppState>();
+
+    get_session_and_source!(state, session_id => sessions, session, source);
+
+    let sections = source.sections();
+    let total_lines = source.total_lines();
+    let line = params.line;
+
+    let describe = |i: usize| {
+        let s: &crate::core::session::SectionInfo = &sections[i];
+        let mut obj = json!({
+            "name": s.name,
+            "startLine": s.start_line,
+            "endLine": s.end_line,
+        });
+        if let Some(pi) = s.parent_index {
+            obj["parentIndex"] = json!(pi);
+        }
+        obj
+    };
+
+    // Every section whose line range covers this line, outermost first. This is
+    // the honest "where am I" answer.
+    let containing: Vec<Value> = sections
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| line >= s.start_line && line <= s.end_line)
+        .map(|(i, _)| describe(i))
+        .collect();
+
+    // What `filter.section` would actually match — which is NOT simply the
+    // innermost containing section. Resolution takes the last section *starting*
+    // at or before the line and gives up if the line is past that section's end,
+    // rather than walking outward. So a line sitting inside a parent but after a
+    // subsection ended matches nothing at all.
+    let matched = crate::core::line::section_index_for_line(sections, line);
+
+    let note = if sections.is_empty() {
+        Some("This source has no parsed sections — not a bugreport/dumpstate, or detected as the wrong source type.")
+    } else if matched.is_none() && !containing.is_empty() {
+        Some("This line lies inside a section by range, but `filter.section` resolves it to nothing: resolution stops at the last section starting before the line and does not walk outward to an enclosing parent. A processor rule naming any of `containingSections` will NOT match this line.")
+    } else if matched.is_none() {
+        Some("Line falls outside every section — before the first, or in a gap between them.")
+    } else {
+        None
+    };
+
+    let mut out = json!({
+        "sessionId": session_id,
+        "line": line,
+        // The name a processor's `filter.section` must use to match this line.
+        // Null means no rule can target it by section.
+        "matchesFilterSection": matched.map_or(Value::Null, |i| json!(sections[i].name)),
+        "containingSections": containing,
+        "totalLinesInSession": total_lines,
+    });
+    if let Some(n) = note {
+        out["note"] = json!(n);
+    }
+    Json(out)
+}
+
 async fn h_sections(
     State(handle): State<Handle>,
     Path(session_id): Path<String>,
@@ -1804,6 +1889,10 @@ struct SearchWithContextParams {
     start_line: Option<usize>,
     /// Restrict search to lines < end_line (0-based, exclusive).
     end_line: Option<usize>,
+    /// Max characters per returned line before truncation (default 500, max 8000).
+    /// Wide dumpsys status lines exceed the default and get their trailing
+    /// fields cut, which can hide the field a diagnosis depends on.
+    max_line_chars: Option<usize>,
 }
 
 async fn h_search_with_context(
@@ -1816,6 +1905,7 @@ async fn h_search_with_context(
     let context_lines = params.context_lines.unwrap_or(3).min(10);
     let case_insensitive = params.case_insensitive.unwrap_or(false);
     let offset = params.offset.unwrap_or(0);
+    let max_line_chars = params.max_line_chars.unwrap_or(500).clamp(1, 8000);
 
     let pattern_str = if case_insensitive {
         format!("(?i){}", params.query)
@@ -1840,17 +1930,25 @@ async fn h_search_with_context(
     let range_end = params.end_line.unwrap_or(total).min(total);
     let mut results: Vec<Value> = Vec::new();
     let mut skipped: usize = 0;
+    // Counted across the whole range, not just the returned page, so callers can
+    // tell how much is left to paginate through. This means the scan no longer
+    // breaks early once the page fills — the regex still runs over the remaining
+    // range — but the expensive part (building context objects, resolving tags)
+    // stays capped at `max_results`.
+    let mut total_matches: usize = 0;
 
     for i in range_start..range_end {
-        if results.len() >= max_results {
-            break;
-        }
         let Some(raw) = source.raw_line(i) else { continue };
 
         if regex.is_match(&raw) {
+            total_matches += 1;
+
             // Skip the first `offset` matches
             if skipped < offset {
                 skipped += 1;
+                continue;
+            }
+            if results.len() >= max_results {
                 continue;
             }
             // Build context
@@ -1865,7 +1963,7 @@ async fn h_search_with_context(
                         "lineNum": j,
                         "level": meta.level.as_str(),
                         "tag": session.resolve_tag(meta.tag_id),
-                        "raw": truncate_str(&line_raw, 500),
+                        "raw": truncate_str(&line_raw, max_line_chars),
                         "isMatch": j == i,
                     }))
                 })
@@ -1882,10 +1980,14 @@ async fn h_search_with_context(
         "sessionId": session_id,
         "query": params.query,
         "caseInsensitive": case_insensitive,
-        "matchCount": results.len(),
+        // True count across the whole search range, independent of max_results
+        // and offset. `returned` is how many are in this page.
+        "matchCount": total_matches,
+        "returned": results.len(),
         "maxResults": max_results,
         "contextLines": context_lines,
         "offset": offset,
+        "maxLineChars": max_line_chars,
         "totalLinesInSession": total,
         "matches": results,
     }))
@@ -1994,6 +2096,10 @@ async fn h_create_bookmark(
         },
     );
 
+    // Q4 — schedule a durable backend flush: this write bypassed the frontend
+    // entirely, so nothing else would persist it.
+    crate::workspace::autosave::schedule_autosave(&state);
+
     Json(json!(bookmark))
 }
 
@@ -2020,6 +2126,8 @@ async fn h_delete_bookmark(
                     bookmark: removed,
                 },
             );
+
+            crate::workspace::autosave::schedule_autosave(&state);
 
             return Json(json!({"ok": true}));
         }
@@ -2073,6 +2181,8 @@ async fn h_update_bookmark(
                     bookmark: updated.clone(),
                 },
             );
+
+            crate::workspace::autosave::schedule_autosave(&state);
 
             return Json(json!(updated));
         }
@@ -2142,6 +2252,10 @@ async fn h_publish_analysis(
         },
     );
 
+    // Q4 — schedule a durable backend flush: this publish bypassed the frontend
+    // entirely, so nothing else would persist it (the loss this fixes).
+    crate::workspace::autosave::schedule_autosave(&state);
+
     Json(json!(artifact))
 }
 
@@ -2197,6 +2311,8 @@ async fn h_update_analysis(
                 },
             );
 
+            crate::workspace::autosave::schedule_autosave(&state);
+
             return Json(json!(updated));
         }
     }
@@ -2227,6 +2343,8 @@ async fn h_delete_analysis(
                     artifact_id,
                 },
             );
+
+            crate::workspace::autosave::schedule_autosave(&state);
 
             return Json(json!({"ok": true}));
         }
@@ -2626,4 +2744,75 @@ fn level_at_least(line_level: &str, filter: &str) -> bool {
         }
     }
     priority(line_level) >= priority(filter)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── truncate_str / max_line_chars ────────────────────────────────────────
+    // Wide dumpsys status lines exceed the 500-char default and lose their
+    // trailing fields. Callers can now widen the cap per request.
+
+    #[test]
+    fn truncate_str_leaves_short_lines_untouched() {
+        assert_eq!(truncate_str("short", 500), "short");
+        // Exactly at the cap must not gain an ellipsis.
+        let exact = "x".repeat(500);
+        assert_eq!(truncate_str(&exact, 500), exact);
+    }
+
+    #[test]
+    fn truncate_str_cuts_and_marks_long_lines() {
+        let long = "x".repeat(600);
+        let out = truncate_str(&long, 500);
+        assert!(out.ends_with("..."));
+        assert_eq!(out.chars().count(), 503);
+    }
+
+    #[test]
+    fn truncate_str_respects_a_wider_cap() {
+        // A realistic UsbPortStatus line: the fields that decide a diagnosis
+        // (canChangeDataRole, lastConnectDurationMillis) sit past char 500.
+        let line = format!("{}canChangeDataRole=false, lastConnectDurationMillis=0", "p".repeat(520));
+        assert!(!truncate_str(&line, 500).contains("canChangeDataRole"));
+        let wide = truncate_str(&line, 8000);
+        assert!(wide.contains("canChangeDataRole=false"));
+        assert!(wide.contains("lastConnectDurationMillis=0"));
+        assert!(!wide.ends_with("..."));
+    }
+
+    #[test]
+    fn truncate_str_does_not_split_multibyte_chars() {
+        // Each 'é' is two bytes; cutting by byte index would panic or corrupt.
+        let s = "é".repeat(10);
+        let out = truncate_str(&s, 4);
+        assert_eq!(out, "éééé...");
+        assert_eq!(out.chars().count(), 7);
+    }
+
+    #[test]
+    fn max_line_chars_clamp_matches_handler_bounds() {
+        // Mirrors `params.max_line_chars.unwrap_or(500).clamp(1, 8000)`.
+        let clamp = |v: usize| v.clamp(1, 8000);
+        assert_eq!(clamp(0), 1);
+        assert_eq!(clamp(500), 500);
+        assert_eq!(clamp(50_000), 8000);
+    }
+
+    // ── level_at_least ───────────────────────────────────────────────────────
+
+    #[test]
+    fn level_at_least_orders_by_severity() {
+        assert!(level_at_least("E", "W"));
+        assert!(level_at_least("W", "W"));
+        assert!(!level_at_least("D", "W"));
+        // Unknown levels are treated as Info.
+        assert!(level_at_least("?", "D"));
+        assert!(!level_at_least("?", "W"));
+    }
 }

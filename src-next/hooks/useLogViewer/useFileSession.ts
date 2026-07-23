@@ -7,12 +7,13 @@ import { onFileIndexProgress, onFileIndexComplete } from '../../bridge/events';
 import { preSeedSession, clearPreSeed } from '../../cache';
 import { useSessionCoreCtx, useSessionProgressCtx } from '../../context/SessionContext';
 import { bus, emitSessionLoadedWithFocus } from '../../events/bus';
-import { getStoredFirstPaneId, getStoredLogviewerTabs } from '../useWorkspaceLayout';
-import { storageGetJSON, storageSetJSON, storageRemove } from '../../utils';
+import { getStoredFirstPaneId } from '../useWorkspaceLayout';
+import { storageGetJSON, storageSetJSON } from '../../utils';
 import type { CacheController } from '../../cache';
 import { diag, diagStart, diagEnd } from '../../utils/diagnostics';
 import type { SharedLogViewerRefs } from './types';
 import { planExtraSessionImport } from './multiSessionImport';
+import { genKeyFor } from './loadGeneration';
 
 const LS_TAB_PATHS = 'logtapper_tab_paths';
 
@@ -60,7 +61,6 @@ export function useFileSession(
   const [indexingProgress, setIndexingProgressLocal] = useState<{ percent: number; indexedLines: number } | null>(null);
 
   const loadGenRef = useRef<Map<string, number>>(new Map());
-  const hasRestoredRef = useRef(false);
   // Throttle totalLines → sessions update to at most every 250ms (reduces LogViewer re-renders
   // on large file indexing which can emit ~1000 progress events for a 1M-line file).
   const lastTotalLinesUpdateRef = useRef(0);
@@ -83,8 +83,15 @@ export function useFileSession(
 
     const targetPaneId = paneId ?? refs.activeLogPaneIdRef.current ?? getStoredFirstPaneId() ?? DEFAULT_PANE_ID;
 
-    const gen = (loadGenRef.current.get(targetPaneId) ?? 0) + 1;
-    loadGenRef.current.set(targetPaneId, gen);
+    // The generation guard cancels a load that has been superseded. Its unit is
+    // the *destination*: a fresh open replaces whatever is loading in the pane,
+    // but a load aimed at a specific tab only supersedes an earlier load into
+    // that same tab. Keying purely by pane made concurrent restores into sibling
+    // tabs cancel each other — and since the restore loop runs active-tab-first,
+    // the file under investigation was always the one destroyed.
+    const genKey = genKeyFor(targetPaneId, existingTabId);
+    const gen = (loadGenRef.current.get(genKey) ?? 0) + 1;
+    loadGenRef.current.set(genKey, gen);
 
     const tabId = existingTabId ?? crypto.randomUUID();
 
@@ -127,8 +134,8 @@ export function useFileSession(
       if (!result) throw new Error('No sessions returned from load_log_file');
       diag('file-load', 'IPC returned', { sessionId: result.sessionId, totalLines: result.totalLines, sourceType: result.sourceType, isIndexing: result.isIndexing, sessionCount: results.length });
 
-      if (loadGenRef.current.get(targetPaneId) !== gen) {
-        diag('file-load', 'stale generation — discarding', { gen, current: loadGenRef.current.get(targetPaneId) });
+      if (loadGenRef.current.get(genKey) !== gen) {
+        diag('file-load', 'stale generation — discarding', { gen, current: loadGenRef.current.get(genKey), genKey });
         for (const r of results) {
           try { await closeSessionCmd(r.sessionId); } catch { /* ignore */ }
           clearPreSeed(r.sessionId);
@@ -234,13 +241,13 @@ export function useFileSession(
       }
     } catch (e) {
       diag('file-load', 'ERROR', { error: String(e) });
-      if (loadGenRef.current.get(targetPaneId) === gen) {
+      if (loadGenRef.current.get(genKey) === gen) {
         const tabPathsErr = readTabPaths(); delete tabPathsErr[tabId]; saveTabPaths(tabPathsErr);
         setErrorPane(targetPaneId, String(e));
       }
     } finally {
-      if (loadGenRef.current.get(targetPaneId) === gen) {
-        loadGenRef.current.delete(targetPaneId);
+      if (loadGenRef.current.get(genKey) === gen) {
+        loadGenRef.current.delete(genKey);
         setLoadingPane(targetPaneId, false);
       }
       diagEnd(`loadFile:${label}`);
@@ -253,46 +260,10 @@ export function useFileSession(
     deps.resetSessionState, deps.detachStream,
   ]);
 
-  // Restore all open files on app startup (StrictMode double-mount guard).
-  // Active tabs are loaded first (they replace the existing logviewer tab in the
-  // pane), then non-active tabs are loaded with their persisted tabId so the
-  // session:loaded handler matches them to the already-existing tab in the tree.
-  useEffect(() => {
-    if (hasRestoredRef.current) return;
-    hasRestoredRef.current = true;
-    storageRemove('logtapper_last_file');
-
-    const tabPaths = readTabPaths();
-    const storedTabs = getStoredLogviewerTabs();
-
-    // Sort: active tabs first so they establish the pane's initial session,
-    // then non-active tabs load into existing persisted tab slots.
-    const sorted = [...storedTabs].sort((a, b) => (b.isActive ? 1 : 0) - (a.isActive ? 1 : 0));
-    const loadedPanes = new Set<string>();
-    const handledLtsPaths = new Set<string>();
-    for (const { tabId, paneId, isActive } of sorted) {
-      const path = tabPaths[tabId];
-      if (!path) continue;
-
-      // For .lts files, only the first tab pointing to this path loads all
-      // sessions via planExtraSessionImport. Subsequent tabs pointing to the
-      // same .lts would create N*M backend sessions — skip them.
-      if (path.endsWith('.lts')) {
-        if (handledLtsPaths.has(path)) continue;
-        handledLtsPaths.add(path);
-      }
-
-      if (isActive && !loadedPanes.has(paneId)) {
-        // First load for this pane — replaces the existing logviewer tab.
-        loadedPanes.add(paneId);
-        loadFile(path, paneId);
-      } else {
-        // Non-active tab — load with the persisted tabId so the session:loaded
-        // handler finds the existing tab in the tree instead of creating a new one.
-        loadFile(path, paneId, tabId);
-      }
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Startup restore of open files is now owned by `useStartupRestore` (design
+  // §Q2) — it drives the same union/dedup planner used by explicit opens and
+  // gates on Q1 hydration + Q3 trust. The inline localStorage replay that lived
+  // here (and its latent auto-run ordering defect) has been removed.
 
   // Subscribe to progressive file-indexing events (StrictMode-safe)
   useEffect(() => {
