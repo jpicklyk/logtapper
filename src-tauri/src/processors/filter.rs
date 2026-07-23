@@ -135,6 +135,9 @@ pub fn rule_matches(
         FilterRule::SectionIs { section } => {
             match pipeline_ctx {
                 Some(ctx) => {
+                    // Innermost-only: a rule naming a parent section matches
+                    // neither lines inside a subsection nor lines past a
+                    // subsection's end — see `section_index_for_line`.
                     let line_section = crate::core::line::section_for_line(&ctx.sections, line.source_line_num);
                     if line_section == section {
                         FilterMatch::matched()

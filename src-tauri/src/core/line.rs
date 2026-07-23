@@ -95,8 +95,6 @@ impl PipelineContext {
     }
 }
 
-/// Look up which section a given line belongs to via binary search.
-/// Returns the section name, or "" if the line is not in any section.
 /// Index of the section containing `line_num`, or `None` when the line falls
 /// before the first section or into a gap between sections.
 ///
@@ -106,6 +104,16 @@ impl PipelineContext {
 /// the same resolution `filter.section` performs in processor YAML — a rule
 /// naming a parent section will not match lines that sit inside one of its
 /// subsections.
+///
+/// Resolution deliberately does not walk outward to an enclosing parent: a
+/// line past the end of a subsection resolves to `None` even though the
+/// parent's range still covers it. Changing that would alter matching for
+/// every installed processor, so the narrow semantics are kept by decision and
+/// pinned by `section_does_not_fall_back_to_parent_after_a_subsection_ends`.
+/// The `section_at` bridge endpoint reports both views —
+/// `matchesFilterSection` (this resolution) vs `containingSections` (range
+/// containment) — and their disagreement is the diagnostic for a
+/// parent-section filter that matches nothing.
 pub fn section_index_for_line(sections: &[SectionInfo], line_num: usize) -> Option<usize> {
     if sections.is_empty() {
         return None;
@@ -123,6 +131,8 @@ pub fn section_index_for_line(sections: &[SectionInfo], line_num: usize) -> Opti
     }
 }
 
+/// Name of the section containing `line_num` per [`section_index_for_line`]'s
+/// innermost-only resolution, or `""` when it resolves to none.
 pub fn section_for_line(sections: &[SectionInfo], line_num: usize) -> &str {
     section_index_for_line(sections, line_num).map_or("", |i| sections[i].name.as_str())
 }

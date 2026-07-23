@@ -309,6 +309,15 @@ Section names are extracted from `------ SECTION NAME (...) ------` headers in b
 
 When a processor declares `sections:`, only lines within those sections are processed. This is both a correctness filter (avoid matching unrelated data) and a performance optimization (skip irrelevant sections entirely).
 
+### Section Resolution Is Innermost-Only
+
+A line resolves to exactly **one** section: the innermost one containing it. Two consequences for `section:` / `sections:` filters:
+
+- Naming a parent section (e.g. `"DUMPSYS NORMAL"`) will **not** match lines inside any of its subsections — each subsection claims its own lines.
+- After a subsection ends, resolution does **not** fall back to the enclosing parent: those lines resolve to *no* section at all.
+
+Always target the innermost section name that actually contains your lines. To check what a line resolves to, use the `logtapper_section_at` MCP tool: `matchesFilterSection` is the exact name a filter must use (`null` means no section filter can target that line), while `containingSections` lists every enclosing range. A `null` `matchesFilterSection` alongside a non-empty `containingSections` is the parent-fallback trap — a processor filtering on any of those enclosing names silently matches zero lines.
+
 ## Rhai Scripting Guide
 
 Read `references/rhai-patterns.md` for the complete Rhai scripting reference. Key points:
