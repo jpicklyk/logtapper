@@ -200,10 +200,10 @@ export function usePaneActions() {
 }
 
 export function useSettingsActions() {
-  const { startMcpBridge, stopMcpBridge, setFileAssociation, openDefaultAppsSettings } = useActionsContext();
+  const { startMcpBridge, stopMcpBridge, setFileAssociation, openDefaultAppsSettings, setMcpOpenAllowlist } = useActionsContext();
   return useMemo(
-    () => ({ startMcpBridge, stopMcpBridge, setFileAssociation, openDefaultAppsSettings }),
-    [startMcpBridge, stopMcpBridge, setFileAssociation, openDefaultAppsSettings],
+    () => ({ startMcpBridge, stopMcpBridge, setFileAssociation, openDefaultAppsSettings, setMcpOpenAllowlist }),
+    [startMcpBridge, stopMcpBridge, setFileAssociation, openDefaultAppsSettings, setMcpOpenAllowlist],
   );
 }
 

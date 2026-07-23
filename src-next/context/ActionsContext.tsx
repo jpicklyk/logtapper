@@ -70,6 +70,7 @@ export interface ViewActions {
   openDefaultAppsSettings: () => Promise<void>;
   startMcpBridge: () => Promise<void>;
   stopMcpBridge: () => Promise<void>;
+  setMcpOpenAllowlist: (dirs: string[], allowAll: boolean) => Promise<void>;
   exportAllSessions: (options: ExportAllOptions) => Promise<void>;
 }
 
@@ -205,6 +206,7 @@ const DEFAULT_ACTIONS: ActionsContextValue = {
   openDefaultAppsSettings: () => noopAsync(),
   startMcpBridge: () => noopAsync(),
   stopMcpBridge: () => noopAsync(),
+  setMcpOpenAllowlist: (_dirs: string[], _allowAll: boolean) => noopAsync(),
   exportAllSessions: (_options: ExportAllOptions) => noopAsync(),
 };
 

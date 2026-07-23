@@ -10,7 +10,6 @@ import type { ThemeMode } from '../../context';
 import {
   getFileAssociationStatus,
   getMcpOpenAllowlist,
-  setMcpOpenAllowlist,
 } from '../../bridge/commands';
 import { useSettingsActions } from '../../context';
 import type { FileAssocEntry, McpOpenAllowlist } from '../../bridge/types';
@@ -278,11 +277,14 @@ const McpIntegrationSection = memo(function McpIntegrationSection({ settings, on
 
 // ── MCP file access allowlist section ─────────────────────────────────────
 //
-// App-config UI: local component state + the two allowlist Tauri commands
-// directly. Not routed through ActionsContext / SessionActionsContext -- the
-// allowlist is backend-owned config, not a workspace or session mutation.
+// App-config UI: local component state, with the read (getMcpOpenAllowlist)
+// called directly -- mirrors FileAssociationsSection's getFileAssociationStatus,
+// the codebase's convention for untracked-config reads. The mutation
+// (setMcpOpenAllowlist) routes through useSettingsActions -- ViewActions
+// exists for exactly this kind of untracked system config (see setFileAssociation).
 
 function McpFileAccessSection() {
+  const { setMcpOpenAllowlist } = useSettingsActions();
   const [allowlist, setAllowlistState] = useState<McpOpenAllowlist | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -315,7 +317,7 @@ function McpFileAccessSection() {
         getMcpOpenAllowlist().then(setAllowlistState).catch(() => {});
       })
       .finally(() => setPending(false));
-  }, []);
+  }, [setMcpOpenAllowlist]);
 
   const handleToggleAllowAll = useCallback((checked: boolean) => {
     const prev = allowlistRef.current;
@@ -383,27 +385,28 @@ function McpFileAccessSection() {
         </div>
       )}
 
-      <div className={`${css.mcpDirList} ${allowlist.allowAll ? css.mcpDirListDisabled : ''}`}>
+      <div className={`${css.catList} ${allowlist.allowAll ? css.mcpDirListDisabled : ''}`}>
         {allowlist.allowedDirs.length === 0 ? (
           <span className={css.labelHint}>No directories allowlisted.</span>
         ) : (
           allowlist.allowedDirs.map((dir) => (
-            <div key={dir} className={css.mcpDirRow}>
+            <div key={dir} className={css.catRow}>
               <span className={css.mcpDirPath} title={dir}>{dir}</span>
               <IconButton
                 icon={Trash2}
                 size={12}
                 type="button"
-                className={css.mcpDirDelBtn}
+                className={css.catDeleteBtn}
                 onClick={() => handleRemoveDir(dir)}
                 title="Remove directory"
+                disabled={pending}
               />
             </div>
           ))
         )}
       </div>
 
-      <Button variant="ghost" size="sm" className={css.linkBtn} type="button" onClick={handleAddDir}>
+      <Button variant="ghost" size="sm" className={css.linkBtn} type="button" onClick={handleAddDir} disabled={pending}>
         <Plus size={12} /> Add directory
       </Button>
     </div>

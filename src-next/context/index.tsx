@@ -5,7 +5,7 @@ import { useSessionCoreCtx, useSessionPaneCtx } from './SessionContext';
 import { saveLiveCapture, loadProcessorYaml, uninstallProcessor,
   loadProcessorFromFile as bridgeLoadProcessorFromFile,
   setFileAssociation, openDefaultAppsSettings,
-  startMcpBridge, stopMcpBridge, exportAllSessions,
+  startMcpBridge, stopMcpBridge, setMcpOpenAllowlist, exportAllSessions,
 } from '../bridge/commands';
 import { basename, dirname } from '../utils';
 import { ViewerProvider } from './ViewerContext';
@@ -376,6 +376,7 @@ function HookWiring({ children }: { children: ReactNode }) {
     openDefaultAppsSettings,
     startMcpBridge,
     stopMcpBridge,
+    setMcpOpenAllowlist,
     exportAllSessions,
   }), [logViewer.loadFile, logViewer.startStream, logViewer.stopStream, logViewer.closeSession,
        installProcessor, removeProcessor, loadProcessorFromFile,
