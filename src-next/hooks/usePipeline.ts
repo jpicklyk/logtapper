@@ -38,13 +38,18 @@ export interface PipelineActions {
   loadProcessors: () => Promise<void>;
   installFromYaml: (yaml: string) => Promise<void>;
   removeProcessor: (id: string) => Promise<void>;
-  run: (sessionId: string, anonymize?: boolean) => Promise<void>;
+  run: (sessionId: string, anonymize?: boolean, override?: { chain: string[]; disabled: string[] }) => Promise<void>;
   stop: (sessionId: string) => Promise<void>;
   getVars: (sessionId: string, processorId: string) => Promise<Record<string, unknown>>;
   clearResults: (sessionId: string) => void;
 }
 
-export function usePipeline(): PipelineActions {
+export function usePipeline(
+  // The wiring instance (HookWiring) passes the shared auto-run scheduler; the
+  // few components that also call usePipeline for its stateless actions get the
+  // no-op default so they never drive a second auto-run.
+  scheduleAutoRun: (sessionId: string, isIndexing: boolean | undefined, chain: string[], disabled: string[]) => void = () => {},
+): PipelineActions {
   const { processors, pipelineChain, disabledChainIds, resultsBySession, dispatch } = usePipelineContext();
 
   // Track the focused pane so session:pre-load can resolve the outgoing sessionId.
@@ -266,9 +271,27 @@ export function usePipeline(): PipelineActions {
   }, [dispatch]);
 
   const run = useCallback(
-    async (sessionId: string, anonymize = false) => {
-      const chain = pipelineChainRef.current;
-      const disabled = new Set(disabledChainIdsRef.current);
+    async (
+      sessionId: string,
+      anonymize = false,
+      override?: { chain: string[]; disabled: string[] },
+    ) => {
+      let chain: string[];
+      let disabled: Set<string>;
+      if (override) {
+        // Auto-run after a workspace restore: use the session's restored chain
+        // directly. `chain:restore` (dispatched by useWorkspaceRestore) only
+        // reaches pipelineChainRef on the next render, which has not happened yet
+        // when this fires — reading the ref would run a stale/empty chain and
+        // no-op (the exact bug §Q2 fixes). Filter to installed processors,
+        // mirroring useWorkspaceRestore's chain:restore filter.
+        const installed = new Set(processorsRef.current.map((p) => p.id));
+        chain = override.chain.filter((id) => installed.has(id) || id.includes('@lts-'));
+        disabled = new Set(override.disabled);
+      } else {
+        chain = pipelineChainRef.current;
+        disabled = new Set(disabledChainIdsRef.current);
+      }
       const effectiveChain = chain.filter((id) => !disabled.has(id));
       if (effectiveChain.length === 0) return;
       dispatch({ type: 'run:started', sessionId });
@@ -296,8 +319,10 @@ export function usePipeline(): PipelineActions {
     [dispatch],
   );
 
-  // ── Workspace restore: set chain from .ltw and auto-rerun ────────────────
-  useWorkspaceRestore(dispatch, processors, run, hasRestoredChainRef);
+  // ── Workspace restore: set pipeline chain (all sources) + own the .lts-path
+  //    auto-run through the shared scheduler. The .ltw path's auto-run is owned
+  //    by the restore core; useWorkspaceRestore acts only on `source: "lts"`.
+  useWorkspaceRestore(dispatch, processors, hasRestoredChainRef, scheduleAutoRun);
 
   const clearResults = useCallback((sessionId: string) => {
     dispatch({ type: 'results:cleared', sessionId });

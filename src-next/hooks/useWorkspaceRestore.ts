@@ -8,38 +8,54 @@ import { setSessionPipelineMeta } from '../bridge/commands';
 import { bus } from '../events/bus';
 
 /**
- * Listens for `workspace-restored` Tauri events and restores the pipeline chain.
- * When active processors are present, dispatches `chain:restore` to PipelineContext
- * and auto-runs the pipeline (deferred until indexing completes if still indexing).
+ * Listens for `workspace-restored` Tauri events. For every source it restores
+ * the pipeline chain (`chain:restore` + backend meta push + `hasRestoredRef`).
  *
- * `hasRestoredRef` is owned by usePipeline and set to `true` here so loadProcessors
- * can skip the localStorage chain override when a workspace restore already set it.
+ * Auto-run ownership is split by the payload's `source` tag (see
+ * `emit_workspace_restored`):
+ *  - `source: "workspace"` (from `restore_workspace_session`, the `.ltw` path) →
+ *    the restore core owns the auto-run; this hook schedules nothing.
+ *  - `source: "lts"` (from `load_lts_file_inner`) → this hook owns the auto-run,
+ *    for both direct `.lts` opens and `.lts` sessions embedded in a `.ltw` (the
+ *    core deliberately skips those). It routes through the SAME shared
+ *    `autoRunScheduler` so the run-now/await-indexing decision and the strict
+ *    one-shot-per-session-id swallow are identical to the `.ltw` path.
  *
- * Handlers are keyed by sessionId so that multi-session .lts restores do not
- * clobber each other — each session gets its own independent handler pair.
+ * The `.lts` session's `isIndexing` arrives on `session:loaded`, which fires
+ * AFTER this `workspace-restored` on the `.lts` path (the backend emits
+ * `workspace-restored` mid-`load_log_file`, before the frontend emits
+ * `session:loaded` once the invoke resolves). Registering the scoped
+ * `session:loaded` one-shot here is therefore in time — there is no
+ * registration-after-event dead path like the one the `.ltw` path had — and it
+ * also guarantees the session is frontend-registered before the run. The chain
+ * is passed to the scheduler explicitly (from the payload, filtered to installed
+ * processors) so the run never depends on `chain:restore` having propagated to
+ * `pipelineChainRef` this same tick.
  */
 export function useWorkspaceRestore(
   dispatch: React.Dispatch<PipelineAction>,
   processors: ProcessorSummary[],
-  run: (sessionId: string) => Promise<void>,
   hasRestoredRef: React.MutableRefObject<boolean>,
+  scheduleAutoRun: (sessionId: string, isIndexing: boolean | undefined, chain: string[], disabled: string[]) => void,
 ): void {
   const processorsRef = useRef(processors);
   processorsRef.current = processors;
-  const runRef = useRef(run);
-  runRef.current = run;
+  const scheduleAutoRunRef = useRef(scheduleAutoRun);
+  scheduleAutoRunRef.current = scheduleAutoRun;
 
-  // Maps keyed by sessionId so multi-session .lts restores don't clobber each other
-  const pendingIndexingHandlersRef = useRef(new Map<string, (e: { sessionId: string }) => void>());
-  const pendingLoadedHandlersRef = useRef(new Map<string, (e: any) => void>());
+  // Scoped session:loaded one-shots for `.lts`-backed sessions awaiting their
+  // isIndexing flag, keyed by sessionId so multi-session `.lts` restores don't
+  // clobber each other.
+  const pendingLoadedRef = useRef(new Map<string, (e: { sessionId: string; isIndexing?: boolean }) => void>());
 
   useEffect(() => {
     let cancelled = false;
     let unlisten: UnlistenFn | null = null;
+    const pendingLoaded = pendingLoadedRef.current;
 
     listen<WorkspaceRestoredPayload>('workspace-restored', (event) => {
       if (cancelled) return;
-      const { sessionId, activeProcessorIds, disabledProcessorIds } = event.payload;
+      const { sessionId, activeProcessorIds, disabledProcessorIds, source } = event.payload;
       if (!activeProcessorIds || activeProcessorIds.length === 0) return;
 
       // Filter to only installed processors, allowing session-scoped .lts processors through.
@@ -51,65 +67,30 @@ export function useWorkspaceRestore(
       // Signal that a workspace restore set the chain (prevents localStorage override)
       hasRestoredRef.current = true;
 
-      // Override chain with workspace-saved state
+      // Override chain with workspace-saved state (all sources — drives the UI).
       dispatch({ type: 'chain:restore', chain: validActive, disabledChainIds: validDisabled });
 
       // Push to backend so subsequent saves capture the restored chain
       setSessionPipelineMeta(sessionId, validActive, validDisabled).catch(() => {});
 
-      // Auto-run: always subscribe to indexing-complete as the primary trigger,
-      // since workspace-restored fires during load_log_file before the session
-      // is registered in the frontend context. Also use session:loaded as a
-      // fallback for files already fully indexed (isIndexing carried in payload).
-      const autoRun = () => { runRef.current(sessionId).catch(() => {}); };
+      // Auto-run only for the `.lts` path; the core owns `source: "workspace"`.
+      // A missing/legacy `source` defaults to core-owned (no schedule here).
+      if (source !== 'lts') return;
 
-      // Remove any existing handlers for this sessionId before registering new ones
-      const existingIndexingHandler = pendingIndexingHandlersRef.current.get(sessionId);
-      if (existingIndexingHandler) {
-        bus.off('session:indexing-complete', existingIndexingHandler);
-        pendingIndexingHandlersRef.current.delete(sessionId);
+      const existing = pendingLoaded.get(sessionId);
+      if (existing) {
+        bus.off('session:loaded', existing);
+        pendingLoaded.delete(sessionId);
       }
-      const existingLoadedHandler = pendingLoadedHandlersRef.current.get(sessionId);
-      if (existingLoadedHandler) {
-        bus.off('session:loaded', existingLoadedHandler);
-        pendingLoadedHandlersRef.current.delete(sessionId);
-      }
-
-      const handler = (e: { sessionId: string }) => {
-        if (e.sessionId === sessionId) {
-          bus.off('session:indexing-complete', handler);
-          pendingIndexingHandlersRef.current.delete(sessionId);
-          // Also remove the loaded handler since indexing-complete fired
-          const lh = pendingLoadedHandlersRef.current.get(sessionId);
-          if (lh) {
-            bus.off('session:loaded', lh);
-            pendingLoadedHandlersRef.current.delete(sessionId);
-          }
-          if (!cancelled) autoRun();
-        }
-      };
-      pendingIndexingHandlersRef.current.set(sessionId, handler);
-      bus.on('session:indexing-complete', handler);
-
-      // For files that are already fully indexed (isIndexing was false in
-      // LoadResult), session:indexing-complete will never fire. Use
-      // session:loaded as a fallback — it carries isIndexing directly in
-      // the payload, so no context lookup or setTimeout is needed.
-      const loadedHandler = (e: { sessionId: string; sourceType: string; paneId: string; isIndexing?: boolean }) => {
-        // Scope to the specific sessionId — don't act on other sessions' load events
+      const onLoaded = (e: { sessionId: string; isIndexing?: boolean }) => {
         if (e.sessionId !== sessionId) return;
-        bus.off('session:loaded', loadedHandler);
-        pendingLoadedHandlersRef.current.delete(sessionId);
-        if (!e.isIndexing) {
-          // Already indexed — indexing-complete won't fire, so run now
-          bus.off('session:indexing-complete', handler);
-          pendingIndexingHandlersRef.current.delete(sessionId);
-          if (!cancelled) autoRun();
-        }
-        // else: still indexing — indexing-complete handler will fire later
+        bus.off('session:loaded', onLoaded);
+        pendingLoaded.delete(sessionId);
+        if (cancelled) return;
+        scheduleAutoRunRef.current(sessionId, e.isIndexing, validActive, validDisabled);
       };
-      pendingLoadedHandlersRef.current.set(sessionId, loadedHandler);
-      bus.on('session:loaded', loadedHandler);
+      pendingLoaded.set(sessionId, onLoaded);
+      bus.on('session:loaded', onLoaded);
     }).then((fn) => {
       if (cancelled) fn();
       else unlisten = fn;
@@ -118,11 +99,8 @@ export function useWorkspaceRestore(
     return () => {
       cancelled = true;
       unlisten?.();
-      // Clean up all pending bus listeners across all sessions
-      pendingIndexingHandlersRef.current.forEach((h) => bus.off('session:indexing-complete', h));
-      pendingIndexingHandlersRef.current.clear();
-      pendingLoadedHandlersRef.current.forEach((h) => bus.off('session:loaded', h));
-      pendingLoadedHandlersRef.current.clear();
+      pendingLoaded.forEach((h) => bus.off('session:loaded', h));
+      pendingLoaded.clear();
     };
   }, [dispatch]);
 }

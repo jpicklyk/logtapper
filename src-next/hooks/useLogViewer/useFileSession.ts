@@ -7,8 +7,8 @@ import { onFileIndexProgress, onFileIndexComplete } from '../../bridge/events';
 import { preSeedSession, clearPreSeed } from '../../cache';
 import { useSessionCoreCtx, useSessionProgressCtx } from '../../context/SessionContext';
 import { bus, emitSessionLoadedWithFocus } from '../../events/bus';
-import { getStoredFirstPaneId, getStoredLogviewerTabs } from '../useWorkspaceLayout';
-import { storageGetJSON, storageSetJSON, storageRemove } from '../../utils';
+import { getStoredFirstPaneId } from '../useWorkspaceLayout';
+import { storageGetJSON, storageSetJSON } from '../../utils';
 import type { CacheController } from '../../cache';
 import { diag, diagStart, diagEnd } from '../../utils/diagnostics';
 import type { SharedLogViewerRefs } from './types';
@@ -61,7 +61,6 @@ export function useFileSession(
   const [indexingProgress, setIndexingProgressLocal] = useState<{ percent: number; indexedLines: number } | null>(null);
 
   const loadGenRef = useRef<Map<string, number>>(new Map());
-  const hasRestoredRef = useRef(false);
   // Throttle totalLines → sessions update to at most every 250ms (reduces LogViewer re-renders
   // on large file indexing which can emit ~1000 progress events for a 1M-line file).
   const lastTotalLinesUpdateRef = useRef(0);
@@ -261,46 +260,10 @@ export function useFileSession(
     deps.resetSessionState, deps.detachStream,
   ]);
 
-  // Restore all open files on app startup (StrictMode double-mount guard).
-  // Active tabs are loaded first (they replace the existing logviewer tab in the
-  // pane), then non-active tabs are loaded with their persisted tabId so the
-  // session:loaded handler matches them to the already-existing tab in the tree.
-  useEffect(() => {
-    if (hasRestoredRef.current) return;
-    hasRestoredRef.current = true;
-    storageRemove('logtapper_last_file');
-
-    const tabPaths = readTabPaths();
-    const storedTabs = getStoredLogviewerTabs();
-
-    // Sort: active tabs first so they establish the pane's initial session,
-    // then non-active tabs load into existing persisted tab slots.
-    const sorted = [...storedTabs].sort((a, b) => (b.isActive ? 1 : 0) - (a.isActive ? 1 : 0));
-    const loadedPanes = new Set<string>();
-    const handledLtsPaths = new Set<string>();
-    for (const { tabId, paneId, isActive } of sorted) {
-      const path = tabPaths[tabId];
-      if (!path) continue;
-
-      // For .lts files, only the first tab pointing to this path loads all
-      // sessions via planExtraSessionImport. Subsequent tabs pointing to the
-      // same .lts would create N*M backend sessions — skip them.
-      if (path.endsWith('.lts')) {
-        if (handledLtsPaths.has(path)) continue;
-        handledLtsPaths.add(path);
-      }
-
-      if (isActive && !loadedPanes.has(paneId)) {
-        // First load for this pane — replaces the existing logviewer tab.
-        loadedPanes.add(paneId);
-        loadFile(path, paneId);
-      } else {
-        // Non-active tab — load with the persisted tabId so the session:loaded
-        // handler finds the existing tab in the tree instead of creating a new one.
-        loadFile(path, paneId, tabId);
-      }
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Startup restore of open files is now owned by `useStartupRestore` (design
+  // §Q2) — it drives the same union/dedup planner used by explicit opens and
+  // gates on Q1 hydration + Q3 trust. The inline localStorage replay that lived
+  // here (and its latent auto-run ordering defect) has been removed.
 
   // Subscribe to progressive file-indexing events (StrictMode-safe)
   useEffect(() => {

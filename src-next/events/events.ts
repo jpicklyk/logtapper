@@ -160,6 +160,12 @@ export type AppEvents = {
    *  the file as a NEW workspace. `savedAt` dates it, `reasons` are the machine
    *  codes from the assessment, `candidatePath` is what "Open it" loads. */
   'workspace:untrusted-autosave': { workspaceId: string; candidatePath: string; savedAt: number; reasons: string[] };
+  /** Fired by Q2's startup/open restore when the plan diverged from a clean
+   *  match — a manifest file has moved/is missing (its artifacts were skipped,
+   *  not misattached), a stored tab was not in the workspace file, or a `.lts`
+   *  reference was deduped. Surfaced as a non-blocking notice so these are not
+   *  swallowed into `console.warn`. Reuses the existing toast surface. */
+  'workspace:restore-warnings': { warnings: string[] };
 
   // ── File operations ──────────────────────────────────────────────────────
   /** Fired when an .lts file import is skipped because it's already open. */

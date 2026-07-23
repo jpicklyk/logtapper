@@ -334,7 +334,9 @@ fn load_lts_file_inner(
         meta.active_processor_ids = remap(&meta.active_processor_ids);
         meta.disabled_processor_ids = remap(&meta.disabled_processor_ids);
 
-        // Store pipeline meta and emit workspace-restored event.
+        // Store pipeline meta and emit workspace-restored event. `source: "lts"`
+        // tells the frontend this session was recreated from the .lts archive, so
+        // useWorkspaceRestore (not the .ltw restore core) owns its auto-run.
         emit_workspace_restored(
             state,
             app,
@@ -342,6 +344,7 @@ fn load_lts_file_inner(
             bm_count,
             an_count,
             meta,
+            "lts",
         );
 
         results.push(result);
@@ -358,6 +361,14 @@ fn load_lts_file_inner(
 
 /// Store pipeline meta in AppState and emit `workspace-restored` event.
 /// Used by the `.lts` load path and the `restore_workspace_session` command.
+///
+/// `source` distinguishes the two emitters so the frontend can decide who owns
+/// the auto-run: `"lts"` (this session was recreated mid-`load_log_file` from a
+/// `.lts` archive — `useWorkspaceRestore` owns its auto-run) vs `"workspace"`
+/// (emitted by `restore_workspace_session` on the `.ltw` path — the restore
+/// orchestrator's core owns those). Without the tag the frontend cannot tell a
+/// `.lts`-backed session apart from a `.ltw` manifest session and would either
+/// double-run it or silently drop its auto-run.
 pub(crate) fn emit_workspace_restored(
     state: &AppState,
     app: &tauri::AppHandle,
@@ -365,6 +376,7 @@ pub(crate) fn emit_workspace_restored(
     bm_count: usize,
     an_count: usize,
     meta: crate::workspace::SessionMeta,
+    source: &str,
 ) {
     let has_chain = !meta.active_processor_ids.is_empty();
     if has_chain {
@@ -380,6 +392,7 @@ pub(crate) fn emit_workspace_restored(
             "analysisCount": an_count,
             "activeProcessorIds": meta.active_processor_ids,
             "disabledProcessorIds": meta.disabled_processor_ids,
+            "source": source,
         }));
     }
 }

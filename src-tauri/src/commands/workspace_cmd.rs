@@ -368,6 +368,7 @@ pub async fn restore_workspace_session(
         bm_count,
         an_count,
         meta,
+        "workspace",
     );
 
     Ok(())

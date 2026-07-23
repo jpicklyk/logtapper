@@ -700,6 +700,11 @@ export interface WorkspaceRestoredPayload {
   analysisCount: number;
   activeProcessorIds?: string[];
   disabledProcessorIds?: string[];
+  /** Which backend emitted this: `"lts"` (recreated from a `.lts` archive mid
+   *  `load_log_file` — `useWorkspaceRestore` owns its auto-run) or `"workspace"`
+   *  (from `restore_workspace_session` on the `.ltw` path — the restore core owns
+   *  it). Optional so payloads from older backends still parse. */
+  source?: 'lts' | 'workspace';
 }
 
 // ---------------------------------------------------------------------------

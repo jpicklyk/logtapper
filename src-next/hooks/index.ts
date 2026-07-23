@@ -52,6 +52,7 @@ export type { StatusBarSelection } from './useStatusBarSelection';
 export { useCorrelatorResult } from './useCorrelatorResult';
 export type { UseCorrelatorResultReturn } from './useCorrelatorResult';
 export { useStartupFile } from './useStartupFile';
+export { useStartupRestore } from './useStartupRestore';
 export { useEditorTabRestore } from './useEditorTabRestore';
 export { useWorkspace } from './useWorkspace';
 export type { WorkspaceActions, SavePromptChoice } from './useWorkspace';

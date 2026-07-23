@@ -21,11 +21,13 @@ import { WorkspaceProvider, useWorkspaceIdentity, useWorkspaceContext } from './
 import { SavePromptDialog } from '../ui/SavePromptDialog';
 import { useCacheManager, useDataSourceRegistry } from '../cache';
 import { useLogViewer } from '../hooks/useLogViewer';
-import { usePipeline } from '../hooks/usePipeline';
+import { usePipeline, type PipelineActions } from '../hooks/usePipeline';
 import { useSettings } from '../hooks/useSettings';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { useWorkspaceAutoSave } from '../hooks/useWorkspaceAutoSave';
 import { useAppExitSave } from '../hooks/useAppExitSave';
+import { useStartupRestore } from '../hooks/useStartupRestore';
+import { createAutoRunScheduler, type AutoRunScheduler } from '../hooks/workspace/autoRunScheduler';
 import type { AppStateFile } from '../bridge/types';
 import { collectEditorTabsForSave, buildAppStatePayload } from '../hooks/workspace/workspacePersistence';
 import { STORAGE_KEY } from '../hooks/workspace/workspaceTypes';
@@ -209,9 +211,45 @@ function HookWiring({ children }: { children: ReactNode }) {
     return session?.filePath ? dirname(session.filePath) : undefined;
   }, []);
 
-  const pipeline = usePipeline();
+  // Auto-run scheduler (Q2): shared by the `.ltw` restore core (via useWorkspace)
+  // and useWorkspaceRestore (the `.lts` path, via usePipeline). Created once
+  // (construction is side-effect-free; it registers bus handlers only when a
+  // session must wait on indexing). pipeline.run is kept fresh via a ref that is
+  // populated right after usePipeline below — scheduleAutoRun is only ever
+  // invoked during an async restore, long after that assignment.
+  const runRef = useRef<PipelineActions['run'] | null>(null);
+  const autoRunSchedulerRef = useRef<AutoRunScheduler | null>(null);
+  if (!autoRunSchedulerRef.current) {
+    autoRunSchedulerRef.current = createAutoRunScheduler(
+      {
+        on: (e, h) => bus.on(e, h),
+        off: (e, h) => bus.off(e, h),
+      },
+      (sessionId, chain, disabled) => {
+        void runRef.current?.(sessionId, false, { chain, disabled }).catch(() => {});
+      },
+    );
+  }
+  const scheduleAutoRun = useCallback(
+    (sessionId: string, isIndexing: boolean | undefined, chain: string[], disabled: string[]) => {
+      autoRunSchedulerRef.current?.schedule(sessionId, isIndexing, chain, disabled);
+    },
+    [],
+  );
 
-  const workspace = useWorkspace(closeAllSessions, logViewer.loadFile, getDefaultDir, getPipelineChain, getDisabledChainIds);
+  const pipeline = usePipeline(scheduleAutoRun);
+  runRef.current = pipeline.run;
+
+  useEffect(() => () => { autoRunSchedulerRef.current?.dispose(); }, []);
+  // Q5-safe lifecycle: forget a session's auto-run record on close so reopening
+  // it (even with a recurring deterministic id) schedules again.
+  useEffect(() => {
+    const onClosed = (e: { sessionId: string }) => { autoRunSchedulerRef.current?.forget(e.sessionId); };
+    bus.on('session:closed', onClosed);
+    return () => { bus.off('session:closed', onClosed); };
+  }, []);
+
+  const workspace = useWorkspace(closeAllSessions, logViewer.loadFile, scheduleAutoRun, getDefaultDir, getPipelineChain, getDisabledChainIds);
   const wsCtx = useWorkspaceContext();
   const { markDirty } = wsCtx;
 
@@ -274,6 +312,16 @@ function HookWiring({ children }: { children: ReactNode }) {
   }, []);
 
   useAppExitSave(buildAutoSavePayload, getAppStatePayload);
+
+  // Q2 — single startup restore orchestrator. Replaces the inline localStorage
+  // replay that used to live in useFileSession. Awaits Q1 hydration, runs Q3's
+  // trust gate, and drives the shared restore core + auto-run scheduler.
+  useStartupRestore({
+    loadFile: logViewer.loadFile,
+    scheduleAutoRun,
+    getPipelineChain,
+    getDisabledChainIds,
+  });
 
   // Sync fileCacheBudget setting → CacheManager whenever it changes.
   // Kept here (not in AppShell) because this is business logic — wiring a

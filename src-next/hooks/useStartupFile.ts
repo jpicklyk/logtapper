@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { useFileActions, useWorkspaceActions } from '../context';
-import { getStartupFile } from '../bridge/commands';
 import { onOpenFile } from '../bridge/events';
+import { consumeStartupFile } from './workspace/startupFile';
 
 function isLtsFile(path: string): boolean {
   return path.toLowerCase().endsWith('.lts');
@@ -23,9 +23,11 @@ export function useStartupFile() {
   const actionsRef = useRef({ loadFile, openWorkspace });
   actionsRef.current = { loadFile, openWorkspace };
 
-  // CLI arg — consumed once on mount. Safe with StrictMode: .take() returns null on second call.
+  // CLI arg — consumed once on mount. Shared (memoised) with useStartupRestore so
+  // the backend `.take()` is read once and both hooks observe the same value:
+  // this hook loads the file; the orchestrator skips its `.ltw` gate.
   useEffect(() => {
-    getStartupFile().then((path) => {
+    consumeStartupFile().then((path) => {
       if (!path) return;
       const a = actionsRef.current;
       if (isLtsFile(path)) a.openWorkspace(path);
