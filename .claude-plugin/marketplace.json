@@ -1,0 +1,16 @@
+{
+  "name": "logtapper-plugins",
+  "owner": {
+    "name": "jpicklyk",
+    "email": "jpicklyk@gmail.com"
+  },
+  "description": "Official Claude Code plugins for the LogTapper desktop log-analysis app.",
+  "plugins": [
+    {
+      "name": "logtapper",
+      "source": "./plugins/logtapper",
+      "description": "Attach the LogTapper MCP server to Claude Code and work with live log sessions by chat.",
+      "author": { "name": "jpicklyk" }
+    }
+  ]
+}

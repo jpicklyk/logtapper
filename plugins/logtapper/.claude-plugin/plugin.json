@@ -1,0 +1,14 @@
+{
+  "name": "logtapper",
+  "displayName": "LogTapper",
+  "version": "0.1.0",
+  "description": "Companion tools for the LogTapper desktop log-analysis app. Attach the LogTapper MCP server to Claude Code so you can query live log sessions, run processors, and inspect state-tracker events by chat.",
+  "author": {
+    "name": "jpicklyk",
+    "email": "jpicklyk@gmail.com"
+  },
+  "homepage": "https://github.com/jpicklyk/logtapper",
+  "repository": "https://github.com/jpicklyk/logtapper",
+  "license": "GPL-3.0-or-later",
+  "keywords": ["logtapper", "logs", "android", "logcat", "bugreport", "mcp", "log-analysis"]
+}
