@@ -67,8 +67,9 @@ pub struct AppState {
     pub anonymizer_config: Mutex<AnonymizerConfig>,
     /// Directories an MCP client may open files from via the
     /// `logtapper_open_file` endpoint (raw strings, as persisted in
-    /// `mcp_open_allowlist.json`). Default-deny: empty means nothing is
-    /// permitted. See `commands/bridge_access.rs`.
+    /// `mcp_open_allowlist.json`). Default-deny unless `allowAll` is set, in
+    /// which case any path that passes path-hygiene is permitted regardless
+    /// of `allowed_dirs`. See `commands/bridge_access.rs`.
     pub mcp_open_allowlist: Mutex<bridge_access::McpOpenAllowlist>,
     /// PII token->original mappings from the last pipeline run per session.
     pub pii_mappings: Mutex<HashMap<String, HashMap<String, String>>>,

@@ -32,10 +32,19 @@ use crate::commands::{lock_or_err, AppState};
 /// Default-deny: an empty `allowed_dirs` means no path is ever permitted,
 /// aside from re-opening a session that is already open (see
 /// `validate_open_path`'s auto-permit step).
+///
+/// `allow_all` is an opt-in escape hatch (default `false`, so existing
+/// `mcp_open_allowlist.json` files without the field still parse via
+/// `#[serde(default)]`): when set, [`validate_open_path`] skips the
+/// allowlist-containment step (step 6) entirely and permits any path that
+/// passes the unconditional path-hygiene checks (steps 1-3). It never
+/// weakens those hygiene checks — see `validate_open_path`'s doc comment.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpOpenAllowlist {
     pub allowed_dirs: Vec<String>,
+    #[serde(default)]
+    pub allow_all: bool,
 }
 
 fn persist_mcp_open_allowlist(app: &AppHandle, allowlist: &McpOpenAllowlist) -> Result<(), String> {
@@ -51,10 +60,10 @@ fn persist_mcp_open_allowlist(app: &AppHandle, allowlist: &McpOpenAllowlist) -> 
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn get_mcp_open_allowlist(state: State<'_, AppState>) -> Vec<String> {
+pub fn get_mcp_open_allowlist(state: State<'_, AppState>) -> McpOpenAllowlist {
     match lock_or_err(&state.mcp_open_allowlist, "mcp_open_allowlist") {
-        Ok(cfg) => cfg.allowed_dirs.clone(),
-        Err(_) => Vec::new(),
+        Ok(cfg) => cfg.clone(),
+        Err(_) => McpOpenAllowlist::default(),
     }
 }
 
@@ -67,8 +76,12 @@ pub async fn set_mcp_open_allowlist(
     state: State<'_, AppState>,
     app: AppHandle,
     dirs: Vec<String>,
+    allow_all: bool,
 ) -> Result<(), String> {
-    let allowlist = McpOpenAllowlist { allowed_dirs: dirs };
+    let allowlist = McpOpenAllowlist {
+        allowed_dirs: dirs,
+        allow_all,
+    };
     persist_mcp_open_allowlist(&app, &allowlist)?;
     let mut stored = lock_or_err(&state.mcp_open_allowlist, "mcp_open_allowlist")?;
     *stored = allowlist;
@@ -171,7 +184,8 @@ fn components_prefix(dir_normalized: &str, candidate_normalized: &str) -> bool {
 /// (mirrors [`McpOpenAllowlist::allowed_dirs`]). `open_session_canonical_paths`
 /// are the canonical-lowercased paths (see [`canonical_compare_form`]) of
 /// sessions that are already open — reopening one of those exposes nothing
-/// new, so it is auto-permitted even outside the allowlist.
+/// new, so it is auto-permitted even outside the allowlist. `allow_all`
+/// mirrors [`McpOpenAllowlist::allow_all`] — see step 5.
 ///
 /// Validation order (each step is load-bearing — do not reorder):
 ///
@@ -193,7 +207,13 @@ fn components_prefix(dir_normalized: &str, candidate_normalized: &str) -> bool {
 ///    case-insensitive).
 /// 4. **Auto-permit reopen**: if the normalized form matches an entry in
 ///    `open_session_canonical_paths`, return `Ok` immediately.
-/// 5. **Containment**: canonicalize + normalize each configured allowed
+/// 5. **Allow-all bypass**: if `allow_all` is set, return `Ok` immediately
+///    with the canonicalized `PathBuf` from step 2 — skipping the allowlist
+///    containment check in step 6 entirely. This is purely an allowlist
+///    bypass: it runs AFTER steps 1-3, so a path that fails raw-form
+///    rejection or cannot be canonicalized is rejected before this step is
+///    ever reached. `allow_all` must never be consulted earlier than this.
+/// 6. **Containment**: canonicalize + normalize each configured allowed
 ///    directory the same way (an entry that fails to canonicalize — e.g. it
 ///    was deleted or renamed since being configured — is skipped, not
 ///    treated as an error) and check whether its path *components* are a
@@ -205,6 +225,7 @@ pub fn validate_open_path(
     allowed_dirs: &[String],
     open_session_canonical_paths: &[String],
     raw: &str,
+    allow_all: bool,
 ) -> Result<PathBuf, OpenAccessError> {
     // Step 1: raw-form rejection — pure string checks, before any filesystem access.
     if !Path::new(raw).is_absolute() {
@@ -250,7 +271,15 @@ pub fn validate_open_path(
         return Ok(candidate_display);
     }
 
-    // Step 5: containment within a configured allowed directory.
+    // Step 5: allow-all bypass. Only reachable after steps 1-3 (raw-form
+    // rejection + mandatory canonicalize) have already succeeded — it skips
+    // ONLY the allowlist-containment loop below, never the path-hygiene
+    // checks above.
+    if allow_all {
+        return Ok(candidate_display);
+    }
+
+    // Step 6: containment within a configured allowed directory.
     for dir in allowed_dirs {
         let Some(dir_normalized) = canonical_compare_form(Path::new(dir)) else {
             // Allowlist entry doesn't exist / can't be resolved — skip it,
@@ -286,7 +315,7 @@ mod tests {
 
     #[test]
     fn relative_path_is_rejected() {
-        let result = validate_open_path(&[], &[], r"relative\path.log");
+        let result = validate_open_path(&[], &[], r"relative\path.log", false);
         assert_eq!(
             result,
             Err(OpenAccessError::InvalidPath("path must be absolute".to_string()))
@@ -295,13 +324,13 @@ mod tests {
 
     #[test]
     fn empty_path_is_rejected() {
-        let result = validate_open_path(&[], &[], "");
+        let result = validate_open_path(&[], &[], "", false);
         assert!(matches!(result, Err(OpenAccessError::InvalidPath(_))));
     }
 
     #[test]
     fn unc_share_is_rejected_as_invalid_path() {
-        let result = validate_open_path(&[], &[], r"\\server\share\file.log");
+        let result = validate_open_path(&[], &[], r"\\server\share\file.log", false);
         assert!(
             matches!(result, Err(OpenAccessError::InvalidPath(_))),
             "UNC share must be InvalidPath, got {result:?}"
@@ -310,7 +339,7 @@ mod tests {
 
     #[test]
     fn verbatim_prefix_is_rejected_as_invalid_path() {
-        let result = validate_open_path(&[], &[], r"\\?\C:\x");
+        let result = validate_open_path(&[], &[], r"\\?\C:\x", false);
         assert!(
             matches!(result, Err(OpenAccessError::InvalidPath(_))),
             "\\\\?\\ verbatim path must be InvalidPath, got {result:?}"
@@ -319,7 +348,7 @@ mod tests {
 
     #[test]
     fn device_prefix_is_rejected_as_invalid_path() {
-        let result = validate_open_path(&[], &[], r"\\.\C:\x");
+        let result = validate_open_path(&[], &[], r"\\.\C:\x", false);
         assert!(
             matches!(result, Err(OpenAccessError::InvalidPath(_))),
             "\\\\.\\ device path must be InvalidPath, got {result:?}"
@@ -328,7 +357,7 @@ mod tests {
 
     #[test]
     fn forward_slash_unc_is_rejected_as_invalid_path() {
-        let result = validate_open_path(&[], &[], "//server/share");
+        let result = validate_open_path(&[], &[], "//server/share", false);
         assert!(
             matches!(result, Err(OpenAccessError::InvalidPath(_))),
             "// UNC-style path must be InvalidPath, got {result:?}"
@@ -343,7 +372,7 @@ mod tests {
         // canonicalize issue outbound SMB; the component/prefix-kind check
         // must catch them. Both must be InvalidPath, not NotAllowed.
         for raw in [r"/\server\share\file.log", r"\/server/share/file.log"] {
-            let result = validate_open_path(&[], &[], raw);
+            let result = validate_open_path(&[], &[], raw, false);
             assert!(
                 matches!(result, Err(OpenAccessError::InvalidPath(_))),
                 "mixed-separator UNC {raw:?} must be InvalidPath, got {result:?}"
@@ -353,7 +382,7 @@ mod tests {
 
     #[test]
     fn alternate_data_stream_is_rejected() {
-        let result = validate_open_path(&[], &[], r"C:\somewhere\file.log:hidden-stream");
+        let result = validate_open_path(&[], &[], r"C:\somewhere\file.log:hidden-stream", false);
         assert!(
             matches!(result, Err(OpenAccessError::InvalidPath(_))),
             "ADS path must be InvalidPath, got {result:?}"
@@ -371,7 +400,7 @@ mod tests {
         let nonexistent = tmp.path().join("does-not-exist.log");
         let raw = nonexistent.to_string_lossy().into_owned();
 
-        let result = validate_open_path(&[], &[], &raw);
+        let result = validate_open_path(&[], &[], &raw, false);
         assert_eq!(
             result,
             Err(OpenAccessError::NotAllowed),
@@ -395,7 +424,7 @@ mod tests {
         let raw_str = raw.to_string_lossy().into_owned();
 
         let allowed_dirs = vec![allowed.to_string_lossy().into_owned()];
-        let result = validate_open_path(&allowed_dirs, &[], &raw_str);
+        let result = validate_open_path(&allowed_dirs, &[], &raw_str, false);
         assert_eq!(
             result,
             Err(OpenAccessError::NotAllowed),
@@ -412,7 +441,7 @@ mod tests {
         let raw = allowed.join("nope.log").to_string_lossy().into_owned();
         let allowed_dirs = vec![allowed.to_string_lossy().into_owned()];
 
-        let result = validate_open_path(&allowed_dirs, &[], &raw);
+        let result = validate_open_path(&allowed_dirs, &[], &raw, false);
         assert_eq!(result, Err(OpenAccessError::NotAllowed));
     }
 
@@ -427,11 +456,12 @@ mod tests {
 
         let allowed_dirs = vec![allowed.to_string_lossy().into_owned()];
 
-        let outside_result = validate_open_path(&allowed_dirs, &[], &outside_file);
+        let outside_result = validate_open_path(&allowed_dirs, &[], &outside_file, false);
         let unresolvable_result = validate_open_path(
             &allowed_dirs,
             &[],
             &allowed.join("also-nope.log").to_string_lossy(),
+            false,
         );
 
         assert_eq!(outside_result, Err(OpenAccessError::NotAllowed));
@@ -452,7 +482,7 @@ mod tests {
         let evil_file = write_file(&logs_evil, "trap.log", "gotcha");
 
         let allowed_dirs = vec![logs.to_string_lossy().into_owned()];
-        let result = validate_open_path(&allowed_dirs, &[], &evil_file);
+        let result = validate_open_path(&allowed_dirs, &[], &evil_file, false);
         assert_eq!(
             result,
             Err(OpenAccessError::NotAllowed),
@@ -473,7 +503,7 @@ mod tests {
         let uppercased = file.to_uppercase();
 
         let allowed_dirs = vec![allowed.to_string_lossy().into_owned()];
-        let result = validate_open_path(&allowed_dirs, &[], &uppercased);
+        let result = validate_open_path(&allowed_dirs, &[], &uppercased, false);
         assert!(result.is_ok(), "case-differing path must still match: {result:?}");
     }
 
@@ -482,7 +512,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let file = write_file(tmp.path(), "device.log", "data");
 
-        let result = validate_open_path(&[], &[], &file);
+        let result = validate_open_path(&[], &[], &file, false);
         assert_eq!(result, Err(OpenAccessError::NotAllowed));
     }
 
@@ -494,7 +524,7 @@ mod tests {
         let canonical_form = canonical_compare_form(Path::new(&file)).expect("canonicalize test file");
         let open_sessions = vec![canonical_form];
 
-        let result = validate_open_path(&[], &open_sessions, &file);
+        let result = validate_open_path(&[], &open_sessions, &file, false);
         assert!(
             result.is_ok(),
             "reopening an already-open session must be permitted even with an empty allowlist: {result:?}"
@@ -510,12 +540,99 @@ mod tests {
         let file = write_file(&other, "device.log", "data");
 
         let allowed_dirs = vec![missing_allowed.to_string_lossy().into_owned()];
-        let result = validate_open_path(&allowed_dirs, &[], &file);
+        let result = validate_open_path(&allowed_dirs, &[], &file, false);
         assert_eq!(
             result,
             Err(OpenAccessError::NotAllowed),
             "a nonexistent allowlist entry must be skipped, not panic or error out"
         );
+    }
+
+    // ── Step 5: allow_all bypass ─────────────────────────────────────────────
+
+    #[test]
+    fn allow_all_permits_path_outside_allowlist() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let allowed = tmp.path().join("allowed");
+        let outside = tmp.path().join("outside");
+        fs::create_dir_all(&allowed).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let outside_file = write_file(&outside, "real.log", "data");
+
+        let allowed_dirs = vec![allowed.to_string_lossy().into_owned()];
+
+        // Sanity: without allow_all this is NotAllowed (proves the fixture
+        // actually exercises the bypass rather than something else).
+        let without_bypass = validate_open_path(&allowed_dirs, &[], &outside_file, false);
+        assert_eq!(without_bypass, Err(OpenAccessError::NotAllowed));
+
+        let result = validate_open_path(&allowed_dirs, &[], &outside_file, true);
+        assert!(
+            result.is_ok(),
+            "allow_all=true must permit a path outside every allowed directory: {result:?}"
+        );
+    }
+
+    #[test]
+    fn allow_all_still_rejects_relative_path() {
+        let result = validate_open_path(&[], &[], r"relative\path.log", true);
+        assert!(
+            matches!(result, Err(OpenAccessError::InvalidPath(_))),
+            "allow_all must not weaken step 1 raw-form rejection (relative path), got {result:?}"
+        );
+    }
+
+    #[test]
+    fn allow_all_still_rejects_unc_path() {
+        let result = validate_open_path(&[], &[], r"\\server\share\file.log", true);
+        assert!(
+            matches!(result, Err(OpenAccessError::InvalidPath(_))),
+            "allow_all must not weaken step 1 raw-form rejection (UNC path), got {result:?}"
+        );
+    }
+
+    #[test]
+    fn allow_all_still_rejects_alternate_data_stream() {
+        let result = validate_open_path(&[], &[], r"C:\somewhere\file.log:hidden-stream", true);
+        assert!(
+            matches!(result, Err(OpenAccessError::InvalidPath(_))),
+            "allow_all must not weaken step 1 raw-form rejection (ADS path), got {result:?}"
+        );
+    }
+
+    #[test]
+    fn allow_all_still_rejects_nonexistent_path() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let nonexistent = tmp.path().join("does-not-exist.log");
+        let raw = nonexistent.to_string_lossy().into_owned();
+
+        let result = validate_open_path(&[], &[], &raw, true);
+        assert_eq!(
+            result,
+            Err(OpenAccessError::NotAllowed),
+            "allow_all must not weaken step 2's mandatory canonicalize — an \
+             unresolvable path must still fail"
+        );
+    }
+
+    #[test]
+    fn allow_all_false_is_byte_identical_to_default_behavior() {
+        // Outside the allowlist: still NotAllowed with allow_all explicitly false.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let allowed = tmp.path().join("allowed");
+        let outside = tmp.path().join("outside");
+        fs::create_dir_all(&allowed).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let outside_file = write_file(&outside, "real.log", "data");
+        let inside_file = write_file(&allowed, "inside.log", "data");
+
+        let allowed_dirs = vec![allowed.to_string_lossy().into_owned()];
+
+        assert_eq!(
+            validate_open_path(&allowed_dirs, &[], &outside_file, false),
+            Err(OpenAccessError::NotAllowed)
+        );
+        assert!(validate_open_path(&allowed_dirs, &[], &inside_file, false).is_ok());
     }
 
     // ── Junction/symlink escape ──────────────────────────────────────────────
@@ -557,7 +674,7 @@ mod tests {
 
         let raw = link.join("secret.log").to_string_lossy().into_owned();
         let allowed_dirs = vec![allowed.to_string_lossy().into_owned()];
-        let result = validate_open_path(&allowed_dirs, &[], &raw);
+        let result = validate_open_path(&allowed_dirs, &[], &raw, false);
 
         assert_eq!(
             result,

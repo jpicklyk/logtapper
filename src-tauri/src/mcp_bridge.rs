@@ -485,8 +485,11 @@ async fn h_open_file(
 
     let state = handle.state::<AppState>();
 
-    // Allowlist: lock, clone, drop.
-    let allowed: Vec<String> = state.mcp_open_allowlist.lock().unwrap().allowed_dirs.clone();
+    // Allowlist: lock, clone both fields, drop.
+    let (allowed, allow_all): (Vec<String>, bool) = {
+        let cfg = state.mcp_open_allowlist.lock().unwrap();
+        (cfg.allowed_dirs.clone(), cfg.allow_all)
+    };
 
     // Canonical paths of already-open file-backed sessions (auto-permit reopen).
     // Skip streams (file_path=None) and any path that no longer canonicalizes.
@@ -501,7 +504,7 @@ async fn h_open_file(
             .collect()
     };
 
-    match validate_open_path(&allowed, &open_paths, &body.path) {
+    match validate_open_path(&allowed, &open_paths, &body.path, allow_all) {
         Err(OpenAccessError::NotAllowed) => {
             err(StatusCode::FORBIDDEN, "path is not allowed", "NOT_ALLOWED")
         }
