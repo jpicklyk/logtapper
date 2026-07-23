@@ -8,6 +8,7 @@ import { bus } from '../events/bus';
 import { basename, dirname, storageGetJSON } from '../utils';
 import { collectEditorTabsForSave, buildEditorTabEvents, performAutoSave, buildAppStatePayload } from './workspace/workspacePersistence';
 import { STORAGE_KEY } from './workspace/workspaceTypes';
+import { pairArtifactsWithSessions } from './workspace/artifactPairing';
 
 /** Derive a workspace display name from a file path. */
 export function workspaceNameFromPath(path: string): string {
@@ -125,52 +126,78 @@ export function useWorkspace(
   const doLoadWorkspace = useCallback(async (path: string) => {
     const result = await loadWorkspaceV4(path);
 
-    // Collect session IDs in order as each session:loaded event fires.
-    // session:loaded fires synchronously before loadFile's promise resolves,
-    // so by the time each await returns, the corresponding ID is queued.
-    const loadedSessionIds: string[] = [];
-    const onSessionLoaded = (payload: { sessionId: string }) => {
-      loadedSessionIds.push(payload.sessionId);
-    };
-    bus.on('session:loaded', onSessionLoaded);
+    // Loading a workspace runs `loadFile` per session, and `loadFile` is a
+    // tracked mutation — so without this bracket the restore would schedule an
+    // auto-save of itself. That matters beyond wasted work: if some sessions
+    // fail to load, saving would overwrite the good .ltw with the partial set.
+    bus.emit('workspace:restore-begin');
+    try {
+      // Collect session IDs as each session:loaded event fires. session:loaded
+      // fires synchronously before loadFile's promise resolves, so by the time
+      // each await returns, the IDs that load produced are queued.
+      const loadedSessionIds: string[] = [];
+      const onSessionLoaded = (payload: { sessionId: string }) => {
+        loadedSessionIds.push(payload.sessionId);
+      };
+      bus.on('session:loaded', onSessionLoaded);
 
-    // Load each session by file path
-    for (const session of result.sessions) {
+      // Record which sessions each manifest entry's own load produced, so a
+      // failed entry drops itself rather than shifting every later one. See
+      // artifactPairing.ts for why positional matching was unsafe.
+      const outcomes: Array<{
+        filePath: string;
+        producedSessionIds: string[];
+        data: (typeof result.sessionData)[number] | undefined;
+      }> = [];
+
       try {
-        await loadFile(session.filePath);
-      } catch (e) {
-        console.warn(`[useWorkspace] Failed to load session ${session.filePath}:`, e);
+        for (const [i, session] of result.sessions.entries()) {
+          const before = loadedSessionIds.length;
+          try {
+            await loadFile(session.filePath);
+          } catch (e) {
+            console.warn(`[useWorkspace] Failed to load session ${session.filePath}:`, e);
+          }
+          outcomes.push({
+            filePath: session.filePath,
+            producedSessionIds: loadedSessionIds.slice(before),
+            data: result.sessionData[i],
+          });
+        }
+      } finally {
+        bus.off('session:loaded', onSessionLoaded);
       }
+
+      const { pairs, warnings } = pairArtifactsWithSessions(outcomes);
+      for (const w of warnings) console.warn(`[useWorkspace] ${w}`);
+
+      // Restore per-session artifacts. Independent — run in parallel.
+      await Promise.all(
+        pairs.map(({ sessionId, data }) =>
+          restoreWorkspaceSession({ sessionId, ...data })
+            .catch(e => console.warn(`[useWorkspace] Failed to restore artifacts for session ${sessionId}:`, e)),
+        ),
+      );
+
+      // Restore editor tabs from workspace
+      for (const event of buildEditorTabEvents(result.editorTabs)) {
+        bus.emit('layout:open-tab', event);
+      }
+
+      // Restore layout pane state (widths, visible panes, tab order, etc.)
+      if (result.layout) {
+        bus.emit('workspace:restore-layout', { layout: result.layout });
+      }
+
+      // Pipeline chain restore is handled by useWorkspaceRestore via the
+      // workspace-restored Tauri event emitted by the backend during session load.
+
+      bus.emit('workspace:opened', { name: result.workspaceName, filePath: path });
+    } finally {
+      // Must run even on failure — a missed end would suppress auto-save for
+      // the rest of the session.
+      bus.emit('workspace:restore-end');
     }
-
-    bus.off('session:loaded', onSessionLoaded);
-
-    // Restore per-session artifacts (bookmarks, analyses, pipeline meta).
-    // Match by index: loadedSessionIds[i] corresponds to result.sessionData[i].
-    // Restores are independent — run in parallel.
-    await Promise.all(
-      loadedSessionIds.map((sessionId, i) => {
-        const data = result.sessionData[i];
-        if (!data) return Promise.resolve();
-        return restoreWorkspaceSession({ sessionId, ...data })
-          .catch(e => console.warn(`[useWorkspace] Failed to restore artifacts for session ${sessionId}:`, e));
-      }),
-    );
-
-    // Restore editor tabs from workspace
-    for (const event of buildEditorTabEvents(result.editorTabs)) {
-      bus.emit('layout:open-tab', event);
-    }
-
-    // Restore layout pane state (widths, visible panes, tab order, etc.)
-    if (result.layout) {
-      bus.emit('workspace:restore-layout', { layout: result.layout });
-    }
-
-    // Pipeline chain restore is handled by useWorkspaceRestore via the
-    // workspace-restored Tauri event emitted by the backend during session load.
-
-    bus.emit('workspace:opened', { name: result.workspaceName, filePath: path });
   }, [loadFile]);
 
   /** Persist the workspace list to backend app-state.json. */

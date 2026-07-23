@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { bus } from '../events/bus';
 import { performAutoSave } from './workspace/workspacePersistence';
+import { createAutoSaveGate } from './workspace/autoSaveGate';
 import type { LtwEditorTab } from '../bridge/types';
 
 const AUTO_SAVE_DEBOUNCE_MS = 3000;
@@ -29,9 +30,21 @@ export function useWorkspaceAutoSave(
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
+    const gate = createAutoSaveGate();
+
+    const cancelPending = () => {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    };
 
     const handler = () => {
-      if (timer !== null) clearTimeout(timer);
+      // A restore emits a burst of tracked mutations as it loads each session.
+      // Saving then would rewrite what was just read, and a partial restore
+      // would overwrite the good .ltw with the partial state.
+      if (gate.isSuppressed()) return;
+      cancelPending();
       timer = setTimeout(() => {
         timer = null;
         const payload = buildPayloadRef.current();
@@ -42,10 +55,23 @@ export function useWorkspaceAutoSave(
       }, AUTO_SAVE_DEBOUNCE_MS);
     };
 
+    const onRestoreBegin = () => {
+      gate.beginRestore();
+      // Drop anything already scheduled — it was queued against pre-restore
+      // state and would fire mid-restore.
+      cancelPending();
+    };
+    const onRestoreEnd = () => gate.endRestore();
+
     bus.on('workspace:mutated', handler);
+    bus.on('workspace:restore-begin', onRestoreBegin);
+    bus.on('workspace:restore-end', onRestoreEnd);
     return () => {
       bus.off('workspace:mutated', handler);
-      if (timer !== null) clearTimeout(timer);
+      bus.off('workspace:restore-begin', onRestoreBegin);
+      bus.off('workspace:restore-end', onRestoreEnd);
+      gate.reset();
+      cancelPending();
     };
   }, []);
 }

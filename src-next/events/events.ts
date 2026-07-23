@@ -138,6 +138,16 @@ export type AppEvents = {
   'workspace:restore-layout': { layout: unknown };
   /** Fired after an .lts workspace is fully restored. */
   'workspace:opened':        { name: string; filePath: string };
+  /** Fired when a restore begins. Suppresses auto-save until the matching
+   *  `workspace:restore-end`, so loading a workspace does not immediately
+   *  persist it back. Without this, a restore that only partially succeeds
+   *  would overwrite the good .ltw with the partial state. Reference-counted,
+   *  so overlapping restores are safe. */
+  'workspace:restore-begin': undefined;
+  /** Fired when a restore finishes, successfully or not. Must be emitted in a
+   *  `finally` — a missed end would suppress auto-save for the rest of the
+   *  session. */
+  'workspace:restore-end':   undefined;
 
   // ── File operations ──────────────────────────────────────────────────────
   /** Fired when an .lts file import is skipped because it's already open. */

@@ -3,6 +3,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
 import type { AnalysisArtifact } from '../bridge/types';
 import { listAnalyses, getAnalysis } from '../bridge/commands';
 import { onAnalysisUpdate } from '../bridge/events';
+import { bus } from '../events/bus';
 
 export interface AnalysisState {
   artifacts: AnalysisArtifact[];
@@ -47,6 +48,21 @@ export function useAnalysis(sessionId: string | null) {
 
     onAnalysisUpdate((payload) => {
       if (cancelled) return;
+
+      // Durability signal — deliberately before the focused-session guard.
+      //
+      // An analysis published over the MCP bridge is written straight into
+      // AppState by the bridge handler; nothing in the frontend action surface
+      // runs, so neither markDirty nor workspace:mutated fires for it. The
+      // publish also frequently targets a session that is not the focused one,
+      // so emitting after the guard would miss it entirely.
+      //
+      // This is how a published analysis was lost: the workspace auto-save had
+      // not run in fifteen days despite an active investigation. Interim fix —
+      // the durable answer is a backend-side flush trigger, so that any future
+      // non-frontend writer is covered by construction.
+      bus.emit('workspace:mutated');
+
       if (payload.sessionId !== currentSessionId.current) return;
 
       if (payload.action === 'deleted') {

@@ -3,6 +3,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
 import type { Bookmark } from '../bridge/types';
 import { listBookmarks } from '../bridge/commands';
 import { onBookmarkUpdate } from '../bridge/events';
+import { bus } from '../events/bus';
 
 export interface BookmarkState {
   bookmarks: Bookmark[];
@@ -47,6 +48,13 @@ export function useBookmarks(sessionId: string | null) {
 
     onBookmarkUpdate((payload) => {
       if (cancelled) return;
+
+      // Durability signal — before the focused-session guard, for the same
+      // reason as useAnalysis: a bookmark created over the MCP bridge is
+      // written straight into AppState and may target a non-focused session,
+      // so nothing else would schedule an auto-save for it.
+      bus.emit('workspace:mutated');
+
       if (payload.sessionId !== currentSessionId.current) return;
 
       setState((prev) => {

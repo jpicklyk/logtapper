@@ -13,6 +13,7 @@ import type { CacheController } from '../../cache';
 import { diag, diagStart, diagEnd } from '../../utils/diagnostics';
 import type { SharedLogViewerRefs } from './types';
 import { planExtraSessionImport } from './multiSessionImport';
+import { genKeyFor } from './loadGeneration';
 
 const LS_TAB_PATHS = 'logtapper_tab_paths';
 
@@ -83,8 +84,15 @@ export function useFileSession(
 
     const targetPaneId = paneId ?? refs.activeLogPaneIdRef.current ?? getStoredFirstPaneId() ?? DEFAULT_PANE_ID;
 
-    const gen = (loadGenRef.current.get(targetPaneId) ?? 0) + 1;
-    loadGenRef.current.set(targetPaneId, gen);
+    // The generation guard cancels a load that has been superseded. Its unit is
+    // the *destination*: a fresh open replaces whatever is loading in the pane,
+    // but a load aimed at a specific tab only supersedes an earlier load into
+    // that same tab. Keying purely by pane made concurrent restores into sibling
+    // tabs cancel each other — and since the restore loop runs active-tab-first,
+    // the file under investigation was always the one destroyed.
+    const genKey = genKeyFor(targetPaneId, existingTabId);
+    const gen = (loadGenRef.current.get(genKey) ?? 0) + 1;
+    loadGenRef.current.set(genKey, gen);
 
     const tabId = existingTabId ?? crypto.randomUUID();
 
@@ -127,8 +135,8 @@ export function useFileSession(
       if (!result) throw new Error('No sessions returned from load_log_file');
       diag('file-load', 'IPC returned', { sessionId: result.sessionId, totalLines: result.totalLines, sourceType: result.sourceType, isIndexing: result.isIndexing, sessionCount: results.length });
 
-      if (loadGenRef.current.get(targetPaneId) !== gen) {
-        diag('file-load', 'stale generation — discarding', { gen, current: loadGenRef.current.get(targetPaneId) });
+      if (loadGenRef.current.get(genKey) !== gen) {
+        diag('file-load', 'stale generation — discarding', { gen, current: loadGenRef.current.get(genKey), genKey });
         for (const r of results) {
           try { await closeSessionCmd(r.sessionId); } catch { /* ignore */ }
           clearPreSeed(r.sessionId);
@@ -234,13 +242,13 @@ export function useFileSession(
       }
     } catch (e) {
       diag('file-load', 'ERROR', { error: String(e) });
-      if (loadGenRef.current.get(targetPaneId) === gen) {
+      if (loadGenRef.current.get(genKey) === gen) {
         const tabPathsErr = readTabPaths(); delete tabPathsErr[tabId]; saveTabPaths(tabPathsErr);
         setErrorPane(targetPaneId, String(e));
       }
     } finally {
-      if (loadGenRef.current.get(targetPaneId) === gen) {
-        loadGenRef.current.delete(targetPaneId);
+      if (loadGenRef.current.get(genKey) === gen) {
+        loadGenRef.current.delete(genKey);
         setLoadingPane(targetPaneId, false);
       }
       diagEnd(`loadFile:${label}`);
