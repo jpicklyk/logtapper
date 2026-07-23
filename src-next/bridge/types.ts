@@ -862,6 +862,13 @@ export interface WorkspaceEntry {
   name: string;
   ltwPath: string | null;
   dirty: boolean;
+  /** Path to the app-data-dir auto-save `.ltw` (`workspaces/{id}.ltw`), or null
+   *  if never auto-saved. Distinct from `ltwPath` (explicit user save). Optional
+   *  because app-state.json files written before this field parse without it. */
+  autoSavePath?: string | null;
+  /** Epoch-millis timestamp of the last completed auto-save, or null. Paired
+   *  with `autoSavePath`. Optional for the same backward-compat reason. */
+  lastAutoSaveAt?: number | null;
 }
 
 export interface AppStateFile {

@@ -7,6 +7,7 @@ import type { LtwEditorTab } from '../bridge/types';
 const AUTO_SAVE_DEBOUNCE_MS = 3000;
 
 export interface AutoSavePayload {
+  workspaceId: string;
   workspaceName: string;
   filePath: string | null;
   editorTabs: LtwEditorTab[];
@@ -39,6 +40,32 @@ export function useWorkspaceAutoSave(
       }
     };
 
+    // Defined outside the setTimeout callback below on purpose: the
+    // `no-side-effects-in-updater` lint rule treats any `set[A-Z]…` call
+    // (including `setTimeout`) as a setState updater, so a `bus.emit` lexically
+    // inside the timer arrow would be flagged. Hoisting keeps the emit clean.
+    const runAutoSave = () => {
+      const payload = buildPayloadRef.current();
+      if (!payload) return;
+      performAutoSave(payload)
+        .then((savedPath) => {
+          // A non-null path means the workspace had no explicit .ltw and was
+          // auto-saved to the app-data dir. Announce it so WorkspaceContext can
+          // record the recovery path + timestamp onto the entry (previously
+          // this return was discarded, leaving the entry's filePath null).
+          if (savedPath) {
+            bus.emit('workspace:auto-saved', {
+              workspaceId: payload.workspaceId,
+              path: savedPath,
+              savedAt: Date.now(),
+            });
+          }
+        })
+        .catch((e: unknown) =>
+          console.warn('[useWorkspaceAutoSave] Auto-save failed:', e),
+        );
+    };
+
     const handler = () => {
       // A restore emits a burst of tracked mutations as it loads each session.
       // Saving then would rewrite what was just read, and a partial restore
@@ -47,11 +74,7 @@ export function useWorkspaceAutoSave(
       cancelPending();
       timer = setTimeout(() => {
         timer = null;
-        const payload = buildPayloadRef.current();
-        if (!payload) return;
-        performAutoSave(payload).catch((e: unknown) =>
-          console.warn('[useWorkspaceAutoSave] Auto-save failed:', e),
-        );
+        runAutoSave();
       }, AUTO_SAVE_DEBOUNCE_MS);
     };
 

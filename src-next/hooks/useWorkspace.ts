@@ -107,9 +107,13 @@ export function useWorkspace(
       buildSavePayload('', active.name);
     try {
       const savedPath = await performAutoSave({
+        workspaceId: active.id,
         workspaceName, filePath: active.filePath, editorTabs, layout, pipelineChain, disabledChainIds,
       });
-      if (savedPath) ctx.setWorkspacePath(active.id, savedPath);
+      // A non-null path means the workspace was auto-saved to the app-data dir
+      // (no explicit .ltw). Record the recovery path + timestamp so switch-back
+      // can reload it and app-state.json carries the Q3 linkage fields.
+      if (savedPath) ctx.recordAutoSave(active.id, savedPath, Date.now());
     } catch (e) {
       console.warn('[useWorkspace] Auto-save failed:', e);
     }

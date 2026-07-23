@@ -19,6 +19,16 @@ pub struct WorkspaceEntry {
     pub ltw_path: Option<String>,
     /// Whether this workspace has unsaved changes.
     pub dirty: bool,
+    /// Path to the app-data-dir auto-save `.ltw` (`workspaces/{id}.ltw`), or
+    /// null if this workspace has never been auto-saved. Distinct from
+    /// `ltw_path`, which tracks an explicit user save. `#[serde(default)]` so
+    /// app-state.json files written before this field existed still parse.
+    #[serde(default)]
+    pub auto_save_path: Option<String>,
+    /// Epoch-millis timestamp of the last completed auto-save, or null. Paired
+    /// with `auto_save_path` — both are written together when a flush completes.
+    #[serde(default)]
+    pub last_auto_save_at: Option<i64>,
 }
 
 /// The full application state persisted to disk.
@@ -102,12 +112,16 @@ mod tests {
                     name: "wifi-debug".into(),
                     ltw_path: Some("/data/wifi-debug.ltw".into()),
                     dirty: false,
+                    auto_save_path: None,
+                    last_auto_save_at: None,
                 },
                 WorkspaceEntry {
                     id: "ws-2".into(),
                     name: "Untitled".into(),
                     ltw_path: None,
                     dirty: true,
+                    auto_save_path: None,
+                    last_auto_save_at: None,
                 },
             ],
             active_workspace_id: Some("ws-1".into()),
@@ -124,6 +138,57 @@ mod tests {
         assert!(loaded.workspaces[1].ltw_path.is_none());
         assert!(loaded.workspaces[1].dirty);
         assert_eq!(loaded.active_workspace_id.as_deref(), Some("ws-1"));
+    }
+
+    #[test]
+    fn round_trip_auto_save_fields() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("app-state.json");
+
+        let state = AppStateFile {
+            workspaces: vec![WorkspaceEntry {
+                id: "ws-1".into(),
+                name: "Untitled".into(),
+                ltw_path: None,
+                dirty: true,
+                auto_save_path: Some("/data/workspaces/ws-1.ltw".into()),
+                last_auto_save_at: Some(1_700_000_000_123),
+            }],
+            active_workspace_id: Some("ws-1".into()),
+        };
+
+        save_app_state(&path, &state).unwrap();
+        let loaded = load_app_state(&path);
+
+        assert_eq!(loaded.workspaces.len(), 1);
+        assert_eq!(
+            loaded.workspaces[0].auto_save_path.as_deref(),
+            Some("/data/workspaces/ws-1.ltw")
+        );
+        assert_eq!(loaded.workspaces[0].last_auto_save_at, Some(1_700_000_000_123));
+    }
+
+    #[test]
+    fn old_file_without_auto_save_fields_parses() {
+        // A field-less app-state.json written before auto_save_path /
+        // last_auto_save_at existed must still deserialize (serde defaults).
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("app-state.json");
+        let legacy = r#"{
+            "workspaces": [
+                { "id": "ws-1", "name": "wifi-debug", "ltwPath": "/data/wifi-debug.ltw", "dirty": false }
+            ],
+            "activeWorkspaceId": "ws-1"
+        }"#;
+        std::fs::write(&path, legacy).unwrap();
+
+        let loaded = load_app_state(&path);
+        assert_eq!(loaded.workspaces.len(), 1);
+        assert_eq!(loaded.workspaces[0].name, "wifi-debug");
+        assert_eq!(loaded.workspaces[0].ltw_path.as_deref(), Some("/data/wifi-debug.ltw"));
+        // Missing fields default to None rather than failing the parse.
+        assert!(loaded.workspaces[0].auto_save_path.is_none());
+        assert!(loaded.workspaces[0].last_auto_save_at.is_none());
     }
 
     #[test]
@@ -154,6 +219,8 @@ mod tests {
                 name: "First".into(),
                 ltw_path: None,
                 dirty: false,
+                auto_save_path: None,
+                last_auto_save_at: None,
             }],
             active_workspace_id: Some("ws-1".into()),
         };
@@ -165,6 +232,8 @@ mod tests {
                 name: "Second".into(),
                 ltw_path: Some("/path.ltw".into()),
                 dirty: true,
+                auto_save_path: None,
+                last_auto_save_at: None,
             }],
             active_workspace_id: Some("ws-2".into()),
         };

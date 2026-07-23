@@ -616,6 +616,9 @@ export function saveWorkspaceV4(options: SaveWorkspaceV4Options): Promise<void> 
 }
 
 export interface AutoSaveWorkspaceOptions {
+  /** Stable workspace id — keys the auto-save filename (`workspaces/{id}.ltw`)
+   *  so two workspaces sharing a name no longer overwrite each other. */
+  workspaceId: string;
   workspaceName: string;
   editorTabs: LtwEditorTab[];
   layout: unknown | null;

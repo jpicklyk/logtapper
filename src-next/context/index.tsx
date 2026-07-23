@@ -223,6 +223,7 @@ function HookWiring({ children }: { children: ReactNode }) {
     const active = wsCtxRef.current.activeWorkspace;
     if (!active) return null;
     return {
+      workspaceId: active.id,
       workspaceName: active.name,
       filePath: active.filePath,
       editorTabs: collectEditorTabsForSave(),

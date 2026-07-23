@@ -127,6 +127,10 @@ pub async fn save_workspace_v4(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AutoSaveWorkspaceOptions {
+    /// Stable workspace identifier — keys the auto-save filename so two
+    /// distinct workspaces that happen to share a name (e.g. both "Untitled")
+    /// no longer collide onto the same file.
+    pub workspace_id: String,
     pub workspace_name: String,
     pub editor_tabs: Vec<LtwEditorTab>,
     pub layout: Option<LtwLayout>,
@@ -134,8 +138,13 @@ pub struct AutoSaveWorkspaceOptions {
     pub disabled_chain_ids: Vec<String>,
 }
 
-/// Auto-save the active workspace to `app_data_dir/workspaces/{sanitized_name}.ltw`.
+/// Auto-save the active workspace to `app_data_dir/workspaces/{workspace_id}.ltw`.
 /// Returns the path where it was saved.
+///
+/// Keyed by workspace id, not sanitized name: two "Untitled" workspaces used to
+/// derive the same `Untitled.ltw` and overwrite each other. Legacy name-keyed
+/// files left over from before this change are deliberately not migrated or
+/// touched here.
 #[tauri::command]
 pub async fn auto_save_workspace(
     state: State<'_, AppState>,
@@ -143,8 +152,7 @@ pub async fn auto_save_workspace(
     options: AutoSaveWorkspaceOptions,
 ) -> Result<String, String> {
     let ws_dir = crate::workspace::workspace_dir(&app)?;
-    let sanitized = crate::workspace::sanitize_workspace_name(&options.workspace_name);
-    let dest = ws_dir.join(format!("{sanitized}.ltw"));
+    let dest = ws_dir.join(format!("{}.ltw", options.workspace_id));
 
     let entries = collect_session_data(&state)?;
     let chain = LtwPipelineChain {

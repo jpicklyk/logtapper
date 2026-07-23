@@ -8,6 +8,12 @@ export interface WorkspaceIdentity {
   filePath: string | null;
   /** True when any tracked state has changed since last save/open. */
   dirty: boolean;
+  /** Path to the app-data-dir auto-save `.ltw` (`workspaces/{id}.ltw`), or null
+   *  if never auto-saved. Mirrors app-state.json's `autoSavePath`; carried
+   *  through so the on-disk state can point at the crash-recovery file. */
+  autoSavePath?: string | null;
+  /** Epoch-millis timestamp of the last completed auto-save, or null. */
+  lastAutoSaveAt?: number | null;
 }
 
 /** Lightweight reference to an open session (metadata only, not full state). */

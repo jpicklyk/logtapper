@@ -148,6 +148,11 @@ export type AppEvents = {
    *  `finally` — a missed end would suppress auto-save for the rest of the
    *  session. */
   'workspace:restore-end':   undefined;
+  /** Fired after a background/debounced auto-save writes the app-data-dir
+   *  `.ltw` (i.e. the workspace had no explicit path). WorkspaceContext records
+   *  the path + timestamp onto the entry so app-state.json can point at the
+   *  crash-recovery file. Targeted by `workspaceId`. */
+  'workspace:auto-saved':    { workspaceId: string; path: string; savedAt: number };
 
   // ── File operations ──────────────────────────────────────────────────────
   /** Fired when an .lts file import is skipped because it's already open. */
