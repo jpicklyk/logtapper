@@ -8,21 +8,13 @@ import { preSeedSession, clearPreSeed } from '../../cache';
 import { useSessionCoreCtx, useSessionProgressCtx } from '../../context/SessionContext';
 import { bus, emitSessionLoadedWithFocus } from '../../events/bus';
 import { getStoredFirstPaneId } from '../useWorkspaceLayout';
-import { storageGetJSON, storageSetJSON } from '../../utils';
 import type { CacheController } from '../../cache';
 import { diag, diagStart, diagEnd } from '../../utils/diagnostics';
 import type { SharedLogViewerRefs } from './types';
 import { planExtraSessionImport } from './multiSessionImport';
 import { genKeyFor } from './loadGeneration';
+import { readTabPaths, saveTabPaths } from '../workspace/workspacePersistence';
 
-const LS_TAB_PATHS = 'logtapper_tab_paths';
-
-function readTabPaths(): Record<string, string> {
-  return storageGetJSON<Record<string, string>>(LS_TAB_PATHS, {});
-}
-function saveTabPaths(paths: Record<string, string>): void {
-  storageSetJSON(LS_TAB_PATHS, paths);
-}
 const DEFAULT_PANE_ID = 'primary';
 
 interface FileSessionDeps {

@@ -2,7 +2,6 @@ import { useEffect, useRef } from 'react';
 import { bus } from '../events/bus';
 import { performAutoSave } from './workspace/workspacePersistence';
 import { createAutoSaveGate } from './workspace/autoSaveGate';
-import { syncWorkspaceEnvelope } from '../bridge/commands';
 import type { LtwEditorTab } from '../bridge/types';
 
 const AUTO_SAVE_DEBOUNCE_MS = 3000;
@@ -48,19 +47,11 @@ export function useWorkspaceAutoSave(
     const runAutoSave = () => {
       const payload = buildPayloadRef.current();
       if (!payload) return;
-      // Belt-and-braces: refresh the backend envelope on every debounced tick so
-      // it stays fresh independent of the save command's own caching (and would
-      // still fire if this path ever early-returned before saving). Lightweight —
-      // no file I/O, just a cache refresh.
-      syncWorkspaceEnvelope({
-        workspaceId: payload.workspaceId,
-        workspaceName: payload.workspaceName,
-        ltwPath: payload.filePath,
-        editorTabs: payload.editorTabs,
-        layout: payload.layout,
-        pipelineChain: payload.pipelineChain,
-        disabledChainIds: payload.disabledChainIds,
-      }).catch((e: unknown) => console.warn('[useWorkspaceAutoSave] Envelope sync failed:', e));
+      // No separate envelope sync here: performAutoSave's underlying command
+      // (saveWorkspaceV4 / autoSaveWorkspace) already calls autosave::cache_envelope
+      // with this exact payload as the first thing it does (see
+      // src-tauri/src/commands/workspace_cmd.rs) — a pre-sync would just write the
+      // same fields to the backend cache a moment before the save command does.
       performAutoSave(payload)
         .then((savedPath) => {
           // A non-null path means the workspace had no explicit .ltw and was

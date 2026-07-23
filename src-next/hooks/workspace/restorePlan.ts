@@ -74,7 +74,8 @@ export interface PlanInput {
   hasLocalLayout: boolean;
 }
 
-function isLts(path: string): boolean {
+/** Whether `path` is a `.lts` (LogTapper session archive) file. Case-insensitive. */
+export function isLts(path: string): boolean {
   return path.toLowerCase().endsWith('.lts');
 }
 

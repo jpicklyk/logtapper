@@ -5,18 +5,9 @@ import { severityColor } from '../../bridge/types';
 import { useSession, useNavigationActions } from '../../context';
 import { useAnalysis } from '../../hooks';
 import { bus } from '../../events/bus';
+import { formatShortDateTime } from '../../utils';
 import MarkdownSection from './MarkdownSection';
 import styles from './AnalysisReader.module.css';
-
-function formatDate(epochMs: number): string {
-  const d = new Date(epochMs);
-  return d.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
 
 const AnalysisReader = React.memo(function AnalysisReader() {
   const session = useSession();
@@ -94,7 +85,7 @@ const AnalysisReader = React.memo(function AnalysisReader() {
         <div className={styles.content}>
           <header className={styles.titleCard}>
             <h2 className={styles.title}>{artifact.title}</h2>
-            <span className={styles.timestamp}>{formatDate(artifact.createdAt)}</span>
+            <span className={styles.timestamp}>{formatShortDateTime(artifact.createdAt)}</span>
             <div className={styles.summaryBar}>
               <span className={styles.summaryCount}>
                 {artifact.sections.length} section{artifact.sections.length !== 1 ? 's' : ''}

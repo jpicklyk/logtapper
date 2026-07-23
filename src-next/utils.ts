@@ -81,3 +81,20 @@ export function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
+
+/** Format an epoch-ms timestamp as a short locale date/time (e.g. "Jan 5, 2:30 PM").
+ *  Pass `includeYear` for contexts where the timestamp could be from a much
+ *  earlier period (e.g. a recovered auto-save) rather than assumed-recent. */
+export function formatShortDateTime(epochMs: number, includeYear = false): string {
+  try {
+    return new Date(epochMs).toLocaleString(undefined, {
+      ...(includeYear ? { year: 'numeric' as const } : {}),
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return 'an earlier session';
+  }
+}

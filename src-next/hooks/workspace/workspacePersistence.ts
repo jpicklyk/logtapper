@@ -84,7 +84,7 @@ export function loadPersistedState(): Partial<PersistedState> {
     if (parsed.centerTree) {
       // Pass tabPaths so logviewer tabs without a file path (unsaved ADB
       // streams) are stripped before the tree is used by the app.
-      const tabPaths = storageGetJSON<Record<string, string>>('logtapper_tab_paths', {});
+      const tabPaths = readTabPaths();
       const sanitized = sanitizeTree(parsed.centerTree, tabPaths);
       if (sanitized) result.centerTree = sanitized;
     }
@@ -118,6 +118,21 @@ export function loadPersistedState(): Partial<PersistedState> {
 
 export function savePersistedState(state: PersistedState): void {
   storageSetJSON(STORAGE_KEY, state);
+}
+
+// ---------------------------------------------------------------------------
+// Tab-path map (tabId → source path) — the sole owner of the
+// `logtapper_tab_paths` localStorage key.
+// ---------------------------------------------------------------------------
+
+export const LS_TAB_PATHS = 'logtapper_tab_paths';
+
+export function readTabPaths(): Record<string, string> {
+  return storageGetJSON<Record<string, string>>(LS_TAB_PATHS, {});
+}
+
+export function saveTabPaths(paths: Record<string, string>): void {
+  storageSetJSON(LS_TAB_PATHS, paths);
 }
 
 // ---------------------------------------------------------------------------

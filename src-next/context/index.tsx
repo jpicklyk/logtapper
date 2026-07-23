@@ -6,7 +6,6 @@ import { saveLiveCapture, loadProcessorYaml, uninstallProcessor,
   loadProcessorFromFile as bridgeLoadProcessorFromFile,
   setFileAssociation, openDefaultAppsSettings,
   startMcpBridge, stopMcpBridge, exportAllSessions,
-  syncWorkspaceEnvelope,
 } from '../bridge/commands';
 import { basename, dirname } from '../utils';
 import { ViewerProvider } from './ViewerContext';
@@ -30,6 +29,7 @@ import { useStartupRestore } from '../hooks/useStartupRestore';
 import { createAutoRunScheduler, type AutoRunScheduler } from '../hooks/workspace/autoRunScheduler';
 import type { AppStateFile } from '../bridge/types';
 import { collectEditorTabsForSave, buildAppStatePayload } from '../hooks/workspace/workspacePersistence';
+import { pushWorkspaceEnvelope, toEnvelopeOptions } from '../hooks/workspace/envelopeSync';
 import { STORAGE_KEY } from '../hooks/workspace/workspaceTypes';
 import { storageGetJSON } from '../utils';
 import { bus } from '../events/bus';
@@ -294,15 +294,7 @@ function HookWiring({ children }: { children: ReactNode }) {
     if (prev.name === curr.name && prev.filePath === curr.filePath) return;
     const payload = buildAutoSavePayload();
     if (!payload) return;
-    syncWorkspaceEnvelope({
-      workspaceId: payload.workspaceId,
-      workspaceName: payload.workspaceName,
-      ltwPath: payload.filePath,
-      editorTabs: payload.editorTabs,
-      layout: payload.layout,
-      pipelineChain: payload.pipelineChain,
-      disabledChainIds: payload.disabledChainIds,
-    }).catch((e: unknown) => console.warn('[HookWiring] Envelope identity sync failed:', e));
+    void pushWorkspaceEnvelope(toEnvelopeOptions(payload), '[HookWiring]');
   }, [activeWs?.id, activeWs?.name, activeWs?.filePath, buildAutoSavePayload]);
 
   // Build the AppStateFile payload for exit save — reads workspace list from context.

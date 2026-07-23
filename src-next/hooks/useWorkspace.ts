@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { useWorkspaceContext } from '../context/WorkspaceContext';
-import { saveWorkspaceV4, loadWorkspaceV4, saveAppState, syncWorkspaceEnvelope } from '../bridge/commands';
+import { saveWorkspaceV4, loadWorkspaceV4, saveAppState } from '../bridge/commands';
 import type { WorkspaceIdentity } from '../bridge/workspaceTypes';
 
 import { bus } from '../events/bus';
@@ -10,6 +10,7 @@ import { collectEditorTabsForSave, performAutoSave, buildAppStatePayload } from 
 import { STORAGE_KEY } from './workspace/workspaceTypes';
 import { planExplicitOpen } from './workspace/restorePlan';
 import { restoreWorkspace, type RestoreIo } from './workspace/restoreCore';
+import { pushWorkspaceEnvelope } from './workspace/envelopeSync';
 
 /** Derive a workspace display name from a file path. */
 export function workspaceNameFromPath(path: string): string {
@@ -98,7 +99,7 @@ export function useWorkspace(
     workspaceName?: string; editorTabs?: ReturnType<typeof collectEditorTabsForSave>;
     layout?: unknown; pipelineChain?: string[]; disabledChainIds?: string[];
   }) => {
-    return syncWorkspaceEnvelope({
+    return pushWorkspaceEnvelope({
       workspaceId: ws.id,
       workspaceName: override?.workspaceName ?? ws.name,
       ltwPath: ws.filePath,
@@ -106,7 +107,7 @@ export function useWorkspace(
       layout: override?.layout ?? getLayoutState(),
       pipelineChain: override?.pipelineChain ?? (getPipelineChain?.() ?? []),
       disabledChainIds: override?.disabledChainIds ?? (getDisabledChainIds?.() ?? []),
-    }).catch(e => console.warn('[useWorkspace] Failed to sync workspace envelope:', e));
+    }, '[useWorkspace]');
   }, [getLayoutState, getPipelineChain, getDisabledChainIds]);
 
   /** Save the active workspace to a .ltw v4 file. */
@@ -176,7 +177,7 @@ export function useWorkspace(
     // Read the active id at the END, after the active workspace has settled.
     const active = wsCtxRef.current.activeWorkspace;
     if (active) {
-      void syncWorkspaceEnvelope({
+      void pushWorkspaceEnvelope({
         workspaceId: active.id,
         workspaceName: result.workspaceName,
         ltwPath: path,
@@ -184,7 +185,7 @@ export function useWorkspace(
         layout: result.layout,
         pipelineChain: result.pipelineChain.chain,
         disabledChainIds: result.pipelineChain.disabledIds,
-      }).catch(e => console.warn('[useWorkspace] Failed to sync workspace envelope:', e));
+      }, '[useWorkspace]');
     }
   }, [loadFile, scheduleAutoRun]);
 

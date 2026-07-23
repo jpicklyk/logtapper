@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useWorkspaceActions } from '../context';
 import { bus } from '../events/bus';
 import type { ToastItem } from '../ui';
+import { formatShortDateTime } from '../utils';
 
 let toastCounter = 0;
 
@@ -46,7 +47,7 @@ export function useUntrustedAutoSaveToast(addToast: (toast: ToastItem) => void):
         id: `untrusted-autosave-${++toastCounter}`,
         title: 'Auto-saved workspace not restored',
         message:
-          `An auto-saved workspace from ${formatSavedAt(e.savedAt)} was found but ` +
+          `An auto-saved workspace from ${formatShortDateTime(e.savedAt, true)} was found but ` +
           `doesn't match this workspace (${describeReason(e.reasons[0])}). ` +
           `Click to open it as a new workspace.`,
         // Whole-toast click = "Open it"; opens as a NEW workspace entry so it
@@ -59,21 +60,6 @@ export function useUntrustedAutoSaveToast(addToast: (toast: ToastItem) => void):
       bus.off('workspace:untrusted-autosave', onUntrusted);
     };
   }, []);
-}
-
-/** Format the manifest `savedAt` epoch-ms as a short human date for the notice. */
-function formatSavedAt(savedAt: number): string {
-  try {
-    return new Date(savedAt).toLocaleString(undefined, {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  } catch {
-    return 'an earlier session';
-  }
 }
 
 /** Map a machine-readable verdict reason to a short human phrase. */

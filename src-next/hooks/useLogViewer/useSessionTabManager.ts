@@ -6,18 +6,10 @@ import { useSessionCoreCtx, useSessionPaneCtx, useSessionProgressCtx } from '../
 import { useViewerContext } from '../../context/ViewerContext';
 import { bus } from '../../events/bus';
 import { sessionScrollPositions } from '../../viewport';
-import { storageGetJSON, storageSetJSON } from '../../utils';
 import type { CacheController } from '../../cache';
 import type { SharedLogViewerRefs } from './types';
+import { readTabPaths, saveTabPaths } from '../workspace/workspacePersistence';
 
-const LS_TAB_PATHS = 'logtapper_tab_paths';
-
-function readTabPaths(): Record<string, string> {
-  return storageGetJSON<Record<string, string>>(LS_TAB_PATHS, {});
-}
-function saveTabPaths(paths: Record<string, string>): void {
-  storageSetJSON(LS_TAB_PATHS, paths);
-}
 const DEFAULT_PANE_ID = 'primary';
 
 interface TabManagerDeps {

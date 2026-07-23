@@ -1,11 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { useWorkspaceContext } from '../context/WorkspaceContext';
-import { loadWorkspaceV4, syncWorkspaceEnvelope } from '../bridge/commands';
+import { loadWorkspaceV4 } from '../bridge/commands';
 import type { LoadWorkspaceV4Result } from '../bridge/types';
 import type { WorkspaceIdentity } from '../bridge/workspaceTypes';
 import { bus } from '../events/bus';
 import { storageGetJSON, storageRemove } from '../utils';
-import { getStoredLogviewerTabs, collectEditorTabsForSave } from './workspace/workspacePersistence';
+import { getStoredLogviewerTabs, collectEditorTabsForSave, readTabPaths } from './workspace/workspacePersistence';
 import { STORAGE_KEY } from './workspace/workspaceTypes';
 import {
   assessRestoreCandidate,
@@ -14,8 +14,7 @@ import {
 import { planStartupRestore, type StoredTab } from './workspace/restorePlan';
 import { restoreWorkspace, type RestoreIo } from './workspace/restoreCore';
 import { consumeStartupFile } from './workspace/startupFile';
-
-const LS_TAB_PATHS = 'logtapper_tab_paths';
+import { pushWorkspaceEnvelope } from './workspace/envelopeSync';
 
 /**
  * The single startup restore orchestrator (design:
@@ -66,8 +65,6 @@ export function useStartupRestore(deps: StartupRestoreDeps): void {
         depsRef.current.scheduleAutoRun(sessionId, isIndexing, chain, disabled),
     };
 
-    const readTabPaths = (): Record<string, string> =>
-      storageGetJSON<Record<string, string>>(LS_TAB_PATHS, {});
     const readStoredTabs = (): StoredTab[] => getStoredLogviewerTabs();
     const hasLocalLayout = (): boolean => storageGetJSON<unknown>(STORAGE_KEY, null) !== null;
 
@@ -77,7 +74,7 @@ export function useStartupRestore(deps: StartupRestoreDeps): void {
       editorTabs?: ReturnType<typeof collectEditorTabsForSave>; layout?: unknown;
       pipelineChain?: string[]; disabledChainIds?: string[];
     }): void => {
-      void syncWorkspaceEnvelope({
+      void pushWorkspaceEnvelope({
         workspaceId: ws.id,
         workspaceName: override?.workspaceName ?? ws.name,
         ltwPath: override?.ltwPath ?? ws.filePath,
@@ -85,7 +82,7 @@ export function useStartupRestore(deps: StartupRestoreDeps): void {
         layout: override?.layout ?? storageGetJSON<unknown>(STORAGE_KEY, null),
         pipelineChain: override?.pipelineChain ?? depsRef.current.getPipelineChain(),
         disabledChainIds: override?.disabledChainIds ?? depsRef.current.getDisabledChainIds(),
-      }).catch((e: unknown) => console.warn('[useStartupRestore] envelope sync failed:', e));
+      }, '[useStartupRestore]');
     };
 
     const surfaceWarnings = (warnings: string[]): void => {
@@ -142,10 +139,15 @@ export function useStartupRestore(deps: StartupRestoreDeps): void {
         lastAutoSaveAt: active.lastAutoSaveAt ?? null,
       };
 
-      const autoHeader = entry.autoSavePath ? toHeader(await readWorkspace(entry.autoSavePath)) : null;
+      // Independent reads — run in parallel rather than awaiting one before
+      // starting the other.
+      const [autoResult, explicitResult] = await Promise.all([
+        entry.autoSavePath ? readWorkspace(entry.autoSavePath) : Promise.resolve(null),
+        entry.ltwPath ? readWorkspace(entry.ltwPath) : Promise.resolve(null),
+      ]);
       if (cancelled) return;
-      const explicitHeader = entry.ltwPath ? toHeader(await readWorkspace(entry.ltwPath)) : null;
-      if (cancelled) return;
+      const autoHeader = toHeader(autoResult);
+      const explicitHeader = toHeader(explicitResult);
 
       const localTabPaths = Object.values(readTabPaths());
       const assessment = assessRestoreCandidate(entry, { autoSave: autoHeader, explicit: explicitHeader }, localTabPaths);

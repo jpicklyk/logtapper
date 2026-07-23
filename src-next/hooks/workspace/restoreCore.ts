@@ -15,7 +15,7 @@ import { restoreWorkspaceSession } from '../../bridge/commands';
 import type { LoadWorkspaceSessionData, LtwEditorTab } from '../../bridge/types';
 import { pairArtifactsWithSessions } from './artifactPairing';
 import { buildEditorTabEvents } from './workspacePersistence';
-import { buildRestoreOutcomes, type RestorePlan } from './restorePlan';
+import { buildRestoreOutcomes, isLts, type RestorePlan } from './restorePlan';
 
 /** The `.ltw`-derived data the core consumes (subset of `LoadWorkspaceV4Result`).
  *  For the pure-localStorage fallback the caller passes empty `sessionData` /
@@ -93,7 +93,7 @@ export async function restoreWorkspace(
     // would run twice. The scheduler's swallow is the belt to this braces.
     const ltsSessionIds = new Set<string>();
     plan.loads.forEach((load, i) => {
-      if (load.path.toLowerCase().endsWith('.lts')) {
+      if (isLts(load.path)) {
         for (const sid of producedSessionIdsPerLoad[i] ?? []) ltsSessionIds.add(sid);
       }
     });
@@ -103,12 +103,14 @@ export async function restoreWorkspace(
     const warnings = [...plan.warnings, ...pairingWarnings];
     for (const w of warnings) console.warn(`[restoreWorkspace] ${w}`);
 
-    // Restore artifacts per session, then trigger the auto-run directly. Kept
-    // sequential (not the old Promise.all) so "after each restore_workspace_session
-    // resolves, trigger the run" is honoured deterministically. The chain has
-    // already been dispatched by useWorkspaceRestore on the workspace-restored
-    // event emitted synchronously inside restore_workspace_session.
-    for (const { sessionId, data } of pairs) {
+    // Restore artifacts per session, then trigger that session's own auto-run.
+    // Restores are independent — each targets its own session_id-keyed slices of
+    // AppState (bookmarks/analyses/pipeline meta) and emits its own scoped
+    // workspace-restored event, so run them in parallel. What must stay ordered
+    // is local to each pair: "this session's restore resolves before this
+    // session's own auto-run is scheduled" — Promise.all over per-pair async
+    // callbacks preserves that while letting sessions restore concurrently.
+    await Promise.all(pairs.map(async ({ sessionId, data }) => {
       try {
         await restoreWorkspaceSession({
           sessionId,
@@ -119,7 +121,7 @@ export async function restoreWorkspace(
         });
       } catch (e) {
         console.warn(`[restoreWorkspace] Failed to restore artifacts for ${sessionId}:`, e);
-        continue;
+        return;
       }
       // Only sessions with a restored chain, and not owned by the `.lts` path.
       if (data.activeProcessorIds.length > 0 && !ltsSessionIds.has(sessionId)) {
@@ -130,7 +132,7 @@ export async function restoreWorkspace(
           data.disabledProcessorIds,
         );
       }
-    }
+    }));
 
     // View-state: editor tabs + layout blob. Only when localStorage did not
     // already restore them (else they self-restore from their own keys and this

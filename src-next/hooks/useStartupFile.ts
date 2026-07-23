@@ -3,10 +3,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
 import { useFileActions, useWorkspaceActions } from '../context';
 import { onOpenFile } from '../bridge/events';
 import { consumeStartupFile } from './workspace/startupFile';
-
-function isLtsFile(path: string): boolean {
-  return path.toLowerCase().endsWith('.lts');
-}
+import { isLts } from './workspace/restorePlan';
 
 /**
  * Opens a file passed via CLI args at launch (e.g. double-click file association)
@@ -30,7 +27,7 @@ export function useStartupFile() {
     consumeStartupFile().then((path) => {
       if (!path) return;
       const a = actionsRef.current;
-      if (isLtsFile(path)) a.openWorkspace(path);
+      if (isLts(path)) a.openWorkspace(path);
       else a.loadFile(path);
     }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -44,7 +41,7 @@ export function useStartupFile() {
     onOpenFile((path) => {
       if (cancelled) return;
       const a = actionsRef.current;
-      if (isLtsFile(path)) a.openWorkspace(path);
+      if (isLts(path)) a.openWorkspace(path);
       else a.loadFile(path);
     }).then((fn) => {
       if (cancelled) fn();
