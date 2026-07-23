@@ -1,13 +1,21 @@
 type: state_tracker
 id: wlan-disconnect-tracker
 name: WLAN Disconnect Tracker
-version: 1.5.1
+version: 1.5.2
 author: LogTapper
-description: "Tracks WiFi connection state with focus on disconnection events. Captures IEEE 802.11 reason codes, locally-generated flags, and BSSID from wpa_supplicant CTRL-EVENT logcat messages and WifiClientModeImpl/SemClientModeImpl state logs. Uses DUMPSYS NORMAL section filtering for bugreport NETWORK_DISCONNECTION_EVENT transitions to avoid cross-section duplication."
+description: "Tracks WiFi connection state with focus on disconnection events. Captures IEEE 802.11 reason codes, locally-generated flags, and BSSID from wpa_supplicant CTRL-EVENT logcat messages and WifiClientModeImpl/SemClientModeImpl state logs. Scopes the bugreport NETWORK_DISCONNECTION_EVENT transitions to the dumpsys wifi section to avoid cross-section duplication."
 tags: [wifi, network, wlan, disconnect, android]
 category: network
 
 group: Network
+
+# The per-tracker range gate (pipeline_core.rs) is the union of these names and
+# every transition's `filter.section`. Without SYSTEM LOG here the whole tracker
+# is confined to the dumpsys ranges and none of the logcat transitions below can
+# fire on a bugreport.
+sections:
+  - "SYSTEM LOG"
+  - "DUMPSYS NORMAL"
 
 state:
   - name: connection_state
@@ -113,10 +121,15 @@ transitions:
 
   # ── Bugreport WifiStateMachine dump: NETWORK_DISCONNECTION_EVENT ──────────
   # Most-specific first (with locallyGenerated), then generic fallback.
+  #
+  # `filter.section` matches the INNERMOST section name (section_for_line), so
+  # these must name the `wifi` dumpsys subsection, not its DUMPSYS NORMAL parent
+  # — a parent name here matches only lines between subsections, i.e. never.
+  # UNVERIFIED: no NETWORK_DISCONNECTION_EVENT line was available to test against.
 
   - name: Disconnected (network event, local)
     filter:
-      section: "DUMPSYS NORMAL"
+      section: "wifi"
       message_regex: 'NETWORK_DISCONNECTION_EVENT.*bssid:\s*([0-9a-fA-F:]{17}).*reasonCode:\s*(\d+).*locallyGenerated:\s*true'
     set:
       connection_state: "disconnected"
@@ -126,7 +139,7 @@ transitions:
 
   - name: Disconnected (network event, remote)
     filter:
-      section: "DUMPSYS NORMAL"
+      section: "wifi"
       message_regex: 'NETWORK_DISCONNECTION_EVENT.*bssid:\s*([0-9a-fA-F:]{17}).*reasonCode:\s*(\d+).*locallyGenerated:\s*false'
     set:
       connection_state: "disconnected"
@@ -136,7 +149,7 @@ transitions:
 
   - name: Disconnected (network event)
     filter:
-      section: "DUMPSYS NORMAL"
+      section: "wifi"
       message_contains: "NETWORK_DISCONNECTION_EVENT"
     set:
       connection_state: "disconnected"
