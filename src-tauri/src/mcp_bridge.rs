@@ -99,6 +99,53 @@ fn processor_id_matches(candidate: &str, filter: Option<&String>) -> bool {
     })
 }
 
+// ---------------------------------------------------------------------------
+// PII anonymization helpers — used by every raw-line handler below
+// (h_query, h_search, h_lines_around, h_search_with_context).
+// ---------------------------------------------------------------------------
+
+/// Resolve whether MCP bridge responses for `session_id` should be
+/// anonymized, given the current per-session flag map (`AppState::mcp_anonymize`).
+///
+/// **Fails closed**: a session with no explicit entry — one the frontend has
+/// never signalled a pipeline-chain state for (e.g. just opened, or the
+/// signal hasn't landed yet) — defaults to `true`. Serving raw PII for an
+/// unrecognized session is the wrong default; over-anonymizing a session
+/// that didn't need it is not.
+///
+/// Pulled out as a pure function (no locking, no `AppState`) so the decision
+/// itself is unit-testable without spinning up Axum or Tauri state.
+fn resolve_should_anonymize(flags: &HashMap<String, bool>, session_id: &str) -> bool {
+    flags.get(session_id).copied().unwrap_or(true)
+}
+
+/// Anonymize `raw` for `session_id` per its resolved per-session flag (see
+/// [`resolve_should_anonymize`]). Reuses this session's persistent
+/// `LogAnonymizer` — cached in `mcp_anonymizers` — so token numbering stays
+/// stable across multiple bridge calls, creating one from the current
+/// default `anonymizer_config` on first use. Returns `raw` unchanged when
+/// anonymization is disabled (or unset — never happens, since unset fails
+/// closed to anonymize) for this session.
+///
+/// Locks `mcp_anonymize`, then (only when anonymizing) `anonymizer_config`
+/// and `mcp_anonymizers`, each acquired and released in turn. Never held
+/// across an `.await`; never nested with `sessions` or `pipeline_results`.
+fn anonymize_for_session(state: &AppState, session_id: &str, raw: &str) -> String {
+    let should_anonymize = {
+        let flags = state.mcp_anonymize.lock().unwrap();
+        resolve_should_anonymize(&flags, session_id)
+    };
+    if !should_anonymize {
+        return raw.to_string();
+    }
+    let config = state.anonymizer_config.lock().unwrap().clone();
+    let mut anon_map = state.mcp_anonymizers.lock().unwrap();
+    let anon = anon_map
+        .entry(session_id.to_string())
+        .or_insert_with(|| LogAnonymizer::from_config(&config));
+    anon.anonymize(raw).0
+}
+
 /// Concrete handle type — Wry is the only desktop runtime Tauri ships.
 type Handle = AppHandle<Wry>;
 
@@ -816,31 +863,10 @@ async fn h_query(
         snaps
     };
 
-    // ── PII anonymization ─────────────────────────────────────────────────────
-    // Anonymize only when the frontend has __pii_anonymizer in the pipeline chain
-    // (signalled via set_mcp_anonymize).  One persistent LogAnonymizer per session
-    // ensures token numbering is stable across multiple MCP queries.
-    let snaps = {
-        let should_anonymize = *state.mcp_anonymize.lock().unwrap();
-        if should_anonymize {
-            let config = state.anonymizer_config.lock().unwrap().clone();
-            let mut anon_map = state.mcp_anonymizers.lock().unwrap();
-            let anon = anon_map
-                .entry(session_id.clone())
-                .or_insert_with(|| LogAnonymizer::from_config(&config));
-            snaps
-                .into_iter()
-                .map(|s| {
-                    let (clean, _) = anon.anonymize(&s.raw);
-                    LineSnap { raw: clean, ..s }
-                })
-                .collect::<Vec<_>>()
-        } else {
-            snaps
-        }
-    };
-
     // Build JSON output.
+    // ── PII anonymization applied inline ────────────────────────────────────
+    // Per-session flag (signalled via set_mcp_anonymize, fails closed for an
+    // unknown session) — see `resolve_should_anonymize` / `anonymize_for_session`.
     let mut tag_counts: HashMap<String, usize> = HashMap::new();
     let mut level_counts: HashMap<&str, usize> = HashMap::new();
 
@@ -849,11 +875,12 @@ async fn h_query(
         .map(|snap| {
             *tag_counts.entry(snap.tag.clone()).or_insert(0) += 1;
             *level_counts.entry(snap.level).or_insert(0) += 1;
+            let raw = anonymize_for_session(&state, &session_id, &snap.raw);
             json!({
                 "lineNum": snap.line_num,
                 "level": snap.level,
                 "tag": snap.tag,
-                "raw": snap.raw,
+                "raw": raw,
             })
         })
         .collect();
@@ -1574,11 +1601,15 @@ async fn h_search(
                     .filter_map(|j| caps.get(j).map(|m| m.as_str().to_string()))
                     .collect();
 
-                // Context lines
+                // Context lines — anonymized (if enabled for this session) before
+                // truncation, same as the matched line itself below.
                 let context_before: Vec<(usize, String)> = if context > 0 {
                     let start = i.saturating_sub(context);
                     (start..i)
-                        .filter_map(|j| source.raw_line(j).map(|r| (j, truncate_str(&r, 500))))
+                        .filter_map(|j| source.raw_line(j).map(|r| {
+                            let clean = anonymize_for_session(&state, &session_id, &r);
+                            (j, truncate_str(&clean, 500))
+                        }))
                         .collect()
                 } else {
                     vec![]
@@ -1587,15 +1618,19 @@ async fn h_search(
                 let context_after: Vec<(usize, String)> = if context > 0 {
                     let end = (i + 1 + context).min(total);
                     ((i + 1)..end)
-                        .filter_map(|j| source.raw_line(j).map(|r| (j, truncate_str(&r, 500))))
+                        .filter_map(|j| source.raw_line(j).map(|r| {
+                            let clean = anonymize_for_session(&state, &session_id, &r);
+                            (j, truncate_str(&clean, 500))
+                        }))
                         .collect()
                 } else {
                     vec![]
                 };
 
+                let clean_raw = anonymize_for_session(&state, &session_id, &raw);
                 results.push(MatchResult {
                     line_num: i,
-                    raw: truncate_str(&raw, 500),
+                    raw: truncate_str(&clean_raw, 500),
                     captures,
                     context_before,
                     context_after,
@@ -2080,11 +2115,12 @@ async fn h_lines_around(
         .filter_map(|i| {
             let raw = source.raw_line(i)?;
             let meta = source.meta_at(i)?;
+            let clean = anonymize_for_session(&state, &session_id, &raw);
             Some(json!({
                 "lineNum": i,
                 "level": meta.level.as_str(),
                 "tag": session.resolve_tag(meta.tag_id),
-                "raw": truncate_str(&raw, 500),
+                "raw": truncate_str(&clean, 500),
                 "isCenter": i == center,
             }))
         })
@@ -2190,11 +2226,12 @@ async fn h_search_with_context(
                 .filter_map(|j| {
                     let line_raw = source.raw_line(j)?;
                     let meta = source.meta_at(j)?;
+                    let clean = anonymize_for_session(&state, &session_id, &line_raw);
                     Some(json!({
                         "lineNum": j,
                         "level": meta.level.as_str(),
                         "tag": session.resolve_tag(meta.tag_id),
-                        "raw": truncate_str(&line_raw, max_line_chars),
+                        "raw": truncate_str(&clean, max_line_chars),
                         "isMatch": j == i,
                     }))
                 })
@@ -2828,6 +2865,75 @@ fn level_at_least(line_level: &str, filter: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── resolve_should_anonymize / anonymize_for_session ────────────────────
+    // Per-session MCP anonymization flag: must fail closed on an unknown
+    // session, and must not leak one session's raw-vs-anonymized state into
+    // another's (the bug this module fixes — see AppState::mcp_anonymize).
+
+    #[test]
+    fn resolve_should_anonymize_defaults_true_for_unknown_session() {
+        // No entry at all — e.g. a session the frontend has never signalled
+        // a pipeline-chain state for. Must fail closed to anonymize.
+        let flags: HashMap<String, bool> = HashMap::new();
+        assert!(resolve_should_anonymize(&flags, "unknown-session"));
+    }
+
+    #[test]
+    fn resolve_should_anonymize_true_when_flag_set_true() {
+        let mut flags: HashMap<String, bool> = HashMap::new();
+        flags.insert("sess-a".to_string(), true);
+        assert!(resolve_should_anonymize(&flags, "sess-a"));
+    }
+
+    #[test]
+    fn resolve_should_anonymize_false_when_flag_set_false() {
+        let mut flags: HashMap<String, bool> = HashMap::new();
+        flags.insert("sess-a".to_string(), false);
+        assert!(!resolve_should_anonymize(&flags, "sess-a"));
+    }
+
+    #[test]
+    fn resolve_should_anonymize_is_per_session_not_global() {
+        // The exact scenario from the bug report: two sessions, only one of
+        // which has __pii_anonymizer active. A global bool could not
+        // represent this; the per-session map must.
+        let mut flags: HashMap<String, bool> = HashMap::new();
+        flags.insert("sess-anonymized".to_string(), true);
+        flags.insert("sess-raw".to_string(), false);
+        assert!(resolve_should_anonymize(&flags, "sess-anonymized"));
+        assert!(!resolve_should_anonymize(&flags, "sess-raw"));
+    }
+
+    #[test]
+    fn anonymize_for_session_serves_raw_when_flag_false() {
+        let state = AppState::new();
+        state.mcp_anonymize.lock().unwrap().insert("sess-a".to_string(), false);
+        let raw = "contact user@example.com for access";
+        let out = anonymize_for_session(&state, "sess-a", raw);
+        assert_eq!(out, raw);
+    }
+
+    #[test]
+    fn anonymize_for_session_redacts_when_flag_true() {
+        let state = AppState::new();
+        state.mcp_anonymize.lock().unwrap().insert("sess-a".to_string(), true);
+        let raw = "contact user@example.com for access";
+        let out = anonymize_for_session(&state, "sess-a", raw);
+        assert_ne!(out, raw);
+        assert!(!out.contains("user@example.com"));
+    }
+
+    #[test]
+    fn anonymize_for_session_fails_closed_for_unknown_session() {
+        // No `set_mcp_anonymize` call has ever landed for this session —
+        // must anonymize by default, not serve raw PII.
+        let state = AppState::new();
+        let raw = "contact user@example.com for access";
+        let out = anonymize_for_session(&state, "never-seen-session", raw);
+        assert_ne!(out, raw);
+        assert!(!out.contains("user@example.com"));
+    }
 
     // ── truncate_str / max_line_chars ────────────────────────────────────────
     // Wide dumpsys status lines exceed the 500-char default and lose their

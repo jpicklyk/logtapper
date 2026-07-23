@@ -526,8 +526,9 @@ pub(crate) fn close_session_inner(state: &AppState, _app: Option<&tauri::AppHand
         Ok(())
     })?;
 
-    // 12. Remove MCP anonymizer
+    // 12. Remove MCP anonymizer + its per-session anonymize flag
     lock_or_err(&state.mcp_anonymizers, "mcp_anonymizers")?.remove(session_id);
+    lock_or_err(&state.mcp_anonymize, "mcp_anonymize")?.remove(session_id);
 
     // 13. Clean up bookmarks, analyses, and pipeline meta.
     lock_or_err(&state.bookmarks, "bookmarks")?.remove(session_id);

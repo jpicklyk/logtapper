@@ -77,9 +77,18 @@ pub struct AppState {
     pub stream_anonymizers: Mutex<HashMap<String, LogAnonymizer>>,
     /// Persistent anonymizers for MCP query results (one per session for stable token numbering).
     pub mcp_anonymizers: Mutex<HashMap<String, LogAnonymizer>>,
-    /// Whether to apply PII anonymization to MCP query results.
-    /// Set to true by the frontend when __pii_anonymizer is in the pipeline chain.
-    pub mcp_anonymize: Mutex<bool>,
+    /// Per-session flag: whether to apply PII anonymization to MCP bridge
+    /// query results for that session. Keyed by session id; set by the
+    /// frontend (via `set_mcp_anonymize`) whenever `__pii_anonymizer` enters
+    /// or leaves that session's pipeline chain.
+    ///
+    /// A session with no entry here (never signalled — e.g. just opened) is
+    /// NOT assumed safe: bridge handlers must fail closed and treat a
+    /// missing entry as `true` (anonymize). See
+    /// `mcp_bridge::resolve_should_anonymize`. This must stay per-session —
+    /// a single global flag previously applied here served raw PII for any
+    /// session that happened to share bridge traffic with an anonymized one.
+    pub mcp_anonymize: Mutex<HashMap<String, bool>>,
     /// StateTracker results: sessionId -> trackerId -> StateTrackerResult.
     #[allow(dead_code)]
     pub state_tracker_results: Mutex<HashMap<String, HashMap<String, StateTrackerResult>>>,
@@ -195,7 +204,7 @@ impl AppState {
             pii_mappings: Mutex::new(HashMap::new()),
             stream_anonymizers: Mutex::new(HashMap::new()),
             mcp_anonymizers: Mutex::new(HashMap::new()),
-            mcp_anonymize: Mutex::new(false),
+            mcp_anonymize: Mutex::new(HashMap::new()),
             state_tracker_results: Mutex::new(HashMap::new()),
             stream_tracker_state: Mutex::new(HashMap::new()),
             stream_transformer_state: Mutex::new(HashMap::new()),

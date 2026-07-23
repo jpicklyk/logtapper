@@ -85,6 +85,16 @@ export function usePipeline(
     storageSetJSON(LS_DISABLED_KEY, disabledChainIds);
     bus.emit('pipeline:chain-changed', { chain: pipelineChain });
 
+    // Push the MCP-bridge per-session anonymize flag immediately (not
+    // debounced) — it's the security boundary the bridge consults on every
+    // raw-line request, unlike the meta sync below which only feeds
+    // workspace persistence. Resolved the same way setSessionPipelineMeta's
+    // sessionId is below.
+    const anonymizeSessionId = paneSessionMapRef.current.get(activeLogPaneIdRef.current ?? '');
+    if (anonymizeSessionId) {
+      setMcpAnonymize(anonymizeSessionId, pipelineChain.includes('__pii_anonymizer')).catch(() => {});
+    }
+
     // Debounced push to backend for workspace persistence (500ms)
     if (metaSyncTimerRef.current) clearTimeout(metaSyncTimerRef.current);
     metaSyncTimerRef.current = setTimeout(() => {
@@ -102,6 +112,7 @@ export function usePipeline(
     const sessionId = paneSessionMap.get(activeLogPaneId ?? '');
     if (!sessionId) return;
     setSessionPipelineMeta(sessionId, pipelineChainRef.current, disabledChainIdsRef.current).catch(() => {});
+    setMcpAnonymize(sessionId, pipelineChainRef.current.includes('__pii_anonymizer')).catch(() => {});
   }, [activeLogPaneId, paneSessionMap]);
 
   // Cleanup debounce timer on unmount
@@ -121,11 +132,6 @@ export function usePipeline(
     bus.on('stream:started', handleStreamStarted);
     return () => { bus.off('stream:started', handleStreamStarted); };
   }, []);
-
-  useEffect(() => {
-    if (!chainInitializedRef.current) return;
-    setMcpAnonymize(pipelineChain.includes('__pii_anonymizer')).catch(() => {});
-  }, [pipelineChain]);
 
   // Subscribe to pipeline-progress events (StrictMode-safe)
   useEffect(() => {

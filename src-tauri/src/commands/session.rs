@@ -16,12 +16,14 @@ pub struct McpStatus {
     pub idle_secs: Option<u32>,
 }
 
-/// Enable or disable PII anonymization for MCP query results.
-/// Called by the frontend whenever __pii_anonymizer is added to or removed from the chain.
+/// Enable or disable PII anonymization for MCP bridge query results for one
+/// session. Called by the frontend whenever __pii_anonymizer is added to or
+/// removed from that session's pipeline chain. Per-session — see
+/// `AppState::mcp_anonymize` for why a global flag is unsafe here.
 #[tauri::command]
-pub fn set_mcp_anonymize(state: State<'_, AppState>, enabled: bool) {
-    if let Ok(mut flag) = state.mcp_anonymize.lock() {
-        *flag = enabled;
+pub fn set_mcp_anonymize(state: State<'_, AppState>, session_id: String, enabled: bool) {
+    if let Ok(mut flags) = state.mcp_anonymize.lock() {
+        flags.insert(session_id, enabled);
     }
 }
 

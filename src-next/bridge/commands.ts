@@ -297,8 +297,8 @@ export function getCorrelatorEvents(
   return invoke('get_correlator_events', { sessionId, correlatorId });
 }
 
-export function setMcpAnonymize(enabled: boolean): Promise<void> {
-  return invoke('set_mcp_anonymize', { enabled });
+export function setMcpAnonymize(sessionId: string, enabled: boolean): Promise<void> {
+  return invoke('set_mcp_anonymize', { sessionId, enabled });
 }
 
 // ---------------------------------------------------------------------------
