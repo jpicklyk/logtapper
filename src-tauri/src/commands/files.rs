@@ -482,6 +482,22 @@ fn close_session_inner(state: &AppState, _app: Option<&tauri::AppHandle>, sessio
     lock_or_err(&state.lts_processor_yamls, "lts_processor_yamls")?
         .retain(|key, _| !key.ends_with(&lts_suffix));
 
+    // 16. Remove watches targeting the closed session.
+    lock_or_err(&state.active_watches, "active_watches")?.remove(session_id);
+
+    // 17. Remove filters targeting the closed session. active_filters is keyed
+    //     by filter_id, so match on each filter's session_id. Cancel before
+    //     dropping so the background scan task stops and the filter's status
+    //     reads Cancelled rather than Complete.
+    lock_or_err(&state.active_filters, "active_filters")?.retain(|_, filter| {
+        if filter.session_id == session_id {
+            filter.cancel();
+            false
+        } else {
+            true
+        }
+    });
+
     Ok(())
 }
 
@@ -1639,6 +1655,80 @@ mod tests {
 
         assert!(!state.session_pipeline_meta.lock().unwrap().contains_key("sess-pm"),
             "pipeline meta must be removed on close");
+    }
+
+    // -------------------------------------------------------------------------
+    // Watches and filters cleanup
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn close_session_inner_removes_watches() {
+        use crate::core::filter::FilterCriteria;
+        use crate::core::watch::WatchSession;
+
+        let state = make_state();
+        insert_session(&state, "sess-w", None);
+        insert_session(&state, "sess-w-other", None);
+
+        {
+            let mut watches = state.active_watches.lock().unwrap();
+            watches.insert("sess-w".to_string(), vec![Arc::new(WatchSession::new(
+                "watch-1".to_string(),
+                "sess-w".to_string(),
+                FilterCriteria::default(),
+            ))]);
+            watches.insert("sess-w-other".to_string(), vec![Arc::new(WatchSession::new(
+                "watch-2".to_string(),
+                "sess-w-other".to_string(),
+                FilterCriteria::default(),
+            ))]);
+        }
+
+        close_session_inner(&state, None, "sess-w").unwrap();
+
+        let watches = state.active_watches.lock().unwrap();
+        assert!(!watches.contains_key("sess-w"),
+            "watches must be removed on close");
+        assert!(watches.contains_key("sess-w-other"),
+            "watches for other sessions must be preserved");
+    }
+
+    #[test]
+    fn close_session_inner_removes_and_cancels_filters() {
+        use crate::core::filter::{FilterCriteria, FilterSession};
+
+        let state = make_state();
+        insert_session(&state, "sess-f", None);
+
+        let closed_filter = Arc::new(FilterSession::new(
+            "filter-1".to_string(),
+            "sess-f".to_string(),
+            FilterCriteria::default(),
+            100,
+        ));
+        let other_filter = Arc::new(FilterSession::new(
+            "filter-2".to_string(),
+            "sess-f-other".to_string(),
+            FilterCriteria::default(),
+            100,
+        ));
+        {
+            let mut filters = state.active_filters.lock().unwrap();
+            filters.insert("filter-1".to_string(), Arc::clone(&closed_filter));
+            filters.insert("filter-2".to_string(), Arc::clone(&other_filter));
+        }
+
+        close_session_inner(&state, None, "sess-f").unwrap();
+
+        let filters = state.active_filters.lock().unwrap();
+        assert!(!filters.contains_key("filter-1"),
+            "filters targeting the closed session must be removed");
+        assert!(closed_filter.is_cancelled(),
+            "removed filter must be cancelled so its background scan stops");
+        assert!(filters.contains_key("filter-2"),
+            "filters for other sessions must be preserved");
+        assert!(!other_filter.is_cancelled(),
+            "filters for other sessions must not be cancelled");
     }
 
     // -------------------------------------------------------------------------
