@@ -27,6 +27,47 @@ pub(crate) fn sha256_hex(content: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
+/// Durably write `dest`: content is written to a sibling temp file first,
+/// flushed to disk, then moved into place with `std::fs::rename`. `rename`
+/// replaces the destination atomically on the same volume (including NTFS on
+/// Windows) — so a crash or power loss mid-write can only strand the temp
+/// file, never truncate or corrupt the previous good `dest`.
+///
+/// `write_fn` receives the freshly-created temp file, writes its content, and
+/// hands ownership back (e.g. `ZipWriter::finish()` already returns `W`). On
+/// any failure the temp file is removed (best-effort) and `dest` is left
+/// untouched.
+///
+/// `tmp_ext` becomes the temp file's extension, e.g. `"ltw.tmp"` for
+/// `workspace.ltw` -> `workspace.ltw.tmp`.
+pub(crate) fn write_atomic<F>(dest: &Path, tmp_ext: &str, write_fn: F) -> Result<(), String>
+where
+    F: FnOnce(File) -> Result<File, String>,
+{
+    let tmp_path = dest.with_extension(tmp_ext);
+
+    let tmp_file = File::create(&tmp_path)
+        .map_err(|e| format!("Failed to create temp file '{}': {e}", tmp_path.display()))?;
+
+    let result = write_fn(tmp_file).and_then(|file| {
+        file.sync_all()
+            .map_err(|e| format!("Failed to flush temp file '{}': {e}", tmp_path.display()))
+    });
+
+    if let Err(e) = result {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e);
+    }
+
+    std::fs::rename(&tmp_path, dest).map_err(|e| {
+        format!(
+            "Failed to move temp file '{}' into place at '{}': {e}",
+            tmp_path.display(),
+            dest.display()
+        )
+    })
+}
+
 /// Write a JSON-serializable value as a zip entry.
 pub(crate) fn zip_write_json<T: serde::Serialize + ?Sized>(
     writer: &mut zip::ZipWriter<File>,
@@ -122,6 +163,58 @@ pub fn evict_old_workspaces(dir: &Path, keep: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write as _;
+
+    // --- write_atomic -------------------------------------------------------
+
+    /// A fresh destination (no prior file) is created with the written content.
+    #[test]
+    fn write_atomic_creates_new_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("state.json");
+
+        write_atomic(&dest, "json.tmp", |mut f| {
+            f.write_all(b"hello").map_err(|e| e.to_string())?;
+            Ok(f)
+        })
+        .unwrap();
+
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "hello");
+        // No leftover temp file.
+        assert!(!dir.path().join("state.json.tmp").exists());
+    }
+
+    /// A successful write replaces existing content in place; the previous
+    /// content is fully gone (rename, not append).
+    #[test]
+    fn write_atomic_replaces_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("state.json");
+        std::fs::write(&dest, "old-content-longer-than-new").unwrap();
+
+        write_atomic(&dest, "json.tmp", |mut f| {
+            f.write_all(b"new").map_err(|e| e.to_string())?;
+            Ok(f)
+        })
+        .unwrap();
+
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "new");
+    }
+
+    /// If `write_fn` fails, the destination (a prior good save) is left
+    /// completely untouched, and the temp file is cleaned up.
+    #[test]
+    fn write_atomic_failure_leaves_dest_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("state.json");
+        std::fs::write(&dest, "good-save").unwrap();
+
+        let result = write_atomic(&dest, "json.tmp", |_f| Err("boom".to_string()));
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "good-save");
+        assert!(!dir.path().join("state.json.tmp").exists(), "temp file must be cleaned up");
+    }
 
     /// `evict_old_workspaces` deletes the oldest files when over the keep limit.
     #[test]

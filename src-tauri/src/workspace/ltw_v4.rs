@@ -141,33 +141,37 @@ pub fn write_ltw(
         sessions: session_entries.iter().map(|(m, _, _, _)| m.clone()).collect(),
     };
 
-    let out_file = File::create(dest)
-        .map_err(|e| format!("Failed to create workspace file '{}': {e}", dest.display()))?;
-    let mut writer = zip::ZipWriter::new(out_file);
-    let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    // Written atomically: content lands in a sibling `.ltw.tmp` file first and
+    // is only renamed over `dest` once fully flushed, so a crash or power loss
+    // mid-write can never truncate the previous good auto-save (see
+    // `workspace::write_atomic`).
+    crate::workspace::write_atomic(dest, "ltw.tmp", |out_file| {
+        let mut writer = zip::ZipWriter::new(out_file);
+        let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
-    // Manifest
-    zip_write_json(&mut writer, "manifest.json", opts, &manifest)?;
+        // Manifest
+        zip_write_json(&mut writer, "manifest.json", opts, &manifest)?;
 
-    // Per-session data
-    for (idx, (_, bookmarks, analyses, meta)) in session_entries.iter().enumerate() {
-        let prefix = format!("sessions/{idx}");
-        zip_write_json(&mut writer, &format!("{prefix}/bookmarks.json"), opts, bookmarks)?;
-        zip_write_json(&mut writer, &format!("{prefix}/analyses.json"), opts, analyses)?;
-        zip_write_json(&mut writer, &format!("{prefix}/pipeline-meta.json"), opts, meta)?;
-    }
+        // Per-session data
+        for (idx, (_, bookmarks, analyses, meta)) in session_entries.iter().enumerate() {
+            let prefix = format!("sessions/{idx}");
+            zip_write_json(&mut writer, &format!("{prefix}/bookmarks.json"), opts, bookmarks)?;
+            zip_write_json(&mut writer, &format!("{prefix}/analyses.json"), opts, analyses)?;
+            zip_write_json(&mut writer, &format!("{prefix}/pipeline-meta.json"), opts, meta)?;
+        }
 
-    // Workspace-level data
-    zip_write_json(&mut writer, "pipeline-chain.json", opts, pipeline_chain)?;
-    zip_write_json(&mut writer, "editor-tabs.json", opts, editor_tabs)?;
+        // Workspace-level data
+        zip_write_json(&mut writer, "pipeline-chain.json", opts, pipeline_chain)?;
+        zip_write_json(&mut writer, "editor-tabs.json", opts, editor_tabs)?;
 
-    if let Some(layout_val) = layout {
-        zip_write_json(&mut writer, "layout.json", opts, layout_val)?;
-    }
+        if let Some(layout_val) = layout {
+            zip_write_json(&mut writer, "layout.json", opts, layout_val)?;
+        }
 
-    writer
-        .finish()
-        .map_err(|e| format!("Failed to finalise workspace zip: {e}"))?;
+        writer
+            .finish()
+            .map_err(|e| format!("Failed to finalise workspace zip: {e}"))
+    })?;
 
     Ok(saved_at)
 }

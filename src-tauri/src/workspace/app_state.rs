@@ -2,6 +2,7 @@
 //!
 //! Stored as `app-state.json` in the Tauri app data directory.
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -54,21 +55,65 @@ pub fn app_state_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(data_dir.join(APP_STATE_FILENAME))
 }
 
-/// Load the application state from disk. Returns default (empty) state if
-/// the file doesn't exist or is corrupt.
+/// Load the application state from disk.
+///
+/// A *missing* file is the normal first-run case and quietly yields the
+/// default (empty) state. A file that *exists* but fails to read or parse is
+/// a corruption signal (e.g. a crash mid-write before atomic saves existed,
+/// or disk damage) — silently discarding it would make the whole workspace
+/// list vanish with no trace. Instead it is renamed aside (`.corrupt`) so the
+/// data isn't lost, logged, and only then does loading fall back to default.
 pub fn load_app_state(path: &Path) -> AppStateFile {
     match std::fs::read_to_string(path) {
-        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
-        Err(_) => AppStateFile::default(),
+        Ok(contents) => match serde_json::from_str(&contents) {
+            Ok(state) => state,
+            Err(e) => {
+                log::warn!(
+                    "[app-state] '{}' exists but failed to parse ({e}); backing up as corrupt and falling back to default",
+                    path.display()
+                );
+                backup_corrupt_file(path);
+                AppStateFile::default()
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => AppStateFile::default(),
+        Err(e) => {
+            log::warn!(
+                "[app-state] '{}' exists but failed to read ({e}); backing up as corrupt and falling back to default",
+                path.display()
+            );
+            backup_corrupt_file(path);
+            AppStateFile::default()
+        }
     }
 }
 
-/// Save the application state to disk.
+/// Rename a corrupt/unreadable `app-state.json` aside to `app-state.json.corrupt`
+/// so the raw bytes are preserved for inspection/recovery instead of being
+/// silently discarded. Best-effort: if the rename itself fails, log and move on
+/// — `load_app_state` still falls back to the default state either way.
+fn backup_corrupt_file(path: &Path) {
+    let backup_path = path.with_extension("json.corrupt");
+    if let Err(e) = std::fs::rename(path, &backup_path) {
+        log::warn!(
+            "[app-state] failed to back up corrupt file '{}' to '{}': {e}",
+            path.display(),
+            backup_path.display()
+        );
+    }
+}
+
+/// Save the application state to disk. Written atomically (via
+/// `workspace::write_atomic`): a crash or power loss mid-write can never
+/// truncate the previously saved `app-state.json`.
 pub fn save_app_state(path: &Path, state: &AppStateFile) -> Result<(), String> {
     let json = serde_json::to_string_pretty(state)
         .map_err(|e| format!("Failed to serialize app state: {e}"))?;
-    std::fs::write(path, json)
-        .map_err(|e| format!("Failed to write app state to '{}': {e}", path.display()))
+    crate::workspace::write_atomic(path, "json.tmp", |mut file| {
+        file.write_all(json.as_bytes())
+            .map_err(|e| format!("Failed to write app state to '{}': {e}", path.display()))?;
+        Ok(file)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +251,44 @@ mod tests {
 
         let loaded = load_app_state(&path);
         assert!(loaded.workspaces.is_empty());
+    }
+
+    /// A corrupt-but-existing app-state.json must be renamed aside to
+    /// `.corrupt` (never deleted) rather than silently discarded, so the raw
+    /// bytes stay recoverable. `load_app_state` still returns the default.
+    #[test]
+    fn load_corrupt_file_is_backed_up_not_deleted() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("app-state.json");
+        let corrupt_bytes = "not valid json {{{ definitely corrupt";
+        std::fs::write(&path, corrupt_bytes).unwrap();
+
+        let loaded = load_app_state(&path);
+
+        // Falls back to default.
+        assert!(loaded.workspaces.is_empty());
+        assert!(loaded.active_workspace_id.is_none());
+
+        // Original path no longer holds the corrupt content...
+        assert!(!path.exists(), "corrupt file must be moved aside, not left in place");
+
+        // ...but the corrupt bytes survive at the backup path.
+        let backup_path = dir.path().join("app-state.json.corrupt");
+        assert!(backup_path.exists(), "corrupt backup must be created");
+        assert_eq!(std::fs::read_to_string(&backup_path).unwrap(), corrupt_bytes);
+    }
+
+    /// A missing file is the ordinary first-run case: default state, no
+    /// spurious `.corrupt` backup created.
+    #[test]
+    fn load_missing_file_creates_no_backup() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("app-state.json");
+
+        let loaded = load_app_state(&path);
+
+        assert!(loaded.workspaces.is_empty());
+        assert!(!dir.path().join("app-state.json.corrupt").exists());
     }
 
     #[test]
