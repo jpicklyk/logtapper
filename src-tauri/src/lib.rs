@@ -289,6 +289,22 @@ pub fn run() {
                 }
             }
 
+            // Load the MCP open-file allowlist from disk (default-deny: stays
+            // empty on a missing or corrupt file). Gates the future
+            // `logtapper_open_file` MCP bridge endpoint — see
+            // commands/bridge_access.rs.
+            let mcp_allowlist_path = data_dir.join("mcp_open_allowlist.json");
+            if let Ok(json) = std::fs::read_to_string(&mcp_allowlist_path) {
+                match serde_json::from_str::<commands::bridge_access::McpOpenAllowlist>(&json) {
+                    Ok(cfg) => {
+                        if let Ok(mut stored) = state.mcp_open_allowlist.lock() {
+                            *stored = cfg.allowed_dirs;
+                        }
+                    }
+                    Err(e) => eprintln!("Failed to parse mcp_open_allowlist.json: {e}"),
+                }
+            }
+
             // Resolve the marketplace directory path.
             // In dev builds, resolve relative to the running executable so the path
             // is machine-independent. The exe lives at src-tauri/target/debug/ so
@@ -478,6 +494,9 @@ pub fn run() {
             commands::anonymizer::set_anonymizer_config,
             commands::anonymizer::test_anonymizer,
             commands::anonymizer::get_pii_mappings,
+            // MCP bridge open-file allowlist (gates the future logtapper_open_file endpoint)
+            commands::bridge_access::get_mcp_open_allowlist,
+            commands::bridge_access::set_mcp_open_allowlist,
             // W1C -- StateTracker query commands
             commands::state_tracker::get_state_at_line,
             commands::state_tracker::get_state_transitions,
