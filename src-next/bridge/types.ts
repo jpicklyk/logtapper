@@ -853,6 +853,11 @@ export interface LoadWorkspaceSessionData {
 
 export interface LoadWorkspaceV4Result {
   workspaceName: string;
+  /** Stable workspace id from the manifest, or null for legacy files. Fed to
+   *  Q3's `assessRestoreCandidate` as the candidate's `workspaceId`. */
+  workspaceId: string | null;
+  /** Manifest savedAt epoch-ms — Q3's timestamp check against `lastAutoSaveAt`. */
+  savedAt: number;
   sessions: LtwManifestSession[];
   pipelineChain: LtwPipelineChain;
   editorTabs: LtwEditorTab[];

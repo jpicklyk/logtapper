@@ -153,6 +153,13 @@ export type AppEvents = {
    *  the path + timestamp onto the entry so app-state.json can point at the
    *  crash-recovery file. Targeted by `workspaceId`. */
   'workspace:auto-saved':    { workspaceId: string; path: string; savedAt: number };
+  /** Fired by Q2's startup restore when the active workspace's candidate
+   *  auto-save `.ltw` failed Q3's trust gate (`assessRestoreCandidate` returned
+   *  `untrusted`). The app has already fallen back to the plain-localStorage
+   *  plan (no regression); this drives a non-blocking notice offering to open
+   *  the file as a NEW workspace. `savedAt` dates it, `reasons` are the machine
+   *  codes from the assessment, `candidatePath` is what "Open it" loads. */
+  'workspace:untrusted-autosave': { workspaceId: string; candidatePath: string; savedAt: number; reasons: string[] };
 
   // ── File operations ──────────────────────────────────────────────────────
   /** Fired when an .lts file import is skipped because it's already open. */

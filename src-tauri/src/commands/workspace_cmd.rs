@@ -118,7 +118,7 @@ pub async fn save_workspace_v4(
     autosave::cache_envelope(
         &state,
         WorkspaceEnvelope {
-            workspace_id: options.workspace_id,
+            workspace_id: options.workspace_id.clone(),
             workspace_name: options.workspace_name.clone(),
             ltw_path: Some(options.dest_path.clone()),
             editor_tabs: options.editor_tabs.clone(),
@@ -135,6 +135,7 @@ pub async fn save_workspace_v4(
     ltw_v4::write_ltw(
         Path::new(&options.dest_path),
         &options.workspace_name,
+        Some(&options.workspace_id),
         &entry_refs(&entries),
         &chain,
         &options.editor_tabs,
@@ -187,7 +188,7 @@ pub async fn auto_save_workspace(
     autosave::cache_envelope(
         &state,
         WorkspaceEnvelope {
-            workspace_id: options.workspace_id,
+            workspace_id: options.workspace_id.clone(),
             workspace_name: options.workspace_name.clone(),
             ltw_path: None,
             editor_tabs: options.editor_tabs.clone(),
@@ -205,6 +206,7 @@ pub async fn auto_save_workspace(
         ltw_v4::write_ltw(
             &dest,
             &options.workspace_name,
+            Some(&options.workspace_id),
             &entry_refs(&entries),
             &chain,
             &options.editor_tabs,
@@ -285,6 +287,13 @@ pub struct LoadWorkspaceSessionData {
 #[serde(rename_all = "camelCase")]
 pub struct LoadWorkspaceResult {
     pub workspace_name: String,
+    /// Stable workspace id from the manifest, or null for legacy files. Q3's
+    /// trust gate (`assessRestoreCandidate`) matches this against the app-state
+    /// entry's id before a silent restore.
+    pub workspace_id: Option<String>,
+    /// Manifest `savedAt` (epoch-ms). Q3 compares it against the recorded
+    /// `lastAutoSaveAt` when the candidate is the auto-save.
+    pub saved_at: i64,
     pub sessions: Vec<LtwManifestSession>,
     pub pipeline_chain: LtwPipelineChain,
     pub editor_tabs: Vec<LtwEditorTab>,
@@ -307,6 +316,8 @@ pub async fn load_workspace_v4(path: String) -> Result<LoadWorkspaceResult, Stri
 
     Ok(LoadWorkspaceResult {
         workspace_name: data.manifest.workspace_name,
+        workspace_id: data.manifest.workspace_id,
+        saved_at: data.manifest.saved_at,
         sessions: data.manifest.sessions,
         pipeline_chain: data.pipeline_chain,
         editor_tabs: data.editor_tabs,

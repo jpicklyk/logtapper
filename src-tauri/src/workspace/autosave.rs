@@ -249,6 +249,7 @@ pub fn write_flush_blocking(
         ltw_v4::write_ltw(
             dest,
             &envelope.workspace_name,
+            Some(&envelope.workspace_id),
             &refs,
             &envelope.pipeline_chain,
             &envelope.editor_tabs,
@@ -436,6 +437,9 @@ mod tests {
         let data = ltw_v4::read_ltw(&dest).unwrap();
         assert_eq!(data.manifest.workspace_name, "ws-ws-1");
         assert_eq!(data.manifest.saved_at, saved_at);
+        // The flusher stamps the envelope's workspace id into the manifest so
+        // Q3's trust gate can match it against the app-state entry on restore.
+        assert_eq!(data.manifest.workspace_id.as_deref(), Some("ws-1"));
 
         // app-state.json: target entry updated, other entry preserved.
         let reloaded = load_app_state(&app_state_path);
