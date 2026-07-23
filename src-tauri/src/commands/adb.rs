@@ -801,8 +801,11 @@ fn flush_batch(
     }
 
     // ── Step 2b: Apply PII anonymization to ViewLines (if enabled) ────────────
-    // Extract the anonymizer for this session (same extract-use-reinsert pattern
-    // as stream_processor_state). Using the same instance across batches keeps
+    // Extract the anonymizer for this session (extract-use-reinsert; unlike the
+    // reporter/transformer/tracker snapshots this is a move, not a clone —
+    // token maps grow with the capture, and no writer merges into the entry
+    // mid-batch, so cloning per batch would cost without protecting anything).
+    // Using the same instance across batches keeps
     // token numbering stable: the same raw value always maps to the same token.
     let anon: Option<LogAnonymizer> = {
         match state.stream_anonymizers.lock() {
@@ -856,13 +859,18 @@ fn flush_batch(
             };
 
             if !transformer_defs.is_empty() {
-                // Extract ALL transformer states in one lock (consolidated pattern)
+                // Snapshot ALL transformer states in one lock. Clone (not
+                // remove) — same as the reporter/tracker snapshots below — so
+                // the map keeps the last-committed state while this batch is
+                // in flight: a mid-batch `update_stream_transformers` operates
+                // on real state rather than a hole, and nothing is lost when
+                // the epoch guard drops this batch's re-insert.
                 let mut transformer_states: HashMap<String, crate::processors::transformer::types::ContinuousTransformerState> = {
                     match state.stream_transformer_state.lock() {
-                        Ok(mut st) => {
-                            if let Some(inner) = st.get_mut(session_id) {
+                        Ok(st) => {
+                            if let Some(inner) = st.get(session_id) {
                                 transformer_ids.iter()
-                                    .filter_map(|id| inner.remove(id).map(|s| (id.clone(), s)))
+                                    .filter_map(|id| inner.get(id).cloned().map(|s| (id.clone(), s)))
                                     .collect()
                             } else {
                                 HashMap::new()
@@ -1044,13 +1052,19 @@ fn flush_batch(
             };
 
             if let Some(partitioned) = partitioned {
-                // Extract continuous states from AppState
+                // Snapshot continuous states from AppState. Clone (not remove)
+                // — same as trackers below — so the map keeps the
+                // last-committed state during processing: a mid-batch
+                // `update_stream_processors` operates on real accumulated
+                // state rather than a hole, and nothing is lost when the
+                // epoch guard drops this batch's re-insert. Cheap: streaming
+                // drains emissions/matches between batches (drain=true).
                 let reporter_states: HashMap<String, ContinuousRunState> = state.stream_processor_state.lock()
                     .ok()
-                    .and_then(|mut sp| {
-                        sp.get_mut(session_id).map(|inner| {
+                    .and_then(|sp| {
+                        sp.get(session_id).map(|inner| {
                             reporter_ids.iter()
-                                .filter_map(|id| inner.remove(id).map(|s| (id.clone(), s)))
+                                .filter_map(|id| inner.get(id.as_str()).cloned().map(|s| (id.clone(), s)))
                                 .collect()
                         })
                     })

@@ -438,6 +438,14 @@ impl RunResult {
 /// Saved state for a processor running continuously on a live ADB stream.
 /// Between batches the `ProcessorRun` is consumed; state is stored here and
 /// restored via `ProcessorRun::new_seeded()` for each new batch.
+///
+/// Clone is required by `flush_batch`'s snapshot-extract: the stored state is
+/// cloned (not moved) out of `stream_processor_state`, so the map keeps the
+/// last-committed state while a batch is in flight. Cheap in streaming mode:
+/// `into_continuous_state(.., drain=true)` empties `emissions` /
+/// `matched_line_nums` between batches, and `history`'s `LineContext`s are
+/// `Arc`-backed.
+#[derive(Clone)]
 pub struct ContinuousRunState {
     pub vars: VarStore,
     pub emissions: Vec<Emission>,
