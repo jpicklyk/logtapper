@@ -65,11 +65,11 @@ pub struct AppState {
     pub stream_processor_state: Mutex<HashMap<String, HashMap<String, ContinuousRunState>>>,
     /// Global anonymizer configuration (persisted to disk).
     pub anonymizer_config: Mutex<AnonymizerConfig>,
-    /// Directories an MCP client may open files from via the future
+    /// Directories an MCP client may open files from via the
     /// `logtapper_open_file` endpoint (raw strings, as persisted in
     /// `mcp_open_allowlist.json`). Default-deny: empty means nothing is
     /// permitted. See `commands/bridge_access.rs`.
-    pub mcp_open_allowlist: Mutex<Vec<String>>,
+    pub mcp_open_allowlist: Mutex<bridge_access::McpOpenAllowlist>,
     /// PII token->original mappings from the last pipeline run per session.
     pub pii_mappings: Mutex<HashMap<String, HashMap<String, String>>>,
     /// Persistent anonymizers for live ADB stream sessions.
@@ -167,7 +167,7 @@ impl AppState {
             indexing_tasks: Mutex::new(HashMap::new()),
             stream_processor_state: Mutex::new(HashMap::new()),
             anonymizer_config: Mutex::new(AnonymizerConfig::with_defaults()),
-            mcp_open_allowlist: Mutex::new(Vec::new()),
+            mcp_open_allowlist: Mutex::new(bridge_access::McpOpenAllowlist::default()),
             pii_mappings: Mutex::new(HashMap::new()),
             stream_anonymizers: Mutex::new(HashMap::new()),
             mcp_anonymizers: Mutex::new(HashMap::new()),

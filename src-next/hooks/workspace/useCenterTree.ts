@@ -54,6 +54,15 @@ export interface CenterTreeHandle {
 // Hook
 // ---------------------------------------------------------------------------
 
+/** All tab ids currently bound to `sessionId` in a tab→session map. */
+function tabIdsForSession(map: Map<string, string>, sessionId: string): string[] {
+  const ids: string[] = [];
+  for (const [tabId, sid] of map.entries()) {
+    if (sid === sessionId) ids.push(tabId);
+  }
+  return ids;
+}
+
 export function useCenterTree(
   options: UseCenterTreeOptions,
   savedCenterTree: SplitNode,
@@ -479,13 +488,11 @@ export function useCenterTree(
     // survives app restart via the startup restore in useFileSession.
     const onStreamSaved = (e: { sessionId: string; path: string }) => {
       // Reverse-lookup tabId from tabSessionMap (tabId → sessionId).
-      for (const [tabId, sid] of tabSessionMapRef.current.entries()) {
-        if (sid === e.sessionId) {
-          const tabPaths = JSON.parse(localStorage.getItem('logtapper_tab_paths') ?? '{}');
-          tabPaths[tabId] = e.path;
-          localStorage.setItem('logtapper_tab_paths', JSON.stringify(tabPaths));
-          break;
-        }
+      const [tabId] = tabIdsForSession(tabSessionMapRef.current, e.sessionId);
+      if (tabId) {
+        const tabPaths = JSON.parse(localStorage.getItem('logtapper_tab_paths') ?? '{}');
+        tabPaths[tabId] = e.path;
+        localStorage.setItem('logtapper_tab_paths', JSON.stringify(tabPaths));
       }
     };
 
@@ -527,10 +534,7 @@ export function useCenterTree(
     onBridgeSessionClosed(({ sessionId }) => {
       if (cancelled) return;
       // Snapshot matching tabIds before mutating — closeTab deletes map entries.
-      const tabIds: string[] = [];
-      for (const [tabId, sid] of tabSessionMapRef.current.entries()) {
-        if (sid === sessionId) tabIds.push(tabId);
-      }
+      const tabIds = tabIdsForSession(tabSessionMapRef.current, sessionId);
       for (const tabId of tabIds) {
         // treeRef.current updates synchronously between closeTab calls, so each
         // lookup sees the latest tree. Missing tab → skip (no throw).

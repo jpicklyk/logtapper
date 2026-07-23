@@ -358,6 +358,13 @@ async fn h_status(State(handle): State<Handle>) -> Json<Value> {
     }))
 }
 
+/// Build a JSON error response with a stable machine-readable `code` for MCP
+/// clients. Shared by the write-style handlers (`h_open_file`,
+/// `h_close_session`) so every error body has the same `{ error, code }` shape.
+fn err(status: StatusCode, message: impl Into<String>, code: &str) -> Response {
+    (status, Json(json!({ "error": message.into(), "code": code }))).into_response()
+}
+
 // ---------------------------------------------------------------------------
 // POST /mcp/open_file   { "path": "C:\\logs\\device.log" }
 // ---------------------------------------------------------------------------
@@ -396,7 +403,7 @@ async fn h_open_file(
     let state = handle.state::<AppState>();
 
     // Allowlist: lock, clone, drop.
-    let allowed: Vec<String> = state.mcp_open_allowlist.lock().unwrap().clone();
+    let allowed: Vec<String> = state.mcp_open_allowlist.lock().unwrap().allowed_dirs.clone();
 
     // Canonical paths of already-open file-backed sessions (auto-permit reopen).
     // Skip streams (file_path=None) and any path that no longer canonicalizes.
@@ -412,16 +419,12 @@ async fn h_open_file(
     };
 
     match validate_open_path(&allowed, &open_paths, &body.path) {
-        Err(OpenAccessError::NotAllowed) => (
-            StatusCode::FORBIDDEN,
-            Json(json!({ "error": "path is not allowed", "code": "NOT_ALLOWED" })),
-        )
-            .into_response(),
-        Err(OpenAccessError::InvalidPath(msg)) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": msg, "code": "INVALID_PATH" })),
-        )
-            .into_response(),
+        Err(OpenAccessError::NotAllowed) => {
+            err(StatusCode::FORBIDDEN, "path is not allowed", "NOT_ALLOWED")
+        }
+        Err(OpenAccessError::InvalidPath(msg)) => {
+            err(StatusCode::BAD_REQUEST, msg, "INVALID_PATH")
+        }
         Ok(canonical) => {
             let canonical_str = canonical.to_string_lossy().to_string();
             match crate::commands::files::open_file_inner(&state, &handle, &canonical_str) {
@@ -433,17 +436,13 @@ async fn h_open_file(
                         "isIndexing": first.is_indexing,
                     }))
                     .into_response(),
-                    None => (
+                    None => err(
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({ "error": "open produced no session", "code": "OPEN_FAILED" })),
-                    )
-                        .into_response(),
+                        "open produced no session",
+                        "OPEN_FAILED",
+                    ),
                 },
-                Err(e) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": e, "code": "OPEN_FAILED" })),
-                )
-                    .into_response(),
+                Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e, "OPEN_FAILED"),
             }
         }
     }
@@ -479,20 +478,12 @@ async fn h_close_session(
     {
         let sessions = state.sessions.lock().unwrap();
         if !sessions.contains_key(&session_id) {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({ "error": "session not found", "code": "NOT_FOUND" })),
-            )
-                .into_response();
+            return err(StatusCode::NOT_FOUND, "session not found", "NOT_FOUND");
         }
     }
 
     if let Err(e) = crate::commands::files::close_session_inner(&state, Some(&handle), &session_id) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": e, "code": "CLOSE_FAILED" })),
-        )
-            .into_response();
+        return err(StatusCode::INTERNAL_SERVER_ERROR, e, "CLOSE_FAILED");
     }
 
     // Notify the frontend so it closes any pane/tab bound to this session.

@@ -1,8 +1,8 @@
-//! Access-control gate for the future `logtapper_open_file` MCP bridge endpoint.
+//! Access-control gate for the `logtapper_open_file` MCP bridge endpoint.
 //!
 //! The MCP bridge (`mcp_bridge.rs`) is an unauthenticated Axum server bound to
-//! `127.0.0.1:40404`. A future `open_file` route would let an MCP client read
-//! an arbitrary path off disk — this module is the gate for that route:
+//! `127.0.0.1:40404`. The `open_file` route lets an MCP client read an
+//! arbitrary path off disk — this module is the gate that route calls first:
 //!
 //! - **Config plumbing**: [`McpOpenAllowlist`], persisted to
 //!   `{app_data_dir}/mcp_open_allowlist.json`, mirroring the anonymizer config
@@ -10,12 +10,9 @@
 //!   `AppState` + `get_*`/`set_*` Tauri commands + startup load in
 //!   `lib.rs::setup()`). Default-deny: an empty `allowed_dirs` list.
 //! - **Path validation**: [`validate_open_path`], the security-critical
-//!   function a future `open_file` handler must call before touching the
-//!   filesystem on behalf of an MCP client. See its doc comment for the full
-//!   validation order and rationale.
-//!
-//! This module intentionally does NOT wire up an `open_file` route — only the
-//! allowlist config and the validator it will call.
+//!   function the `open_file` handler (`mcp_bridge::h_open_file`) calls before
+//!   touching the filesystem on behalf of an MCP client. See its doc comment
+//!   for the full validation order and rationale.
 
 use std::path::{Path, PathBuf};
 
@@ -28,7 +25,7 @@ use crate::commands::{lock_or_err, AppState};
 // Config
 // ---------------------------------------------------------------------------
 
-/// Directories an MCP client is permitted to open files from via the future
+/// Directories an MCP client is permitted to open files from via the
 /// `logtapper_open_file` endpoint. Persisted verbatim as the user entered
 /// them (see [`validate_open_path`] for how entries are resolved/compared).
 ///
@@ -56,7 +53,7 @@ fn persist_mcp_open_allowlist(app: &AppHandle, allowlist: &McpOpenAllowlist) -> 
 #[tauri::command]
 pub fn get_mcp_open_allowlist(state: State<'_, AppState>) -> Vec<String> {
     match lock_or_err(&state.mcp_open_allowlist, "mcp_open_allowlist") {
-        Ok(dirs) => dirs.clone(),
+        Ok(cfg) => cfg.allowed_dirs.clone(),
         Err(_) => Vec::new(),
     }
 }
@@ -74,7 +71,7 @@ pub async fn set_mcp_open_allowlist(
     let allowlist = McpOpenAllowlist { allowed_dirs: dirs };
     persist_mcp_open_allowlist(&app, &allowlist)?;
     let mut stored = lock_or_err(&state.mcp_open_allowlist, "mcp_open_allowlist")?;
-    *stored = allowlist.allowed_dirs;
+    *stored = allowlist;
     Ok(())
 }
 
@@ -134,8 +131,8 @@ fn strip_verbatim_prefix(p: &Path) -> PathBuf {
 /// bad allowlist entry (or reject an unresolvable candidate) rather than
 /// silently comparing against a non-canonical string.
 ///
-/// Exported so the future `open_file` endpoint and `close_stale_sessions`
-/// (`commands/files.rs`) can share this exact comparison form instead of
+/// Exported so the `open_file` endpoint and `close_stale_sessions`
+/// (`commands/files.rs`) share this exact comparison form instead of
 /// growing a third variant of the canonicalize-strip-lowercase logic.
 pub fn canonical_compare_form(p: &Path) -> Option<String> {
     let canonical = std::fs::canonicalize(p).ok()?;
