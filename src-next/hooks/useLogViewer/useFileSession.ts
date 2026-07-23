@@ -1,9 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import type { SourceType } from '../../bridge/types';
+import type { SourceType, LoadResult } from '../../bridge/types';
 import { isBugreportLike } from '../../bridge/types';
 import { loadLogFile, closeSession as closeSessionCmd, getLines } from '../../bridge/commands';
-import { onFileIndexProgress, onFileIndexComplete } from '../../bridge/events';
+import { onFileIndexProgress, onFileIndexComplete, onBridgeSessionOpened } from '../../bridge/events';
 import { preSeedSession, clearPreSeed } from '../../cache';
 import { useSessionCoreCtx, useSessionProgressCtx } from '../../context/SessionContext';
 import { bus, emitSessionLoadedWithFocus } from '../../events/bus';
@@ -13,6 +13,7 @@ import { diag, diagStart, diagEnd } from '../../utils/diagnostics';
 import type { SharedLogViewerRefs } from './types';
 import { planExtraSessionImport } from './multiSessionImport';
 import { genKeyFor } from './loadGeneration';
+import { planBridgeSessionOpen } from './bridgeSessionOpen';
 import { readTabPaths, saveTabPaths } from '../workspace/workspacePersistence';
 
 const DEFAULT_PANE_ID = 'primary';
@@ -56,6 +57,81 @@ export function useFileSession(
   // Throttle totalLines → sessions update to at most every 250ms (reduces LogViewer re-renders
   // on large file indexing which can emit ~1000 progress events for a 1M-line file).
   const lastTotalLinesUpdateRef = useRef(0);
+
+  // The "post-load half" of an open: given an ALREADY-loaded backend session
+  // (its LoadResult), register it and create/activate its logviewer tab. Shared
+  // by `loadFile` (after its load_log_file IPC returns) and the bridge
+  // `session-opened` listener (whose session was opened out-of-band by the MCP
+  // bridge — so it must run this WITHOUT re-invoking load_log_file, which would
+  // close+reopen the session). Tab creation itself is delegated to useCenterTree
+  // via `emitSessionLoadedWithFocus` — this never mutates the tree directly.
+  const registerLoadedSession = useCallback((
+    result: LoadResult,
+    targetPaneId: string,
+    tabId: string,
+    opts: { isNewTab: boolean; previousSessionId?: string; path: string },
+  ) => {
+    const { isNewTab, previousSessionId, path } = opts;
+
+    // Optimistic fetch: pre-populate cache while React propagates session state.
+    // When useViewCache allocates the handle it will consume these pre-seeded lines,
+    // making the FetchScheduler's first viewport fetch a cache hit.
+    diag('file-load', 'optimistic fetch: requesting first 100 lines');
+    getLines({
+      sessionId: result.sessionId,
+      mode: { mode: 'Full' },
+      offset: 0,
+      count: 100,
+      context: 0,
+    }).then((window) => {
+      diag('file-load', 'optimistic fetch: received', { lines: window.lines.length });
+      preSeedSession(result.sessionId, window.lines);
+    }).catch((err) => { console.warn('[useFileSession] optimistic fetch failed (non-fatal):', err); });
+
+    diag('session', 'registerSession', { paneId: targetPaneId, sessionId: result.sessionId, isNewTab, sourceType: result.sourceType });
+    registerSession(targetPaneId, result);
+
+    if (!isNewTab) {
+      diag('session', 'activateSessionForPane', { paneId: targetPaneId, sessionId: result.sessionId });
+      activateSessionForPane(targetPaneId, result.sessionId);
+    }
+
+    if (result.isIndexing) {
+      setIndexingProgressCtx(result.sessionId, { linesIndexed: 0, totalLines: 0, percent: 0, done: false });
+    }
+
+    const tabPathsSave = readTabPaths(); tabPathsSave[tabId] = path; saveTabPaths(tabPathsSave);
+
+    diag('bus', 'emitting session:loaded + session:focused');
+    emitSessionLoadedWithFocus(
+      {
+        sourceName: result.sourceName,
+        sourceType: result.sourceType as SourceType,
+        sessionId: result.sessionId,
+        paneId: targetPaneId,
+        tabId,
+        isNewTab,
+        previousSessionId,
+        readOnly: isBugreportLike(result.sourceType) ? true : undefined,
+        isIndexing: result.isIndexing,
+      },
+      { sessionId: result.sessionId, paneId: targetPaneId },
+    );
+
+    if (isBugreportLike(result.sourceType)) {
+      bus.emit('session:dumpstate:opened', {
+        sessionId: result.sessionId,
+        paneId: targetPaneId,
+        sourceName: result.sourceName,
+      });
+    } else if (result.sourceType === 'Logcat') {
+      bus.emit('session:logcat:opened', {
+        sessionId: result.sessionId,
+        paneId: targetPaneId,
+        sourceName: result.sourceName,
+      });
+    }
+  }, [registerSession, activateSessionForPane, setIndexingProgressCtx]);
 
   const loadFile = useCallback(async (path: string, paneId?: string, existingTabId?: string) => {
     // Prevent duplicate imports: if this .lts file already has an active session, skip.
@@ -135,64 +211,8 @@ export function useFileSession(
         return;
       }
 
-      // Optimistic fetch: pre-populate cache while React propagates session state.
-      // When useViewCache allocates the handle it will consume these pre-seeded lines,
-      // making the FetchScheduler's first viewport fetch a cache hit.
-      diag('file-load', 'optimistic fetch: requesting first 100 lines');
-      getLines({
-        sessionId: result.sessionId,
-        mode: { mode: 'Full' },
-        offset: 0,
-        count: 100,
-        context: 0,
-      }).then((window) => {
-        diag('file-load', 'optimistic fetch: received', { lines: window.lines.length });
-        preSeedSession(result.sessionId, window.lines);
-      }).catch((err) => { console.warn('[useFileSession] optimistic fetch failed (non-fatal):', err); });
-
-      diag('session', 'registerSession', { paneId: targetPaneId, sessionId: result.sessionId, isNewTab, sourceType: result.sourceType });
-      registerSession(targetPaneId, result);
-
-      if (!isNewTab) {
-        diag('session', 'activateSessionForPane', { paneId: targetPaneId, sessionId: result.sessionId });
-        activateSessionForPane(targetPaneId, result.sessionId);
-      }
-
-      if (result.isIndexing) {
-        setIndexingProgressCtx(result.sessionId, { linesIndexed: 0, totalLines: 0, percent: 0, done: false });
-      }
-
-      const tabPathsSave = readTabPaths(); tabPathsSave[tabId] = path; saveTabPaths(tabPathsSave);
-
-      diag('bus', 'emitting session:loaded + session:focused');
-      emitSessionLoadedWithFocus(
-        {
-          sourceName: result.sourceName,
-          sourceType: result.sourceType as SourceType,
-          sessionId: result.sessionId,
-          paneId: targetPaneId,
-          tabId,
-          isNewTab,
-          previousSessionId,
-          readOnly: isBugreportLike(result.sourceType) ? true : undefined,
-          isIndexing: result.isIndexing,
-        },
-        { sessionId: result.sessionId, paneId: targetPaneId },
-      );
-
-      if (isBugreportLike(result.sourceType)) {
-        bus.emit('session:dumpstate:opened', {
-          sessionId: result.sessionId,
-          paneId: targetPaneId,
-          sourceName: result.sourceName,
-        });
-      } else if (result.sourceType === 'Logcat') {
-        bus.emit('session:logcat:opened', {
-          sessionId: result.sessionId,
-          paneId: targetPaneId,
-          sourceName: result.sourceName,
-        });
-      }
+      // Post-load half: register the session and create/activate its tab.
+      registerLoadedSession(result, targetPaneId, tabId, { isNewTab, previousSessionId, path });
 
       // Register additional sessions from multi-session .lts import.
       const extraActions = planExtraSessionImport(
@@ -248,9 +268,69 @@ export function useFileSession(
     refs.activeLogPaneIdRef, refs.paneSessionMapRef,
     refs.streamingPaneIdRef,
     cacheManager, registerSession, activateSessionForPane, setLoadingPane, setErrorPane,
-    setIndexingProgressCtx,
+    registerLoadedSession,
     deps.resetSessionState, deps.detachStream,
   ]);
+
+  // ---------------------------------------------------------------------------
+  // Bridge/agent-initiated session open (Tauri `session-opened` event)
+  // ---------------------------------------------------------------------------
+  //
+  // The MCP bridge can open a file out-of-band (POST /mcp/open_file). The backend
+  // session ALREADY exists by the time this fires, so the frontend runs ONLY the
+  // post-load half (`registerLoadedSession`) — it must NOT call loadFile /
+  // load_log_file again, which would close+reopen the session. Tab creation is the
+  // same path a normal open uses: emit `session:loading` then `session:loaded`
+  // (via registerLoadedSession), which useCenterTree turns into a tab + a
+  // tabSessionMap binding. No duplication of tab logic.
+  //
+  // Idempotency (rule 6 targeting + no duplicate tab): the decision is made by the
+  // pure `planBridgeSessionOpen`, keyed on the payload's sessionId. Auto-permit
+  // reopen re-fires `session-opened` with the SAME deterministic sessionId; because
+  // session registration and tab creation move in lockstep, `sessions.has(id)` is
+  // an exact proxy for "a tab already exists" — so an already-open session is
+  // skipped (no second tab). A missing sessionId is also a safe no-op.
+  //
+  // StrictMode-safe async listener: cancelled flag + captured unlisten +
+  // immediate-unregister-if-cleanup-already-ran.
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: UnlistenFn | null = null;
+
+    onBridgeSessionOpened((payload) => {
+      if (cancelled) return;
+      const plan = planBridgeSessionOpen({
+        sessionId: payload.sessionId,
+        activeLogPaneId: refs.activeLogPaneIdRef.current,
+        storedFirstPaneId: getStoredFirstPaneId() ?? null,
+        defaultPaneId: DEFAULT_PANE_ID,
+        paneSessionMap: refs.paneSessionMapRef.current,
+        isSessionOpen: (sid) => refs.sessionsRef.current.has(sid),
+      });
+      if (plan.kind !== 'open') {
+        diag('file-load', 'bridge session-opened — no-op', { sessionId: payload.sessionId, reason: plan.reason });
+        return;
+      }
+      const tabId = crypto.randomUUID();
+      const label = payload.filePath?.split(/[\\/]/).pop() ?? payload.sourceName;
+      diag('file-load', 'bridge session-opened — creating tab', { sessionId: payload.sessionId, paneId: plan.targetPaneId, tabId, isNewTab: plan.isNewTab });
+      // Placeholder tab first (mirrors the normal open), then the post-load half.
+      bus.emit('session:loading', { paneId: plan.targetPaneId, tabId, label, isNewTab: plan.isNewTab });
+      registerLoadedSession(payload, plan.targetPaneId, tabId, {
+        isNewTab: plan.isNewTab,
+        previousSessionId: plan.previousSessionId,
+        path: payload.filePath ?? '',
+      });
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [registerLoadedSession, refs.activeLogPaneIdRef, refs.paneSessionMapRef, refs.sessionsRef]);
 
   // Startup restore of open files is now owned by `useStartupRestore` (design
   // §Q2) — it drives the same union/dedup planner used by explicit opens and

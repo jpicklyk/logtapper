@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { AdbStreamStopped, AdbTrackerUpdate, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress, BookmarkUpdateEvent, AnalysisUpdateEvent, WatchMatchEvent } from './types';
+import type { AdbStreamStopped, AdbTrackerUpdate, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress, BookmarkUpdateEvent, AnalysisUpdateEvent, WatchMatchEvent, LoadResult } from './types';
 
 // ---------------------------------------------------------------------------
 // ADB streaming events
@@ -162,6 +162,29 @@ export function onBridgeSessionClosed(
   cb: (payload: SessionClosedPayload) => void,
 ): Promise<UnlistenFn> {
   return listen<SessionClosedPayload>('session-closed', (e) => cb(e.payload));
+}
+
+// ---------------------------------------------------------------------------
+// Session opened by the MCP bridge (agent-initiated open)
+// ---------------------------------------------------------------------------
+
+/** Payload for the `session-opened` Tauri event: the full `LoadResult` of the
+ *  freshly bridge-opened session (camelCase mirror of the Rust struct). */
+export type SessionOpenedPayload = LoadResult;
+
+/**
+ * Emitted by the MCP bridge AFTER it opens a file on behalf of an agent
+ * (POST /mcp/open_file). The UI open path does NOT emit this — it builds its own
+ * tab — only bridge-initiated opens, which are otherwise invisible to the
+ * frontend. The consumer creates + activates a logviewer tab for the
+ * already-loaded session, reusing the normal post-load path (never re-invoking
+ * `load_log_file`). Idempotent: a reopen re-fires this with the same
+ * (deterministic) `sessionId`, and the consumer must not spawn a duplicate tab.
+ */
+export function onBridgeSessionOpened(
+  cb: (payload: SessionOpenedPayload) => void,
+): Promise<UnlistenFn> {
+  return listen<SessionOpenedPayload>('session-opened', (e) => cb(e.payload));
 }
 
 // ---------------------------------------------------------------------------

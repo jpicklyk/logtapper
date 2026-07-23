@@ -429,13 +429,26 @@ async fn h_open_file(
             let canonical_str = canonical.to_string_lossy().to_string();
             match crate::commands::files::open_file_inner(&state, &handle, &canonical_str) {
                 Ok(results) => match results.first() {
-                    Some(first) => Json(json!({
-                        "sessionId": first.session_id,
-                        "sourceType": first.source_type,
-                        "totalLines": first.total_lines,
-                        "isIndexing": first.is_indexing,
-                    }))
-                    .into_response(),
+                    Some(first) => {
+                        // Notify the frontend so it creates a logviewer tab for this
+                        // already-loaded session — the symmetric half of `session-closed`.
+                        // Emitted HERE, from the handler, NOT from `open_file_inner`: the
+                        // UI-initiated open path already builds its own tab and must stay
+                        // behavior-unchanged; a bridge-initiated open is otherwise invisible
+                        // to the frontend unless the bridge tells it. The payload is the full
+                        // LoadResult (camelCase) so the frontend can reuse its normal
+                        // post-load tab logic against an already-loaded session. Reopening the
+                        // same file re-fires this with the SAME (deterministic) sessionId — the
+                        // frontend listener is idempotent and will not spawn a duplicate tab.
+                        let _ = handle.emit("session-opened", first);
+                        Json(json!({
+                            "sessionId": first.session_id,
+                            "sourceType": first.source_type,
+                            "totalLines": first.total_lines,
+                            "isIndexing": first.is_indexing,
+                        }))
+                        .into_response()
+                    }
                     None => err(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "open produced no session",
