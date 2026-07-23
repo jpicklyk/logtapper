@@ -13,7 +13,9 @@ use std::collections::HashMap;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
+    http::StatusCode,
     middleware,
+    response::{IntoResponse, Response},
     routing::{delete, get, post},
 };
 use serde::Deserialize;
@@ -121,6 +123,7 @@ pub async fn start(handle: Handle, shutdown_rx: tokio::sync::oneshot::Receiver<(
     // Clone handle for the router state; keep original for the port flag.
     let router = Router::new()
         .route("/mcp/status", get(h_status))
+        .route("/mcp/open_file", post(h_open_file))
         .route("/mcp/sessions", get(h_sessions))
         .route("/mcp/sessions/{session_id}/query", get(h_query))
         .route("/mcp/sessions/{session_id}/pipeline", get(h_pipeline))
@@ -352,6 +355,97 @@ async fn h_status(State(handle): State<Handle>) -> Json<Value> {
         "sessionIds": session_ids,
         "installedProcessors": processor_ids.len(),
     }))
+}
+
+// ---------------------------------------------------------------------------
+// POST /mcp/open_file   { "path": "C:\\logs\\device.log" }
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct OpenFileBody {
+    /// Absolute local path to open. Must resolve inside the configured
+    /// `mcp_open_allowlist`, or match an already-open session.
+    path: String,
+}
+
+/// Open a log file as a session on behalf of an MCP client, gated by the
+/// `mcp_open_allowlist` allowlist.
+///
+/// Reuses [`crate::commands::files::open_file_inner`] — the SAME writer the Tauri
+/// UI uses — so the stored `file_path`, the derived session id, the emitted
+/// events, and the background indexer are all identical to a UI-driven open. The
+/// file is opened with its CANONICAL path so the stored id is stable regardless
+/// of the spelling the client sent (reopening the same file is therefore
+/// idempotent — same session id, one registry entry).
+///
+/// Error contract (see [`crate::commands::bridge_access::OpenAccessError`]):
+/// - `NotAllowed` → HTTP 403 `{ "error": "path is not allowed", "code": "NOT_ALLOWED" }`.
+///   Deliberately identical whether the path is outside the allowlist OR does not
+///   exist — a client must not be able to probe the filesystem for files it isn't
+///   allowed to open. Do not branch the message or status on which case it is.
+/// - `InvalidPath(msg)` → HTTP 400 `{ "error": msg, "code": "INVALID_PATH" }` for
+///   malformed input (relative / UNC / verbatim / device / ADS paths), rejected
+///   before any filesystem access.
+async fn h_open_file(
+    State(handle): State<Handle>,
+    Json(body): Json<OpenFileBody>,
+) -> Response {
+    use crate::commands::bridge_access::{OpenAccessError, canonical_compare_form, validate_open_path};
+
+    let state = handle.state::<AppState>();
+
+    // Allowlist: lock, clone, drop.
+    let allowed: Vec<String> = state.mcp_open_allowlist.lock().unwrap().clone();
+
+    // Canonical paths of already-open file-backed sessions (auto-permit reopen).
+    // Skip streams (file_path=None) and any path that no longer canonicalizes.
+    // The sessions lock is released at the end of this block — it is NEVER held
+    // across the open call below.
+    let open_paths: Vec<String> = {
+        let sessions = state.sessions.lock().unwrap();
+        sessions
+            .values()
+            .filter_map(|s| s.file_path.as_deref())
+            .filter_map(|p| canonical_compare_form(std::path::Path::new(p)))
+            .collect()
+    };
+
+    match validate_open_path(&allowed, &open_paths, &body.path) {
+        Err(OpenAccessError::NotAllowed) => (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "path is not allowed", "code": "NOT_ALLOWED" })),
+        )
+            .into_response(),
+        Err(OpenAccessError::InvalidPath(msg)) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": msg, "code": "INVALID_PATH" })),
+        )
+            .into_response(),
+        Ok(canonical) => {
+            let canonical_str = canonical.to_string_lossy().to_string();
+            match crate::commands::files::open_file_inner(&state, &handle, &canonical_str) {
+                Ok(results) => match results.first() {
+                    Some(first) => Json(json!({
+                        "sessionId": first.session_id,
+                        "sourceType": first.source_type,
+                        "totalLines": first.total_lines,
+                        "isIndexing": first.is_indexing,
+                    }))
+                    .into_response(),
+                    None => (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": "open produced no session", "code": "OPEN_FAILED" })),
+                    )
+                        .into_response(),
+                },
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e, "code": "OPEN_FAILED" })),
+                )
+                    .into_response(),
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

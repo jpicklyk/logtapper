@@ -137,6 +137,36 @@ pub async fn load_log_file(
         return load_lts_file_inner(&state, &app, &path);
     }
 
+    // Plain file (or bugreport .zip): delegate to the shared inner open path.
+    // Reused verbatim by the MCP `open_file` bridge endpoint so both openers
+    // produce identical sessions. `&state` / `&app` deref-coerce to the inner
+    // fn's `&AppState` / `&AppHandle` (same as the load_lts_file_inner call above).
+    open_file_inner(&state, &app, &path)
+}
+
+/// Open a plain log file (or a bugreport `.zip`) and register it as a session.
+///
+/// Extracted verbatim from the plain-file branch of [`load_log_file`] so the MCP
+/// bridge's `open_file` endpoint can reuse the exact same open path: identical
+/// `LoadResult`, identical stale-session close, identical `sessions.insert`, and
+/// the identical background-indexer spawn. This is the single session-registry
+/// writer for file-backed sessions — MCP adds a caller, not a divergent path.
+///
+/// Shape differs from a `#[tauri::command]` only in that `path` arrives as `&str`
+/// and `app` as `&AppHandle`; behaviour is otherwise byte-for-byte the same.
+///
+/// Sync (not `async`): the original branch had no `.await`. The only concurrency
+/// is the `tokio::spawn` of the background indexer, which resolves the runtime
+/// via the ambient tokio context of whichever async caller invoked it (the Tauri
+/// command, or the Axum bridge handler — both run under tokio), so a sync fn is
+/// correct and the spawn is reached identically.
+pub(crate) fn open_file_inner(
+    state: &AppState,
+    app: &tauri::AppHandle,
+    path: &str,
+) -> Result<Vec<LoadResult>, String> {
+    let path_obj = Path::new(path);
+
     // If the file is a .zip, extract the dumpstate/bugreport .txt to a temp file
     // and load that instead. The temp file persists for the session lifetime.
     let (effective_path, _temp_file) = if path_obj.extension().and_then(|e| e.to_str()) == Some("zip") {
@@ -144,7 +174,7 @@ pub async fn load_log_file(
         let p = extracted.path().to_string_lossy().to_string();
         (p, Some(extracted))
     } else {
-        (path.clone(), None)
+        (path.to_string(), None)
     };
     let effective_path_obj = Path::new(&effective_path);
 
@@ -165,12 +195,12 @@ pub async fn load_log_file(
 
     // Close any existing sessions for the same file path (e.g. stale sessions from
     // frontend reloads). Collects ALL matching IDs then closes each one.
-    close_stale_sessions(&state, Some(&app), &path)?;
+    close_stale_sessions(state, Some(app), path)?;
 
     const INITIAL_BYTES: usize = 1_000_000; // 1 MB initial chunk
 
     let mut session = AnalysisSession::new(session_id.clone());
-    session.file_path = Some(path.clone());
+    session.file_path = Some(path.to_string());
     // Hold the temp file handle in the session so it persists (deleted on drop).
     session.temp_file = _temp_file;
     let (mmap_arc, total_bytes, bytes_consumed) =
@@ -191,7 +221,7 @@ pub async fn load_log_file(
         session_id: session_id.clone(),
         source_id,
         source_name,
-        file_path: Some(path.clone()),
+        file_path: Some(path.to_string()),
         total_lines,
         file_size,
         first_timestamp: first_ts,
@@ -215,7 +245,7 @@ pub async fn load_log_file(
             let mut tasks = lock_or_err(&state.indexing_tasks, "indexing_tasks")?;
             tasks.insert(session_id.clone(), cancel_tx);
         }
-        let app_clone = app;
+        let app_clone = app.clone();
         let sid = session_id;
         let initial_line_count = total_lines; // capture before session is moved into map
         tokio::spawn(async move {
@@ -404,16 +434,32 @@ pub(crate) fn emit_workspace_restored(
     }
 }
 
-/// Close **all** sessions whose `file_path` matches the given path.
-/// Collects every matching ID under a short-lived lock, then closes each one.
-/// Previously used `.find()` which only removed one duplicate per call — the
+/// Close **all** sessions whose `file_path` refers to the same on-disk file as
+/// `path`. Collects every matching ID under a short-lived lock, then closes each
+/// one. Previously used `.find()` which only removed one duplicate per call — the
 /// remaining stale sessions caused the MCP agent to target the wrong session ID.
+///
+/// Comparison is **canonical** (see [`stale_path_matches`]), not raw-string:
+/// `derive_file_session_id_from_disk` derives the session id from the
+/// canonical-lowercased path, so two spellings of the same file (different casing
+/// or a `\\?\` prefix) derive the SAME deterministic id. A raw-string `==` would
+/// miss the alias, and the subsequent `sessions.insert(same_id, …)` would silently
+/// overwrite the prior session WITHOUT running `close_session_inner`'s cleanup
+/// (indexing-task cancel, watch/filter purge). Matching canonically keeps this
+/// scan consistent with the id invariant so the cleanup always runs.
 fn close_stale_sessions(state: &AppState, app: Option<&tauri::AppHandle>, path: &str) -> Result<(), String> {
+    // Canonicalize the incoming path once, outside the sessions lock.
+    let incoming_canonical =
+        crate::commands::bridge_access::canonical_compare_form(Path::new(path));
     let stale_ids: Vec<String> = {
         let sessions = lock_or_err(&state.sessions, "sessions")?;
         sessions
             .values()
-            .filter(|s| s.file_path.as_deref() == Some(path))
+            .filter(|s| {
+                s.file_path
+                    .as_deref()
+                    .is_some_and(|stored| stale_path_matches(stored, path, incoming_canonical.as_deref()))
+            })
             .map(|s| s.id.clone())
             .collect()
     };
@@ -421,6 +467,26 @@ fn close_stale_sessions(state: &AppState, app: Option<&tauri::AppHandle>, path: 
         close_session_inner(state, app, &stale_id)?;
     }
     Ok(())
+}
+
+/// True if a stored session `file_path` refers to the same on-disk file as the
+/// `incoming` open path. `incoming_canonical` is [`canonical_compare_form`] of
+/// `incoming`, pre-computed once by the caller so it isn't recomputed per session.
+///
+/// When BOTH the stored path and the incoming path canonicalize, their canonical
+/// (resolved, case-folded) forms are compared — this is what makes stale-close
+/// consistent with the canonical id derivation. Otherwise (either side can't be
+/// canonicalized — e.g. the file was deleted since the session opened) it falls
+/// back to raw string equality, so a deleted-then-reopened file still matches its
+/// stale entry rather than leaking a duplicate under the same raw path.
+fn stale_path_matches(stored: &str, incoming: &str, incoming_canonical: Option<&str>) -> bool {
+    match (
+        crate::commands::bridge_access::canonical_compare_form(Path::new(stored)),
+        incoming_canonical,
+    ) {
+        (Some(stored_canonical), Some(incoming_canonical)) => stored_canonical == incoming_canonical,
+        _ => stored == incoming,
+    }
 }
 
 fn close_session_inner(state: &AppState, _app: Option<&tauri::AppHandle>, session_id: &str) -> Result<(), String> {
@@ -1507,6 +1573,64 @@ mod tests {
 
         assert!(stale_id.is_none(),
             "stream sessions with no file_path must not be matched");
+    }
+
+    // -------------------------------------------------------------------------
+    // close_stale_sessions — canonical (case-insensitive) matching
+    // -------------------------------------------------------------------------
+
+    /// Two differently-cased spellings of the SAME real file must be recognised
+    /// as the same session by `close_stale_sessions`. This is the invariant that
+    /// makes reopen idempotent: `derive_file_session_id_from_disk` derives the id
+    /// from the canonical-lowercased path, so both spellings derive the same id;
+    /// the stale-close must catch the alias so the reopen's `sessions.insert` does
+    /// not silently overwrite the prior entry and skip its cleanup. The map must
+    /// end with exactly one session (the freshly opened one).
+    #[test]
+    fn close_stale_sessions_matches_differently_cased_paths_to_same_file() {
+        use std::fs;
+
+        let state = make_state();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let file = tmp.path().join("device.log");
+        fs::write(&file, "line one\nline two\n").expect("write test file");
+
+        // Existing (stale) session stored under the path's as-created casing.
+        let stored_path = file.to_string_lossy().into_owned();
+        insert_session(&state, "stale-id", Some(&stored_path));
+        assert!(state.sessions.lock().unwrap().contains_key("stale-id"));
+
+        // Reopen the SAME file via an upper-cased spelling. NTFS resolves it to
+        // the same file, so canonical comparison must treat the stale session as
+        // a match even though the raw strings differ.
+        let reopened_path = stored_path.to_uppercase();
+        assert_ne!(reopened_path, stored_path, "test needs a case-differing spelling");
+
+        close_stale_sessions(&state, None, &reopened_path).unwrap();
+        // Simulate what open_file_inner does next: insert the fresh session.
+        insert_session(&state, "fresh-id", Some(&reopened_path));
+
+        let sessions = state.sessions.lock().unwrap();
+        assert!(!sessions.contains_key("stale-id"),
+            "differently-cased path to the same file must be closed as stale");
+        assert_eq!(sessions.len(), 1,
+            "map must hold exactly the freshly opened session after the stale one closes");
+        assert!(sessions.contains_key("fresh-id"));
+    }
+
+    /// The raw-string fallback: when the incoming path cannot be canonicalized
+    /// (e.g. a virtual/nonexistent path), a stale entry with the same raw string
+    /// still matches, so it is not leaked.
+    #[test]
+    fn close_stale_sessions_falls_back_to_raw_equality_for_uncanonicalizable_paths() {
+        let state = make_state();
+        // A path that does not exist on disk — canonical_compare_form returns None.
+        insert_session(&state, "stale-id", Some("/nonexistent/virtual/device.log"));
+
+        close_stale_sessions(&state, None, "/nonexistent/virtual/device.log").unwrap();
+
+        assert!(!state.sessions.lock().unwrap().contains_key("stale-id"),
+            "identical raw path must still match when neither side canonicalizes");
     }
 
     // -------------------------------------------------------------------------

@@ -133,7 +133,7 @@ function ok(data: unknown): { content: Array<{ type: "text"; text: string }> } {
 
 const server = new McpServer({
   name: "logtapper",
-  version: "1.0.0",
+  version: "1.1.0",
   description:
     "Query live Android log sessions loaded in LogTapper. " +
     "Use these tools to inspect log content, state-tracker events, and " +
@@ -1090,6 +1090,51 @@ server.tool(
           query
         )
       );
+    } catch (err) {
+      return ok({ error: String(err) });
+    }
+  }
+);
+
+// ── 18. logtapper_open_file ──────────────────────────────────────────────
+
+server.tool(
+  "logtapper_open_file",
+  "Open a log file in LogTapper as a new session, then query it with the other " +
+    "tools. Use this to load a file the user has pointed you at without them " +
+    "having to open it in the UI first.\n\n" +
+    "Access is gated by an allowlist the user configures in LogTapper. The `path` " +
+    "MUST be:\n" +
+    "  • absolute and a local drive path (e.g. 'C:\\\\logs\\\\device.log') — relative, " +
+    "UNC (\\\\\\\\server\\\\share), verbatim (\\\\\\\\?\\\\), device (\\\\\\\\.\\\\), and NTFS " +
+    "alternate-data-stream paths are rejected; and\n" +
+    "  • inside one of the configured allowlisted directories, OR the path of a " +
+    "session that is already open (reopening is always permitted and is " +
+    "idempotent — it returns the SAME sessionId).\n\n" +
+    "Errors return an HTTP error whose body carries a `code`:\n" +
+    "  • INVALID_PATH — the path is malformed (not absolute, UNC/verbatim/device/ADS). " +
+    "The message says what was wrong; fix the path and retry.\n" +
+    "  • NOT_ALLOWED — the path is not permitted. This response is DELIBERATELY " +
+    "identical whether the file is outside the allowlist or does not exist, so you " +
+    "cannot use it to probe for files. Do NOT retry variations to discover what " +
+    "exists; if the user expects this path to work, ask them to add its directory " +
+    "to LogTapper's open-file allowlist.\n\n" +
+    "On success returns { sessionId, sourceType, totalLines, isIndexing }. " +
+    "If `isIndexing` is true, the file is large and still being indexed in the " +
+    "background: `totalLines` will keep growing. Poll logtapper_get_metadata (its " +
+    "`isIndexing` flag) or logtapper_get_status until indexing settles before " +
+    "relying on line counts or querying the tail of the file.",
+  {
+    path: z
+      .string()
+      .describe(
+        "Absolute local drive path to the log file (e.g. 'C:\\\\logs\\\\device.log'). " +
+          "Must be inside the configured allowlist or already open as a session."
+      ),
+  },
+  async ({ path }) => {
+    try {
+      return ok(await bridgePost("/mcp/open_file", { path }));
     } catch (err) {
       return ok({ error: String(err) });
     }
