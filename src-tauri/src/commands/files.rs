@@ -503,29 +503,28 @@ pub(crate) fn close_session_inner(state: &AppState, _app: Option<&tauri::AppHand
     // 3. Remove session (drops mmap / stream data)
     lock_or_err(&state.sessions, "sessions")?.remove(session_id);
 
-    // 4. Remove pipeline results
-    lock_or_err(&state.pipeline_results, "pipeline_results")?.remove(session_id);
-
-    // 5. Remove state tracker results
+    // 5. Remove state tracker results (never written by streaming flush_batch)
     lock_or_err(&state.state_tracker_results, "state_tracker_results")?.remove(session_id);
 
-    // 6. Remove correlator results
+    // 6. Remove correlator results (never written by streaming flush_batch)
     lock_or_err(&state.correlator_results, "correlator_results")?.remove(session_id);
 
-    // 7. Remove streaming processor state
-    lock_or_err(&state.stream_processor_state, "stream_processor_state")?.remove(session_id);
-
-    // 8. Remove streaming tracker state
-    lock_or_err(&state.stream_tracker_state, "stream_tracker_state")?.remove(session_id);
-
-    // 9. Remove streaming transformer state
-    lock_or_err(&state.stream_transformer_state, "stream_transformer_state")?.remove(session_id);
-
-    // 10. Remove PII mappings
-    lock_or_err(&state.pii_mappings, "pii_mappings")?.remove(session_id);
-
-    // 11. Remove stream anonymizer
-    lock_or_err(&state.stream_anonymizers, "stream_anonymizers")?.remove(session_id);
+    // 4, 7-11. Remove everything an in-flight ADB `flush_batch` could re-insert
+    //   — the accumulated streaming pipeline results, all three continuous
+    //   stream-state maps, the PII mappings, and the stream anonymizer — and DROP
+    //   the streaming epoch, all atomically under the epoch lock. This closes
+    //   race (c): a batch that extracted state before this close ran now finds a
+    //   dropped epoch at re-insert time and discards its state instead of
+    //   recreating entries under a dead session id. See `AppState::stream_epochs`.
+    state.clear_stream_epoch_with(session_id, || {
+        lock_or_err(&state.pipeline_results, "pipeline_results")?.remove(session_id);
+        lock_or_err(&state.stream_processor_state, "stream_processor_state")?.remove(session_id);
+        lock_or_err(&state.stream_tracker_state, "stream_tracker_state")?.remove(session_id);
+        lock_or_err(&state.stream_transformer_state, "stream_transformer_state")?.remove(session_id);
+        lock_or_err(&state.pii_mappings, "pii_mappings")?.remove(session_id);
+        lock_or_err(&state.stream_anonymizers, "stream_anonymizers")?.remove(session_id);
+        Ok(())
+    })?;
 
     // 12. Remove MCP anonymizer
     lock_or_err(&state.mcp_anonymizers, "mcp_anonymizers")?.remove(session_id);

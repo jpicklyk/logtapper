@@ -200,6 +200,11 @@ pub async fn start_adb_stream(
         sessions.insert(session_id.clone(), session);
     }
 
+    // Seed the streaming epoch guard for this session before any batch can run,
+    // so every `flush_batch` re-insert has a concrete `Some(_)` to compare against.
+    // See `AppState::stream_epochs`.
+    state.seed_stream_epoch(&session_id);
+
     // ── Initialize continuous processor states ────────────────────────────────
     if !active_processor_ids.is_empty() {
         let procs = lock_or_err(&state.processors, "processors")?;
@@ -319,38 +324,24 @@ pub async fn stop_adb_stream(
         },
     );
 
-    // Clean up continuous processor state (session data remains for search/pipeline)
-    {
-        let mut sp_state = lock_or_err(&state.stream_processor_state, "stream_processor_state")?;
-        sp_state.remove(&session_id);
-    }
-
-    // Clean up stream anonymizer
-    {
-        let mut sa = lock_or_err(&state.stream_anonymizers, "stream_anonymizers")?;
-        sa.remove(&session_id);
-    }
-
-    // Clean up stream transformer state
-    {
-        let mut st = lock_or_err(&state.stream_transformer_state, "stream_transformer_state")?;
-        st.remove(&session_id);
-    }
-
-    // Clean up stream tracker state
-    {
-        let mut st = lock_or_err(&state.stream_tracker_state, "stream_tracker_state")?;
-        st.remove(&session_id);
-    }
-
-    // Clean up accumulated pipeline results from streaming
-    {
+    // Clean up all continuous stream state that an in-flight `flush_batch` could
+    // re-insert into, plus the accumulated streaming pipeline results, and drop
+    // the epoch — all atomically under the epoch lock so a batch that is mid-flight
+    // cannot resurrect any of it after the stream has stopped. Session data
+    // remains in `sessions` for search/pipeline. See `AppState::stream_epochs`.
+    state.clear_stream_epoch_with(&session_id, || {
+        lock_or_err(&state.stream_processor_state, "stream_processor_state")?.remove(&session_id);
+        lock_or_err(&state.stream_anonymizers, "stream_anonymizers")?.remove(&session_id);
+        lock_or_err(&state.stream_transformer_state, "stream_transformer_state")?.remove(&session_id);
+        lock_or_err(&state.stream_tracker_state, "stream_tracker_state")?.remove(&session_id);
         if let Ok(mut pr) = state.pipeline_results.lock() {
             pr.remove(&session_id);
         }
-    }
+        Ok(())
+    })?;
 
-    // Clean up state tracker results from streaming
+    // Clean up state tracker results from streaming. `flush_batch` never writes
+    // this map in streaming mode, so it needs no epoch guard.
     {
         if let Ok(mut str_results) = state.state_tracker_results.lock() {
             str_results.remove(&session_id);
@@ -375,14 +366,29 @@ pub async fn set_stream_anonymize(
     session_id: String,
     enabled: bool,
 ) -> Result<(), String> {
-    let mut sa = lock_or_err(&state.stream_anonymizers, "stream_anonymizers")?;
-    if enabled {
-        let config = lock_or_err(&state.anonymizer_config, "anonymizer_config")?.clone();
-        sa.insert(session_id, LogAnonymizer::from_config(&config));
+    // Snapshot the config outside the epoch section (leaf lock, avoids nesting an
+    // unrelated lock under `stream_epochs`).
+    let config = if enabled {
+        Some(lock_or_err(&state.anonymizer_config, "anonymizer_config")?.clone())
     } else {
-        sa.remove(&session_id);
-    }
-    Ok(())
+        None
+    };
+
+    // Enable/disable the anonymizer and bump the epoch atomically, so an in-flight
+    // `flush_batch` cannot re-insert the extracted anonymizer after we disabled it
+    // (nor keep an old instance after we replaced it). See `AppState::stream_epochs`.
+    state.bump_stream_epoch_with(&session_id, || {
+        let mut sa = lock_or_err(&state.stream_anonymizers, "stream_anonymizers")?;
+        match config {
+            Some(cfg) => {
+                sa.insert(session_id.clone(), LogAnonymizer::from_config(&cfg));
+            }
+            None => {
+                sa.remove(&session_id);
+            }
+        }
+        Ok(())
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -417,24 +423,28 @@ pub async fn update_stream_processors(
             .collect()
     };
 
-    let mut sp_state = lock_or_err(&state.stream_processor_state, "stream_processor_state")?;
+    // Replace the active reporter set and bump the epoch atomically, so a batch
+    // in flight cannot re-insert the state of a processor we just removed (nor
+    // clobber the freshly-seeded set). See `AppState::stream_epochs`.
+    state.bump_stream_epoch_with(&session_id, || {
+        let mut sp_state = lock_or_err(&state.stream_processor_state, "stream_processor_state")?;
 
-    let inner = sp_state.entry(session_id).or_default();
+        let inner = sp_state.entry(session_id.clone()).or_default();
 
-    // Remove processors no longer in the requested set.
-    inner.retain(|id, _| processor_ids.contains(id));
+        // Remove processors no longer in the requested set.
+        inner.retain(|id, _| processor_ids.contains(id));
 
-    // Add new processors (those not already tracked) with fresh state.
-    for proc_id in &processor_ids {
-        if !inner.contains_key(proc_id.as_str()) {
-            if let Some(def) = new_proc_defs.get(proc_id) {
-                let run = ProcessorRun::new(def);
-                inner.insert(proc_id.clone(), run.into_continuous_state(current_total, false));
+        // Add new processors (those not already tracked) with fresh state.
+        for proc_id in &processor_ids {
+            if !inner.contains_key(proc_id.as_str()) {
+                if let Some(def) = new_proc_defs.get(proc_id) {
+                    let run = ProcessorRun::new(def);
+                    inner.insert(proc_id.clone(), run.into_continuous_state(current_total, false));
+                }
             }
         }
-    }
-
-    Ok(())
+        Ok(())
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -463,22 +473,28 @@ pub async fn update_stream_trackers(
             .collect()
     };
 
-    let mut st = lock_or_err(&state.stream_tracker_state, "stream_tracker_state")?;
-    let inner = st.entry(session_id).or_default();
-    inner.retain(|id, _| tracker_ids.contains(id));
-    for t_id in &tracker_ids {
-        if !inner.contains_key(t_id.as_str()) {
-            if let Some(def) = tracker_defs.get(t_id) {
-                let current_state = build_defaults(def);
-                inner.insert(t_id.clone(), crate::processors::state_tracker::types::ContinuousTrackerState {
-                    current_state,
-                    transitions: Vec::new(),
-                    last_processed_line: current_total,
-                });
+    // Replace the active tracker set and bump the epoch atomically. This is
+    // race (d): without the bump, an in-flight batch that cloned the pre-update
+    // tracker set could re-insert it and clobber this update. See
+    // `AppState::stream_epochs`.
+    state.bump_stream_epoch_with(&session_id, || {
+        let mut st = lock_or_err(&state.stream_tracker_state, "stream_tracker_state")?;
+        let inner = st.entry(session_id.clone()).or_default();
+        inner.retain(|id, _| tracker_ids.contains(id));
+        for t_id in &tracker_ids {
+            if !inner.contains_key(t_id.as_str()) {
+                if let Some(def) = tracker_defs.get(t_id) {
+                    let current_state = build_defaults(def);
+                    inner.insert(t_id.clone(), crate::processors::state_tracker::types::ContinuousTrackerState {
+                        current_state,
+                        transitions: Vec::new(),
+                        last_processed_line: current_total,
+                    });
+                }
             }
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -499,18 +515,23 @@ pub async fn update_stream_transformers(
             .map_or(0, super::super::core::log_source::LogSource::total_lines)
     };
 
-    let mut st = lock_or_err(&state.stream_transformer_state, "stream_transformer_state")?;
-    let inner = st.entry(session_id).or_default();
-    inner.retain(|id, _| transformer_ids.contains(id));
-    for t_id in &transformer_ids {
-        if !inner.contains_key(t_id.as_str()) {
-            inner.insert(t_id.clone(), crate::processors::transformer::types::ContinuousTransformerState {
-                last_processed_line: current_total,
-                pii_mappings: None,
-            });
+    // Replace the active transformer set and bump the epoch atomically, so a
+    // batch in flight cannot re-insert the state of a transformer we just removed.
+    // See `AppState::stream_epochs`.
+    state.bump_stream_epoch_with(&session_id, || {
+        let mut st = lock_or_err(&state.stream_transformer_state, "stream_transformer_state")?;
+        let inner = st.entry(session_id.clone()).or_default();
+        inner.retain(|id, _| transformer_ids.contains(id));
+        for t_id in &transformer_ids {
+            if !inner.contains_key(t_id.as_str()) {
+                inner.insert(t_id.clone(), crate::processors::transformer::types::ContinuousTransformerState {
+                    last_processed_line: current_total,
+                    pii_mappings: None,
+                });
+            }
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -677,6 +698,13 @@ fn flush_batch(
     let state_guard = app.state::<AppState>();
     let state: &AppState = &state_guard;
     let parser = LogcatParser;
+
+    // Capture the streaming epoch for this session BEFORE extracting any state.
+    // Every re-insert below is gated on this value: if a concurrent writer
+    // (stop / set_stream_anonymize / update_stream_* / close_session) changes or
+    // drops the epoch while this batch is processing, the corresponding re-insert
+    // is skipped and its now-stale state is dropped. See `AppState::stream_epochs`.
+    let epoch0 = state.current_stream_epoch(session_id);
 
     // ── Step 1: Snapshot current total_lines (before appending) ───────────────
     let first_new_line = {
@@ -886,14 +914,24 @@ fn flush_batch(
                     // only modify content, dropping would break the view stream.
                 }
 
-                // Re-insert ALL transformer states in one lock
-                if let Ok(mut st) = state.stream_transformer_state.lock() {
-                    let inner = st.entry(session_id.to_string()).or_default();
-                    for (t_id, run) in transformer_runs {
-                        let new_cont = run.into_continuous_state(first_new_line + parsed.len());
-                        inner.insert(t_id, new_cont);
+                // Re-insert ALL transformer states in one lock, gated on the
+                // epoch. This is race (c): the re-insert runs BEFORE the Step-3
+                // session-exists check, so a `close_session` (or `stop`) between
+                // extract and here would otherwise recreate transformer state
+                // under a dead session id. The epoch guard (which those writers
+                // drop/bump) skips the re-insert instead. `get_mut` (never
+                // `or_default`) means a removed session is never recreated.
+                let final_line = first_new_line + parsed.len();
+                state.reinsert_stream_state_if_current(session_id, epoch0, || {
+                    if let Ok(mut st) = state.stream_transformer_state.lock() {
+                        if let Some(inner) = st.get_mut(session_id) {
+                            for (t_id, run) in transformer_runs {
+                                let new_cont = run.into_continuous_state(final_line);
+                                inner.insert(t_id, new_cont);
+                            }
+                        }
                     }
-                }
+                });
             }
         }
     }
@@ -1081,52 +1119,68 @@ fn flush_batch(
 
                 core.run_layer2_parallel(&enriched, &pre_transform_msgs);
 
-                // Snapshot results for event emission
+                // Snapshot results for event emission, then take the continuous
+                // state (consumes `core`).
                 let snapshot = core.current_results();
-
-                // Merge reporter results into pipeline_results (accumulate across batches).
-                if !snapshot.reporter_results.is_empty() {
-                    if let Ok(mut pr) = state.pipeline_results.lock() {
-                        let session_results = pr.entry(session_id.to_string()).or_default();
-                        for (proc_id, batch_result) in snapshot.reporter_results {
-                            let existing = session_results.entry(proc_id.clone()).or_default();
-                            existing.merge(batch_result);
-
-                            proc_updates.push(AdbProcessorUpdate {
-                                session_id: session_id.to_string(),
-                                processor_id: proc_id,
-                                matched_lines: existing.matched_line_nums.len(),
-                                emission_count: existing.emissions.len(),
-                            });
-                        }
-                    }
-                }
-
-                // Persist continuous state back to AppState
                 let cont = core.into_continuous_state(total_lines);
+                let reporter_results = snapshot.reporter_results;
+                let reporter_states = cont.reporter_states;
+                let tracker_states = cont.tracker_states;
 
-                // Re-insert reporter states
-                if !cont.reporter_states.is_empty() {
-                    if let Ok(mut sp) = state.stream_processor_state.lock() {
-                        let inner = sp.entry(session_id.to_string()).or_default();
-                        for (id, new_state) in cont.reporter_states {
-                            inner.insert(id, new_state);
+                // Merge reporter results into pipeline_results (accumulate across
+                // batches) and re-insert reporter continuous state — both gated on
+                // the epoch so a concurrent stop/close/update cannot be resurrected
+                // or clobbered by this in-flight batch. `proc_updates` is populated
+                // inside the guard so no events fire for a state we didn't persist.
+                if !reporter_results.is_empty() || !reporter_states.is_empty() {
+                    let proc_updates = &mut proc_updates;
+                    state.reinsert_stream_state_if_current(session_id, epoch0, || {
+                        if !reporter_results.is_empty() {
+                            if let Ok(mut pr) = state.pipeline_results.lock() {
+                                let session_results = pr.entry(session_id.to_string()).or_default();
+                                for (proc_id, batch_result) in reporter_results {
+                                    let existing = session_results.entry(proc_id.clone()).or_default();
+                                    existing.merge(batch_result);
+
+                                    proc_updates.push(AdbProcessorUpdate {
+                                        session_id: session_id.to_string(),
+                                        processor_id: proc_id,
+                                        matched_lines: existing.matched_line_nums.len(),
+                                        emission_count: existing.emissions.len(),
+                                    });
+                                }
+                            }
                         }
-                    }
+                        // `get_mut` (never `or_default`) so a removed session is
+                        // never recreated here.
+                        if !reporter_states.is_empty() {
+                            if let Ok(mut sp) = state.stream_processor_state.lock() {
+                                if let Some(inner) = sp.get_mut(session_id) {
+                                    for (id, new_state) in reporter_states {
+                                        inner.insert(id, new_state);
+                                    }
+                                }
+                            }
+                        }
+                    });
                 }
 
-                // Re-insert tracker states and emit tracker events
-                if !cont.tracker_states.is_empty() {
-                    let event_data: Vec<(String, usize)> = cont.tracker_states.iter()
-                        .map(|(t_id, cs)| (t_id.clone(), cs.transitions.len()))
-                        .collect();
-
-                    if let Ok(mut st) = state.stream_tracker_state.lock() {
-                        let inner = st.entry(session_id.to_string()).or_default();
-                        for (t_id, new_cont) in cont.tracker_states {
-                            inner.insert(t_id, new_cont);
+                // Re-insert tracker states (gated on the epoch — this is race (d):
+                // a concurrent `update_stream_trackers` bumps the epoch so its new
+                // set is not clobbered by this batch's stale clone). Tracker events
+                // are emitted only for the states actually persisted.
+                if !tracker_states.is_empty() {
+                    let mut event_data: Vec<(String, usize)> = Vec::new();
+                    state.reinsert_stream_state_if_current(session_id, epoch0, || {
+                        if let Ok(mut st) = state.stream_tracker_state.lock() {
+                            if let Some(inner) = st.get_mut(session_id) {
+                                for (t_id, new_cont) in tracker_states {
+                                    event_data.push((t_id.clone(), new_cont.transitions.len()));
+                                    inner.insert(t_id, new_cont);
+                                }
+                            }
                         }
-                    }
+                    });
 
                     for (t_id, transition_count) in event_data {
                         let _ = app.emit("adb-tracker-update", AdbTrackerUpdate {
@@ -1141,18 +1195,25 @@ fn flush_batch(
     }
 
     // ── Step 4b: Re-insert anonymizer and persist PII mappings ───────────────
+    // Gated on the epoch. This is race (a): `set_stream_anonymize(false)` (or a
+    // stop/close) removes the anonymizer and bumps/drops the epoch; without the
+    // guard, this batch would re-insert the extracted anonymizer and silently keep
+    // PII anonymization ON. Key-presence alone can't detect it — the batch itself
+    // removed the key during extraction — so the epoch check is required.
     if let Some(a) = anon {
         // Update the session's token→original map so the PII dashboard can show it.
         let forward = a.mappings.all_mappings();
         let inverted: std::collections::HashMap<String, String> =
             forward.into_iter().map(|(raw, tok)| (tok, raw)).collect();
-        if let Ok(mut pm) = state.pii_mappings.lock() {
-            pm.insert(session_id.to_string(), inverted);
-        }
-        // Re-insert for the next batch.
-        if let Ok(mut sa) = state.stream_anonymizers.lock() {
-            sa.insert(session_id.to_string(), a);
-        }
+        state.reinsert_stream_state_if_current(session_id, epoch0, || {
+            if let Ok(mut pm) = state.pii_mappings.lock() {
+                pm.insert(session_id.to_string(), inverted);
+            }
+            // Re-insert for the next batch.
+            if let Ok(mut sa) = state.stream_anonymizers.lock() {
+                sa.insert(session_id.to_string(), a);
+            }
+        });
     }
 
     // ── Step 4c: Evaluate active watches on new lines ──────────────────────────
@@ -1380,5 +1441,195 @@ mod tests {
         // health and protect_mode have no explicit default → serde default (null)
         assert!(cont.transitions.is_empty());
         assert_eq!(cont.last_processed_line, 0);
+    }
+
+    // ── Streaming epoch guard tests ──────────────────────────────────────────
+    //
+    // These simulate the racing interleavings that `flush_batch`'s
+    // extract-process-reinsert pattern is exposed to, by driving the same
+    // `AppState` epoch helpers the real code uses, in the racing order:
+    //   extract (record epoch0) → concurrent writer (clear/bump/drop epoch) →
+    //   attempted re-insert (assert it is dropped, not resurrected).
+    // Plus the normal no-race path (assert state flows batch-to-batch).
+
+    use crate::commands::AppState;
+
+    fn tracker_state(last_line: usize) -> crate::processors::state_tracker::types::ContinuousTrackerState {
+        crate::processors::state_tracker::types::ContinuousTrackerState {
+            current_state: std::collections::HashMap::new(),
+            transitions: Vec::new(),
+            last_processed_line: last_line,
+        }
+    }
+
+    /// Normal path: no concurrent writer → the re-insert runs and state flows.
+    #[test]
+    fn epoch_reinsert_runs_on_normal_path() {
+        let state = AppState::new();
+        state.seed_stream_epoch("s1");
+        let epoch0 = state.current_stream_epoch("s1");
+
+        let mut ran = false;
+        state.reinsert_stream_state_if_current("s1", epoch0, || ran = true);
+        assert!(ran, "re-insert must proceed when no writer changed the epoch");
+    }
+
+    /// A concurrent bump (update_stream_* / set_stream_anonymize) between extract
+    /// and re-insert must cause the re-insert to be dropped.
+    #[test]
+    fn epoch_reinsert_dropped_after_concurrent_bump() {
+        let state = AppState::new();
+        state.seed_stream_epoch("s1");
+        let epoch0 = state.current_stream_epoch("s1");
+
+        // Concurrent writer bumps the epoch mid-batch.
+        state.bump_stream_epoch_with("s1", || Ok(())).unwrap();
+
+        let mut ran = false;
+        state.reinsert_stream_state_if_current("s1", epoch0, || ran = true);
+        assert!(!ran, "stale re-insert must be dropped after a concurrent epoch bump");
+    }
+
+    /// A terminal clear (stop_adb_stream / close_session) drops the epoch, so the
+    /// in-flight re-insert must be dropped — even though epoch0 was `Some`.
+    #[test]
+    fn epoch_reinsert_dropped_after_terminal_clear() {
+        let state = AppState::new();
+        state.seed_stream_epoch("s1");
+        let epoch0 = state.current_stream_epoch("s1");
+
+        state.clear_stream_epoch_with("s1", || Ok(())).unwrap();
+
+        let mut ran = false;
+        state.reinsert_stream_state_if_current("s1", epoch0, || ran = true);
+        assert!(!ran, "stale re-insert must be dropped after the session was cleared/closed");
+    }
+
+    /// Race (a): `set_stream_anonymize(false)` removes the anonymizer + bumps the
+    /// epoch while a batch is in flight. The batch must NOT resurrect the
+    /// anonymizer (which would silently keep PII anonymization ON).
+    #[test]
+    fn race_a_anonymizer_not_resurrected_after_disable() {
+        let state = AppState::new();
+        state.seed_stream_epoch("s1");
+
+        // A batch is in flight and has an anonymizer enabled: it extracts it and
+        // records the epoch.
+        let epoch0 = state.current_stream_epoch("s1");
+        let extracted = LogAnonymizer::from_config(
+            &crate::anonymizer::config::AnonymizerConfig::with_defaults(),
+        );
+
+        // Concurrent set_stream_anonymize(false): remove anonymizer + bump epoch,
+        // exactly as the command does.
+        state.bump_stream_epoch_with("s1", || {
+            state.stream_anonymizers.lock().unwrap().remove("s1");
+            Ok(())
+        }).unwrap();
+
+        // Batch's Step-4b re-insert (gated).
+        state.reinsert_stream_state_if_current("s1", epoch0, || {
+            state.stream_anonymizers.lock().unwrap().insert("s1".to_string(), extracted);
+        });
+
+        assert!(
+            !state.stream_anonymizers.lock().unwrap().contains_key("s1"),
+            "anonymizer disabled mid-batch must stay disabled, not be resurrected",
+        );
+    }
+
+    /// Anonymizer normal path: no writer → the extracted anonymizer is re-inserted
+    /// so token numbering persists across batches.
+    #[test]
+    fn anonymizer_reinserted_on_normal_path() {
+        let state = AppState::new();
+        state.seed_stream_epoch("s1");
+        let epoch0 = state.current_stream_epoch("s1");
+        let extracted = LogAnonymizer::from_config(
+            &crate::anonymizer::config::AnonymizerConfig::with_defaults(),
+        );
+        state.reinsert_stream_state_if_current("s1", epoch0, || {
+            state.stream_anonymizers.lock().unwrap().insert("s1".to_string(), extracted);
+        });
+        assert!(
+            state.stream_anonymizers.lock().unwrap().contains_key("s1"),
+            "anonymizer must be re-inserted on the normal (no-race) path",
+        );
+    }
+
+    /// Race (d): `update_stream_trackers` replaces the tracker set + bumps the
+    /// epoch while a batch is in flight. The batch's stale clone must NOT clobber
+    /// the updated set.
+    #[test]
+    fn race_d_tracker_update_not_clobbered_by_stale_reinsert() {
+        let state = AppState::new();
+        state.seed_stream_epoch("s1");
+
+        // Initial tracker state (as start_adb_stream would seed it).
+        {
+            let mut st = state.stream_tracker_state.lock().unwrap();
+            let mut inner = HashMap::new();
+            inner.insert("t1".to_string(), tracker_state(0));
+            st.insert("s1".to_string(), inner);
+        }
+
+        // Batch in flight clones the tracker state and records the epoch.
+        let epoch0 = state.current_stream_epoch("s1");
+        let stale_clone = tracker_state(10);
+
+        // Concurrent update_stream_trackers: replace with an updated value + bump.
+        state.bump_stream_epoch_with("s1", || {
+            let mut st = state.stream_tracker_state.lock().unwrap();
+            let inner = st.get_mut("s1").unwrap();
+            inner.insert("t1".to_string(), tracker_state(999));
+            Ok(())
+        }).unwrap();
+
+        // Batch's re-insert (gated) must be dropped, leaving the update intact.
+        state.reinsert_stream_state_if_current("s1", epoch0, || {
+            if let Some(inner) = state.stream_tracker_state.lock().unwrap().get_mut("s1") {
+                inner.insert("t1".to_string(), stale_clone);
+            }
+        });
+
+        let st = state.stream_tracker_state.lock().unwrap();
+        assert_eq!(
+            st.get("s1").unwrap().get("t1").unwrap().last_processed_line, 999,
+            "the tracker update must win over the in-flight batch's stale re-insert",
+        );
+    }
+
+    /// Race (b/c): after `stop_adb_stream` / `close_session` remove the session
+    /// map entry, a batch that used `get_mut`-only re-insert must not recreate it.
+    #[test]
+    fn tracker_reinsert_does_not_recreate_removed_session() {
+        let state = AppState::new();
+        state.seed_stream_epoch("s1");
+
+        // Seed then a terminal clear removes the whole session entry + drops epoch.
+        {
+            let mut st = state.stream_tracker_state.lock().unwrap();
+            let mut inner = HashMap::new();
+            inner.insert("t1".to_string(), tracker_state(0));
+            st.insert("s1".to_string(), inner);
+        }
+        let epoch0 = state.current_stream_epoch("s1");
+        state.clear_stream_epoch_with("s1", || {
+            state.stream_tracker_state.lock().unwrap().remove("s1");
+            Ok(())
+        }).unwrap();
+
+        // Batch re-insert (gated + get_mut-only) must not resurrect the session.
+        let stale_clone = tracker_state(10);
+        state.reinsert_stream_state_if_current("s1", epoch0, || {
+            if let Some(inner) = state.stream_tracker_state.lock().unwrap().get_mut("s1") {
+                inner.insert("t1".to_string(), stale_clone);
+            }
+        });
+
+        assert!(
+            !state.stream_tracker_state.lock().unwrap().contains_key("s1"),
+            "a stopped/closed session's tracker state must not be recreated",
+        );
     }
 }

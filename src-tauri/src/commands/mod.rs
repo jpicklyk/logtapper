@@ -91,6 +91,20 @@ pub struct AppState {
     /// Continuous Transformer state for live streaming.
     #[allow(dead_code)]
     pub stream_transformer_state: Mutex<HashMap<String, HashMap<String, ContinuousTransformerState>>>,
+    /// Per-session generation stamp guarding the ADB streaming
+    /// extract-process-reinsert pattern (see `commands::adb::flush_batch`).
+    ///
+    /// Every writer that clears or replaces a session's continuous stream state
+    /// (`stop_adb_stream`, `set_stream_anonymize`, `update_stream_processors`,
+    /// `update_stream_trackers`, `update_stream_transformers`,
+    /// `close_session_inner`) bumps or drops this stamp *while holding this lock*.
+    /// `flush_batch` records the stamp when a batch begins and, at re-insert
+    /// time, re-reads it under this lock and drops the batch's state when the
+    /// stamp changed (or the entry is gone). This ensures a concurrent writer's
+    /// clear/update is never resurrected or clobbered by an in-flight batch,
+    /// without holding any lock across batch processing. Lock order is always
+    /// `stream_epochs` (outer) → the specific stream-state map (inner).
+    pub stream_epochs: Mutex<HashMap<String, u64>>,
     /// Cancellation flag for the active pipeline run.
     pub pipeline_cancel: Arc<AtomicBool>,
     /// Active filter sessions: filterId -> FilterSession.
@@ -185,6 +199,7 @@ impl AppState {
             state_tracker_results: Mutex::new(HashMap::new()),
             stream_tracker_state: Mutex::new(HashMap::new()),
             stream_transformer_state: Mutex::new(HashMap::new()),
+            stream_epochs: Mutex::new(HashMap::new()),
             correlator_results: Mutex::new(HashMap::new()),
             pipeline_cancel: Arc::new(AtomicBool::new(false)),
             active_filters: Mutex::new(HashMap::new()),
@@ -206,5 +221,88 @@ impl AppState {
             autosave_generation: AtomicU64::new(0),
             autosave_flushed_generation: AtomicU64::new(0),
         }
+    }
+
+    // ── ADB streaming epoch guard ────────────────────────────────────────────
+    //
+    // These helpers implement the per-session generation stamp described on the
+    // `stream_epochs` field. They exist so `flush_batch` (which extracts stream
+    // state, processes a batch with no locks held, then re-inserts) can never
+    // resurrect or clobber state that a concurrent command legitimately cleared,
+    // updated, or dropped in between.
+
+    /// Snapshot a session's stream epoch (`None` if never seeded or already
+    /// dropped). `flush_batch` calls this once at the start of a batch and passes
+    /// the result to every re-insert via [`Self::reinsert_stream_state_if_current`].
+    pub fn current_stream_epoch(&self, session_id: &str) -> Option<u64> {
+        self.stream_epochs
+            .lock()
+            .ok()
+            .and_then(|e| e.get(session_id).copied())
+    }
+
+    /// Seed a session's stream epoch to `0` at stream start, so every later
+    /// re-insert compares against a concrete `Some(_)` value (distinguishing a
+    /// live session from one that has been closed and had its epoch dropped).
+    pub fn seed_stream_epoch(&self, session_id: &str) {
+        if let Ok(mut e) = self.stream_epochs.lock() {
+            e.entry(session_id.to_string()).or_insert(0);
+        }
+    }
+
+    /// Run `f` — which clears or replaces one or more of a session's stream-state
+    /// maps — and then BUMP the session's epoch, all while holding the
+    /// `stream_epochs` lock. Because the mutation and the bump are atomic under
+    /// this lock (and [`Self::reinsert_stream_state_if_current`] re-checks the
+    /// epoch under the same lock), an in-flight `flush_batch` re-insert gated on
+    /// the pre-bump epoch is guaranteed to observe the change and drop its stale
+    /// state. Used by the incremental writers (`set_stream_anonymize`,
+    /// `update_stream_processors`, `update_stream_trackers`,
+    /// `update_stream_transformers`). `f` acquires stream-state map locks (inner)
+    /// — never `stream_epochs` again — preserving the `stream_epochs → map` order.
+    pub fn bump_stream_epoch_with<F>(&self, session_id: &str, f: F) -> Result<(), String>
+    where
+        F: FnOnce() -> Result<(), String>,
+    {
+        let mut epochs = lock_or_err(&self.stream_epochs, "stream_epochs")?;
+        f()?;
+        *epochs.entry(session_id.to_string()).or_insert(0) += 1;
+        Ok(())
+    }
+
+    /// Run `f` — which clears a session's stream-state maps — and then DROP the
+    /// session's epoch entry, atomically under the `stream_epochs` lock. An
+    /// in-flight re-insert gated on the old epoch then observes `None` and drops
+    /// its state. Used by the terminal clearers (`stop_adb_stream`,
+    /// `close_session_inner`). `f` acquires stream-state map locks (inner) only.
+    pub fn clear_stream_epoch_with<F>(&self, session_id: &str, f: F) -> Result<(), String>
+    where
+        F: FnOnce() -> Result<(), String>,
+    {
+        let mut epochs = lock_or_err(&self.stream_epochs, "stream_epochs")?;
+        f()?;
+        epochs.remove(session_id);
+        Ok(())
+    }
+
+    /// Re-insert an in-flight batch's stream state (via `f`) only if the
+    /// session's epoch still equals `epoch0` (captured when the batch began).
+    /// The `stream_epochs` lock is held across `f` — which performs the actual
+    /// map insert — so a concurrent clearer/updater cannot slip between the check
+    /// and the insert. When the epoch changed (a writer ran) or the lock is
+    /// poisoned, `f` is not run and the stale state is dropped. Lock order:
+    /// `stream_epochs` (outer) → target map (inner), matching every writer.
+    pub fn reinsert_stream_state_if_current<F: FnOnce()>(
+        &self,
+        session_id: &str,
+        epoch0: Option<u64>,
+        f: F,
+    ) {
+        if let Ok(epochs) = self.stream_epochs.lock() {
+            if epochs.get(session_id).copied() == epoch0 {
+                f();
+            }
+        }
+        // epoch changed (writer ran) or lock poisoned → drop the stale state.
     }
 }
