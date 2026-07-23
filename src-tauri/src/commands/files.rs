@@ -489,7 +489,7 @@ fn stale_path_matches(stored: &str, incoming: &str, incoming_canonical: Option<&
     }
 }
 
-fn close_session_inner(state: &AppState, _app: Option<&tauri::AppHandle>, session_id: &str) -> Result<(), String> {
+pub(crate) fn close_session_inner(state: &AppState, _app: Option<&tauri::AppHandle>, session_id: &str) -> Result<(), String> {
     // 1. Cancel active ADB stream (if any)
     if let Some(cancel_tx) = lock_or_err(&state.stream_tasks, "stream_tasks")?.remove(session_id) {
         let _ = cancel_tx.send(());
@@ -1507,6 +1507,68 @@ mod tests {
         let state = make_state();
         // Must not panic or error when the session doesn't exist
         assert!(close_session_inner(&state, None, "nonexistent").is_ok());
+    }
+
+    /// Acceptance test for the MCP close endpoint: closing a session must actually
+    /// DROP the file's memory map, not merely unregister the session. On Windows a
+    /// mapped file stays locked until every mapping view is dropped, so a successful
+    /// rename after close is proof the mmap was released. This is the whole point of
+    /// wiring the bridge close through `close_session_inner` (which removes the
+    /// session, dropping its `FileLogSource` and the `Arc<Mmap>` inside it).
+    #[test]
+    fn close_session_inner_drops_mmap_so_file_can_be_renamed() {
+        let state = make_state();
+        let id = "mmap-drop-sess";
+
+        // A real on-disk temp file with logcat-shaped content so the parser indexes it.
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let mut temp_path = std::env::temp_dir();
+        temp_path.push(format!("logtapper_close_mmap_{unique}.log"));
+        std::fs::write(
+            &temp_path,
+            "01-01 00:00:00.000  1000  1000 I TestTag: first line\n\
+             01-01 00:00:00.001  1000  1000 I TestTag: second line\n",
+        )
+        .expect("write temp log file");
+
+        // Build a session over the file — this opens the memory map — and register it.
+        {
+            let mut session = AnalysisSession::new(id.to_string());
+            session.file_path = Some(temp_path.to_string_lossy().to_string());
+            // add_source_partial returns an Arc<Mmap> clone intended for the background
+            // indexer. Drop it immediately (`let _ =`) so the ONLY live mapping handle is
+            // the one owned by the session's FileLogSource — otherwise this test would
+            // pass even if close_session_inner leaked the session's copy.
+            let _ = session
+                .add_source_partial(&temp_path, "src-0".to_string(), 1_000_000)
+                .expect("add_source_partial should open + index the file");
+            state.sessions.lock().unwrap().insert(id.to_string(), session);
+        }
+        assert!(state.sessions.lock().unwrap().contains_key(id));
+
+        // Close: removes the session, dropping the FileLogSource and its mmap.
+        close_session_inner(&state, None, id).unwrap();
+
+        // (a) The id is gone from the sessions map.
+        assert!(
+            !state.sessions.lock().unwrap().contains_key(id),
+            "session id must be gone from the sessions map after close"
+        );
+
+        // (b) The file can now be renamed. On Windows this FAILS with an access/sharing
+        //     violation if the mmap is still held, so success proves the mapping was
+        //     actually dropped rather than just unregistered.
+        let moved_path = temp_path.with_extension("moved");
+        let _ = std::fs::remove_file(&moved_path); // clear any leftover from a prior run
+        std::fs::rename(&temp_path, &moved_path).expect(
+            "rename must succeed after close — a lingering mmap keeps the file locked on Windows",
+        );
+
+        // Cleanup.
+        let _ = std::fs::remove_file(&moved_path);
     }
 
     // -------------------------------------------------------------------------

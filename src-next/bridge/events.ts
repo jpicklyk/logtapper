@@ -144,6 +144,27 @@ export function onOpenFile(
 }
 
 // ---------------------------------------------------------------------------
+// Session closed by the MCP bridge (agent-initiated close)
+// ---------------------------------------------------------------------------
+
+/** Payload for the `session-closed` Tauri event. */
+export interface SessionClosedPayload {
+  sessionId: string;
+}
+
+/**
+ * Emitted by the MCP bridge AFTER it closes a session on behalf of an agent
+ * (POST /mcp/sessions/{id}/close). The UI close path does NOT emit this — only
+ * bridge-initiated closes, which are otherwise invisible to the frontend. The
+ * consumer closes any pane/tab bound to `sessionId` (targeted — never all panes).
+ */
+export function onBridgeSessionClosed(
+  cb: (payload: SessionClosedPayload) => void,
+): Promise<UnlistenFn> {
+  return listen<SessionClosedPayload>('session-closed', (e) => cb(e.payload));
+}
+
+// ---------------------------------------------------------------------------
 // Workspace auto-saved (Q4 — backend flush)
 // ---------------------------------------------------------------------------
 

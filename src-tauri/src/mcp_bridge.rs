@@ -20,7 +20,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tauri::{AppHandle, Manager, Wry};
+use tauri::{AppHandle, Emitter, Manager, Wry};
 
 use crate::anonymizer::LogAnonymizer;
 use crate::commands::AppState;
@@ -125,6 +125,7 @@ pub async fn start(handle: Handle, shutdown_rx: tokio::sync::oneshot::Receiver<(
         .route("/mcp/status", get(h_status))
         .route("/mcp/open_file", post(h_open_file))
         .route("/mcp/sessions", get(h_sessions))
+        .route("/mcp/sessions/{session_id}/close", post(h_close_session))
         .route("/mcp/sessions/{session_id}/query", get(h_query))
         .route("/mcp/sessions/{session_id}/pipeline", get(h_pipeline))
         .route("/mcp/sessions/{session_id}/events", get(h_events))
@@ -446,6 +447,58 @@ async fn h_open_file(
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// POST /mcp/sessions/{session_id}/close
+// ---------------------------------------------------------------------------
+
+/// Close a session on behalf of an MCP client. ALWAYS closes (never refuses
+/// because the session is displayed): purges every session-keyed map and drops
+/// the file's memory map via [`crate::commands::files::close_session_inner`] — the
+/// SAME cleanup the Tauri UI close path runs — then notifies the frontend so any
+/// pane/tab bound to the session is closed.
+///
+/// The `session-closed` Tauri event is emitted HERE, not from `close_session_inner`.
+/// The UI close path is user-initiated (the user already sees their own tab go
+/// away) and must stay behavior-unchanged; a bridge-initiated close, by contrast,
+/// is invisible to the frontend unless the bridge tells it. Emitting only on this
+/// path keeps the two paths cleanly separated.
+///
+/// Error contract:
+/// - Unknown session id → HTTP 404 `{ "error": "session not found", "code": "NOT_FOUND" }`.
+///   The existence check runs under a short-lived `sessions` lock that is dropped
+///   before `close_session_inner` re-acquires it (no lock held across the close).
+async fn h_close_session(
+    State(handle): State<Handle>,
+    Path(session_id): Path<String>,
+) -> Response {
+    let state = handle.state::<AppState>();
+
+    // Existence check under a short-lived lock; drop it before closing.
+    {
+        let sessions = state.sessions.lock().unwrap();
+        if !sessions.contains_key(&session_id) {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "session not found", "code": "NOT_FOUND" })),
+            )
+                .into_response();
+        }
+    }
+
+    if let Err(e) = crate::commands::files::close_session_inner(&state, Some(&handle), &session_id) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e, "code": "CLOSE_FAILED" })),
+        )
+            .into_response();
+    }
+
+    // Notify the frontend so it closes any pane/tab bound to this session.
+    let _ = handle.emit("session-closed", json!({ "sessionId": session_id }));
+
+    Json(json!({ "closed": true, "sessionId": session_id })).into_response()
 }
 
 // ---------------------------------------------------------------------------

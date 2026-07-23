@@ -133,7 +133,7 @@ function ok(data: unknown): { content: Array<{ type: "text"; text: string }> } {
 
 const server = new McpServer({
   name: "logtapper",
-  version: "1.1.0",
+  version: "1.2.0",
   description:
     "Query live Android log sessions loaded in LogTapper. " +
     "Use these tools to inspect log content, state-tracker events, and " +
@@ -1135,6 +1135,41 @@ server.tool(
   async ({ path }) => {
     try {
       return ok(await bridgePost("/mcp/open_file", { path }));
+    } catch (err) {
+      return ok({ error: String(err) });
+    }
+  }
+);
+
+// ── 19. logtapper_close_session ──────────────────────────────────────────
+
+server.tool(
+  "logtapper_close_session",
+  "Close a log session in LogTapper and release the resources it holds. This " +
+    "purges the session's pipeline/tracker/correlator results, cancels any active " +
+    "ADB stream or background indexing, and — for file-backed sessions — DROPS the " +
+    "underlying memory map so the file handle is released (on Windows the file is " +
+    "no longer locked and can be moved or deleted).\n\n" +
+    "The session ALWAYS closes, even if the user currently has it open in a tab: " +
+    "LogTapper closes that tab in response. After a successful call the id no longer " +
+    "appears in logtapper_list_sessions or logtapper_get_status.\n\n" +
+    "Returns { closed: true, sessionId } on success. If the id is not a currently " +
+    "loaded session, returns an HTTP 404 error whose body carries code NOT_FOUND — " +
+    "call logtapper_list_sessions to see the valid ids. Closing is idempotent from " +
+    "the caller's view: once closed, re-closing the same id returns NOT_FOUND.",
+  {
+    session_id: z
+      .string()
+      .describe("Session ID from logtapper_list_sessions or logtapper_get_status"),
+  },
+  async ({ session_id }) => {
+    try {
+      return ok(
+        await bridgePost(
+          `/mcp/sessions/${encodeURIComponent(session_id)}/close`,
+          {}
+        )
+      );
     } catch (err) {
       return ok({ error: String(err) });
     }

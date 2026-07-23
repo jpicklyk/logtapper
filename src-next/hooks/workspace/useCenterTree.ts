@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { UnlistenFn } from '@tauri-apps/api/event';
 import { bus } from '../../events/bus';
+import { onBridgeSessionClosed } from '../../bridge/events';
 import type { CenterTabType, BottomTabType, CenterPane, DropZone, EditorTabState, SplitNode } from './workspaceTypes';
 import { TAB_LABELS } from './workspaceTypes';
 import {
@@ -500,6 +502,51 @@ export function useCenterTree(
       bus.off('stream:saved', onStreamSaved);
     };
   }, []);
+
+  // ---------------------------------------------------------------------------
+  // Bridge/agent-initiated session close (Tauri `session-closed` event)
+  // ---------------------------------------------------------------------------
+  //
+  // The MCP bridge can close a session out-of-band (POST /mcp/sessions/{id}/close).
+  // The backend session is already gone by the time this fires; the frontend must
+  // close any tab(s) still bound to it. This hook owns tab identity, so it is the
+  // right place: `tabSessionMapRef` is the tabId→sessionId reverse map and
+  // `closeTab` is the same programmatic tab-close action the tab X button uses
+  // (AppShell.onTabClose). closeTab removes the tab from the tree AND drives the
+  // session-layer cleanup via the `layout:logviewer-tab-closed` bus event —
+  // i.e. it transitively invokes useSessionTabManager.closeSession.
+  //
+  // Targeted (rule 6): only tabs whose map entry matches `sessionId` are closed,
+  // never all tabs. No-op when nothing is bound (agent closed a session with no
+  // open tab). StrictMode-safe async listener pattern (cancelled flag + immediate
+  // unregister if cleanup already ran).
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: UnlistenFn | null = null;
+
+    onBridgeSessionClosed(({ sessionId }) => {
+      if (cancelled) return;
+      // Snapshot matching tabIds before mutating — closeTab deletes map entries.
+      const tabIds: string[] = [];
+      for (const [tabId, sid] of tabSessionMapRef.current.entries()) {
+        if (sid === sessionId) tabIds.push(tabId);
+      }
+      for (const tabId of tabIds) {
+        // treeRef.current updates synchronously between closeTab calls, so each
+        // lookup sees the latest tree. Missing tab → skip (no throw).
+        const found = findTabAcrossTree(treeRef.current, tabId);
+        if (found) closeTab(tabId, found.pane.id);
+      }
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [closeTab]);
 
   // ---------------------------------------------------------------------------
   // Return
