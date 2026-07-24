@@ -107,6 +107,13 @@ export interface LoadResult {
   hasCrlf: boolean;
   /** Detected file encoding (e.g. "UTF-8", "UTF-16 LE", "UTF-16 BE"). */
   encoding: string;
+  /**
+   * Client-side only: cumulative count of live-stream lines permanently lost
+   * because they could not be spilled to disk. Never sent by the backend at
+   * load time (a fresh session has none); populated from `AdbBatchPayload`
+   * via `updateSession` as the stream runs. Undefined for file sessions.
+   */
+  lostLineCount?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -164,6 +171,12 @@ export interface AdbBatchPayload {
   firstTimestamp: number | null;
   /** Most recent non-zero timestamp (ns since 2000-01-01 UTC), or null. */
   lastTimestamp: number | null;
+  /**
+   * Cumulative count of evicted lines that could not be spilled to disk and are
+   * therefore permanently lost. 0 in the normal case; non-zero surfaces
+   * otherwise-silent data loss (spill-file create/write failure).
+   */
+  lostLineCount: number;
 }
 
 export interface AdbProcessorUpdate {

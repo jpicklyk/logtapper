@@ -14,6 +14,8 @@ export interface FileInfoData {
   sourceType: string | undefined;
   totalLines: number | undefined;
   fileSize: number | undefined;
+  /** Live-stream lines permanently lost because spilling to disk failed. */
+  lostLineCount: number | undefined;
   firstTimestamp: number | null | undefined;
   lastTimestamp: number | null | undefined;
   sections: SectionEntry[];
@@ -322,6 +324,7 @@ export function useFileInfo(paneId: string | null): FileInfoData {
     sourceType: session?.sourceType,
     totalLines: session?.totalLines,
     fileSize: session?.fileSize,
+    lostLineCount: session?.lostLineCount,
     firstTimestamp: effectiveFirstTs,
     lastTimestamp: effectiveLastTs,
     sections,

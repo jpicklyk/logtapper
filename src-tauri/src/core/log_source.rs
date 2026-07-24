@@ -578,6 +578,51 @@ mod tests {
 // SpillFile — temp file for evicted stream lines
 // ---------------------------------------------------------------------------
 
+/// Filename prefix for per-session spill files (in the app-data / temp dir).
+pub(crate) const SPILL_FILE_PREFIX: &str = "logtapper-spill-";
+/// Filename suffix for spill files.
+pub(crate) const SPILL_FILE_SUFFIX: &str = ".tmp";
+
+/// Build the spill file name for a given session id.
+fn spill_file_name(session_id: &str) -> String {
+    format!("{SPILL_FILE_PREFIX}{session_id}{SPILL_FILE_SUFFIX}")
+}
+
+/// Delete orphaned spill files left in `dir` by a previous run.
+///
+/// ADB stream sessions are purely in-memory: their `LogSource` lives only in
+/// `AppState::sessions` and they are never persisted to `.ltw` (see
+/// `collect_session_data`, which skips sessions without a `file_path`). So no
+/// session — and no `SpillFile`, whose `Drop` deletes the temp file — ever
+/// survives a process restart. Any `logtapper-spill-*.tmp` present at startup
+/// is therefore an orphan from a crashed or force-killed run and is safe to
+/// remove. Returns the number of files deleted. Non-fatal: individual delete
+/// failures are logged and skipped.
+pub fn sweep_orphaned_spill_files(dir: &std::path::Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0; // dir missing or unreadable — nothing to sweep
+    };
+    let mut removed = 0usize;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if name.starts_with(SPILL_FILE_PREFIX) && name.ends_with(SPILL_FILE_SUFFIX) {
+            let path = entry.path();
+            if !path.is_file() {
+                continue; // never touch directories that happen to match
+            }
+            match std::fs::remove_file(&path) {
+                Ok(()) => removed += 1,
+                Err(e) => eprintln!(
+                    "Warning: failed to remove orphaned spill file {}: {e}",
+                    path.display()
+                ),
+            }
+        }
+    }
+    removed
+}
+
 /// Holds the spill file handle, byte offsets for each spilled line, and the
 /// file path (for cleanup and capture finalization).
 pub(crate) struct SpillFile {
@@ -679,6 +724,11 @@ pub struct StreamLogSource {
     pub(crate) temp_dir: PathBuf,
     /// Session ID for naming the spill file.
     pub(crate) session_id: String,
+    /// Count of evicted lines that could NOT be written to the spill file
+    /// (spill creation failed, or an individual write errored). These lines are
+    /// permanently lost — they leave the in-memory buffer but never reach disk.
+    /// Surfaced to the UI so silent, invisible data loss becomes observable.
+    pub(crate) lost_line_count: usize,
 }
 
 impl StreamLogSource {
@@ -695,6 +745,7 @@ impl StreamLogSource {
             spill: None,
             temp_dir,
             session_id,
+            lost_line_count: 0,
         }
     }
 
@@ -735,28 +786,40 @@ impl StreamLogSource {
         }
         // Create spill file on first eviction.
         if self.spill.is_none() {
-            let spill_path = self.temp_dir.join(format!(
-                "logtapper-spill-{}.tmp",
-                self.session_id
-            ));
+            let spill_path = self.temp_dir.join(spill_file_name(&self.session_id));
             match SpillFile::create(spill_path) {
                 Ok(sf) => self.spill = Some(sf),
                 Err(e) => {
                     eprintln!("Warning: failed to create spill file, evicted lines will be lost: {e}");
-                    // Fall through — evict without spilling (legacy behavior).
+                    // Fall through — evict without spilling (retention cap must
+                    // hold), but the loss is now counted (see below).
                 }
             }
         }
-        // Write evicted lines to spill file.
-        if let Some(ref mut spill) = self.spill {
-            for line in self.raw_lines.iter().take(count) {
-                if let Err(e) = spill.write_line(line) {
-                    eprintln!("Warning: spill write failed: {e}");
+        // Write evicted lines to the spill file, counting any that are lost.
+        // The retention cap must be enforced regardless (lines still drain), so
+        // an unspillable line is dropped — but recorded in `lost_line_count`
+        // instead of vanishing behind only an eprintln.
+        let mut lost = 0usize;
+        match self.spill {
+            Some(ref mut spill) => {
+                for line in self.raw_lines.iter().take(count) {
+                    if let Err(e) = spill.write_line(line) {
+                        eprintln!("Warning: spill write failed, evicted line lost: {e}");
+                        lost += 1;
+                    }
                 }
+            }
+            None => {
+                // Spill file could not be created — every line evicted in this
+                // call is permanently lost.
+                lost = count;
             }
         }
         self.raw_lines.drain(0..count);
-        // NOTE: line_meta is NOT drained — metadata stays for all lines.
+        // NOTE: line_meta is NOT drained — metadata stays for all lines, so
+        // absolute line numbering (via `evicted_count`) is unaffected by loss.
+        self.lost_line_count += lost;
         self.evicted_count += count;
     }
 
@@ -799,6 +862,12 @@ impl StreamLogSource {
     /// Number of lines evicted from the front.
     pub fn evicted_count(&self) -> usize {
         self.evicted_count
+    }
+
+    /// Number of evicted lines permanently lost because spilling failed
+    /// (spill-file creation failed, or an individual write errored).
+    pub fn lost_line_count(&self) -> usize {
+        self.lost_line_count
     }
 
     /// Cached first timestamp (survives eviction).
@@ -871,5 +940,173 @@ impl LogSource for StreamLogSource {
     fn first_timestamp(&self) -> Option<i64> {
         // Return cached value so eviction doesn't lose the original first timestamp.
         self.cached_first_ts
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests for spill-file sweep + eviction loss accounting
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod spill_tests {
+    use super::*;
+    use crate::core::line::{LineMeta, LogLevel};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    /// Create a fresh, uniquely-named temp directory for a test.
+    fn unique_temp_dir(tag: &str) -> PathBuf {
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "logtapper-spilltest-{tag}-{}-{n}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn dummy_meta() -> LineMeta {
+        LineMeta {
+            level: LogLevel::Info,
+            tag_id: 0,
+            timestamp: 0,
+            byte_offset: 0,
+            byte_len: 0,
+            is_section_boundary: false,
+        }
+    }
+
+    /// The startup sweep deletes `logtapper-spill-*.tmp` orphans and leaves
+    /// every non-matching file untouched.
+    #[test]
+    fn sweep_deletes_orphans_and_spares_others() {
+        let dir = unique_temp_dir("sweep");
+
+        // Orphan spill files (must be deleted).
+        let orphan1 = dir.join(spill_file_name("sess-A"));
+        let orphan2 = dir.join(spill_file_name("adb-192-168-0-2_9c3f"));
+        std::fs::write(&orphan1, b"x").unwrap();
+        std::fs::write(&orphan2, b"y").unwrap();
+
+        // Non-matching files (must be spared).
+        let keep_suffix = dir.join("logtapper-spill-foo.txt"); // wrong suffix
+        let keep_prefix = dir.join("something-else.tmp"); // wrong prefix
+        let keep_other = dir.join("sources.json"); // unrelated
+        std::fs::write(&keep_suffix, b"a").unwrap();
+        std::fs::write(&keep_prefix, b"b").unwrap();
+        std::fs::write(&keep_other, b"c").unwrap();
+
+        let removed = sweep_orphaned_spill_files(&dir);
+        assert_eq!(removed, 2, "both orphan spill files must be removed");
+        assert!(!orphan1.exists(), "orphan 1 deleted");
+        assert!(!orphan2.exists(), "orphan 2 deleted");
+        assert!(keep_suffix.exists(), "wrong-suffix file spared");
+        assert!(keep_prefix.exists(), "wrong-prefix file spared");
+        assert!(keep_other.exists(), "unrelated file spared");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A directory whose name coincidentally matches the spill pattern is never
+    /// removed (only regular files are swept).
+    #[test]
+    fn sweep_ignores_matching_directories() {
+        let dir = unique_temp_dir("sweepdir");
+        let matching_subdir = dir.join(spill_file_name("looks-like-a-spill"));
+        std::fs::create_dir_all(&matching_subdir).unwrap();
+
+        let removed = sweep_orphaned_spill_files(&dir);
+        assert_eq!(removed, 0, "directories matching the pattern must be ignored");
+        assert!(matching_subdir.exists(), "matching directory must survive");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Sweeping a missing/unreadable directory is a no-op that returns 0.
+    #[test]
+    fn sweep_missing_dir_returns_zero() {
+        let dir = std::env::temp_dir()
+            .join(format!("logtapper-spilltest-absent-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(sweep_orphaned_spill_files(&dir), 0);
+    }
+
+    /// When the spill file cannot be created, evicted lines are counted as lost
+    /// and absolute line numbering stays consistent (meta is never drained, and
+    /// `evicted_count` still advances so retained lines read at the right index).
+    #[test]
+    fn evict_records_loss_when_spill_unavailable() {
+        // Force SpillFile::create to fail: point temp_dir at a *file* so that
+        // joining a filename onto it cannot be opened. Reliable on all OSes.
+        let base = unique_temp_dir("evictfail");
+        let file_as_dir = base.join("blocker");
+        std::fs::write(&file_as_dir, b"x").unwrap();
+
+        let mut src = StreamLogSource::new(
+            "src".to_string(),
+            "name".to_string(),
+            "sess-fail".to_string(),
+            file_as_dir,
+        );
+        for i in 0..5 {
+            src.push_raw_line(format!("line {i}"));
+            src.push_meta(dummy_meta());
+        }
+        assert_eq!(src.total_lines(), 5);
+
+        // Evict the first 2 — spill creation fails, so both are lost.
+        src.evict(2);
+
+        assert!(!src.has_spill(), "spill file must not have been created");
+        assert_eq!(src.lost_line_count(), 2, "both unspillable lines are counted as lost");
+        assert_eq!(src.evicted_count(), 2, "evicted_count still advances");
+        // Metadata is never drained, so absolute line count is unchanged.
+        assert_eq!(src.total_lines(), 5);
+        // Evicted lines are unrecoverable (no spill) → None, not a panic or shift.
+        assert!(src.raw_line(0).is_none(), "lost line 0 returns None");
+        assert!(src.raw_line(1).is_none(), "lost line 1 returns None");
+        // Retained lines still read at their ABSOLUTE index (numbering intact).
+        assert_eq!(src.raw_line(2).as_deref(), Some("line 2"));
+        assert_eq!(src.raw_line(4).as_deref(), Some("line 4"));
+        // meta_at works for every absolute line number.
+        assert!(src.meta_at(0).is_some());
+        assert!(src.meta_at(4).is_some());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The normal path: spilling succeeds, nothing is lost, evicted lines are
+    /// recoverable, and line numbering is preserved.
+    #[test]
+    fn evict_no_loss_and_recovers_lines_when_spill_ok() {
+        let dir = unique_temp_dir("evictok");
+        let mut src = StreamLogSource::new(
+            "src".to_string(),
+            "name".to_string(),
+            "sess-ok".to_string(),
+            dir.clone(),
+        );
+        for i in 0..5 {
+            src.push_raw_line(format!("line {i}"));
+            src.push_meta(dummy_meta());
+        }
+
+        src.evict(2);
+
+        assert!(src.has_spill(), "spill file created on first eviction");
+        assert_eq!(src.lost_line_count(), 0, "no loss when spilling works");
+        assert_eq!(src.evicted_count(), 2);
+        assert_eq!(src.total_lines(), 5);
+        // Evicted lines recoverable from the spill file at absolute index.
+        assert_eq!(src.raw_line(0).as_deref(), Some("line 0"));
+        assert_eq!(src.raw_line(1).as_deref(), Some("line 1"));
+        // Retained lines still read at absolute index.
+        assert_eq!(src.raw_line(2).as_deref(), Some("line 2"));
+        assert_eq!(src.raw_line(4).as_deref(), Some("line 4"));
+
+        // Drop removes the temp spill file.
+        drop(src);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

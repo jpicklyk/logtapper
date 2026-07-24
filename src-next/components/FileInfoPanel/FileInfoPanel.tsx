@@ -1,7 +1,7 @@
 import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import {
-  FileText, Smartphone, Clock, HardDrive, Layers, Hash, Search,
+  FileText, Smartphone, Clock, HardDrive, Layers, Hash, Search, AlertTriangle,
 } from 'lucide-react';
 import type { DumpstateMetadata } from '../../bridge/types';
 import { isBugreportLike } from '../../bridge/types';
@@ -25,6 +25,8 @@ interface FileInfoPanelProps {
   sourceType?: string;
   totalLines?: number;
   fileSize?: number;
+  /** Live-stream lines permanently lost because spilling to disk failed. */
+  lostLineCount?: number;
   firstTimestamp?: number | null;
   lastTimestamp?: number | null;
   sections: SectionEntry[];
@@ -82,6 +84,7 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
     sourceType,
     totalLines,
     fileSize,
+    lostLineCount,
     firstTimestamp,
     lastTimestamp,
     sections,
@@ -168,6 +171,24 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
               value={fileSize != null ? formatFileSize(fileSize) : '\u2014'}
             />
           </div>
+
+          {/* Lost-lines warning (spill failure during live capture) */}
+          {lostLineCount != null && lostLineCount > 0 && (
+            <div className={styles.lostLinesWarning} role="alert">
+              <span className={styles.lostLinesWarningIcon}>
+                <AlertTriangle size={14} />
+              </span>
+              <span className={styles.lostLinesWarningText}>
+                <span className={styles.lostLinesWarningTitle}>
+                  {lostLineCount.toLocaleString()} line{lostLineCount !== 1 ? 's' : ''} lost
+                </span>
+                <span className={styles.lostLinesWarningDetail}>
+                  Evicted lines could not be written to the spill file and are
+                  unrecoverable. Live capture continues.
+                </span>
+              </span>
+            </div>
+          )}
 
           {/* ── Time range ────────────────────────────────────────── */}
           {(firstTimestamp || lastTimestamp) && (

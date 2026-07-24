@@ -19,6 +19,7 @@ const FileInfoPane = React.memo(function FileInfoPane({ paneId }: FileInfoPanePr
       sourceType={fileInfo.sourceType}
       totalLines={fileInfo.totalLines}
       fileSize={fileInfo.fileSize}
+      lostLineCount={fileInfo.lostLineCount}
       firstTimestamp={fileInfo.firstTimestamp}
       lastTimestamp={fileInfo.lastTimestamp}
       sections={fileInfo.sections}

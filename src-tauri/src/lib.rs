@@ -279,6 +279,17 @@ pub fn run() {
             let sources_path = data_dir.join("sources.json");
             let state = app.state::<AppState>();
 
+            // Sweep orphaned ADB-stream spill files left by a previous run.
+            // Stream sessions are in-memory only and never persisted to `.ltw`
+            // (collect_session_data skips sessions without a file_path), so any
+            // `logtapper-spill-*.tmp` present at startup is an orphan from a
+            // crash / force-kill whose `SpillFile::drop` never ran. Nothing holds
+            // these files at startup, so they can be safely deleted.
+            let swept = crate::core::log_source::sweep_orphaned_spill_files(&data_dir);
+            if swept > 0 {
+                log::info!("[startup] removed {swept} orphaned spill file(s)");
+            }
+
             // Load anonymizer config from disk
             let config_path = data_dir.join("anonymizer_config.json");
             if let Ok(json) = std::fs::read_to_string(&config_path) {

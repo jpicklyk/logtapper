@@ -74,6 +74,7 @@ export function useStreamSession(
       fileSize: payload.byteCount,
       firstTimestamp: prev.firstTimestamp ?? payload.firstTimestamp,
       lastTimestamp: payload.lastTimestamp,
+      lostLineCount: payload.lostLineCount,
     }));
 
     // Incremental filter: check only new lines from this batch

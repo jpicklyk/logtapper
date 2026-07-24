@@ -128,6 +128,44 @@
   margin-top: 1px;
 }
 
+/* ── Lost-lines warning (live stream spill failure) ───────────────────────── */
+
+.lostLinesWarning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 8px;
+  border: 1px solid var(--warning);
+  border-radius: 4px;
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+}
+
+.lostLinesWarningIcon {
+  flex-shrink: 0;
+  display: flex;
+  margin-top: 1px;
+}
+
+.lostLinesWarningText {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lostLinesWarningTitle {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.lostLinesWarningDetail {
+  font-size: 10px;
+  color: var(--text-dimmed);
+  line-height: 1.3;
+}
+
 /* ── Time range ───────────────────────────────────────────────────────────── */
 
 .timeRange {

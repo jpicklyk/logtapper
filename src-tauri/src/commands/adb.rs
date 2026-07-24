@@ -44,6 +44,10 @@ pub struct AdbBatch {
     pub first_timestamp: Option<i64>,
     /// Most recent non-zero timestamp (nanoseconds since 2000-01-01 UTC).
     pub last_timestamp: Option<i64>,
+    /// Cumulative count of evicted lines that could NOT be spilled to disk and
+    /// are therefore permanently lost (spill-file create/write failure). 0 in
+    /// the normal case; a non-zero value makes otherwise-silent loss visible.
+    pub lost_line_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -945,7 +949,7 @@ fn flush_batch(
     }
 
     // ── Step 3: Append raw lines + meta to session, evict if over cap ─────────
-    let (total_lines, byte_count, first_ts, last_ts) = {
+    let (total_lines, byte_count, first_ts, last_ts, lost_line_count) = {
         let mut sessions = match state.sessions.lock() {
             Ok(g) => g,
             Err(e) => {
@@ -997,8 +1001,10 @@ fn flush_batch(
             .rev()
             .find(|m| m.timestamp > 0)
             .map(|m| m.timestamp);
+        // Cumulative count of evicted lines that failed to spill (see evict()).
+        let lost = stream.lost_line_count();
 
-        (total, bc, first_ts, last_ts)
+        (total, bc, first_ts, last_ts, lost)
     };
 
     // Collect ViewLines for the batch event
@@ -1254,13 +1260,14 @@ fn flush_batch(
     }
 
     // ── Step 5: Send events via Channel ───────────────────────────────────────
-    send_batch(on_event, session_id, view_lines, total_lines, byte_count, first_ts, last_ts);
+    send_batch(on_event, session_id, view_lines, total_lines, byte_count, first_ts, last_ts, lost_line_count);
 
     for update in proc_updates {
         let _ = on_event.send(AdbStreamEvent::ProcessorUpdate(update));
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn send_batch(
     on_event: &Channel<AdbStreamEvent>,
     session_id: &str,
@@ -1269,6 +1276,7 @@ fn send_batch(
     byte_count: u64,
     first_timestamp: Option<i64>,
     last_timestamp: Option<i64>,
+    lost_line_count: usize,
 ) {
     let _ = on_event.send(AdbStreamEvent::Batch(AdbBatch {
         session_id: session_id.to_string(),
@@ -1277,6 +1285,7 @@ fn send_batch(
         byte_count,
         first_timestamp,
         last_timestamp,
+        lost_line_count,
     }));
 }
 
