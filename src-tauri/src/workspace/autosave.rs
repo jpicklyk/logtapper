@@ -268,9 +268,11 @@ async fn flush(app: &AppHandle) {
     //      the divergence predicate below cannot catch while the sets still
     //      overlap — and clobber the complete `.ltw` written at switch start.
     //      Skip *without* recording the flushed generation, so this mutation
-    //      stays dirty and the next flush (after the switch settles, or the
-    //      window auto-expires) still persists it. `cache_envelope` at restore
-    //      completion clears the window and re-arms a correct flush.
+    //      stays dirty. There is no automatic retry when the window clears:
+    //      the pending state is persisted by the next flush trigger — a
+    //      subsequent mutation's schedule_autosave signal, or the exit
+    //      handler's has_pending_flush check. `cache_envelope` at restore
+    //      completion clears the window.
     if switch_suppression_active(&state) {
         log::debug!(
             "[autosave] flush skipped: workspace switch in progress (suppression window active)"

@@ -917,7 +917,7 @@ impl StreamLogSource {
         }
         if self.lost_line_count > 0 {
             let marker = format!(
-                "---- [LogTapper] {} lines not captured (spill cap reached) ----",
+                "---- [LogTapper] {} lines not captured (spill unavailable) ----",
                 self.lost_line_count
             );
             writer.write_all(marker.as_bytes()).map_err(|e| format!("Write error: {e}"))?;
@@ -1334,7 +1334,7 @@ mod spill_tests {
                 "line 0",
                 "line 1",
                 "line 2",
-                "---- [LogTapper] 7 lines not captured (spill cap reached) ----",
+                "---- [LogTapper] 7 lines not captured (spill unavailable) ----",
                 "line 10",
                 "line 11",
                 "line 12",
