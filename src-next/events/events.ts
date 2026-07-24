@@ -123,11 +123,19 @@ export type AppEvents = {
   'marketplace:pack-updated':          { packId: string; sourceName: string };
 
   // ── Workspace ──────────────────────────────────────────────────────────
-  /** Fired by component-local hooks (bookmarks, analyses, editor dirty) that
-   *  bypass ActionsContext. Actions routed through ActionsContext get automatic
-   *  dirty tracking via `trackMutations()` — they do NOT need this event.
-   *  WorkspaceContext listens to set `dirty = true`. No payload. */
-  'workspace:mutated':       undefined;
+  /** Fired on every workspace or artifact mutation. `source` discriminates
+   *  what `useWorkspaceAutoSave` does with it:
+   *   - 'workspace': a `WorkspaceMutationActions` mutation via `trackMutations()`
+   *     (file loads, chain edits, processor installs) or another workspace-layer
+   *     change (e.g. editor tab dirty state) — the frontend is the ONLY
+   *     persister, so this drives the full debounced `.ltw` write.
+   *   - 'artifact': a session-layer artifact mutation (bookmark, analysis) —
+   *     the backend's `schedule_autosave` (`artifact_mutations.rs`) already
+   *     writes the `.ltw` for these, so this only refreshes the backend's
+   *     cached envelope (`sync_workspace_envelope`) to keep the layout/tabs
+   *     current for that write.
+   *  WorkspaceContext listens to set `dirty = true` regardless of source. */
+  'workspace:mutated':       { source: 'artifact' | 'workspace' };
   /** Fired just before a workspace reset (new workspace or open .lts). Hooks
    *  should clean up session-scoped state. */
   'workspace:before-reset':  undefined;

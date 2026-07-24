@@ -64,7 +64,7 @@ export function SessionActionsProvider({ sessionId, children }: SessionActionsPr
   sessionIdRef.current = sessionId;
 
   const markDirty = useCallback(() => {
-    bus.emit('workspace:mutated', undefined);
+    bus.emit('workspace:mutated', { source: 'artifact' });
   }, []);
 
   // --- Bookmark actions ---

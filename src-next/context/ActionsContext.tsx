@@ -142,7 +142,7 @@ export function trackMutations(
 ): Partial<ActionsContextValue> {
   const onMutate = () => {
     markDirty();
-    bus.emit('workspace:mutated');
+    bus.emit('workspace:mutated', { source: 'workspace' });
   };
   const result = { ...actions } as Record<string, unknown>;
   for (const key of MUTATION_ACTION_KEYS) {

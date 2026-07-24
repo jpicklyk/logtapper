@@ -53,7 +53,7 @@ export function useBookmarks(sessionId: string | null) {
       // reason as useAnalysis: a bookmark created over the MCP bridge is
       // written straight into AppState and may target a non-focused session,
       // so nothing else would schedule an auto-save for it.
-      bus.emit('workspace:mutated');
+      bus.emit('workspace:mutated', { source: 'artifact' });
 
       if (payload.sessionId !== currentSessionId.current) return;
 

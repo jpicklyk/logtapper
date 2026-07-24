@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { bus } from '../events/bus';
 import { performAutoSave } from './workspace/workspacePersistence';
+import { pushWorkspaceEnvelope, toEnvelopeOptions } from './workspace/envelopeSync';
 import { createAutoSaveGate } from './workspace/autoSaveGate';
 import type { LtwEditorTab } from '../bridge/types';
 
@@ -18,9 +19,27 @@ export interface AutoSavePayload {
 
 /**
  * Debounced auto-save hook that listens to `workspace:mutated` events and
- * saves the workspace after 3 seconds of inactivity.
+ * acts after 3 seconds of inactivity. What it does depends on the event's
+ * `source`:
  *
- * Prevents data loss on bookmark/analysis mutations if the app crashes.
+ *  - 'workspace' (file loads, pipeline chain edits, processor installs,
+ *    editor-tab dirty state, ...): the frontend is the only persister for
+ *    these, so this runs the full `.ltw` write via `performAutoSave`, exactly
+ *    as before.
+ *  - 'artifact' (bookmarks, analyses — including MCP-bridge-originated ones):
+ *    the backend's `schedule_autosave` (`artifact_mutations.rs`) already
+ *    writes the `.ltw` on every artifact mutation. Duplicating that write
+ *    here would race the backend's own write and buy nothing, so this only
+ *    pushes a fresh envelope to the backend's cache (`sync_workspace_envelope`
+ *    — no file write) so the backend's write reflects the current
+ *    layout/tabs/chain alongside the artifact change.
+ *
+ * A burst of mixed sources within one debounce window collapses to exactly
+ * one action: if any 'workspace' event lands before the timer fires, the
+ * full `performAutoSave` runs — it is a superset of what the 'artifact'
+ * branch would have done, so 'workspace' always wins over 'artifact' within
+ * the same window.
+ *
  * Uses refs for all mutable state to avoid causing re-renders.
  */
 export function useWorkspaceAutoSave(
@@ -31,6 +50,7 @@ export function useWorkspaceAutoSave(
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let pendingSource: 'workspace' | 'artifact' | null = null;
     const gate = createAutoSaveGate();
 
     const cancelPending = () => {
@@ -45,8 +65,19 @@ export function useWorkspaceAutoSave(
     // (including `setTimeout`) as a setState updater, so a `bus.emit` lexically
     // inside the timer arrow would be flagged. Hoisting keeps the emit clean.
     const runAutoSave = () => {
+      const source = pendingSource;
+      pendingSource = null;
       const payload = buildPayloadRef.current();
       if (!payload) return;
+
+      if (source === 'artifact') {
+        // Backend already owns the .ltw write for artifact mutations (see the
+        // JSDoc above) — only refresh its cached envelope so that write picks
+        // up the current layout/tabs/chain.
+        void pushWorkspaceEnvelope(toEnvelopeOptions(payload), '[useWorkspaceAutoSave]');
+        return;
+      }
+
       // No separate envelope sync here: performAutoSave's underlying command
       // (saveWorkspaceV4 / autoSaveWorkspace) already calls autosave::cache_envelope
       // with this exact payload as the first thing it does (see
@@ -71,11 +102,17 @@ export function useWorkspaceAutoSave(
         );
     };
 
-    const handler = () => {
+    const handler = (payload: { source: 'artifact' | 'workspace' }) => {
       // A restore emits a burst of tracked mutations as it loads each session.
       // Saving then would rewrite what was just read, and a partial restore
       // would overwrite the good .ltw with the partial state.
       if (gate.isSuppressed()) return;
+      // 'workspace' wins and sticks for the rest of this debounce window —
+      // see the JSDoc above for why a later 'artifact' event must not
+      // downgrade an already-pending 'workspace' save.
+      if (pendingSource !== 'workspace') {
+        pendingSource = payload.source;
+      }
       cancelPending();
       timer = setTimeout(() => {
         timer = null;
@@ -88,6 +125,7 @@ export function useWorkspaceAutoSave(
       // Drop anything already scheduled — it was queued against pre-restore
       // state and would fire mid-restore.
       cancelPending();
+      pendingSource = null;
     };
     const onRestoreEnd = () => gate.endRestore();
 

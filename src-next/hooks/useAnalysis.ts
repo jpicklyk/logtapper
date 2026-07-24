@@ -61,7 +61,7 @@ export function useAnalysis(sessionId: string | null) {
       // not run in fifteen days despite an active investigation. Interim fix —
       // the durable answer is a backend-side flush trigger, so that any future
       // non-frontend writer is covered by construction.
-      bus.emit('workspace:mutated');
+      bus.emit('workspace:mutated', { source: 'artifact' });
 
       if (payload.sessionId !== currentSessionId.current) return;
 

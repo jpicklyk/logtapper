@@ -239,8 +239,10 @@ export function useCenterTree(
         tabs: pane.tabs.map((t) => (t.id === tabId ? { ...t, unsaved: isDirty } : t)),
       })),
     );
-    // Editor content changed — mark workspace dirty (only on dirty=true, not on save-clean)
-    if (isDirty) bus.emit('workspace:mutated', undefined);
+    // Editor content changed — mark workspace dirty (only on dirty=true, not on save-clean).
+    // Editor tab content lives only in the frontend (not a backend-durable artifact),
+    // so this is a 'workspace'-sourced mutation — the frontend remains its only persister.
+    if (isDirty) bus.emit('workspace:mutated', { source: 'workspace' });
   }, [updateTree]);
 
   const openCenterTab = useCallback((type: CenterTabType, label?: string, filePath?: string, editorState?: EditorTabState) => {
