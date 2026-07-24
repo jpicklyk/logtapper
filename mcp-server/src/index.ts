@@ -303,9 +303,11 @@ server.tool(
     "  tag     — exact tag string\n" +
     "  message — substring match against the raw line\n" +
     "\nWhen any filter is active, the tool switches to full-scan mode (up to " +
-    "100k lines) to avoid missing rare events. The chosen strategy still " +
+    "500k lines) to avoid missing rare events. The chosen strategy still " +
     "controls scan ordering. A 'strategyNote' field in the response explains " +
-    "the fallback.\n" +
+    "the fallback; 'scannedLines' reports how many lines were actually " +
+    "scanned, and 'truncated' is true if the 500k cap (or the session " +
+    "ending mid-scan) cut the scan short of the full requested range.\n" +
     "\nRange restriction:\n" +
     "  start_line / end_line — restrict sampling/scanning to a line range\n" +
     "  time_start / time_end — restrict to a timestamp range (ISO 8601)",
@@ -395,7 +397,11 @@ server.tool(
     "decide whether to paginate. `returned` is how many are in this page. " +
     "Lines are truncated to `maxLineChars` (default 500) with a trailing '...'; " +
     "wide dumpsys status lines exceed that and lose their trailing fields, so " +
-    "raise max_line_chars when a value you need may sit past the cut.",
+    "raise max_line_chars when a value you need may sit past the cut. The " +
+    "search range itself is capped at 500k lines per request; `scannedLines` " +
+    "reports how many lines were actually scanned, and `truncated` is true if " +
+    "that cap (or the session ending mid-scan) cut the scan short — page " +
+    "forward with start_line to cover the rest.",
   {
     session_id: z.string().describe("Session ID"),
     query: z.string().describe("Regex pattern to search for"),
