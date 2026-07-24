@@ -571,6 +571,19 @@ pub(crate) fn close_session_inner(state: &AppState, _app: Option<&tauri::AppHand
         }
     });
 
+    // 18. Remove the per-session pipeline run lock so the registry does not grow
+    //     unboundedly (and never accumulates poisoned locks) across the app's
+    //     lifetime. Eviction is safe: any pipeline run in flight for this session
+    //     holds its OWN clone of the `Arc<Mutex<()>>`, so the Mutex stays alive
+    //     by refcount and that run finishes normally — removing the registry's
+    //     reference never drops a lock a live run is using. The only consequence
+    //     is that if the identical file is reopened (ids are content-derived)
+    //     *while* an old run is still executing, the reopened session mints a
+    //     fresh lock and the two runs no longer serialize; that requires running
+    //     a pipeline across a close+reopen of the same file, and its worst case
+    //     is one stale result overwritten by the next clean run — not corruption.
+    lock_or_err(&state.pipeline_run_locks, "pipeline_run_locks")?.remove(session_id);
+
     Ok(())
 }
 
@@ -1601,6 +1614,26 @@ mod tests {
 
         assert!(!state.pipeline_results.lock().unwrap().contains_key("sess-3"),
             "pipeline results must be cleared on close");
+    }
+
+    #[test]
+    fn close_session_inner_removes_pipeline_run_lock() {
+        let state = make_state();
+        insert_session(&state, "sess-runlock", None);
+        // Materialize the per-session run lock (as execute_pipeline would).
+        let _ = state.pipeline_run_lock("sess-runlock").unwrap();
+        assert!(
+            state.pipeline_run_locks.lock().unwrap().contains_key("sess-runlock"),
+            "precondition: run lock entry exists before close"
+        );
+
+        close_session_inner(&state, None, "sess-runlock").unwrap();
+
+        assert!(
+            !state.pipeline_run_locks.lock().unwrap().contains_key("sess-runlock"),
+            "close_session_inner must evict the session's pipeline run lock so the \
+             registry does not grow (or retain poisoned locks) for the app's lifetime"
+        );
     }
 
     #[test]

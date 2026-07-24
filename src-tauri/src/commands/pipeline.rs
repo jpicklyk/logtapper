@@ -214,16 +214,37 @@ pub fn execute_pipeline(
     // lock across an await; both callers wrap it in spawn_blocking, so parking a
     // blocking-pool thread here does not stall the async runtime.
     let run_lock = state.pipeline_run_lock(session_id)?;
-    let _run_guard = run_lock
-        .lock()
-        .map_err(|_| "pipeline_run_lock poisoned".to_string())?;
 
-    // ── Register this run's cancellation token ───────────────────────────────
+    // ── Register this run's cancellation token BEFORE waiting on the run lock ──
     // Each run owns a distinct token keyed by a fresh run id, so starting this
-    // run never clears another run's pending cancel. `_cancel_guard` removes the
-    // token on every exit path (including the `?` early returns below).
+    // run never clears another run's pending cancel. Registering *before* we
+    // block on the run lock means a `stop_pipeline` issued while this run is
+    // still queued behind another same-session run lands on a live token (which
+    // we re-check right after acquisition below) instead of being missed — the
+    // queued run would otherwise slip past the stop and execute a full pass
+    // under a fresh, uncancelled token. `_cancel_guard` removes the token on
+    // every exit path (the `?` early returns, the queued-cancel abort, and the
+    // happy path).
     let (run_id, cancel) = state.register_pipeline_run();
     let _cancel_guard = PipelineRunGuard { state, run_id };
+
+    // Acquire the per-session run lock, RECOVERING from a poisoned lock. This
+    // `Mutex<()>` guards no data — it is a pure serialization gate — so a prior
+    // run that panicked while holding it left behind no corrupt invariant to
+    // protect against; taking the guard out of the `PoisonError` is safe.
+    // Propagating the poison instead would make every later run on this session
+    // fail forever: session ids are content-derived and the run-lock entry is
+    // cached, so even closing and reopening the same file would reuse the
+    // poisoned lock, bricking pipeline runs until the app restarts.
+    let _run_guard = run_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+
+    // If a stop arrived while we were queued behind another run, honor it now
+    // rather than running a full pass. Returning empty leaves any results
+    // already stored for this session untouched (a cancelled run is not a
+    // failure — mirrors the mid-run cancel path, which also returns Ok).
+    if cancel.load(Ordering::Relaxed) {
+        return Ok(Vec::new());
+    }
 
     // ── Partition processor IDs by kind and clone defs (single lock scope) ───
     let mut defs = PartitionedDefs {
@@ -823,5 +844,38 @@ pipeline:
             !Arc::ptr_eq(&a1, &b),
             "different sessions must get distinct run locks (so they stay concurrent)"
         );
+    }
+
+    #[test]
+    fn poisoned_run_lock_does_not_brick_subsequent_runs() {
+        // A run that panics while holding the per-session run lock poisons it.
+        // execute_pipeline acquires the lock with
+        // `run_lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner())`;
+        // this test exercises that exact recovery against the real Arc handed
+        // out by `pipeline_run_lock`, proving a panicked run cannot brick every
+        // later run on the (content-derived, cached) session id. execute_pipeline
+        // itself needs a Tauri AppHandle + a populated session, so it is not
+        // unit-testable directly — this asserts the mechanism it relies on.
+        let state = AppState::new();
+        let lock = state.pipeline_run_lock("sess-poison").unwrap();
+
+        // Simulate a run that panics mid-execution while holding the run lock.
+        let lock_for_panic = Arc::clone(&lock);
+        let joined = std::thread::spawn(move || {
+            let _held = lock_for_panic.lock().unwrap();
+            panic!("run panicked while holding the run lock");
+        })
+        .join();
+        assert!(joined.is_err(), "the spawned run must have panicked");
+        assert!(lock.is_poisoned(), "the panic must have poisoned the run lock");
+
+        // The next run fetches the SAME Arc (same session id) ...
+        let next = state.pipeline_run_lock("sess-poison").unwrap();
+        assert!(Arc::ptr_eq(&lock, &next), "same session reuses the cached run lock");
+
+        // ... and must still acquire it via the poison-recovering path used by
+        // execute_pipeline. Reaching the assertion proves the subsequent run
+        // proceeds rather than erroring out forever.
+        let _guard = next.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     }
 }
