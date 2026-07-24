@@ -3205,7 +3205,7 @@ mod tests {
         // every later bridge request.
         let poisoner = std::sync::Arc::clone(&state);
         let joined = std::thread::spawn(move || {
-            let _guard = poisoner.sessions.lock().unwrap();
+            let _guard = poisoner.sessions.lock().expect("lock not yet poisoned");
             panic!("simulated writer panic while holding sessions");
         })
         .join();
@@ -3226,11 +3226,11 @@ mod tests {
         // Seed a flag before poisoning so the recovered guard reflects the
         // same value a caller would see if the poisoning writer's insert had
         // completed — `into_inner` recovery must not lose or corrupt it.
-        state.mcp_anonymize.lock().unwrap().insert("sess-a".to_string(), false);
+        state.mcp_anonymize.lock().expect("lock not yet poisoned").insert("sess-a".to_string(), false);
 
         let poisoner = std::sync::Arc::clone(&state);
         let joined = std::thread::spawn(move || {
-            let _guard = poisoner.mcp_anonymize.lock().unwrap();
+            let _guard = poisoner.mcp_anonymize.lock().expect("lock not yet poisoned");
             panic!("simulated writer panic while holding mcp_anonymize");
         })
         .join();
