@@ -135,7 +135,7 @@ src-next/ui/          ← primitive UI components (Button, Modal, Tooltip, etc.)
 - **FileLogSource** — memory-mapped file + byte-offset line index. Immutable after construction.
 - **StreamLogSource** — append-only `Vec<String>` for ADB logcat. Evicts old lines to a `SpillFile` (temp disk file with byte-offset indexing) when over the retention cap (default 500k lines). `evicted_count` tracks offset so line numbers remain stable.
 
-**AnalysisSession** (`core/session.rs`): holds `Option<Box<dyn LogSource>>` plus `Timeline`, `CrossSourceIndex`, `TagInterner`. Accessor helpers `file_source()` / `stream_source()` downcast to concrete types.
+**AnalysisSession** (`core/session.rs`): holds `Option<Box<dyn LogSource>>` plus a `TagInterner`. Accessor helpers `file_source()` / `stream_source()` downcast to concrete types.
 
 ### AppState concurrency model (`commands/mod.rs`)
 

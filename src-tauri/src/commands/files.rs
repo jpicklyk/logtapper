@@ -671,7 +671,7 @@ async fn run_background_indexer(
         // Call build_partial_line_index under the session lock so the tag interner
         // is available. memchr-based scanning of 8 MB chunks completes in < 1 ms,
         // so lock contention is negligible.
-        let (chunk_line_count, bytes_in_chunk, rebuild_input) = {
+        let (chunk_line_count, bytes_in_chunk) = {
             let Ok(mut sessions) = state.sessions.lock() else {
                 return;
             };
@@ -703,7 +703,7 @@ async fn run_background_indexer(
             if bytes_in_chunk == 0 {
                 // No progress — break out of the loop.
                 // Return (0, 0) to signal the outer loop to break.
-                (0usize, 0usize, None)
+                (0usize, 0usize)
             } else {
                 let sentinel = crate::core::session::adjust_and_strip_sentinel(
                     &mut chunk_index, &mut chunk_meta, cursor, bytes_in_chunk,
@@ -715,15 +715,7 @@ async fn run_background_indexer(
 
                 session.extend_source_index(chunk_index, chunk_meta, sentinel, done);
 
-                // On the final chunk, snapshot the (compact) timeline input while
-                // still holding the lock, but defer the expensive rebuild (sort +
-                // hashmaps over every line) until after the lock is released.
-                let rebuild_input = if done {
-                    session.snapshot_timeline_input()
-                } else {
-                    None
-                };
-                (chunk_line_count, bytes_in_chunk, rebuild_input)
+                (chunk_line_count, bytes_in_chunk)
             }
         }; // session lock released
 
@@ -734,27 +726,6 @@ async fn run_background_indexer(
         cursor += bytes_in_chunk;
         let done = cursor >= data.len();
         total_indexed += chunk_line_count;
-
-        // Build the timeline/cross-source index OUTSIDE the sessions lock, then
-        // re-acquire briefly to swap it in. `try_swap_timeline` validates the
-        // session was not closed, replaced, or extended in the meantime, so a
-        // stale rebuild can never clobber newer state.
-        if let Some(input) = rebuild_input {
-            let expected_total_lines = input.expected_total_lines;
-            let expected_generation = input.generation;
-            let (timeline, index) =
-                crate::core::session::AnalysisSession::build_timeline_and_index(input);
-            if let Ok(mut sessions) = state.sessions.lock() {
-                if let Some(session) = sessions.get_mut(&session_id) {
-                    session.try_swap_timeline(
-                        timeline,
-                        index,
-                        expected_total_lines,
-                        expected_generation,
-                    );
-                }
-            }
-        }
 
         let _ = app.emit(
             "file-index-progress",

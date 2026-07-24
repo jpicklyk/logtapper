@@ -32,4 +32,4 @@ Both implement `raw_line(n)`, `meta_at(n)`, `total_lines()`, `is_live()`, and do
 
 ## AnalysisSession (`session.rs`)
 
-Holds `Option<Box<dyn LogSource>>` plus `Timeline`, `CrossSourceIndex`, `TagInterner`. Accessor helpers `file_source()` / `stream_source()` downcast to concrete types.
+Holds `Option<Box<dyn LogSource>>` plus a `TagInterner`. Accessor helpers `file_source()` / `stream_source()` downcast to concrete types.
