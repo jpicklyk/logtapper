@@ -146,6 +146,70 @@ fn anonymize_for_session(state: &AppState, session_id: &str, raw: &str) -> Strin
     anon.anonymize(raw).0
 }
 
+// ---------------------------------------------------------------------------
+// Chunked scan helpers — shared by h_query / h_search / h_search_with_context
+// ---------------------------------------------------------------------------
+//
+// These three raw-line scan handlers used to acquire `sessions` once and
+// hold it for the entire scan — unbounded for h_search / h_search_with_context,
+// and up to 100k lines for h_query. A rarely-matching filter/regex over a
+// multi-million-line bugreport ties up the global `sessions` lock for the
+// whole request, freezing `get_lines`, `flush_batch`, filter creation, and
+// the UI for as long as the scan runs.
+//
+// The fix mirrors `commands::files::search_logs` (`SEARCH_CHUNK_SIZE`): scan
+// in bounded windows, dropping and re-acquiring `sessions` between each one
+// so other lock holders always get a turn. A hard cap on total lines scanned
+// per request (`MCP_SCAN_LINE_CAP`) additionally bounds worst-case request
+// latency. When the cap — or a mid-scan session removal — stops the scan
+// before the full requested range was covered, handlers set `truncated: true`
+// and report `scannedLines` in the JSON response (both purely additive: every
+// existing field is unchanged) so callers know results may be incomplete.
+
+/// Lines scanned per lock acquisition. Matches `commands::files::search_logs`'s
+/// `SEARCH_CHUNK_SIZE` so both raw-line scan paths behave consistently.
+const MCP_SCAN_CHUNK_SIZE: usize = 10_000;
+
+/// Hard cap on total lines scanned across all chunks for a single request.
+/// Without this, a rarely-matching regex/filter over a 20M-line bugreport
+/// would scan the entire file on every call — chunking alone stops it from
+/// starving other lock holders, but the request could still run for a very
+/// long time. Callers that need to see past the cap can page with
+/// `start_line`/`end_line`.
+const MCP_SCAN_LINE_CAP: usize = 500_000;
+
+/// True if `[range_start, range_end)` is wider than `scan_cap` — i.e. the
+/// scan window had to be capped down. Pure so the truncation math is unit
+/// testable without a live session/lock.
+fn scan_window_capped(range_start: usize, range_end: usize, scan_cap: usize) -> bool {
+    range_end.saturating_sub(range_start) > scan_cap
+}
+
+/// The effective (possibly capped) end of a scan window starting at
+/// `range_start`, given the caller-requested `range_end` and `scan_cap`.
+/// Equal to `range_end` when the window already fits under the cap.
+fn capped_range_end(range_start: usize, range_end: usize, scan_cap: usize) -> usize {
+    range_start.saturating_add(scan_cap).min(range_end)
+}
+
+/// Split `[start, end)` into consecutive `[chunk_start, chunk_end)` windows
+/// of at most `chunk_size` lines each, in ascending order. Pure — used to
+/// scan under short-lived `sessions` lock acquisitions (one per window)
+/// instead of holding the lock for a single large scan.
+fn scan_chunk_bounds(start: usize, end: usize, chunk_size: usize) -> Vec<(usize, usize)> {
+    if start >= end || chunk_size == 0 {
+        return Vec::new();
+    }
+    let mut bounds = Vec::new();
+    let mut cur = start;
+    while cur < end {
+        let next = (cur + chunk_size).min(end);
+        bounds.push((cur, next));
+        cur = next;
+    }
+    bounds
+}
+
 /// Concrete handle type — Wry is the only desktop runtime Tauri ships.
 type Handle = AppHandle<Wry>;
 
@@ -788,33 +852,37 @@ async fn h_query(
     };
 
     // If any filter is active, scanning a fixed sample produces poor results for
-    // rare events in large logs.  Instead, scan all lines (up to SCAN_CAP) and
-    // collect up to `n` matches.  The "strategy" still controls scan direction:
+    // rare events in large logs.  Instead, scan lines (up to MCP_SCAN_LINE_CAP)
+    // and collect up to `n` matches.  The "strategy" still controls scan
+    // direction:
     //   recent   → scan newest→oldest (stop after n matches)
     //   around   → scan outward from around_line (stop after n matches)
-    //   uniform  → scan all, then space the matches evenly
+    //   uniform  → scan in order, then space the matches evenly
     let has_filter = params.tag.is_some() || params.message.is_some()
         || params.level.is_some() || time_start_ns.is_some() || time_end_ns.is_some();
-    const SCAN_CAP: usize = 100_000;
+
+    let mut query_lines_scanned: usize = 0;
+    let mut query_truncated = false;
 
     let snaps = if has_filter {
-        // Rebuild snap list by scanning real lines instead of using the sample.
-        get_session_and_source!(state, session_id => sessions, session, source);
-
-        // Clamp scan range to [start_line, end_line)
+        // Clamp scan range to [start_line, end_line) — pure arithmetic
+        // against the `total_lines` snapshot captured above, no lock needed.
         let range_start = params.start_line.unwrap_or(0).min(total_lines);
         let range_end = params.end_line.unwrap_or(total_lines).min(total_lines);
+        let cap_applied = scan_window_capped(range_start, range_end, MCP_SCAN_LINE_CAP);
 
-        // Build the scan order based on strategy (clamped to range).
+        // Build the scan order based on strategy (clamped to range AND to
+        // MCP_SCAN_LINE_CAP — without the cap, "uniform" in particular would
+        // materialize one usize per line for the whole session).
         let scan_indices: Vec<usize> = match strategy {
             "recent" => {
-                let start = range_start.max(range_end.saturating_sub(SCAN_CAP));
+                let start = range_start.max(range_end.saturating_sub(MCP_SCAN_LINE_CAP));
                 (start..range_end).rev().collect()
             }
             "around" => {
                 let center = params.around_line.unwrap_or_else(|| range_end.saturating_sub(1))
                     .clamp(range_start, range_end.saturating_sub(1));
-                let half = SCAN_CAP / 2;
+                let half = MCP_SCAN_LINE_CAP / 2;
                 let start = center.saturating_sub(half).max(range_start);
                 let end = (center + half).min(range_end);
                 // Interleave outward from center: center, center-1, center+1, …
@@ -823,41 +891,70 @@ async fn h_query(
                     .collect()
             }
             _ => {
-                // uniform: scan all lines in order so rare events aren't missed
-                (range_start..range_end).collect()
+                // uniform: scan lines in order (capped) so rare events aren't missed
+                let end = capped_range_end(range_start, range_end, MCP_SCAN_LINE_CAP);
+                (range_start..end).collect()
             }
         };
 
         let msg_needle = params.message.as_ref().map(|m| m.to_lowercase());
         let mut matched: Vec<LineSnap> = Vec::new();
-        for i in scan_indices {
+        let mut session_lost = false;
+
+        // Scan the (already-capped) index list in fixed-size batches,
+        // dropping and re-acquiring `sessions` between batches (see the
+        // "Chunked scan helpers" section above). Indices may be
+        // non-contiguous — the "around" strategy interleaves forward and
+        // backward — so we chunk the materialized Vec rather than a range.
+        'chunks: for idx_chunk in scan_indices.chunks(MCP_SCAN_CHUNK_SIZE) {
             if matched.len() >= n { break; }
-            let Some(raw) = source.raw_line(i) else { continue };
-            let Some(meta) = source.meta_at(i) else { continue };
-            let level_str = meta.level.as_str();
-            // Tag filter
-            if let Some(ref tf) = params.tag {
-                if session.resolve_tag(meta.tag_id) != tf { continue; }
-            }
-            // Message filter (case-insensitive)
-            if let Some(ref needle) = msg_needle {
-                if !raw.to_lowercase().contains(needle.as_str()) { continue; }
-            }
-            // Level filter
-            if let Some(ref lf) = params.level {
-                if !level_at_least(level_str, lf) { continue; }
-            }
-            // Time range filter
-            if let Some(ts) = time_start_ns {
-                if meta.timestamp < ts { continue; }
-            }
-            if let Some(ts) = time_end_ns {
-                if meta.timestamp > ts { continue; }
-            }
-            matched.push(LineSnap { line_num: i, level: level_str, tag: session.resolve_tag(meta.tag_id).to_string(), raw: raw.into_owned() });
+
+            {
+                let sessions = state.sessions.lock().unwrap();
+                let Some(session) = sessions.get(&session_id) else {
+                    session_lost = true;
+                    break 'chunks;
+                };
+                let Some(source) = session.primary_source() else {
+                    session_lost = true;
+                    break 'chunks;
+                };
+
+                for &i in idx_chunk {
+                    if matched.len() >= n { break; }
+                    query_lines_scanned += 1;
+                    let Some(raw) = source.raw_line(i) else { continue };
+                    let Some(meta) = source.meta_at(i) else { continue };
+                    let level_str = meta.level.as_str();
+                    // Tag filter
+                    if let Some(ref tf) = params.tag {
+                        if session.resolve_tag(meta.tag_id) != tf { continue; }
+                    }
+                    // Message filter (case-insensitive)
+                    if let Some(ref needle) = msg_needle {
+                        if !raw.to_lowercase().contains(needle.as_str()) { continue; }
+                    }
+                    // Level filter
+                    if let Some(ref lf) = params.level {
+                        if !level_at_least(level_str, lf) { continue; }
+                    }
+                    // Time range filter
+                    if let Some(ts) = time_start_ns {
+                        if meta.timestamp < ts { continue; }
+                    }
+                    if let Some(ts) = time_end_ns {
+                        if meta.timestamp > ts { continue; }
+                    }
+                    matched.push(LineSnap { line_num: i, level: level_str, tag: session.resolve_tag(meta.tag_id).to_string(), raw: raw.into_owned() });
+                }
+            } // sessions lock dropped here, before the yield below
+
+            tokio::task::yield_now().await;
         }
         // For "recent" we scanned newest→oldest; restore chronological order.
         if strategy == "recent" { matched.reverse(); }
+
+        query_truncated = session_lost || (cap_applied && matched.len() < n);
         matched
     } else {
         snaps
@@ -899,9 +996,14 @@ async fn h_query(
     });
     if has_filter {
         result["strategyNote"] = json!(format!(
-            "Filters active — switched to full scan mode using '{}' ordering (scanned up to {} lines)",
-            strategy, SCAN_CAP
+            "Filters active — switched to full scan mode using '{}' ordering (scan capped at {} lines)",
+            strategy, MCP_SCAN_LINE_CAP
         ));
+        // Additive fields — see "Chunked scan helpers" module docs. Present
+        // only on the filtered/scan path; the plain-sample path above never
+        // scans, so there is nothing meaningful to report.
+        result["scannedLines"] = json!(query_lines_scanned);
+        result["truncated"] = json!(query_truncated);
     }
     Json(result)
 }
@@ -1583,65 +1685,99 @@ async fn h_search(
         context_after: Vec<(usize, String)>,
     }
 
-    let matches: Vec<MatchResult> = {
+    // Resolve the scan window once — same error contract as before (unknown
+    // session / no sources → early JSON error via the macro). Everything
+    // after this drops the lock and re-acquires it per chunk (see the
+    // "Chunked scan helpers" module docs): a rarely-matching regex must not
+    // hold `sessions` for the whole scan.
+    let total: usize = {
         get_session_and_source!(state, session_id => sessions, session, source);
+        source.total_lines()
+    };
+    let range_start = params.start_line.unwrap_or(0).min(total);
+    let requested_end = params.end_line.unwrap_or(total).min(total);
+    let cap_applied = scan_window_capped(range_start, requested_end, MCP_SCAN_LINE_CAP);
+    let range_end = capped_range_end(range_start, requested_end, MCP_SCAN_LINE_CAP);
 
-        let total = source.total_lines();
-        let range_start = params.start_line.unwrap_or(0).min(total);
-        let range_end = params.end_line.unwrap_or(total).min(total);
-        let mut results: Vec<MatchResult> = Vec::new();
+    let mut results: Vec<MatchResult> = Vec::new();
+    let mut lines_scanned: usize = 0;
+    let mut session_lost = false;
 
-        for i in range_start..range_end {
-            if results.len() >= limit { break; }
-            let Some(raw) = source.raw_line(i) else { continue };
+    'chunks: for (chunk_start, chunk_end) in scan_chunk_bounds(range_start, range_end, MCP_SCAN_CHUNK_SIZE) {
+        if results.len() >= limit { break; }
 
-            if let Some(caps) = regex.captures(&raw) {
-                // Collect capture groups (skip group 0 = full match)
-                let captures: Vec<String> = (1..caps.len())
-                    .filter_map(|j| caps.get(j).map(|m| m.as_str().to_string()))
-                    .collect();
+        { // `sessions` guard scope — dropped before the yield below.
+            let sessions = state.sessions.lock().unwrap();
+            let Some(session) = sessions.get(&session_id) else {
+                session_lost = true;
+                break 'chunks;
+            };
+            let Some(source) = session.primary_source() else {
+                session_lost = true;
+                break 'chunks;
+            };
+            // Re-validate bounds: `total_lines` on a live stream only ever
+            // grows (eviction shifts the retained window, not the count),
+            // but clamp defensively rather than assume that invariant here.
+            let live_total = source.total_lines();
+            let chunk_end = chunk_end.min(live_total);
 
-                // Context lines — anonymized (if enabled for this session) before
-                // truncation, same as the matched line itself below.
-                let context_before: Vec<(usize, String)> = if context > 0 {
-                    let start = i.saturating_sub(context);
-                    (start..i)
-                        .filter_map(|j| source.raw_line(j).map(|r| {
-                            let clean = anonymize_for_session(&state, &session_id, &r);
-                            (j, truncate_str(&clean, 500))
-                        }))
-                        .collect()
-                } else {
-                    vec![]
-                };
+            for i in chunk_start..chunk_end {
+                if results.len() >= limit { break; }
+                lines_scanned += 1;
+                let Some(raw) = source.raw_line(i) else { continue };
 
-                let context_after: Vec<(usize, String)> = if context > 0 {
-                    let end = (i + 1 + context).min(total);
-                    ((i + 1)..end)
-                        .filter_map(|j| source.raw_line(j).map(|r| {
-                            let clean = anonymize_for_session(&state, &session_id, &r);
-                            (j, truncate_str(&clean, 500))
-                        }))
-                        .collect()
-                } else {
-                    vec![]
-                };
+                if let Some(caps) = regex.captures(&raw) {
+                    // Collect capture groups (skip group 0 = full match)
+                    let captures: Vec<String> = (1..caps.len())
+                        .filter_map(|j| caps.get(j).map(|m| m.as_str().to_string()))
+                        .collect();
 
-                let clean_raw = anonymize_for_session(&state, &session_id, &raw);
-                results.push(MatchResult {
-                    line_num: i,
-                    raw: truncate_str(&clean_raw, 500),
-                    captures,
-                    context_before,
-                    context_after,
-                });
+                    // Context lines — anonymized (if enabled for this session) before
+                    // truncation, same as the matched line itself below.
+                    let context_before: Vec<(usize, String)> = if context > 0 {
+                        let start = i.saturating_sub(context);
+                        (start..i)
+                            .filter_map(|j| source.raw_line(j).map(|r| {
+                                let clean = anonymize_for_session(&state, &session_id, &r);
+                                (j, truncate_str(&clean, 500))
+                            }))
+                            .collect()
+                    } else {
+                        vec![]
+                    };
+
+                    let context_after: Vec<(usize, String)> = if context > 0 {
+                        let end = (i + 1 + context).min(live_total);
+                        ((i + 1)..end)
+                            .filter_map(|j| source.raw_line(j).map(|r| {
+                                let clean = anonymize_for_session(&state, &session_id, &r);
+                                (j, truncate_str(&clean, 500))
+                            }))
+                            .collect()
+                    } else {
+                        vec![]
+                    };
+
+                    let clean_raw = anonymize_for_session(&state, &session_id, &raw);
+                    results.push(MatchResult {
+                        line_num: i,
+                        raw: truncate_str(&clean_raw, 500),
+                        captures,
+                        context_before,
+                        context_after,
+                    });
+                }
             }
         }
-        results
-    };
 
-    let total_matches = matches.len();
-    let results_json: Vec<Value> = matches.into_iter().map(|m| {
+        tokio::task::yield_now().await;
+    }
+
+    let truncated = session_lost || (cap_applied && results.len() < limit);
+
+    let total_matches = results.len();
+    let results_json: Vec<Value> = results.into_iter().map(|m| {
         let mut entry = json!({
             "lineNum": m.line_num,
             "raw": m.raw,
@@ -1671,6 +1807,8 @@ async fn h_search(
         "matchCount": total_matches,
         "limit": limit,
         "matches": results_json,
+        "scannedLines": lines_scanned,
+        "truncated": truncated,
     }))
 }
 
@@ -2190,65 +2328,100 @@ async fn h_search_with_context(
         }
     };
 
-    get_session_and_source!(state, session_id => sessions, session, source);
-
-    let total = source.total_lines();
+    // Same error contract as before for a missing session — resolved once,
+    // then the lock is dropped; the scan below re-acquires it per chunk (see
+    // the "Chunked scan helpers" module docs).
+    let total: usize = {
+        get_session_and_source!(state, session_id => sessions, session, source);
+        source.total_lines()
+    };
     let range_start = params.start_line.unwrap_or(0).min(total);
-    let range_end = params.end_line.unwrap_or(total).min(total);
+    let requested_end = params.end_line.unwrap_or(total).min(total);
+    // NOTE: this handler intentionally keeps scanning the whole (possibly
+    // capped) range to produce an exact `matchCount`, rather than stopping
+    // once `max_results` is reached — that full-scan-for-counting design is
+    // tracked separately (see item c5d058b3) and is unchanged here. What
+    // changes is HOW the range is scanned: in bounded chunks, with the
+    // `sessions` lock released between them, and now capped at
+    // MCP_SCAN_LINE_CAP so a pathological range can't scan unboundedly.
+    let cap_applied = scan_window_capped(range_start, requested_end, MCP_SCAN_LINE_CAP);
+    let range_end = capped_range_end(range_start, requested_end, MCP_SCAN_LINE_CAP);
+
     let mut results: Vec<Value> = Vec::new();
     let mut skipped: usize = 0;
-    // Counted across the whole range, not just the returned page, so callers can
-    // tell how much is left to paginate through. This means the scan no longer
-    // breaks early once the page fills — the regex still runs over the remaining
-    // range — but the expensive part (building context objects, resolving tags)
-    // stays capped at `max_results`.
+    // Counted across the whole (possibly capped) scan range, not just the
+    // returned page, so callers can tell how much is left to paginate
+    // through. `returned` is how many are in this page.
     let mut total_matches: usize = 0;
+    let mut lines_scanned: usize = 0;
+    let mut session_lost = false;
 
-    for i in range_start..range_end {
-        let Some(raw) = source.raw_line(i) else { continue };
+    'chunks: for (chunk_start, chunk_end) in scan_chunk_bounds(range_start, range_end, MCP_SCAN_CHUNK_SIZE) {
+        { // `sessions` guard scope — dropped before the yield below.
+            let sessions = state.sessions.lock().unwrap();
+            let Some(session) = sessions.get(&session_id) else {
+                session_lost = true;
+                break 'chunks;
+            };
+            let Some(source) = session.primary_source() else {
+                session_lost = true;
+                break 'chunks;
+            };
+            let live_total = source.total_lines();
+            let chunk_end = chunk_end.min(live_total);
 
-        if regex.is_match(&raw) {
-            total_matches += 1;
+            for i in chunk_start..chunk_end {
+                let Some(raw) = source.raw_line(i) else { continue };
+                lines_scanned += 1;
 
-            // Skip the first `offset` matches
-            if skipped < offset {
-                skipped += 1;
-                continue;
+                if regex.is_match(&raw) {
+                    total_matches += 1;
+
+                    // Skip the first `offset` matches
+                    if skipped < offset {
+                        skipped += 1;
+                        continue;
+                    }
+                    if results.len() >= max_results {
+                        continue;
+                    }
+                    // Build context
+                    let ctx_start = i.saturating_sub(context_lines);
+                    let ctx_end = (i + context_lines + 1).min(live_total);
+
+                    let context: Vec<Value> = (ctx_start..ctx_end)
+                        .filter_map(|j| {
+                            let line_raw = source.raw_line(j)?;
+                            let meta = source.meta_at(j)?;
+                            let clean = anonymize_for_session(&state, &session_id, &line_raw);
+                            Some(json!({
+                                "lineNum": j,
+                                "level": meta.level.as_str(),
+                                "tag": session.resolve_tag(meta.tag_id),
+                                "raw": truncate_str(&clean, max_line_chars),
+                                "isMatch": j == i,
+                            }))
+                        })
+                        .collect();
+
+                    results.push(json!({
+                        "matchLineNum": i,
+                        "context": context,
+                    }));
+                }
             }
-            if results.len() >= max_results {
-                continue;
-            }
-            // Build context
-            let ctx_start = i.saturating_sub(context_lines);
-            let ctx_end = (i + context_lines + 1).min(total);
-
-            let context: Vec<Value> = (ctx_start..ctx_end)
-                .filter_map(|j| {
-                    let line_raw = source.raw_line(j)?;
-                    let meta = source.meta_at(j)?;
-                    let clean = anonymize_for_session(&state, &session_id, &line_raw);
-                    Some(json!({
-                        "lineNum": j,
-                        "level": meta.level.as_str(),
-                        "tag": session.resolve_tag(meta.tag_id),
-                        "raw": truncate_str(&clean, max_line_chars),
-                        "isMatch": j == i,
-                    }))
-                })
-                .collect();
-
-            results.push(json!({
-                "matchLineNum": i,
-                "context": context,
-            }));
         }
+
+        tokio::task::yield_now().await;
     }
+
+    let truncated = session_lost || cap_applied;
 
     Json(json!({
         "sessionId": session_id,
         "query": params.query,
         "caseInsensitive": case_insensitive,
-        // True count across the whole search range, independent of max_results
+        // True count across the whole scan range, independent of max_results
         // and offset. `returned` is how many are in this page.
         "matchCount": total_matches,
         "returned": results.len(),
@@ -2258,6 +2431,8 @@ async fn h_search_with_context(
         "maxLineChars": max_line_chars,
         "totalLinesInSession": total,
         "matches": results,
+        "scannedLines": lines_scanned,
+        "truncated": truncated,
     }))
 }
 
@@ -3090,5 +3265,116 @@ mod tests {
             let headers = headers_from(&[("host", "127.0.0.1:40404"), ("referer", bad)]);
             assert!(!is_trusted_request(&headers), "referer {bad:?} must be rejected");
         }
+    }
+
+    // ── scan_chunk_bounds / scan_window_capped / capped_range_end ───────────
+    // Pure chunking + cap math backing h_query / h_search / h_search_with_context.
+    // These handlers used to scan a whole (sometimes unbounded) range under a
+    // single `sessions` lock acquisition, freezing every other lock holder for
+    // the duration. The fix scans in `MCP_SCAN_CHUNK_SIZE`-line windows,
+    // dropping and re-acquiring the lock between each, and bounds the total
+    // scan at `MCP_SCAN_LINE_CAP`. This section tests the pure math only —
+    // the chunk/cap boundaries — not the handlers' async lock-acquisition
+    // loops, which need a live AppState/Tauri context to exercise.
+
+    #[test]
+    fn scan_chunk_bounds_splits_evenly() {
+        assert_eq!(
+            scan_chunk_bounds(0, 30, 10),
+            vec![(0, 10), (10, 20), (20, 30)]
+        );
+    }
+
+    #[test]
+    fn scan_chunk_bounds_handles_remainder() {
+        assert_eq!(
+            scan_chunk_bounds(0, 25, 10),
+            vec![(0, 10), (10, 20), (20, 25)]
+        );
+    }
+
+    #[test]
+    fn scan_chunk_bounds_single_chunk_when_smaller_than_chunk_size() {
+        assert_eq!(scan_chunk_bounds(5, 8, 10), vec![(5, 8)]);
+    }
+
+    #[test]
+    fn scan_chunk_bounds_empty_range_yields_no_chunks() {
+        assert_eq!(scan_chunk_bounds(10, 10, 10), Vec::<(usize, usize)>::new());
+        assert_eq!(scan_chunk_bounds(20, 10, 10), Vec::<(usize, usize)>::new());
+    }
+
+    #[test]
+    fn scan_chunk_bounds_zero_chunk_size_yields_no_chunks() {
+        // Defensive: a zero chunk size must not infinite-loop.
+        assert_eq!(scan_chunk_bounds(0, 100, 0), Vec::<(usize, usize)>::new());
+    }
+
+    #[test]
+    fn scan_chunk_bounds_nonzero_start_offset() {
+        assert_eq!(
+            scan_chunk_bounds(100_000, 100_025, 10),
+            vec![(100_000, 100_010), (100_010, 100_020), (100_020, 100_025)]
+        );
+    }
+
+    #[test]
+    fn scan_window_capped_true_when_range_exceeds_cap() {
+        assert!(scan_window_capped(0, 20_000_000, MCP_SCAN_LINE_CAP));
+    }
+
+    #[test]
+    fn scan_window_capped_false_when_range_fits_under_cap() {
+        assert!(!scan_window_capped(0, 100, MCP_SCAN_LINE_CAP));
+        // Exactly at the cap is not "over" the cap.
+        assert!(!scan_window_capped(0, MCP_SCAN_LINE_CAP, MCP_SCAN_LINE_CAP));
+    }
+
+    #[test]
+    fn scan_window_capped_respects_nonzero_start() {
+        // 20M-line bugreport, paging from line 19M — the remaining window is
+        // only 1M, still over a 500k cap.
+        assert!(scan_window_capped(19_000_000, 20_000_000, 500_000));
+        assert!(!scan_window_capped(19_900_000, 20_000_000, 500_000));
+    }
+
+    #[test]
+    fn capped_range_end_clamps_to_cap_when_over() {
+        assert_eq!(capped_range_end(0, 20_000_000, 500_000), 500_000);
+        assert_eq!(capped_range_end(1_000, 20_000_000, 500_000), 501_000);
+    }
+
+    #[test]
+    fn capped_range_end_passes_through_when_under_cap() {
+        assert_eq!(capped_range_end(0, 100, 500_000), 100);
+        assert_eq!(capped_range_end(50, 100, 500_000), 100);
+    }
+
+    #[test]
+    fn capped_range_end_exact_at_cap_is_unchanged() {
+        assert_eq!(capped_range_end(0, 500_000, 500_000), 500_000);
+    }
+
+    #[test]
+    fn cap_and_chunk_bounds_agree_on_scanned_line_count() {
+        // The two helpers are used together: cap the window, then chunk it.
+        // Their combined output must scan exactly `min(range, cap)` lines,
+        // with no gaps or overlaps between consecutive chunks.
+        let range_start = 3;
+        let requested_end = 1_000_003; // 1,000,000 lines requested
+        let cap = 500_000;
+        let end = capped_range_end(range_start, requested_end, cap);
+        assert_eq!(end - range_start, cap);
+
+        let chunks = scan_chunk_bounds(range_start, end, MCP_SCAN_CHUNK_SIZE);
+        assert!(!chunks.is_empty());
+        // Contiguous, no gaps/overlaps, and covers exactly [range_start, end).
+        assert_eq!(chunks.first().unwrap().0, range_start);
+        assert_eq!(chunks.last().unwrap().1, end);
+        for pair in chunks.windows(2) {
+            assert_eq!(pair[0].1, pair[1].0, "chunks must be contiguous");
+        }
+        let total_scanned: usize = chunks.iter().map(|(s, e)| e - s).sum();
+        assert_eq!(total_scanned, cap);
     }
 }
