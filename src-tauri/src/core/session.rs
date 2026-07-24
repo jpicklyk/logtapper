@@ -152,7 +152,7 @@ impl AnalysisSession {
             id,
             source: None,
             timeline: Timeline::new(),
-            index: CrossSourceIndex::build(&[]),
+            index: CrossSourceIndex::empty(),
             tag_interner: TagInterner::new(),
             file_path: None,
             temp_file: None,
@@ -355,7 +355,16 @@ impl AnalysisSession {
     }
 
     /// Extend the file source index with new entries from background indexing.
-    /// When `done` is true, rebuilds sections and timeline.
+    /// When `done` is true, rebuilds the section index.
+    ///
+    /// NOTE: this intentionally does **not** rebuild the timeline/cross-source
+    /// index. That rebuild (a full sort plus two hashmap/btreemap builds over
+    /// every line) is expensive and must not run while the caller holds the
+    /// `sessions` lock. The background indexer instead snapshots the input via
+    /// [`snapshot_timeline_input`](Self::snapshot_timeline_input), builds the
+    /// structures outside the lock, and swaps them in with
+    /// [`try_swap_timeline`](Self::try_swap_timeline). Synchronous single-shot
+    /// loads call [`rebuild_timeline`](Self::rebuild_timeline) directly.
     pub fn extend_source_index(
         &mut self,
         new_offsets: Vec<u64>,
@@ -386,33 +395,136 @@ impl AnalysisSession {
                     file_src.set_sections(sections);
                 }
             }
-            self.rebuild_timeline();
         }
     }
 
-    /// Rebuild the unified timeline and cross-source index.
-    pub fn rebuild_timeline(&mut self) {
-        let all_entries: Vec<TimelineEntry> = if let Some(ref src) = self.source {
-            src.line_meta_slice()
-                .iter()
-                .enumerate()
-                .map(|(i, m)| TimelineEntry {
-                    source_id: src.id().to_string(),
-                    source_line_num: i,
-                    timestamp: m.timestamp,
-                    level: m.level,
-                    tag: self.tag_interner.resolve(m.tag_id).to_string(),
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-
-        self.timeline = Timeline::build(
-            std::iter::once(("", all_entries.into_iter())),
-        );
-        self.index = CrossSourceIndex::build(&self.timeline.entries);
+    /// Snapshot the interner's tag table as a cheaply-shareable `Arc<[Arc<str>]>`
+    /// indexed by `tag_id`. One `Arc<str>` per distinct tag (not per line).
+    fn snapshot_tag_table(&self) -> Arc<[Arc<str>]> {
+        self.tag_interner
+            .table
+            .iter()
+            .map(|s| Arc::<str>::from(s.as_str()))
+            .collect()
     }
+
+    /// Rebuild the unified timeline and cross-source index in place.
+    ///
+    /// Used by the synchronous single-shot load paths (small files, zip loads,
+    /// fully-indexed partial loads) where no `sessions` lock is contended.
+    /// The large-file background indexer does NOT use this — see
+    /// [`snapshot_timeline_input`](Self::snapshot_timeline_input).
+    pub fn rebuild_timeline(&mut self) {
+        match self.snapshot_timeline_input() {
+            Some(input) => {
+                let (timeline, index) = Self::build_timeline_and_index(input);
+                self.timeline = timeline;
+                self.index = index;
+            }
+            None => {
+                self.timeline = Timeline::new();
+                self.index = CrossSourceIndex::empty();
+            }
+        }
+    }
+
+    /// Capture everything needed to rebuild the timeline/index without holding
+    /// the source. Materializes the compact `TimelineEntry` vec (24 bytes/line,
+    /// no heap per line) from the source's line metadata. Returns `None` when
+    /// there is no source.
+    ///
+    /// This is the only step that touches the source and therefore the only step
+    /// the caller must run under the `sessions` lock; it is O(lines) but a flat
+    /// copy of scalar fields. The expensive sort + hashmap construction happens
+    /// afterwards in [`build_timeline_and_index`](Self::build_timeline_and_index),
+    /// outside the lock.
+    pub fn snapshot_timeline_input(&self) -> Option<TimelineRebuildInput> {
+        let src = self.source.as_ref()?;
+        let source_id: Arc<str> = Arc::from(src.id());
+        let tag_table = self.snapshot_tag_table();
+        let entries: Vec<TimelineEntry> = src
+            .line_meta_slice()
+            .iter()
+            .enumerate()
+            .map(|(i, m)| TimelineEntry {
+                source_idx: 0,
+                source_line_num: i,
+                timestamp: m.timestamp,
+                level: m.level,
+                tag_id: m.tag_id,
+            })
+            .collect();
+        let expected_total_lines = entries.len();
+        Some(TimelineRebuildInput {
+            entries,
+            source_ids: vec![Arc::clone(&source_id)],
+            tag_table,
+            expected_total_lines,
+            source_id: source_id.to_string(),
+        })
+    }
+
+    /// Build the timeline and cross-source index from a snapshot. Pure and
+    /// self-contained — safe to call outside any lock (this is where the sort
+    /// and hashmap/btreemap construction happen).
+    pub fn build_timeline_and_index(
+        input: TimelineRebuildInput,
+    ) -> (Timeline, CrossSourceIndex) {
+        let TimelineRebuildInput {
+            entries,
+            source_ids,
+            tag_table,
+            ..
+        } = input;
+        let timeline =
+            Timeline::from_source_entries(entries, source_ids.clone(), Arc::clone(&tag_table));
+        let index = CrossSourceIndex::build(&timeline.entries, tag_table, source_ids);
+        (timeline, index)
+    }
+
+    /// Swap a freshly-built timeline/index into this session, but only if the
+    /// session still matches the state the snapshot was taken from. Guards
+    /// against the session having been closed, replaced under the same id, or
+    /// extended with more lines while the rebuild ran outside the lock.
+    ///
+    /// Returns `true` if the swap was applied, `false` if it was rejected as
+    /// stale (the caller's built structures are simply dropped).
+    pub fn try_swap_timeline(
+        &mut self,
+        timeline: Timeline,
+        index: CrossSourceIndex,
+        expected_total_lines: usize,
+        expected_source_id: &str,
+    ) -> bool {
+        let still_valid = self.source.as_ref().is_some_and(|src| {
+            !src.is_indexing()
+                && src.total_lines() == expected_total_lines
+                && src.id() == expected_source_id
+        });
+        if still_valid {
+            self.timeline = timeline;
+            self.index = index;
+        }
+        still_valid
+    }
+}
+
+/// Snapshot of the data needed to rebuild a session's timeline/cross-source
+/// index outside the `sessions` lock. Produced by
+/// [`AnalysisSession::snapshot_timeline_input`] and consumed by
+/// [`AnalysisSession::build_timeline_and_index`].
+pub struct TimelineRebuildInput {
+    /// Compact per-line entries (source_line_num == index into the source's
+    /// line metadata at snapshot time).
+    pub(crate) entries: Vec<TimelineEntry>,
+    /// Source id table, indexed by `TimelineEntry::source_idx`.
+    pub(crate) source_ids: Vec<Arc<str>>,
+    /// Tag table snapshot, indexed by `TimelineEntry::tag_id`.
+    pub(crate) tag_table: Arc<[Arc<str>]>,
+    /// Line count the snapshot reflects — used to reject a stale swap-in.
+    pub(crate) expected_total_lines: usize,
+    /// Source id the snapshot reflects — used to reject a stale swap-in.
+    pub(crate) source_id: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -1133,6 +1245,73 @@ mod tests {
         assert!(session.primary_source().unwrap().is_indexing());
         session.file_source_mut().unwrap().set_indexing(false);
         assert!(!session.primary_source().unwrap().is_indexing());
+    }
+
+    // --- timeline/index rebuild + swap tests ---
+
+    #[test]
+    fn session_rebuild_timeline_uses_compact_identity_mapping() {
+        let (src, _mmap) = make_file_source(5);
+        let mut session = AnalysisSession::new("f-rt".into());
+        session.source = Some(Box::new(src));
+        // Production indexing interns tags into `session.tag_interner`, so
+        // line_meta tag_ids are valid indices into it. `make_file_source` uses a
+        // throwaway interner, so replay the single tag here to restore that
+        // invariant ("" is pre-interned at id 0, "TestTag" lands at id 1 — the
+        // same id the helper's interner assigned).
+        assert_eq!(session.intern_tag("TestTag"), 1);
+        session.rebuild_timeline();
+
+        assert_eq!(session.timeline.total_entries(), 5);
+        // Single source in ascending-timestamp (== line) order → identity mapping.
+        for n in 0..5 {
+            assert_eq!(session.timeline.timeline_index("file-src", n), Some(n));
+        }
+        assert_eq!(session.timeline.timeline_index("file-src", 5), None);
+
+        // tag_id round-trips to the original tag string, both via the timeline's
+        // snapshot table and via the session's interner.
+        let tag_id = session.timeline.entries[0].tag_id;
+        assert_eq!(session.timeline.resolve_tag(tag_id), "TestTag");
+        assert_eq!(session.resolve_tag(tag_id), "TestTag");
+
+        // The cross-source index resolves the same tag by string.
+        assert_eq!(
+            session.index.entries_for_tag("TestTag").map(<[usize]>::len),
+            Some(5)
+        );
+    }
+
+    #[test]
+    fn session_try_swap_timeline_rejects_stale_state() {
+        let (src, _mmap) = make_file_source(4);
+        let mut session = AnalysisSession::new("f-swap".into());
+        session.source = Some(Box::new(src));
+
+        let build = |s: &AnalysisSession| {
+            AnalysisSession::build_timeline_and_index(s.snapshot_timeline_input().unwrap())
+        };
+
+        // Line-count mismatch → rejected (source grew/shrank while rebuilding).
+        let (tl, ix) = build(&session);
+        assert!(!session.try_swap_timeline(tl, ix, 999, "file-src"));
+        assert_eq!(session.timeline.total_entries(), 0, "rejected swap must not apply");
+
+        // Correct count but wrong source id (session replaced) → rejected.
+        let (tl, ix) = build(&session);
+        assert!(!session.try_swap_timeline(tl, ix, 4, "different-source"));
+        assert_eq!(session.timeline.total_entries(), 0);
+
+        // Source is mid-reindex → rejected even with matching count + id.
+        session.file_source_mut().unwrap().set_indexing(true);
+        let (tl, ix) = build(&session);
+        assert!(!session.try_swap_timeline(tl, ix, 4, "file-src"));
+        session.file_source_mut().unwrap().set_indexing(false);
+
+        // All guards satisfied → applied.
+        let (tl, ix) = build(&session);
+        assert!(session.try_swap_timeline(tl, ix, 4, "file-src"));
+        assert_eq!(session.timeline.total_entries(), 4);
     }
 
     // --- meta_at() correctness tests ---
