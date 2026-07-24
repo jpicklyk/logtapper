@@ -33,15 +33,77 @@ use crate::processors::state_tracker::types::StateTransition;
 pub const PORT: u16 = 40404;
 
 // ---------------------------------------------------------------------------
+// Lock-poisoning helpers
+// ---------------------------------------------------------------------------
+//
+// Every AppState Mutex touched in this file falls into one of two families:
+//
+// - Request-scoped reads of data a panicking writer could leave genuinely
+//   torn (`sessions`, `pipeline_results`, `state_tracker_results`,
+//   `correlator_results`, `stream_tracker_state`) go through
+//   `lock_or_json_err!` / `lock_or_err_response!` below: on poison, fail
+//   *this* request with the bridge's existing `{"error": ...}` contract
+//   instead of silently serving a possibly-inconsistent snapshot. The next
+//   request gets a fresh lock attempt — nothing is bricked. `sessions` is
+//   the chokepoint (`get_session_and_source!` / `verify_session_exists!`,
+//   below) since it backs every raw-line read in the bridge;
+//   `pipeline_results` / `state_tracker_results` / `correlator_results` are
+//   the "three-map write sequence" `execute_pipeline` (`commands/pipeline.rs`)
+//   writes together as one logical unit per run — a poison mid-sequence
+//   means those three are momentarily mutually inconsistent for this
+//   session; `stream_tracker_state` is mutated in place by the ADB
+//   extract-process-reinsert pattern (see `AppState::stream_epochs` docs) and
+//   carries the same risk.
+// - Pure gate/registry locks with no cross-field invariants (`processors`,
+//   `mcp_open_allowlist`, `mcp_anonymize`, `anonymizer_config`,
+//   `mcp_anonymizers`, `bookmarks`, `analyses`, `active_watches`) recover via
+//   `PoisonError::into_inner` directly at their call sites — each guards a
+//   flat, independently-keyed map or a single wholesale-replaced config
+//   value, so a panicking writer cannot leave a torn invariant behind and
+//   serving the recovered data is safe. This mirrors the `run_lock`
+//   precedent in `commands/pipeline.rs::execute_pipeline`.
+
+/// Acquire `$mutex`, returning a bridge-contract `{"error": ...}` JSON body
+/// early on poison instead of unwinding the whole request/thread. Only valid
+/// inside a handler whose return type is exactly `Json<Value>` — see
+/// [`lock_or_err_response!`] for the two `Response`-returning handlers
+/// (`h_open_file`, `h_close_session`).
+macro_rules! lock_or_json_err {
+    ($mutex:expr, $name:expr) => {
+        match $mutex.lock() {
+            Ok(guard) => guard,
+            Err(_) => return Json(json!({ "error": format!("{} lock poisoned", $name) })),
+        }
+    };
+}
+
+/// Same as [`lock_or_json_err!`], but for handlers returning `Response`,
+/// using the bridge's structured `{ error, code }` shape via [`err`].
+macro_rules! lock_or_err_response {
+    ($mutex:expr, $name:expr) => {
+        match $mutex.lock() {
+            Ok(guard) => guard,
+            Err(_) => return err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("{} lock poisoned", $name),
+                "LOCK_POISONED",
+            ),
+        }
+    };
+}
+
+// ---------------------------------------------------------------------------
 // Session lookup macros
 // ---------------------------------------------------------------------------
 
 /// Acquire the sessions lock, look up `$session_id`, bind `$sessions` (the lock
 /// guard), `$session` (the `&AnalysisSession`), and `$source` (the `&dyn LogSource`).
-/// Returns a JSON error response on lookup failure.
+/// Returns a JSON error response on lookup failure OR on a poisoned lock (see
+/// `lock_or_json_err!` above) — this is the chokepoint for every raw-line
+/// read in the bridge, so a torn `sessions` map must never be served silently.
 macro_rules! get_session_and_source {
     ($state:expr, $session_id:expr => $sessions:ident, $session:ident, $source:ident) => {
-        let $sessions = $state.sessions.lock().unwrap();
+        let $sessions = lock_or_json_err!($state.sessions, "sessions");
         let Some($session) = $sessions.get(&$session_id) else {
             return Json(json!({ "error": format!("Session not found: {}", $session_id) }));
         };
@@ -51,11 +113,12 @@ macro_rules! get_session_and_source {
     };
 }
 
-/// Verify a session exists (by key) and return a JSON error if not.
+/// Verify a session exists (by key) and return a JSON error if not (or if
+/// the lock is poisoned — see `lock_or_json_err!` above).
 /// Does not bind the session — drops the lock immediately.
 macro_rules! verify_session_exists {
     ($state:expr, $session_id:expr) => {{
-        let sessions = $state.sessions.lock().unwrap();
+        let sessions = lock_or_json_err!($state.sessions, "sessions");
         if !sessions.contains_key(&$session_id) {
             return Json(json!({ "error": format!("Session not found: {}", $session_id) }));
         }
@@ -132,14 +195,14 @@ fn resolve_should_anonymize(flags: &HashMap<String, bool>, session_id: &str) -> 
 /// across an `.await`; never nested with `sessions` or `pipeline_results`.
 fn anonymize_for_session(state: &AppState, session_id: &str, raw: &str) -> String {
     let should_anonymize = {
-        let flags = state.mcp_anonymize.lock().unwrap();
+        let flags = state.mcp_anonymize.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         resolve_should_anonymize(&flags, session_id)
     };
     if !should_anonymize {
         return raw.to_string();
     }
-    let config = state.anonymizer_config.lock().unwrap().clone();
-    let mut anon_map = state.mcp_anonymizers.lock().unwrap();
+    let config = state.anonymizer_config.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    let mut anon_map = state.mcp_anonymizers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let anon = anon_map
         .entry(session_id.to_string())
         .or_insert_with(|| LogAnonymizer::from_config(&config));
@@ -534,12 +597,12 @@ async fn h_status(State(handle): State<Handle>) -> Json<Value> {
     let state = handle.state::<AppState>();
 
     let session_ids: Vec<String> = {
-        let sessions = state.sessions.lock().unwrap();
+        let sessions = lock_or_json_err!(state.sessions, "sessions");
         sessions.keys().cloned().collect()
     };
 
     let processor_ids: Vec<String> = {
-        let procs = state.processors.lock().unwrap();
+        let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         procs.keys().cloned().collect()
     };
 
@@ -598,7 +661,7 @@ async fn h_open_file(
 
     // Allowlist: lock, clone both fields, drop.
     let (allowed, allow_all): (Vec<String>, bool) = {
-        let cfg = state.mcp_open_allowlist.lock().unwrap();
+        let cfg = state.mcp_open_allowlist.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         (cfg.allowed_dirs.clone(), cfg.allow_all)
     };
 
@@ -607,7 +670,7 @@ async fn h_open_file(
     // The sessions lock is released at the end of this block — it is NEVER held
     // across the open call below.
     let open_paths: Vec<String> = {
-        let sessions = state.sessions.lock().unwrap();
+        let sessions = lock_or_err_response!(state.sessions, "sessions");
         sessions
             .values()
             .filter_map(|s| s.file_path.as_deref())
@@ -686,7 +749,7 @@ async fn h_close_session(
 
     // Existence check under a short-lived lock; drop it before closing.
     {
-        let sessions = state.sessions.lock().unwrap();
+        let sessions = lock_or_err_response!(state.sessions, "sessions");
         if !sessions.contains_key(&session_id) {
             return err(StatusCode::NOT_FOUND, "session not found", "NOT_FOUND");
         }
@@ -711,7 +774,7 @@ async fn h_sessions(State(handle): State<Handle>) -> Json<Value> {
 
     // Collect session info without holding the lock into the JSON builder.
     let sessions_info: Vec<Value> = {
-        let sessions = state.sessions.lock().unwrap();
+        let sessions = lock_or_json_err!(state.sessions, "sessions");
         sessions
             .values()
             .map(|session| {
@@ -735,7 +798,7 @@ async fn h_sessions(State(handle): State<Handle>) -> Json<Value> {
 
     // Processor IDs that have pipeline results for any session.
     let processors_with_results: Vec<String> = {
-        let results = state.pipeline_results.lock().unwrap();
+        let results = lock_or_json_err!(state.pipeline_results, "pipeline_results");
         let mut ids: std::collections::HashSet<String> = std::collections::HashSet::new();
         for session_map in results.values() {
             ids.extend(session_map.keys().cloned());
@@ -745,7 +808,7 @@ async fn h_sessions(State(handle): State<Handle>) -> Json<Value> {
 
     // Installed processors (id + name + type).
     let installed: Vec<Value> = {
-        let procs = state.processors.lock().unwrap();
+        let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         procs
             .values()
             .map(|p| {
@@ -910,7 +973,7 @@ async fn h_query(
             if matched.len() >= n { break; }
 
             {
-                let sessions = state.sessions.lock().unwrap();
+                let sessions = lock_or_json_err!(state.sessions, "sessions");
                 let Some(session) = sessions.get(&session_id) else {
                     session_lost = true;
                     break 'chunks;
@@ -1048,8 +1111,8 @@ async fn h_pipeline(
 
     // Collect reporter data (clone out of lock)
     let reporter_snaps: Vec<ReporterSnap> = {
-        let results = state.pipeline_results.lock().unwrap();
-        let procs = state.processors.lock().unwrap();
+        let results = lock_or_json_err!(state.pipeline_results, "pipeline_results");
+        let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         match results.get(&session_id) {
             None => vec![],
             Some(session_map) => session_map
@@ -1085,9 +1148,9 @@ async fn h_pipeline(
 
     // Collect tracker data (clone out of lock)
     let tracker_snaps: Vec<TrackerSnap> = {
-        let pipeline_res = state.state_tracker_results.lock().unwrap();
-        let stream_res = state.stream_tracker_state.lock().unwrap();
-        let procs = state.processors.lock().unwrap();
+        let pipeline_res = lock_or_json_err!(state.state_tracker_results, "state_tracker_results");
+        let stream_res = lock_or_json_err!(state.stream_tracker_state, "stream_tracker_state");
+        let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
         let from_pipeline = pipeline_res.get(&session_id);
         let from_stream = stream_res.get(&session_id);
@@ -1149,7 +1212,7 @@ async fn h_pipeline(
         needed.sort_unstable();
         needed.dedup();
 
-        let sessions = state.sessions.lock().unwrap();
+        let sessions = lock_or_json_err!(state.sessions, "sessions");
         resolve_line_texts(&sessions, &session_id, &needed)
     };
 
@@ -1238,7 +1301,7 @@ async fn h_processor_detail(
 
     // Resolve bare → qualified ID and check processor type in a single lock.
     let (resolved_id, processor_type) = {
-        let procs = state.processors.lock().unwrap();
+        let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let resolved = resolve_processor_id(&procs, &processor_id)
             .unwrap_or_else(|| processor_id.clone());
         let ptype = procs.get(&resolved).map(|p| p.processor_type().to_string());
@@ -1249,8 +1312,8 @@ async fn h_processor_detail(
         Some("reporter") | None => {
             // Try reporter results (None processor_type means it might still have results)
             let result_data: Option<(RunResult, String, String)> = {
-                let results = state.pipeline_results.lock().unwrap();
-                let procs = state.processors.lock().unwrap();
+                let results = lock_or_json_err!(state.pipeline_results, "pipeline_results");
+                let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 results.get(&session_id)
                     .and_then(|m| m.get(&resolved_id))
                     .map(|rr| {
@@ -1286,7 +1349,7 @@ async fn h_processor_detail(
             needed_lines.dedup();
 
             let line_texts: HashMap<usize, String> = if include_line_text {
-                let sessions = state.sessions.lock().unwrap();
+                let sessions = lock_or_json_err!(state.sessions, "sessions");
                 resolve_line_texts(&sessions, &session_id, &needed_lines)
             } else {
                 HashMap::new()
@@ -1343,9 +1406,9 @@ async fn h_processor_detail(
         Some("state_tracker") => {
             // Resolve tracker data
             let tracker_data: Option<(Vec<StateTransition>, Value, String, String)> = {
-                let pipeline_res = state.state_tracker_results.lock().unwrap();
-                let stream_res = state.stream_tracker_state.lock().unwrap();
-                let procs = state.processors.lock().unwrap();
+                let pipeline_res = lock_or_json_err!(state.state_tracker_results, "state_tracker_results");
+                let stream_res = lock_or_json_err!(state.stream_tracker_state, "stream_tracker_state");
+                let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
                 let proc = procs.get(&resolved_id);
                 let name = proc.map_or_else(|| resolved_id.clone(), |p| p.meta.name.clone());
@@ -1375,7 +1438,7 @@ async fn h_processor_detail(
             // Resolve line text if requested
             let line_texts: HashMap<usize, String> = if include_line_text {
                 let needed: Vec<usize> = page.iter().map(|t| t.line_num).collect();
-                let sessions = state.sessions.lock().unwrap();
+                let sessions = lock_or_json_err!(state.sessions, "sessions");
                 resolve_line_texts(&sessions, &session_id, &needed)
             } else {
                 HashMap::new()
@@ -1434,8 +1497,8 @@ async fn h_events(
     let limit = params.limit.unwrap_or(50).min(200);
 
     let events: Vec<Value> = {
-        let pipeline_res = state.state_tracker_results.lock().unwrap();
-        let stream_res   = state.stream_tracker_state.lock().unwrap();
+        let pipeline_res = lock_or_json_err!(state.state_tracker_results, "state_tracker_results");
+        let stream_res   = lock_or_json_err!(state.stream_tracker_state, "stream_tracker_state");
 
         // Collect transitions from pipeline results first, then streaming state.
         // Both may coexist; streaming transitions use tracker_id as the key.
@@ -1505,7 +1568,7 @@ async fn h_correlations(
     let offset = params.offset.unwrap_or(0);
 
     let correlators: Vec<Value> = {
-        let cr = state.correlator_results.lock().unwrap();
+        let cr = lock_or_json_err!(state.correlator_results, "correlator_results");
         match cr.get(&session_id) {
             None => vec![],
             Some(session_map) => session_map
@@ -1566,22 +1629,28 @@ async fn h_state_at_line(
 
     // Resolve bare ID → qualified ID (e.g. "wifi-state" → "wifi-state@official")
     let resolved_id = {
-        let procs = state.processors.lock().unwrap();
+        let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         resolve_processor_id(&procs, &tracker_id).unwrap_or_else(|| tracker_id.clone())
     };
 
-    // Resolve transitions from pipeline or stream state
-    let transitions: Option<Vec<StateTransition>> = {
-        let pipeline_res = state.state_tracker_results.lock().unwrap();
+    // Resolve transitions from pipeline or stream state. Deliberately two
+    // plain blocks rather than `.or_else(|| { .. })` — `lock_or_json_err!`
+    // expands to an early `return` on poison, which must return from this
+    // handler, not from a closure.
+    let from_pipeline: Option<Vec<StateTransition>> = {
+        let pipeline_res = lock_or_json_err!(state.state_tracker_results, "state_tracker_results");
         pipeline_res.get(&session_id)
             .and_then(|session_map| session_map.get(&resolved_id))
             .map(|r| r.transitions.clone())
-    }.or_else(|| {
-        let stream_res = state.stream_tracker_state.lock().unwrap();
+    };
+    let transitions: Option<Vec<StateTransition>> = if from_pipeline.is_some() {
+        from_pipeline
+    } else {
+        let stream_res = lock_or_json_err!(state.stream_tracker_state, "stream_tracker_state");
         stream_res.get(&session_id)
             .and_then(|m| m.get(&resolved_id))
             .map(|cont| cont.transitions.clone())
-    });
+    };
 
     let Some(transitions) = transitions else {
         return Json(json!({
@@ -1591,7 +1660,7 @@ async fn h_state_at_line(
 
     // Replay transitions up to line_num against declared defaults
     let defaults: HashMap<String, serde_json::Value> = {
-        let procs = state.processors.lock().unwrap();
+        let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         match procs.get(&resolved_id).and_then(|p| p.as_state_tracker()) {
             Some(def) => build_defaults(def),
             None => HashMap::new(),
@@ -1707,7 +1776,7 @@ async fn h_search(
         if results.len() >= limit { break; }
 
         { // `sessions` guard scope — dropped before the yield below.
-            let sessions = state.sessions.lock().unwrap();
+            let sessions = lock_or_json_err!(state.sessions, "sessions");
             let Some(session) = sessions.get(&session_id) else {
                 session_lost = true;
                 break 'chunks;
@@ -1820,7 +1889,7 @@ async fn h_processor_defs_list(State(handle): State<Handle>) -> Json<Value> {
     let state = handle.state::<AppState>();
 
     let processors: Vec<Value> = {
-        let procs = state.processors.lock().unwrap();
+        let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         procs.iter().map(|(qualified_id, p)| {
             json!({
                 "id": qualified_id,
@@ -1852,7 +1921,7 @@ async fn h_processor_defs_single(
 ) -> Json<Value> {
     let state = handle.state::<AppState>();
 
-    let procs = state.processors.lock().unwrap();
+    let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let resolved = resolve_processor_id(&procs, &processor_id);
     let Some(p) = resolved.as_ref().and_then(|rid| procs.get(rid)) else {
         return Json(json!({ "error": "processor not found", "processorId": processor_id }));
@@ -2358,7 +2427,7 @@ async fn h_search_with_context(
 
     'chunks: for (chunk_start, chunk_end) in scan_chunk_bounds(range_start, range_end, MCP_SCAN_CHUNK_SIZE) {
         { // `sessions` guard scope — dropped before the yield below.
-            let sessions = state.sessions.lock().unwrap();
+            let sessions = lock_or_json_err!(state.sessions, "sessions");
             let Some(session) = sessions.get(&session_id) else {
                 session_lost = true;
                 break 'chunks;
@@ -2452,7 +2521,7 @@ async fn h_list_bookmarks(
     axum::extract::Query(query): axum::extract::Query<BookmarkListQuery>,
 ) -> Json<Value> {
     let state = handle.state::<AppState>();
-    let bookmarks = state.bookmarks.lock().unwrap();
+    let bookmarks = state.bookmarks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let list: Vec<_> = bookmarks
         .get(&session_id)
         .cloned()
@@ -2564,7 +2633,7 @@ async fn h_list_analyses(
     Path(session_id): Path<String>,
 ) -> Json<Value> {
     let state = handle.state::<AppState>();
-    let analyses = state.analyses.lock().unwrap();
+    let analyses = state.analyses.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let list = analyses.get(&session_id).cloned().unwrap_or_default();
     Json(json!(list))
 }
@@ -2597,7 +2666,7 @@ async fn h_get_analysis(
     Path((session_id, artifact_id)): Path<(String, String)>,
 ) -> Json<Value> {
     let state = handle.state::<AppState>();
-    let analyses = state.analyses.lock().unwrap();
+    let analyses = state.analyses.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(list) = analyses.get(&session_id) {
         if let Some(art) = list.iter().find(|a| a.id == artifact_id) {
             return Json(json!(art));
@@ -2649,7 +2718,7 @@ async fn h_list_watches(
     Path(session_id): Path<String>,
 ) -> Json<Value> {
     let state = handle.state::<AppState>();
-    let watches = state.active_watches.lock().unwrap();
+    let watches = state.active_watches.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let list = watches.get(&session_id);
     let infos: Vec<Value> = list
         .map(|ws| {
@@ -2704,7 +2773,7 @@ async fn h_create_watch(
     };
 
     {
-        let mut watches = state.active_watches.lock().unwrap();
+        let mut watches = state.active_watches.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         watches
             .entry(session_id)
             .or_default()
@@ -2719,7 +2788,7 @@ async fn h_cancel_watch(
     Path((session_id, watch_id)): Path<(String, String)>,
 ) -> Json<Value> {
     let state = handle.state::<AppState>();
-    let watches = state.active_watches.lock().unwrap();
+    let watches = state.active_watches.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(list) = watches.get(&session_id) {
         if let Some(w) = list.iter().find(|w| w.watch_id == watch_id) {
             w.cancel();
@@ -2755,13 +2824,13 @@ async fn h_run_pipeline(
     // Bare IDs (e.g. "wifi-state") are resolved to qualified keys ("wifi-state@official").
     let processor_ids: Vec<String> = match body.processor_ids {
         Some(ids) if !ids.is_empty() => {
-            let procs = state.processors.lock().unwrap();
+            let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             ids.into_iter()
                 .map(|id| resolve_processor_id(&procs, &id).unwrap_or(id))
                 .collect()
         }
         _ => {
-            let procs = state.processors.lock().unwrap();
+            let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             procs.keys().cloned().collect()
         }
     };
@@ -2837,7 +2906,7 @@ async fn h_insights(
     let proc_snaps: Vec<ProcSnap> = {
         // Collect (qualified_id, display_name, schema) — qualified_id is the HashMap key.
         let proc_meta: Vec<(String, String, Option<McpSchema>)> = {
-            let procs = state.processors.lock().unwrap();
+            let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             procs.iter()
                 .filter(|(qid, p)| {
                     if let Some(ref ids) = filter_ids {
@@ -2855,7 +2924,7 @@ async fn h_insights(
         };
 
         // Evaluate signals in-place while holding pipeline_results lock (pure CPU, no I/O).
-        let all_results = state.pipeline_results.lock().unwrap();
+        let all_results = lock_or_json_err!(state.pipeline_results, "pipeline_results");
         let session_map = all_results.get(&session_id);
 
         proc_meta.into_iter().map(|(id, name, schema_mcp)| {
@@ -3083,7 +3152,7 @@ mod tests {
     #[test]
     fn anonymize_for_session_serves_raw_when_flag_false() {
         let state = AppState::new();
-        state.mcp_anonymize.lock().unwrap().insert("sess-a".to_string(), false);
+        state.mcp_anonymize.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert("sess-a".to_string(), false);
         let raw = "contact user@example.com for access";
         let out = anonymize_for_session(&state, "sess-a", raw);
         assert_eq!(out, raw);
@@ -3092,7 +3161,7 @@ mod tests {
     #[test]
     fn anonymize_for_session_redacts_when_flag_true() {
         let state = AppState::new();
-        state.mcp_anonymize.lock().unwrap().insert("sess-a".to_string(), true);
+        state.mcp_anonymize.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert("sess-a".to_string(), true);
         let raw = "contact user@example.com for access";
         let out = anonymize_for_session(&state, "sess-a", raw);
         assert_ne!(out, raw);
@@ -3108,6 +3177,73 @@ mod tests {
         let out = anonymize_for_session(&state, "never-seen-session", raw);
         assert_ne!(out, raw);
         assert!(!out.contains("user@example.com"));
+    }
+
+    // ── Lock poisoning: `lock_or_json_err!` vs. `into_inner` recovery ───────
+    // See the "Lock-poisoning helpers" module docs near the top of this file
+    // for the two-family policy. These tests poison a real AppState mutex
+    // from another thread (mirroring "some unrelated handler panicked while
+    // holding this lock") and assert the two recovery strategies behave as
+    // documented instead of propagating the poison as a panic.
+
+    /// Exercises the exact `lock_or_json_err!` expansion a real handler uses
+    /// for `sessions` — a standalone `Json<Value>`-returning fn so the
+    /// macro's early `return` has a matching function to return from
+    /// (handlers themselves need a live Axum/Tauri `AppHandle` this test
+    /// suite otherwise avoids constructing).
+    fn poisoned_sessions_probe(state: &AppState) -> Json<Value> {
+        let sessions = lock_or_json_err!(state.sessions, "sessions");
+        Json(json!({ "sessionCount": sessions.len() }))
+    }
+
+    #[test]
+    fn lock_or_json_err_returns_error_body_on_poison_instead_of_panicking() {
+        let state = std::sync::Arc::new(AppState::new());
+
+        // Poison `sessions` from another thread — a panic anywhere while
+        // holding the lock (e.g. a bug in a session mutation) must not brick
+        // every later bridge request.
+        let poisoner = std::sync::Arc::clone(&state);
+        let joined = std::thread::spawn(move || {
+            let _guard = poisoner.sessions.lock().unwrap();
+            panic!("simulated writer panic while holding sessions");
+        })
+        .join();
+        assert!(joined.is_err(), "poisoning thread should have panicked");
+        assert!(state.sessions.is_poisoned());
+
+        // Must return the bridge's `{"error": ...}` contract, not panic.
+        let Json(body) = poisoned_sessions_probe(&state);
+        assert_eq!(
+            body.get("error").and_then(Value::as_str),
+            Some("sessions lock poisoned"),
+        );
+    }
+
+    #[test]
+    fn mcp_anonymize_recovers_via_into_inner_after_poison_instead_of_panicking() {
+        let state = std::sync::Arc::new(AppState::new());
+        // Seed a flag before poisoning so the recovered guard reflects the
+        // same value a caller would see if the poisoning writer's insert had
+        // completed — `into_inner` recovery must not lose or corrupt it.
+        state.mcp_anonymize.lock().unwrap().insert("sess-a".to_string(), false);
+
+        let poisoner = std::sync::Arc::clone(&state);
+        let joined = std::thread::spawn(move || {
+            let _guard = poisoner.mcp_anonymize.lock().unwrap();
+            panic!("simulated writer panic while holding mcp_anonymize");
+        })
+        .join();
+        assert!(joined.is_err(), "poisoning thread should have panicked");
+        assert!(state.mcp_anonymize.is_poisoned());
+
+        // `anonymize_for_session` locks `mcp_anonymize` via `into_inner`
+        // recovery (a pure per-session flag map, no cross-field invariant) —
+        // it must recover and see the flag set before the panic, not panic
+        // itself.
+        let raw = "contact user@example.com for access";
+        let out = anonymize_for_session(&state, "sess-a", raw);
+        assert_eq!(out, raw, "flag=false must still serve raw text after recovery");
     }
 
     // ── truncate_str / max_line_chars ────────────────────────────────────────
