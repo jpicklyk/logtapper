@@ -233,6 +233,12 @@ pub(crate) fn open_file_inner(
         encoding: encoding.display_name().to_string(),
     };
 
+    // Capture the session's per-instantiation generation before it is moved into
+    // the map. The background indexer re-checks this under the sessions lock so a
+    // stale indexer can never mutate a newer same-id session (ids are
+    // content-derived, so close+reopen re-derives the same id).
+    let session_generation = session.generation();
+
     {
         let mut sessions = lock_or_err(&state.sessions, "sessions")?;
         sessions.insert(session_id.clone(), session);
@@ -257,6 +263,7 @@ pub(crate) fn open_file_inner(
                 bytes_consumed,
                 total_bytes,
                 initial_line_count,
+                session_generation,
                 app_clone,
                 cancel_rx,
             )
@@ -576,6 +583,22 @@ pub async fn close_session(
     close_session_inner(&state, Some(&app), &session_id)
 }
 
+/// Decide whether the background indexer should stop, given the result of a
+/// non-blocking `cancel_rx.try_recv()`.
+///
+/// Both an explicit cancel (`Ok(())`, sent by `close_session_inner`) and a
+/// *dropped sender* (`Err(Closed)`) mean stop. The dropped-sender case matters
+/// because any path that overwrites this indexer's `indexing_tasks` entry
+/// (rather than send-then-remove) drops the `Sender` without signalling — the
+/// old asymmetry (vs `run_streaming_task`'s `select!`) that left indexers
+/// unstoppable. Only `Err(Empty)` — no signal yet, sender still alive —
+/// continues.
+fn indexer_cancelled(
+    recv: Result<(), tokio::sync::oneshot::error::TryRecvError>,
+) -> bool {
+    !matches!(recv, Err(tokio::sync::oneshot::error::TryRecvError::Empty))
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_background_indexer(
     session_id: String,
@@ -585,6 +608,7 @@ async fn run_background_indexer(
     start_byte: usize,
     total_bytes: usize,
     initial_line_count: usize,
+    expected_generation: u64,
     app: AppHandle,
     mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) {
@@ -623,8 +647,9 @@ async fn run_background_indexer(
     let mut total_indexed: usize = initial_line_count;
 
     while cursor < data.len() {
-        // Check for cancellation
-        if cancel_rx.try_recv().is_ok() {
+        // Stop on an explicit cancel (Ok) OR a dropped sender (Err(Closed)) —
+        // see `indexer_cancelled`. Only Err(Empty) continues.
+        if indexer_cancelled(cancel_rx.try_recv()) {
             return;
         }
 
@@ -640,6 +665,18 @@ async fn run_background_indexer(
             let Some(session) = sessions.get_mut(&session_id) else {
                 return;
             };
+
+            // The session id is content-derived and deterministic: a close+reopen
+            // of the same file re-derives the SAME id. If this stale indexer
+            // blocked on the sessions lock while its session was closed and a new
+            // same-id session inserted, `get_mut` now resolves that NEW session.
+            // Writing our old-cursor/old-mmap offsets into it would corrupt its
+            // line_index (duplicated/gapped) and interleave with the new session's
+            // own indexer. The generation is unique per instantiation, so a
+            // mismatch means "not our session" — abort silently.
+            if session.generation() != expected_generation {
+                return;
+            }
 
             let (mut chunk_index, mut chunk_meta, bytes_in_chunk) =
                 crate::core::session::build_partial_line_index(
@@ -691,7 +728,7 @@ async fn run_background_indexer(
         // stale rebuild can never clobber newer state.
         if let Some(input) = rebuild_input {
             let expected_total_lines = input.expected_total_lines;
-            let expected_source_id = input.source_id.clone();
+            let expected_generation = input.generation;
             let (timeline, index) =
                 crate::core::session::AnalysisSession::build_timeline_and_index(input);
             if let Ok(mut sessions) = state.sessions.lock() {
@@ -700,7 +737,7 @@ async fn run_background_indexer(
                         timeline,
                         index,
                         expected_total_lines,
-                        &expected_source_id,
+                        expected_generation,
                     );
                 }
             }
@@ -1487,6 +1524,40 @@ mod tests {
         let mut session = AnalysisSession::new(id.to_string());
         session.file_path = file_path.map(str::to_string);
         state.sessions.lock().unwrap().insert(id.to_string(), session);
+    }
+
+    // -------------------------------------------------------------------------
+    // indexer_cancelled — cancellation polling semantics
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn indexer_cancelled_treats_ok_and_closed_as_cancel() {
+        use tokio::sync::oneshot::error::TryRecvError;
+        // Explicit cancel signal → stop.
+        assert!(indexer_cancelled(Ok(())));
+        // Sender dropped without sending (overwritten indexing_tasks entry) →
+        // stop. This is the "unstoppable indexer on sender drop" bug.
+        assert!(indexer_cancelled(Err(TryRecvError::Closed)));
+        // No signal yet, sender still alive → keep indexing.
+        assert!(!indexer_cancelled(Err(TryRecvError::Empty)));
+    }
+
+    #[test]
+    fn indexer_cancelled_on_dropped_sender_via_channel() {
+        // A real channel: dropping the sender makes try_recv return Closed, which
+        // indexer_cancelled must treat as "stop".
+        let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
+        drop(tx);
+        assert!(indexer_cancelled(rx.try_recv()), "dropped sender must cancel");
+
+        // Sender alive, nothing sent → Empty → keep going.
+        let (_tx, mut rx2) = tokio::sync::oneshot::channel::<()>();
+        assert!(!indexer_cancelled(rx2.try_recv()), "live+empty must not cancel");
+
+        // Explicit send → Ok → cancel.
+        let (tx3, mut rx3) = tokio::sync::oneshot::channel::<()>();
+        tx3.send(()).unwrap();
+        assert!(indexer_cancelled(rx3.try_recv()), "signalled must cancel");
     }
 
     // -------------------------------------------------------------------------

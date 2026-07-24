@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::core::bugreport_parser::BugreportParser;
@@ -133,8 +134,29 @@ pub struct SectionInfo {
 // AnalysisSession — owns the source for one "workspace"
 // ---------------------------------------------------------------------------
 
+/// Process-global monotonic counter handing out a fresh generation token to
+/// every [`AnalysisSession`]. Starts at 1 so 0 is never a live session's
+/// generation. See [`AnalysisSession::generation`].
+static SESSION_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+/// Allocate the next per-instantiation session generation token.
+fn next_session_generation() -> u64 {
+    SESSION_GENERATION.fetch_add(1, Ordering::Relaxed)
+}
+
 pub struct AnalysisSession {
     pub id: String,
+    /// Per-instantiation identity token, unique for the life of the process.
+    ///
+    /// Session ids are content-derived and therefore deterministic: closing and
+    /// reopening the same unchanged file yields the SAME `id`. A background
+    /// indexer spawned for one instantiation must never mutate a *different*
+    /// instantiation that happens to share the id (e.g. a stale indexer that
+    /// blocked on the `sessions` lock while the session was closed and reopened
+    /// under the same id). The generation distinguishes instantiations even when
+    /// `id` collides, making it a strictly stronger identity check than `id`.
+    /// Assigned once at construction; never mutated.
+    generation: u64,
     pub source: Option<Box<dyn LogSource>>,
     pub timeline: Timeline,
     pub index: CrossSourceIndex,
@@ -150,6 +172,7 @@ impl AnalysisSession {
     pub fn new(id: String) -> Self {
         Self {
             id,
+            generation: next_session_generation(),
             source: None,
             timeline: Timeline::new(),
             index: CrossSourceIndex::empty(),
@@ -157,6 +180,14 @@ impl AnalysisSession {
             file_path: None,
             temp_file: None,
         }
+    }
+
+    /// This session's per-instantiation generation token. Stable for the life of
+    /// the object; two sessions sharing the same content-derived `id` still have
+    /// distinct generations. Used to reject a stale background indexer that
+    /// resolved a newer same-id session under the `sessions` lock.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Intern a tag string and return its compact u16 ID.
@@ -460,7 +491,7 @@ impl AnalysisSession {
             source_ids: vec![Arc::clone(&source_id)],
             tag_table,
             expected_total_lines,
-            source_id: source_id.to_string(),
+            generation: self.generation,
         })
     }
 
@@ -487,6 +518,12 @@ impl AnalysisSession {
     /// against the session having been closed, replaced under the same id, or
     /// extended with more lines while the rebuild ran outside the lock.
     ///
+    /// Identity is checked via the per-instantiation `generation` token, which
+    /// is strictly stronger than the previous source-id heuristic: a
+    /// close+reopen of the same file re-derives the SAME id, but always gets a
+    /// fresh generation, so a stale rebuild cannot clobber the new session's
+    /// timeline. The line-count and not-indexing checks are retained.
+    ///
     /// Returns `true` if the swap was applied, `false` if it was rejected as
     /// stale (the caller's built structures are simply dropped).
     pub fn try_swap_timeline(
@@ -494,13 +531,12 @@ impl AnalysisSession {
         timeline: Timeline,
         index: CrossSourceIndex,
         expected_total_lines: usize,
-        expected_source_id: &str,
+        expected_generation: u64,
     ) -> bool {
-        let still_valid = self.source.as_ref().is_some_and(|src| {
-            !src.is_indexing()
-                && src.total_lines() == expected_total_lines
-                && src.id() == expected_source_id
-        });
+        let still_valid = self.generation == expected_generation
+            && self.source.as_ref().is_some_and(|src| {
+                !src.is_indexing() && src.total_lines() == expected_total_lines
+            });
         if still_valid {
             self.timeline = timeline;
             self.index = index;
@@ -523,8 +559,9 @@ pub struct TimelineRebuildInput {
     pub(crate) tag_table: Arc<[Arc<str>]>,
     /// Line count the snapshot reflects — used to reject a stale swap-in.
     pub(crate) expected_total_lines: usize,
-    /// Source id the snapshot reflects — used to reject a stale swap-in.
-    pub(crate) source_id: String,
+    /// Generation of the session this snapshot was taken from — used to reject a
+    /// stale swap-in after the session was closed and reopened under the same id.
+    pub(crate) generation: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -1283,10 +1320,30 @@ mod tests {
     }
 
     #[test]
+    fn session_generation_is_unique_per_instantiation() {
+        // Two sessions sharing the SAME content-derived id must still have
+        // distinct generations — this is what lets a stale indexer detect that
+        // the session it resolved under the lock is a different instantiation.
+        let a = AnalysisSession::new("same-content-id".into());
+        let b = AnalysisSession::new("same-content-id".into());
+        assert_eq!(a.id, b.id, "precondition: ids collide");
+        assert_ne!(
+            a.generation(),
+            b.generation(),
+            "same-id sessions must not share a generation"
+        );
+        // A third instantiation is distinct from both prior ones.
+        let c = AnalysisSession::new("same-content-id".into());
+        assert_ne!(c.generation(), a.generation());
+        assert_ne!(c.generation(), b.generation());
+    }
+
+    #[test]
     fn session_try_swap_timeline_rejects_stale_state() {
         let (src, _mmap) = make_file_source(4);
         let mut session = AnalysisSession::new("f-swap".into());
         session.source = Some(Box::new(src));
+        let generation = session.generation();
 
         let build = |s: &AnalysisSession| {
             AnalysisSession::build_timeline_and_index(s.snapshot_timeline_input().unwrap())
@@ -1294,24 +1351,37 @@ mod tests {
 
         // Line-count mismatch → rejected (source grew/shrank while rebuilding).
         let (tl, ix) = build(&session);
-        assert!(!session.try_swap_timeline(tl, ix, 999, "file-src"));
+        assert!(!session.try_swap_timeline(tl, ix, 999, generation));
         assert_eq!(session.timeline.total_entries(), 0, "rejected swap must not apply");
 
-        // Correct count but wrong source id (session replaced) → rejected.
+        // Correct count but wrong generation (session closed + reopened under the
+        // same content-derived id) → rejected. This is the same-id-different-
+        // instantiation case the source-id heuristic could not catch.
         let (tl, ix) = build(&session);
-        assert!(!session.try_swap_timeline(tl, ix, 4, "different-source"));
+        assert!(!session.try_swap_timeline(tl, ix, 4, generation.wrapping_add(1)));
         assert_eq!(session.timeline.total_entries(), 0);
 
-        // Source is mid-reindex → rejected even with matching count + id.
+        // Source is mid-reindex → rejected even with matching count + generation.
         session.file_source_mut().unwrap().set_indexing(true);
         let (tl, ix) = build(&session);
-        assert!(!session.try_swap_timeline(tl, ix, 4, "file-src"));
+        assert!(!session.try_swap_timeline(tl, ix, 4, generation));
         session.file_source_mut().unwrap().set_indexing(false);
 
         // All guards satisfied → applied.
         let (tl, ix) = build(&session);
-        assert!(session.try_swap_timeline(tl, ix, 4, "file-src"));
+        assert!(session.try_swap_timeline(tl, ix, 4, generation));
         assert_eq!(session.timeline.total_entries(), 4);
+    }
+
+    #[test]
+    fn session_snapshot_carries_generation() {
+        // The snapshot must record the generation of the session it came from so
+        // try_swap_timeline can reject it if the session was replaced meanwhile.
+        let (src, _mmap) = make_file_source(3);
+        let mut session = AnalysisSession::new("f-gen".into());
+        session.source = Some(Box::new(src));
+        let input = session.snapshot_timeline_input().unwrap();
+        assert_eq!(input.generation, session.generation());
     }
 
     // --- meta_at() correctness tests ---
