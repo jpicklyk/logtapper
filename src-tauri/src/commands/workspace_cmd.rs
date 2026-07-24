@@ -71,6 +71,24 @@ pub(crate) fn collect_session_data(state: &AppState) -> Result<Vec<SessionEntry>
     Ok(entries)
 }
 
+/// Snapshot the set of session ids currently eligible for workspace persistence
+/// — those with both a file path and a primary source, i.e. exactly the sessions
+/// [`collect_session_data`] serialises. Used to stamp the workspace envelope with
+/// the sessions it was built against, and — at flush time — to detect a live
+/// snapshot that has diverged wholesale from that set (a workspace switch caught
+/// mid-flight). Kept in lock-step with `collect_session_data`'s filter above;
+/// change both together.
+pub(crate) fn snapshot_session_ids(state: &AppState) -> Result<Vec<String>, String> {
+    let sessions = lock_or_err(&state.sessions, "sessions")?;
+    Ok(sessions
+        .iter()
+        .filter(|(_, session)| {
+            session.file_path.is_some() && session.primary_source().is_some()
+        })
+        .map(|(id, _)| id.clone())
+        .collect())
+}
+
 /// Build entry refs from collected data (for write_ltw's borrow signature).
 pub(crate) fn entry_refs(entries: &[SessionEntry]) -> Vec<(
     LtwManifestSession,
@@ -124,6 +142,8 @@ pub async fn save_workspace_v4(
             editor_tabs: options.editor_tabs.clone(),
             layout: options.layout.clone(),
             pipeline_chain: chain.clone(),
+            // Stamped by cache_envelope from the live session set; ignored here.
+            session_ids: Vec::new(),
             updated_at: now_ms(),
         },
     );
@@ -194,6 +214,8 @@ pub async fn auto_save_workspace(
             editor_tabs: options.editor_tabs.clone(),
             layout: options.layout.clone(),
             pipeline_chain: chain.clone(),
+            // Stamped by cache_envelope from the live session set; ignored here.
+            session_ids: Vec::new(),
             updated_at: now_ms(),
         },
     );
@@ -261,6 +283,8 @@ pub async fn sync_workspace_envelope(
                 chain: options.pipeline_chain,
                 disabled_ids: options.disabled_chain_ids,
             },
+            // Stamped by cache_envelope from the live session set; ignored here.
+            session_ids: Vec::new(),
             updated_at: now_ms(),
         },
     );

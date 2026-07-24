@@ -24,7 +24,9 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
-use crate::commands::workspace_cmd::{collect_session_data, entry_refs, SessionEntry};
+use crate::commands::workspace_cmd::{
+    collect_session_data, entry_refs, snapshot_session_ids, SessionEntry,
+};
 use crate::commands::AppState;
 use crate::workspace::app_state::{load_app_state, save_app_state};
 use crate::workspace::ltw_v4::{self, LtwEditorTab, LtwLayout, LtwPipelineChain};
@@ -57,6 +59,14 @@ pub struct WorkspaceEnvelope {
     pub editor_tabs: Vec<LtwEditorTab>,
     pub layout: Option<LtwLayout>,
     pub pipeline_chain: LtwPipelineChain,
+    /// The session-id set live in `AppState` when this envelope was cached — the
+    /// sessions this shell was built against. Stamped by [`cache_envelope`], not
+    /// the caller. A flush compares it against the live snapshot and skips when
+    /// the two diverge wholesale (a workspace switch caught mid-flight), so this
+    /// shell can never be stamped onto the wrong (or an empty) session set. An
+    /// empty vec means "no expectation recorded" (never divergent) — see
+    /// [`session_snapshot_diverges`].
+    pub session_ids: Vec<String>,
     /// Epoch-millis when this envelope was cached (diagnostics only).
     pub updated_at: i64,
 }
@@ -66,10 +76,45 @@ pub struct WorkspaceEnvelope {
 // ---------------------------------------------------------------------------
 
 /// Replace the cached workspace envelope. Cheap in-memory write.
-pub fn cache_envelope(state: &AppState, envelope: WorkspaceEnvelope) {
+///
+/// Stamps `session_ids` from the live `AppState` session set (ignoring whatever
+/// the caller put there) so a later flush can tell whether the sessions it is
+/// about to serialise still belong to this shell — every cache site funnels
+/// through here, so the stamp can never be forgotten. A poisoned `sessions`
+/// lock degrades to an empty stamp (guard disabled for this envelope, i.e. the
+/// pre-existing behaviour), never a panic.
+pub fn cache_envelope(state: &AppState, mut envelope: WorkspaceEnvelope) {
+    envelope.session_ids = snapshot_session_ids(state).unwrap_or_default();
     if let Ok(mut guard) = state.workspace_envelope.lock() {
         *guard = Some(envelope);
     }
+}
+
+/// True when the live session-id snapshot diverges *wholesale* from the set the
+/// envelope was cached against — the signature of a workspace switch caught
+/// between tearing down the old workspace's sessions and settling the new one's.
+///
+/// Deliberately permissive: a single session added or removed within the same
+/// workspace is normal churn and must NOT suppress a flush. Only two shapes
+/// count as wholesale divergence:
+///   * `expected` is non-empty but `live` is empty — sessions torn down
+///     mid-switch (the "zero sessions" anomaly); or
+///   * both are non-empty yet share no id at all — `live` is a different
+///     workspace's session set entirely.
+///
+/// An empty `expected` set records no expectation (a genuinely empty workspace,
+/// or a legacy envelope stamped before a poisoned-lock degrade) and is never
+/// treated as divergent, so "first session added to an empty workspace" still
+/// flushes normally.
+fn session_snapshot_diverges(expected: &[String], live: &[String]) -> bool {
+    if expected.is_empty() {
+        return false;
+    }
+    if live.is_empty() {
+        return true;
+    }
+    let live_set: std::collections::HashSet<&str> = live.iter().map(String::as_str).collect();
+    !expected.iter().any(|id| live_set.contains(id.as_str()))
 }
 
 /// Signal the background flusher to schedule a flush. Sync and non-blocking
@@ -182,6 +227,34 @@ async fn flush(app: &AppHandle) {
         }
     };
 
+    // (b2) Session-snapshot skepticism — the sibling of the partial-envelope
+    //      skip above. If the live session set has diverged wholesale from the
+    //      set this envelope was cached against, a workspace switch is in flight
+    //      (its sessions torn down, or already replaced by the incoming
+    //      workspace's). Writing now would stamp this shell onto the wrong — or
+    //      an empty — session set, destroying its own good auto-save. Skip; the
+    //      switch's own auto-save / envelope sync re-arms a correct flush. (The
+    //      id set is re-read here rather than derived from `entries`, a second
+    //      brief `sessions` lock; any churn in that sub-microsecond window only
+    //      shifts a boundary case and is at worst a spurious skip the next flush
+    //      corrects — never data loss.)
+    let live_ids = match snapshot_session_ids(&state) {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("[autosave] flush skipped: session id snapshot failed: {e}");
+            return;
+        }
+    };
+    if session_snapshot_diverges(&envelope.session_ids, &live_ids) {
+        log::warn!(
+            "[autosave] flush skipped: live session snapshot diverges from envelope \
+             (expected {} session(s), live {}) — workspace switch likely in flight",
+            envelope.session_ids.len(),
+            live_ids.len()
+        );
+        return;
+    }
+
     // Resolve paths (these need the AppHandle) before handing owned data to the
     // blocking pool.
     let ws_dir = match crate::workspace::workspace_dir(app) {
@@ -282,6 +355,26 @@ pub fn flush_now_blocking(app: &AppHandle) {
             return;
         }
     };
+
+    // Same session-snapshot skepticism as the periodic flush: never stamp this
+    // shell onto a wholesale-divergent (or empty) session set. Rare at exit, but
+    // an exit racing an in-flight switch must still not clobber a good auto-save.
+    let live_ids = match snapshot_session_ids(&state) {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("[autosave] exit flush skipped: session id snapshot failed: {e}");
+            return;
+        }
+    };
+    if session_snapshot_diverges(&envelope.session_ids, &live_ids) {
+        log::warn!(
+            "[autosave] exit flush skipped: live session snapshot diverges from envelope \
+             (expected {} session(s), live {}) — workspace switch likely in flight",
+            envelope.session_ids.len(),
+            live_ids.len()
+        );
+        return;
+    }
 
     let ws_dir = match crate::workspace::workspace_dir(app) {
         Ok(d) => d,
@@ -425,8 +518,68 @@ mod tests {
             editor_tabs: vec![],
             layout: None,
             pipeline_chain: LtwPipelineChain::default(),
+            session_ids: vec![],
             updated_at: 0,
         }
+    }
+
+    // --- session_snapshot_diverges (the flush divergence predicate) --------
+    //
+    // The guard that keeps a debounced flush firing mid-workspace-switch from
+    // stamping the outgoing shell onto the incoming (or an empty) session set.
+
+    fn ids(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn diverges_false_when_both_empty() {
+        // Empty workspace, no sessions live → nothing to diverge from.
+        assert!(!session_snapshot_diverges(&ids(&[]), &ids(&[])));
+    }
+
+    #[test]
+    fn diverges_false_when_expected_empty_but_live_present() {
+        // "First session added to an empty workspace" — no recorded expectation,
+        // so it must still flush.
+        assert!(!session_snapshot_diverges(&ids(&[]), &ids(&["a"])));
+    }
+
+    #[test]
+    fn diverges_true_when_expected_present_but_live_empty() {
+        // Mid-switch teardown: the workspace had sessions, all now closed. This
+        // is the "zero sessions" anomaly — skip.
+        assert!(session_snapshot_diverges(&ids(&["a", "b"]), &ids(&[])));
+    }
+
+    #[test]
+    fn diverges_false_on_session_added_within_workspace() {
+        // Normal churn: a session added. Overlap non-empty → flush.
+        assert!(!session_snapshot_diverges(&ids(&["a"]), &ids(&["a", "b"])));
+    }
+
+    #[test]
+    fn diverges_false_on_session_removed_within_workspace() {
+        // Normal churn: a session removed. Overlap non-empty → flush.
+        assert!(!session_snapshot_diverges(&ids(&["a", "b"]), &ids(&["a"])));
+    }
+
+    #[test]
+    fn diverges_false_on_identical_sets() {
+        // MCP bookmark/analysis write with no session change — the common case.
+        assert!(!session_snapshot_diverges(&ids(&["a", "b"]), &ids(&["b", "a"])));
+    }
+
+    #[test]
+    fn diverges_true_on_disjoint_sets() {
+        // Switched to another workspace's sessions entirely — skip.
+        assert!(session_snapshot_diverges(&ids(&["a", "b"]), &ids(&["c", "d"])));
+    }
+
+    #[test]
+    fn diverges_false_on_partial_overlap_with_new_additions() {
+        // Shares one id but also gained others — still the same workspace, flush.
+        assert!(!session_snapshot_diverges(&ids(&["a", "b"]), &ids(&["b", "c", "d"])));
     }
 
     // Mirror of scheduler_loop, counting flushes instead of performing them, so
