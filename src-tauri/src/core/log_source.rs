@@ -623,6 +623,29 @@ pub fn sweep_orphaned_spill_files(dir: &std::path::Path) -> usize {
     removed
 }
 
+/// Maximum total bytes a single ADB stream's spill file may grow to before
+/// the backend stops spilling evicted lines to disk.
+///
+/// Without a cap, an overnight (or otherwise unattended) capture spills every
+/// line evicted past the in-memory retention window (default 500k lines) to
+/// disk, unbounded. 2 GiB is generous enough to cover essentially any normal
+/// capture session while still guaranteeing a runaway stream cannot fill the
+/// disk. Once reached, further evictions stop writing to the spill file and
+/// instead count toward `StreamLogSource::lost_line_count` (already surfaced
+/// to the UI via `AdbBatch` / the FileInfoPanel warning banner) — the same
+/// mechanism used when the spill file fails to create at all.
+///
+/// This is a constant rather than a user setting: threading a `spillMaxBytes`
+/// value from `AppSettings` down to here would require adding a new
+/// parameter through `start_adb_stream` (already an 8-parameter Tauri
+/// command) → `run_streaming_task` (already `#[allow(clippy::too_many_arguments)]`)
+/// → `flush_batch` → `evict()`, plus new frontend plumbing (settings field,
+/// `GeneralTab` control, bridge command param). That is substantially more
+/// invasive than the cap logic itself for a rarely-hit safety backstop.
+/// Centralizing the value here keeps it trivial to promote to a setting later
+/// if a real need arises.
+pub(crate) const SPILL_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024; // 2 GiB
+
 /// Holds the spill file handle, byte offsets for each spilled line, and the
 /// file path (for cleanup and capture finalization).
 pub(crate) struct SpillFile {
@@ -631,14 +654,26 @@ pub(crate) struct SpillFile {
     file: Mutex<std::fs::File>,
     /// Byte offset of each spilled line within the file.
     line_offsets: Vec<u64>,
-    /// Total bytes written (== offset of next write).
+    /// Total bytes written (== offset of next write). Updated from the byte
+    /// lengths already in hand at write time — no `fs::metadata`/stat calls.
     total_bytes: u64,
+    /// Set once `total_bytes` reaches `cap`. Checked by callers before
+    /// attempting a write so a capped stream never repeats failed write
+    /// attempts — just a bool read.
+    cap_reached: bool,
+    /// Byte cap for this spill file. Always `SPILL_MAX_BYTES` in production;
+    /// tests use `create_with_cap` to exercise cap behavior without writing
+    /// gigabytes of data.
+    cap: u64,
     /// Path on disk (for cleanup / finalization).
     pub(crate) path: PathBuf,
 }
 
 impl SpillFile {
-    fn create(path: PathBuf) -> Result<Self, String> {
+    /// Create a new spill file. `cap` is `SPILL_MAX_BYTES` in production;
+    /// tests pass a tiny cap (see `StreamLogSource::evict_with_cap_for_test`)
+    /// to exercise cap behavior without writing gigabytes of data.
+    fn create_with_cap(path: PathBuf, cap: u64) -> Result<Self, String> {
         let file = std::fs::File::options()
             .read(true)
             .write(true)
@@ -650,11 +685,17 @@ impl SpillFile {
             file: Mutex::new(file),
             line_offsets: Vec::new(),
             total_bytes: 0,
+            cap_reached: false,
+            cap,
             path,
         })
     }
 
-    /// Append a line to the spill file.  Records byte offset.
+    /// Append a line to the spill file.  Records byte offset and updates the
+    /// running byte total; flips `cap_reached` once `cap` is hit. Callers are
+    /// expected to check `is_cap_reached()` before calling this — it does not
+    /// refuse the write itself, so the cap is enforced by the caller skipping
+    /// the call entirely once reached.
     fn write_line(&mut self, line: &str) -> Result<(), String> {
         let mut f = self.file.lock().map_err(|_| "spill file lock poisoned")?;
         self.line_offsets.push(self.total_bytes);
@@ -662,7 +703,16 @@ impl SpillFile {
         f.write_all(bytes).map_err(|e| format!("spill write: {e}"))?;
         f.write_all(b"\n").map_err(|e| format!("spill write: {e}"))?;
         self.total_bytes += bytes.len() as u64 + 1;
+        if self.total_bytes >= self.cap {
+            self.cap_reached = true;
+        }
         Ok(())
+    }
+
+    /// Whether the spill file has reached `SPILL_MAX_BYTES`. A plain bool
+    /// read — no stat call — so callers can check it per-line cheaply.
+    pub(crate) fn is_cap_reached(&self) -> bool {
+        self.cap_reached
     }
 
     /// Read a spilled line by its absolute line number (0-based within the spill).
@@ -781,13 +831,26 @@ impl StreamLogSource {
     /// via `raw_line()`.  Metadata (`line_meta`) is never drained — it stays
     /// in memory for all lines (past and present).
     pub fn evict(&mut self, count: usize) {
+        self.evict_inner(count, SPILL_MAX_BYTES);
+    }
+
+    /// Test-only entry point identical to `evict()` but with an overridable
+    /// spill byte cap, so cap-enforcement behavior can be exercised without
+    /// writing gigabytes of data. Only takes effect on the eviction that
+    /// creates the spill file (the cap is fixed for the file's lifetime).
+    #[cfg(test)]
+    pub(crate) fn evict_with_cap_for_test(&mut self, count: usize, cap: u64) {
+        self.evict_inner(count, cap);
+    }
+
+    fn evict_inner(&mut self, count: usize, spill_cap: u64) {
         if count == 0 {
             return;
         }
         // Create spill file on first eviction.
         if self.spill.is_none() {
             let spill_path = self.temp_dir.join(spill_file_name(&self.session_id));
-            match SpillFile::create(spill_path) {
+            match SpillFile::create_with_cap(spill_path, spill_cap) {
                 Ok(sf) => self.spill = Some(sf),
                 Err(e) => {
                     eprintln!("Warning: failed to create spill file, evicted lines will be lost: {e}");
@@ -803,7 +866,14 @@ impl StreamLogSource {
         let mut lost = 0usize;
         match self.spill {
             Some(ref mut spill) => {
-                for line in self.raw_lines.iter().take(count) {
+                for (i, line) in self.raw_lines.iter().take(count).enumerate() {
+                    // Once SPILL_MAX_BYTES is reached (in this call or a prior
+                    // one), stop attempting writes: a cheap flag check, no
+                    // further disk I/O. The rest of this batch is lost.
+                    if spill.is_cap_reached() {
+                        lost += count - i;
+                        break;
+                    }
                     if let Err(e) = spill.write_line(line) {
                         eprintln!("Warning: spill write failed, evicted line lost: {e}");
                         lost += 1;
@@ -825,6 +895,15 @@ impl StreamLogSource {
 
     /// Write all lines (spill first, then retained) to `writer`, each followed
     /// by a newline.  Returns the number of lines written.
+    ///
+    /// When lines were permanently lost (`lost_line_count > 0` — spill cap
+    /// reached, or spill creation failed), a single marker line is written at
+    /// the boundary between the spilled content and the retained lines, i.e.
+    /// exactly where the lost lines would otherwise silently be missing from
+    /// the output. The marker is output-only: it is generated fresh on every
+    /// save and never touches `line_meta`, line numbering, or any other
+    /// stored state. When `lost_line_count == 0`, output is byte-identical to
+    /// before this marker existed.
     pub fn write_stream_lines(&self, writer: &mut impl std::io::Write) -> Result<u32, String> {
         let mut count = 0u32;
         if let Some(ref spill) = self.spill {
@@ -835,6 +914,15 @@ impl StreamLogSource {
                     count += 1;
                 }
             }
+        }
+        if self.lost_line_count > 0 {
+            let marker = format!(
+                "---- [LogTapper] {} lines not captured (spill cap reached) ----",
+                self.lost_line_count
+            );
+            writer.write_all(marker.as_bytes()).map_err(|e| format!("Write error: {e}"))?;
+            writer.write_all(b"\n").map_err(|e| format!("Write error: {e}"))?;
+            count += 1;
         }
         for raw in &self.raw_lines {
             writer.write_all(raw.as_bytes()).map_err(|e| format!("Write error: {e}"))?;
@@ -1037,8 +1125,8 @@ mod spill_tests {
     /// `evicted_count` still advances so retained lines read at the right index).
     #[test]
     fn evict_records_loss_when_spill_unavailable() {
-        // Force SpillFile::create to fail: point temp_dir at a *file* so that
-        // joining a filename onto it cannot be opened. Reliable on all OSes.
+        // Force SpillFile::create_with_cap to fail: point temp_dir at a *file*
+        // so that joining a filename onto it cannot be opened. Reliable on all OSes.
         let base = unique_temp_dir("evictfail");
         let file_as_dir = base.join("blocker");
         std::fs::write(&file_as_dir, b"x").unwrap();
@@ -1107,6 +1195,185 @@ mod spill_tests {
 
         // Drop removes the temp spill file.
         drop(src);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── Spill byte-cap tests ────────────────────────────────────────────
+
+    /// Once the (test-tiny) spill byte cap is reached, spilling stops: only
+    /// the lines that fit under the cap are written to disk, the rest of the
+    /// same eviction call are counted as lost, retained lines are unaffected,
+    /// and absolute line numbering (evicted_count / meta_at / total_lines)
+    /// stays consistent — mirroring the "spill unavailable" test above but
+    /// for the byte-cap path instead of a creation failure.
+    #[test]
+    fn evict_cap_stops_spilling_mid_batch_and_counts_loss() {
+        let dir = unique_temp_dir("evictcap");
+        let mut src = StreamLogSource::new(
+            "src".to_string(),
+            "name".to_string(),
+            "sess-cap".to_string(),
+            dir.clone(),
+        );
+        // 15 lines: "line 0".."line 14". Each write is content + '\n':
+        // "line 0".."line 9" = 7 bytes each, "line 10".."line 14" = 8 bytes each.
+        for i in 0..15 {
+            src.push_raw_line(format!("line {i}"));
+            src.push_meta(dummy_meta());
+        }
+
+        // cap=20 bytes: "line 0" (7) -> 7, "line 1" (7) -> 14, "line 2" (7) -> 21
+        // >= 20, so exactly 3 lines get spilled before the cap trips.
+        src.evict_with_cap_for_test(10, 20);
+
+        assert!(src.has_spill(), "spill file is still created under the cap");
+        assert_eq!(src.evicted_count(), 10, "retention cap (line count) unaffected by the byte cap");
+        assert_eq!(src.total_lines(), 15, "line_meta is never drained, numbering stable");
+        assert_eq!(src.lost_line_count(), 7, "lines 3..9 (7 of the 10 evicted) are lost once the byte cap trips");
+
+        // Spilled (recoverable) lines: absolute indices 0, 1, 2.
+        assert_eq!(src.raw_line(0).as_deref(), Some("line 0"));
+        assert_eq!(src.raw_line(1).as_deref(), Some("line 1"));
+        assert_eq!(src.raw_line(2).as_deref(), Some("line 2"));
+        // Lost lines: absolute indices 3..9 — evicted but never spilled, so
+        // unrecoverable (None, not a panic or a shifted read).
+        for i in 3..10 {
+            assert!(src.raw_line(i).is_none(), "line {i} was lost to the byte cap, must read as None");
+        }
+        // Retained (in-memory) lines: absolute indices 10..14, unaffected by
+        // the cap, still read at their absolute index.
+        for i in 10..15 {
+            let expected = format!("line {i}");
+            assert_eq!(src.raw_line(i).as_deref(), Some(expected.as_str()));
+        }
+        // meta_at covers every absolute line number regardless of loss.
+        for i in 0..15 {
+            assert!(src.meta_at(i).is_some(), "meta_at({i}) must stay populated");
+        }
+
+        drop(src);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Once the cap is reached, further evictions — even in separate calls —
+    /// must not attempt any more spill writes: `total_spilled()` stops
+    /// growing and `lost_line_count` accounts for every subsequent evicted
+    /// line via a cheap flag check, not repeated failed I/O.
+    #[test]
+    fn evict_cap_reached_short_circuits_across_calls() {
+        let dir = unique_temp_dir("evictcapmulti");
+        let mut src = StreamLogSource::new(
+            "src".to_string(),
+            "name".to_string(),
+            "sess-capmulti".to_string(),
+            dir.clone(),
+        );
+        for i in 0..6 {
+            src.push_raw_line(format!("line {i}"));
+            src.push_meta(dummy_meta());
+        }
+
+        // cap=15: "line 0" (7) -> 7, "line 1" (7) -> 14 (< 15, not yet tripped).
+        src.evict_with_cap_for_test(2, 15);
+        assert_eq!(src.lost_line_count(), 0, "cap not yet reached after 2 lines (14 < 15)");
+        assert_eq!(src.evicted_count(), 2);
+
+        // "line 2" (7) -> 21 >= 15: trips the cap on this write; "line 3" is
+        // then lost via the cheap flag check within the same call.
+        src.evict_with_cap_for_test(2, 15);
+        assert_eq!(src.lost_line_count(), 1, "line 3 lost once the cap trips mid-call");
+        assert_eq!(src.evicted_count(), 4);
+        let spilled_after_trip = src.spill.as_ref().unwrap().total_spilled();
+        assert_eq!(spilled_after_trip, 3, "lines 0,1,2 spilled before the cap tripped");
+
+        // A subsequent call evicts 2 more lines; the cap is already reached,
+        // so both are lost with no further spill I/O — total_spilled() is
+        // unchanged, demonstrating growth has stopped.
+        src.evict_with_cap_for_test(2, 15);
+        assert_eq!(src.lost_line_count(), 3, "both lines in the third call are lost too");
+        assert_eq!(src.evicted_count(), 6);
+        assert_eq!(
+            src.spill.as_ref().unwrap().total_spilled(),
+            spilled_after_trip,
+            "spill file growth has stopped — no further lines were written"
+        );
+
+        drop(src);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `write_stream_lines` writes exactly one output-only marker line at the
+    /// boundary between spilled content and retained lines when lines were
+    /// lost, and omits it entirely (byte-identical output) when nothing was
+    /// lost. The marker must never affect `total_lines()` / `meta_at()`.
+    #[test]
+    fn write_stream_lines_marker_present_only_when_lines_lost() {
+        let dir = unique_temp_dir("marker");
+
+        // ── lost_line_count > 0: marker appears between spill and retained ──
+        let mut lossy = StreamLogSource::new(
+            "src".to_string(),
+            "name".to_string(),
+            "sess-marker-lossy".to_string(),
+            dir.clone(),
+        );
+        for i in 0..15 {
+            lossy.push_raw_line(format!("line {i}"));
+            lossy.push_meta(dummy_meta());
+        }
+        lossy.evict_with_cap_for_test(10, 20); // same shape as the cap test above
+        assert_eq!(lossy.lost_line_count(), 7);
+
+        let mut buf = Vec::new();
+        let written = lossy.write_stream_lines(&mut buf).unwrap();
+        let text = String::from_utf8(buf).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(
+            lines,
+            vec![
+                "line 0",
+                "line 1",
+                "line 2",
+                "---- [LogTapper] 7 lines not captured (spill cap reached) ----",
+                "line 10",
+                "line 11",
+                "line 12",
+                "line 13",
+                "line 14",
+            ],
+            "marker must sit exactly between spilled content and retained lines"
+        );
+        assert_eq!(written, 9, "3 spilled + 1 marker + 5 retained");
+        // Marker is output-only: it never touched stored state.
+        assert_eq!(lossy.total_lines(), 15, "line_meta/total_lines unaffected by the marker");
+
+        // ── lost_line_count == 0: output must be identical to before the
+        // marker existed — no marker line anywhere. ──
+        let mut clean = StreamLogSource::new(
+            "src".to_string(),
+            "name".to_string(),
+            "sess-marker-clean".to_string(),
+            dir.clone(),
+        );
+        for i in 0..5 {
+            clean.push_raw_line(format!("line {i}"));
+            clean.push_meta(dummy_meta());
+        }
+        clean.evict(2); // plenty of headroom under the real 2 GiB cap — no loss
+        assert_eq!(clean.lost_line_count(), 0);
+
+        let mut buf2 = Vec::new();
+        let written2 = clean.write_stream_lines(&mut buf2).unwrap();
+        let text2 = String::from_utf8(buf2).unwrap();
+        assert!(!text2.contains("LogTapper"), "no marker line when nothing was lost");
+        assert_eq!(
+            text2.lines().collect::<Vec<_>>(),
+            vec!["line 0", "line 1", "line 2", "line 3", "line 4"]
+        );
+        assert_eq!(written2, 5);
+
+        drop(lossy);
+        drop(clean);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
