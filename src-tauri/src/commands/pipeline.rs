@@ -3,7 +3,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::{lock_or_err, AppState};
 use crate::commands::pipeline_core::{
@@ -158,9 +158,22 @@ impl SourceSnapshot {
 
 const CHUNK_SIZE: usize = 50_000;
 
+/// RAII guard that removes a run's cancellation token from the registry when
+/// `execute_pipeline` returns — on the happy path or any `?` early return — so
+/// the `pipeline_cancels` map never accumulates stale tokens.
+struct PipelineRunGuard<'a> {
+    state: &'a AppState,
+    run_id: u64,
+}
+
+impl Drop for PipelineRunGuard<'_> {
+    fn drop(&mut self) {
+        self.state.unregister_pipeline_run(self.run_id);
+    }
+}
+
 #[tauri::command]
 pub async fn run_pipeline(
-    state: State<'_, AppState>,
     app: AppHandle,
     session_id: String,
     processor_ids: Vec<String>,
@@ -169,7 +182,18 @@ pub async fn run_pipeline(
     #[allow(unused_variables)]
     anonymize: bool,
 ) -> Result<Vec<PipelineRunSummary>, String> {
-    execute_pipeline(&state, &app, &session_id, &processor_ids)
+    // The pipeline is CPU-heavy (rayon) and previously ran directly on the async
+    // runtime thread, starving other IPC. Run it on a blocking thread, matching
+    // the MCP bridge's `h_run_pipeline`. No lock guard is held across this await:
+    // `execute_pipeline` is synchronous and acquires/releases all locks inside
+    // the blocking closure.
+    let app_for_task = app.clone();
+    tokio::task::spawn_blocking(move || {
+        let state = app_for_task.state::<AppState>();
+        execute_pipeline(&state, &app_for_task, &session_id, &processor_ids)
+    })
+    .await
+    .map_err(|e| format!("Pipeline task panicked: {e}"))?
 }
 
 /// Core pipeline execution logic. Called by both the Tauri command and the MCP bridge.
@@ -179,8 +203,27 @@ pub fn execute_pipeline(
     session_id: &str,
     processor_ids: &[String],
 ) -> Result<Vec<PipelineRunSummary>, String> {
-    // Reset cancellation flag at the start
-    state.pipeline_cancel.store(false, Ordering::Relaxed);
+    // ── Serialize runs on the same session ───────────────────────────────────
+    // Two runs on one session (e.g. the UI and the MCP bridge racing) must not
+    // interleave their writes to pipeline_results / state_tracker_results /
+    // correlator_results — that leaves stored state mixing one run's trackers
+    // with another's reporters. Holding the per-session run lock for the whole
+    // run makes each run's three-map write sequence atomic w.r.t. other runs.
+    // This lock is the outermost AppState lock (taken before any other), so it
+    // introduces no ordering cycle. execute_pipeline is synchronous and holds no
+    // lock across an await; both callers wrap it in spawn_blocking, so parking a
+    // blocking-pool thread here does not stall the async runtime.
+    let run_lock = state.pipeline_run_lock(session_id)?;
+    let _run_guard = run_lock
+        .lock()
+        .map_err(|_| "pipeline_run_lock poisoned".to_string())?;
+
+    // ── Register this run's cancellation token ───────────────────────────────
+    // Each run owns a distinct token keyed by a fresh run id, so starting this
+    // run never clears another run's pending cancel. `_cancel_guard` removes the
+    // token on every exit path (including the `?` early returns below).
+    let (run_id, cancel) = state.register_pipeline_run();
+    let _cancel_guard = PipelineRunGuard { state, run_id };
 
     // ── Partition processor IDs by kind and clone defs (single lock scope) ───
     let mut defs = PartitionedDefs {
@@ -287,8 +330,7 @@ pub fn execute_pipeline(
     // ── Build PipelineCore ──────────────────────────────────────────────────
     let mut core = PipelineCore::new(&defs, pipeline_ctx, &src_sections, &anonymizer_config);
 
-    // Cancellation flag
-    let cancel = Arc::clone(&state.pipeline_cancel);
+    // `cancel` is this run's own token (from register_pipeline_run above).
 
     // ── Chunked processing loop ──────────────────────────────────────────────
     let mut lines_processed = 0usize;
@@ -458,7 +500,10 @@ pub fn execute_pipeline(
 
 #[tauri::command]
 pub async fn stop_pipeline(state: State<'_, AppState>) -> Result<(), String> {
-    state.pipeline_cancel.store(true, Ordering::Relaxed);
+    // No run/session parameter (the UI stop button carries none): signal every
+    // currently-registered run. Starting a run never clears another's token, so
+    // this only affects runs actually in flight when stop is pressed.
+    state.cancel_all_pipeline_runs();
     Ok(())
 }
 
@@ -689,5 +734,94 @@ pipeline:
         };
         let json = serde_json::to_value(&nonzero).unwrap();
         assert_eq!(json.get("scannedFrom").and_then(|v| v.as_u64()), Some(1234));
+    }
+
+    // ── Per-run cancellation registry semantics ──────────────────────────────
+    //
+    // These lock in the guarantees that motivated replacing the single global
+    // `pipeline_cancel: Arc<AtomicBool>`: starting run B must never clear run A's
+    // pending cancel, `stop_pipeline` must cancel exactly the runs in flight, and
+    // a finished run must leave the registry so its token can't be re-signalled.
+
+    #[test]
+    fn starting_a_run_does_not_clear_another_runs_pending_cancel() {
+        let state = AppState::new();
+        // Run A starts and is then cancelled (user hit stop while only A ran).
+        let (id_a, tok_a) = state.register_pipeline_run();
+        tok_a.store(true, Ordering::Relaxed);
+        // Run B starts afterwards — the old global-flag reset would clobber A's
+        // pending cancel here. With per-run tokens it must not.
+        let (id_b, tok_b) = state.register_pipeline_run();
+        assert_ne!(id_a, id_b, "each run must get a distinct id");
+        assert!(
+            tok_a.load(Ordering::Relaxed),
+            "starting run B must NOT clear run A's pending cancel"
+        );
+        assert!(
+            !tok_b.load(Ordering::Relaxed),
+            "run B must begin uncancelled"
+        );
+    }
+
+    #[test]
+    fn stop_cancels_all_currently_active_runs() {
+        let state = AppState::new();
+        let (_a, tok_a) = state.register_pipeline_run();
+        let (_b, tok_b) = state.register_pipeline_run();
+        let signalled = state.cancel_all_pipeline_runs();
+        assert_eq!(signalled, 2, "both in-flight runs must be signalled");
+        assert!(tok_a.load(Ordering::Relaxed));
+        assert!(tok_b.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn completing_a_run_removes_it_from_the_registry() {
+        let state = AppState::new();
+        let (id_a, tok_a) = state.register_pipeline_run();
+        let (_id_b, tok_b) = state.register_pipeline_run();
+        // Run A finishes and deregisters (mirrors PipelineRunGuard::drop).
+        state.unregister_pipeline_run(id_a);
+        let signalled = state.cancel_all_pipeline_runs();
+        assert_eq!(signalled, 1, "a completed run must no longer be in the registry");
+        assert!(
+            !tok_a.load(Ordering::Relaxed),
+            "the completed run's token must not be re-signalled"
+        );
+        assert!(tok_b.load(Ordering::Relaxed), "the still-active run is signalled");
+    }
+
+    #[test]
+    fn pipeline_run_guard_deregisters_on_drop() {
+        let state = AppState::new();
+        let (run_id, _tok) = state.register_pipeline_run();
+        {
+            let _guard = PipelineRunGuard { state: &state, run_id };
+            assert_eq!(
+                state.cancel_all_pipeline_runs(),
+                1,
+                "run is registered while the guard is alive"
+            );
+        } // guard drops here → unregisters
+        assert_eq!(
+            state.cancel_all_pipeline_runs(),
+            0,
+            "dropping the guard must remove the run from the registry"
+        );
+    }
+
+    #[test]
+    fn pipeline_run_lock_is_per_session() {
+        let state = AppState::new();
+        let a1 = state.pipeline_run_lock("session-1").unwrap();
+        let a2 = state.pipeline_run_lock("session-1").unwrap();
+        let b = state.pipeline_run_lock("session-2").unwrap();
+        assert!(
+            Arc::ptr_eq(&a1, &a2),
+            "the same session must share one run lock (so its runs serialize)"
+        );
+        assert!(
+            !Arc::ptr_eq(&a1, &b),
+            "different sessions must get distinct run locks (so they stay concurrent)"
+        );
     }
 }

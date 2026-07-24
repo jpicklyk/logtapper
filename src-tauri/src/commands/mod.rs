@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::anonymizer::config::AnonymizerConfig;
@@ -114,8 +114,24 @@ pub struct AppState {
     /// without holding any lock across batch processing. Lock order is always
     /// `stream_epochs` (outer) → the specific stream-state map (inner).
     pub stream_epochs: Mutex<HashMap<String, u64>>,
-    /// Cancellation flag for the active pipeline run.
-    pub pipeline_cancel: Arc<AtomicBool>,
+    /// Per-run pipeline cancellation tokens, keyed by a monotonic run id drawn
+    /// from `pipeline_run_seq`. Each `execute_pipeline` invocation registers its
+    /// own token (via `register_pipeline_run`) and removes it on completion, so
+    /// starting one run can never clear another run's pending cancel — the bug a
+    /// single global `AtomicBool` had. `stop_pipeline` carries no run/session
+    /// parameter (matching the parameterless UI stop button) and signals every
+    /// currently-registered token via `cancel_all_pipeline_runs`.
+    pub pipeline_cancels: Mutex<HashMap<u64, Arc<AtomicBool>>>,
+    /// Monotonic source of run ids used as `pipeline_cancels` keys.
+    pub pipeline_run_seq: AtomicU64,
+    /// Per-session pipeline run locks. `execute_pipeline` holds the target
+    /// session's lock across its whole run so two concurrent runs on the same
+    /// session cannot interleave their writes to `pipeline_results` /
+    /// `state_tracker_results` / `correlator_results` (which would leave stored
+    /// state mixing one run's trackers with another's reporters). Distinct
+    /// sessions still run fully concurrently. Always the outermost lock — taken
+    /// before any other `AppState` lock — so it introduces no ordering cycle.
+    pub pipeline_run_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     /// Active filter sessions: filterId -> FilterSession.
     pub active_filters: Mutex<HashMap<String, Arc<FilterSession>>>,
     /// Bookmarks: sessionId -> Vec<Bookmark>.
@@ -210,7 +226,9 @@ impl AppState {
             stream_transformer_state: Mutex::new(HashMap::new()),
             stream_epochs: Mutex::new(HashMap::new()),
             correlator_results: Mutex::new(HashMap::new()),
-            pipeline_cancel: Arc::new(AtomicBool::new(false)),
+            pipeline_cancels: Mutex::new(HashMap::new()),
+            pipeline_run_seq: AtomicU64::new(0),
+            pipeline_run_locks: Mutex::new(HashMap::new()),
             active_filters: Mutex::new(HashMap::new()),
             bookmarks: Mutex::new(HashMap::new()),
             analyses: Mutex::new(HashMap::new()),
@@ -230,6 +248,58 @@ impl AppState {
             autosave_generation: AtomicU64::new(0),
             autosave_flushed_generation: AtomicU64::new(0),
         }
+    }
+
+    // ── Pipeline run registry (per-run cancel + per-session serialization) ────
+    //
+    // These replace the former single global `pipeline_cancel: Arc<AtomicBool>`.
+    // The UI `run_pipeline` command and the MCP bridge's `h_run_pipeline` can run
+    // concurrently; a single flag meant starting one run reset the other's
+    // pending cancel and `stop_pipeline` cancelled both indiscriminately.
+
+    /// Allocate a fresh run id and register a cancellation token for it.
+    /// Returns `(run_id, token)`. The caller must call
+    /// [`Self::unregister_pipeline_run`] on completion — `execute_pipeline` uses
+    /// a drop guard so every exit path (including `?` early returns) cleans up.
+    pub fn register_pipeline_run(&self) -> (u64, Arc<AtomicBool>) {
+        let run_id = self.pipeline_run_seq.fetch_add(1, Ordering::Relaxed);
+        let token = Arc::new(AtomicBool::new(false));
+        if let Ok(mut m) = self.pipeline_cancels.lock() {
+            m.insert(run_id, Arc::clone(&token));
+        }
+        (run_id, token)
+    }
+
+    /// Remove a run's cancellation token from the registry once it has finished.
+    pub fn unregister_pipeline_run(&self, run_id: u64) {
+        if let Ok(mut m) = self.pipeline_cancels.lock() {
+            m.remove(&run_id);
+        }
+    }
+
+    /// Signal cancellation to every currently-registered pipeline run and return
+    /// how many were signalled. Backs `stop_pipeline`: with no run/session
+    /// parameter it cancels all in-flight runs, preserving the current UI stop
+    /// button's "stop what's running" behaviour while never touching a run's
+    /// token at *start* time (which is what caused the reset bug).
+    pub fn cancel_all_pipeline_runs(&self) -> usize {
+        match self.pipeline_cancels.lock() {
+            Ok(m) => {
+                for token in m.values() {
+                    token.store(true, Ordering::Relaxed);
+                }
+                m.len()
+            }
+            Err(_) => 0,
+        }
+    }
+
+    /// Fetch (creating if absent) the per-session pipeline run lock.
+    /// `execute_pipeline` holds this across its whole run so same-session runs
+    /// serialize; different sessions get distinct locks and stay concurrent.
+    pub fn pipeline_run_lock(&self, session_id: &str) -> Result<Arc<Mutex<()>>, String> {
+        let mut reg = lock_or_err(&self.pipeline_run_locks, "pipeline_run_locks")?;
+        Ok(Arc::clone(reg.entry(session_id.to_string()).or_default()))
     }
 
     // ── ADB streaming epoch guard ────────────────────────────────────────────
