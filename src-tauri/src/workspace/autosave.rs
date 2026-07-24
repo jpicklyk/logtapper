@@ -19,7 +19,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -34,6 +34,20 @@ use crate::workspace::ltw_v4::{self, LtwEditorTab, LtwLayout, LtwPipelineChain};
 /// Debounce window: a burst of `schedule_autosave` signals collapses into one
 /// flush once this much quiet has elapsed.
 const DEBOUNCE_MS: u64 = 3000;
+
+/// How long a switch-suppression window stays armed before it auto-expires.
+///
+/// A workspace transition (new / open / switch) tears down the outgoing
+/// workspace's sessions and restores the incoming one's. A background flush
+/// firing in that window would stamp the outgoing shell onto a *partial*
+/// (mid-teardown) session set — the residual the divergence predicate cannot
+/// catch, since a partial teardown still overlaps the stamped set — and clobber
+/// the complete `.ltw` written at switch start. Suppression is normally cleared
+/// the instant the restore re-caches the envelope (see [`cache_envelope`]); this
+/// deadline is the safety net for a transition that dies mid-way, bounding a
+/// stuck window to at most this long rather than disabling autosave for the
+/// rest of the session.
+const SWITCH_SUPPRESSION_MS: u64 = 30_000;
 
 /// How many auto-save `.ltw` files to keep in the id-keyed `workspaces/` dir.
 ///
@@ -87,6 +101,53 @@ pub fn cache_envelope(state: &AppState, mut envelope: WorkspaceEnvelope) {
     envelope.session_ids = snapshot_session_ids(state).unwrap_or_default();
     if let Ok(mut guard) = state.workspace_envelope.lock() {
         *guard = Some(envelope);
+    }
+    // A re-stamp means the workspace has settled onto a known session set — the
+    // switch's restore completed (a restore always ends by re-caching the
+    // envelope), or a normal auto-save / envelope-sync ran. End any open
+    // switch-suppression window now so autosave resumes immediately rather than
+    // idling until the deadline lapses.
+    clear_switch_suppression(state);
+}
+
+/// Open a switch-suppression window: the background flusher skips until the
+/// window is cleared (by [`cache_envelope`]) or [`SWITCH_SUPPRESSION_MS`] elapses.
+/// Called at the start of a workspace teardown (new / open / switch) via the
+/// `begin_workspace_switch` command. A poisoned lock is a no-op (autosave simply
+/// isn't suppressed for this transition), never a panic.
+pub fn begin_switch_suppression(state: &AppState) {
+    if let Ok(mut guard) = state.autosave_switch_suppressed_until.lock() {
+        *guard = Some(Instant::now() + Duration::from_millis(SWITCH_SUPPRESSION_MS));
+    }
+}
+
+/// Close any open switch-suppression window. Idempotent; a poisoned lock is a
+/// no-op.
+pub fn clear_switch_suppression(state: &AppState) {
+    if let Ok(mut guard) = state.autosave_switch_suppressed_until.lock() {
+        *guard = None;
+    }
+}
+
+/// True if a switch-suppression window is armed and not yet past its deadline.
+///
+/// Self-healing: an expired window is cleared as a side effect, so the state can
+/// never stay stuck "suppressed" once the deadline has passed even if no
+/// [`cache_envelope`] ever arrives. A poisoned lock reads as *not* suppressed
+/// (fail-open) so a poisoning can never permanently disable autosave — the
+/// divergence predicate ([`session_snapshot_diverges`]) remains as
+/// defense-in-depth for that degraded case.
+pub fn switch_suppression_active(state: &AppState) -> bool {
+    let Ok(mut guard) = state.autosave_switch_suppressed_until.lock() else {
+        return false;
+    };
+    match *guard {
+        Some(deadline) if Instant::now() < deadline => true,
+        Some(_) => {
+            *guard = None; // deadline lapsed — clear so the window self-heals
+            false
+        }
+        None => false,
     }
 }
 
@@ -200,6 +261,22 @@ async fn flush(app: &AppHandle) {
     // racing this flush (landing after the snapshot but before completion)
     // is correctly left "dirty" — see `has_pending_flush`.
     let generation_at_start = state.autosave_generation.load(Ordering::Relaxed);
+
+    // (a0) Switch-suppression window: a workspace transition (new / open /
+    //      switch) is tearing down / restoring sessions. A flush now would stamp
+    //      the outgoing shell onto a partial (mid-teardown) session set — which
+    //      the divergence predicate below cannot catch while the sets still
+    //      overlap — and clobber the complete `.ltw` written at switch start.
+    //      Skip *without* recording the flushed generation, so this mutation
+    //      stays dirty and the next flush (after the switch settles, or the
+    //      window auto-expires) still persists it. `cache_envelope` at restore
+    //      completion clears the window and re-arms a correct flush.
+    if switch_suppression_active(&state) {
+        log::debug!(
+            "[autosave] flush skipped: workspace switch in progress (suppression window active)"
+        );
+        return;
+    }
 
     // (a) Clone the envelope under a brief lock, then drop the guard. No
     //     envelope → log and skip. NEVER fabricate a partial one: writing empty
@@ -333,6 +410,17 @@ async fn flush(app: &AppHandle) {
 pub fn flush_now_blocking(app: &AppHandle) {
     let state = app.state::<AppState>();
     let generation_at_start = state.autosave_generation.load(Ordering::Relaxed);
+
+    // Exit racing an in-flight workspace switch: the switch-start auto-save
+    // (`doAutoSave(A)`) already persisted the good state, so an exit flush now
+    // would only risk writing a mid-teardown snapshot over it. Skip while the
+    // suppression window is active (and within its deadline). See `flush()`.
+    if switch_suppression_active(&state) {
+        log::warn!(
+            "[autosave] exit flush skipped: workspace switch in progress (suppression window active)"
+        );
+        return;
+    }
 
     let envelope = {
         let Ok(guard) = state.workspace_envelope.lock() else {
@@ -580,6 +668,95 @@ mod tests {
     fn diverges_false_on_partial_overlap_with_new_additions() {
         // Shares one id but also gained others — still the same workspace, flush.
         assert!(!session_snapshot_diverges(&ids(&["a", "b"]), &ids(&["b", "c", "d"])));
+    }
+
+    // --- Switch-suppression window ----------------------------------------
+    //
+    // The residual the divergence predicate can't catch: a PARTIAL teardown of a
+    // multi-session workspace switch still overlaps the stamped set, so the
+    // predicate admits the flush. The suppression window closes that gap by
+    // making the whole teardown+restore backend-observable. `flush()` /
+    // `flush_now_blocking()` gate on `switch_suppression_active` (they need a
+    // real `AppHandle`, so — like the divergence predicate — the pure gate is
+    // what's unit-tested here; the flush call sites just return early on it).
+
+    #[test]
+    fn suppression_inactive_on_fresh_state() {
+        let state = AppState::new();
+        assert!(!switch_suppression_active(&state), "no window armed yet");
+    }
+
+    #[test]
+    fn begin_arms_the_window() {
+        let state = AppState::new();
+        begin_switch_suppression(&state);
+        assert!(switch_suppression_active(&state), "begin must arm the window");
+    }
+
+    #[test]
+    fn clear_ends_the_window() {
+        let state = AppState::new();
+        begin_switch_suppression(&state);
+        clear_switch_suppression(&state);
+        assert!(!switch_suppression_active(&state), "clear must end the window");
+    }
+
+    #[test]
+    fn cache_envelope_clears_the_window() {
+        // Restore completion re-caches the envelope; that must end suppression so
+        // autosave resumes immediately rather than idling until the deadline.
+        let state = AppState::new();
+        begin_switch_suppression(&state);
+        assert!(switch_suppression_active(&state));
+        cache_envelope(&state, envelope("ws-1", None));
+        assert!(!switch_suppression_active(&state), "cache_envelope must clear suppression");
+    }
+
+    #[test]
+    fn expired_window_reads_inactive_and_self_heals() {
+        // A transition that dies mid-way never re-caches the envelope; the
+        // monotonic deadline is the backstop. Force a past deadline (rather than
+        // sleeping 30s) and confirm the window reads inactive AND clears itself.
+        let state = AppState::new();
+        *state.autosave_switch_suppressed_until.lock().unwrap() =
+            Some(Instant::now() - Duration::from_millis(1));
+
+        assert!(!switch_suppression_active(&state), "past-deadline window is inactive");
+        // Self-heal: the field is now None, not a still-armed past deadline.
+        assert!(
+            state.autosave_switch_suppressed_until.lock().unwrap().is_none(),
+            "an expired window must be cleared as a side effect"
+        );
+    }
+
+    #[test]
+    fn begin_after_expiry_re_arms() {
+        // begins → expires → begins again: the second window must be live.
+        let state = AppState::new();
+        *state.autosave_switch_suppressed_until.lock().unwrap() =
+            Some(Instant::now() - Duration::from_millis(1));
+        assert!(!switch_suppression_active(&state));
+        begin_switch_suppression(&state);
+        assert!(switch_suppression_active(&state), "a fresh begin re-arms after expiry");
+    }
+
+    #[test]
+    fn armed_window_deadline_is_in_the_future() {
+        // The armed deadline must be ~SWITCH_SUPPRESSION_MS out, not already past
+        // — otherwise the window would be dead on arrival.
+        let state = AppState::new();
+        let before = Instant::now();
+        begin_switch_suppression(&state);
+        let deadline = state
+            .autosave_switch_suppressed_until
+            .lock()
+            .unwrap()
+            .expect("armed");
+        assert!(deadline > before, "deadline must be in the future");
+        assert!(
+            deadline <= before + Duration::from_millis(SWITCH_SUPPRESSION_MS) + Duration::from_secs(1),
+            "deadline must be bounded by the suppression constant"
+        );
     }
 
     // Mirror of scheduler_loop, counting flushes instead of performing them, so

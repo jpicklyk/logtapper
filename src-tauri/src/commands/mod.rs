@@ -182,6 +182,17 @@ pub struct AppState {
     /// (periodic or exit-time). `autosave_generation != autosave_flushed_generation`
     /// means a mutation happened since the last durable write.
     pub autosave_flushed_generation: AtomicU64,
+    /// Switch-suppression window for the background auto-save flusher. `Some(deadline)`
+    /// while a workspace transition (new / open / switch) is tearing down the
+    /// outgoing sessions and restoring the incoming ones. The background
+    /// `flush()` / `flush_now_blocking()` skip while it is set and `now < deadline`,
+    /// so a flush caught mid-teardown can never stamp the outgoing shell onto a
+    /// partial session set and clobber the complete `.ltw` written at switch start.
+    /// Set by `begin_workspace_switch`; cleared the instant the restore re-caches
+    /// the envelope (`autosave::cache_envelope`) or when the monotonic deadline
+    /// lapses — so a transition that dies mid-way degrades to a bounded window of
+    /// suppressed autosave, never a permanently disabled one.
+    pub autosave_switch_suppressed_until: Mutex<Option<std::time::Instant>>,
 }
 
 impl Default for AppState {
@@ -247,6 +258,7 @@ impl AppState {
             app_state_write_lock: Arc::new(Mutex::new(())),
             autosave_generation: AtomicU64::new(0),
             autosave_flushed_generation: AtomicU64::new(0),
+            autosave_switch_suppressed_until: Mutex::new(None),
         }
     }
 

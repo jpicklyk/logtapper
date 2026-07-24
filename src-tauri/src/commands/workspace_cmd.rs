@@ -292,6 +292,32 @@ pub async fn sync_workspace_envelope(
 }
 
 // ---------------------------------------------------------------------------
+// Begin workspace switch — arm the autosave switch-suppression window
+// ---------------------------------------------------------------------------
+
+/// Open the backend autosave switch-suppression window at the start of a
+/// workspace teardown (new / open / switch).
+///
+/// The frontend orchestrates a switch as a burst of independent commands
+/// (auto-save the outgoing workspace, close each session, restore the incoming
+/// one), so there is no single backend "switch" call the flusher could observe.
+/// Meanwhile the debounced flush timer is armed by artifact mutations —
+/// including over the MCP bridge — so it can fire mid-teardown, independent of
+/// any frontend gating. Without this window a flush landing after some (but not
+/// all) of the outgoing sessions have closed writes the outgoing shell minus
+/// the already-closed sessions, clobbering the complete `.ltw` the switch wrote
+/// at its start. This command tells the backend "a transition is underway";
+/// [`autosave::flush`] and [`autosave::flush_now_blocking`] then skip until the
+/// restore re-caches the envelope (which clears the window) or the window's
+/// deadline lapses (bounding a dead-mid-way transition to a short, self-healing
+/// suppression rather than a permanently disabled autosave).
+#[tauri::command]
+pub async fn begin_workspace_switch(state: State<'_, AppState>) -> Result<(), String> {
+    autosave::begin_switch_suppression(&state);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Load workspace (.ltw v4) — returns manifest for frontend orchestration
 // ---------------------------------------------------------------------------
 

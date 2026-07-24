@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { useWorkspaceContext } from '../context/WorkspaceContext';
-import { saveWorkspaceV4, loadWorkspaceV4, saveAppState } from '../bridge/commands';
+import { saveWorkspaceV4, loadWorkspaceV4, saveAppState, beginWorkspaceSwitch } from '../bridge/commands';
 import type { WorkspaceIdentity } from '../bridge/workspaceTypes';
 
 import { bus } from '../events/bus';
@@ -144,6 +144,16 @@ export function useWorkspace(
   /** Clear the current panes (close all backend sessions + reset layout tree). */
   const doClearPanes = useCallback(async () => {
     bus.emit('workspace:before-reset', undefined);
+    // Arm the backend autosave switch-suppression window before tearing sessions
+    // down. This is the single common teardown for every workspace transition
+    // (new / open / switch), so one call here covers them all. It is the earliest
+    // backend-visible teardown step: session closes are per-session commands the
+    // flusher can't distinguish from ordinary churn, and there is no bulk/switch
+    // command to hang the signal on. The window is cleared when the restore
+    // re-caches the envelope (or auto-expires), so a failed `beginWorkspaceSwitch`
+    // only degrades to the pre-existing behaviour — never a stuck-off autosave.
+    await beginWorkspaceSwitch().catch(e =>
+      console.warn('[useWorkspace] Failed to arm switch-suppression window:', e));
     await closeAllSessions();
     // Layout tree is reset via the workspace:reset event listener in useWorkspaceLayout
   }, [closeAllSessions]);

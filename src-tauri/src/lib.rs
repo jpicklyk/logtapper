@@ -562,6 +562,7 @@ pub fn run() {
             commands::workspace_cmd::save_workspace_v4,
             commands::workspace_cmd::auto_save_workspace,
             commands::workspace_cmd::sync_workspace_envelope,
+            commands::workspace_cmd::begin_workspace_switch,
             commands::workspace_cmd::load_workspace_v4,
             commands::workspace_cmd::restore_workspace_session,
             commands::workspace_cmd::get_app_state,

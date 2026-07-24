@@ -639,6 +639,16 @@ export function syncWorkspaceEnvelope(options: SyncWorkspaceEnvelopeOptions): Pr
   return invoke('sync_workspace_envelope', { options });
 }
 
+/** Arm the backend autosave switch-suppression window at the start of a
+ *  workspace teardown (new / open / switch). While armed, the backend's
+ *  debounced auto-save flusher skips — so an MCP-triggered flush landing
+ *  mid-teardown cannot clobber the complete `.ltw` written at switch start.
+ *  Cleared automatically when the restore re-caches the envelope, or after a
+ *  short deadline if the transition dies mid-way. */
+export function beginWorkspaceSwitch(): Promise<void> {
+  return invoke('begin_workspace_switch');
+}
+
 export function loadWorkspaceV4(path: string): Promise<LoadWorkspaceV4Result> {
   return invoke('load_workspace_v4', { path });
 }

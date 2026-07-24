@@ -9,6 +9,7 @@ vi.mock('../bridge/commands', () => ({
   saveWorkspaceV4: vi.fn(),
   loadWorkspaceV4: vi.fn(),
   saveAppState: vi.fn(),
+  beginWorkspaceSwitch: vi.fn(),
 }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn(),
