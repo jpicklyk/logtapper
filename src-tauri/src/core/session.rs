@@ -423,8 +423,18 @@ pub fn detect_source_type_from_slice(data: &[u8]) -> SourceType {
     detect_source_type_with_encoding(data, detect_encoding(data))
 }
 
+/// Bytes sampled from the head of a file for source-type detection.
+///
+/// Must reach past vendor preambles: Samsung `dumpstate_board.txt` carries ~380
+/// lines of boot-stat tables and `!@Boot:` markers before its first
+/// kernel-timestamped line, which a 4 KiB window never reached.
+const DETECT_SAMPLE_BYTES: usize = 64 * 1024;
+
+/// Maximum lines examined when counting format signatures within the sample.
+const DETECT_SCAN_LINES: usize = 600;
+
 fn detect_source_type_with_encoding(data: &[u8], encoding: Encoding) -> SourceType {
-    let sample = &data[..data.len().min(4096)];
+    let sample = &data[..data.len().min(DETECT_SAMPLE_BYTES)];
     let decoded_buf: String;
     let text: &str = match encoding {
         Encoding::Utf8 => std::str::from_utf8(sample).unwrap_or(""),
@@ -444,10 +454,23 @@ fn detect_source_type_with_encoding(data: &[u8], encoding: Encoding) -> SourceTy
     if text.contains("Bugreport format version:") {
         return SourceType::Bugreport;
     }
-    if text.contains("--------- beginning of") || is_logcat_threadtime(text) {
+    if text.contains("--------- beginning of") {
         return SourceType::Logcat;
     }
-    if text.contains("[    0.") || text.contains("Linux version") || looks_like_kernel(text) {
+
+    // Count format signatures across the sample and let the dominant one win.
+    // First-match-wins misclassified any file whose head is vendor preamble
+    // rather than log lines: the logcat fallthrough at the bottom claimed them
+    // before the kernel check was ever reached.
+    let (logcat_hits, kernel_hits) = count_format_signatures(text);
+    if kernel_hits > logcat_hits {
+        return SourceType::Kernel;
+    }
+    if logcat_hits > 0 {
+        return SourceType::Logcat;
+    }
+
+    if text.contains("Linux version") {
         return SourceType::Kernel;
     }
     if text.contains("RILJ") || text.contains("RIL") {
@@ -457,48 +480,66 @@ fn detect_source_type_with_encoding(data: &[u8], encoding: Encoding) -> SourceTy
     SourceType::Logcat
 }
 
-fn is_logcat_threadtime(sample: &str) -> bool {
-    for line in sample.lines().take(10) {
+/// Count sampled lines that look like logcat-threadtime versus kernel
+/// (`[   12.345678]`) format. Returns `(logcat, kernel)`.
+fn count_format_signatures(sample: &str) -> (usize, usize) {
+    let mut logcat = 0usize;
+    let mut kernel = 0usize;
+    for line in sample.lines().take(DETECT_SCAN_LINES) {
         if line.starts_with("-----") {
             continue;
         }
-        let b = line.as_bytes();
-        if b.len() > 14
-            && b[2] == b'-'
-            && b[5] == b' '
-            && b[8] == b':'
-            && b[11] == b':'
-            && b[14] == b'.'
-        {
-            return true;
+        if is_threadtime_line(line) {
+            logcat += 1;
+        } else if is_kernel_timestamp_line(line) {
+            kernel += 1;
         }
     }
-    false
+    (logcat, kernel)
 }
 
-fn looks_like_kernel(sample: &str) -> bool {
-    for line in sample.lines().take(10) {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if !trimmed.starts_with('[') {
-            continue;
-        }
-        if let Some(close) = trimmed.find(']') {
-            if close > 1 {
-                let inner = &trimmed[1..close];
-                if inner.contains('.')
-                    && inner
-                        .chars()
-                        .all(|c| c.is_ascii_digit() || c == '.' || c == ' ')
-                {
-                    return true;
-                }
-            }
+/// `MM-DD HH:MM:SS.mmm ...` — logcat threadtime, matched positionally.
+fn is_threadtime_line(line: &str) -> bool {
+    let b = line.as_bytes();
+    b.len() > 14
+        && b[2] == b'-'
+        && b[5] == b' '
+        && b[8] == b':'
+        && b[11] == b':'
+        && b[14] == b'.'
+}
+
+/// `[   12.345678] ...`, optionally preceded by a kmsg priority such as `<6>`.
+fn is_kernel_timestamp_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+
+    let rest = match trimmed.strip_prefix('<') {
+        Some(after) => match after.find('>') {
+            Some(i) if i > 0 && after[..i].bytes().all(|c| c.is_ascii_digit()) => &after[i + 1..],
+            _ => trimmed,
+        },
+        None => trimmed,
+    };
+
+    let Some(rest) = rest.strip_prefix('[') else {
+        return false;
+    };
+    let Some(close) = rest.find(']') else {
+        return false;
+    };
+    let inner = &rest[..close];
+    if !inner.contains('.') {
+        return false;
+    }
+    let mut seen_digit = false;
+    for c in inner.chars() {
+        match c {
+            '0'..='9' => seen_digit = true,
+            '.' | ' ' => {}
+            _ => return false,
         }
     }
-    false
+    seen_digit
 }
 
 // ---------------------------------------------------------------------------
@@ -849,6 +890,93 @@ mod tests {
     use super::*;
     use crate::core::line::LogLevel;
     use crate::core::log_source::{FileLogSource, LogSource, StreamLogSource, ZipLogSource};
+
+    // --- Source-type detection ---
+
+    /// Build a Samsung `dumpstate_board.txt`-shaped fixture: a long vendor
+    /// preamble with no log-format signatures, then kernel-timestamped lines.
+    fn vendor_preamble_then_kernel(kernel_lines: usize) -> String {
+        let mut s = String::from(
+            "verbose logging: disabled\n\
+             [default] Hello, world!\n\
+             dumpFlags : -1\n\
+             ------ POWER ON INFO (/proc/boot_stat) ------\n\
+             boot event                    time(msec)  ktime(msec)  delta(msec)\n",
+        );
+        for i in 0..400 {
+            s.push_str(&format!(
+                "!@Boot: stage {:<40} :   {:>8}   {:>8}   {:>8}\n",
+                i,
+                i * 13,
+                i * 7,
+                i
+            ));
+        }
+        s.push_str("------ POWER DUMP (/proc/sec_pm_log/power_log) ------\n");
+        for i in 0..kernel_lines {
+            s.push_str(&format!(
+                "[{i:>6}.381122] pmon: Pending Wakeup Sources: sec-battery-vbus\n"
+            ));
+        }
+        s
+    }
+
+    #[test]
+    fn detects_kernel_behind_long_vendor_preamble() {
+        let s = vendor_preamble_then_kernel(50);
+        assert!(
+            s.len() > 4096,
+            "fixture must exceed the old 4 KiB sample window to be meaningful"
+        );
+        assert_eq!(
+            detect_source_type_from_slice(s.as_bytes()),
+            SourceType::Kernel,
+            "kernel content behind a vendor preamble must not fall through to Logcat"
+        );
+    }
+
+    #[test]
+    fn logcat_is_not_misdetected_as_kernel() {
+        let mut s = String::new();
+        for i in 0..40 {
+            s.push_str(&format!(
+                "07-14 02:48:{:02}.629  1000  2452  3606 I EthernetTracker: iface eth0\n",
+                i % 60
+            ));
+        }
+        // A stray bracketed uptime line must not outvote the threadtime majority.
+        s.push_str("[  671.611514] some embedded kernel echo\n");
+        assert_eq!(
+            detect_source_type_from_slice(s.as_bytes()),
+            SourceType::Logcat
+        );
+    }
+
+    #[test]
+    fn dumpstate_marker_wins_over_kernel_content() {
+        let mut s = String::from("========\n== dumpstate: 2026-07-14 02:51:05\n========\n");
+        for i in 0..50 {
+            s.push_str(&format!("[{i:>6}.000000] kernel line\n"));
+        }
+        assert_eq!(
+            detect_source_type_from_slice(s.as_bytes()),
+            SourceType::Dumpstate
+        );
+    }
+
+    #[test]
+    fn kernel_timestamp_predicate_rejects_bracketed_text() {
+        assert!(!is_kernel_timestamp_line("[default] Hello, world!"));
+        assert!(!is_kernel_timestamp_line("[abc.def] not numeric"));
+        assert!(!is_kernel_timestamp_line("no bracket at all"));
+        assert!(is_kernel_timestamp_line("[  671.611514] real kernel line"));
+        assert!(is_kernel_timestamp_line("<6>[    0.381122] with kmsg priority"));
+    }
+
+    #[test]
+    fn empty_input_defaults_to_logcat() {
+        assert_eq!(detect_source_type_from_slice(b""), SourceType::Logcat);
+    }
 
     /// Helper: build a StreamLogSource with `n` retained lines and `evicted`
     /// evicted lines (simulated by setting evicted_count and pushing metadata

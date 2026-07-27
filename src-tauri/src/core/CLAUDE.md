@@ -11,13 +11,15 @@
 
 ## LogParser trait (`parser.rs`)
 
-Returning `None` from `parse_meta()` **silently drops the line from the index** — it will never appear in any viewer or search result. Only `LogcatParser` has a fallback for unrecognized lines; `KernelParser` drops non-matching lines.
+Returning `None` from `parse_meta()` does **not** drop the line. The indexer in `session.rs` applies `.unwrap_or(...)`, so the line is still indexed — but with degraded metadata: `LogLevel::Info`, empty tag, and `timestamp: 0`. The practical cost of `None` is a line that exists in the viewer but is invisible to level/tag filters and time-range queries.
 
-| Parser | Used for | `parse_meta` fallback |
+`parse_line()` returning `None` behaves differently per call site: `pipeline.rs` filter-maps the line out entirely, so **processors never see it**, while `filter.rs` degrades gracefully (pid `0`, viewer falls back to `meta_at`). Keep the two methods consistent, or pipeline coverage will silently diverge from what the viewer shows.
+
+| Parser | Used for | `parse_meta` on unrecognized lines |
 |---|---|---|
-| `LogcatParser` | Logcat, Radio, Events, default | Yes — all non-separator lines are indexed |
-| `KernelParser` | Kernel (dmesg) | **No** — non-matching lines are dropped |
-| `BugreportParser` | Bugreport | Yes — delegates to `LogcatParser`, skips `------` dividers |
+| `LogcatParser` | Logcat, Radio, Events, default | Indexed with `Info` / empty tag / `timestamp: 0` |
+| `KernelParser` | Kernel (dmesg) | Returns `None` → indexer falls back to the same degraded metadata |
+| `BugreportParser` | Bugreport | Delegates to `LogcatParser`, skips `------` dividers |
 
 `parser_for(&source_type)` in `session.rs` selects the correct parser based on detected source type. Used by `pipeline.rs`, `files.rs`, and `filter.rs`.
 
