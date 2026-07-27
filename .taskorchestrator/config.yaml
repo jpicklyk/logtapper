@@ -1,3 +1,7 @@
+project:
+  rootId: "9adc7633-4cab-4acf-a789-739a6747d8df"
+  name: "LogTapper"
+
 work_item_schemas:
 
   feature:
