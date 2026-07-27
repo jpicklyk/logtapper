@@ -1,5 +1,5 @@
 name: USB Ethernet Diagnostics
-version: 1.0.0
+version: 1.0.2
 description: USB-attached Ethernet analysis — enumeration health, interface lifetime, IP configuration auditing, and framework-side flap detection
 author: LogTapper
 tags: [network, ethernet, usb, kernel, android]

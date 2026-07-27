@@ -720,6 +720,19 @@ pub async fn install_pack_from_marketplace(
     pack_meta.id = pack_entry.id.clone();
     validate_pack(&pack_meta)?;
 
+    // The marketplace index is authoritative for the pack version. `detect_pack_updates`
+    // compares the index entry against the *installed manifest's* version, so a manifest
+    // whose `version` lags its index entry re-reports the same update after every install —
+    // the update row never clears. Reconcile here and persist the corrected manifest so the
+    // fix survives a restart (packs are reloaded from disk on startup).
+    let pack_yaml = if pack_meta.version == pack_entry.version {
+        pack_yaml
+    } else {
+        pack_meta.version = pack_entry.version.clone();
+        serde_yaml::to_string(&pack_meta)
+            .map_err(|e| format!("Failed to re-serialize pack manifest: {e}"))?
+    };
+
     // Persist the pack manifest.
     super::processors::persist_pack_yaml(&app, &pack_meta.id, &pack_yaml)?;
 
@@ -1015,6 +1028,27 @@ mod tests {
                     entry.id, yaml_ver, entry.version
                 );
             }
+        }
+    }
+
+    /// A pack manifest whose `version` lags its index entry makes the pack's update row
+    /// reappear after every install — `detect_pack_updates` reads the installed manifest,
+    /// not the index. Bump both or neither.
+    #[test]
+    fn pack_yaml_versions_match_index() {
+        let (dir, index) = load_marketplace_index();
+        for entry in &index.packs {
+            let yaml_str = match std::fs::read_to_string(dir.join(&entry.path)) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let pack = crate::processors::pack::parse_pack_yaml(&yaml_str)
+                .unwrap_or_else(|e| panic!("Pack '{}' failed to parse: {e}", entry.id));
+            assert_eq!(
+                pack.version, entry.version,
+                "Version mismatch for pack '{}': YAML='{}', index='{}'",
+                entry.id, pack.version, entry.version
+            );
         }
     }
 

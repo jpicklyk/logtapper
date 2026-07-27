@@ -28,7 +28,8 @@ marketplace/
 
 - **Updating an existing processor:** bump the version in both the YAML and `marketplace.json` — the "Updates" tab will show the new version.
 - **Adding a new processor:** it will NOT appear in "check for updates." Users must browse the Marketplace and install it (or install/update a pack that includes it).
-- **Updating a pack:** pack updates are handled at install time — the pack manifest lists processor IDs, and installing the pack installs/updates all listed processors. There is no separate pack-level version check in `check_updates`; the update check is processor-by-processor.
+- **Updating a pack:** `check_updates` runs a pack-level check too (`detect_pack_updates` in `commands/sources.rs`), which flags a pack when the index version is newer than the **installed manifest's** version, or when the index lists processor IDs the installed manifest doesn't have. Clicking "Update Pack" re-runs the pack install, which installs/updates every listed processor and re-persists the manifest.
+  - **The installed manifest's `version` is what the check compares against** — not the index entry that was used to install it. If `packs/*.pack.yaml` lags its `marketplace.json` entry, the pack's update row reappears after every install and never clears. The `pack_yaml_versions_match_index` test in `commands/sources.rs` guards this.
 
 ## Version bumping checklist
 
