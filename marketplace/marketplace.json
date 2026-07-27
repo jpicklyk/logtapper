@@ -1,6 +1,6 @@
 {
   "name": "official",
-  "version": 8,
+  "version": 9,
   "owner": {
     "name": "LogTapper"
   },
@@ -783,7 +783,7 @@
     {
       "id": "ethernet-config-audit",
       "name": "Ethernet Config Audit",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Audits every write to an Ethernet interface's IP configuration and attributes it to the caller: the Settings UI, a Knox Customization admin app, or an unattributed privileged write. Surfaces silent clobbering of operator-entered addresses and DHCP/STATIC toggling.",
       "path": "processors/ethernet_config_audit.yaml",
       "tags": [
@@ -969,7 +969,7 @@
     {
       "id": "usb-ethernet-diagnostics",
       "name": "USB Ethernet Diagnostics",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "USB-attached Ethernet analysis — enumeration health, interface lifetime, IP configuration auditing, and framework-side flap detection",
       "path": "packs/usb-ethernet-diagnostics.pack.yaml",
       "tags": [

@@ -1,7 +1,7 @@
 meta:
   id: "ethernet-config-audit"
   name: "Ethernet Config Audit"
-  version: "1.0.0"
+  version: "1.0.1"
   author: "LogTapper"
   description: "Audits every write to an Ethernet interface's IP configuration and attributes it to the caller that made it — the Settings UI, a Knox Customization admin app, or an unattributed privileged write. Surfaces silent clobbering, where an operator-entered static address is overwritten by a provisioning app minutes later, and DHCP/STATIC toggling on the same interface."
   tags: ["ethernet", "network", "configuration", "knox", "android"]
@@ -76,6 +76,18 @@ vars:
 pipeline:
   - stage: filter
     rules:
+      # Tag gate first — it is cheap, and it excludes the `dumpsys ethernet` /
+      # `dumpsys sem_ethernet` sections of a bugreport, which print a
+      # "Static configuration: IP address ..." line for every configured
+      # interface. Those are current state, not writes, and without this gate
+      # they more than double the emission count with unattributable rows.
+      - type: tag_match
+        tags:
+          - "EthernetTracker"
+          - "EthernetNetworkFactory"
+          - "EtherenetSettings"
+          - "KnoxCustomManagerService"
+          - "ExecReceiver"
       - type: message_contains_any
         values:
           # The actual write, logged by EthernetTracker in system_server.
@@ -135,9 +147,13 @@ pipeline:
         return;
       }
       if "setEthernetConfigurations()" in msg {
-        // Knox plumbing line. If no app-level caller was seen just above, this
-        // write is privileged but unattributed.
-        if ln - vars.last_caller_line > 50 {
+        // Knox plumbing line — not an attribution in itself. A single app-level
+        // call can rewrite every interface in one burst (27 interfaces spanning
+        // ~160 lines was observed), so extend the window while the burst is
+        // still running rather than letting attribution age out mid-way.
+        if ln - vars.last_caller_line <= 50 && vars.last_caller != "" {
+          vars.last_caller_line = ln;
+        } else {
           vars.last_caller = "knox-unattributed";
           vars.last_caller_line = ln;
         }
