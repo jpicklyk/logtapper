@@ -1,7 +1,7 @@
 meta:
   id: "ethernet-config-audit"
   name: "Ethernet Config Audit"
-  version: "1.0.1"
+  version: "1.0.2"
   author: "LogTapper"
   description: "Audits every write to an Ethernet interface's IP configuration and attributes it to the caller that made it — the Settings UI, a Knox Customization admin app, or an unattributed privileged write. Surfaces silent clobbering, where an operator-entered static address is overwritten by a provisioning app minutes later, and DHCP/STATIC toggling on the same interface."
   tags: ["ethernet", "network", "configuration", "knox", "android"]
@@ -81,10 +81,12 @@ pipeline:
       # "Static configuration: IP address ..." line for every configured
       # interface. Those are current state, not writes, and without this gate
       # they more than double the emission count with unattributable rows.
+      # EthernetNetworkFactory is deliberately absent: it re-logs the *old*
+      # static config during updateInterface, which is an echo of a write we
+      # already captured from EthernetTracker, not a write of its own.
       - type: tag_match
         tags:
           - "EthernetTracker"
-          - "EthernetNetworkFactory"
           - "EtherenetSettings"
           - "KnoxCustomManagerService"
           - "ExecReceiver"
