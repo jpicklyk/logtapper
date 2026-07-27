@@ -1,0 +1,234 @@
+meta:
+  id: "usb-enumeration-health"
+  name: "USB Enumeration Health"
+  version: "1.0.0"
+  author: "LogTapper"
+  description: "Diagnoses USB enumeration failures from kernel logs. Buckets failures by the stage they occur in (port reset, descriptor read, SET_ADDRESS, give-up) and by errno, and tracks the device-number climb rate. Failures concentrated at one stage indicate a firmware or driver fault; failures spread across every stage indicate a marginal physical link (cable, connector, adapter)."
+  tags: ["usb", "enumeration", "kernel", "hardware", "android"]
+  category: usb
+
+vars:
+  - name: attempts
+    type: int
+    default: 0
+    display: true
+    label: "Enumeration Attempts"
+
+  - name: failures
+    type: int
+    default: 0
+    display: true
+    label: "Failed Operations"
+
+  - name: give_ups
+    type: int
+    default: 0
+    display: true
+    label: "Enumeration Give-ups"
+
+  - name: max_device_number
+    type: int
+    default: 0
+    display: true
+    label: "Highest Device Number"
+
+  - name: stage_counts
+    type: map
+    default: {}
+    display: true
+    label: "Failures by Stage"
+    display_as: table
+    columns: ["stage", "count"]
+
+  - name: errno_counts
+    type: map
+    default: {}
+    display: true
+    label: "Failures by errno"
+    display_as: table
+    columns: ["errno", "count"]
+
+pipeline:
+  - stage: filter
+    rules:
+      # All markers below are emitted by drivers/usb/core/hub.c and
+      # drivers/usb/host/xhci.c. Substring matching is used throughout because an
+      # invalid regex would silently produce zero matches at runtime.
+      - type: message_contains_any
+        values:
+          # Enumeration attempt started (hub_port_init)
+          - "USB device number"
+          # Port reset did not bring the port up enabled
+          - "not enabled, trying reset again"
+          # GET_DESCRIPTOR failed
+          - "device descriptor read"
+          # xHCI Address Device command failed (one per SET_ADDRESS attempt)
+          - "Device not responding to setup address"
+          # SET_ADDRESS retry loop exhausted
+          - "device not accepting address"
+          # hub_port_connect gave up on the device entirely
+          - "unable to enumerate USB device"
+
+  - stage: extract
+    fields:
+      # "new high-speed USB device number 22 using xhci-hcd"
+      # "USB disconnect, device number 10"
+      - name: device_number
+        pattern: 'USB device number (\d+)'
+        cast: int
+      # "device not accepting address 22, error -71"
+      - name: address
+        pattern: 'not accepting address (\d+)'
+        cast: int
+      # "error -71" — kept as a string so it can be used as a map key directly.
+      - name: errno
+        pattern: 'error (-\d+)'
+        cast: string
+      # Port identifier, e.g. "usb 2-1" or "usb usb2-port1"
+      - name: port
+        pattern: 'usb ([0-9a-z\-]+):'
+        cast: string
+
+  - stage: script
+    runtime: rhai
+    src: |
+      let msg = line.message;
+
+      // Classify which stage of enumeration this line represents. Order matters:
+      // the more specific markers are tested before the general ones.
+      let stage = "";
+      let is_failure = true;
+
+      if "unable to enumerate USB device" in msg {
+        stage = "give-up";
+        vars.give_ups += 1;
+      } else if "device not accepting address" in msg {
+        stage = "set-address-exhausted";
+      } else if "Device not responding to setup address" in msg {
+        stage = "set-address-attempt";
+      } else if "device descriptor read" in msg {
+        stage = "descriptor-read";
+      } else if "not enabled, trying reset again" in msg {
+        stage = "port-reset";
+      } else if "USB device number" in msg {
+        // "new high-speed USB device number N" is an attempt, not a failure.
+        // "USB disconnect, device number N" is also not a failure — skip it so
+        // disconnects are not double-counted here (see usb-netdev-lifetime).
+        if "disconnect" in msg {
+          return;
+        }
+        stage = "attempt";
+        is_failure = false;
+        vars.attempts += 1;
+      } else {
+        return;
+      }
+
+      if is_failure {
+        vars.failures += 1;
+        let sc = vars.stage_counts;
+        if stage in sc { sc[stage] = sc[stage] + 1; } else { sc[stage] = 1; }
+        vars.stage_counts = sc;
+      }
+
+      // Track the highest device number seen. The kernel burns one device number
+      // per enumeration attempt, so a fast climb is itself a churn signal.
+      let dev = -1;
+      if "device_number" in fields {
+        dev = fields.device_number;
+      } else if "address" in fields {
+        dev = fields.address;
+      }
+      if dev > vars.max_device_number {
+        vars.max_device_number = dev;
+      }
+
+      let err = "none";
+      if "errno" in fields {
+        err = fields.errno;
+        let ec = vars.errno_counts;
+        if err in ec { ec[err] = ec[err] + 1; } else { ec[err] = 1; }
+        vars.errno_counts = ec;
+      }
+
+      let port = if "port" in fields { fields.port } else { "unknown" };
+
+      _emits.push(#{
+        stage: stage,
+        errno: err,
+        device_number: dev,
+        port: port,
+      });
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["stage", "errno", "device_number", "port"]
+        sort: "stage"
+      - type: summary
+        source: vars
+        template: |
+          {{attempts}} enumeration attempts, {{failures}} failed operations, {{give_ups}} give-ups.
+          Highest device number reached: {{max_device_number}}
+
+    charts:
+      - id: stage_bar
+        type: bar
+        title: "Enumeration Failures by Stage"
+        source: emissions
+        x: { field: stage, label: "Stage" }
+        y: { field: stage, label: "Count", aggregation: count }
+
+      - id: errno_bar
+        type: bar
+        title: "Failures by errno"
+        source: emissions
+        x: { field: errno, label: "errno" }
+        y: { field: errno, label: "Count", aggregation: count }
+
+      - id: device_number_series
+        type: time_series
+        title: "Device Number Climb (one per enumeration attempt)"
+        source: emissions
+        x: { field: timestamp, label: "Time" }
+        y: { field: device_number, label: "Device Number", aggregation: max }
+
+schema:
+  source_types: ["kernel", "dumpstate", "logcat"]
+  emissions:
+    - name: stage
+      type: string
+      description: "Enumeration stage: attempt, port-reset, descriptor-read, set-address-attempt, set-address-exhausted, give-up"
+    - name: errno
+      type: string
+      description: "Kernel errno string, e.g. -71 (-EPROTO), or 'none' when the line carries no errno"
+    - name: device_number
+      type: int
+      description: "USB device number or address involved, or -1 when absent"
+    - name: port
+      type: string
+      description: "USB port identifier, e.g. 2-1"
+  mcp:
+    summary:
+      template: "{{attempts}} USB enumeration attempts, {{failures}} failed operations, {{give_ups}} give-ups. Highest device number: {{max_device_number}}."
+      include_vars: [attempts, failures, give_ups, max_device_number]
+    signals:
+      - name: enumeration_failures
+        severity: critical
+        condition: "failures > 10"
+        fields: [failures, give_ups, max_device_number]
+        format: "{{failures}} USB enumeration failures detected — check cable, connector, and adapter before investigating software"
+        type: aggregate
+      - name: enumeration_give_up
+        severity: critical
+        condition: "give_ups > 0"
+        fields: [give_ups]
+        format: "Kernel gave up enumerating a USB device {{give_ups}} time(s) — the device never became usable"
+        type: aggregate
+      - name: device_number_churn
+        severity: warning
+        condition: "max_device_number > 20"
+        fields: [max_device_number, attempts]
+        format: "USB device numbers reached {{max_device_number}} — each failed enumeration burns one, indicating repeated re-enumeration"
+        type: aggregate

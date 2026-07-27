@@ -1,0 +1,236 @@
+meta:
+  id: "ethernet-interface-flap"
+  name: "Ethernet Interface Flap"
+  version: "1.0.0"
+  author: "LogTapper"
+  description: "Tracks the Android framework's view of Ethernet interface churn: onInterfaceAdded/Removed cycles, link state transitions, connect/disconnect intents, and stale IpClient callbacks. Measures how long each interface was present. Complements usb-netdev-lifetime, which sees the same churn from the kernel side, and works on bugreports where no kernel log is available."
+  tags: ["ethernet", "network", "flap", "connectivity", "android"]
+  category: network
+
+vars:
+  - name: added
+    type: int
+    default: 0
+    display: true
+    label: "Interfaces Added"
+
+  - name: removed
+    type: int
+    default: 0
+    display: true
+    label: "Interfaces Removed"
+
+  - name: completed
+    type: int
+    default: 0
+    display: true
+    label: "Completed Presences"
+
+  - name: sub_second
+    type: int
+    default: 0
+    display: true
+    label: "Presences Under 1s"
+
+  - name: shortest_ms
+    type: int
+    default: -1
+    display: true
+    label: "Shortest Presence (ms)"
+
+  - name: longest_ms
+    type: int
+    default: -1
+    display: true
+    label: "Longest Presence (ms)"
+
+  - name: link_up
+    type: int
+    default: 0
+    display: true
+    label: "Link Up Events"
+
+  - name: link_down
+    type: int
+    default: 0
+    display: true
+    label: "Link Down Events"
+
+  - name: stale_callbacks
+    type: int
+    default: 0
+    display: true
+    label: "Stale IpClient Callbacks"
+
+  - name: open_ifaces
+    type: map
+    default: {}
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: tag_match
+        tags: ["EthernetTracker", "EthernetNetworkFactory"]
+      - type: message_contains_any
+        values:
+          - "onInterfaceAdded, iface:"
+          - "onInterfaceRemoved, iface:"
+          - "interfaceLinkStateChanged, iface:"
+          - "send intent: Connected"
+          - "send intent: Disconnected"
+          - "Ignoring stale IpClientCallbacks"
+
+  - stage: extract
+    fields:
+      # "onInterfaceAdded, iface: eth0" and
+      # "interfaceLinkStateChanged, iface: eth0, up: false"
+      - name: iface
+        pattern: 'iface: ([^,\s]+)'
+        cast: string
+      - name: up
+        pattern: 'up: (true|false)'
+        cast: string
+
+  - stage: script
+    runtime: rhai
+    src: |
+      let msg = line.message;
+      let iface = if "iface" in fields { fields.iface } else { "unknown" };
+      let ts = line.timestamp;
+
+      // ── Stale callbacks — a reliable flap marker on its own ───────────────
+      if "Ignoring stale IpClientCallbacks" in msg {
+        vars.stale_callbacks += 1;
+        _emits.push(#{
+          event: "stale-callback",
+          iface: iface,
+          duration_ms: -1,
+        });
+        return;
+      }
+
+      // ── Connect / disconnect intents (no iface on these lines) ────────────
+      if "send intent: Connected" in msg {
+        _emits.push(#{ event: "intent-connected", iface: iface, duration_ms: -1 });
+        return;
+      }
+      if "send intent: Disconnected" in msg {
+        _emits.push(#{ event: "intent-disconnected", iface: iface, duration_ms: -1 });
+        return;
+      }
+
+      // ── Link state ────────────────────────────────────────────────────────
+      if "interfaceLinkStateChanged" in msg {
+        let ev = "link-unknown";
+        if "up" in fields {
+          if fields.up == "true" {
+            vars.link_up += 1;
+            ev = "link-up";
+          } else {
+            vars.link_down += 1;
+            ev = "link-down";
+          }
+        }
+        _emits.push(#{ event: ev, iface: iface, duration_ms: -1 });
+        return;
+      }
+
+      // ── Interface added ───────────────────────────────────────────────────
+      if "onInterfaceAdded" in msg {
+        vars.added += 1;
+        let open = vars.open_ifaces;
+        open[iface] = ts;
+        vars.open_ifaces = open;
+        _emits.push(#{ event: "added", iface: iface, duration_ms: -1 });
+        return;
+      }
+
+      // ── Interface removed — close the pairing ─────────────────────────────
+      if "onInterfaceRemoved" in msg {
+        vars.removed += 1;
+        let duration_ms = -1;
+        let open = vars.open_ifaces;
+        if iface in open {
+          let start = open[iface];
+          if start > 0 && ts > start {
+            duration_ms = (ts - start) / 1000000;
+            vars.completed += 1;
+            if vars.shortest_ms < 0 || duration_ms < vars.shortest_ms {
+              vars.shortest_ms = duration_ms;
+            }
+            if duration_ms > vars.longest_ms {
+              vars.longest_ms = duration_ms;
+            }
+            if duration_ms < 1000 {
+              vars.sub_second += 1;
+            }
+          }
+          open[iface] = 0;
+          vars.open_ifaces = open;
+        }
+        _emits.push(#{ event: "removed", iface: iface, duration_ms: duration_ms });
+      }
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["event", "iface", "duration_ms"]
+        sort: "event"
+      - type: summary
+        source: vars
+        template: |
+          {{added}} interfaces added, {{removed}} removed ({{completed}} paired).
+          Shortest presence: {{shortest_ms}} ms | Longest: {{longest_ms}} ms | Under 1s: {{sub_second}}
+          Link up: {{link_up}} | Link down: {{link_down}} | Stale IpClient callbacks: {{stale_callbacks}}
+
+    charts:
+      - id: event_bar
+        type: bar
+        title: "Interface Events by Type"
+        source: emissions
+        x: { field: event, label: "Event" }
+        y: { field: event, label: "Count", aggregation: count }
+
+      - id: presence_series
+        type: time_series
+        title: "Interface Presence Duration Over Time (ms)"
+        source: emissions
+        x: { field: timestamp, label: "Time" }
+        y: { field: duration_ms, label: "Presence (ms)", aggregation: max }
+
+schema:
+  source_types: ["logcat", "bugreport", "dumpstate"]
+  emissions:
+    - name: event
+      type: string
+      description: "added, removed, link-up, link-down, intent-connected, intent-disconnected, or stale-callback"
+    - name: iface
+      type: string
+      description: "Interface name, or 'unknown' for lines that carry none"
+    - name: duration_ms
+      type: int
+      description: "Interface presence in milliseconds on removal, or -1 for other events"
+  mcp:
+    summary:
+      template: "{{added}} interfaces added, {{removed}} removed, {{completed}} paired. Shortest presence {{shortest_ms}} ms, {{sub_second}} under one second. {{stale_callbacks}} stale IpClient callbacks."
+      include_vars: [added, removed, completed, shortest_ms, sub_second, stale_callbacks]
+    signals:
+      - name: interface_flapping
+        severity: critical
+        condition: "sub_second > 5"
+        fields: [sub_second, shortest_ms, added]
+        format: "Ethernet interface appeared and vanished {{sub_second}} times in under a second (shortest {{shortest_ms}} ms) — IP provisioning cannot complete against a link this unstable"
+        type: aggregate
+      - name: repeated_add_remove
+        severity: warning
+        condition: "added > 10"
+        fields: [added, removed]
+        format: "{{added}} interface add events and {{removed}} removals — sustained Ethernet churn"
+        type: aggregate
+      - name: stale_ipclient_callbacks
+        severity: warning
+        condition: "stale_callbacks > 5"
+        fields: [stale_callbacks]
+        format: "{{stale_callbacks}} stale IpClient callbacks — each one is an IP provisioning attempt abandoned mid-flight"
+        type: aggregate

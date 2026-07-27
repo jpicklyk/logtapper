@@ -1,0 +1,295 @@
+meta:
+  id: "ethernet-config-audit"
+  name: "Ethernet Config Audit"
+  version: "1.0.0"
+  author: "LogTapper"
+  description: "Audits every write to an Ethernet interface's IP configuration and attributes it to the caller that made it — the Settings UI, a Knox Customization admin app, or an unattributed privileged write. Surfaces silent clobbering, where an operator-entered static address is overwritten by a provisioning app minutes later, and DHCP/STATIC toggling on the same interface."
+  tags: ["ethernet", "network", "configuration", "knox", "android"]
+  category: network
+
+vars:
+  - name: writes
+    type: int
+    default: 0
+    display: true
+    label: "Config Writes"
+
+  - name: static_writes
+    type: int
+    default: 0
+    display: true
+    label: "STATIC Writes"
+
+  - name: dhcp_writes
+    type: int
+    default: 0
+    display: true
+    label: "DHCP Writes"
+
+  - name: assignment_flips
+    type: int
+    default: 0
+    display: true
+    label: "DHCP/STATIC Flips"
+
+  - name: caller_counts
+    type: map
+    default: {}
+    display: true
+    label: "Writes by Caller"
+    display_as: table
+    columns: ["caller", "count"]
+
+  - name: iface_counts
+    type: map
+    default: {}
+    display: true
+    label: "Writes by Interface"
+    display_as: table
+    columns: ["iface", "count"]
+
+  # Internal bookkeeping — not displayed.
+  - name: last_caller
+    type: string
+    default: ""
+
+  - name: last_caller_line
+    type: int
+    default: -1000
+
+  - name: pending_iface
+    type: string
+    default: ""
+
+  - name: pending_caller
+    type: string
+    default: ""
+
+  - name: pending_line
+    type: int
+    default: -1000
+
+  - name: last_assignment
+    type: map
+    default: {}
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains_any
+        values:
+          # The actual write, logged by EthernetTracker in system_server.
+          - "updateConfiguration, iface:"
+          # Detail line that follows a STATIC write.
+          - "Static configuration: IP address"
+          # Caller markers — attribute the write to whoever triggered it.
+          - "handle_saveconf"
+          - "setEthernetConfigurations"
+          - "clear out any existing configurations"
+
+  - stage: extract
+    fields:
+      - name: iface
+        pattern: 'iface: (\S+?),'
+        cast: string
+      - name: assignment
+        pattern: 'IP assignment: (\w+)'
+        cast: string
+      - name: ip
+        pattern: 'IP address (\S+)'
+        cast: string
+      - name: gateway
+        pattern: 'Gateway (\S+)'
+        cast: string
+      - name: dns
+        pattern: 'DNS servers: \[\s*([^\]]*?)\s*\]'
+        cast: string
+      - name: knox_iface
+        pattern: 'setEthernetConfigurations\(\) - (\S+)'
+        cast: string
+
+  - stage: script
+    runtime: rhai
+    src: |
+      let msg = line.message;
+      let tag = line.tag;
+      let ln = line.line_number;
+
+      // ── Caller markers ────────────────────────────────────────────────────
+      // Record app-level callers only. KnoxCustomManagerService is the plumbing
+      // every privileged write passes through, so it is not itself an
+      // attribution — it only tells us the write was privileged.
+      if "handle_saveconf" in msg {
+        vars.last_caller = "settings-ui";
+        vars.last_caller_line = ln;
+        return;
+      }
+      if "clear out any existing configurations" in msg {
+        vars.last_caller = "provisioning-app";
+        vars.last_caller_line = ln;
+        return;
+      }
+      if "setDHCP" in msg && "setEthernetConfigurations" in msg {
+        vars.last_caller = "provisioning-app";
+        vars.last_caller_line = ln;
+        return;
+      }
+      if "setEthernetConfigurations()" in msg {
+        // Knox plumbing line. If no app-level caller was seen just above, this
+        // write is privileged but unattributed.
+        if ln - vars.last_caller_line > 50 {
+          vars.last_caller = "knox-unattributed";
+          vars.last_caller_line = ln;
+        }
+        return;
+      }
+
+      // ── The write itself ──────────────────────────────────────────────────
+      if "updateConfiguration, iface:" in msg {
+        if !("iface" in fields) || !("assignment" in fields) {
+          return;
+        }
+        let iface = fields.iface;
+        let assignment = fields.assignment;
+
+        let caller = "unknown";
+        if ln - vars.last_caller_line <= 50 && vars.last_caller != "" {
+          caller = vars.last_caller;
+        }
+
+        vars.writes += 1;
+        if assignment == "STATIC" {
+          vars.static_writes += 1;
+        } else if assignment == "DHCP" {
+          vars.dhcp_writes += 1;
+        }
+
+        let cc = vars.caller_counts;
+        if caller in cc { cc[caller] = cc[caller] + 1; } else { cc[caller] = 1; }
+        vars.caller_counts = cc;
+
+        let ic = vars.iface_counts;
+        if iface in ic { ic[iface] = ic[iface] + 1; } else { ic[iface] = 1; }
+        vars.iface_counts = ic;
+
+        // Count DHCP <-> STATIC flips per interface.
+        let la = vars.last_assignment;
+        if iface in la {
+          if la[iface] != assignment {
+            vars.assignment_flips += 1;
+          }
+        }
+        la[iface] = assignment;
+        vars.last_assignment = la;
+
+        if assignment == "STATIC" {
+          // A "Static configuration: IP address ..." detail line follows.
+          // Hold the write and emit once the address is known.
+          vars.pending_iface = iface;
+          vars.pending_caller = caller;
+          vars.pending_line = ln;
+          return;
+        }
+
+        _emits.push(#{
+          iface: iface,
+          assignment: assignment,
+          caller: caller,
+          ip: "",
+          gateway: "",
+          dns: "",
+        });
+        return;
+      }
+
+      // ── STATIC detail line — completes a pending write ────────────────────
+      if "Static configuration: IP address" in msg {
+        let iface = "unknown";
+        let caller = "unknown";
+        if vars.pending_iface != "" && ln - vars.pending_line <= 10 {
+          iface = vars.pending_iface;
+          caller = vars.pending_caller;
+        }
+        // Consume the pending write so a later detail line cannot re-pair.
+        vars.pending_iface = "";
+        vars.pending_line = -1000;
+
+        let ip = if "ip" in fields { fields.ip } else { "" };
+        let gw = if "gateway" in fields { fields.gateway } else { "" };
+        let dns = if "dns" in fields { fields.dns } else { "" };
+
+        _emits.push(#{
+          iface: iface,
+          assignment: "STATIC",
+          caller: caller,
+          ip: ip,
+          gateway: gw,
+          dns: dns,
+        });
+      }
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["iface", "assignment", "ip", "gateway", "dns", "caller"]
+        sort: "iface"
+      - type: summary
+        source: vars
+        template: |
+          {{writes}} Ethernet config writes ({{static_writes}} STATIC, {{dhcp_writes}} DHCP).
+          DHCP/STATIC flips: {{assignment_flips}}
+
+    charts:
+      - id: caller_bar
+        type: bar
+        title: "Config Writes by Caller"
+        source: emissions
+        x: { field: caller, label: "Caller" }
+        y: { field: caller, label: "Writes", aggregation: count }
+
+      - id: assignment_bar
+        type: bar
+        title: "Writes by IP Assignment Mode"
+        source: emissions
+        x: { field: assignment, label: "Assignment" }
+        y: { field: assignment, label: "Writes", aggregation: count }
+
+schema:
+  source_types: ["logcat", "bugreport", "dumpstate"]
+  emissions:
+    - name: iface
+      type: string
+      description: "Interface the configuration was written to"
+    - name: assignment
+      type: string
+      description: "IP assignment mode written: STATIC or DHCP"
+    - name: caller
+      type: string
+      description: "Attributed caller: settings-ui, provisioning-app, knox-unattributed, or unknown"
+    - name: ip
+      type: string
+      description: "Static IP address and prefix, empty for DHCP writes"
+    - name: gateway
+      type: string
+      description: "Static gateway, empty for DHCP writes"
+    - name: dns
+      type: string
+      description: "Static DNS servers, empty for DHCP writes"
+  mcp:
+    summary:
+      template: "{{writes}} Ethernet config writes ({{static_writes}} STATIC, {{dhcp_writes}} DHCP) with {{assignment_flips}} DHCP/STATIC flips."
+      include_vars: [writes, static_writes, dhcp_writes, assignment_flips]
+    signals:
+      - name: config_thrash
+        severity: warning
+        condition: "assignment_flips > 2"
+        fields: [assignment_flips, writes]
+        format: "Ethernet IP assignment flipped between DHCP and STATIC {{assignment_flips}} times — two components are contending for the same interface"
+        type: aggregate
+      - name: bulk_config_rewrite
+        severity: warning
+        condition: "writes > 20"
+        fields: [writes, static_writes]
+        format: "{{writes}} Ethernet config writes — a provisioning app may be clobbering operator-entered settings"
+        type: aggregate

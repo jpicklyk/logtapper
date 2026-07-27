@@ -462,6 +462,173 @@ pub mod vars {
 mod tests {
     use super::*;
 
+    // ── Shipped marketplace content ──────────────────────────────────────────
+    //
+    // These guard the marketplace/ directory itself. Without them a malformed
+    // processor reaches users as one that silently matches zero lines, and a
+    // YAML missing from marketplace.json never appears in the Marketplace at
+    // all — neither failure surfaces until someone tries to install it.
+
+    fn marketplace_dir() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("src-tauri has a parent directory")
+            .join("marketplace")
+    }
+
+    fn processor_yaml_files() -> Vec<std::path::PathBuf> {
+        let dir = marketplace_dir().join("processors");
+        let mut out: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
+            .map(|e| e.expect("readable dir entry").path())
+            .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("yaml"))
+            .collect();
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn every_marketplace_processor_parses() {
+        let files = processor_yaml_files();
+        assert!(!files.is_empty(), "no processor YAML files found");
+        for path in &files {
+            let yaml = std::fs::read_to_string(path).expect("read processor yaml");
+            if let Err(e) = AnyProcessor::from_yaml(&yaml) {
+                panic!("{} failed to parse: {e}", path.display());
+            }
+        }
+    }
+
+    #[test]
+    fn every_marketplace_regex_compiles() {
+        use crate::processors::reporter::schema::{FilterRule, PipelineStage};
+
+        for path in processor_yaml_files() {
+            let yaml = std::fs::read_to_string(&path).expect("read processor yaml");
+            let Ok(p) = AnyProcessor::from_yaml(&yaml) else {
+                continue; // parse failures are reported by the test above
+            };
+            let ProcessorKind::Reporter(def) = &p.kind else {
+                continue;
+            };
+            for stage in &def.pipeline {
+                match stage {
+                    PipelineStage::Extract(ex) => {
+                        for f in &ex.fields {
+                            assert!(
+                                regex::Regex::new(&f.pattern).is_ok(),
+                                "{}: extract field '{}' has an invalid regex: {}",
+                                path.display(),
+                                f.name,
+                                f.pattern
+                            );
+                        }
+                    }
+                    PipelineStage::Filter(fs) => {
+                        for rule in &fs.rules {
+                            let pattern = match rule {
+                                FilterRule::MessageRegex { pattern }
+                                | FilterRule::TagRegex { pattern } => Some(pattern),
+                                _ => None,
+                            };
+                            if let Some(pattern) = pattern {
+                                assert!(
+                                    regex::Regex::new(pattern).is_ok(),
+                                    "{}: filter has an invalid regex: {pattern}",
+                                    path.display()
+                                );
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_marketplace_script_compiles() {
+        use crate::processors::reporter::schema::PipelineStage;
+
+        for path in processor_yaml_files() {
+            let yaml = std::fs::read_to_string(&path).expect("read processor yaml");
+            let Ok(p) = AnyProcessor::from_yaml(&yaml) else {
+                continue; // parse failures are reported by every_marketplace_processor_parses
+            };
+            let ProcessorKind::Reporter(def) = &p.kind else {
+                continue;
+            };
+            for stage in &def.pipeline {
+                if let PipelineStage::Script(s) = stage {
+                    if let Err(e) = crate::scripting::sandbox::validate_for_install(&s.src) {
+                        panic!("{}: Rhai script failed validation: {e}", path.display());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn marketplace_index_is_consistent() {
+        let root = marketplace_dir();
+        let raw = std::fs::read_to_string(root.join("marketplace.json"))
+            .expect("read marketplace.json");
+        let index: serde_json::Value =
+            serde_json::from_str(&raw).expect("marketplace.json is valid JSON");
+
+        let procs = index["processors"]
+            .as_array()
+            .expect("marketplace.json has a processors array");
+
+        // Every index entry must point at a file that exists.
+        let mut indexed_paths = std::collections::HashSet::new();
+        for p in procs {
+            let id = p["id"].as_str().expect("processor entry has an id");
+            let rel = p["path"].as_str().expect("processor entry has a path");
+            assert!(
+                root.join(rel).exists(),
+                "index entry '{id}' points at missing file {rel}"
+            );
+            indexed_paths.insert(rel.replace('\\', "/"));
+        }
+
+        // Every YAML on disk must be indexed, or it is invisible in the UI.
+        for path in processor_yaml_files() {
+            let name = path
+                .file_name()
+                .expect("file has a name")
+                .to_string_lossy()
+                .to_string();
+            let rel = format!("processors/{name}");
+            assert!(
+                indexed_paths.contains(&rel),
+                "{rel} exists but has no marketplace.json entry — it will never appear in the Marketplace"
+            );
+        }
+
+        // Every pack must resolve to a real manifest and known processor ids.
+        let known: std::collections::HashSet<&str> =
+            procs.iter().filter_map(|p| p["id"].as_str()).collect();
+        for pack in index["packs"].as_array().expect("packs array") {
+            let pid = pack["id"].as_str().expect("pack entry has an id");
+            let rel = pack["path"].as_str().expect("pack entry has a path");
+            assert!(
+                root.join(rel).exists(),
+                "pack '{pid}' points at missing manifest {rel}"
+            );
+            for r in pack["processor_ids"]
+                .as_array()
+                .expect("pack has processor_ids")
+            {
+                let r = r.as_str().expect("processor id is a string");
+                assert!(
+                    known.contains(r),
+                    "pack '{pid}' references unknown processor '{r}'"
+                );
+            }
+        }
+    }
+
     const MINIMAL_REPORTER: &str = r#"
 meta:
   id: test-reporter

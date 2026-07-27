@@ -1,0 +1,228 @@
+meta:
+  id: "usb-netdev-lifetime"
+  name: "USB Netdev Lifetime"
+  version: "1.0.0"
+  author: "LogTapper"
+  description: "Pairs USB network-driver register/unregister events and reports how long each network interface survived. A healthy adapter registers once and stays. Lifetimes measured in milliseconds, or a lifetime series that decays over a capture, indicate a failing USB link rather than a networking fault. Covers cdc_eem, cdc_ncm, cdc_ether, usbnet, rndis_host, r8152 and ax88xxx."
+  tags: ["usb", "ethernet", "network", "kernel", "android"]
+  category: network
+
+vars:
+  - name: registrations
+    type: int
+    default: 0
+    display: true
+    label: "Interface Registrations"
+
+  - name: completed
+    type: int
+    default: 0
+    display: true
+    label: "Completed Lifetimes"
+
+  - name: shortest_ms
+    type: int
+    default: -1
+    display: true
+    label: "Shortest Lifetime (ms)"
+
+  - name: longest_ms
+    type: int
+    default: -1
+    display: true
+    label: "Longest Lifetime (ms)"
+
+  - name: sub_second
+    type: int
+    default: 0
+    display: true
+    label: "Lifetimes Under 1s"
+
+  - name: open_ifaces
+    type: map
+    default: {}
+
+  - name: driver_counts
+    type: map
+    default: {}
+    display: true
+    label: "Registrations by Driver"
+    display_as: table
+    columns: ["driver", "count"]
+
+pipeline:
+  - stage: filter
+    rules:
+      # Coarse prefilter — the script narrows to USB network drivers. Kernel
+      # netdev registration lines always quote the driver name.
+      - type: message_contains_any
+        values:
+          - "register '"
+          - "unregister '"
+
+  - stage: extract
+    fields:
+      # "cdc_eem 2-1:1.0 eth0: register 'cdc_eem' at usb-xhci-hcd.2.auto-1, ..."
+      - name: iface
+        pattern: '(\S+): (?:un)?register '''
+        cast: string
+      - name: driver
+        pattern: '(?:un)?register ''([^'']+)'''
+        cast: string
+      - name: mac
+        pattern: '([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})'
+        cast: string
+      # Kernel monotonic uptime. Present in the message only when the file is
+      # parsed by a non-kernel parser (the kernel parser consumes it into
+      # line.timestamp); the script falls back to line.timestamp when absent.
+      - name: uptime
+        pattern: '^\[\s*(\d+\.\d+)\]'
+        cast: float
+
+  - stage: script
+    runtime: rhai
+    src: |
+      if !("driver" in fields) || !("iface" in fields) {
+        return;
+      }
+
+      let driver = fields.driver;
+      let iface = fields.iface;
+
+      // Narrow to USB network drivers — "register '...'" also appears for
+      // unrelated kernel subsystems.
+      let known = driver == "cdc_eem" || driver == "cdc_ncm" || driver == "cdc_ether"
+        || driver == "usbnet" || driver == "rndis_host" || driver == "r8152"
+        || driver == "asix" || driver == "ax88179_178a" || driver == "smsc95xx";
+      if !known {
+        return;
+      }
+
+      // Resolve a time value in seconds. Only differences are used, so an
+      // arbitrary epoch offset in line.timestamp is harmless.
+      let t = -1.0;
+      if "uptime" in fields {
+        t = fields.uptime;
+      } else if line.timestamp > 0 {
+        t = line.timestamp.to_float() / 1000000000.0;
+      }
+
+      let msg = line.message;
+      let is_unregister = "unregister '" in msg;
+      let mac = if "mac" in fields { fields.mac } else { "unknown" };
+
+      if !is_unregister {
+        vars.registrations += 1;
+
+        let dc = vars.driver_counts;
+        if driver in dc { dc[driver] = dc[driver] + 1; } else { dc[driver] = 1; }
+        vars.driver_counts = dc;
+
+        let open = vars.open_ifaces;
+        open[iface] = t;
+        vars.open_ifaces = open;
+
+        _emits.push(#{
+          event: "register",
+          iface: iface,
+          driver: driver,
+          mac: mac,
+          duration_ms: -1,
+        });
+        return;
+      }
+
+      // Unregister — close the pairing if we saw its register.
+      let duration_ms = -1;
+      let open = vars.open_ifaces;
+      if iface in open {
+        let start = open[iface];
+        if start >= 0.0 && t >= 0.0 {
+          duration_ms = ((t - start) * 1000.0).to_int();
+          vars.completed += 1;
+
+          if vars.shortest_ms < 0 || duration_ms < vars.shortest_ms {
+            vars.shortest_ms = duration_ms;
+          }
+          if duration_ms > vars.longest_ms {
+            vars.longest_ms = duration_ms;
+          }
+          if duration_ms < 1000 {
+            vars.sub_second += 1;
+          }
+        }
+        // Mark consumed so a stray second unregister does not re-pair.
+        open[iface] = -1.0;
+        vars.open_ifaces = open;
+      }
+
+      _emits.push(#{
+        event: "unregister",
+        iface: iface,
+        driver: driver,
+        mac: mac,
+        duration_ms: duration_ms,
+      });
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["event", "iface", "driver", "duration_ms", "mac"]
+        sort: "iface"
+      - type: summary
+        source: vars
+        template: |
+          {{registrations}} interface registrations, {{completed}} completed lifetimes.
+          Shortest: {{shortest_ms}} ms | Longest: {{longest_ms}} ms | Under 1s: {{sub_second}}
+
+    charts:
+      - id: lifetime_series
+        type: time_series
+        title: "Interface Lifetime Over Time (ms)"
+        source: emissions
+        x: { field: timestamp, label: "Time" }
+        y: { field: duration_ms, label: "Lifetime (ms)", aggregation: max }
+
+      - id: driver_bar
+        type: bar
+        title: "Registrations by Driver"
+        source: emissions
+        x: { field: driver, label: "Driver" }
+        y: { field: driver, label: "Count", aggregation: count }
+
+schema:
+  source_types: ["kernel", "dumpstate", "logcat"]
+  emissions:
+    - name: event
+      type: string
+      description: "register or unregister"
+    - name: iface
+      type: string
+      description: "Network interface name, e.g. eth0"
+    - name: driver
+      type: string
+      description: "USB network driver that claimed the device"
+    - name: mac
+      type: string
+      description: "MAC address reported at registration, or 'unknown'"
+    - name: duration_ms
+      type: int
+      description: "Interface lifetime in milliseconds on unregister, or -1 when unpaired"
+  mcp:
+    summary:
+      template: "{{registrations}} USB netdev registrations, {{completed}} completed lifetimes. Shortest {{shortest_ms}} ms, longest {{longest_ms}} ms, {{sub_second}} under one second."
+      include_vars: [registrations, completed, shortest_ms, longest_ms, sub_second]
+    signals:
+      - name: sub_second_lifetimes
+        severity: critical
+        condition: "sub_second > 3"
+        fields: [sub_second, shortest_ms, registrations]
+        format: "{{sub_second}} USB network interfaces lived under one second (shortest {{shortest_ms}} ms) — the USB link is dropping before IP provisioning can complete"
+        type: aggregate
+      - name: repeated_registration
+        severity: warning
+        condition: "registrations > 5"
+        fields: [registrations]
+        format: "{{registrations}} USB netdev registrations — a stable adapter registers once"
+        type: aggregate

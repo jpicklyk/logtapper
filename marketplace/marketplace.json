@@ -1,6 +1,6 @@
 {
   "name": "official",
-  "version": 7,
+  "version": 8,
   "owner": {
     "name": "LogTapper"
   },
@@ -273,7 +273,7 @@
       "id": "exception-storm-detector",
       "name": "Exception Storm Detector",
       "version": "1.1.3",
-      "description": "Detects exception storms \u2014 bursts of 20+ identical errors within a 2-second window. Uses the BurstDetector aggregate to fire exactly once per rising edge.",
+      "description": "Detects exception storms — bursts of 20+ identical errors within a 2-second window. Uses the BurstDetector aggregate to fire exactly once per rising edge.",
       "path": "processors/exception_storm_detector.yaml",
       "tags": [
         "exception",
@@ -391,7 +391,7 @@
       "id": "exception-stack-tracker",
       "name": "Exception Stack Tracker",
       "version": "1.3.5",
-      "description": "Tracks exception stack traces across all tags \u2014 both fatal crashes (AndroidRuntime FATAL EXCEPTION) and non-fatal logged exceptions (Binder, system_server, etc.). Separates fatal vs non-fatal counts, shows which apps crashed and why, and groups non-fatal exceptions by source and type. System.err exceptions are attributed to the owning app package via stack frame analysis.",
+      "description": "Tracks exception stack traces across all tags — both fatal crashes (AndroidRuntime FATAL EXCEPTION) and non-fatal logged exceptions (Binder, system_server, etc.). Separates fatal vs non-fatal counts, shows which apps crashed and why, and groups non-fatal exceptions by source and type. System.err exceptions are attributed to the owning app package via stack frame analysis.",
       "path": "processors/exception_stack_tracker.yaml",
       "tags": [
         "exception",
@@ -596,7 +596,7 @@
       "id": "ims-volte-reporter",
       "name": "IMS / VoLTE Bearer Reporter",
       "version": "1.0.1",
-      "description": "Tracks IMS bearer setup and teardown events from logcat and bugreport. Extracts state transitions (CONNECTING \u2192 CONNECTED \u2192 DISCONNECTED), transport type (WWAN/WLAN), network type (LTE, NR), and interface name. Distinguishes 'IMS connected but no internet' situations from full connectivity loss.",
+      "description": "Tracks IMS bearer setup and teardown events from logcat and bugreport. Extracts state transitions (CONNECTING → CONNECTED → DISCONNECTED), transport type (WWAN/WLAN), network type (LTE, NR), and interface name. Distinguishes 'IMS connected but no internet' situations from full connectivity loss.",
       "path": "processors/ims_volte_reporter.yaml",
       "tags": [
         "ims",
@@ -620,7 +620,7 @@
       "id": "crash-storm-detector",
       "name": "Crash Storm Detector",
       "version": "1.0.2",
-      "description": "Detects crash storms \u2014 when the same app crashes 3+ times within 10 seconds. Fires once per rising edge per process.",
+      "description": "Detects crash storms — when the same app crashes 3+ times within 10 seconds. Fires once per rising edge per process.",
       "path": "processors/crash_storm_detector.yaml",
       "tags": [
         "crash",
@@ -731,6 +731,102 @@
         "logcat"
       ],
       "deprecated": false
+    },
+    {
+      "id": "usb-enumeration-health",
+      "name": "USB Enumeration Health",
+      "version": "1.0.0",
+      "description": "Diagnoses USB enumeration failures from kernel logs. Buckets failures by stage (port reset, descriptor read, SET_ADDRESS, give-up) and by errno, and tracks the device-number climb rate. Failures spread across every stage indicate a marginal physical link rather than a driver fault.",
+      "path": "processors/usb_enumeration_health.yaml",
+      "tags": [
+        "usb",
+        "enumeration",
+        "kernel",
+        "hardware",
+        "android"
+      ],
+      "sha256": "",
+      "category": "usb",
+      "license": null,
+      "processor_type": "reporter",
+      "source_types": [
+        "kernel",
+        "dumpstate",
+        "logcat"
+      ],
+      "deprecated": false
+    },
+    {
+      "id": "usb-netdev-lifetime",
+      "name": "USB Netdev Lifetime",
+      "version": "1.0.0",
+      "description": "Pairs USB network-driver register/unregister events and reports how long each interface survived. Lifetimes measured in milliseconds, or a decaying lifetime series, indicate a failing USB link. Covers cdc_eem, cdc_ncm, cdc_ether, usbnet, rndis_host, r8152 and ax88xxx.",
+      "path": "processors/usb_netdev_lifetime.yaml",
+      "tags": [
+        "usb",
+        "ethernet",
+        "network",
+        "kernel",
+        "android"
+      ],
+      "sha256": "",
+      "category": "network",
+      "license": null,
+      "processor_type": "reporter",
+      "source_types": [
+        "kernel",
+        "dumpstate",
+        "logcat"
+      ],
+      "deprecated": false
+    },
+    {
+      "id": "ethernet-config-audit",
+      "name": "Ethernet Config Audit",
+      "version": "1.0.0",
+      "description": "Audits every write to an Ethernet interface's IP configuration and attributes it to the caller: the Settings UI, a Knox Customization admin app, or an unattributed privileged write. Surfaces silent clobbering of operator-entered addresses and DHCP/STATIC toggling.",
+      "path": "processors/ethernet_config_audit.yaml",
+      "tags": [
+        "ethernet",
+        "network",
+        "configuration",
+        "knox",
+        "android"
+      ],
+      "sha256": "",
+      "category": "network",
+      "license": null,
+      "processor_type": "reporter",
+      "source_types": [
+        "logcat",
+        "bugreport",
+        "dumpstate"
+      ],
+      "deprecated": false
+    },
+    {
+      "id": "ethernet-interface-flap",
+      "name": "Ethernet Interface Flap",
+      "version": "1.0.0",
+      "description": "Tracks the Android framework's view of Ethernet churn: onInterfaceAdded/Removed cycles, link state transitions, connect/disconnect intents, and stale IpClient callbacks. Measures interface presence duration and works on bugreports with no kernel log.",
+      "path": "processors/ethernet_interface_flap.yaml",
+      "tags": [
+        "ethernet",
+        "network",
+        "flap",
+        "connectivity",
+        "android"
+      ],
+      "sha256": "",
+      "category": "network",
+      "license": null,
+      "processor_type": "reporter",
+      "source_types": [
+        "logcat",
+        "bugreport",
+        "dumpstate"
+      ],
+      "deprecated": false
     }
   ],
   "packs": [
@@ -738,7 +834,7 @@
       "id": "wifi-diagnostics",
       "name": "WiFi Diagnostics",
       "version": "2.0.0",
-      "description": "Full WiFi connection analysis \u2014 state tracking, disconnect events, probe monitoring, and Wi-Fi Direct P2P group formation diagnostics",
+      "description": "Full WiFi connection analysis — state tracking, disconnect events, probe monitoring, and Wi-Fi Direct P2P group formation diagnostics",
       "path": "packs/wifi-diagnostics.pack.yaml",
       "tags": [
         "network",
@@ -857,7 +953,7 @@
       "id": "samsung-security",
       "name": "Samsung Security",
       "version": "1.0.0",
-      "description": "Samsung-specific security feature monitoring \u2014 Auto Blocker state tracking and security setting analysis",
+      "description": "Samsung-specific security feature monitoring — Auto Blocker state tracking and security setting analysis",
       "path": "packs/samsung-security.pack.yaml",
       "tags": [
         "samsung",
@@ -867,6 +963,28 @@
       "category": "security",
       "processor_ids": [
         "samsung-auto-blocker"
+      ],
+      "sha256": ""
+    },
+    {
+      "id": "usb-ethernet-diagnostics",
+      "name": "USB Ethernet Diagnostics",
+      "version": "1.0.0",
+      "description": "USB-attached Ethernet analysis — enumeration health, interface lifetime, IP configuration auditing, and framework-side flap detection",
+      "path": "packs/usb-ethernet-diagnostics.pack.yaml",
+      "tags": [
+        "network",
+        "ethernet",
+        "usb",
+        "kernel",
+        "android"
+      ],
+      "category": "network",
+      "processor_ids": [
+        "usb-enumeration-health",
+        "usb-netdev-lifetime",
+        "ethernet-config-audit",
+        "ethernet-interface-flap"
       ],
       "sha256": ""
     }
