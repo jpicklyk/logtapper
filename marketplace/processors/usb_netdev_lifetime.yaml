@@ -1,7 +1,7 @@
 meta:
   id: "usb-netdev-lifetime"
   name: "USB Netdev Lifetime"
-  version: "1.0.0"
+  version: "1.0.1"
   author: "LogTapper"
   description: "Pairs USB network-driver register/unregister events and reports how long each network interface survived. A healthy adapter registers once and stays. Lifetimes measured in milliseconds, or a lifetime series that decays over a capture, indicate a failing USB link rather than a networking fault. Covers cdc_eem, cdc_ncm, cdc_ether, usbnet, rndis_host, r8152 and ax88xxx."
   tags: ["usb", "ethernet", "network", "kernel", "android"]
@@ -192,7 +192,7 @@ pipeline:
         y: { field: driver, label: "Count", aggregation: count }
 
 schema:
-  source_types: ["kernel", "dumpstate", "logcat"]
+  source_types: ["kernel", "bugreport", "dumpstate", "logcat"]
   emissions:
     - name: event
       type: string

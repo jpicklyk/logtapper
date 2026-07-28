@@ -1,7 +1,7 @@
 meta:
   id: "usb-enumeration-health"
   name: "USB Enumeration Health"
-  version: "1.0.0"
+  version: "1.0.1"
   author: "LogTapper"
   description: "Diagnoses USB enumeration failures from kernel logs. Buckets failures by the stage they occur in (port reset, descriptor read, SET_ADDRESS, give-up) and by errno, and tracks the device-number climb rate. Failures concentrated at one stage indicate a firmware or driver fault; failures spread across every stage indicate a marginal physical link (cable, connector, adapter)."
   tags: ["usb", "enumeration", "kernel", "hardware", "android"]
@@ -195,7 +195,7 @@ pipeline:
         y: { field: device_number, label: "Device Number", aggregation: max }
 
 schema:
-  source_types: ["kernel", "dumpstate", "logcat"]
+  source_types: ["kernel", "bugreport", "dumpstate", "logcat"]
   emissions:
     - name: stage
       type: string

@@ -1,6 +1,6 @@
 {
   "name": "official",
-  "version": 10,
+  "version": 11,
   "owner": {
     "name": "LogTapper"
   },
@@ -735,7 +735,7 @@
     {
       "id": "usb-enumeration-health",
       "name": "USB Enumeration Health",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Diagnoses USB enumeration failures from kernel logs. Buckets failures by stage (port reset, descriptor read, SET_ADDRESS, give-up) and by errno, and tracks the device-number climb rate. Failures spread across every stage indicate a marginal physical link rather than a driver fault.",
       "path": "processors/usb_enumeration_health.yaml",
       "tags": [
@@ -751,6 +751,7 @@
       "processor_type": "reporter",
       "source_types": [
         "kernel",
+        "bugreport",
         "dumpstate",
         "logcat"
       ],
@@ -759,7 +760,7 @@
     {
       "id": "usb-netdev-lifetime",
       "name": "USB Netdev Lifetime",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Pairs USB network-driver register/unregister events and reports how long each interface survived. Lifetimes measured in milliseconds, or a decaying lifetime series, indicate a failing USB link. Covers cdc_eem, cdc_ncm, cdc_ether, usbnet, rndis_host, r8152 and ax88xxx.",
       "path": "processors/usb_netdev_lifetime.yaml",
       "tags": [
@@ -775,6 +776,7 @@
       "processor_type": "reporter",
       "source_types": [
         "kernel",
+        "bugreport",
         "dumpstate",
         "logcat"
       ],
@@ -969,7 +971,7 @@
     {
       "id": "usb-ethernet-diagnostics",
       "name": "USB Ethernet Diagnostics",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "description": "USB-attached Ethernet analysis — enumeration health, interface lifetime, IP configuration auditing, and framework-side flap detection",
       "path": "packs/usb-ethernet-diagnostics.pack.yaml",
       "tags": [
