@@ -1,7 +1,7 @@
 type: state_tracker
 id: p2p-group-formation-tracker
 name: P2P Group Formation Tracker
-version: 1.0.0
+version: 1.0.1
 author: LogTapper
 description: "Tracks Wi-Fi Direct (P2P) group formation lifecycle from discovery through GO Negotiation, client association, and group teardown. Detects GO Negotiation race conditions, formation timeouts (Wi-Fi P2P Technical Specification Section 3.1.4 — 15 second deadline), and client association failures. Monitors both GO and Client roles."
 tags: [network, wifi, p2p, wifi-direct, android]
@@ -217,7 +217,7 @@ output:
   annotate: true
 
 schema:
-  source_types: ["logcat"]
+  source_types: ["logcat", "bugreport"]
   emissions: []
   mcp:
     summary:

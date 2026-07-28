@@ -1052,6 +1052,37 @@ mod tests {
         }
     }
 
+    /// The YAML is what governs execution — the installed processor is built
+    /// from it, and enforcement reads `AnyProcessor::schema`. The index copy is
+    /// only what the Marketplace UI shows before install. When they drift, the
+    /// UI advertises eligibility the processor does not have (or hides
+    /// eligibility it does), and anyone auditing declarations from the index
+    /// reaches the wrong conclusion about which processors are affected.
+    #[test]
+    fn processor_source_types_match_index() {
+        let (dir, index) = load_marketplace_index();
+        for entry in &index.processors {
+            let yaml_str = match std::fs::read_to_string(dir.join(&entry.path)) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let Ok(p) = crate::processors::AnyProcessor::from_yaml(&yaml_str) else {
+                continue; // parse failures are reported by their own test
+            };
+            let declared = p
+                .schema
+                .as_ref()
+                .map(|s| s.source_types.clone())
+                .unwrap_or_default();
+            assert_eq!(
+                declared, entry.source_types,
+                "source_types mismatch for '{}': YAML={:?} (governs execution), \
+                 index={:?} (shown in the Marketplace)",
+                entry.id, declared, entry.source_types
+            );
+        }
+    }
+
     #[test]
     fn all_processor_yamls_parse_successfully() {
         use crate::processors::AnyProcessor;

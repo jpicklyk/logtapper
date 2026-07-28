@@ -1,7 +1,7 @@
 meta:
   id: "p2p-go-negotiation-events"
   name: "P2P GO Negotiation Events"
-  version: "1.0.0"
+  version: "1.0.1"
   author: "LogTapper"
   description: "Emits events for every Wi-Fi Direct GO Negotiation exchange — requests, responses, confirms, race conditions, and timeouts. Tracks negotiation success/failure rates and detects simultaneous initiation (race conditions per Wi-Fi P2P Technical Specification Section 3.1.4.2). Aggregates negotiation timing and outcome statistics."
   tags: ["network", "wifi", "p2p", "wifi-direct", "android"]
@@ -217,7 +217,7 @@ pipeline:
         y: { field: event_type, label: "Events", aggregation: count }
 
 schema:
-  source_types: ["logcat"]
+  source_types: ["logcat", "bugreport"]
   emissions:
     - name: event_type
       type: string
