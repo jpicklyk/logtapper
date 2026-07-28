@@ -1450,6 +1450,41 @@ pipeline:
         assert!(!excluded_by_declared_source_types(&v(&["KERNEL"]), &SourceType::Kernel));
     }
 
+    /// The built-in PII anonymizer declares no schema at all, so it is never
+    /// excluded on any source type. That is a security property, not an
+    /// accident: enforcement runs on transformers, and a transformer skipped on
+    /// some source type would mean PII silently reaching exports and the MCP
+    /// bridge unredacted for exactly those sources. If a `schema.source_types`
+    /// is ever added to the built-in, this test should fail and the change
+    /// should be justified before it lands.
+    #[test]
+    fn builtin_pii_anonymizer_is_never_excluded() {
+        let yaml = include_str!("../processors/builtin/pii_anonymizer.yaml");
+        let p = crate::processors::AnyProcessor::from_yaml(yaml)
+            .expect("built-in PII anonymizer parses");
+        let declared = p
+            .schema
+            .as_ref()
+            .map_or(&[][..], |s| s.source_types.as_slice());
+        assert!(
+            declared.is_empty(),
+            "the built-in anonymizer must declare no source_types, or PII \
+             redaction silently stops on the types it omits (declared: {declared:?})"
+        );
+        for st in [
+            SourceType::Logcat,
+            SourceType::Kernel,
+            SourceType::Bugreport,
+            SourceType::Dumpstate,
+            SourceType::Radio,
+        ] {
+            assert!(
+                !excluded_by_declared_source_types(declared, &st),
+                "the anonymizer must run on {st}"
+            );
+        }
+    }
+
     /// The asymmetry is load-bearing and is exactly what a second
     /// implementation of this rule would get wrong: Dumpstate is a superset of
     /// Bugreport, so it satisfies a "bugreport" declaration, but a Bugreport

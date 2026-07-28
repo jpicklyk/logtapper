@@ -401,6 +401,22 @@ pub fn execute_pipeline(
             }
             true
         });
+        // Transformers are included even though they are Layer 1, not Layer 2.
+        // They are excluded from the *pre-filter* (see `collect_prefilter_info`)
+        // for a different reason — an unfiltered transformer there would disable
+        // the whole optimisation — and that exemption must not be mistaken for a
+        // source-type exemption. A transformer rewrites or drops lines before any
+        // reporter, tracker or correlator sees them, so running one against a
+        // source it does not understand corrupts every downstream processor's
+        // input rather than merely wasting work.
+        defs.transformer_defs.retain(|(id, _)| {
+            let d = declared(id);
+            if excluded_by_declared_source_types(&d, &source_type) {
+                skipped.push(source_type_skip(id, &d, &source_type));
+                return false;
+            }
+            true
+        });
     }
 
     // ── Pre-filter: exclude processors whose source_type filter doesn't match ─

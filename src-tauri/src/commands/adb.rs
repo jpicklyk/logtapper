@@ -852,7 +852,22 @@ fn flush_batch(
         if !transformer_ids.is_empty() {
             let transformer_defs: Vec<(String, std::sync::Arc<crate::processors::transformer::schema::TransformerDef>)> = {
                 match state.processors.lock() {
+                    // Same declared-source_types exclusion the Layer 2 processors
+                    // get below, and the same reason file mode applies it to
+                    // transformers: one that does not understand this source
+                    // rewrites the lines every downstream processor then reads.
+                    // An ADB stream is always Logcat.
                     Ok(procs) => transformer_ids.iter()
+                        .filter(|id| procs.get(id.as_str()).map_or(true, |p| {
+                            let declared = p
+                                .schema
+                                .as_ref()
+                                .map_or(&[][..], |s| s.source_types.as_slice());
+                            !excluded_by_declared_source_types(
+                                declared,
+                                &crate::core::session::SourceType::Logcat,
+                            )
+                        }))
                         .filter_map(|id| procs.get(id.as_str())
                             .and_then(crate::processors::AnyProcessor::as_transformer_arc)
                             .map(|arc| (id.clone(), arc)))
