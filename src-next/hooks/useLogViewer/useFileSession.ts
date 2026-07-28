@@ -8,7 +8,6 @@ import { preSeedSession, clearPreSeed } from '../../cache';
 import { useSessionCoreCtx, useSessionProgressCtx } from '../../context/SessionContext';
 import { bus, emitSessionLoadedWithFocus } from '../../events/bus';
 import { getStoredFirstPaneId } from '../useWorkspaceLayout';
-import type { CacheController } from '../../cache';
 import { diag, diagStart, diagEnd } from '../../utils/diagnostics';
 import type { SharedLogViewerRefs } from './types';
 import { planExtraSessionImport } from './multiSessionImport';
@@ -31,25 +30,18 @@ export interface FileSessionResult {
 }
 
 export function useFileSession(
-  cacheManager: CacheController,
   refs: SharedLogViewerRefs,
   deps: FileSessionDeps,
 ): FileSessionResult {
   const {
     sessions,
     registerSession,
-    terminateSession,
     updateSession,
     activateSessionForPane,
     setLoadingPane,
     setErrorPane,
   } = useSessionCoreCtx();
   const { setIndexingProgress: setIndexingProgressCtx } = useSessionProgressCtx();
-
-  // Keep a stable ref for terminateSession so loadFile can use it without
-  // being re-created every time terminateSession identity changes.
-  const terminateSessionRef = useRef(terminateSession);
-  terminateSessionRef.current = terminateSession;
 
   const [indexingProgress, setIndexingProgressLocal] = useState<{ percent: number; indexedLines: number } | null>(null);
 
@@ -167,17 +159,18 @@ export function useFileSession(
 
     const tabId = existingTabId ?? crypto.randomUUID();
 
+    // `isNewTab` reads backwards: it is true when the pane ALREADY holds a
+    // session, because then this open ADDS a tab alongside it rather than
+    // replacing it. The name is kept because it travels on the session:loading
+    // / session:loaded payloads with exactly that meaning. The existing session
+    // stays open — its tab is still visible — so nothing is disposed here;
+    // disposal belongs to closeSession (useSessionTabManager) when a tab is
+    // actually closed. Callers that want a REPLACE (e.g. reopen-as in
+    // FileInfoPane) close first so this load takes the empty-pane path.
     const previousSessionId = refs.paneSessionMapRef.current.get(targetPaneId);
     const isNewTab = previousSessionId !== undefined;
 
     if (!isNewTab) {
-      if (previousSessionId) {
-        try { await closeSessionCmd(previousSessionId); } catch { /* ignore */ }
-        // Inline terminateSession — deps object doesn't include it, get it from ref
-        terminateSessionRef.current(previousSessionId);
-        cacheManager.releaseSessionViews(previousSessionId);
-      }
-
       bus.emit('session:pre-load', { paneId: targetPaneId });
 
       // Clean up any active stream on this pane
@@ -271,7 +264,7 @@ export function useFileSession(
   }, [
     refs.activeLogPaneIdRef, refs.paneSessionMapRef,
     refs.streamingPaneIdRef,
-    cacheManager, registerSession, activateSessionForPane, setLoadingPane, setErrorPane,
+    registerSession, activateSessionForPane, setLoadingPane, setErrorPane,
     registerLoadedSession,
     deps.resetSessionState, deps.detachStream,
   ]);
