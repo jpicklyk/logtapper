@@ -104,15 +104,26 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
     0,
   );
 
+  // Processors the backend excluded from the run. Surfacing the count is the
+  // whole point of the skip rows: without it, a pack whose kernel half cannot
+  // apply to a Logcat session just reports zeros with no explanation.
+  const skippedSummaries = (lastResults as PipelineRunSummary[]).filter((r) => r.skipped);
+  const skippedSourceType = skippedSummaries[0]?.skipped?.actual;
+
   const renderProcRow = (p: ProcessorSummary) => {
     const s = getSummary(p.id);
     const isSelected = p.id === selected;
     const notRun = !s;
-    const zeroMatches = s && s.matchedLines === 0;
+    // A skipped processor never executed, so it is neither "ran and matched
+    // nothing" nor "not run yet" — it gets its own state. The backend decides
+    // this; the row only renders the reason it sent.
+    const skipped = s?.skipped;
+    const zeroMatches = s && !skipped && s.matchedLines === 0;
     const rowClass = [
       styles.procRow,
       isSelected && styles.procRowActive,
       notRun && styles.procRowNotRun,
+      skipped && styles.procRowSkipped,
       zeroMatches && styles.procRowZeroMatches,
     ].filter(Boolean).join(' ');
     return (
@@ -122,9 +133,14 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
         onClick={() => {
           setSelectedId(p.id);
         }}
+        title={skipped ? `Not applicable to ${skipped.actual} source — this processor declares ${skipped.declared.join(', ')}` : undefined}
       >
         <span className={styles.procRowName}>{p.name}</span>
-        {s ? (
+        {skipped ? (
+          <span className={`${styles.procRowStats} ${styles.procRowStatsSkipped}`}>
+            n/a
+          </span>
+        ) : s ? (
           <span className={styles.procRowStats}>
             {s.matchedLines > 0
               ? s.matchedLines.toLocaleString()
@@ -148,6 +164,11 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
             ? `${activeProcessors.length} processor${activeProcessors.length !== 1 ? 's' : ''} . ${totalMatches.toLocaleString()} matches`
             : `${activeProcessors.length} processor${activeProcessors.length !== 1 ? 's' : ''}`}
         </div>
+        {skippedSummaries.length > 0 && (
+          <div className={styles.skipNotice}>
+            {skippedSummaries.length} not applicable to this {skippedSourceType} source
+          </div>
+        )}
         {packGroups.map((group) => {
           const isCollapsed = collapsedGroups.has(group.packId);
           const groupMatches = group.processors.reduce((n, p) => {

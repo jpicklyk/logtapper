@@ -1129,7 +1129,21 @@ server.tool(
     "If `isIndexing` is true, the file is large and still being indexed in the " +
     "background: `totalLines` will keep growing. Poll logtapper_get_metadata (its " +
     "`isIndexing` flag) or logtapper_get_status until indexing settles before " +
-    "relying on line counts or querying the tail of the file.",
+    "relying on line counts or querying the tail of the file.\n\n" +
+    "SOURCE TYPE. LogTapper normally detects the type from the file's leading " +
+    "bytes, and that type decides two things: which parser reads the lines, and " +
+    "which processors are eligible to run (a processor declaring " +
+    "source_types: [kernel] is skipped on a Logcat session and vice versa). " +
+    "Detection is a content heuristic and it can be wrong — most often on vendor " +
+    "dumps whose head is a long preamble of boot tables or banners rather than " +
+    "log lines, where the real format only starts thousands of lines in. Pass " +
+    "`sourceType` when you know the file's provenance better than its first bytes " +
+    "do: the user told you what it is, the filename or the directory it came from " +
+    "identifies it, or you opened it once and the returned `sourceType` disagrees " +
+    "with what the content plainly shows. Reopening the same path with a corrected " +
+    "`sourceType` is the supported way to fix a misdetection — it re-indexes with " +
+    "the right parser. Omit it whenever detection is right; an override is not a " +
+    "default to set routinely.",
   {
     path: z
       .string()
@@ -1137,10 +1151,36 @@ server.tool(
         "Absolute local drive path to the log file (e.g. 'C:\\\\logs\\\\device.log'). " +
           "Must be inside the configured allowlist or already open as a session."
       ),
+    sourceType: z
+      .enum([
+        "Logcat",
+        "Kernel",
+        "Radio",
+        "Events",
+        "Bugreport",
+        "Dumpstate",
+        "Tombstone",
+        "ANRTrace",
+      ])
+      .optional()
+      .describe(
+        "Override content detection for this session. Omit to let LogTapper " +
+          "detect the type. Use when detection is wrong or when you already know " +
+          "the format — e.g. 'Kernel' for a dmesg or Samsung dumpstate_board.txt " +
+          "whose head is boot-stat preamble, 'Dumpstate' for a Samsung dump, " +
+          "'Bugreport' for a standard ADB bugreport. Rejected with " +
+          "INVALID_SOURCE_TYPE if the value is not one of these. Not supported " +
+          "for .lts session bundles, which carry their own recorded type."
+      ),
   },
-  async ({ path }) => {
+  async ({ path, sourceType }) => {
     try {
-      return ok(await bridgePost("/mcp/open_file", { path }));
+      return ok(
+        await bridgePost("/mcp/open_file", {
+          path,
+          ...(sourceType ? { sourceType } : {}),
+        })
+      );
     } catch (err) {
       return ok({ error: String(err) });
     }

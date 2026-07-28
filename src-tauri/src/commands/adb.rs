@@ -10,7 +10,9 @@ use tokio_stream::{wrappers::ReceiverStream, StreamExt as _};
 use crate::anonymizer::LogAnonymizer;
 use crate::commands::{lock_or_err, AppState};
 use crate::commands::files::LoadResult;
-use crate::commands::pipeline_core::{ContinuousStates, PartitionedDefs, PipelineCore};
+use crate::commands::pipeline_core::{
+    excluded_by_declared_source_types, ContinuousStates, PartitionedDefs, PipelineCore,
+};
 use crate::core::line::{LineContext, LineMeta, LogLevel, ParsedLineMeta, PipelineContext, ViewLine};
 use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;
@@ -1033,12 +1035,36 @@ fn flush_batch(
             let partitioned = {
                 match state.processors.lock() {
                     Ok(procs) => {
+                        // An ADB stream is always Logcat (see `pipeline_ctx`
+                        // above). Apply the same declared-source_types
+                        // exclusion file mode uses, so a processor's
+                        // eligibility does not depend on which path executes
+                        // it. The streaming channel has no equivalent of the
+                        // file-mode skip row yet, so an excluded processor
+                        // simply stops producing updates rather than reporting
+                        // why — it stays in the chain showing zero, which is
+                        // what it did before this exclusion existed.
+                        let stream_source_type = crate::core::session::SourceType::Logcat;
+                        let eligible = |id: &str| -> bool {
+                            // `map_or(true, ..)` rather than `is_none_or`: the
+                            // latter is stable only from 1.82 and the crate's
+                            // MSRV is 1.77.2.
+                            procs.get(id).map_or(true, |p| {
+                                let declared = p
+                                    .schema
+                                    .as_ref()
+                                    .map_or(&[][..], |s| s.source_types.as_slice());
+                                !excluded_by_declared_source_types(declared, &stream_source_type)
+                            })
+                        };
                         let reporter_defs: Vec<_> = reporter_ids.iter()
+                            .filter(|id| eligible(id.as_str()))
                             .filter_map(|id| procs.get(id.as_str())
                                 .and_then(crate::processors::AnyProcessor::as_reporter_arc)
                                 .map(|arc| (id.clone(), arc)))
                             .collect();
                         let tracker_defs: Vec<_> = tracker_ids.iter()
+                            .filter(|id| eligible(id.as_str()))
                             .filter_map(|id| procs.get(id.as_str())
                                 .and_then(crate::processors::AnyProcessor::as_state_tracker_arc)
                                 .map(|arc| (id.clone(), arc)))

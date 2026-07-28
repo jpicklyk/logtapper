@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { bus } from '../events/bus';
-import type { SearchQuery, ExportAllOptions, ProcessorSummary } from '../bridge/types';
+import type { SearchQuery, ExportAllOptions, ProcessorSummary, SourceType } from '../bridge/types';
 
 // ---------------------------------------------------------------------------
 // Action categories
@@ -13,7 +13,11 @@ import type { SearchQuery, ExportAllOptions, ProcessorSummary } from '../bridge/
  */
 export interface WorkspaceMutationActions {
   // Session lifecycle
-  loadFile: (path: string, paneId?: string) => Promise<void>;
+  /** `sourceType` overrides backend content detection for this open. Used by the
+   *  File Info panel's "reopen as" affordance to correct a misdetection — the
+   *  type cannot be changed in place because the line index is already built
+   *  with the parser it selects. */
+  loadFile: (path: string, paneId?: string, existingTabId?: string, sourceType?: SourceType) => Promise<void>;
   startStream: (deviceId?: string) => Promise<void>;
   closeSession: (paneId?: string) => Promise<void>;
 

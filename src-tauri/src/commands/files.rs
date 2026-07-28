@@ -129,11 +129,36 @@ pub async fn load_log_file(
     state: State<'_, AppState>,
     app: AppHandle,
     path: String,
+    source_type: Option<String>,
 ) -> Result<Vec<LoadResult>, String> {
     let path_obj = Path::new(&path);
 
+    // Reject an unknown label rather than silently falling back to detection —
+    // a typo that quietly reverted to the detected type would be invisible, and
+    // the caller supplied the override precisely because detection was wrong.
+    let source_type_override = match source_type.as_deref() {
+        None => None,
+        Some(label) => Some(
+            crate::core::session::SourceType::from_label(label).ok_or_else(|| {
+                format!(
+                    "Unknown source type '{label}'. Expected one of: {}",
+                    crate::core::session::SourceType::labels().join(", ")
+                )
+            })?,
+        ),
+    };
+
     // If the file is a .lts session export, use the dedicated multi-session import path.
+    // `.lts` bundles are LogTapper's own export format and carry the source type
+    // each embedded session was captured with, so an override does not apply.
     if path_obj.extension().and_then(|e| e.to_str()) == Some("lts") {
+        if source_type_override.is_some() {
+            return Err(
+                "source_type override is not supported for .lts session bundles — \
+                 they carry the source type each session was captured with"
+                    .to_string(),
+            );
+        }
         return load_lts_file_inner(&state, &app, &path);
     }
 
@@ -141,7 +166,7 @@ pub async fn load_log_file(
     // Reused verbatim by the MCP `open_file` bridge endpoint so both openers
     // produce identical sessions. `&state` / `&app` deref-coerce to the inner
     // fn's `&AppState` / `&AppHandle` (same as the load_lts_file_inner call above).
-    open_file_inner(&state, &app, &path)
+    open_file_inner(&state, &app, &path, source_type_override)
 }
 
 /// Open a plain log file (or a bugreport `.zip`) and register it as a session.
@@ -160,10 +185,18 @@ pub async fn load_log_file(
 /// via the ambient tokio context of whichever async caller invoked it (the Tauri
 /// command, or the Axum bridge handler — both run under tokio), so a sync fn is
 /// correct and the spawn is reached identically.
+///
+/// `source_type_override`, when present, replaces content detection for the
+/// session this opens — including the case where `path` is a zip, since the
+/// extracted bugreport becomes that same single session. Detection is a
+/// heuristic and now gates which processors run (see
+/// `excluded_by_declared_source_types`), so callers that know the file's
+/// provenance better than its first bytes do need a way to say so.
 pub(crate) fn open_file_inner(
     state: &AppState,
     app: &tauri::AppHandle,
     path: &str,
+    source_type_override: Option<crate::core::session::SourceType>,
 ) -> Result<Vec<LoadResult>, String> {
     let path_obj = Path::new(path);
 
@@ -204,7 +237,12 @@ pub(crate) fn open_file_inner(
     // Hold the temp file handle in the session so it persists (deleted on drop).
     session.temp_file = _temp_file;
     let (mmap_arc, total_bytes, bytes_consumed) =
-        session.add_source_partial(effective_path_obj, source_id.clone(), INITIAL_BYTES)?;
+        session.add_source_partial_typed(
+            effective_path_obj,
+            source_id.clone(),
+            INITIAL_BYTES,
+            source_type_override,
+        )?;
 
     let source = session.primary_source().ok_or("No source after partial load")?;
     let total_lines = source.total_lines();

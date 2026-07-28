@@ -568,6 +568,32 @@ mod tests {
         }
     }
 
+    /// `source_types` gates execution: a processor whose declaration excludes
+    /// the session's source type is skipped before it runs. An empty or missing
+    /// declaration means "applies to every source", which is almost never what
+    /// a real processor wants and silently opts it out of the check. Every
+    /// shipped processor declares one today; this keeps it that way.
+    #[test]
+    fn every_marketplace_processor_declares_source_types() {
+        for path in processor_yaml_files() {
+            let yaml = std::fs::read_to_string(&path).expect("read processor yaml");
+            let Ok(p) = AnyProcessor::from_yaml(&yaml) else {
+                continue; // parse failures are reported by every_marketplace_processor_parses
+            };
+            let declared = p
+                .schema
+                .as_ref()
+                .map(|s| s.source_types.as_slice())
+                .unwrap_or(&[]);
+            assert!(
+                !declared.is_empty(),
+                "{} declares no schema.source_types — it would run against every \
+                 source type, including ones it cannot parse",
+                path.display()
+            );
+        }
+    }
+
     #[test]
     fn marketplace_index_is_consistent() {
         let root = marketplace_dir();

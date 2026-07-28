@@ -641,6 +641,21 @@ fn compute_tracker_section_ranges(
 // Source-type exclusion helper
 // ---------------------------------------------------------------------------
 
+/// Check a processor's declared `source_types` metadata against the session's
+/// source type.
+///
+/// An empty or absent declaration means "applies to any source" and never
+/// excludes. Shares `SourceType::matches_str` with [`excluded_by_source_type`]
+/// so the declarative metadata and the `source_type_is` filter rule cannot
+/// disagree about what matches — notably that `Dumpstate` satisfies a
+/// `"bugreport"` declaration but not the reverse.
+pub fn excluded_by_declared_source_types(
+    declared: &[String],
+    source_type: &crate::core::session::SourceType,
+) -> bool {
+    !declared.is_empty() && !declared.iter().any(|d| source_type.matches_str(d))
+}
+
 /// Check if a set of filter rules contains a SourceTypeIs that doesn't match
 /// the current source type.
 pub fn excluded_by_source_type(
@@ -1402,5 +1417,52 @@ pipeline:
         assert!(passes_gate(&ranges[0], 450), "line in 2nd DUMPSYS block must pass the gate");
         assert!(passes_gate(&ranges[0], 650), "line in 3rd DUMPSYS block must pass the gate");
         assert!(!passes_gate(&ranges[0], 150));
+    }
+
+    // ── Declared source_types exclusion ─────────────────────────────────────
+
+    use crate::core::session::SourceType;
+
+    fn v(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn empty_declaration_never_excludes() {
+        assert!(!excluded_by_declared_source_types(&[], &SourceType::Kernel));
+        assert!(!excluded_by_declared_source_types(&[], &SourceType::Logcat));
+    }
+
+    #[test]
+    fn declaration_matching_the_source_runs() {
+        let d = v(&["kernel", "dumpstate", "logcat"]);
+        assert!(!excluded_by_declared_source_types(&d, &SourceType::Kernel));
+    }
+
+    #[test]
+    fn declaration_excluding_the_source_is_skipped() {
+        let d = v(&["logcat", "bugreport", "dumpstate"]);
+        assert!(excluded_by_declared_source_types(&d, &SourceType::Kernel));
+    }
+
+    #[test]
+    fn matching_is_case_insensitive() {
+        assert!(!excluded_by_declared_source_types(&v(&["KERNEL"]), &SourceType::Kernel));
+    }
+
+    /// The asymmetry is load-bearing and is exactly what a second
+    /// implementation of this rule would get wrong: Dumpstate is a superset of
+    /// Bugreport, so it satisfies a "bugreport" declaration, but a Bugreport
+    /// source does not satisfy a "dumpstate" declaration.
+    #[test]
+    fn dumpstate_satisfies_bugreport_but_not_the_reverse() {
+        assert!(
+            !excluded_by_declared_source_types(&v(&["bugreport"]), &SourceType::Dumpstate),
+            "a Dumpstate source must run a processor declaring bugreport"
+        );
+        assert!(
+            excluded_by_declared_source_types(&v(&["dumpstate"]), &SourceType::Bugreport),
+            "a Bugreport source must NOT run a processor declaring dumpstate"
+        );
     }
 }

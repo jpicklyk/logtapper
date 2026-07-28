@@ -12,6 +12,10 @@ import type { SectionEntry } from './FileInfoPanel';
 export interface FileInfoData {
   sourceName: string | undefined;
   sourceType: string | undefined;
+  /** Path this session was opened from; absent for streaming sessions. */
+  filePath: string | undefined;
+  /** Streaming sessions have no file to reopen, so they get no override UI. */
+  isStreamingSession: boolean;
   totalLines: number | undefined;
   fileSize: number | undefined;
   /** Live-stream lines permanently lost because spilling to disk failed. */
@@ -322,6 +326,10 @@ export function useFileInfo(paneId: string | null): FileInfoData {
   return {
     sourceName: session?.sourceName,
     sourceType: session?.sourceType,
+    /** Needed by the "reopen as" affordance — correcting a misdetected source
+     *  type means reopening this path with an explicit type. */
+    filePath: session?.filePath ?? undefined,
+    isStreamingSession: isStreaming,
     totalLines: session?.totalLines,
     fileSize: session?.fileSize,
     lostLineCount: session?.lostLineCount,

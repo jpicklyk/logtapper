@@ -133,7 +133,11 @@ export function useFileSession(
     }
   }, [registerSession, activateSessionForPane, setIndexingProgressCtx]);
 
-  const loadFile = useCallback(async (path: string, paneId?: string, existingTabId?: string) => {
+  // `sourceType` overrides backend content detection for this open. It cannot be
+  // applied after the fact — the line index is built with the parser the type
+  // selects — so correcting a misdetection means reopening the path, which is
+  // exactly what this does.
+  const loadFile = useCallback(async (path: string, paneId?: string, existingTabId?: string, sourceType?: SourceType) => {
     // Prevent duplicate imports: if this .lts file already has an active session, skip.
     // Check live session context (via ref) rather than localStorage which can be stale.
     if (!existingTabId && path.endsWith('.lts')) {
@@ -197,7 +201,7 @@ export function useFileSession(
 
     try {
       diag('file-load', 'calling loadLogFile IPC');
-      const results = await loadLogFile(path);
+      const results = await loadLogFile(path, sourceType);
       const result = results[0];
       if (!result) throw new Error('No sessions returned from load_log_file');
       diag('file-load', 'IPC returned', { sessionId: result.sessionId, totalLines: result.totalLines, sourceType: result.sourceType, isIndexing: result.isIndexing, sessionCount: results.length });

@@ -3,6 +3,7 @@ import type {
   LineRequest,
   LineWindow,
   LoadResult,
+  SourceType,
   SearchQuery,
   SearchSummary,
   ProcessorSummary,
@@ -121,8 +122,17 @@ export function getPackagePids(
 // Phase 1 — File / Session
 // ---------------------------------------------------------------------------
 
-export function loadLogFile(path: string): Promise<LoadResult[]> {
-  return invoke('load_log_file', { path });
+/**
+ * Open a log file as a session.
+ *
+ * `sourceType` overrides content detection. Detection decides both which parser
+ * builds the line index and which processors are eligible to run, and it cannot
+ * be corrected after the fact — the index is already built with the wrong
+ * parser — so correcting a misdetection means reopening the path with an
+ * explicit type. Omit it for normal opens.
+ */
+export function loadLogFile(path: string, sourceType?: SourceType): Promise<LoadResult[]> {
+  return invoke('load_log_file', sourceType ? { path, sourceType } : { path });
 }
 
 export function closeSession(sessionId: string): Promise<void> {
