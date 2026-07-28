@@ -216,10 +216,18 @@ pub(crate) fn open_file_inner(
         .unwrap_or(0);
 
     // Derive stable IDs from the original path (not the temp extraction).
-    // Deterministic per (canonical path, length, content prefix) so an unchanged
-    // file keeps its id across restarts — MCP handles survive, restore
-    // diagnostics correlate. See core::session_identity (design §Q5).
-    let session_id = crate::core::session_identity::derive_file_session_id_from_disk(path_obj);
+    // Deterministic per (canonical path, length, content prefix, source-type
+    // override) so an unchanged file keeps its id across restarts — MCP handles
+    // survive, restore diagnostics correlate. See core::session_identity
+    // (design §Q5). The override is part of the identity because it selects the
+    // parser that builds the line index: same id + different type would mean two
+    // incompatible parses sharing every id-keyed structure, including the
+    // frontend line cache.
+    let override_label = source_type_override.as_ref().map(ToString::to_string);
+    let session_id = crate::core::session_identity::derive_file_session_id_from_disk(
+        path_obj,
+        override_label.as_deref(),
+    );
     let source_id = path_obj
         .file_stem()
         .and_then(|s| s.to_str())
@@ -228,7 +236,19 @@ pub(crate) fn open_file_inner(
 
     // Close any existing sessions for the same file path (e.g. stale sessions from
     // frontend reloads). Collects ALL matching IDs then closes each one.
-    close_stale_sessions(state, Some(app), path)?;
+    let closed_ids = close_stale_sessions(state, Some(app), path)?;
+
+    // Tell the frontend about sessions that are NOT about to be re-created under
+    // the same id. That only happens when the id changed — i.e. a reopen with a
+    // different source-type override. Without this the frontend keeps a tab
+    // bound to a session the backend has already dropped.
+    //
+    // Filtering on `id != session_id` is what makes this safe for the ordinary
+    // same-id reopen: emitting there would tell the frontend to discard a tab it
+    // is about to reuse.
+    for stale_id in closed_ids.iter().filter(|id| *id != &session_id) {
+        let _ = app.emit("session-closed", serde_json::json!({ "sessionId": stale_id }));
+    }
 
     const INITIAL_BYTES: usize = 1_000_000; // 1 MB initial chunk
 
@@ -492,7 +512,9 @@ pub(crate) fn emit_workspace_restored(
 /// overwrite the prior session WITHOUT running `close_session_inner`'s cleanup
 /// (indexing-task cancel, watch/filter purge). Matching canonically keeps this
 /// scan consistent with the id invariant so the cleanup always runs.
-fn close_stale_sessions(state: &AppState, app: Option<&tauri::AppHandle>, path: &str) -> Result<(), String> {
+/// Returns the ids actually closed, so callers can notify the frontend about
+/// sessions that are not being immediately re-created under the same id.
+fn close_stale_sessions(state: &AppState, app: Option<&tauri::AppHandle>, path: &str) -> Result<Vec<String>, String> {
     // Canonicalize the incoming path once, outside the sessions lock.
     let incoming_canonical =
         crate::commands::bridge_access::canonical_compare_form(Path::new(path));
@@ -508,10 +530,10 @@ fn close_stale_sessions(state: &AppState, app: Option<&tauri::AppHandle>, path: 
             .map(|s| s.id.clone())
             .collect()
     };
-    for stale_id in stale_ids {
-        close_session_inner(state, app, &stale_id)?;
+    for stale_id in &stale_ids {
+        close_session_inner(state, app, stale_id)?;
     }
-    Ok(())
+    Ok(stale_ids)
 }
 
 /// True if a stored session `file_path` refers to the same on-disk file as the
@@ -2159,13 +2181,13 @@ mod tests {
         let state = make_state();
 
         // First load: derive id, close stale (none yet), register.
-        let id1 = crate::core::session_identity::derive_file_session_id_from_disk(path_obj);
+        let id1 = crate::core::session_identity::derive_file_session_id_from_disk(path_obj, None);
         close_stale_sessions(&state, None, &path).unwrap();
         insert_session(&state, &id1, Some(&path));
 
         // Second load of the SAME unchanged file: same deterministic id;
         // close_stale_sessions closes the first before the second registers.
-        let id2 = crate::core::session_identity::derive_file_session_id_from_disk(path_obj);
+        let id2 = crate::core::session_identity::derive_file_session_id_from_disk(path_obj, None);
         assert_eq!(id1, id2, "same unchanged file must derive the same session id");
         close_stale_sessions(&state, None, &path).unwrap();
         insert_session(&state, &id2, Some(&path));
