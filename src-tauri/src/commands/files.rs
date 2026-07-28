@@ -254,6 +254,10 @@ pub(crate) fn open_file_inner(
 
     let mut session = AnalysisSession::new(session_id.clone());
     session.file_path = Some(path.to_string());
+    // Recorded so workspace save can replay it. Only the explicit override is
+    // kept — never the detected type, which would freeze detection for that
+    // workspace and stop any later detector fix from reaching it.
+    session.source_type_override = override_label;
     // Hold the temp file handle in the session so it persists (deleted on drop).
     session.temp_file = _temp_file;
     let (mmap_arc, total_bytes, bytes_consumed) =

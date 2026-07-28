@@ -32,7 +32,8 @@ pub(crate) type SessionEntry = (
 /// Acquires locks briefly: sessions once, bookmarks/analyses/meta once each.
 pub(crate) fn collect_session_data(state: &AppState) -> Result<Vec<SessionEntry>, String> {
     // Snapshot session info under brief lock
-    let session_info: Vec<(String, String, String, String)> = {
+    // (id, file_path, source_name, source_type, source_type_override)
+    let session_info: Vec<(String, String, String, String, Option<String>)> = {
         let sessions = lock_or_err(&state.sessions, "sessions")?;
         sessions
             .iter()
@@ -44,6 +45,7 @@ pub(crate) fn collect_session_data(state: &AppState) -> Result<Vec<SessionEntry>
                     file_path.clone(),
                     source.name().to_string(),
                     format!("{:?}", source.source_type()),
+                    session.source_type_override.clone(),
                 ))
             })
             .collect()
@@ -55,12 +57,13 @@ pub(crate) fn collect_session_data(state: &AppState) -> Result<Vec<SessionEntry>
         let bm_guard = lock_or_err(&state.bookmarks, "bookmarks")?;
         let an_guard = lock_or_err(&state.analyses, "analyses")?;
         let meta_guard = lock_or_err(&state.session_pipeline_meta, "session_pipeline_meta")?;
-        for (session_id, file_path, source_name, source_type) in session_info {
+        for (session_id, file_path, source_name, source_type, source_type_override) in session_info {
             entries.push((
                 LtwManifestSession {
                     file_path,
                     source_name,
                     source_type,
+                    source_type_override,
                 },
                 bm_guard.get(&session_id).cloned().unwrap_or_default(),
                 an_guard.get(&session_id).cloned().unwrap_or_default(),

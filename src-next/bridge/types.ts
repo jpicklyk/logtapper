@@ -875,6 +875,11 @@ export interface LtwManifestSession {
   filePath: string;
   sourceName: string;
   sourceType: string;
+  /** The label explicitly supplied at open to replace content detection, absent
+   *  when `sourceType` was detected. Only this is replayed on restore —
+   *  replaying `sourceType` would freeze detection, so a later fix to the
+   *  detector could never reach an already-saved workspace. */
+  sourceTypeOverride?: string;
 }
 
 export interface LtwPipelineChain {

@@ -199,6 +199,16 @@ pub struct AnalysisSession {
     /// Holds the extracted temp file for zip-backed sessions. The temp file is
     /// deleted when the session is dropped. Must outlive the mmap.
     pub temp_file: Option<tempfile::NamedTempFile>,
+    /// The source-type label a caller explicitly supplied at open, replacing
+    /// content detection. `None` means the type was detected.
+    ///
+    /// The distinction matters for workspace persistence: only an *explicit*
+    /// override may be replayed on restore. Persisting a detected type would
+    /// freeze that detection forever, so a later fix to the detector could
+    /// never take effect on an already-saved workspace. It is also what makes
+    /// a restored session resolve to the same id, since the override is part
+    /// of the identity preimage (see `core::session_identity`).
+    pub source_type_override: Option<String>,
 }
 
 impl AnalysisSession {
@@ -210,6 +220,7 @@ impl AnalysisSession {
             tag_interner: TagInterner::new(),
             file_path: None,
             temp_file: None,
+            source_type_override: None,
         }
     }
 
