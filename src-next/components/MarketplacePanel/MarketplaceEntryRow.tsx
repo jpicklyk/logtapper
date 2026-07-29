@@ -67,6 +67,13 @@ export const MarketplaceEntryRow = React.memo(function MarketplaceEntryRow({
         {entry.description && (
           <div className={css.entryDesc}>{entry.description}</div>
         )}
+        {entry.sourceTypes && entry.sourceTypes.length > 0 && (
+          <div className={css.sourceTypes} title="Log source types this processor applies to. It is skipped on sessions of any other type.">
+            {entry.sourceTypes.map((t) => (
+              <span key={t} className={css.sourceTypeChip}>{t}</span>
+            ))}
+          </div>
+        )}
         {entry.tags.length > 0 && (
           <div className={css.tags}>
             {entry.tags.map((t) => (

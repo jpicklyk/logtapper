@@ -129,11 +129,36 @@ pub async fn load_log_file(
     state: State<'_, AppState>,
     app: AppHandle,
     path: String,
+    source_type: Option<String>,
 ) -> Result<Vec<LoadResult>, String> {
     let path_obj = Path::new(&path);
 
+    // Reject an unknown label rather than silently falling back to detection —
+    // a typo that quietly reverted to the detected type would be invisible, and
+    // the caller supplied the override precisely because detection was wrong.
+    let source_type_override = match source_type.as_deref() {
+        None => None,
+        Some(label) => Some(
+            crate::core::session::SourceType::from_label(label).ok_or_else(|| {
+                format!(
+                    "Unknown source type '{label}'. Expected one of: {}",
+                    crate::core::session::SourceType::labels().join(", ")
+                )
+            })?,
+        ),
+    };
+
     // If the file is a .lts session export, use the dedicated multi-session import path.
+    // `.lts` bundles are LogTapper's own export format and carry the source type
+    // each embedded session was captured with, so an override does not apply.
     if path_obj.extension().and_then(|e| e.to_str()) == Some("lts") {
+        if source_type_override.is_some() {
+            return Err(
+                "source_type override is not supported for .lts session bundles — \
+                 they carry the source type each session was captured with"
+                    .to_string(),
+            );
+        }
         return load_lts_file_inner(&state, &app, &path);
     }
 
@@ -141,7 +166,7 @@ pub async fn load_log_file(
     // Reused verbatim by the MCP `open_file` bridge endpoint so both openers
     // produce identical sessions. `&state` / `&app` deref-coerce to the inner
     // fn's `&AppState` / `&AppHandle` (same as the load_lts_file_inner call above).
-    open_file_inner(&state, &app, &path)
+    open_file_inner(&state, &app, &path, source_type_override)
 }
 
 /// Open a plain log file (or a bugreport `.zip`) and register it as a session.
@@ -160,10 +185,18 @@ pub async fn load_log_file(
 /// via the ambient tokio context of whichever async caller invoked it (the Tauri
 /// command, or the Axum bridge handler — both run under tokio), so a sync fn is
 /// correct and the spawn is reached identically.
+///
+/// `source_type_override`, when present, replaces content detection for the
+/// session this opens — including the case where `path` is a zip, since the
+/// extracted bugreport becomes that same single session. Detection is a
+/// heuristic and now gates which processors run (see
+/// `excluded_by_declared_source_types`), so callers that know the file's
+/// provenance better than its first bytes do need a way to say so.
 pub(crate) fn open_file_inner(
     state: &AppState,
     app: &tauri::AppHandle,
     path: &str,
+    source_type_override: Option<crate::core::session::SourceType>,
 ) -> Result<Vec<LoadResult>, String> {
     let path_obj = Path::new(path);
 
@@ -183,28 +216,74 @@ pub(crate) fn open_file_inner(
         .unwrap_or(0);
 
     // Derive stable IDs from the original path (not the temp extraction).
-    // Deterministic per (canonical path, length, content prefix) so an unchanged
-    // file keeps its id across restarts — MCP handles survive, restore
-    // diagnostics correlate. See core::session_identity (design §Q5).
-    let session_id = crate::core::session_identity::derive_file_session_id_from_disk(path_obj);
+    // Deterministic per (canonical path, length, content prefix, source-type
+    // override) so an unchanged file keeps its id across restarts — MCP handles
+    // survive, restore diagnostics correlate. See core::session_identity
+    // (design §Q5). The override is part of the identity because it selects the
+    // parser that builds the line index: same id + different type would mean two
+    // incompatible parses sharing every id-keyed structure, including the
+    // frontend line cache.
+    let override_label = source_type_override.as_ref().map(ToString::to_string);
+    let session_id = crate::core::session_identity::derive_file_session_id_from_disk(
+        path_obj,
+        override_label.as_deref(),
+    );
     let source_id = path_obj
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("source")
         .to_string();
 
+    // Rescue the artifacts of any session we are about to replace, BEFORE closing
+    // it — `close_session_inner` deletes a session's bookmarks, analyses and
+    // pipeline meta along with the session itself.
+    //
+    // This matters because a source-type override changes the session id, so a
+    // reopen is a close of one id and a create of another. Without the rescue the
+    // user's bookmarks and analyses are silently destroyed by the act of
+    // correcting a misdetected file.
+    //
+    // GUARD: only rescue from a session whose id we can still reproduce from the
+    // file's CURRENT bytes. The id preimage is (path, length, content prefix,
+    // override), so reproducing it proves the file has not been replaced since
+    // that session was opened — and therefore that its line numbers still mean
+    // the same thing. If the file changed on disk, its artifacts refer to
+    // content that no longer exists and must be allowed to die with it.
+    let rescued = rescue_artifacts_for_replacement(state, path_obj, path)?;
+
     // Close any existing sessions for the same file path (e.g. stale sessions from
     // frontend reloads). Collects ALL matching IDs then closes each one.
-    close_stale_sessions(state, Some(app), path)?;
+    let closed_ids = close_stale_sessions(state, Some(app), path)?;
+
+    // Tell the frontend about sessions that are NOT about to be re-created under
+    // the same id. That only happens when the id changed — i.e. a reopen with a
+    // different source-type override. Without this the frontend keeps a tab
+    // bound to a session the backend has already dropped.
+    //
+    // Filtering on `id != session_id` is what makes this safe for the ordinary
+    // same-id reopen: emitting there would tell the frontend to discard a tab it
+    // is about to reuse.
+    for stale_id in closed_ids.iter().filter(|id| *id != &session_id) {
+        let _ = app.emit("session-closed", serde_json::json!({ "sessionId": stale_id }));
+    }
 
     const INITIAL_BYTES: usize = 1_000_000; // 1 MB initial chunk
 
     let mut session = AnalysisSession::new(session_id.clone());
     session.file_path = Some(path.to_string());
+    // Recorded so workspace save can replay it. Only the explicit override is
+    // kept — never the detected type, which would freeze detection for that
+    // workspace and stop any later detector fix from reaching it.
+    session.source_type_override = override_label;
     // Hold the temp file handle in the session so it persists (deleted on drop).
     session.temp_file = _temp_file;
     let (mmap_arc, total_bytes, bytes_consumed) =
-        session.add_source_partial(effective_path_obj, source_id.clone(), INITIAL_BYTES)?;
+        session.add_source_partial_typed(
+            effective_path_obj,
+            source_id.clone(),
+            INITIAL_BYTES,
+            source_type_override,
+        )?;
 
     let source = session.primary_source().ok_or("No source after partial load")?;
     let total_lines = source.total_lines();
@@ -243,6 +322,10 @@ pub(crate) fn open_file_inner(
         let mut sessions = lock_or_err(&state.sessions, "sessions")?;
         sessions.insert(session_id.clone(), session);
     }
+
+    // Re-key the rescued artifacts onto the new session. Done after the insert so
+    // they never reference a session id that is not yet in the registry.
+    rescued.restore_onto(state, &session_id)?;
 
     // Spawn background indexing task if there's more to scan.
     if is_indexing {
@@ -454,7 +537,125 @@ pub(crate) fn emit_workspace_restored(
 /// overwrite the prior session WITHOUT running `close_session_inner`'s cleanup
 /// (indexing-task cancel, watch/filter purge). Matching canonically keeps this
 /// scan consistent with the id invariant so the cleanup always runs.
-fn close_stale_sessions(state: &AppState, app: Option<&tauri::AppHandle>, path: &str) -> Result<(), String> {
+/// Artifacts lifted off sessions that are about to be replaced by a reopen of
+/// the same file, so they can be re-keyed onto the new session id.
+#[derive(Default)]
+pub(crate) struct RescuedArtifacts {
+    bookmarks: Vec<crate::core::bookmark::Bookmark>,
+    analyses: Vec<crate::core::analysis::AnalysisArtifact>,
+    pipeline_meta: Option<crate::workspace::SessionMeta>,
+}
+
+impl RescuedArtifacts {
+    fn is_empty(&self) -> bool {
+        self.bookmarks.is_empty() && self.analyses.is_empty() && self.pipeline_meta.is_none()
+    }
+
+    /// Attach the rescued artifacts to `session_id`.
+    ///
+    /// Delegates to [`restore_artifacts`], the same helper the `.lts` import
+    /// path uses, because each artifact also carries an embedded `session_id`
+    /// that has to be rewritten — storing under the new map key alone leaves the
+    /// field pointing at a session that no longer exists, which then travels out
+    /// over the MCP bridge and into workspace saves. Verified against the
+    /// running app: re-keying without the rewrite reported a bookmark whose
+    /// `sessionId` was the closed session's.
+    fn restore_onto(self, state: &AppState, session_id: &str) -> Result<(), String> {
+        if self.is_empty() {
+            return Ok(());
+        }
+        restore_artifacts(state, session_id, self.bookmarks, self.analyses);
+        if let Some(meta) = self.pipeline_meta {
+            let mut pm = lock_or_err(&state.session_pipeline_meta, "session_pipeline_meta")?;
+            pm.insert(session_id.to_string(), meta);
+        }
+        Ok(())
+    }
+}
+
+/// Take the artifacts of every session bound to `path` whose id can still be
+/// reproduced from the file's current bytes.
+///
+/// Reproducing the id is the safety check: it proves the file has not been
+/// replaced since that session was opened, so its bookmarks and analyses still
+/// point at the same lines. A source-type change is exactly this case — same
+/// bytes, different id, because the override is part of the id preimage. A file
+/// whose content changed derives a different id and is skipped, so its stale
+/// artifacts are not grafted onto content they never referred to.
+///
+/// Artifacts are REMOVED here rather than copied: `close_session_inner` would
+/// delete them moments later anyway, and taking them keeps a single owner.
+fn rescue_artifacts_for_replacement(
+    state: &AppState,
+    path_obj: &Path,
+    path: &str,
+) -> Result<RescuedArtifacts, String> {
+    // (id, override) for sessions on this path. Lock taken and dropped before any
+    // artifact lock, per the AppState ordering rules.
+    let candidates: Vec<(String, Option<String>)> = {
+        let incoming_canonical =
+            crate::commands::bridge_access::canonical_compare_form(path_obj);
+        let sessions = lock_or_err(&state.sessions, "sessions")?;
+        sessions
+            .values()
+            .filter(|s| {
+                s.file_path
+                    .as_deref()
+                    .is_some_and(|stored| {
+                        stale_path_matches(stored, path, incoming_canonical.as_deref())
+                    })
+            })
+            .map(|s| (s.id.clone(), s.source_type_override.clone()))
+            .collect()
+    };
+
+    let migratable: Vec<String> = candidates
+        .into_iter()
+        .filter(|(id, override_label)| {
+            crate::core::session_identity::derive_file_session_id_from_disk(
+                path_obj,
+                override_label.as_deref(),
+            ) == *id
+        })
+        .map(|(id, _)| id)
+        .collect();
+
+    if migratable.is_empty() {
+        return Ok(RescuedArtifacts::default());
+    }
+
+    let mut out = RescuedArtifacts::default();
+    {
+        let mut bm = lock_or_err(&state.bookmarks, "bookmarks")?;
+        for id in &migratable {
+            if let Some(v) = bm.remove(id) {
+                out.bookmarks.extend(v);
+            }
+        }
+    }
+    {
+        let mut an = lock_or_err(&state.analyses, "analyses")?;
+        for id in &migratable {
+            if let Some(v) = an.remove(id) {
+                out.analyses.extend(v);
+            }
+        }
+    }
+    {
+        let mut pm = lock_or_err(&state.session_pipeline_meta, "session_pipeline_meta")?;
+        // Last one wins; in practice there is at most one session per path.
+        for id in &migratable {
+            if let Some(m) = pm.remove(id) {
+                out.pipeline_meta = Some(m);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Returns the ids actually closed, so callers can notify the frontend about
+/// sessions that are not being immediately re-created under the same id.
+fn close_stale_sessions(state: &AppState, app: Option<&tauri::AppHandle>, path: &str) -> Result<Vec<String>, String> {
     // Canonicalize the incoming path once, outside the sessions lock.
     let incoming_canonical =
         crate::commands::bridge_access::canonical_compare_form(Path::new(path));
@@ -470,10 +671,10 @@ fn close_stale_sessions(state: &AppState, app: Option<&tauri::AppHandle>, path: 
             .map(|s| s.id.clone())
             .collect()
     };
-    for stale_id in stale_ids {
-        close_session_inner(state, app, &stale_id)?;
+    for stale_id in &stale_ids {
+        close_session_inner(state, app, stale_id)?;
     }
-    Ok(())
+    Ok(stale_ids)
 }
 
 /// True if a stored session `file_path` refers to the same on-disk file as the
@@ -1504,6 +1705,27 @@ mod tests {
         AppState::new()
     }
 
+    fn sample_bookmark(
+        id: &str,
+        session_id: &str,
+        line: u32,
+    ) -> crate::core::bookmark::Bookmark {
+        use crate::core::bookmark::{Bookmark, CreatedBy};
+        Bookmark {
+            id: id.to_string(),
+            session_id: session_id.to_string(),
+            line_number: line,
+            line_number_end: None,
+            snippet: None,
+            category: None,
+            tags: None,
+            label: "Test".to_string(),
+            note: String::new(),
+            created_by: CreatedBy::User,
+            created_at: 1000,
+        }
+    }
+
     fn insert_session(state: &AppState, id: &str, file_path: Option<&str>) {
         let mut session = AnalysisSession::new(id.to_string());
         session.file_path = file_path.map(str::to_string);
@@ -1784,6 +2006,96 @@ mod tests {
             "map must hold exactly the freshly opened session after the stale one closes");
         assert!(sessions.contains_key("fresh-id"));
     }
+
+    /// Reopening a file with a different source type mints a NEW session id
+    /// (the override is part of the id preimage), and closing the old session
+    /// deletes its bookmarks and analyses. Without a rescue, correcting a
+    /// misdetected file silently destroys the user's work.
+    #[test]
+    fn reopen_with_override_carries_artifacts_to_the_new_session() {
+        use std::fs;
+        let state = make_state();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let file = tmp.path().join("board.txt");
+        fs::write(&file, "[    0.000000] boot
+[    1.000000] more
+").expect("write");
+        let path = file.to_string_lossy().to_string();
+
+        // A session opened with detection (no override), carrying user work.
+        let detected_id =
+            crate::core::session_identity::derive_file_session_id_from_disk(&file, None);
+        insert_session(&state, &detected_id, Some(&path));
+        state.bookmarks.lock().unwrap().insert(
+            detected_id.clone(),
+            vec![sample_bookmark("bm-1", &detected_id, 42)],
+        );
+
+        let rescued = rescue_artifacts_for_replacement(&state, &file, &path)
+            .expect("rescue must succeed");
+
+        assert_eq!(rescued.bookmarks.len(), 1, "the bookmark must be rescued");
+        assert_eq!(rescued.bookmarks[0].line_number, 42, "line reference is preserved");
+        assert!(
+            state.bookmarks.lock().unwrap().get(&detected_id).is_none(),
+            "rescued artifacts are taken, not copied — the old id must be emptied"
+        );
+
+        // Re-key onto the id a Kernel-override reopen would produce.
+        let override_id =
+            crate::core::session_identity::derive_file_session_id_from_disk(&file, Some("Kernel"));
+        assert_ne!(override_id, detected_id, "the override must change the id");
+        rescued.restore_onto(&state, &override_id).expect("restore");
+
+        let bm = state.bookmarks.lock().unwrap();
+        let carried = bm.get(&override_id).expect("the new session must inherit the bookmark");
+        assert_eq!(carried.len(), 1);
+        assert_eq!(
+            carried[0].session_id, override_id,
+            "the embedded session_id must be rewritten too — storing under the new map key \
+             alone leaves it pointing at a session that no longer exists, and that value \
+             travels out over the MCP bridge and into workspace saves"
+        );
+    }
+
+    /// The guard that keeps the rescue honest. If the file's bytes changed, the
+    /// stale session's id can no longer be reproduced from disk, and its
+    /// bookmarks refer to lines that no longer mean the same thing. They must
+    /// die with the old session rather than being grafted onto new content.
+    #[test]
+    fn replaced_file_does_not_inherit_stale_artifacts() {
+        use std::fs;
+        let state = make_state();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let file = tmp.path().join("device.log");
+        fs::write(&file, "original content
+").expect("write");
+        let path = file.to_string_lossy().to_string();
+
+        let old_id = crate::core::session_identity::derive_file_session_id_from_disk(&file, None);
+        insert_session(&state, &old_id, Some(&path));
+        state.bookmarks.lock().unwrap().insert(
+            old_id.clone(),
+            vec![sample_bookmark("bm-stale", &old_id, 3)],
+        );
+
+        // The file is replaced underneath the open session.
+        fs::write(&file, "completely different content, many more lines
+").expect("rewrite");
+
+        let rescued = rescue_artifacts_for_replacement(&state, &file, &path)
+            .expect("rescue must succeed");
+
+        assert!(
+            rescued.bookmarks.is_empty(),
+            "artifacts from a session whose file changed must NOT be carried forward"
+        );
+        assert!(
+            state.bookmarks.lock().unwrap().get(&old_id).is_some(),
+            "they are left in place for close_session_inner to purge with the session"
+        );
+    }
+
 
     /// The raw-string fallback: when the incoming path cannot be canonicalized
     /// (e.g. a virtual/nonexistent path), a stale entry with the same raw string
@@ -2121,13 +2433,13 @@ mod tests {
         let state = make_state();
 
         // First load: derive id, close stale (none yet), register.
-        let id1 = crate::core::session_identity::derive_file_session_id_from_disk(path_obj);
+        let id1 = crate::core::session_identity::derive_file_session_id_from_disk(path_obj, None);
         close_stale_sessions(&state, None, &path).unwrap();
         insert_session(&state, &id1, Some(&path));
 
         // Second load of the SAME unchanged file: same deterministic id;
         // close_stale_sessions closes the first before the second registers.
-        let id2 = crate::core::session_identity::derive_file_session_id_from_disk(path_obj);
+        let id2 = crate::core::session_identity::derive_file_session_id_from_disk(path_obj, None);
         assert_eq!(id1, id2, "same unchanged file must derive the same session id");
         close_stale_sessions(&state, None, &path).unwrap();
         insert_session(&state, &id2, Some(&path));

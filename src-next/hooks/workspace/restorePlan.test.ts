@@ -7,8 +7,13 @@ import type { LtwManifestSession, LoadWorkspaceSessionData } from '../../bridge/
 // Factories
 // ---------------------------------------------------------------------------
 
-function session(filePath: string): LtwManifestSession {
-  return { filePath, sourceName: filePath.split(/[\\/]/).pop() ?? filePath, sourceType: 'Logcat' };
+function session(filePath: string, sourceTypeOverride?: string): LtwManifestSession {
+  return {
+    filePath,
+    sourceName: filePath.split(/[\\/]/).pop() ?? filePath,
+    sourceType: 'Logcat',
+    ...(sourceTypeOverride ? { sourceTypeOverride } : {}),
+  };
 }
 
 function data(tag: string): LoadWorkspaceSessionData {
@@ -28,6 +33,49 @@ function tab(tabId: string, paneId: string, isActive = false): StoredTab {
 // ---------------------------------------------------------------------------
 // planStartupRestore — union / dedup / ordering
 // ---------------------------------------------------------------------------
+
+describe('planStartupRestore — source-type override replay', () => {
+  it('replays a persisted override so the session reopens with the corrected type', () => {
+    const plan = planStartupRestore({
+      sessions: [session('/board.txt', 'Kernel')],
+      storedTabs: [tab('t1', 'p1')],
+      tabPaths: { t1: '/board.txt' },
+      hasLocalLayout: true,
+    });
+
+    const load = plan.loads.find((l) => l.path === '/board.txt')!;
+    expect(load.sourceType).toBe('Kernel');
+  });
+
+  // Replaying a DETECTED type would freeze detection for that workspace: a later
+  // fix to the detector could never take effect on an already-saved one. Only an
+  // explicit override is persisted, so a detected-type entry must carry nothing.
+  it('does not replay a detected type — the session must re-detect on restore', () => {
+    const plan = planStartupRestore({
+      sessions: [session('/a.log')],
+      storedTabs: [tab('t1', 'p1')],
+      tabPaths: { t1: '/a.log' },
+      hasLocalLayout: true,
+    });
+
+    const load = plan.loads.find((l) => l.path === '/a.log')!;
+    expect(load.sourceType).toBeUndefined();
+  });
+
+  // A tab the manifest never recorded has no override to replay — the union
+  // branch must not invent one from a neighbouring entry.
+  it('leaves localStorage-only tabs without an override', () => {
+    const plan = planStartupRestore({
+      sessions: [session('/board.txt', 'Kernel')],
+      storedTabs: [tab('t1', 'p1'), tab('t2', 'p1')],
+      tabPaths: { t1: '/board.txt', t2: '/later.log' },
+      hasLocalLayout: true,
+    });
+
+    expect(plan.loads.find((l) => l.path === '/board.txt')!.sourceType).toBe('Kernel');
+    expect(plan.loads.find((l) => l.path === '/later.log')!.sourceType).toBeUndefined();
+  });
+});
 
 describe('planStartupRestore', () => {
   it('manifest ⊂ tabs — extra stored tabs are appended as dataIndex:null with a warning', () => {

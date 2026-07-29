@@ -1,6 +1,6 @@
 {
   "name": "official",
-  "version": 10,
+  "version": 12,
   "owner": {
     "name": "LogTapper"
   },
@@ -288,7 +288,8 @@
       "license": null,
       "processor_type": "reporter",
       "source_types": [
-        "logcat"
+        "logcat",
+        "bugreport"
       ],
       "deprecated": false
     },
@@ -310,7 +311,8 @@
       "license": null,
       "processor_type": "reporter",
       "source_types": [
-        "logcat"
+        "logcat",
+        "bugreport"
       ],
       "deprecated": false
     },
@@ -333,7 +335,8 @@
       "license": null,
       "processor_type": "reporter",
       "source_types": [
-        "logcat"
+        "logcat",
+        "bugreport"
       ],
       "deprecated": false
     },
@@ -406,7 +409,8 @@
       "processor_type": "reporter",
       "source_types": [
         "logcat",
-        "bugreport"
+        "bugreport",
+        "dumpstate"
       ],
       "deprecated": false
     },
@@ -668,7 +672,7 @@
     {
       "id": "p2p-group-formation-tracker",
       "name": "P2P Group Formation Tracker",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Tracks Wi-Fi Direct (P2P) group formation lifecycle from discovery through GO Negotiation, client association, and group teardown. Detects GO Negotiation race conditions, formation timeouts (15 second spec deadline), and client association failures.",
       "path": "processors/p2p_group_formation_tracker.yaml",
       "tags": [
@@ -683,14 +687,15 @@
       "license": null,
       "processor_type": "state_tracker",
       "source_types": [
-        "logcat"
+        "logcat",
+        "bugreport"
       ],
       "deprecated": false
     },
     {
       "id": "p2p-go-negotiation-events",
       "name": "P2P GO Negotiation Events",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Emits events for every Wi-Fi Direct GO Negotiation exchange — requests, responses, confirms, race conditions, and timeouts. Tracks negotiation success/failure rates and detects simultaneous initiation race conditions.",
       "path": "processors/p2p_go_negotiation_events.yaml",
       "tags": [
@@ -705,14 +710,15 @@
       "license": null,
       "processor_type": "reporter",
       "source_types": [
-        "logcat"
+        "logcat",
+        "bugreport"
       ],
       "deprecated": false
     },
     {
       "id": "p2p-wps-provisioning-tracker",
       "name": "P2P WPS Provisioning Tracker",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Tracks WPS provisioning during Wi-Fi Direct group formation — EAP authentication, WPS M1-M8 message exchange, and 4-way handshake. Detects WPS failures, EAP timeouts, and authentication rejections.",
       "path": "processors/p2p_wps_provisioning_tracker.yaml",
       "tags": [
@@ -728,14 +734,15 @@
       "license": null,
       "processor_type": "state_tracker",
       "source_types": [
-        "logcat"
+        "logcat",
+        "bugreport"
       ],
       "deprecated": false
     },
     {
       "id": "usb-enumeration-health",
       "name": "USB Enumeration Health",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Diagnoses USB enumeration failures from kernel logs. Buckets failures by stage (port reset, descriptor read, SET_ADDRESS, give-up) and by errno, and tracks the device-number climb rate. Failures spread across every stage indicate a marginal physical link rather than a driver fault.",
       "path": "processors/usb_enumeration_health.yaml",
       "tags": [
@@ -751,6 +758,7 @@
       "processor_type": "reporter",
       "source_types": [
         "kernel",
+        "bugreport",
         "dumpstate",
         "logcat"
       ],
@@ -759,7 +767,7 @@
     {
       "id": "usb-netdev-lifetime",
       "name": "USB Netdev Lifetime",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Pairs USB network-driver register/unregister events and reports how long each interface survived. Lifetimes measured in milliseconds, or a decaying lifetime series, indicate a failing USB link. Covers cdc_eem, cdc_ncm, cdc_ether, usbnet, rndis_host, r8152 and ax88xxx.",
       "path": "processors/usb_netdev_lifetime.yaml",
       "tags": [
@@ -775,6 +783,7 @@
       "processor_type": "reporter",
       "source_types": [
         "kernel",
+        "bugreport",
         "dumpstate",
         "logcat"
       ],
@@ -833,7 +842,7 @@
     {
       "id": "wifi-diagnostics",
       "name": "WiFi Diagnostics",
-      "version": "2.0.0",
+      "version": "2.0.1",
       "description": "Full WiFi connection analysis — state tracking, disconnect events, probe monitoring, and Wi-Fi Direct P2P group formation diagnostics",
       "path": "packs/wifi-diagnostics.pack.yaml",
       "tags": [
@@ -969,7 +978,7 @@
     {
       "id": "usb-ethernet-diagnostics",
       "name": "USB Ethernet Diagnostics",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "description": "USB-attached Ethernet analysis — enumeration health, interface lifetime, IP configuration auditing, and framework-side flap detection",
       "path": "packs/usb-ethernet-diagnostics.pack.yaml",
       "tags": [

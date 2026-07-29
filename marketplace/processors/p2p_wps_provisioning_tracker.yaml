@@ -1,7 +1,7 @@
 type: state_tracker
 id: p2p-wps-provisioning-tracker
 name: P2P WPS Provisioning Tracker
-version: 1.0.0
+version: 1.0.1
 author: LogTapper
 description: "Tracks the WPS provisioning exchange during Wi-Fi Direct group formation — from client association through EAP authentication, WPS M1-M8 message exchange, and 4-way handshake completion. Detects WPS failures, EAP timeouts, and authentication rejections."
 tags: [network, wifi, p2p, wifi-direct, wps, android]
@@ -242,7 +242,7 @@ output:
   annotate: true
 
 schema:
-  source_types: ["logcat"]
+  source_types: ["logcat", "bugreport"]
   emissions: []
   mcp:
     summary:

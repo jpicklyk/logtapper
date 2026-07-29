@@ -12,7 +12,7 @@
  */
 import { bus } from '../../events/bus';
 import { restoreWorkspaceSession } from '../../bridge/commands';
-import type { LoadWorkspaceSessionData, LtwEditorTab } from '../../bridge/types';
+import type { LoadWorkspaceSessionData, LtwEditorTab, SourceType } from '../../bridge/types';
 import { pairArtifactsWithSessions } from './artifactPairing';
 import { buildEditorTabEvents } from './workspacePersistence';
 import { buildRestoreOutcomes, isLts, type RestorePlan } from './restorePlan';
@@ -32,8 +32,15 @@ export interface RestoreResult {
 
 export interface RestoreIo {
   /** `useFileSession.loadFile` — accepts the optional persisted tab id at runtime
-   *  even though the public `LogViewerActions` type elides it. */
-  loadFile: (path: string, paneId?: string, existingTabId?: string) => Promise<void>;
+   *  even though the public `LogViewerActions` type elides it. `sourceType`
+   *  replays a persisted override so the session re-detects nothing and resolves
+   *  to the same id it had when saved. */
+  loadFile: (
+    path: string,
+    paneId?: string,
+    existingTabId?: string,
+    sourceType?: SourceType,
+  ) => Promise<void>;
   /** Triggers (or arms) the pipeline auto-run for a restored session, with that
    *  session's restored chain passed explicitly (see autoRunScheduler for why the
    *  chain is not read from the global ref). */
@@ -73,7 +80,7 @@ export async function restoreWorkspace(
       for (const load of plan.loads) {
         const before = loadedOrder.length;
         try {
-          await io.loadFile(load.path, load.paneId, load.existingTabId);
+          await io.loadFile(load.path, load.paneId, load.existingTabId, load.sourceType as SourceType | undefined);
         } catch (e) {
           console.warn(`[restoreWorkspace] Failed to load ${load.path}:`, e);
         }

@@ -197,6 +197,29 @@
   opacity: 0.5;
 }
 
+/* Excluded by the backend before the run — visually distinct from both
+   "ran and matched nothing" (dimmed count) and "not run yet" (--), because it
+   is neither. The reason arrives on the summary's `skipped` field. */
+.procRowSkipped {
+  opacity: 0.55;
+}
+
+.procRowSkipped .procRowName {
+  font-style: italic;
+}
+
+.procRowStatsSkipped {
+  color: var(--text-dimmed);
+  font-style: italic;
+}
+
+.skipNotice {
+  font-size: 11px;
+  color: var(--warning);
+  margin-top: -4px;
+  margin-bottom: 8px;
+}
+
 /* Detail panel */
 .detail {
   flex: 1;

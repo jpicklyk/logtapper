@@ -56,6 +56,16 @@ pub struct LtwManifestSession {
     pub source_name: String,
     /// Source type: Logcat, Bugreport, Dumpstate, Kernel, Unknown.
     pub source_type: String,
+    /// The label a caller explicitly supplied at open to replace content
+    /// detection, or `None` when the type above was detected.
+    ///
+    /// Only an explicit override is persisted. `source_type` records what the
+    /// session ended up as and is informational; replaying *it* on restore
+    /// would freeze detection, so a later detector fix could never reach an
+    /// already-saved workspace. Defaults on read, so `.ltw` files written
+    /// before this field existed still load.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_type_override: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +300,80 @@ mod tests {
         assert!(data.layout.is_none());
     }
 
+    /// The override must survive a save/load cycle, and a detected-type session
+    /// must persist nothing — replaying a detected type would freeze detection
+    /// for that workspace, so a later fix to the detector could never reach it.
+    /// Also pins backward compatibility: a manifest written before the field
+    /// existed still reads, with the override absent.
+    #[test]
+    fn round_trip_source_type_override() {
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path();
+
+        let no_bookmarks: Vec<Bookmark> = vec![];
+        let no_analyses: Vec<AnalysisArtifact> = vec![];
+        let meta = SessionMeta::default();
+        let entries = vec![
+            (
+                LtwManifestSession {
+                    file_path: "/logs/dumpstate_board.txt".into(),
+                    source_name: "dumpstate_board.txt".into(),
+                    source_type: "Kernel".into(),
+                    source_type_override: Some("Kernel".into()),
+                },
+                no_bookmarks.as_slice(),
+                no_analyses.as_slice(),
+                &meta,
+            ),
+            (
+                LtwManifestSession {
+                    file_path: "/logs/device.log".into(),
+                    source_name: "device.log".into(),
+                    source_type: "Logcat".into(),
+                    source_type_override: None,
+                },
+                no_bookmarks.as_slice(),
+                no_analyses.as_slice(),
+                &meta,
+            ),
+        ];
+
+        write_ltw(
+            path,
+            "Overrides",
+            None,
+            &entries,
+            &LtwPipelineChain::default(),
+            &[],
+            None,
+        )
+        .unwrap();
+
+        let data = read_ltw(path).unwrap();
+        assert_eq!(
+            data.manifest.sessions[0].source_type_override.as_deref(),
+            Some("Kernel"),
+            "an explicit override must survive the round trip"
+        );
+        assert_eq!(
+            data.manifest.sessions[1].source_type_override, None,
+            "a detected type must persist no override"
+        );
+    }
+
+    /// A `.ltw` written before `sourceTypeOverride` existed must still parse.
+    #[test]
+    fn manifest_session_without_override_field_still_deserializes() {
+        let json = r#"{
+            "filePath": "/logs/device.log",
+            "sourceName": "device.log",
+            "sourceType": "Logcat"
+        }"#;
+        let parsed: LtwManifestSession = serde_json::from_str(json).expect("legacy entry parses");
+        assert_eq!(parsed.source_type_override, None);
+        assert_eq!(parsed.source_type, "Logcat");
+    }
+
     #[test]
     fn round_trip_multi_session_workspace() {
         let tmp = NamedTempFile::new().unwrap();
@@ -311,6 +395,7 @@ mod tests {
                     file_path: "/logs/device-a.log".into(),
                     source_name: "device-a.log".into(),
                     source_type: "Logcat".into(),
+                    source_type_override: None,
                 },
                 bk1.as_slice(),
                 art1.as_slice(),
@@ -321,6 +406,7 @@ mod tests {
                     file_path: "/logs/bugreport.zip".into(),
                     source_name: "bugreport.zip".into(),
                     source_type: "Bugreport".into(),
+                    source_type_override: None,
                 },
                 bk2.as_slice(),
                 no_analyses.as_slice(),

@@ -631,6 +631,11 @@ struct OpenFileBody {
     /// Absolute local path to open. Must resolve inside the configured
     /// `mcp_open_allowlist`, or match an already-open session.
     path: String,
+    /// Optional source-type override, replacing content detection for this
+    /// session. See [`crate::core::session::SourceType::from_label`] for the
+    /// accepted labels.
+    #[serde(default, rename = "sourceType")]
+    source_type: Option<String>,
 }
 
 /// Open a log file as a session on behalf of an MCP client, gated by the
@@ -686,8 +691,32 @@ async fn h_open_file(
             err(StatusCode::BAD_REQUEST, msg, "INVALID_PATH")
         }
         Ok(canonical) => {
+            // Validate the override before opening. An unknown label is a client
+            // error, not something to silently ignore — falling back to detection
+            // would defeat the whole point of supplying it.
+            let source_type_override = match body.source_type.as_deref() {
+                None => None,
+                Some(label) => match crate::core::session::SourceType::from_label(label) {
+                    Some(t) => Some(t),
+                    None => {
+                        return err(
+                            StatusCode::BAD_REQUEST,
+                            format!(
+                                "unknown sourceType '{label}'; expected one of: {}",
+                                crate::core::session::SourceType::labels().join(", ")
+                            ),
+                            "INVALID_SOURCE_TYPE",
+                        );
+                    }
+                },
+            };
             let canonical_str = canonical.to_string_lossy().to_string();
-            match crate::commands::files::open_file_inner(&state, &handle, &canonical_str) {
+            match crate::commands::files::open_file_inner(
+                &state,
+                &handle,
+                &canonical_str,
+                source_type_override,
+            ) {
                 Ok(results) => match results.first() {
                     Some(first) => {
                         // Notify the frontend so it creates a logviewer tab for this

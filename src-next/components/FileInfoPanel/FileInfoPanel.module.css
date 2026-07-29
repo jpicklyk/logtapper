@@ -52,6 +52,45 @@
   white-space: nowrap;
 }
 
+.typeRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Detection is a heuristic and it decides which processors run, so the
+   correction affordance sits next to the badge it corrects rather than being
+   buried in settings. */
+.reopenAs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.reopenAsLabel {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dimmed);
+}
+
+.reopenAsSelect {
+  font-size: 10px;
+  font-family: inherit;
+  color: var(--text-muted);
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 1px 4px;
+  cursor: pointer;
+}
+
+.reopenAsSelect:hover {
+  color: var(--text-subtle);
+}
+
 .typeBadge {
   align-self: flex-start;
   display: inline-flex;
@@ -67,9 +106,16 @@
   border-color: var(--text-dimmed);
 }
 
+/* Every type detection can return needs its own colour. Dumpstate in
+   particular is a first-class detected type — leaving it on the default
+   dimmed style made a Samsung dump visually identical to an unrecognised
+   one, which is the opposite of what the badge is for. */
 .typeBadge[data-source-type="Bugreport"] { color: var(--warning); border-color: var(--warning); }
+.typeBadge[data-source-type="Dumpstate"] { color: var(--warning); border-color: var(--warning); }
 .typeBadge[data-source-type="Logcat"]    { color: var(--success); border-color: var(--success); }
 .typeBadge[data-source-type="Kernel"]    { color: var(--android); border-color: var(--android); }
+.typeBadge[data-source-type="Radio"]     { color: var(--accent); border-color: var(--accent); }
+.typeBadge[data-source-type="Events"]    { color: var(--accent); border-color: var(--accent); }
 
 /* ── Stats grid ───────────────────────────────────────────────────────────── */
 

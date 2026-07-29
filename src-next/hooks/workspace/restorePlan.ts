@@ -38,6 +38,12 @@ export interface RestoreLoad {
    *  or `null` when the load carries no manifest artifacts (a localStorage tab
    *  opened after the last flush — union semantics). */
   dataIndex: number | null;
+  /** Source-type override to replay, when the manifest recorded one. Absent for
+   *  detected-type sessions, which must re-detect so a later detector fix takes
+   *  effect. Also what makes the restored session resolve to the same id — the
+   *  override is part of the identity preimage. Only manifest-derived loads can
+   *  carry this; a localStorage-only tab has no record of it. */
+  sourceType?: string;
 }
 
 export interface RestorePlan {
@@ -125,6 +131,7 @@ function planRestore(input: PlanInput, applyLtwViewState: boolean): RestorePlan 
       existingTabId: tab?.tabId,
       dataIndex: i,
       isActive: tab?.isActive ?? false,
+      sourceType: sessions[i].sourceTypeOverride,
     });
   }
 

@@ -220,6 +220,14 @@
   margin-top: 3px;
 }
 
+/* Excluded by the backend before the run. Italic rather than a colour change
+   alone, matching ProcessorDashboard's skipped rows, so the two panels read the
+   same way — they previously disagreed, with this one showing "0 matched" for a
+   processor that never executed. */
+.nodeStatSkipped {
+  font-style: italic;
+}
+
 .nodeProgress {
   height: 3px;
   border-radius: var(--radius-xs);
@@ -481,6 +489,12 @@
   color: var(--text-dimmed);
   flex-shrink: 0;
   font-family: var(--font-mono);
+}
+
+/* "n/a" in the compact node, for a processor excluded before it ran. Italic so
+   it does not read as a numeric count at a glance. */
+.compactStatSkipped {
+  font-style: italic;
 }
 
 .compactLock {

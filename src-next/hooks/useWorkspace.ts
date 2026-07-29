@@ -58,7 +58,11 @@ export interface WorkspaceActions {
  */
 export function useWorkspace(
   closeAllSessions: () => Promise<void>,
-  loadFile: (path: string, paneId?: string, existingTabId?: string) => Promise<void>,
+  // Must mirror RestoreIo['loadFile'] exactly — it is assigned straight into a
+  // RestoreIo below. A narrower signature here still compiles (fewer params are
+  // assignable to more) but documents a contract this does not have, and invites
+  // the next refactor to wrap it and drop the extra argument.
+  loadFile: RestoreIo['loadFile'],
   scheduleAutoRun: (sessionId: string, isIndexing: boolean | undefined, chain: string[], disabled: string[]) => void,
   getDefaultDir?: () => string | undefined,
   getPipelineChain?: () => string[],

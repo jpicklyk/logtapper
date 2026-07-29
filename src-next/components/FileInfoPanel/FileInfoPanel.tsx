@@ -3,7 +3,7 @@ import clsx from 'clsx';
 import {
   FileText, Smartphone, Clock, HardDrive, Layers, Hash, Search, AlertTriangle,
 } from 'lucide-react';
-import type { DumpstateMetadata } from '../../bridge/types';
+import type { DumpstateMetadata, SourceType } from '../../bridge/types';
 import { isBugreportLike } from '../../bridge/types';
 import type { IndexingProgress } from '../../context';
 import { Input } from '../../ui';
@@ -40,7 +40,24 @@ interface FileInfoPanelProps {
   onToggleGroup?: (indices: number[]) => void;
   onClearSectionFilter?: () => void;
   isSectionFilterActive?: boolean;
+  /** Reopen this file with an explicit source type, replacing detection.
+   *  Absent for streaming sessions and any session with no backing file. */
+  onReopenAs?: (sourceType: SourceType) => void;
 }
+
+/** Types a user can reopen a file as. Mirrors the labels the backend's
+ *  `SourceType::from_label` accepts; `Unknown` is a frontend-only sentinel and
+ *  is deliberately not offered. */
+const REOPEN_SOURCE_TYPES: SourceType[] = [
+  'Logcat',
+  'Kernel',
+  'Radio',
+  'Events',
+  'Bugreport',
+  'Dumpstate',
+  'Tombstone',
+  'ANRTrace',
+];
 
 // ── Stat cell ────────────────────────────────────────────────────────────────
 
@@ -98,6 +115,7 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
     onToggleGroup,
     onClearSectionFilter,
     isSectionFilterActive,
+    onReopenAs,
   }) {
     const isScanning = !!sourceType && isBugreportLike(sourceType) && indexingProgress !== null;
     const duration = formatDuration(firstTimestamp, lastTimestamp);
@@ -151,9 +169,34 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
             </span>
           </div>
           {sourceType && (
-            <span className={styles.typeBadge} data-source-type={sourceType}>
-              {sourceType}
-            </span>
+            <div className={styles.typeRow}>
+              <span className={styles.typeBadge} data-source-type={sourceType}>
+                {sourceType}
+              </span>
+              {onReopenAs && (
+                <label className={styles.reopenAs}>
+                  <span className={styles.reopenAsLabel}>reopen as</span>
+                  <select
+                    className={styles.reopenAsSelect}
+                    value={sourceType}
+                    aria-label="Reopen this file as a different source type"
+                    title={
+                      'The source type is detected from the file\'s leading bytes and decides ' +
+                      'both how lines are parsed and which processors are eligible to run. ' +
+                      'If detection got it wrong, reopen the file as the correct type.'
+                    }
+                    onChange={(e) => {
+                      const next = e.target.value as SourceType;
+                      if (next !== sourceType) onReopenAs(next);
+                    }}
+                  >
+                    {REOPEN_SOURCE_TYPES.map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
           )}
         </div>
 

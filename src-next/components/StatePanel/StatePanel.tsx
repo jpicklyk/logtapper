@@ -265,12 +265,14 @@ const StatePanel = React.memo(function StatePanel() {
         const manualState = manualCollapsed.get(ts.trackerId);
         const isCollapsed = manualState !== undefined ? manualState : !hasData && !ts.loading;
 
-        // Sections from the definition, falling back to source types from schema.
+        // Bugreport section names this tracker targets, from the definition or
+        // from the run snapshot. Deliberately does NOT fall back to the
+        // processor's `sourceTypes`: those are eligibility (which log formats
+        // the processor applies to), not sections within a bugreport, and
+        // rendering them here labelled them as something they are not.
         const sources = meta?.trackerSections?.length
           ? meta.trackerSections
-          : (ts.snapshot?.sourceSections?.length
-              ? ts.snapshot.sourceSections
-              : (meta?.sourceTypes ?? []));
+          : (ts.snapshot?.sourceSections ?? []);
 
         return (
           <div key={ts.trackerId} className={`${styles.card} ${isCollapsed ? styles.cardCollapsed : ''}`}>

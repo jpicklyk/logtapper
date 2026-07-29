@@ -203,6 +203,8 @@ Raw lines ─► Pre-filter (tag union, Aho-Corasick, RegexSet) ─► skip unne
 
 **Pre-filter:** `quick_extract_tag()` + Aho-Corasick/RegexSet check whether any Layer 2 processor could match. **Transformers are excluded from pre-filter** — they run in Layer 1 on all parsed lines but only narrow what reaches Layer 2. Including them would set `has_unfiltered=true` and disable the entire pre-filter.
 
+That pre-filter exemption is narrow and must not be read as a general one. **Transformers ARE subject to declared `source_types` enforcement**, in both `run_pipeline` and `flush_batch` — a transformer rewrites or drops lines before any Layer 2 processor sees them, so running one against a source it does not understand corrupts every downstream processor's input rather than merely wasting work. The built-in `__pii_anonymizer` declares no schema, so it is never excluded; that is deliberate and pinned by a test, because a skipped anonymizer means unredacted PII reaching exports and the MCP bridge.
+
 **Parser dispatch:** `parser_for(&source_type)` selects the correct parser (Logcat, Kernel, Bugreport) based on the session's detected source type.
 
 ### ADB streaming architecture

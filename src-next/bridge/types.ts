@@ -3,7 +3,26 @@
 
 export type LogLevel = 'Verbose' | 'Debug' | 'Info' | 'Warn' | 'Error' | 'Fatal';
 
-export type SourceType = 'Bugreport' | 'Dumpstate' | 'Logcat' | 'Kernel' | 'Unknown';
+/**
+ * Mirrors the Rust `SourceType` enum in `src-tauri/src/core/session.rs` — that
+ * enum is the source of truth. `Radio` is reachable from content detection;
+ * `Events`, `Tombstone` and `ANRTrace` exist on the backend and can arrive over
+ * IPC. `Custom { parser_id }` serializes as `Custom(<id>)` and is intentionally
+ * not enumerated here.
+ *
+ * `'Unknown'` is NOT a backend variant — it is a frontend-only fallback used
+ * when a session's type cannot be resolved locally (see `useSessionTabManager`).
+ */
+export type SourceType =
+  | 'Bugreport'
+  | 'Dumpstate'
+  | 'Logcat'
+  | 'Kernel'
+  | 'Radio'
+  | 'Events'
+  | 'Tombstone'
+  | 'ANRTrace'
+  | 'Unknown';
 
 /** Dumpstate is a superset of Bugreport (Samsung dumps). Both need identical UI treatment. */
 export function isBugreportLike(t: SourceType | string): boolean {
@@ -353,6 +372,25 @@ export interface PipelineRunSummary {
    * buffer (spilled to disk, not read back in for the pipeline scan). Not
    * currently rendered in the UI. */
   scannedFrom?: number;
+  /** Present when the backend excluded this processor before running it, so
+   * `matchedLines: 0` means "never ran" rather than "ran and matched nothing".
+   *
+   * The backend owns this decision — do NOT re-derive it here by comparing the
+   * session's source type against the processor's declared `sourceTypes`. A
+   * second implementation of that rule is exactly how the frontend and backend
+   * drift (the `Dumpstate`/`Bugreport` superset asymmetry is easy to invert).
+   * Render what arrives. */
+  skipped?: SkipReason;
+}
+
+/** Why the backend excluded a processor from a run before executing it. */
+export interface SkipReason {
+  /** Machine-readable discriminant, currently only `source_type_mismatch`. */
+  reason: string;
+  /** The processor's declared `source_types`. */
+  declared: string[];
+  /** The session's actual source type. */
+  actual: string;
 }
 
 export interface MatchedLine {
@@ -837,6 +875,11 @@ export interface LtwManifestSession {
   filePath: string;
   sourceName: string;
   sourceType: string;
+  /** The label explicitly supplied at open to replace content detection, absent
+   *  when `sourceType` was detected. Only this is replayed on restore —
+   *  replaying `sourceType` would freeze detection, so a later fix to the
+   *  detector could never reach an already-saved workspace. */
+  sourceTypeOverride?: string;
 }
 
 export interface LtwPipelineChain {

@@ -86,7 +86,24 @@ fn read_len_and_prefix(path: &Path) -> (u64, Vec<u8>) {
 /// deliberately: an *appended* file (same first 64 KiB, larger length) changes
 /// id too. Residual "same id ⇒ byte-identical prefix + length" means any stale
 /// cache line under a reused id would be identical anyway.
-pub fn derive_file_session_id(path: &Path, file_len: u64, content_prefix: &[u8]) -> String {
+///
+/// `source_type_override` participates in the preimage so that reopening the
+/// same bytes under a different type is a *different* session. It has to: the
+/// line index is built with the parser the type selects, so two sessions with
+/// the same id but different types would disagree about every line's level,
+/// tag and timestamp — and anything keyed by session id (notably the frontend
+/// line cache) would silently serve the older parse.
+///
+/// `None` is excluded from the preimage entirely rather than hashed as an empty
+/// value, so an ordinary detected-type open keeps the exact id it has always
+/// had. That stability is load-bearing: MCP handles survive restarts and
+/// restore diagnostics correlate on it.
+pub fn derive_file_session_id(
+    path: &Path,
+    file_len: u64,
+    content_prefix: &[u8],
+    source_type_override: Option<&str>,
+) -> String {
     let canonical = canonical_path_string(path).to_lowercase();
     let inner = Sha256::digest(content_prefix);
     let mut hasher = Sha256::new();
@@ -94,15 +111,21 @@ pub fn derive_file_session_id(path: &Path, file_len: u64, content_prefix: &[u8])
     hasher.update([0u8]); // domain separator between the variable-length path and fixed fields
     hasher.update(file_len.to_le_bytes());
     hasher.update(inner);
+    if let Some(label) = source_type_override {
+        // Separator keeps the override from aliasing into the fixed-width
+        // fields above, and keeps `Some("")` distinct from `None`.
+        hasher.update([1u8]);
+        hasher.update(label.as_bytes());
+    }
     format!("f-{}", truncated_hex(&hasher.finalize()))
 }
 
 /// Derive a file session id by reading length + content prefix from disk.
 /// Pass the *original* user-facing path (for a `.zip` bugreport this is the
 /// `.zip`, not the temp extraction) so the id is stable across restarts.
-pub fn derive_file_session_id_from_disk(path: &Path) -> String {
+pub fn derive_file_session_id_from_disk(path: &Path, source_type_override: Option<&str>) -> String {
     let (file_len, prefix) = read_len_and_prefix(path);
-    derive_file_session_id(path, file_len, &prefix)
+    derive_file_session_id(path, file_len, &prefix, source_type_override)
 }
 
 /// Derive a stable id for one `.lts` archive entry. Every entry in a `.lts`
@@ -133,8 +156,8 @@ mod tests {
     #[test]
     fn file_id_is_deterministic() {
         let p = Path::new("/nonexistent/device.log");
-        let a = derive_file_session_id(p, 1234, b"hello world");
-        let b = derive_file_session_id(p, 1234, b"hello world");
+        let a = derive_file_session_id(p, 1234, b"hello world", None);
+        let b = derive_file_session_id(p, 1234, b"hello world", None);
         assert_eq!(a, b, "same input must derive the same id");
         assert!(a.starts_with("f-"), "file ids carry the `f-` prefix");
         assert_eq!(a.len(), 2 + ID_HEX_LEN, "prefix + 16 hex chars");
@@ -146,8 +169,8 @@ mod tests {
     // case; this keeps the assertion portable to Linux CI.)
     #[test]
     fn file_id_is_path_case_insensitive() {
-        let upper = derive_file_session_id(Path::new(r"C:\Logs\Device.LOG"), 10, b"x");
-        let lower = derive_file_session_id(Path::new(r"c:\logs\device.log"), 10, b"x");
+        let upper = derive_file_session_id(Path::new(r"C:\Logs\Device.LOG"), 10, b"x", None);
+        let lower = derive_file_session_id(Path::new(r"c:\logs\device.log"), 10, b"x", None);
         assert_eq!(upper, lower, "NTFS case-insensitivity: differing case must not change the id");
     }
 
@@ -155,8 +178,8 @@ mod tests {
     #[test]
     fn file_id_flips_on_content_change() {
         let p = Path::new("/nonexistent/device.log");
-        let a = derive_file_session_id(p, 1234, b"original content");
-        let b = derive_file_session_id(p, 1234, b"replaced content");
+        let a = derive_file_session_id(p, 1234, b"original content", None);
+        let b = derive_file_session_id(p, 1234, b"replaced content", None);
         assert_ne!(a, b, "replaced content at the same path must produce a new id");
     }
 
@@ -165,8 +188,8 @@ mod tests {
     fn file_id_flips_on_length_change() {
         let p = Path::new("/nonexistent/device.log");
         // Same first-64KiB prefix, different total length — models an append.
-        let short = derive_file_session_id(p, 1000, b"shared prefix bytes");
-        let long = derive_file_session_id(p, 2000, b"shared prefix bytes");
+        let short = derive_file_session_id(p, 1000, b"shared prefix bytes", None);
+        let long = derive_file_session_id(p, 2000, b"shared prefix bytes", None);
         assert_ne!(short, long, "an appended file (same prefix, larger len) must flip the id");
     }
 
@@ -178,16 +201,73 @@ mod tests {
         writeln!(tmp, "line one\nline two").unwrap();
         tmp.flush().unwrap();
 
-        let id1 = derive_file_session_id_from_disk(tmp.path());
-        let id2 = derive_file_session_id_from_disk(tmp.path());
+        let id1 = derive_file_session_id_from_disk(tmp.path(), None);
+        let id2 = derive_file_session_id_from_disk(tmp.path(), None);
         assert_eq!(id1, id2, "unchanged file must derive the same id across calls");
         assert!(id1.starts_with("f-"));
 
         // Appending leaves the first-64KiB prefix identical but grows the length.
         writeln!(tmp, "line three").unwrap();
         tmp.flush().unwrap();
-        let id3 = derive_file_session_id_from_disk(tmp.path());
+        let id3 = derive_file_session_id_from_disk(tmp.path(), None);
         assert_ne!(id1, id3, "appending to the file must flip the id (length in preimage)");
+    }
+
+    // ── File id: source-type override participates in identity ──────────────
+
+    /// The whole point of putting the override in the preimage: a reopen under a
+    /// different type must be a different session, because the line index is
+    /// built with the parser that type selects. Same id + different parse would
+    /// leave every id-keyed structure — notably the frontend line cache —
+    /// serving lines from the wrong parser.
+    #[test]
+    fn override_changes_the_file_id() {
+        let p = Path::new("/nonexistent/dumpstate_board.txt");
+        let detected = derive_file_session_id(p, 1234, b"same bytes", None);
+        let as_kernel = derive_file_session_id(p, 1234, b"same bytes", Some("Kernel"));
+        let as_dumpstate = derive_file_session_id(p, 1234, b"same bytes", Some("Dumpstate"));
+
+        assert_ne!(detected, as_kernel, "an override must not reuse the detected id");
+        assert_ne!(as_kernel, as_dumpstate, "different overrides must not collide");
+        assert_eq!(
+            as_kernel,
+            derive_file_session_id(p, 1234, b"same bytes", Some("Kernel")),
+            "the same override is still deterministic"
+        );
+    }
+
+    /// `None` must be excluded from the preimage entirely, not hashed as an
+    /// empty value. Ordinary opens keep the id they have always had — MCP
+    /// handles survive restarts and restore diagnostics correlate on it — and
+    /// `Some("")` must not alias onto `None`.
+    #[test]
+    fn absent_override_leaves_the_id_byte_identical() {
+        let p = Path::new("/nonexistent/device.log");
+
+        // Pinned against the pre-override derivation. If this value changes,
+        // every stored session id and MCP handle in the wild has been
+        // invalidated — that is a breaking change, not a test to update.
+        let expected = {
+            let canonical = canonical_path_string(p).to_lowercase();
+            let inner = Sha256::digest(b"hello world");
+            let mut hasher = Sha256::new();
+            hasher.update(canonical.as_bytes());
+            hasher.update([0u8]);
+            hasher.update(1234u64.to_le_bytes());
+            hasher.update(inner);
+            format!("f-{}", truncated_hex(&hasher.finalize()))
+        };
+
+        assert_eq!(
+            derive_file_session_id(p, 1234, b"hello world", None),
+            expected,
+            "a no-override id must match the original preimage exactly"
+        );
+        assert_ne!(
+            derive_file_session_id(p, 1234, b"hello world", Some("")),
+            expected,
+            "an empty override must not alias onto no override"
+        );
     }
 
     // ── .lts index disambiguation ───────────────────────────────────────────
@@ -223,7 +303,7 @@ mod tests {
     // ── Kinds stay disjoint ─────────────────────────────────────────────────
     #[test]
     fn id_kinds_are_disjoint_by_prefix() {
-        let f = derive_file_session_id(Path::new("/x/a"), 1, b"c");
+        let f = derive_file_session_id(Path::new("/x/a"), 1, b"c", None);
         let l = derive_lts_session_id(Path::new("/x/a"), 0);
         let a = derive_adb_session_id("s", 1);
         assert_ne!(&f[..2], &l[..2]);

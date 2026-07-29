@@ -93,6 +93,43 @@ impl SourceType {
         }
         false
     }
+
+    /// Parse a caller-supplied source-type label (IPC / MCP override).
+    ///
+    /// Case-insensitive over the `Display` spellings. `Custom` is deliberately
+    /// not parseable — it carries a parser id that only the registry can
+    /// resolve — so an override can only name a built-in type.
+    pub fn from_label(s: &str) -> Option<SourceType> {
+        const KNOWN: [SourceType; 8] = [
+            SourceType::Logcat,
+            SourceType::Kernel,
+            SourceType::Radio,
+            SourceType::Events,
+            SourceType::Bugreport,
+            SourceType::Dumpstate,
+            SourceType::Tombstone,
+            SourceType::ANRTrace,
+        ];
+        KNOWN
+            .iter()
+            .find(|t| t.to_string().eq_ignore_ascii_case(s))
+            .cloned()
+    }
+
+    /// Every label [`Self::from_label`] accepts, for error messages and for
+    /// the MCP tool's enum.
+    pub fn labels() -> &'static [&'static str] {
+        &[
+            "Logcat",
+            "Kernel",
+            "Radio",
+            "Events",
+            "Bugreport",
+            "Dumpstate",
+            "Tombstone",
+            "ANRTrace",
+        ]
+    }
 }
 
 impl std::fmt::Display for SourceType {
@@ -162,6 +199,16 @@ pub struct AnalysisSession {
     /// Holds the extracted temp file for zip-backed sessions. The temp file is
     /// deleted when the session is dropped. Must outlive the mmap.
     pub temp_file: Option<tempfile::NamedTempFile>,
+    /// The source-type label a caller explicitly supplied at open, replacing
+    /// content detection. `None` means the type was detected.
+    ///
+    /// The distinction matters for workspace persistence: only an *explicit*
+    /// override may be replayed on restore. Persisting a detected type would
+    /// freeze that detection forever, so a later fix to the detector could
+    /// never take effect on an already-saved workspace. It is also what makes
+    /// a restored session resolve to the same id, since the override is part
+    /// of the identity preimage (see `core::session_identity`).
+    pub source_type_override: Option<String>,
 }
 
 impl AnalysisSession {
@@ -173,6 +220,7 @@ impl AnalysisSession {
             tag_interner: TagInterner::new(),
             file_path: None,
             temp_file: None,
+            source_type_override: None,
         }
     }
 
@@ -338,13 +386,32 @@ impl AnalysisSession {
         source_id: String,
         max_bytes: usize,
     ) -> Result<(Arc<Mmap>, usize, usize), String> {
+        self.add_source_partial_typed(path, source_id, max_bytes, None)
+    }
+
+    /// As [`Self::add_source_partial`], but an explicit `source_type_override`
+    /// replaces content detection.
+    ///
+    /// The override has to be applied *here* rather than set on the source
+    /// afterwards: the line index is built with `parser_for(&source_type)`, so
+    /// correcting the type later would leave every `LineMeta` — level, tag and
+    /// timestamp — produced by the wrong parser. That is why the user-facing
+    /// affordance is "reopen as", not a live setter.
+    pub fn add_source_partial_typed(
+        &mut self,
+        path: &Path,
+        source_id: String,
+        max_bytes: usize,
+        source_type_override: Option<SourceType>,
+    ) -> Result<(Arc<Mmap>, usize, usize), String> {
         let file = File::open(path).map_err(|e| format!("Cannot open '{}': {e}", path.display()))?;
         let mmap = Arc::new(
             unsafe { Mmap::map(&file) }.map_err(|e| format!("Cannot mmap file: {e}"))?,
         );
         let total_bytes = mmap.len();
         let encoding = detect_encoding(mmap.as_ref());
-        let source_type = detect_source_type(&mmap, encoding);
+        let source_type =
+            source_type_override.unwrap_or_else(|| detect_source_type(&mmap, encoding));
         let parser = parser_for(&source_type);
         let (line_index, line_meta, bytes_consumed) =
             build_partial_line_index(mmap.as_ref(), parser.as_ref(), &mut self.tag_interner, max_bytes, encoding);
@@ -426,21 +493,38 @@ pub fn detect_source_type_from_slice(data: &[u8]) -> SourceType {
 /// Bytes sampled from the head of a file for source-type detection.
 ///
 /// Must reach past vendor preambles: Samsung `dumpstate_board.txt` carries ~380
-/// lines of boot-stat tables and `!@Boot:` markers before its first
-/// kernel-timestamped line, which a 4 KiB window never reached.
-const DETECT_SAMPLE_BYTES: usize = 64 * 1024;
+/// lines of boot-stat tables and `!@Boot:` markers — roughly 32 KB — before its
+/// first kernel-timestamped line, which a 4 KiB window never reached.
+///
+/// This is the *only* bound on how far detection looks; there is deliberately
+/// no line cap, which would be able to starve the scan independently. Sized at
+/// ~8x the observed preamble so a longer vendor header does not silently push
+/// the real content out of view. Detection runs once per file open against an
+/// mmap, so the scan itself is negligible; the cost is bounded by the one-time
+/// decode this allocates for UTF-16 inputs.
+const DETECT_SAMPLE_BYTES: usize = 256 * 1024;
 
-/// Maximum lines examined when counting format signatures within the sample.
-const DETECT_SCAN_LINES: usize = 600;
 
 fn detect_source_type_with_encoding(data: &[u8], encoding: Encoding) -> SourceType {
     let sample = &data[..data.len().min(DETECT_SAMPLE_BYTES)];
     let decoded_buf: String;
     let text: &str = match encoding {
-        Encoding::Utf8 => std::str::from_utf8(sample).unwrap_or(""),
+        Encoding::Utf8 => match std::str::from_utf8(sample) {
+            Ok(s) => s,
+            // The sample window can split a multi-byte character at its edge.
+            // Keep the valid prefix: discarding the whole sample would leave
+            // `text` empty, and every check below would fall through to the
+            // `Logcat` default regardless of what the file actually contains.
+            Err(e) => std::str::from_utf8(&sample[..e.valid_up_to()]).unwrap_or(""),
+        },
         Encoding::Utf16Le | Encoding::Utf16Be => {
             let skip = encoding.bom_len();
+            // `decode_utf16_bytes` rejects an odd byte count outright, which
+            // would collapse detection the same way. Split surrogates are
+            // already handled (they decode to U+FFFD), so trimming to a whole
+            // number of code units is enough.
             let raw = &sample[skip..];
+            let raw = &raw[..raw.len() - raw.len() % 2];
             decoded_buf = decode_utf16_bytes(raw, encoding == Encoding::Utf16Be).unwrap_or_default();
             &decoded_buf
         }
@@ -482,10 +566,15 @@ fn detect_source_type_with_encoding(data: &[u8], encoding: Encoding) -> SourceTy
 
 /// Count sampled lines that look like logcat-threadtime versus kernel
 /// (`[   12.345678]`) format. Returns `(logcat, kernel)`.
+///
+/// Every line in the sample is counted. `DETECT_SAMPLE_BYTES` is the only
+/// bound: a line cap would be the one thing able to starve the counter on a
+/// file whose preamble is longer than the cap, which is exactly the case this
+/// detection path exists to handle.
 fn count_format_signatures(sample: &str) -> (usize, usize) {
     let mut logcat = 0usize;
     let mut kernel = 0usize;
-    for line in sample.lines().take(DETECT_SCAN_LINES) {
+    for line in sample.lines() {
         if line.starts_with("-----") {
             continue;
         }
@@ -896,6 +985,12 @@ mod tests {
     /// Build a Samsung `dumpstate_board.txt`-shaped fixture: a long vendor
     /// preamble with no log-format signatures, then kernel-timestamped lines.
     fn vendor_preamble_then_kernel(kernel_lines: usize) -> String {
+        vendor_preamble_then_kernel_with(400, kernel_lines)
+    }
+
+    /// As above, with an explicit preamble length so tests can push past any
+    /// line budget the scanner might reintroduce.
+    fn vendor_preamble_then_kernel_with(preamble_lines: usize, kernel_lines: usize) -> String {
         let mut s = String::from(
             "verbose logging: disabled\n\
              [default] Hello, world!\n\
@@ -903,7 +998,7 @@ mod tests {
              ------ POWER ON INFO (/proc/boot_stat) ------\n\
              boot event                    time(msec)  ktime(msec)  delta(msec)\n",
         );
-        for i in 0..400 {
+        for i in 0..preamble_lines {
             s.push_str(&format!(
                 "!@Boot: stage {:<40} :   {:>8}   {:>8}   {:>8}\n",
                 i,
@@ -976,6 +1071,82 @@ mod tests {
     #[test]
     fn empty_input_defaults_to_logcat() {
         assert_eq!(detect_source_type_from_slice(b""), SourceType::Logcat);
+    }
+
+    /// A preamble longer than the removed 600-line cap *and* longer than the
+    /// previous 64 KiB byte window must still not hide the kernel content
+    /// behind it. Both bounds failed this case for different reasons: the line
+    /// cap starved the signature count, and the byte window ended before the
+    /// kernel lines began.
+    #[test]
+    fn detects_kernel_behind_preamble_longer_than_any_line_budget() {
+        let s = vendor_preamble_then_kernel_with(900, 200);
+        let preamble_bytes = s.find("[     0.381122]").expect("fixture has kernel lines");
+        assert!(
+            preamble_bytes > 64 * 1024,
+            "preamble must overrun the old 64 KiB window to be meaningful \
+             (was {preamble_bytes} bytes)"
+        );
+        assert!(
+            preamble_bytes < DETECT_SAMPLE_BYTES,
+            "fixture must still fit the current window, or it tests nothing"
+        );
+        assert_eq!(
+            detect_source_type_from_slice(s.as_bytes()),
+            SourceType::Kernel,
+            "a 900-line preamble must not starve the format-signature count"
+        );
+    }
+
+    /// A multi-byte character straddling the sample window must not collapse
+    /// detection. `from_utf8` fails on the whole slice when the final char is
+    /// truncated; discarding it left `text` empty and every file fell through
+    /// to the `Logcat` default no matter what it contained.
+    #[test]
+    fn multibyte_char_split_by_sample_window_does_not_break_detection() {
+        let line = b"[  671.611514] pmon: Pending Wakeup Sources: sec-battery\n";
+        let mut v: Vec<u8> = Vec::new();
+        while v.len() < DETECT_SAMPLE_BYTES - 1 {
+            v.extend_from_slice(line);
+        }
+        v.truncate(DETECT_SAMPLE_BYTES - 1);
+        // 'é' is two bytes; 0xC3 is the last byte inside the sample window and
+        // 0xA9 falls outside it, so the sample ends mid-character.
+        v.extend_from_slice("é".as_bytes());
+        v.extend_from_slice(b"\n[     1.000000] more kernel\n");
+
+        assert!(
+            std::str::from_utf8(&v).is_ok(),
+            "the file as a whole is valid UTF-8"
+        );
+        assert!(
+            std::str::from_utf8(&v[..DETECT_SAMPLE_BYTES]).is_err(),
+            "the sample slice must actually split the character, or this test \
+             stops exercising the boundary"
+        );
+
+        assert_eq!(
+            detect_source_type_from_slice(&v),
+            SourceType::Kernel,
+            "a split character must not discard the sample"
+        );
+    }
+
+    /// The UTF-16 path rejects an odd byte count outright, which collapses
+    /// detection the same way a split UTF-8 char did.
+    #[test]
+    fn odd_length_utf16_sample_does_not_break_detection() {
+        let mut v: Vec<u8> = vec![0xFF, 0xFE]; // UTF-16 LE BOM
+        for _ in 0..40 {
+            for c in "[  671.611514] pmon: wakeup source\n".chars() {
+                let mut buf = [0u16; 2];
+                for unit in c.encode_utf16(&mut buf) {
+                    v.extend_from_slice(&unit.to_le_bytes());
+                }
+            }
+        }
+        v.push(0x00); // stray trailing byte — odd total length
+        assert_eq!(detect_source_type_from_slice(&v), SourceType::Kernel);
     }
 
     /// Helper: build a StreamLogSource with `n` retained lines and `evicted`

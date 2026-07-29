@@ -312,6 +312,28 @@
   color: var(--text-dimmed);
 }
 
+/* Source types are eligibility, not description — a processor is skipped
+   outright on a session of any other type. Outlined rather than filled so
+   they read as a constraint and don't blend into the descriptive tag row
+   directly beneath them. */
+.sourceTypes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 4px;
+}
+
+.sourceTypeChip {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+
 /* ── Tag filter chips (Browse toolbar) ───────────────────────────────────── */
 
 .tagFilterBar {

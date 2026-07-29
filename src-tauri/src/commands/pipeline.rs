@@ -7,7 +7,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::{lock_or_err, AppState};
 use crate::commands::pipeline_core::{
-    excluded_by_source_type, PartitionedDefs, PipelineCore,
+    excluded_by_declared_source_types, excluded_by_source_type, PartitionedDefs, PipelineCore,
 };
 use crate::core::line::PipelineContext;
 use crate::core::log_source::{decode_line_bytes, Encoding, FileLogSource, ZipLogSource};
@@ -53,6 +53,48 @@ pub struct PipelineRunSummary {
     /// not matching.
     #[serde(skip_serializing_if = "is_zero_usize")]
     pub scanned_from: usize,
+    /// Set when the processor was excluded before execution rather than run.
+    /// `matched_lines` is zero because it never ran, which is a different fact
+    /// from running and matching nothing — the same distinction `scanned_from`
+    /// draws one level down. Consumers render this; they do not re-derive it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skipped: Option<SkipReason>,
+}
+
+/// Why a processor was excluded from a run before it executed.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkipReason {
+    /// Stable machine-readable discriminant. Currently only
+    /// `"source_type_mismatch"`.
+    pub reason: &'static str,
+    /// The processor's declared `source_types`.
+    pub declared: Vec<String>,
+    /// The session's actual source type.
+    pub actual: String,
+}
+
+/// Build the summary row for a processor excluded by its declared
+/// `source_types`. Free function rather than a closure so the exclusion passes
+/// below can each borrow the skip list independently.
+fn source_type_skip(
+    processor_id: &str,
+    declared: &[String],
+    actual: &crate::core::session::SourceType,
+) -> PipelineRunSummary {
+    PipelineRunSummary {
+        processor_id: processor_id.to_string(),
+        matched_lines: 0,
+        emission_count: 0,
+        script_errors: 0,
+        first_script_error: None,
+        scanned_from: 0,
+        skipped: Some(SkipReason {
+            reason: "source_type_mismatch",
+            declared: declared.to_vec(),
+            actual: actual.to_string(),
+        }),
+    }
 }
 
 fn is_zero_u32(v: &u32) -> bool {
@@ -253,12 +295,25 @@ pub fn execute_pipeline(
         tracker_defs: Vec::new(),
         correlator_defs: Vec::new(),
     };
+    // Declared `source_types` lives on `AnyProcessor::schema`, not on the
+    // per-kind def structs, so it has to be captured here while the registry
+    // entry is still in scope. Deliberately not copied onto the def types —
+    // that would duplicate the schema into the execution types and give it a
+    // second place to drift from.
+    let mut declared_source_types: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
     {
         let procs = lock_or_err(&state.processors, "processors")?;
         for id in processor_ids {
             let resolved = resolve_processor_id(&procs, id)
                 .unwrap_or_else(|| id.clone());
             if let Some(p) = procs.get(resolved.as_str()) {
+                if let Some(schema) = p.schema.as_ref() {
+                    if !schema.source_types.is_empty() {
+                        declared_source_types
+                            .insert(resolved.clone(), schema.source_types.clone());
+                    }
+                }
                 match &p.kind {
                     ProcessorKind::Transformer(d) => defs.transformer_defs.push((resolved, Arc::clone(d))),
                     ProcessorKind::Reporter(d) => defs.reporter_defs.push((resolved, Arc::clone(d))),
@@ -310,6 +365,59 @@ pub fn execute_pipeline(
         (snapshot, sid, stype, src_sections)
     };
     // Sessions lock released.
+
+    // ── Exclude processors whose declared source_types exclude this source ───
+    // Enforced here, in the backend, as the single decision point: the frontend
+    // renders this outcome rather than re-deriving the rule, so the two cannot
+    // drift. Excluded processors are reported as skip rows below instead of
+    // being dropped, because a processor that simply vanished from the run is
+    // indistinguishable from one that ran and matched nothing.
+    let mut skipped: Vec<PipelineRunSummary> = Vec::new();
+    {
+        let declared = |id: &str| -> Vec<String> {
+            declared_source_types.get(id).cloned().unwrap_or_default()
+        };
+        defs.reporter_defs.retain(|(id, _)| {
+            let d = declared(id);
+            if excluded_by_declared_source_types(&d, &source_type) {
+                skipped.push(source_type_skip(id, &d, &source_type));
+                return false;
+            }
+            true
+        });
+        defs.tracker_defs.retain(|(id, _)| {
+            let d = declared(id);
+            if excluded_by_declared_source_types(&d, &source_type) {
+                skipped.push(source_type_skip(id, &d, &source_type));
+                return false;
+            }
+            true
+        });
+        defs.correlator_defs.retain(|(id, _)| {
+            let d = declared(id);
+            if excluded_by_declared_source_types(&d, &source_type) {
+                skipped.push(source_type_skip(id, &d, &source_type));
+                return false;
+            }
+            true
+        });
+        // Transformers are included even though they are Layer 1, not Layer 2.
+        // They are excluded from the *pre-filter* (see `collect_prefilter_info`)
+        // for a different reason — an unfiltered transformer there would disable
+        // the whole optimisation — and that exemption must not be mistaken for a
+        // source-type exemption. A transformer rewrites or drops lines before any
+        // reporter, tracker or correlator sees them, so running one against a
+        // source it does not understand corrupts every downstream processor's
+        // input rather than merely wasting work.
+        defs.transformer_defs.retain(|(id, _)| {
+            let d = declared(id);
+            if excluded_by_declared_source_types(&d, &source_type) {
+                skipped.push(source_type_skip(id, &d, &source_type));
+                return false;
+            }
+            true
+        });
+    }
 
     // ── Pre-filter: exclude processors whose source_type filter doesn't match ─
     defs.reporter_defs.retain(|(_, def)| {
@@ -455,6 +563,7 @@ pub fn execute_pipeline(
             script_errors: result.script_errors,
             first_script_error: result.first_script_error.clone(),
             scanned_from,
+            skipped: None,
         });
         session_pipeline_results.insert(proc_id.clone(), result.clone());
     }
@@ -471,6 +580,7 @@ pub fn execute_pipeline(
                         script_errors: 0,
                         first_script_error: None,
                         scanned_from,
+                        skipped: None,
                     });
                 }
             }
@@ -486,6 +596,7 @@ pub fn execute_pipeline(
             script_errors: 0,
             first_script_error: None,
             scanned_from,
+            skipped: None,
         });
     }
 
@@ -501,6 +612,7 @@ pub fn execute_pipeline(
                         script_errors: 0,
                         first_script_error: None,
                         scanned_from,
+                        skipped: None,
                     });
                 }
             }
@@ -511,6 +623,11 @@ pub fn execute_pipeline(
         let mut pr = lock_or_err(&state.pipeline_results, "pipeline_results")?;
         pr.insert(session_id.to_string(), session_pipeline_results);
     }
+
+    // Processors excluded by their declared source_types never executed, so they
+    // produced no results to collect above. Append their skip rows so they stay
+    // visible in the run rather than silently disappearing from it.
+    summaries.extend(skipped);
 
     Ok(summaries)
 }
@@ -741,6 +858,7 @@ pipeline:
             script_errors: 0,
             first_script_error: None,
             scanned_from: 0,
+            skipped: None,
         };
         let json = serde_json::to_value(&zero).unwrap();
         assert!(json.get("scannedFrom").is_none(), "scannedFrom must be omitted when zero (files, unevicted streams)");
@@ -752,9 +870,39 @@ pipeline:
             script_errors: 0,
             first_script_error: None,
             scanned_from: 1234,
+            skipped: None,
         };
         let json = serde_json::to_value(&nonzero).unwrap();
         assert_eq!(json.get("scannedFrom").and_then(|v| v.as_u64()), Some(1234));
+    }
+
+    /// A skipped processor must be distinguishable from one that ran and
+    /// matched nothing — both report `matchedLines: 0`, so `skipped` is the
+    /// only thing carrying the difference to the frontend.
+    #[test]
+    fn skip_reason_serializes_only_when_present() {
+        let ran = PipelineRunSummary {
+            processor_id: "p".into(),
+            matched_lines: 0,
+            emission_count: 0,
+            script_errors: 0,
+            first_script_error: None,
+            scanned_from: 0,
+            skipped: None,
+        };
+        let json = serde_json::to_value(&ran).unwrap();
+        assert!(json.get("skipped").is_none(), "ran-but-matched-nothing carries no skip reason");
+
+        let skipped = source_type_skip(
+            "ethernet-config-audit",
+            &["logcat".to_string(), "bugreport".to_string()],
+            &crate::core::session::SourceType::Kernel,
+        );
+        let json = serde_json::to_value(&skipped).unwrap();
+        let s = json.get("skipped").expect("skipped processor carries a reason");
+        assert_eq!(s.get("reason").and_then(|v| v.as_str()), Some("source_type_mismatch"));
+        assert_eq!(s.get("actual").and_then(|v| v.as_str()), Some("Kernel"));
+        assert_eq!(json.get("matchedLines").and_then(|v| v.as_u64()), Some(0));
     }
 
     // ── Per-run cancellation registry semantics ──────────────────────────────

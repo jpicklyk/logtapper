@@ -1,5 +1,5 @@
 name: WiFi Diagnostics
-version: 2.0.0
+version: 2.0.1
 description: Full WiFi connection analysis — state tracking, disconnect events, probe monitoring, and Wi-Fi Direct P2P group formation diagnostics
 author: LogTapper
 tags: [network, wifi, p2p, android]
