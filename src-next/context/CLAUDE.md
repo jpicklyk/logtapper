@@ -120,7 +120,7 @@ These two used to diverge: `trackMutations` called only `markDirty`, while `useW
 
 Default stubs (no-op functions) ensure components always have valid action references during initialization. `HookWiring` (in `index.tsx`) instantiates domain hooks and injects real implementations via `ActionsProvider`.
 
-**Session-layer hooks:** `useBookmarks`, `useAnalysis`, `useWatches` are session-scoped and operate below the workspace action surface. They call bridge commands directly and emit `bus.emit('workspace:mutated')` at each mutation point. This is the correct pattern for their scope — they will migrate to per-session context providers with their own action surface in a future phase.
+**Session-layer hooks:** `useBookmarks`, `useAnalysis`, `useWatchList` are session-scoped and operate below the workspace action surface. They call bridge commands directly and emit `bus.emit('workspace:mutated')` at each mutation point. This is the correct pattern for their scope — they will migrate to per-session context providers with their own action surface in a future phase.
 
 **Backend-originated mutations:** `useBookmarks` and `useAnalysis` also emit `workspace:mutated` from their `bookmark-update` / `analysis-update` listeners, **before** the focused-session guard. An artifact created over the MCP bridge is written straight into `AppState` by the bridge handler — no frontend action runs, so nothing else marks the workspace dirty — and it frequently targets a session that is not focused, so emitting after the guard would miss it.
 

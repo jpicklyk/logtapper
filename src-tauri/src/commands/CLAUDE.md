@@ -27,3 +27,21 @@ Key points:
   - Universal (file + streaming): `get_lines`, `create_filter` / `get_filtered_lines` / `cancel_filter` / `close_filter`, all pipeline commands (`run_pipeline`, `get_pipeline_results`, etc.)
   - Streaming only: `save_live_capture`, `start_adb_stream`, `stop_adb_stream`, `flush_batch`
 
+## ADB streaming architecture (`adb.rs`)
+
+`start_adb_stream` spawns a `tokio::task` that:
+
+1. Runs `adb -s DEVICE logcat -v threadtime` as a child process
+2. Buffers lines for 50ms or 100 lines, then calls `flush_batch()`
+3. `flush_batch` applies the full layered execution model (see `processors/CLAUDE.md`)
+4. Continuous state persists between batches via `new_seeded()` / `into_continuous_state()`
+5. Delivers `Batch`, `ProcessorUpdate`, and `StreamStopped` to the frontend
+6. Evaluates active watches against new lines
+7. Exits on cancellation signal, EOF, or I/O error
+
+**Batches are delivered over a Tauri IPC `Channel<AdbStreamEvent>`, not broadcast events.** `adb-batch` and `adb-processor-update` are no longer emitted as app-wide events — the channel is passed into `start_adb_stream` by the caller. The `adb-stream-stopped` broadcast emit survives only as a fallback path from the `stop_adb_stream` command. On the frontend, `channelActiveRef` in `useStreamSession` guards against late channel messages arriving after stop or detach.
+
+`ChunksTimeout` (tokio-stream) is **not** `Unpin` — `tokio::pin!(stream)` is required before using it in `select!`.
+
+**Always use `source.meta_at(n)` and `source.raw_line(n)` instead of direct indexing** — these adjust for eviction offset transparently.
+

@@ -39,3 +39,12 @@ Limits are set in `engine.rs:ScriptEngine::new()` and enforced at **runtime**. A
 ## Coupling to `processors/vars.rs`
 
 `bridge.rs` imports `dynamic_to_json` and `VarStore` from `processors/vars.rs`. If the `VarStore` API changes, `bridge.rs` must be updated in tandem.
+
+## Authoring gotchas
+
+- **`emit()` is NOT a registered function.** Use `_emits.push(#{ key: val })` instead. Calling `emit(...)` compiles but throws at runtime, aborting the entire script.
+- Map key existence: use `key in map`, not `map.contains_key(key)` — `contains_key` is not registered.
+- Nested map mutation: copy → modify → write back (`let m = vars.mymap; m[k] = v; vars.mymap = m`).
+- Integer/float mixing throws: use `.to_float()` to convert. `() > 0` is a type error — guard with `if "field" in fields`.
+- String concatenation with ints: use `some_int.to_string()`.
+- Script runtime errors silently skip **both** var updates and emissions for that line.
