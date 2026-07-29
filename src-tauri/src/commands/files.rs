@@ -551,21 +551,20 @@ impl RescuedArtifacts {
         self.bookmarks.is_empty() && self.analyses.is_empty() && self.pipeline_meta.is_none()
     }
 
-    /// Attach the rescued artifacts to `session_id`. Merges rather than
-    /// overwrites: a brand-new session has no entries, but this must not clobber
-    /// anything if it ever runs against a populated id.
+    /// Attach the rescued artifacts to `session_id`.
+    ///
+    /// Delegates to [`restore_artifacts`], the same helper the `.lts` import
+    /// path uses, because each artifact also carries an embedded `session_id`
+    /// that has to be rewritten — storing under the new map key alone leaves the
+    /// field pointing at a session that no longer exists, which then travels out
+    /// over the MCP bridge and into workspace saves. Verified against the
+    /// running app: re-keying without the rewrite reported a bookmark whose
+    /// `sessionId` was the closed session's.
     fn restore_onto(self, state: &AppState, session_id: &str) -> Result<(), String> {
         if self.is_empty() {
             return Ok(());
         }
-        if !self.bookmarks.is_empty() {
-            let mut bm = lock_or_err(&state.bookmarks, "bookmarks")?;
-            bm.entry(session_id.to_string()).or_default().extend(self.bookmarks);
-        }
-        if !self.analyses.is_empty() {
-            let mut an = lock_or_err(&state.analyses, "analyses")?;
-            an.entry(session_id.to_string()).or_default().extend(self.analyses);
-        }
+        restore_artifacts(state, session_id, self.bookmarks, self.analyses);
         if let Some(meta) = self.pipeline_meta {
             let mut pm = lock_or_err(&state.session_pipeline_meta, "session_pipeline_meta")?;
             pm.insert(session_id.to_string(), meta);
@@ -2049,10 +2048,13 @@ mod tests {
         rescued.restore_onto(&state, &override_id).expect("restore");
 
         let bm = state.bookmarks.lock().unwrap();
+        let carried = bm.get(&override_id).expect("the new session must inherit the bookmark");
+        assert_eq!(carried.len(), 1);
         assert_eq!(
-            bm.get(&override_id).map(Vec::len),
-            Some(1),
-            "the new session must inherit the bookmark"
+            carried[0].session_id, override_id,
+            "the embedded session_id must be rewritten too — storing under the new map key \
+             alone leaves it pointing at a session that no longer exists, and that value \
+             travels out over the MCP bridge and into workspace saves"
         );
     }
 
