@@ -60,7 +60,15 @@ export function useStartupRestore(deps: StartupRestoreDeps): void {
     let cancelled = false;
 
     const io: RestoreIo = {
-      loadFile: (path, paneId, existingTabId) => depsRef.current.loadFile(path, paneId, existingTabId),
+      // Rest args, not a positional re-listing. This wrapper exists only to read
+      // through `depsRef` for callback stability, so it must forward whatever
+      // RestoreIo declares — verbatim. It previously named three parameters and
+      // silently dropped the fourth (`sourceType`), which meant startup restore
+      // reopened an overridden session with plain detection and, under
+      // source_types enforcement, stopped its processors from running.
+      // TypeScript cannot catch that: a function of fewer parameters is
+      // assignable to one of more, so the drop type-checks cleanly.
+      loadFile: (...args) => depsRef.current.loadFile(...args),
       scheduleAutoRun: (sessionId, isIndexing, chain, disabled) =>
         depsRef.current.scheduleAutoRun(sessionId, isIndexing, chain, disabled),
     };
