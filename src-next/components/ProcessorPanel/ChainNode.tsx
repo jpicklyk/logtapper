@@ -109,6 +109,23 @@ function StatLine({
   }
   if (!result) return null;
 
+  // The backend excluded this processor before running it, so every count below
+  // would read zero and be indistinguishable from "ran and matched nothing".
+  // Checked before the per-type branches because each of them is wrong for a
+  // skipped processor — a transformer would otherwise claim "PII anonymization
+  // active" for something that never executed. The reason is rendered as the
+  // backend sent it; the eligibility rule is never re-derived here.
+  if (result.skipped) {
+    return (
+      <div
+        className={`${styles.nodeStat} ${styles.nodeStatSkipped}`}
+        title={`Not applicable to ${result.skipped.actual} source — this processor declares ${result.skipped.declared.join(', ')}`}
+      >
+        n/a . not applicable to {result.skipped.actual}
+      </div>
+    );
+  }
+
   if (processorType === 'state_tracker') {
     return <div className={styles.nodeStat}>{result.matchedLines.toLocaleString()} transitions</div>;
   }
@@ -126,6 +143,8 @@ function StatLine({
 /** Format a compact stat string from a result. */
 function compactStatText(result?: PipelineRunSummary): string {
   if (!result) return '';
+  // Same distinction as StatLine — a bare "0" here would claim the processor ran.
+  if (result.skipped) return 'n/a';
   return result.matchedLines.toLocaleString();
 }
 
@@ -196,7 +215,16 @@ export const ChainNode = React.memo(function ChainNode({
       <div ref={setNodeRef} style={style} className={cls} {...attributes} {...listeners}>
         <div className={styles.compactDot} />
         <span className={styles.compactName}>{name}</span>
-        {result && <span className={styles.compactStat}>{compactStatText(result)}</span>}
+        {result && (
+          <span
+            className={`${styles.compactStat}${result.skipped ? ` ${styles.compactStatSkipped}` : ''}`}
+            title={result.skipped
+              ? `Not applicable to ${result.skipped.actual} source — this processor declares ${result.skipped.declared.join(', ')}`
+              : undefined}
+          >
+            {compactStatText(result)}
+          </span>
+        )}
         <ToggleEnabledBtn disabled={disabled} onClick={() => onToggleEnabled(id)} />
         <Button variant="ghost" size="sm" className={styles.nodeRemove} title="Remove from chain" onClick={(e) => { e.stopPropagation(); onRemove(id); }}>
           {RemoveSvg}
@@ -271,7 +299,16 @@ export const PinnedChainNode = React.memo(function PinnedChainNode({
         <span className={styles.compactLock}>{LockSvg}</span>
         <div className={styles.compactDot} />
         <span className={styles.compactName}>{name}</span>
-        {result && <span className={styles.compactStat}>{compactStatText(result)}</span>}
+        {result && (
+          <span
+            className={`${styles.compactStat}${result.skipped ? ` ${styles.compactStatSkipped}` : ''}`}
+            title={result.skipped
+              ? `Not applicable to ${result.skipped.actual} source — this processor declares ${result.skipped.declared.join(', ')}`
+              : undefined}
+          >
+            {compactStatText(result)}
+          </span>
+        )}
         <ToggleEnabledBtn disabled={disabled} onClick={() => onToggleEnabled(id)} />
         <Button variant="ghost" size="sm" className={styles.nodeRemove} title="Remove from chain" onClick={(e) => { e.stopPropagation(); onRemove(id); }}>
           {RemoveSvg}
