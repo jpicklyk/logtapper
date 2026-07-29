@@ -17,7 +17,16 @@ export interface WorkspaceMutationActions {
    *  File Info panel's "reopen as" affordance to correct a misdetection — the
    *  type cannot be changed in place because the line index is already built
    *  with the parser it selects. */
-  loadFile: (path: string, paneId?: string, existingTabId?: string, sourceType?: SourceType) => Promise<void>;
+  loadFile: (
+    path: string,
+    paneId?: string,
+    existingTabId?: string,
+    sourceType?: SourceType,
+    /** Replace the pane's current session rather than adding a tab beside it.
+     *  Stated explicitly because the alternative — inferring it from a ref that
+     *  has not re-rendered yet — is what appended duplicate tabs. */
+    replace?: boolean,
+  ) => Promise<void>;
   startStream: (deviceId?: string) => Promise<void>;
   closeSession: (paneId?: string) => Promise<void>;
 

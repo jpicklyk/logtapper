@@ -5,6 +5,7 @@ import { isBugreportLike } from '../../bridge/types';
 import { loadLogFile, closeSession as closeSessionCmd, getLines } from '../../bridge/commands';
 import { onFileIndexProgress, onFileIndexComplete, onBridgeSessionOpened } from '../../bridge/events';
 import { preSeedSession, clearPreSeed } from '../../cache';
+import type { CacheController } from '../../cache';
 import { useSessionCoreCtx, useSessionProgressCtx } from '../../context/SessionContext';
 import { bus, emitSessionLoadedWithFocus } from '../../events/bus';
 import { getStoredFirstPaneId } from '../useWorkspaceLayout';
@@ -30,18 +31,24 @@ export interface FileSessionResult {
 }
 
 export function useFileSession(
+  cacheManager: CacheController,
   refs: SharedLogViewerRefs,
   deps: FileSessionDeps,
 ): FileSessionResult {
   const {
     sessions,
     registerSession,
+    terminateSession,
     updateSession,
     activateSessionForPane,
     setLoadingPane,
     setErrorPane,
   } = useSessionCoreCtx();
   const { setIndexingProgress: setIndexingProgressCtx } = useSessionProgressCtx();
+
+  // Stable ref so `loadFile` does not need terminateSession in its deps.
+  const terminateSessionRef = useRef(terminateSession);
+  terminateSessionRef.current = terminateSession;
 
   const [indexingProgress, setIndexingProgressLocal] = useState<{ percent: number; indexedLines: number } | null>(null);
 
@@ -129,7 +136,21 @@ export function useFileSession(
   // applied after the fact — the line index is built with the parser the type
   // selects — so correcting a misdetection means reopening the path, which is
   // exactly what this does.
-  const loadFile = useCallback(async (path: string, paneId?: string, existingTabId?: string, sourceType?: SourceType) => {
+  //
+  // `replace` states the caller's intent instead of leaving it to be inferred
+  // from `paneSessionMapRef` below. A reopen closes the pane's session first,
+  // but `unregisterSession` is a React dispatch and that ref only re-syncs on
+  // render — so the very next statement still read the OLD session id, decided
+  // this was an additional tab, and appended a duplicate. Awaiting the close
+  // resolves its IPC, not React's state propagation, so the intent has to be
+  // passed rather than timed around.
+  const loadFile = useCallback(async (
+    path: string,
+    paneId?: string,
+    existingTabId?: string,
+    sourceType?: SourceType,
+    replace?: boolean,
+  ) => {
     // Prevent duplicate imports: if this .lts file already has an active session, skip.
     // Check live session context (via ref) rather than localStorage which can be stale.
     if (!existingTabId && path.endsWith('.lts')) {
@@ -168,9 +189,28 @@ export function useFileSession(
     // actually closed. Callers that want a REPLACE (e.g. reopen-as in
     // FileInfoPane) close first so this load takes the empty-pane path.
     const previousSessionId = refs.paneSessionMapRef.current.get(targetPaneId);
-    const isNewTab = previousSessionId !== undefined;
+    // An explicit `replace` overrides the inference: the caller has already
+    // closed the pane's session and is putting a different one in its place, so
+    // this must take the replace branch even though the ref may not have caught
+    // up yet.
+    const isNewTab = replace ? false : previousSessionId !== undefined;
 
     if (!isNewTab) {
+      // Replacing the pane's session with a different one for the SAME file.
+      // Frontend-side disposal only: the previous session's cached lines were
+      // produced by the old parser and must not be served under the new session,
+      // and its context entry must go.
+      //
+      // Deliberately does NOT call closeSession on the backend. `open_file_inner`
+      // closes the stale session itself, and it first rescues that session's
+      // bookmarks and analyses onto the new id. Closing from here would run
+      // `close_session_inner` early and delete them before the rescue could see
+      // them — silently undoing the fix for exactly the flow that needs it.
+      if (replace && previousSessionId) {
+        terminateSessionRef.current(previousSessionId);
+        cacheManager.releaseSessionViews(previousSessionId);
+      }
+
       bus.emit('session:pre-load', { paneId: targetPaneId });
 
       // Clean up any active stream on this pane
@@ -264,7 +304,7 @@ export function useFileSession(
   }, [
     refs.activeLogPaneIdRef, refs.paneSessionMapRef,
     refs.streamingPaneIdRef,
-    registerSession, activateSessionForPane, setLoadingPane, setErrorPane,
+    cacheManager, registerSession, activateSessionForPane, setLoadingPane, setErrorPane,
     registerLoadedSession,
     deps.resetSessionState, deps.detachStream,
   ]);

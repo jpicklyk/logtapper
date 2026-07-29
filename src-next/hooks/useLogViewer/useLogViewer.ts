@@ -134,7 +134,7 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
 
   const streamSession = useStreamSession(cacheManager, registry, refs);
 
-  const fileSession = useFileSession(refs, {
+  const fileSession = useFileSession(cacheManager, refs, {
     resetSessionState,
     detachStream: streamSession.detachStream,
   });

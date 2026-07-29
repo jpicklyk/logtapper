@@ -15,7 +15,7 @@ interface FileInfoPaneProps {
 
 const FileInfoPane = React.memo(function FileInfoPane({ paneId }: FileInfoPaneProps) {
   const fileInfo = useFileInfo(paneId);
-  const { loadFile, closeSession } = useFileActions();
+  const { loadFile } = useFileActions();
 
   // Reopening is the only way to change a session's source type: the line index
   // was built with the parser the detected type selected, so every LineMeta
@@ -32,25 +32,18 @@ const FileInfoPane = React.memo(function FileInfoPane({ paneId }: FileInfoPanePr
   const onReopenAs = useCallback(
     (t: SourceType) => {
       if (!filePath) return;
-      // Close first, then load. Reopening is a REPLACE, but `loadFile` treats a
-      // pane that already holds a session as "open another tab" — which would
-      // leave two tabs and, before the override joined session identity, two
-      // tabs pointing at the same id. Closing first puts the pane in the
-      // no-previous-session state, so the load takes the ordinary fresh-open
-      // path: the old session's cache views are released and the new session
-      // (which now has a distinct id, because the override is part of the
-      // identity) gets its own tab.
-      void (async () => {
-        try {
-          await closeSession(paneId ?? undefined);
-        } catch {
-          // Fall through and load anyway — the backend closes stale sessions
-          // for this path on open regardless.
-        }
-        await loadFile(filePath, paneId ?? undefined, undefined, t);
-      })();
+      // Reopening is a REPLACE, declared explicitly rather than inferred.
+      //
+      // This deliberately does NOT close the session first. Closing runs
+      // `close_session_inner`, which deletes the session's bookmarks and
+      // analyses — and `open_file_inner` rescues exactly those onto the new
+      // session id. Closing here would destroy them before the rescue could
+      // run. The backend's own stale-close handles the old session, with the
+      // rescue in front of it; `replace` tells the frontend to reuse the pane's
+      // tab and release the previous session's cached lines.
+      void loadFile(filePath, paneId ?? undefined, undefined, t, true);
     },
-    [loadFile, closeSession, filePath, paneId],
+    [loadFile, filePath, paneId],
   );
 
   return (
