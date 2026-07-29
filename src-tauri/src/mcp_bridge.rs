@@ -2787,11 +2787,10 @@ async fn h_create_watch(
     verify_session_exists!(state, session_id);
 
     let watch_id = uuid::Uuid::new_v4().to_string();
-    let watch = Arc::new(WatchSession::new(
-        watch_id,
-        session_id.clone(),
-        body.criteria.clone(),
-    ));
+    let watch = match WatchSession::new(watch_id, session_id.clone(), body.criteria.clone()) {
+        Ok(w) => Arc::new(w),
+        Err(e) => return Json(json!({ "error": e })),
+    };
 
     let info = WatchInfo {
         watch_id: watch.watch_id.clone(),

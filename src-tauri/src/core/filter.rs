@@ -46,6 +46,25 @@ pub struct FilterCriteria {
     pub combine: CombineMode,
 }
 
+impl FilterCriteria {
+    /// Compile `regex` if one is set, rejecting an invalid pattern instead of
+    /// degrading to "matches nothing".
+    ///
+    /// Every path that creates a filter or a watch must call this before it
+    /// starts scanning. `line_matches_criteria` treats an uncompiled regex as a
+    /// non-match, so an unvalidated bad pattern yields a filter that scans the
+    /// whole source and reports zero matches with no error — indistinguishable
+    /// from a valid filter that genuinely found nothing.
+    pub fn compile_regex(&self) -> Result<Option<regex::Regex>, String> {
+        let Some(pattern) = self.regex.as_deref() else {
+            return Ok(None);
+        };
+        regex::Regex::new(pattern)
+            .map(Some)
+            .map_err(|e| format!("Invalid regex '{pattern}': {e}"))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // FilteredLineSet — the result of a filter scan
 // ---------------------------------------------------------------------------
@@ -198,7 +217,9 @@ pub fn line_matches_criteria(
         if let Some(re) = compiled_regex {
             checks.push(re.is_match(raw));
         } else {
-            // Regex was specified but failed to compile — no match
+            // Regex was specified but no compiled regex was supplied. Callers
+            // validate via FilterCriteria::compile_regex before scanning, so
+            // this is a defensive fallback, not a reachable user-facing path.
             checks.push(false);
         }
     }
@@ -286,6 +307,37 @@ mod tests {
         c.text_search = Some("ERROR".to_string());
         assert!(line_matches_criteria(&c, "Something error happened", LogLevel::Error, "", 0, 0, None));
         assert!(!line_matches_criteria(&c, "All is fine", LogLevel::Info, "", 0, 0, None));
+    }
+
+    #[test]
+    fn compile_regex_none_when_unset() {
+        let c = make_criteria();
+        assert!(c.compile_regex().unwrap().is_none());
+    }
+
+    #[test]
+    fn compile_regex_returns_compiled_pattern() {
+        let mut c = make_criteria();
+        c.regex = Some(r"\d{3}-\d{4}".to_string());
+        let re = c.compile_regex().unwrap().expect("valid pattern must compile");
+        assert!(re.is_match("Call 555-1234"));
+    }
+
+    #[test]
+    fn compile_regex_rejects_invalid_pattern() {
+        let mut c = make_criteria();
+        c.regex = Some(r"[unterminated".to_string());
+        let err = c.compile_regex().expect_err("invalid pattern must be an error");
+        assert!(err.contains("[unterminated"), "error should quote the pattern: {err}");
+    }
+
+    #[test]
+    fn compile_regex_rejects_lookahead_unsupported_by_rust_regex() {
+        // The regex crate has no look-around. Without create-time validation
+        // this compiles to None and the filter silently matches nothing.
+        let mut c = make_criteria();
+        c.regex = Some(r"foo(?!bar)".to_string());
+        assert!(c.compile_regex().is_err());
     }
 
     #[test]

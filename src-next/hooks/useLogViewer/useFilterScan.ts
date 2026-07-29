@@ -297,8 +297,15 @@ export function useFilterScan(cacheManager: CacheController, refs: SharedLogView
       try {
         filterResult = await createFilter(sess.sessionId, criteria);
       } catch (e) {
+        // The backend rejects an invalid regex at create time. Surface it in
+        // the filter bar next to the parse errors — a rejection the user can't
+        // see is no better than the silent zero-match scan it replaced.
         console.error('[useFilterScan] createFilter failed:', e);
-        setSessionFilter(sess.sessionId, { filterScanning: false });
+        setSessionFilter(sess.sessionId, {
+          filterScanning: false,
+          filterParseError: e instanceof Error ? e.message : String(e),
+          filteredLineNums: null,
+        });
         return;
       }
 

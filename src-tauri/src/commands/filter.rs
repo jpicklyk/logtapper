@@ -65,6 +65,11 @@ pub async fn create_filter(
     session_id: String,
     criteria: FilterCriteria,
 ) -> Result<FilterCreateResult, String> {
+    // Compile the regex up front: a filter with an invalid pattern would
+    // otherwise scan the entire source and report zero matches, which the user
+    // cannot distinguish from "no lines matched".
+    let compiled_regex = criteria.compile_regex()?;
+
     // Validate session exists and get total lines
     let total_lines = {
         let sessions = lock_or_err(&state.sessions, "sessions")?;
@@ -99,7 +104,7 @@ pub async fn create_filter(
     let filter_clone = Arc::clone(&filter);
     let app_clone = app;
     tauri::async_runtime::spawn(async move {
-        scan_filter_background(app_clone, filter_clone).await;
+        scan_filter_background(app_clone, filter_clone, compiled_regex).await;
     });
 
     Ok(result)
@@ -109,18 +114,16 @@ pub async fn create_filter(
 // Background filter scanning
 // ---------------------------------------------------------------------------
 
+/// `compiled_regex` is compiled and validated by `create_filter` before the
+/// task is spawned, so this path never has to decide what a bad pattern means.
 async fn scan_filter_background(
     app: AppHandle,
     filter: Arc<FilterSession>,
+    compiled_regex: Option<regex::Regex>,
 ) {
     let state = app.state::<AppState>();
     const BATCH_SIZE: usize = 10_000;
     const PROGRESS_INTERVAL: usize = 50_000;
-
-    // Compile regex once
-    let compiled_regex = filter.criteria.regex.as_ref().and_then(|pattern| {
-        regex::Regex::new(pattern).ok()
-    });
 
     let total_lines = filter.total_lines.load(Ordering::Relaxed);
     let mut scanned = 0usize;

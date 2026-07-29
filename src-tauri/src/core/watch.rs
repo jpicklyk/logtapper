@@ -19,20 +19,25 @@ pub struct WatchSession {
 }
 
 impl WatchSession {
-    pub fn new(watch_id: String, session_id: String, criteria: FilterCriteria) -> Self {
-        let compiled_regex = criteria
-            .regex
-            .as_ref()
-            .and_then(|pat| regex::Regex::new(pat).ok());
+    /// Returns `Err` when `criteria.regex` is set but does not compile — see
+    /// [`FilterCriteria::compile_regex`]. Constructing through this fallible
+    /// path is what keeps a watch with a broken pattern from being registered
+    /// and then silently never firing.
+    pub fn new(
+        watch_id: String,
+        session_id: String,
+        criteria: FilterCriteria,
+    ) -> Result<Self, String> {
+        let compiled_regex = criteria.compile_regex()?;
 
-        Self {
+        Ok(Self {
             watch_id,
             session_id,
             criteria,
             compiled_regex,
             total_matches: AtomicU32::new(0),
             active: AtomicBool::new(true),
-        }
+        })
     }
 
     pub fn is_active(&self) -> bool {
@@ -89,14 +94,14 @@ mod tests {
 
     #[test]
     fn watch_starts_active_with_zero_matches() {
-        let w = WatchSession::new("w1".into(), "s1".into(), make_criteria("error"));
+        let w = WatchSession::new("w1".into(), "s1".into(), make_criteria("error")).unwrap();
         assert!(w.is_active());
         assert_eq!(w.total_matches(), 0);
     }
 
     #[test]
     fn add_matches_increments() {
-        let w = WatchSession::new("w1".into(), "s1".into(), make_criteria("error"));
+        let w = WatchSession::new("w1".into(), "s1".into(), make_criteria("error")).unwrap();
         let total = w.add_matches(5);
         assert_eq!(total, 5);
         let total = w.add_matches(3);
@@ -106,7 +111,7 @@ mod tests {
 
     #[test]
     fn cancel_deactivates() {
-        let w = WatchSession::new("w1".into(), "s1".into(), make_criteria("error"));
+        let w = WatchSession::new("w1".into(), "s1".into(), make_criteria("error")).unwrap();
         assert!(w.is_active());
         w.cancel();
         assert!(!w.is_active());
@@ -118,18 +123,20 @@ mod tests {
             regex: Some(r"\d+".to_string()),
             ..Default::default()
         };
-        let w = WatchSession::new("w1".into(), "s1".into(), criteria);
+        let w = WatchSession::new("w1".into(), "s1".into(), criteria).unwrap();
         assert!(w.compiled_regex.is_some());
     }
 
     #[test]
-    fn invalid_regex_compiles_to_none() {
+    fn invalid_regex_is_rejected() {
         let criteria = FilterCriteria {
             regex: Some(r"[invalid".to_string()),
             ..Default::default()
         };
-        let w = WatchSession::new("w1".into(), "s1".into(), criteria);
-        assert!(w.compiled_regex.is_none());
+        let Err(err) = WatchSession::new("w1".into(), "s1".into(), criteria) else {
+            panic!("invalid regex must not produce a watch that silently never fires");
+        };
+        assert!(err.contains("[invalid"), "error should quote the pattern: {err}");
     }
 
     #[test]
@@ -141,7 +148,7 @@ mod tests {
             log_levels: Some(vec![LogLevel::Error]),
             ..Default::default()
         };
-        let w = WatchSession::new("w1".into(), "s1".into(), criteria);
+        let w = WatchSession::new("w1".into(), "s1".into(), criteria).unwrap();
 
         // Should match: text contains ERROR AND level is Error
         assert!(line_matches_criteria(

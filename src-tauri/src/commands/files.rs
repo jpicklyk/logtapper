@@ -2279,12 +2279,12 @@ mod tests {
                 "watch-1".to_string(),
                 "sess-w".to_string(),
                 FilterCriteria::default(),
-            ))]);
+            ).unwrap())]);
             watches.insert("sess-w-other".to_string(), vec![Arc::new(WatchSession::new(
                 "watch-2".to_string(),
                 "sess-w-other".to_string(),
                 FilterCriteria::default(),
-            ))]);
+            ).unwrap())]);
         }
 
         close_session_inner(&state, None, "sess-w").unwrap();

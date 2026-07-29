@@ -27,8 +27,6 @@ export type { AppSettings, UseSettingsResult, BookmarkCategoryDef } from './useS
 export { useAnonymizerConfig } from './useAnonymizerConfig';
 export type { UseAnonymizerConfigResult } from './useAnonymizerConfig';
 export { useChartData } from './useChartData';
-export { useFilter } from './useFilter';
-export type { FilterState } from './useFilter';
 export { useBookmarks, useBookmarkLines, useBookmarkLookup } from './useBookmarks';
 export type { BookmarkState } from './useBookmarks';
 export { useAnalysis } from './useAnalysis';

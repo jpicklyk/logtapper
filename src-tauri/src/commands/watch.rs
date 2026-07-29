@@ -25,11 +25,13 @@ pub fn create_watch(
     }
 
     let watch_id = Uuid::new_v4().to_string();
+    // Rejects an invalid regex before the watch is registered — otherwise it
+    // would sit active against every batch and never match.
     let watch = Arc::new(WatchSession::new(
         watch_id,
         session_id.clone(),
         criteria.clone(),
-    ));
+    )?);
 
     let info = WatchInfo {
         watch_id: watch.watch_id.clone(),
