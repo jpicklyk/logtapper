@@ -147,7 +147,7 @@ const CorrelationPanel = React.memo(function CorrelationPanel({
 const CorrelationsView = React.memo(function CorrelationsView() {
   const session = useSession();
   const processors = useProcessors();
-  const activeProcessorIds = useActiveProcessorIds();
+  const activeProcessorIds = useActiveProcessorIds(session?.sessionId ?? null);
   const { runCount } = useSessionPipelineResults();
   const { jumpToLine } = useNavigationActions();
 

@@ -51,32 +51,39 @@ function HookWiring({ children }: { children: ReactNode }) {
   settingsRef.current = settings;
 
   const pipelineChainCtx = usePipelineChainCtx();
-  const { activeProcessorIds, pipelineChain, disabledChainIds, dispatch: pipelineDispatch } = pipelineChainCtx;
-  const activeProcessorIdsRef = useRef(activeProcessorIds);
-  activeProcessorIdsRef.current = activeProcessorIds;
-  const pipelineChainRef = useRef(pipelineChain);
-  pipelineChainRef.current = pipelineChain;
-  const disabledChainIdsRef = useRef(disabledChainIds);
-  disabledChainIdsRef.current = disabledChainIds;
+  const { chainBySession, defaultChain, dispatch: pipelineDispatch } = pipelineChainCtx;
+  const chainBySessionRef = useRef(chainBySession);
+  chainBySessionRef.current = chainBySession;
+  const defaultChainRef = useRef(defaultChain);
+  defaultChainRef.current = defaultChain;
 
-  const getPipelineChain = useCallback(() => pipelineChainRef.current, []);
-  const getDisabledChainIds = useCallback(() => disabledChainIdsRef.current, []);
+  /** A session's chain, falling back to the shared default when it has none. */
+  const chainFor = useCallback(
+    (sessionId: string | null) =>
+      (sessionId ? chainBySessionRef.current.get(sessionId) : null) ?? defaultChainRef.current,
+    [],
+  );
+
+  const getPipelineChain = useCallback((sessionId: string | null = null) => chainFor(sessionId).chain, [chainFor]);
+  const getDisabledChainIds = useCallback((sessionId: string | null = null) => chainFor(sessionId).disabled, [chainFor]);
+  const getActiveProcessorIds = useCallback((sessionId: string | null = null) => chainFor(sessionId).active, [chainFor]);
 
   // Pipeline chain mutations â thin wrappers around dispatch, stable via useCallback.
-  const addToChain = useCallback((id: string) => {
-    pipelineDispatch({ type: 'chain:add', id });
+  // Each takes the session whose chain it edits; null targets the shared default.
+  const addToChain = useCallback((id: string, sessionId: string | null = null) => {
+    pipelineDispatch({ type: 'chain:add', sessionId, id });
   }, [pipelineDispatch]);
-  const addPackToChain = useCallback((processorIds: string[]) => {
-    pipelineDispatch({ type: 'chain:add-pack', processorIds });
+  const addPackToChain = useCallback((processorIds: string[], sessionId: string | null = null) => {
+    pipelineDispatch({ type: 'chain:add-pack', sessionId, processorIds });
   }, [pipelineDispatch]);
-  const removeFromChain = useCallback((id: string) => {
-    pipelineDispatch({ type: 'chain:remove', id });
+  const removeFromChain = useCallback((id: string, sessionId: string | null = null) => {
+    pipelineDispatch({ type: 'chain:remove', sessionId, id });
   }, [pipelineDispatch]);
-  const reorderChain = useCallback((fromIndex: number, toIndex: number) => {
-    pipelineDispatch({ type: 'chain:reorder', fromIndex, toIndex });
+  const reorderChain = useCallback((fromIndex: number, toIndex: number, sessionId: string | null = null) => {
+    pipelineDispatch({ type: 'chain:reorder', sessionId, fromIndex, toIndex });
   }, [pipelineDispatch]);
-  const toggleChainEnabled = useCallback((id: string) => {
-    pipelineDispatch({ type: 'chain:toggle-enabled', id });
+  const toggleChainEnabled = useCallback((id: string, sessionId: string | null = null) => {
+    pipelineDispatch({ type: 'chain:toggle-enabled', sessionId, id });
   }, [pipelineDispatch]);
 
   // Processor library mutations
@@ -325,8 +332,10 @@ function HookWiring({ children }: { children: ReactNode }) {
   const rawActions = useMemo<Partial<ActionsContextValue>>(() => ({
     // --- Workspace mutations (auto-tracked via trackMutations) ---
     loadFile: logViewer.loadFile,
+    // A stream creates its session, so no sessionId exists yet — the new session
+    // inherits the default chain, which is what getActiveProcessorIds() returns.
     startStream: (deviceId?: string) => logViewer.startStream(
-      deviceId, undefined, activeProcessorIdsRef.current, settingsRef.current.streamBackendLineMax,
+      deviceId, undefined, getActiveProcessorIds(), settingsRef.current.streamBackendLineMax,
     ),
     closeSession: logViewer.closeSession,
     installProcessor,

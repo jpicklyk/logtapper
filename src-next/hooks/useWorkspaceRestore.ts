@@ -67,8 +67,12 @@ export function useWorkspaceRestore(
       // Signal that a workspace restore set the chain (prevents localStorage override)
       hasRestoredRef.current = true;
 
-      // Override chain with workspace-saved state (all sources — drives the UI).
-      dispatch({ type: 'chain:restore', chain: validActive, disabledChainIds: validDisabled });
+      // Override THIS session's chain with its workspace-saved state. A legacy
+      // workspace that stored no per-session chain never reaches here (the
+      // empty-activeProcessorIds guard above returns), so that session falls
+      // back to the shared default — which is where the legacy global chain
+      // lands via `processors:loaded`. That is the backward-compat path.
+      dispatch({ type: 'chain:restore', sessionId, chain: validActive, disabledChainIds: validDisabled });
 
       // Push to backend so subsequent saves capture the restored chain
       setSessionPipelineMeta(sessionId, validActive, validDisabled).catch(() => {});

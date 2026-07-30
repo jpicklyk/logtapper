@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import type { LoadResult, SearchQuery, SearchSummary, ProcessorSummary, PackSummary, Source, UpdateAvailable } from '../bridge/types';
 import { useSessionCoreCtx, useSessionPaneCtx, useSessionProgressCtx, type IndexingProgress } from './SessionContext';
 import { useSearchCtx, useScrollCtx, useProcessorViewCtx } from './ViewerContext';
-import { usePipelineLibraryCtx, usePipelineChainCtx } from './PipelineContext';
+import { usePipelineLibraryCtx, usePipelineChainCtx, type SessionChainState } from './PipelineContext';
 import { useActionsContext } from './ActionsContext';
 import { useMarketplaceContext } from './MarketplaceContext';
 
@@ -113,12 +113,25 @@ export function useScrollTarget(): { lineNum: number | null; seq: number; paneId
 // Pipeline selectors
 // ---------------------------------------------------------------------------
 
-export function usePipelineChain(): string[] {
-  return usePipelineChainCtx().pipelineChain;
+/**
+ * A session's own chain state. Pass the session whose chain you mean — omitting
+ * it (or passing null) reads the shared default, which is only correct for
+ * surfaces with genuinely no session context (e.g. startup, workspace save).
+ */
+export function useSessionChainState(sessionId: string | null): SessionChainState {
+  const { chainBySession, defaultChain } = usePipelineChainCtx();
+  return useMemo(
+    () => (sessionId ? (chainBySession.get(sessionId) ?? defaultChain) : defaultChain),
+    [chainBySession, defaultChain, sessionId],
+  );
 }
 
-export function useActiveProcessorIds(): string[] {
-  return usePipelineChainCtx().activeProcessorIds;
+export function usePipelineChain(sessionId: string | null): string[] {
+  return useSessionChainState(sessionId).chain;
+}
+
+export function useActiveProcessorIds(sessionId: string | null): string[] {
+  return useSessionChainState(sessionId).active;
 }
 
 /** Global error from processor install/remove operations (not per-session run errors). */
@@ -126,8 +139,8 @@ export function usePipelineGlobalError(): string | null {
   return usePipelineLibraryCtx().error;
 }
 
-export function useDisabledChainIds(): string[] {
-  return usePipelineChainCtx().disabledChainIds;
+export function useDisabledChainIds(sessionId: string | null): string[] {
+  return useSessionChainState(sessionId).disabled;
 }
 
 export function useProcessors(): ProcessorSummary[] {

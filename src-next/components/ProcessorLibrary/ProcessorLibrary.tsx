@@ -3,7 +3,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import type { ProcessorSummary, PackSummary } from '../../bridge/types';
 import { matchesAllTags, getBareId } from '../../bridge/types';
 import { usePipeline } from '../../hooks';
-import { useProcessors, usePacks, usePipelineChain, usePipelineActions } from '../../context';
+import { useProcessors, usePacks, usePipelineChain, usePipelineActions, useFocusedSession } from '../../context';
 import { Modal, ProcessorTypeIcon, PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY, Button } from '../../ui';
 import { ProcessorDetailCard } from '../ProcessorDetailCard';
 import css from './ProcessorLibrary.module.css';
@@ -34,8 +34,26 @@ interface Props {
 const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
   const pipeline = usePipeline();
   const processors = useProcessors();
-  const pipelineChain = usePipelineChain();
-  const { addToChain, addPackToChain, loadProcessorFromFile } = usePipelineActions();
+  // The library is a modal with no pane of its own — it edits the chain of the
+  // session the user is looking at.
+  const focusedSession = useFocusedSession();
+  const targetSessionId = focusedSession?.sessionId ?? null;
+  const pipelineChain = usePipelineChain(targetSessionId);
+  const {
+    addToChain: addToChainFor,
+    addPackToChain: addPackToChainFor,
+    loadProcessorFromFile,
+  } = usePipelineActions();
+
+  // Bind chain edits to the focused session so call sites below stay unchanged.
+  const addToChain = useCallback(
+    (id: string) => addToChainFor(id, targetSessionId),
+    [addToChainFor, targetSessionId],
+  );
+  const addPackToChain = useCallback(
+    (ids: string[]) => addPackToChainFor(ids, targetSessionId),
+    [addPackToChainFor, targetSessionId],
+  );
 
   const [tab, setTab] = useState<Tab>('installed');
   const [query, setQuery] = useState('');

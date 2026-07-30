@@ -50,7 +50,14 @@ export function usePipeline(
   // no-op default so they never drive a second auto-run.
   scheduleAutoRun: (sessionId: string, isIndexing: boolean | undefined, chain: string[], disabled: string[]) => void = () => {},
 ): PipelineActions {
-  const { processors, pipelineChain, disabledChainIds, resultsBySession, dispatch } = usePipelineContext();
+  const { processors, chainBySession, defaultChain, resultsBySession, dispatch } = usePipelineContext();
+
+  // localStorage and the chain-changed bus event describe the DEFAULT chain —
+  // the template a new session inherits. Per-session chains are persisted
+  // through setSessionPipelineMeta below, and by the backend's per-session
+  // pipeline-meta.json, not through these global keys.
+  const pipelineChain = defaultChain.chain;
+  const disabledChainIds = defaultChain.disabled;
 
   // Track the focused pane so session:pre-load can resolve the outgoing sessionId.
   const { paneSessionMap, sessions } = useSessionCoreCtx();
@@ -73,6 +80,18 @@ export function usePipeline(
   const resultsBySessionRef = useRef(resultsBySession);
   resultsBySessionRef.current = resultsBySession;
 
+  const chainBySessionRef = useRef(chainBySession);
+  chainBySessionRef.current = chainBySession;
+  const defaultChainRef = useRef(defaultChain);
+  defaultChainRef.current = defaultChain;
+
+  /** A session's own chain, falling back to the shared default. */
+  const chainFor = useCallback(
+    (sessionId: string | null) =>
+      (sessionId ? chainBySessionRef.current.get(sessionId) : null) ?? defaultChainRef.current,
+    [],
+  );
+
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const chainInitializedRef = useRef(false);
   const hasRestoredChainRef = useRef(false);
@@ -92,7 +111,10 @@ export function usePipeline(
     // sessionId is below.
     const anonymizeSessionId = paneSessionMapRef.current.get(activeLogPaneIdRef.current ?? '');
     if (anonymizeSessionId) {
-      setMcpAnonymize(anonymizeSessionId, pipelineChain.includes('__pii_anonymizer')).catch(() => {});
+      // The anonymizer flag is a per-session security boundary, so it must be
+      // read from that session's OWN chain, not the default.
+      const own = chainFor(anonymizeSessionId);
+      setMcpAnonymize(anonymizeSessionId, own.chain.includes('__pii_anonymizer')).catch(() => {});
     }
 
     // Debounced push to backend for workspace persistence (500ms)
@@ -101,9 +123,12 @@ export function usePipeline(
       metaSyncTimerRef.current = null;
       const sessionId = paneSessionMapRef.current.get(activeLogPaneIdRef.current ?? '');
       if (!sessionId) return;
-      setSessionPipelineMeta(sessionId, pipelineChain, disabledChainIds).catch(() => {});
+      const own = chainFor(sessionId);
+      setSessionPipelineMeta(sessionId, own.chain, own.disabled).catch(() => {});
     }, 500);
-  }, [pipelineChain, disabledChainIds]);
+    // chainBySession is a dependency because a per-session edit must re-push
+    // that session's meta, not just changes to the default.
+  }, [pipelineChain, disabledChainIds, chainBySession, chainFor]);
 
   // Push chain to backend when a session becomes active (handles the case where
   // the chain was initialized from localStorage before any session was loaded).

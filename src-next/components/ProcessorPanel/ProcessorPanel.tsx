@@ -44,8 +44,9 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
   const session = useSession();
   const isStreaming = useIsStreaming();
   const processors = useProcessors();
-  const pipelineChain = usePipelineChain();
-  const disabledChainIds = useDisabledChainIds();
+  const sessionId = session?.sessionId ?? null;
+  const pipelineChain = usePipelineChain(sessionId);
+  const disabledChainIds = useDisabledChainIds(sessionId);
   const running = useSessionPipelineRunning();
   const { results: lastResults } = useSessionPipelineResults();
   const progress = useSessionPipelineProgress();
@@ -54,10 +55,28 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
   // Per-session run errors take priority over global processor install/remove errors
   const pipelineError = sessionError ?? globalError;
   const pipeline = usePipeline();
-  const { removeFromChain, reorderChain, toggleChainEnabled } = usePipelineActions();
+  const {
+    removeFromChain: removeFromChainFor,
+    reorderChain: reorderChainFor,
+    toggleChainEnabled: toggleChainEnabledFor,
+  } = usePipelineActions();
+
+  // Bind every chain edit to THIS panel's session, so downstream call sites and
+  // child props stay session-agnostic and cannot target the wrong chain.
+  const removeFromChain = useCallback(
+    (id: string) => removeFromChainFor(id, sessionId),
+    [removeFromChainFor, sessionId],
+  );
+  const toggleChainEnabled = useCallback(
+    (id: string) => toggleChainEnabledFor(id, sessionId),
+    [toggleChainEnabledFor, sessionId],
+  );
+  const reorderChain = useCallback(
+    (fromIndex: number, toIndex: number) => reorderChainFor(fromIndex, toIndex, sessionId),
+    [reorderChainFor, sessionId],
+  );
 
   const isActive = running || isStreaming;
-  const sessionId = session?.sessionId ?? null;
   const canRun = pipelineChain.length > 0 && !!sessionId && !running;
 
   // ── Compact mode (persisted to localStorage) ──

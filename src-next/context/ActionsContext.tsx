@@ -35,12 +35,13 @@ export interface WorkspaceMutationActions {
   removeProcessor: (id: string) => Promise<void>;
   loadProcessorFromFile: (filePath: string) => Promise<ProcessorSummary>;
 
-  // Pipeline chain
-  addToChain: (id: string) => void;
-  addPackToChain: (processorIds: string[]) => void;
-  removeFromChain: (id: string) => void;
-  reorderChain: (fromIndex: number, toIndex: number) => void;
-  toggleChainEnabled: (id: string) => void;
+  // Pipeline chain. `sessionId` selects whose chain is edited; omitting it (or
+  // passing null) targets the shared default that new sessions inherit.
+  addToChain: (id: string, sessionId?: string | null) => void;
+  addPackToChain: (processorIds: string[], sessionId?: string | null) => void;
+  removeFromChain: (id: string, sessionId?: string | null) => void;
+  reorderChain: (fromIndex: number, toIndex: number, sessionId?: string | null) => void;
+  toggleChainEnabled: (id: string, sessionId?: string | null) => void;
 
   // Workspace lifecycle (save/open handle their own clean/dirty transitions)
   newWorkspace: () => void;

@@ -21,7 +21,7 @@ import styles from './ProcessorDashboard.module.css';
 const ProcessorDashboard = React.memo(function ProcessorDashboard() {
   const session = useSession();
   const processors = useProcessors();
-  const activeProcessorIds = useActiveProcessorIds();
+  const activeProcessorIds = useActiveProcessorIds(session?.sessionId ?? null);
   const { results: lastResults, runCount } = useSessionPipelineResults();
   const { jumpToLine } = useNavigationActions();
   const packs = usePacks();

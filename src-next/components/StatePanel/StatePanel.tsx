@@ -103,7 +103,7 @@ const FieldsGrid = React.memo(function FieldsGrid({ snapshot }: { snapshot: Stat
 const StatePanel = React.memo(function StatePanel() {
   const session = useSession();
   const processors = useProcessors();
-  const pipelineChain = usePipelineChain();
+  const pipelineChain = usePipelineChain(session?.sessionId ?? null);
   const { runCount } = useSessionPipelineResults();
   useSessionTrackerTransitions();
   const stateTracker = useStateTracker();
