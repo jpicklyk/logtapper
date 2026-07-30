@@ -9,7 +9,6 @@ import { isMac } from '../../bridge/platform';
 import { Modal } from '../../ui';
 import { DropdownMenu } from '../../ui';
 import type { MenuItem } from '../../ui';
-import { SearchBar } from '../SearchBar';
 import { ExportModal } from '../ExportModal';
 import { WorkspaceSwitcher } from '../WorkspaceSwitcher';
 import { bus } from '../../events';
@@ -162,9 +161,9 @@ export const Header = React.memo(function Header() {
         <WorkspaceSwitcher />
       </div>
 
-      <div className={styles.searchArea}>
-        <SearchBar disabled={!session} />
-      </div>
+      {/* Search moved into each log pane — see PaneContent. A single header bar
+          cannot express two panes holding two different queries. */}
+      <div className={styles.searchArea} />
 
       <div className={styles.actions}>
         <button

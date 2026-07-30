@@ -481,6 +481,7 @@ export { useWorkspaceContext } from './WorkspaceContext';
 
 // Re-export per-session context
 export { SessionProviders } from './SessionProviders';
+export { PaneSearchProvider, usePaneSearch, usePaneSearchQuery, usePaneSearchActions } from './PaneSearchContext';
 export { SessionDataProvider } from './SessionDataContext';
 export { SessionActionsProvider, useSessionActions,
   useSessionBookmarkActions, useSessionAnalysisActions, useSessionWatchActions,

@@ -5,9 +5,10 @@ import { ProcessorDashboard } from '../ProcessorDashboard';
 import { AnalysisReader } from '../AnalysisReader';
 import { EditorTab } from '../EditorTab';
 import { StreamFilterBar } from '../StreamFilterBar';
+import { SearchBar } from '../SearchBar';
 import { BookmarkCreateDialog } from '../BookmarkPanel';
 import type { BookmarkCreateRequest } from '../BookmarkPanel';
-import { useSessionForPane, useIsLoadingForPane, usePaneActions, useStreamFilter, useFocusedSession, SessionProviders } from '../../context';
+import { useSessionForPane, useIsLoadingForPane, usePaneActions, useStreamFilter, useFocusedSession, SessionProviders, usePaneSearchActions } from '../../context';
 import type { CenterPane } from '../../hooks';
 import { useLogViewerActions } from './useLogViewerActions';
 import { bus } from '../../events';
@@ -41,12 +42,13 @@ function intersectSorted(a: number[], b: number[]): number[] {
 const NOTICE_EXIT_MS = 400;
 const NOTICE_VISIBLE_MS = 4000;
 
-const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFilePathChanged }: Props) {
+const PaneContentInner = React.memo(function PaneContentInner({ pane, onDirtyChanged, onFilePathChanged }: Props) {
   // Use the pane's own session, not the global focused session.
   const session = useSessionForPane(pane.id);
   const focusedSession = useFocusedSession();
   const isLoading = useIsLoadingForPane(pane.id);
-  const { setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter, setEffectiveLineNums } = usePaneActions();
+  const { setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter } = usePaneActions();
+  const { setEffectiveLineNums } = usePaneSearchActions();
   const { fetchLines } = useLogViewerActions(pane.id);
   const { value: filterValue, scanning: filterScanning, filteredLineNums, parseError: filterParseError, sectionFilteredLineNums } = useStreamFilter(pane.id);
 
@@ -105,9 +107,10 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
     return intersectSorted(sectionFilteredLineNums, filteredLineNums);
   }, [filteredLineNums, sectionFilteredLineNums]);
 
-  // Sync effectiveLineNums into the shared ref so useSearchNavigation can scope
-  // search navigation to the currently visible lines. This is a synchronous write
-  // during render (ref mutation, no state change) — safe per React's ref contract.
+  // Publish this pane's visible lines so its own match navigation can be scoped
+  // to them. Each pane writes to its own PaneSearchProvider ref, so two panes no
+  // longer race over a single shared ref. Synchronous ref write during render —
+  // safe per React's ref contract, no state change.
   setEffectiveLineNums(effectiveLineNums);
 
   const handleLogPaneFocus = useCallback(() => {
@@ -128,10 +131,6 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
       onClose={handleBookmarkDialogClose}
     />
   );
-
-  // Resolve sessionId for this pane — used by SessionDataProvider.
-  // For dashboard tabs, fall back to focused session (dashboard shows the focused session's results).
-  const sessionId = session?.sessionId ?? focusedSession?.sessionId ?? null;
 
   const renderContent = () => {
     if (!activeTab) {
@@ -160,6 +159,7 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
         }
         return (
           <div className={styles.logviewerPane} onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus}>
+            {session && <SearchBar paneId={pane.id} disabled={!session} />}
             {session && (
               <StreamFilterBar
                 value={filterValue}
@@ -222,9 +222,28 @@ const PaneContent = React.memo(function PaneContent({ pane, onDirtyChanged, onFi
   };
 
   return (
-    <SessionProviders sessionId={sessionId}>
+    <>
       {renderContent()}
       {bookmarkDialog}
+    </>
+  );
+});
+
+/**
+ * Outer shell: resolves the pane's session and mounts the per-session/per-pane
+ * providers. The body lives in PaneContentInner so that everything inside it —
+ * including `useLogViewerActions` and the effective-line-nums publish — reads
+ * this pane's own search scope rather than a global one.
+ */
+const PaneContent = React.memo(function PaneContent(props: Props) {
+  const session = useSessionForPane(props.pane.id);
+  const focusedSession = useFocusedSession();
+  // Dashboard tabs fall back to the focused session (they show its results).
+  const sessionId = session?.sessionId ?? focusedSession?.sessionId ?? null;
+
+  return (
+    <SessionProviders sessionId={sessionId} paneId={props.pane.id}>
+      <PaneContentInner {...props} />
     </SessionProviders>
   );
 });

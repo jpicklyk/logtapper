@@ -7,7 +7,7 @@ import {
   useSessionForPane,
   useIsStreamingForPane,
   useScrollTarget,
-  useSearchQuery,
+  usePaneSearchQuery,
   useSessionTrackerTransitions,
 } from '../../context';
 import { useBookmarks, useBookmarkLines, useBookmarkLookup, useSettings } from '../../hooks';
@@ -34,7 +34,7 @@ const LogViewer = React.memo(function LogViewer({
   const session = useSessionForPane(paneId);
   const isStreaming = useIsStreamingForPane(paneId);
   const totalLines = session?.totalLines ?? 0;
-  const search = useSearchQuery();
+  const search = usePaneSearchQuery();
   const cacheManager = useCacheManager();
 
   // Bookmark gutter markers

@@ -1,11 +1,13 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import clsx from 'clsx';
 import { Search, X, ChevronUp, ChevronDown } from 'lucide-react';
-import { useSearch, usePaneActions, useNavigationActions } from '../../context';
+import { usePaneSearch, usePaneSearchActions, useIsActiveLogPane } from '../../context';
 import { IconButton, Button } from '../../ui';
 import styles from './SearchBar.module.css';
 
 interface SearchBarProps {
+  /** Pane this bar searches. Ctrl+F only answers when this pane is focused. */
+  paneId: string;
   disabled?: boolean;
   onTimeFilter?: (start: string, end: string) => void;
   timeStart?: string;
@@ -14,15 +16,16 @@ interface SearchBarProps {
 }
 
 export const SearchBar = React.memo<SearchBarProps>(function SearchBar({
+  paneId,
   disabled,
   onTimeFilter,
   timeStart = '',
   timeEnd = '',
   timeFilterCount,
 }) {
-  const { summary, matchIndex } = useSearch();
-  const { setSearch } = usePaneActions();
-  const { jumpToMatch } = useNavigationActions();
+  const { summary, matchIndex } = usePaneSearch();
+  const { setSearch, jumpToMatch } = usePaneSearchActions();
+  const isActivePane = useIsActiveLogPane(paneId);
 
   const [text, setText] = useState('');
   const [isRegex, setIsRegex] = useState(false);
@@ -76,11 +79,11 @@ export const SearchBar = React.memo<SearchBarProps>(function SearchBar({
     triggerSearch(text, isRegex, v);
   };
 
-  const handleClear = () => {
+  const handleClear = useCallback(() => {
     setText('');
     setSearch(null);
     inputRef.current?.focus();
-  };
+  }, [setSearch]);
 
   const handleJump = useCallback(
     (direction: 1 | -1) => {
@@ -117,10 +120,12 @@ export const SearchBar = React.memo<SearchBarProps>(function SearchBar({
     onTimeFilter?.('', '');
   };
 
-  // Global Ctrl+F handler
+  // Ctrl+F focuses THIS pane's search box only when this pane holds log focus —
+  // otherwise every mounted pane would grab the same keystroke. Escape is
+  // unconditional because it is already gated on this input being focused.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+      if (isActivePane && (e.ctrlKey || e.metaKey) && e.key === 'f') {
         e.preventDefault();
         inputRef.current?.focus();
         inputRef.current?.select();
@@ -131,7 +136,7 @@ export const SearchBar = React.memo<SearchBarProps>(function SearchBar({
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, []);
+  }, [isActivePane, handleClear]);
 
   const hasTimeFilter = localStart !== '' || localEnd !== '';
   const matchLabel =
