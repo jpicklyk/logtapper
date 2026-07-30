@@ -102,7 +102,11 @@ export function usePipeline(
     if (!chainInitializedRef.current) return;
     storageSetJSON(LS_KEY, pipelineChain);
     storageSetJSON(LS_DISABLED_KEY, disabledChainIds);
-    bus.emit('pipeline:chain-changed', { chain: pipelineChain });
+    // The consumer applies this chain to the LIVE STREAMING session, so it must
+    // carry that session's own chain, not the default — otherwise editing a
+    // streaming session's chain pushes the default into its processors.
+    const activeSessionId = paneSessionMapRef.current.get(activeLogPaneIdRef.current ?? '') ?? null;
+    bus.emit('pipeline:chain-changed', { chain: chainFor(activeSessionId).chain });
 
     // Push the MCP-bridge per-session anonymize flag immediately (not
     // debounced) — it's the security boundary the bridge consults on every
@@ -136,9 +140,14 @@ export function usePipeline(
     if (!chainInitializedRef.current) return;
     const sessionId = paneSessionMap.get(activeLogPaneId ?? '');
     if (!sessionId) return;
-    setSessionPipelineMeta(sessionId, pipelineChainRef.current, disabledChainIdsRef.current).catch(() => {});
-    setMcpAnonymize(sessionId, pipelineChainRef.current.includes('__pii_anonymizer')).catch(() => {});
-  }, [activeLogPaneId, paneSessionMap]);
+    // Push the session's OWN chain. Pushing the default here would clobber a
+    // diverged session's backend pipeline-meta the moment it gains focus, and
+    // would override its per-session __pii_anonymizer flag — the flag the MCP
+    // bridge consults on every raw-line request.
+    const own = chainFor(sessionId);
+    setSessionPipelineMeta(sessionId, own.chain, own.disabled).catch(() => {});
+    setMcpAnonymize(sessionId, own.chain.includes('__pii_anonymizer')).catch(() => {});
+  }, [activeLogPaneId, paneSessionMap, chainFor]);
 
   // Cleanup debounce timer on unmount
   useEffect(() => () => {
@@ -152,11 +161,12 @@ export function usePipeline(
   useEffect(() => {
     const handleStreamStarted = () => {
       if (!chainInitializedRef.current) return;
-      bus.emit('pipeline:chain-changed', { chain: pipelineChainRef.current });
+      const sid = paneSessionMapRef.current.get(activeLogPaneIdRef.current ?? '') ?? null;
+      bus.emit('pipeline:chain-changed', { chain: chainFor(sid).chain });
     };
     bus.on('stream:started', handleStreamStarted);
     return () => { bus.off('stream:started', handleStreamStarted); };
-  }, []);
+  }, [chainFor]);
 
   // Subscribe to pipeline-progress events (StrictMode-safe)
   useEffect(() => {
@@ -320,8 +330,12 @@ export function usePipeline(
         chain = override.chain.filter((id) => installed.has(id) || id.includes('@lts-'));
         disabled = new Set(override.disabled);
       } else {
-        chain = pipelineChainRef.current;
-        disabled = new Set(disabledChainIdsRef.current);
+        // Run THIS session's own chain. Reading the default here would run the
+        // wrong processors for any session whose chain has diverged — the exact
+        // cross-session bug per-session chains exist to fix.
+        const own = chainFor(sessionId);
+        chain = own.chain;
+        disabled = new Set(own.disabled);
       }
       const effectiveChain = chain.filter((id) => !disabled.has(id));
       if (effectiveChain.length === 0) return;
@@ -347,7 +361,7 @@ export function usePipeline(
         dispatch({ type: 'run:failed', sessionId, error: String(e) });
       }
     },
-    [dispatch],
+    [dispatch, chainFor],
   );
 
   // ── Workspace restore: set pipeline chain (all sources) + own the .lts-path

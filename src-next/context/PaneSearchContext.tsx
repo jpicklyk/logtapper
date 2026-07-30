@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import type { SearchQuery, SearchSummary, SearchProgress } from '../bridge/types';
 import { searchLogs } from '../bridge/commands';
@@ -145,10 +145,33 @@ export function PaneSearchProvider({ paneId, sessionId, children }: Props) {
         console.error('Search error:', e);
       })
       .finally(() => {
+        // Only tear down if THIS search is still the current one. Without the
+        // guard, a superseded search settling would unregister the successor's
+        // live progress listener and kill its incremental results.
+        if (seq !== searchSeqRef.current) return;
         cancelled = true;
         progressUnlistenRef.current?.();
         progressUnlistenRef.current = null;
       });
+  }, []);
+
+  // Clear this pane's search when its session changes. The pane provider is not
+  // remounted on session switch, so without this the previous session's query,
+  // match count, and match line numbers survive into the new session — and
+  // match navigation would jump to line numbers from the old content.
+  useEffect(() => {
+    searchSeqRef.current++;
+    progressUnlistenRef.current?.();
+    progressUnlistenRef.current = null;
+    effectiveLineNumsRef.current = null;
+    setState(EMPTY_STATE);
+  }, [sessionId]);
+
+  // Unregister a still-pending progress listener if the pane unmounts.
+  useEffect(() => () => {
+    searchSeqRef.current++;
+    progressUnlistenRef.current?.();
+    progressUnlistenRef.current = null;
   }, []);
 
   const jumpToMatch = useCallback((direction: 1 | -1) => {
