@@ -175,9 +175,13 @@ export function useSessionTabManager(
 
   // Subscribe to pipeline:chain-changed to update stream processors/trackers/transformers
   useEffect(() => {
-    const handleChainChanged = (data: { chain: string[] }) => {
+    const handleChainChanged = (data: { sessionId: string; chain: string[] }) => {
       const sessionId = refs.streamingSessionIdRef.current;
       if (!sessionId || !refs.isStreamingRef.current) return;
+      // Targeted event: apply only the chain belonging to THIS stream's session.
+      // Without this match, editing any other session's chain rewrote this
+      // stream's live processors with the focused session's chain.
+      if (data.sessionId !== sessionId) return;
       updateStreamProcessors(sessionId, data.chain).catch(() => {});
       updateStreamTrackers(sessionId, data.chain).catch(() => {});
       updateStreamTransformers(sessionId, data.chain).catch(() => {});

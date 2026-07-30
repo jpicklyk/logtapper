@@ -51,7 +51,9 @@ export type AppEvents = {
   'pipeline:completed':     { sessionId: string; runCount: number;
                               hasTrackers: boolean; hasReporters: boolean; hasCorrelators: boolean };
   'pipeline:cleared':       undefined;
-  'pipeline:chain-changed': { chain: string[] };
+  /** Targeted: `sessionId` names the session whose chain changed. Consumers
+   *  MUST match on it — a live stream applies this to its own session only. */
+  'pipeline:chain-changed': { sessionId: string; chain: string[] };
   'pipeline:library-open':  undefined;
   /** Forwarded from Channel<AdbStreamEvent> processorUpdate — drives PipelineContext
    *  so ProcessorDashboard/StatePanel/CorrelationsView refresh during streaming. */

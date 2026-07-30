@@ -96,17 +96,38 @@ export function usePipeline(
   const chainInitializedRef = useRef(false);
   const hasRestoredChainRef = useRef(false);
   const metaSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Previous chain state, for diffing which sessions to notify. */
+  const prevChainsRef = useRef<{ byS: typeof chainBySession; def: typeof defaultChain } | null>(null);
+  /** Sessions with a chain edit awaiting the debounced backend meta push. */
+  const pendingMetaRef = useRef<Set<string>>(new Set());
 
   // Persist chain + disabled state to localStorage + backend whenever they change
   useEffect(() => {
     if (!chainInitializedRef.current) return;
     storageSetJSON(LS_KEY, pipelineChain);
     storageSetJSON(LS_DISABLED_KEY, disabledChainIds);
-    // The consumer applies this chain to the LIVE STREAMING session, so it must
-    // carry that session's own chain, not the default — otherwise editing a
-    // streaming session's chain pushes the default into its processors.
-    const activeSessionId = paneSessionMapRef.current.get(activeLogPaneIdRef.current ?? '') ?? null;
-    bus.emit('pipeline:chain-changed', { chain: chainFor(activeSessionId).chain });
+
+    // Emit one TARGETED event per session whose chain actually changed. Resolving
+    // a single sessionId from the focused pane (as this once did) pushed the
+    // focused session's chain into whichever session was streaming — a
+    // cross-session write that only became possible once chains went per-session.
+    // Broadcasting and letting the consumer filter by ref is forbidden outright
+    // (root CLAUDE.md principle #6), which is why the sessionId is in the payload.
+    const prev = prevChainsRef.current;
+    const targets = new Set<string>();
+    for (const [sid, c] of chainBySession) {
+      if (prev?.byS.get(sid) !== c) targets.add(sid);
+    }
+    // A change to the default reaches every session that has no chain of its own.
+    if (prev?.def !== defaultChain) {
+      for (const sid of paneSessionMapRef.current.values()) {
+        if (sid && !chainBySession.has(sid)) targets.add(sid);
+      }
+    }
+    prevChainsRef.current = { byS: chainBySession, def: defaultChain };
+    for (const sid of targets) {
+      bus.emit('pipeline:chain-changed', { sessionId: sid, chain: chainFor(sid).chain });
+    }
 
     // Push the MCP-bridge per-session anonymize flag immediately (not
     // debounced) — it's the security boundary the bridge consults on every
@@ -121,14 +142,24 @@ export function usePipeline(
       setMcpAnonymize(anonymizeSessionId, own.chain.includes('__pii_anonymizer')).catch(() => {});
     }
 
-    // Debounced push to backend for workspace persistence (500ms)
+    // Debounced push to backend for workspace persistence (500ms).
+    // The target sessions are captured HERE, at edit time — resolving them when
+    // the timer fires loses the edit entirely if focus moves within the window
+    // (the edit would be attributed to whichever session became active instead).
+    for (const sid of targets) pendingMetaRef.current.add(sid);
+    if (targets.size === 0) {
+      const focused = paneSessionMapRef.current.get(activeLogPaneIdRef.current ?? '');
+      if (focused) pendingMetaRef.current.add(focused);
+    }
     if (metaSyncTimerRef.current) clearTimeout(metaSyncTimerRef.current);
     metaSyncTimerRef.current = setTimeout(() => {
       metaSyncTimerRef.current = null;
-      const sessionId = paneSessionMapRef.current.get(activeLogPaneIdRef.current ?? '');
-      if (!sessionId) return;
-      const own = chainFor(sessionId);
-      setSessionPipelineMeta(sessionId, own.chain, own.disabled).catch(() => {});
+      const pending = pendingMetaRef.current;
+      pendingMetaRef.current = new Set();
+      for (const sid of pending) {
+        const own = chainFor(sid);
+        setSessionPipelineMeta(sid, own.chain, own.disabled).catch(() => {});
+      }
     }, 500);
     // chainBySession is a dependency because a per-session edit must re-push
     // that session's meta, not just changes to the default.
@@ -159,10 +190,13 @@ export function usePipeline(
   // session. Without this, if the chain hasn't changed since load (common case),
   // the chain-changed effect never fires and the new session has no processors.
   useEffect(() => {
-    const handleStreamStarted = () => {
+    const handleStreamStarted = (e: { sessionId: string }) => {
       if (!chainInitializedRef.current) return;
-      const sid = paneSessionMapRef.current.get(activeLogPaneIdRef.current ?? '') ?? null;
-      bus.emit('pipeline:chain-changed', { chain: chainFor(sid).chain });
+      // Use the event's own sessionId. `paneSessionMapRef` is still one render
+      // behind here — `stream:started` fires synchronously right after the
+      // registerSession dispatch — so resolving through the pane map yields the
+      // session the pane held BEFORE the stream, and pushes its chain instead.
+      bus.emit('pipeline:chain-changed', { sessionId: e.sessionId, chain: chainFor(e.sessionId).chain });
     };
     bus.on('stream:started', handleStreamStarted);
     return () => { bus.off('stream:started', handleStreamStarted); };

@@ -68,7 +68,8 @@ export interface SessionChainState {
 
 const EMPTY_CHAIN: SessionChainState = { chain: [], disabled: [], active: [] };
 
-interface PipelineState {
+/** Exported for white-box reducer tests; not part of the barrel's public API. */
+export interface PipelineState {
   processors: ProcessorSummary[];
   packs: PackSummary[];
   /**
@@ -138,7 +139,7 @@ export type PipelineAction =
 
 // ── Reducer ───────────────────────────────────────────────────────────────────
 
-const initialState: PipelineState = {
+export const initialState: PipelineState = {
   processors: [],
   packs: [],
   chainBySession: new Map(),
@@ -177,7 +178,7 @@ function mapAllChains(
   return { ...state, chainBySession, defaultChain: fn(state.defaultChain) };
 }
 
-function pipelineReducer(state: PipelineState, action: PipelineAction): PipelineState {
+export function pipelineReducer(state: PipelineState, action: PipelineAction): PipelineState {
   switch (action.type) {
     // ── Run lifecycle ────────────────────────────────────────────────────────
     case 'run:started':
