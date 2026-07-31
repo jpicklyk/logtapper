@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { listen } from '@tauri-apps/api/event';
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import type { LtsEditorTabPayload } from '../bridge/types';
+import { onLtsEditorTabs } from '../bridge/events';
 import type { WorkspaceLayoutState, SplitNode } from './workspace/workspaceTypes';
 import { allPanes } from './workspace';
 
@@ -41,10 +40,10 @@ export function useEditorTabRestore(
     let cancelled = false;
     let unlisten: UnlistenFn | null = null;
 
-    listen<LtsEditorTabPayload[]>('lts-editor-tabs', (event) => {
+    onLtsEditorTabs((payload) => {
       if (cancelled) return;
       const existing = getOpenEditorLabels(centerTreeRef.current);
-      for (const tab of event.payload) {
+      for (const tab of payload) {
         if (existing.has(tab.label)) continue;
         openCenterTab('editor', tab.label, tab.filePath ?? undefined, {
           content: tab.content,

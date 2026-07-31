@@ -1,8 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import { listen } from '@tauri-apps/api/event';
+import { onWorkspaceRestored } from '../bridge/events';
 import type { ToastItem } from '../ui';
-import type { WorkspaceRestoredPayload } from '../bridge/types';
 import { bus } from '../events/bus';
 import { nextToastId } from './useToast';
 
@@ -40,9 +39,9 @@ export function useWorkspaceRestoreToast(addToast: (toast: ToastItem) => void) {
       });
     };
 
-    listen<WorkspaceRestoredPayload>('workspace-restored', (event) => {
+    onWorkspaceRestored((payload) => {
       if (cancelled) return;
-      const { bookmarkCount, analysisCount, activeProcessorIds } = event.payload;
+      const { bookmarkCount, analysisCount, activeProcessorIds } = payload;
       const procCount = (activeProcessorIds ?? []).length;
 
       // Accumulate counts across rapid successive events (multi-session .lts)

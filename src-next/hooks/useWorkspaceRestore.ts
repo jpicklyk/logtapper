@@ -1,9 +1,8 @@
 import React, { useEffect, useRef } from 'react';
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import { listen } from '@tauri-apps/api/event';
+import { onWorkspaceRestored } from '../bridge/events';
 import type { PipelineAction } from '../context/PipelineContext';
 import type { ProcessorSummary } from '../bridge/types';
-import type { WorkspaceRestoredPayload } from '../bridge/types';
 import { setSessionPipelineMeta } from '../bridge/commands';
 import { bus } from '../events/bus';
 
@@ -55,9 +54,9 @@ export function useWorkspaceRestore(
     let unlisten: UnlistenFn | null = null;
     const pendingLoaded = pendingLoadedRef.current;
 
-    listen<WorkspaceRestoredPayload>('workspace-restored', (event) => {
+    onWorkspaceRestored((payload) => {
       if (cancelled) return;
-      const { sessionId, activeProcessorIds, disabledProcessorIds, source } = event.payload;
+      const { sessionId, activeProcessorIds, disabledProcessorIds, source } = payload;
       if (!activeProcessorIds || activeProcessorIds.length === 0) return;
 
       // Filter to only installed processors, allowing session-scoped .lts processors through.
