@@ -216,7 +216,14 @@ export function useWorkspace(
     return wsCtxRef.current.activeWorkspace?.dirty ?? false;
   }, []);
 
-  const executePendingAction = useCallback(async () => {
+  // `promptChoice` is undefined when executePendingAction runs directly from
+  // guardedAction's non-dirty branch (no prompt was shown — nothing to save
+  // or discard). When it runs after the save prompt, it carries the user's
+  // actual choice so the 'switch' case below can honor it: 'discard' must not
+  // persist the dirty state anywhere, and 'save' has already persisted it via
+  // doSave, so an unconditional doAutoSave() here would either silently undo
+  // 'discard' or redundantly repeat 'save'.
+  const executePendingAction = useCallback(async (promptChoice?: 'save' | 'discard') => {
     const action = pendingActionRef.current;
     pendingActionRef.current = null;
     if (!action) return;
@@ -246,8 +253,15 @@ export function useWorkspace(
         break;
       }
       case 'switch': {
-        // Always auto-save current workspace state before switching
-        await doAutoSave();
+        // Auto-save current workspace state before switching — but only when
+        // this isn't resolving an explicit prompt choice. 'save' already wrote
+        // the current state via doSave (this would be a redundant duplicate
+        // write); 'discard' means the user explicitly does not want the dirty
+        // state persisted, so writing it via auto-save would silently undo
+        // that choice.
+        if (promptChoice === undefined) {
+          await doAutoSave();
+        }
         await doClearPanes();
         bus.emit('workspace:reset', undefined);
         ctx.setActiveId(action.targetId);
@@ -290,7 +304,10 @@ export function useWorkspace(
         if (active) ctx.renameWorkspace(active.id, workspaceNameFromPath(destPath));
       }
     }
-    await executePendingAction();
+    // choice is 'save' or 'discard' here ('cancel' already returned above) —
+    // forward it so executePendingAction can decide whether doAutoSave should
+    // run in the 'switch' case.
+    await executePendingAction(choice as 'save' | 'discard');
   }, [doSave, executePendingAction]);
 
   // --- Guarded actions (check dirty before proceeding) ---

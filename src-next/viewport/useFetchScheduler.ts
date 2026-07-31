@@ -89,7 +89,14 @@ export function useFetchScheduler(
               bumpCacheVersion();
             })
             .catch(console.error)
-            .finally(() => { fetchInFlightRef.current = false; });
+            .finally(() => {
+              fetchInFlightRef.current = false;
+              // Same recovery as the phase-1 branch below: if the viewport
+              // scrolled during this in-flight prefetch, reportScroll's queued
+              // range was ignored by the fetchInFlightRef guard. forceFetch
+              // clears dedup so the current viewport position is re-evaluated.
+              schedulerRef.current?.forceFetch();
+            });
         }
         return;
       }

@@ -382,8 +382,12 @@ export function useFilterScan(cacheManager: CacheController, refs: SharedLogView
       onFilterProgress((progress) => {
         handlerChain = handlerChain.then(() => handleProgress(progress)).catch(() => {});
       }).then((fn) => {
-        if (listenerDone) {
-          fn(); // already done — unregister immediately
+        if (listenerDone || filterScanGenRef.current !== gen) {
+          // Already done, or a newer scan started while this listener was
+          // still registering — unregister immediately instead of storing a
+          // stale listener into filterUnlistenRef, which would orphan the
+          // newer scan's own listener.
+          fn();
         } else {
           unlisten = fn;
           filterUnlistenRef.current = fn;

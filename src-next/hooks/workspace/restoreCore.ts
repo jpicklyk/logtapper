@@ -34,12 +34,20 @@ export interface RestoreIo {
   /** `useFileSession.loadFile` — accepts the optional persisted tab id at runtime
    *  even though the public `LogViewerActions` type elides it. `sourceType`
    *  replays a persisted override so the session re-detects nothing and resolves
-   *  to the same id it had when saved. */
+   *  to the same id it had when saved.
+   *
+   *  `replace` and `loadRequestId` are declared here (rather than omitted) so
+   *  their parameter *positions* match the real `useFileSession.loadFile`
+   *  implementation exactly — restoreWorkspace always passes `undefined` for
+   *  `replace` and its own correlation id for `loadRequestId`; if the position
+   *  were wrong, the id would land in the `replace` slot at runtime. */
   loadFile: (
     path: string,
     paneId?: string,
     existingTabId?: string,
     sourceType?: SourceType,
+    replace?: boolean,
+    loadRequestId?: string,
   ) => Promise<void>;
   /** Triggers (or arms) the pipeline auto-run for a restored session, with that
    *  session's restored chain passed explicitly (see autoRunScheduler for why the
@@ -65,22 +73,45 @@ export async function restoreWorkspace(
   // schedule an auto-save of itself and, on a partial failure, overwrite the good
   // `.ltw` with the partial set. Reference-counted gate; end MUST run in finally.
   bus.emit('workspace:restore-begin');
+  // Correlation id stamped on every loadFile call this restore makes. A user
+  // can open a file (via the normal open path) while a restore load is
+  // in-flight — the awaited io.loadFile below yields the event loop, and an
+  // unrelated session:loaded for that unrelated open would otherwise land in
+  // this restore's loadedOrder slice and get attributed the wrong manifest
+  // entry's bookmarks/analyses. Filtering on this id in onSessionLoaded scopes
+  // attribution to sessions THIS restore produced.
+  const loadRequestId = crypto.randomUUID();
   try {
     // session:loaded fires synchronously inside loadFile (before its promise
     // resolves), so slicing this list around each await yields exactly the
     // sessions that load produced, in order — with their isIndexing flag.
     const loadedOrder: Array<{ sessionId: string; isIndexing?: boolean }> = [];
-    const onSessionLoaded = (p: { sessionId: string; isIndexing?: boolean }) => {
+    const onSessionLoaded = (p: { sessionId: string; isIndexing?: boolean; loadRequestId?: string }) => {
+      if (p.loadRequestId !== loadRequestId) return; // not from this restore
       loadedOrder.push({ sessionId: p.sessionId, isIndexing: p.isIndexing });
     };
     bus.on('session:loaded', onSessionLoaded);
+
+    // U6: a session's indexing can complete in the gap between its
+    // session:loaded (which carries the isIndexing snapshot below) and the
+    // scheduleAutoRun call further down, which only runs after an awaited
+    // restoreWorkspaceSession per pair. Subscribing before any load starts
+    // means we catch that completion instead of missing it — scheduleAutoRun
+    // is told below to treat any such session as already-indexed instead of
+    // arming a one-shot for an indexing-complete that already fired (which
+    // would otherwise wait forever, since the event never fires twice).
+    const indexingCompletedIds = new Set<string>();
+    const onIndexingComplete = (p: { sessionId: string }) => {
+      indexingCompletedIds.add(p.sessionId);
+    };
+    bus.on('session:indexing-complete', onIndexingComplete);
 
     const producedSessionIdsPerLoad: string[][] = [];
     try {
       for (const load of plan.loads) {
         const before = loadedOrder.length;
         try {
-          await io.loadFile(load.path, load.paneId, load.existingTabId, load.sourceType as SourceType | undefined);
+          await io.loadFile(load.path, load.paneId, load.existingTabId, load.sourceType as SourceType | undefined, undefined, loadRequestId);
         } catch (e) {
           console.warn(`[restoreWorkspace] Failed to load ${load.path}:`, e);
         }
@@ -110,36 +141,47 @@ export async function restoreWorkspace(
     const warnings = [...plan.warnings, ...pairingWarnings];
     for (const w of warnings) console.warn(`[restoreWorkspace] ${w}`);
 
-    // Restore artifacts per session, then trigger that session's own auto-run.
-    // Restores are independent — each targets its own session_id-keyed slices of
-    // AppState (bookmarks/analyses/pipeline meta) and emits its own scoped
-    // workspace-restored event, so run them in parallel. What must stay ordered
-    // is local to each pair: "this session's restore resolves before this
-    // session's own auto-run is scheduled" — Promise.all over per-pair async
-    // callbacks preserves that while letting sessions restore concurrently.
-    await Promise.all(pairs.map(async ({ sessionId, data }) => {
-      try {
-        await restoreWorkspaceSession({
-          sessionId,
-          bookmarks: data.bookmarks,
-          analyses: data.analyses,
-          activeProcessorIds: data.activeProcessorIds,
-          disabledProcessorIds: data.disabledProcessorIds,
-        });
-      } catch (e) {
-        console.warn(`[restoreWorkspace] Failed to restore artifacts for ${sessionId}:`, e);
-        return;
-      }
-      // Only sessions with a restored chain, and not owned by the `.lts` path.
-      if (data.activeProcessorIds.length > 0 && !ltsSessionIds.has(sessionId)) {
-        io.scheduleAutoRun(
-          sessionId,
-          isIndexingBySession.get(sessionId),
-          data.activeProcessorIds,
-          data.disabledProcessorIds,
-        );
-      }
-    }));
+    try {
+      // Restore artifacts per session, then trigger that session's own auto-run.
+      // Restores are independent — each targets its own session_id-keyed slices of
+      // AppState (bookmarks/analyses/pipeline meta) and emits its own scoped
+      // workspace-restored event, so run them in parallel. What must stay ordered
+      // is local to each pair: "this session's restore resolves before this
+      // session's own auto-run is scheduled" — Promise.all over per-pair async
+      // callbacks preserves that while letting sessions restore concurrently.
+      await Promise.all(pairs.map(async ({ sessionId, data }) => {
+        try {
+          await restoreWorkspaceSession({
+            sessionId,
+            bookmarks: data.bookmarks,
+            analyses: data.analyses,
+            activeProcessorIds: data.activeProcessorIds,
+            disabledProcessorIds: data.disabledProcessorIds,
+          });
+        } catch (e) {
+          console.warn(`[restoreWorkspace] Failed to restore artifacts for ${sessionId}:`, e);
+          return;
+        }
+        // Only sessions with a restored chain, and not owned by the `.lts` path.
+        if (data.activeProcessorIds.length > 0 && !ltsSessionIds.has(sessionId)) {
+          // If indexing-complete already arrived for this session (raced ahead
+          // of us getting here), treat it as not-indexing so scheduleAutoRun
+          // runs now instead of arming a one-shot for an event that already
+          // fired and will never fire again.
+          const isIndexing = indexingCompletedIds.has(sessionId) ? false : isIndexingBySession.get(sessionId);
+          io.scheduleAutoRun(
+            sessionId,
+            isIndexing,
+            data.activeProcessorIds,
+            data.disabledProcessorIds,
+          );
+        }
+      }));
+    } finally {
+      // All scheduleAutoRun decisions above have been made (or skipped on
+      // error) — stop tracking regardless of outcome.
+      bus.off('session:indexing-complete', onIndexingComplete);
+    }
 
     // View-state: editor tabs + layout blob. Only when localStorage did not
     // already restore them (else they self-restore from their own keys and this

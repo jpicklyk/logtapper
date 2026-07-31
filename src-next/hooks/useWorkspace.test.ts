@@ -224,6 +224,37 @@ describe('autoSave path decision', () => {
 });
 
 // ---------------------------------------------------------------------------
+// U59 — executePendingAction's 'switch' case must honor the save-prompt
+// choice instead of unconditionally auto-saving.
+//
+// Mirrors the decision in useWorkspace.ts:executePendingAction's 'switch'
+// case: `if (promptChoice === undefined) { await doAutoSave(); }`.
+// `promptChoice` is undefined only when guardedAction executed directly
+// (workspace wasn't dirty, no prompt shown). When it runs after the save
+// prompt, 'save' already persisted the state via doSave — an unconditional
+// doAutoSave() would be a redundant duplicate write — and 'discard' means
+// the user explicitly opted out of persisting the dirty state, so running
+// doAutoSave() there would silently write it anyway and defeat the choice.
+// ---------------------------------------------------------------------------
+describe('switch action: doAutoSave honors the save-prompt choice (U59)', () => {
+  function shouldAutoSaveOnSwitch(promptChoice: 'save' | 'discard' | undefined): boolean {
+    return promptChoice === undefined;
+  }
+
+  it('direct execution (workspace was clean, no prompt shown) still auto-saves', () => {
+    expect(shouldAutoSaveOnSwitch(undefined)).toBe(true);
+  });
+
+  it('choosing Discard must NOT auto-save (the whole point of discarding)', () => {
+    expect(shouldAutoSaveOnSwitch('discard')).toBe(false);
+  });
+
+  it('choosing Save must NOT auto-save again (doSave already wrote it)', () => {
+    expect(shouldAutoSaveOnSwitch('save')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // editor tab restore mapping
 // ---------------------------------------------------------------------------
 describe('editor tab restore mapping', () => {

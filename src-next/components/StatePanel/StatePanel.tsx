@@ -139,6 +139,8 @@ const StatePanel = React.memo(function StatePanel() {
   const lastRunCountRef = useRef<number>(-1);
 
   useEffect(() => {
+    let cancelled = false;
+
     if (!session || activeTrackers.length === 0) {
       setTrackerStates([]);
       hasDataRef.current = false;
@@ -186,6 +188,8 @@ const StatePanel = React.memo(function StatePanel() {
         });
       }),
     ).then((results) => {
+      if (cancelled) return;
+
       const next: TrackerState[] = results.map((r, i) => {
         if (r.status === 'fulfilled') return r.value;
         return {
@@ -208,6 +212,10 @@ const StatePanel = React.memo(function StatePanel() {
         return next;
       });
     });
+
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, runCount, activeTrackers.length, selectedLine]);
 

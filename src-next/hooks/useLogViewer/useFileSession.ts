@@ -68,9 +68,9 @@ export function useFileSession(
     result: LoadResult,
     targetPaneId: string,
     tabId: string,
-    opts: { isNewTab: boolean; previousSessionId?: string; path: string },
+    opts: { isNewTab: boolean; previousSessionId?: string; path: string; loadRequestId?: string },
   ) => {
-    const { isNewTab, previousSessionId, path } = opts;
+    const { isNewTab, previousSessionId, path, loadRequestId } = opts;
 
     // Optimistic fetch: pre-populate cache while React propagates session state.
     // When useViewCache allocates the handle it will consume these pre-seeded lines,
@@ -113,6 +113,7 @@ export function useFileSession(
         previousSessionId,
         readOnly: isBugreportLike(result.sourceType) ? true : undefined,
         isIndexing: result.isIndexing,
+        loadRequestId,
       },
       { sessionId: result.sessionId, paneId: targetPaneId },
     );
@@ -150,6 +151,11 @@ export function useFileSession(
     existingTabId?: string,
     sourceType?: SourceType,
     replace?: boolean,
+    // Stamped by a workspace restore (`hooks/workspace/restoreCore.ts`) so the
+    // session:loaded event(s) this load produces can be told apart from an
+    // unrelated concurrent open. See the `loadRequestId` doc on
+    // AppEvents['session:loaded'].
+    loadRequestId?: string,
   ) => {
     // Prevent duplicate imports: if this .lts file already has an active session, skip.
     // Check live session context (via ref) rather than localStorage which can be stale.
@@ -249,7 +255,7 @@ export function useFileSession(
       }
 
       // Post-load half: register the session and create/activate its tab.
-      registerLoadedSession(result, targetPaneId, tabId, { isNewTab, previousSessionId, path });
+      registerLoadedSession(result, targetPaneId, tabId, { isNewTab, previousSessionId, path, loadRequestId });
 
       // Register additional sessions from multi-session .lts import.
       const extraActions = planExtraSessionImport(
@@ -280,6 +286,7 @@ export function useFileSession(
               previousSessionId: action.previousSessionId,
               readOnly: action.readOnly || undefined,
               isIndexing: action.session.isIndexing,
+              loadRequestId,
             });
             break;
           case 'persistTabPath': {
