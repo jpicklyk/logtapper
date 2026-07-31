@@ -123,12 +123,12 @@ impl PreFilter {
 /// Type alias for the complex reporter run tuple to satisfy clippy::type_complexity.
 type ReporterRunEntry<'a> = (String, ProcessorRun<'a>, Option<Vec<(usize, usize)>>);
 /// (id, run, section_ranges, section_names, mode)
-type TrackerRunEntry = (String, StateTrackerRun, Option<Vec<(usize, usize)>>, Vec<String>, TrackerMode);
+type TrackerRunEntry<'a> = (String, StateTrackerRun<'a>, Option<Vec<(usize, usize)>>, Vec<String>, TrackerMode);
 
 pub struct PipelineCore<'a> {
     pub transformer_runs: Vec<(String, TransformerRun)>,
     pub reporter_runs: Vec<ReporterRunEntry<'a>>,
-    pub tracker_runs: Vec<TrackerRunEntry>,
+    pub tracker_runs: Vec<TrackerRunEntry<'a>>,
     pub correlator_runs: Vec<(String, CorrelatorRun<'a>)>,
     pub pipeline_ctx: PipelineContext,
     pub prefilter: PreFilter,
@@ -208,7 +208,7 @@ impl<'a> PipelineCore<'a> {
             .collect();
 
         let tracker_section_ranges = compute_tracker_section_ranges(&defs.tracker_defs, sections);
-        let tracker_runs: Vec<TrackerRunEntry> = defs
+        let tracker_runs: Vec<TrackerRunEntry<'a>> = defs
             .tracker_defs
             .iter()
             .zip(tracker_section_ranges)
@@ -273,7 +273,7 @@ impl<'a> PipelineCore<'a> {
             .collect();
 
         // Streaming: no section filtering (sections always empty)
-        let tracker_runs: Vec<TrackerRunEntry> = defs
+        let tracker_runs: Vec<TrackerRunEntry<'a>> = defs
             .tracker_defs
             .iter()
             .map(|(tid, def)| {
@@ -383,6 +383,14 @@ impl<'a> PipelineCore<'a> {
 
         let pctx = &self.pipeline_ctx;
 
+        // KNOWN TRADE-OFF (deliberate deferral, not overlooked): `rayon::scope`
+        // blocks the calling thread until every spawned Layer 2 task finishes.
+        // File-mode callers (`run_pipeline` in `pipeline.rs`) already run this
+        // whole batch loop inside `tokio::task::spawn_blocking`, so that's fine.
+        // The streaming caller (`flush_batch` in `adb.rs`, invoked from the
+        // `select!` loop in `run_streaming_task`) calls this synchronously and
+        // inline instead — see the matching comment there for why that wasn't
+        // restructured in this pass.
         rayon::scope(|s| {
             // Layer 2a: StateTrackers (with section filtering)
             for (_, run, ranges, _, _) in &mut self.tracker_runs {

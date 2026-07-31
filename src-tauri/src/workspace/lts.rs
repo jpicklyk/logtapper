@@ -100,7 +100,7 @@ pub struct LtsData {
     pub editor_tabs: Vec<LtsEditorTab>,
 }
 
-/// Write a `.lts` zip file (format v2) to `dest`.
+/// Write a `.lts` zip file (current format: `LTS_FORMAT_VERSION` = 3) to `dest`.
 ///
 /// # Arguments
 /// * `dest` — output path for the zip file
@@ -230,6 +230,22 @@ pub fn read_lts(path: &Path) -> Result<LtsData, String> {
 
     // 1. manifest.json
     let manifest: LtsManifest = super::zip_read_json(&mut archive, "manifest.json")?;
+
+    // Unlike `ltw_v4.rs`'s `read_ltw` (which requires an exact format match,
+    // since older `.ltw` formats live in now-removed `ltw_v1..v3.rs` files),
+    // this single `lts.rs` reader has always stayed backward-compatible with
+    // older `.lts` manifests by defaulting individual entries that didn't
+    // exist yet (`session-meta.json`, `processor-manifest.json`,
+    // `editor-tabs.json` are all read as "optional — default if missing"
+    // below, regardless of `format_version`). So we don't reject every
+    // non-current version like `read_ltw` does — only versions *newer* than
+    // this build understands, which this code has no fallback path for.
+    if manifest.format_version > LTS_FORMAT_VERSION {
+        return Err(format!(
+            "Unsupported .lts format version {} (this build supports up to {LTS_FORMAT_VERSION})",
+            manifest.format_version
+        ));
+    }
 
     // 2. Per-session data
     let mut sessions: Vec<LtsSessionData> = Vec::with_capacity(manifest.sessions.len());
@@ -1081,5 +1097,97 @@ mod tests {
         assert_eq!(loaded.sessions[0].source_filename, "after.log");
         assert_eq!(loaded.sessions[0].source_bytes, b"new content after overwrite\n");
         assert_eq!(loaded.sessions[0].bookmarks.len(), 1);
+    }
+
+    // ─── format_version validation ─────────────────────────────────────────
+
+    /// Rewrite just `manifest.json` inside an already-written `.lts` zip with
+    /// a tampered `format_version`, keeping every other entry untouched.
+    fn rewrite_manifest_format_version(zip_path: &Path, format_version: u32) {
+        // Read back everything so we can rebuild the zip with only the
+        // manifest changed.
+        let mut manifest: LtsManifest = {
+            let file = File::open(zip_path).unwrap();
+            let mut archive = zip::ZipArchive::new(file).unwrap();
+            super::super::zip_read_json(&mut archive, "manifest.json").unwrap()
+        };
+        manifest.format_version = format_version;
+
+        // Copy every other entry from the original archive verbatim, then
+        // overwrite manifest.json with the tampered version.
+        let orig_bytes = std::fs::read(zip_path).unwrap();
+        let mut src_archive = zip::ZipArchive::new(std::io::Cursor::new(orig_bytes)).unwrap();
+
+        let out_file = File::create(zip_path).unwrap();
+        let mut writer = zip::ZipWriter::new(out_file);
+        let deflate = SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+
+        for i in 0..src_archive.len() {
+            let mut entry = src_archive.by_index(i).unwrap();
+            let name = entry.name().to_string();
+            if name == "manifest.json" {
+                continue;
+            }
+            let mut buf = Vec::new();
+            entry.read_to_end(&mut buf).unwrap();
+            let opts = if entry.compression() == zip::CompressionMethod::Stored {
+                SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Stored)
+                    .large_file(true)
+            } else {
+                deflate
+            };
+            writer.start_file(&name, opts).unwrap();
+            std::io::Write::write_all(&mut writer, &buf).unwrap();
+        }
+
+        writer.start_file("manifest.json", deflate).unwrap();
+        serde_json::to_writer(&mut writer, &manifest).unwrap();
+        writer.finish().unwrap();
+    }
+
+    /// A `.lts` file whose `format_version` is newer than this build
+    /// understands must be rejected with a clear error rather than silently
+    /// misparsed or accepted.
+    #[test]
+    fn read_lts_rejects_future_format_version() {
+        let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        let zip_path = tmp.path().to_path_buf();
+        drop(tmp);
+
+        let sessions = vec![make_session("test.log", b"data\n".to_vec(), vec![], vec![], LtsSessionMeta::default())];
+        write_lts(&zip_path, &sessions, &[], &[]).expect("write_lts");
+
+        rewrite_manifest_format_version(&zip_path, LTS_FORMAT_VERSION + 1);
+
+        let result = read_lts(&zip_path);
+        assert!(result.is_err(), "a newer-than-supported format_version must be rejected");
+        let err = result.err().expect("expected an error");
+        assert!(
+            err.contains("Unsupported .lts format version"),
+            "error must explain the version mismatch, got: {err}"
+        );
+    }
+
+    /// Older `.lts` manifests (format_version below current) must still be
+    /// accepted — this reader stays backward-compatible via per-entry
+    /// optionality rather than a hard version cutover, unlike `read_ltw`.
+    #[test]
+    fn read_lts_accepts_older_format_version() {
+        let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        let zip_path = tmp.path().to_path_buf();
+        drop(tmp);
+
+        let sessions = vec![make_session("old.log", b"legacy data\n".to_vec(), vec![], vec![], LtsSessionMeta::default())];
+        write_lts(&zip_path, &sessions, &[], &[]).expect("write_lts");
+
+        assert!(LTS_FORMAT_VERSION > 1, "test assumes there is an older version to downgrade to");
+        rewrite_manifest_format_version(&zip_path, LTS_FORMAT_VERSION - 1);
+
+        let loaded = read_lts(&zip_path).expect("an older format_version must still be readable");
+        assert_eq!(loaded.sessions.len(), 1);
+        assert_eq!(loaded.sessions[0].source_filename, "old.log");
+        assert_eq!(loaded.sessions[0].source_bytes, b"legacy data\n");
     }
 }

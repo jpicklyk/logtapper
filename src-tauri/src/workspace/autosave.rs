@@ -52,10 +52,15 @@ const SWITCH_SUPPRESSION_MS: u64 = 30_000;
 /// How many auto-save `.ltw` files to keep in the id-keyed `workspaces/` dir.
 ///
 /// Only workspaces without an explicit user save land there (one file per
-/// workspace id, rewritten in place each flush — so an active workspace's file
-/// is always among the newest and never evicted out from under it). Ten covers
-/// a realistic concurrent working set plus recent history for crash recovery,
-/// while bounding growth from churned/deleted workspace ids whose files linger.
+/// workspace id, rewritten in place each flush — so a workspace that keeps
+/// generating flushes always has its file among the newest). A workspace
+/// opened but never mutated since generates no flush of its own, so its file
+/// can't rely on that; `evict_old_workspaces` separately guards against
+/// deleting it by never evicting a file any workspace's `app-state.json`
+/// entry currently points at via `auto_save_path`, regardless of mtime. Ten
+/// covers a realistic concurrent working set plus recent history for crash
+/// recovery, while bounding growth from churned/deleted workspace ids whose
+/// files linger and are no longer referenced.
 const EVICT_KEEP: usize = 10;
 
 /// The last frontend-supplied workspace "shell". The backend can snapshot
@@ -561,7 +566,7 @@ pub fn write_flush_blocking(
         app_state_write_lock,
     )?;
 
-    crate::workspace::evict_old_workspaces(ws_dir, keep);
+    crate::workspace::evict_old_workspaces(ws_dir, keep, app_state_path);
 
     Ok(saved_at)
 }

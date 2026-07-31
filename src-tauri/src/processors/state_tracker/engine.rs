@@ -10,19 +10,26 @@ use crate::processors::state_tracker::types::{
     ContinuousTrackerState, FieldChange, StateSnapshot, StateTrackerResult, StateTransition,
 };
 
-pub struct StateTrackerRun {
-    def: StateTrackerDef,
+// Holds a borrowed `&'a StateTrackerDef` rather than a deep clone — matching
+// `ReporterRun`/`ProcessorRun<'a>` and `CorrelatorRun<'a>`, which already hold
+// references into the same `PartitionedDefs<'a>` (`Arc<StateTrackerDef>` via
+// `.as_ref()`). Previously every construction (including once per streaming
+// batch via `from_continuous_state`) deep-cloned the whole definition —
+// wasted allocation with no behavior difference, since `def` is only ever
+// read here, never mutated.
+pub struct StateTrackerRun<'a> {
+    def: &'a StateTrackerDef,
     current_state: HashMap<String, JsonValue>,
     transitions: Vec<StateTransition>,
     tracker_id: String,
     regex_cache: HashMap<String, Regex>,
 }
 
-impl StateTrackerRun {
-    pub fn new(tracker_id: &str, def: &StateTrackerDef) -> Self {
+impl<'a> StateTrackerRun<'a> {
+    pub fn new(tracker_id: &str, def: &'a StateTrackerDef) -> Self {
         let current_state = build_defaults(def);
         StateTrackerRun {
-            def: def.clone(),
+            def,
             current_state,
             transitions: Vec::new(),
             tracker_id: tracker_id.to_string(),
@@ -30,9 +37,9 @@ impl StateTrackerRun {
         }
     }
 
-    pub fn new_seeded(tracker_id: &str, def: &StateTrackerDef, saved: ContinuousTrackerState) -> Self {
+    pub fn new_seeded(tracker_id: &str, def: &'a StateTrackerDef, saved: ContinuousTrackerState) -> Self {
         StateTrackerRun {
-            def: def.clone(),
+            def,
             current_state: saved.current_state,
             transitions: saved.transitions,
             tracker_id: tracker_id.to_string(),
@@ -58,7 +65,7 @@ impl StateTrackerRun {
             }
 
             for field_name in &rule.clear {
-                if let Some(default_val) = find_default(&self.def, field_name) {
+                if let Some(default_val) = find_default(self.def, field_name) {
                     new_state.insert(field_name.clone(), default_val);
                 }
             }
@@ -81,7 +88,7 @@ impl StateTrackerRun {
     pub fn get_state_at_line(&self, line_num: usize) -> StateSnapshot {
         let pos = self.transitions.partition_point(|t| t.line_num <= line_num);
 
-        let mut fields = build_defaults(&self.def);
+        let mut fields = build_defaults(self.def);
         let mut initialized: std::collections::HashSet<String> = Default::default();
 
         for t in &self.transitions[..pos] {
@@ -478,6 +485,40 @@ mod tests {
         let result = run2.finish(vec![], TrackerMode::default());
         assert_eq!(result.transitions.len(), 2);
         assert_eq!(result.final_state["enabled"], json!(false));
+    }
+
+    /// Regression guard: `StateTrackerRun` used to deep-clone the whole
+    /// `StateTrackerDef` on every construction (once per `PipelineCore::new`
+    /// tracker and, worse, once per streaming batch via
+    /// `from_continuous_state`). It now borrows `&'a StateTrackerDef`,
+    /// matching `ProcessorRun<'a>` / `CorrelatorRun<'a>`. A borrowed field is
+    /// a thin reference regardless of how large the definition is, whereas an
+    /// owned clone would make `size_of::<StateTrackerRun>()` scale with
+    /// `StateTrackerDef` (which holds `Vec<StateFieldDecl>` +
+    /// `Vec<TransitionRule>` + `String` + an output struct — well over a
+    /// pointer's width).
+    #[test]
+    fn state_tracker_run_borrows_def_instead_of_cloning() {
+        // The borrow is enforced at the type level: `StateTrackerRun<'a>` holds
+        // `&'a StateTrackerDef`, so a single `def` can back multiple concurrent
+        // runs. (A size comparison against `StateTrackerDef` is not a valid
+        // proof — the run also carries independent runtime state such as the
+        // current field map and recorded transitions.)
+        // Functional check: two runs can concurrently borrow the same def
+        // (exactly how `PipelineCore` builds one `StateTrackerRun` per active
+        // tracker from a shared `Arc<StateTrackerDef>`) and keep fully
+        // independent state.
+        let def = make_def();
+        let mut run_a = StateTrackerRun::new("wifi-a", &def);
+        let mut run_b = StateTrackerRun::new("wifi-b", &def);
+
+        run_a.process_line(&make_line(1, "WifiStateMachine", "WiFi ENABLED"), &PipelineContext::test_default());
+        run_b.process_line(&make_line(1, "WifiInfo", r#"SSID: "TestNet""#), &PipelineContext::test_default());
+
+        assert_eq!(run_a.current_state["enabled"], json!(true));
+        assert_eq!(run_a.current_state["ssid"], json!(""));
+        assert_eq!(run_b.current_state["enabled"], json!(false));
+        assert_eq!(run_b.current_state["ssid"], json!("TestNet"));
     }
 
     // ── tag_regex capture groups ─────────────────────────────────────────────

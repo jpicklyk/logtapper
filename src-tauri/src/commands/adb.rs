@@ -759,6 +759,17 @@ async fn run_streaming_task(
             batch = batched.next() => {
                 match batch {
                     Some(lines) => {
+                        // KNOWN TRADE-OFF (deliberate deferral, not overlooked): `flush_batch`
+                        // runs parsing, regex matching, and the rayon Layer 2 fan-out
+                        // synchronously, inline, right here in the select! loop — it briefly
+                        // blocks this task's tokio worker thread per batch. Moving that work
+                        // into `spawn_blocking` was considered and rejected for this pass:
+                        // `ChunksTimeout` is not `Unpin` (hence the `tokio::pin!` above) and
+                        // this is the streaming hot path the whole cancellation-safety
+                        // structure above (dedicated reader task + channel) is built around —
+                        // restructuring it is a bigger, riskier change than an uncertain
+                        // finding warrants. The 50ms/100-line batch cap bounds how long any
+                        // single blocking call can run.
                         flush_batch(lines, &session_id, &source_id, &app, max_raw_lines, &on_event);
                     }
                     None => {

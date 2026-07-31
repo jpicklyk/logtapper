@@ -202,6 +202,19 @@ pub(crate) fn open_file_inner(
 
     // If the file is a .zip, extract the dumpstate/bugreport .txt to a temp file
     // and load that instead. The temp file persists for the session lifetime.
+    //
+    // KNOWN TRADE-OFF (deliberate deferral, not overlooked): this decompression
+    // — and the mmap + line-index build later in this function — runs
+    // synchronously on whichever async runtime called us (the Tauri command
+    // `load_log_file`, or the Axum handler `h_open_file` in `mcp_bridge.rs`),
+    // briefly blocking that worker thread on large zips. Moving just the
+    // decompression into `tokio::task::spawn_blocking` would require this fn
+    // to become `async` so it can `.await` the join handle — `open_file_inner`
+    // is deliberately `sync` (see the fn doc above) so `h_open_file` can call
+    // it directly, and that caller lives in `mcp_bridge.rs`, outside this
+    // fix's scope. Revisit together with that call site if this becomes a
+    // measured problem (large bugreport zips are the realistic worst case;
+    // typical file opens don't hit this path at all).
     let (effective_path, _temp_file) = if path_obj.extension().and_then(|e| e.to_str()) == Some("zip") {
         let extracted = extract_bugreport_from_zip(path_obj)?;
         let p = extracted.path().to_string_lossy().to_string();

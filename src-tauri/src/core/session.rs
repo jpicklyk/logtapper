@@ -18,6 +18,12 @@ use crate::core::parser::LogParser;
 // TagInterner — maps tag strings to compact u16 IDs
 // ---------------------------------------------------------------------------
 
+/// Sentinel tag id returned once the interner has exhausted the u16 id
+/// space (see `TagInterner::intern`). Reserved at construction — right
+/// after the empty tag at id 0 — so overflow can never alias a real tag.
+pub const TAG_OVERFLOW_ID: u16 = 1;
+const TAG_OVERFLOW_LABEL: &str = "<tag-overflow>";
+
 pub struct TagInterner {
     table: Vec<String>,
     index: HashMap<String, u16>,
@@ -31,13 +37,28 @@ impl TagInterner {
         };
         // Pre-intern the empty tag at ID 0 so default/empty tags are free.
         interner.intern("");
+        // Reserve the overflow sentinel at ID 1 up front (see `intern`).
+        interner.intern(TAG_OVERFLOW_LABEL);
+        debug_assert_eq!(interner.index.get(TAG_OVERFLOW_LABEL), Some(&TAG_OVERFLOW_ID));
         interner
     }
 
     /// Return the u16 ID for `tag`, inserting it if not yet seen.
+    ///
+    /// `u16` can address at most 65,536 distinct ids (0..=u16::MAX). Once
+    /// the table has claimed all of them, `self.table.len() as u16` would
+    /// truncate and silently alias an existing tag — most dangerously id 0,
+    /// the empty tag, corrupting resolution for every line tagged with the
+    /// new (unrepresentable) string. Instead of growing past that point,
+    /// hand back the reserved `TAG_OVERFLOW_ID` sentinel so resolution stays
+    /// well-defined, just imprecise for the small tail of tags that didn't
+    /// fit.
     pub fn intern(&mut self, tag: &str) -> u16 {
         if let Some(&id) = self.index.get(tag) {
             return id;
+        }
+        if self.table.len() > u16::MAX as usize {
+            return TAG_OVERFLOW_ID;
         }
         let id = self.table.len() as u16;
         self.table.push(tag.to_string());
@@ -996,6 +1017,52 @@ mod tests {
     use super::*;
     use crate::core::line::LogLevel;
     use crate::core::log_source::{FileLogSource, LogSource, StreamLogSource, ZipLogSource};
+
+    // --- TagInterner ---
+
+    /// Regression test for the u16-overflow aliasing bug: once the table has
+    /// claimed every id in 0..=u16::MAX, `intern()` must stop growing and
+    /// hand back the reserved `TAG_OVERFLOW_ID` sentinel instead of letting
+    /// `table.len() as u16` wrap around and alias an existing tag (most
+    /// dangerously id 0, the empty tag).
+    ///
+    /// Interning 65,536 real strings just to reach the boundary would make
+    /// this test slow and memory-heavy for no extra coverage, so the table
+    /// is forged directly (same-module access to private fields) to the
+    /// exact state `intern()`'s guard checks for.
+    #[test]
+    fn tag_interner_overflow_returns_sentinel_not_alias() {
+        let mut interner = TagInterner::new();
+
+        // Forge the table/index to the boundary: ids 0..=u16::MAX are all
+        // claimed (u16::MAX as usize + 1 entries), which is exactly the
+        // state where the next `intern()` call cannot mint a fresh id.
+        interner.table = (0..=u16::MAX as usize).map(|i| format!("tag-{i}")).collect();
+        interner.index = interner
+            .table
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t.clone(), i as u16))
+            .collect();
+
+        // A brand-new tag can no longer get a fresh id — it must resolve to
+        // the reserved overflow sentinel, never truncate/alias into id 0.
+        let overflow_id = interner.intern("brand-new-tag-past-the-limit");
+        assert_eq!(overflow_id, TAG_OVERFLOW_ID);
+        assert_ne!(overflow_id, 0, "overflow must not alias the empty tag id");
+
+        // The table must not have grown past the u16 space.
+        assert_eq!(interner.table.len(), u16::MAX as usize + 1);
+
+        // A second, different overflow tag also gets the same stable
+        // sentinel rather than a new (impossible) id.
+        assert_eq!(interner.intern("yet-another-overflow-tag"), TAG_OVERFLOW_ID);
+
+        // Already-interned tags are unaffected — they keep resolving to
+        // their original id rather than being redirected to the sentinel.
+        assert_eq!(interner.intern("tag-500"), 500);
+        assert_eq!(interner.resolve(500), "tag-500");
+    }
 
     // --- Source-type detection ---
 

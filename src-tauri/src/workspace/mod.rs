@@ -116,8 +116,24 @@ pub fn workspace_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 
 /// Delete the oldest `.ltw` files in `dir` so that at most `keep` files remain.
 ///
+/// Never deletes a file that is currently recorded as a workspace's
+/// `auto_save_path` in `app-state.json` at `app_state_path`, even if that
+/// workspace hasn't been flushed recently (e.g. opened but left untouched
+/// while *other* workspaces churn through their own auto-saves). The
+/// `EVICT_KEEP`-per-flush design assumes an active workspace's file is
+/// "always among the newest" because it gets rewritten in place on every
+/// flush — true only while that workspace keeps generating flushes. A
+/// workspace with zero mutations since it was opened never re-flushes, so
+/// its file's mtime can age out from under it purely because unrelated
+/// workspaces kept flushing; deleting it would silently invalidate
+/// `auto_save_path` with nothing to notice or repair the dangling pointer.
+/// Protected files are excluded from the eviction candidate pool entirely
+/// (kept in addition to `keep`, not counted against it), so genuinely
+/// stale, unreferenced files are still trimmed down to `keep` exactly as
+/// before.
+///
 /// All errors are silently ignored — this is a non-fatal housekeeping operation.
-pub fn evict_old_workspaces(dir: &Path, keep: usize) {
+pub fn evict_old_workspaces(dir: &Path, keep: usize, app_state_path: &Path) {
     // Cheap pre-count: statting + sorting every file runs on every flush, but the
     // common case is being under the keep limit. Count `.ltw` entries by
     // extension only — no `metadata()` calls — and bail before the expensive pass.
@@ -132,6 +148,13 @@ pub fn evict_old_workspaces(dir: &Path, keep: usize) {
         return;
     }
 
+    let protected: std::collections::HashSet<PathBuf> = app_state::load_app_state(app_state_path)
+        .workspaces
+        .into_iter()
+        .filter_map(|w| w.auto_save_path)
+        .map(PathBuf::from)
+        .collect();
+
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -140,7 +163,7 @@ pub fn evict_old_workspaces(dir: &Path, keep: usize) {
         .flatten()
         .filter_map(|e| {
             let path = e.path();
-            if path.extension().is_some_and(|ext| ext == "ltw") {
+            if path.extension().is_some_and(|ext| ext == "ltw") && !protected.contains(&path) {
                 let mtime = e.metadata().ok()?.modified().ok()?;
                 Some((mtime, path))
             } else {
@@ -232,7 +255,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
-        evict_old_workspaces(dir, 3);
+        evict_old_workspaces(dir, 3, &dir.join("app-state.json"));
 
         let remaining: Vec<_> = std::fs::read_dir(dir)
             .unwrap()
@@ -261,7 +284,7 @@ mod tests {
             std::fs::write(dir.join(format!("f{i}.ltw")), b"data").expect("write");
         }
 
-        evict_old_workspaces(dir, 5);
+        evict_old_workspaces(dir, 5, &dir.join("app-state.json"));
 
         let count = std::fs::read_dir(dir).unwrap().count();
         assert_eq!(count, 2);
@@ -284,7 +307,7 @@ mod tests {
         std::fs::write(dir.join("other.log"), b"log file").expect("write log");
 
         // Evict keeping only 2 .ltw files.
-        evict_old_workspaces(dir, 2);
+        evict_old_workspaces(dir, 2, &dir.join("app-state.json"));
 
         let remaining: Vec<String> = std::fs::read_dir(dir)
             .unwrap()
@@ -302,5 +325,68 @@ mod tests {
 
         // Total file count = 2 ltw + 2 non-ltw = 4.
         assert_eq!(remaining.len(), 4, "total file count must be 4; got: {remaining:?}");
+    }
+
+    /// A file recorded as a workspace's `auto_save_path` in app-state.json
+    /// must survive eviction even when it is the oldest file in the
+    /// directory — this is the open-but-untouched-workspace scenario:
+    /// its file never gets refreshed by its own flushes, but it is still a
+    /// live pointer that app-state.json depends on. Genuinely stale,
+    /// unreferenced files are still trimmed down to `keep` as before.
+    #[test]
+    fn evict_never_deletes_a_referenced_auto_save_path() {
+        let tmp_dir = tempfile::tempdir().expect("tmpdir");
+        let dir = tmp_dir.path();
+        let app_state_path = tmp_dir.path().join("app-state.json");
+
+        // 5 files, oldest to newest: file0 (oldest) .. file4 (newest).
+        let names: Vec<String> = (0..5).map(|i| format!("file{i}.ltw")).collect();
+        for (i, name) in names.iter().enumerate() {
+            std::fs::write(dir.join(name), vec![b'x'; i + 1]).expect("write");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        // app-state.json records file0.ltw — the OLDEST file, otherwise the
+        // very first candidate for eviction — as an open workspace's live
+        // auto_save_path.
+        let protected_path = dir.join("file0.ltw");
+        let state = app_state::AppStateFile {
+            workspaces: vec![app_state::WorkspaceEntry {
+                id: "ws-open".to_string(),
+                name: "Open".to_string(),
+                ltw_path: None,
+                dirty: false,
+                auto_save_path: Some(protected_path.to_string_lossy().to_string()),
+                last_auto_save_at: Some(123),
+            }],
+            active_workspace_id: Some("ws-open".to_string()),
+        };
+        app_state::save_app_state(&app_state_path, &state).expect("write app-state.json");
+
+        // Keep 3 — without protection this would evict file0 and file1.
+        evict_old_workspaces(dir, 3, &app_state_path);
+
+        let remaining: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+
+        assert!(
+            remaining.contains(&"file0.ltw".to_string()),
+            "file0.ltw is a live auto_save_path and must survive eviction; remaining: {remaining:?}"
+        );
+        // The 3 newest unreferenced files also survive under `keep = 3`.
+        for name in &["file2.ltw", "file3.ltw", "file4.ltw"] {
+            assert!(
+                remaining.contains(&(*name).to_string()),
+                "{name} should survive eviction; remaining: {remaining:?}"
+            );
+        }
+        // file1.ltw is genuinely stale and unreferenced — still evicted.
+        assert!(
+            !remaining.contains(&"file1.ltw".to_string()),
+            "file1.ltw is unreferenced and stale; it should still be evicted; remaining: {remaining:?}"
+        );
     }
 }
