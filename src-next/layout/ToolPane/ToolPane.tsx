@@ -8,8 +8,6 @@ interface ToolPaneProps {
   visible: boolean;
   size: number;
   onResize: (delta: number) => void;
-  minSize?: number;
-  maxSize?: number;
   children: React.ReactNode;
 }
 
