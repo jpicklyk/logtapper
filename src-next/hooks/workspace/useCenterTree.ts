@@ -246,44 +246,56 @@ export function useCenterTree(
   }, [updateTree]);
 
   const openCenterTab = useCallback((type: CenterTabType, label?: string, filePath?: string, editorState?: EditorTabState) => {
-    updateTree((tree) => {
-      // 1. If a tab of this type already exists (and no filePath — reuse tab), activate it
-      if (!filePath) {
-        const existing = findTabByType(tree, type);
-        if (existing && !editorState) {
-          if (existing.pane.activeTabId === existing.tab.id) return tree;
-          return updateLeaf(tree, existing.pane.id, (pane) => ({
+    // Decide using treeRef.current (synchronously current committed state) BEFORE
+    // calling updateTree — mirrors the onSessionLoaded/onSessionLoading pattern.
+    // StrictMode calls the updateTree updater twice with the same prev; if
+    // makeTab (crypto.randomUUID) and storageSet ran inside that updater, the
+    // first (discarded) invocation's UUID would seed orphaned localStorage keys
+    // — including full editor content — that are never cleaned up (U9 fix).
+    const tree = treeRef.current;
+
+    // 1. If a tab of this type already exists (and no filePath — reuse tab), activate it
+    if (!filePath) {
+      const existing = findTabByType(tree, type);
+      if (existing && !editorState) {
+        if (existing.pane.activeTabId === existing.tab.id) return;
+        updateTree((t) =>
+          updateLeaf(t, existing.pane.id, (pane) => ({
             ...pane,
             activeTabId: existing.tab.id,
-          }));
-        }
+          })),
+        );
+        return;
       }
+    }
 
-      // 2. Add to the focused pane (or first leaf as fallback)
-      const focPaneId = activeLogPaneIdRef.current;
-      const target = (focPaneId ? findLeafByPaneId(tree, focPaneId) : null) ?? firstLeaf(tree);
-      const tab = makeTab(type, label);
+    // 2. Add to the focused pane (or first leaf as fallback)
+    const focPaneId = activeLogPaneIdRef.current;
+    const target = (focPaneId ? findLeafByPaneId(tree, focPaneId) : null) ?? firstLeaf(tree);
+    const tab = makeTab(type, label);
 
-      // Pre-seed localStorage with the file path so EditorTab picks it up on mount.
-      if (filePath) {
-        storageSet(LS_FILEPATH_PREFIX + tab.id, filePath);
+    // Pre-seed localStorage with the file path so EditorTab picks it up on mount.
+    if (filePath) {
+      storageSet(LS_FILEPATH_PREFIX + tab.id, filePath);
+    }
+
+    // Pre-seed localStorage with editor state so EditorTab picks it up on mount.
+    if (editorState && type === 'editor') {
+      storageSet(LS_CONTENT_PREFIX + tab.id, editorState.content);
+      storageSet(LS_MODE_PREFIX + tab.id, editorState.viewMode);
+      if (editorState.wordWrap) {
+        storageSet(LS_WRAP_PREFIX + tab.id, 'true');
       }
+    }
 
-      // Pre-seed localStorage with editor state so EditorTab picks it up on mount.
-      if (editorState && type === 'editor') {
-        storageSet(LS_CONTENT_PREFIX + tab.id, editorState.content);
-        storageSet(LS_MODE_PREFIX + tab.id, editorState.viewMode);
-        if (editorState.wordWrap) {
-          storageSet(LS_WRAP_PREFIX + tab.id, 'true');
-        }
-      }
-
-      return updateLeaf(tree, target.pane.id, (pane) => ({
+    // Pure updater — only applies the pre-built tab, never generates one.
+    updateTree((t) =>
+      updateLeaf(t, target.pane.id, (pane) => ({
         ...pane,
         tabs: [...pane.tabs, tab],
         activeTabId: tab.id,
-      }));
-    });
+      })),
+    );
   }, [updateTree, activeLogPaneIdRef]);
 
   const dropTabOnPane = useCallback((

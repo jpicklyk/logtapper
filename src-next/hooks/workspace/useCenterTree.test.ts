@@ -18,6 +18,7 @@
  * a React renderer.
  */
 import { describe, it, expect, vi } from 'vitest';
+import React from 'react';
 import { renderHook, act } from '@testing-library/react';
 import type { SplitNode, Tab } from './workspaceTypes';
 import { findLeafByPaneId, updateLeaf } from './splitTreeHelpers';
@@ -469,5 +470,88 @@ describe('V4: dropTabOnPane skips emit on no-op self-drop', () => {
 
     expect(emitted).toHaveLength(1);
     expect(emitted[0]).toMatchObject({ tabId: tabA.id, paneId: toPaneId });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// U9: openCenterTab must not leak orphaned localStorage keys under StrictMode
+//
+// makeTab (crypto.randomUUID) and the storageSet calls (file path, editor
+// content, view mode, word wrap) used to run inside the updateTree updater.
+// StrictMode double-invokes setState updaters and discards the first result —
+// the first invocation's UUID still seeded real localStorage keys (including
+// full editor content) that are never cleaned up, because the committed tree
+// only ever references the SECOND (kept) tab id. Fix: build the tab and call
+// storageSet BEFORE updateTree, so the updater is pure and only ever runs
+// (functionally) once per call, regardless of how many times StrictMode
+// invokes it.
+//
+// This test renders the hook inside an actual <React.StrictMode> tree so the
+// real double-invocation semantics apply (verified against a throwaway probe
+// hook before writing this test — StrictMode does double-invoke setState
+// updater functions under this harness).
+// ---------------------------------------------------------------------------
+
+describe('U9: openCenterTab does not create orphaned localStorage keys under StrictMode', () => {
+  function renderCenterTreeStrict(initialTree: SplitNode) {
+    const activeLogPaneIdRef = { current: null as string | null };
+    const paneSessionMapRef = { current: new Map<string, string>() };
+    const activateSessionForPane = vi.fn();
+    const openBottomPane = vi.fn();
+
+    return renderHook(
+      () =>
+        useCenterTree(
+          { activeLogPaneIdRef, paneSessionMapRef, activateSessionForPane, openBottomPane },
+          initialTree,
+        ),
+      { wrapper: ({ children }) => React.createElement(React.StrictMode, null, children) },
+    );
+  }
+
+  it('seeds exactly one set of localStorage keys per opened editor tab', () => {
+    localStorage.clear();
+    const initialTree = makeTree('pane-1', []);
+    const { result } = renderCenterTreeStrict(initialTree);
+
+    act(() => {
+      result.current.openCenterTab('editor', undefined, undefined, {
+        content: 'hello world',
+        viewMode: 'edit',
+        wordWrap: true,
+      });
+    });
+
+    const leaf = findLeafByPaneId(result.current.treeRef.current, 'pane-1');
+    const tab = leaf?.pane.tabs[0];
+    expect(tab).toBeDefined();
+
+    // Exactly one content/mode/wrap key exists, matching the tab actually in
+    // the committed tree. A pre-fix run would leave a second, orphaned key
+    // (seeded by the discarded StrictMode invocation's UUID) in localStorage.
+    const contentKeys = Object.keys(localStorage).filter((k) => k.startsWith('logtapper_scratchpad_'));
+    const modeKeys = Object.keys(localStorage).filter((k) => k.startsWith('logtapper_editor_mode_'));
+    const wrapKeys = Object.keys(localStorage).filter((k) => k.startsWith('logtapper_editor_wrap_'));
+
+    expect(contentKeys).toEqual([`logtapper_scratchpad_${tab!.id}`]);
+    expect(modeKeys).toEqual([`logtapper_editor_mode_${tab!.id}`]);
+    expect(wrapKeys).toEqual([`logtapper_editor_wrap_${tab!.id}`]);
+  });
+
+  it('seeds exactly one file path key when opening a file tab', () => {
+    localStorage.clear();
+    const initialTree = makeTree('pane-1', []);
+    const { result } = renderCenterTreeStrict(initialTree);
+
+    act(() => {
+      result.current.openCenterTab('editor', 'my-file.txt', '/path/to/my-file.txt');
+    });
+
+    const leaf = findLeafByPaneId(result.current.treeRef.current, 'pane-1');
+    const tab = leaf?.pane.tabs[0];
+    expect(tab).toBeDefined();
+
+    const filePathKeys = Object.keys(localStorage).filter((k) => k.startsWith('logtapper_editor_filepath_'));
+    expect(filePathKeys).toEqual([`logtapper_editor_filepath_${tab!.id}`]);
   });
 });
