@@ -47,6 +47,16 @@ export const SearchBar = React.memo<SearchBarProps>(function SearchBar({
     }
   }, [timeStart, timeEnd]);
 
+  // Clear pending debounce timers on unmount — otherwise a debounced
+  // setSearch/onTimeFilter fires ~250-400ms later against a pane/session
+  // context that has already closed.
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      if (timeDebounceRef.current) clearTimeout(timeDebounceRef.current);
+    };
+  }, []);
+
   const triggerSearch = useCallback(
     (value: string, regex: boolean, cs: boolean) => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
