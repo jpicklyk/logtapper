@@ -407,34 +407,6 @@ export interface PipelineProgress {
 }
 
 // ---------------------------------------------------------------------------
-// Chart types (Phase 3)
-// ---------------------------------------------------------------------------
-
-export interface DataPoint {
-  x: number;
-  y: number;
-  label?: string;
-  timelinePos?: number;
-}
-
-export interface DataSeries {
-  label: string;
-  color?: string;
-  points: DataPoint[];
-}
-
-export interface ChartData {
-  id: string;
-  chartType: string;
-  title: string;
-  description?: string;
-  series: DataSeries[];
-  xAxis: { label: string; field: string | null };
-  yAxis: { label: string; field: string | null };
-  interactive: boolean;
-}
-
-// ---------------------------------------------------------------------------
 // Timeline sparkline types
 // ---------------------------------------------------------------------------
 

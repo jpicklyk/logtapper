@@ -29,11 +29,10 @@ export type {
   WorkspaceLayoutState,
   DropZone,
 } from './useWorkspaceLayout';
-export { useSettings, SETTING_DEFAULTS, DEFAULT_BOOKMARK_CATEGORIES, loadSettings } from './useSettings';
+export { useSettings, SETTING_DEFAULTS, DEFAULT_BOOKMARK_CATEGORIES, loadSettings, categoryColorToHex } from './useSettings';
 export type { AppSettings, UseSettingsResult, BookmarkCategoryDef } from './useSettings';
 export { useAnonymizerConfig } from './useAnonymizerConfig';
 export type { UseAnonymizerConfigResult } from './useAnonymizerConfig';
-export { useChartData } from './useChartData';
 export { useBookmarks, useBookmarkLines, useBookmarkLookup } from './useBookmarks';
 export type { BookmarkState } from './useBookmarks';
 export { useAnalysis } from './useAnalysis';
