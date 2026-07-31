@@ -159,8 +159,10 @@ export function useFetchScheduler(
     const lastActual = virtualBase + last;
 
     // Cancel stale in-flight prefetch when scrolling fast — don't let
-    // an old prefetch block the post-settle viewport fetch
-    if (scheduler.velocity >= 5 && fetchInFlightRef.current) {
+    // an old prefetch block the post-settle viewport fetch. Uses the
+    // scheduler's own isSettled (velocity < its configured threshold)
+    // instead of a hardcoded value duplicating DEFAULT_VELOCITY_THRESHOLD.
+    if (!scheduler.isSettled && fetchInFlightRef.current) {
       fetchGenRef.current++;
       fetchInFlightRef.current = false;
     }
