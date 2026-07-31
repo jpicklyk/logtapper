@@ -463,7 +463,13 @@ function AddCategoryButton({ onAdd, existingIds }: {
   const [adding, setAdding] = useState(false);
   const [newId, setNewId] = useState('');
   const [newLabel, setNewLabel] = useState('');
-  const [newColor, setNewColor] = useState('var(--text-muted)');
+  // A native <input type="color"> requires a concrete color value — CSS
+  // custom properties like 'var(--text-muted)' aren't valid here and the
+  // browser silently falls back to #000000, so the picker (and the
+  // persisted category color) disagree with the intended muted gray.
+  // #8b949e is that gray's concrete hex (see LEGACY_COLOR_MIGRATION in
+  // useSettings.ts, which maps it back to var(--text-muted)).
+  const [newColor, setNewColor] = useState('#8b949e');
 
   const handleSubmit = useCallback(() => {
     const id = newId.trim().toLowerCase().replace(/\s+/g, '-');
@@ -471,7 +477,7 @@ function AddCategoryButton({ onAdd, existingIds }: {
     onAdd({ id, label: newLabel.trim() || id, color: newColor });
     setNewId('');
     setNewLabel('');
-    setNewColor('var(--text-muted)');
+    setNewColor('#8b949e');
     setAdding(false);
   }, [newId, newLabel, newColor, existingIds, onAdd]);
 
