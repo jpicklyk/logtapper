@@ -1,5 +1,9 @@
 import type { StateTransition } from '../../bridge/types';
 import { clamp } from '../../utils';
+// Thin re-export over the shared nanosecond timestamp/duration formatters
+// (see ../../utils/timeFormat) so StateTimeline's call sites and tests keep
+// their existing names.
+export { formatTimestampCompact as formatTs, formatDurationNs as fmtDuration } from '../../utils/timeFormat';
 
 export type Viewport = readonly [number, number];
 
@@ -7,27 +11,6 @@ export interface TrackerTimeline {
   trackerId: string;
   trackerName: string;
   transitions: StateTransition[];
-}
-
-export function formatTs(tsNanos: number, includeDate = false): string {
-  const d = new Date(tsNanos / 1_000_000);
-  const time = [
-    d.getUTCHours().toString().padStart(2, '0'),
-    d.getUTCMinutes().toString().padStart(2, '0'),
-    d.getUTCSeconds().toString().padStart(2, '0'),
-  ].join(':') + '.' + d.getUTCMilliseconds().toString().padStart(3, '0');
-  if (!includeDate) return time;
-  const month = (d.getUTCMonth() + 1).toString().padStart(2, '0');
-  const day = d.getUTCDate().toString().padStart(2, '0');
-  return `${month}-${day} ${time}`;
-}
-
-export function fmtDuration(nanos: number): string {
-  if (nanos < 1e6) return `${(nanos / 1e3).toFixed(1)}us`;
-  if (nanos < 1e9) return `${(nanos / 1e6).toFixed(0)}ms`;
-  if (nanos < 60e9) return `${(nanos / 1e9).toFixed(2)}s`;
-  if (nanos < 3600e9) return `${(nanos / 60e9).toFixed(1)}m`;
-  return `${(nanos / 3600e9).toFixed(2)}h`;
 }
 
 /** Convert a line number to a CSS percentage position within the viewport. */
