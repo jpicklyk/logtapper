@@ -158,7 +158,7 @@ export default function ReadOnlyViewer({
     handlePointerMove,
     handlePointerUp,
     clear: clearSelection,
-  } = useSelectionManager((n) => dataSource.getLine(n)?.raw);
+  } = useSelectionManager();
 
   // Clear selection and caret when the data source changes (new session).
   useEffect(() => {

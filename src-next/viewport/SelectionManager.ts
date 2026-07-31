@@ -13,7 +13,7 @@ const EMPTY_SELECTION: Selection = {
   mode: 'line',
 };
 
-export function useSelectionManager(getLineText: (lineNum: number) => string | undefined): {
+export function useSelectionManager(): {
   selection: Selection;
   handleLineClick: (lineNum: number, e: React.MouseEvent) => void;
   handlePointerDown: (lineNum: number, col: number, e: React.PointerEvent) => void;
