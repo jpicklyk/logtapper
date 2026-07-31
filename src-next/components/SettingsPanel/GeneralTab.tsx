@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { open as openDirectoryDialog } from '@tauri-apps/plugin-dialog';
 import { ExternalLink, Moon, Monitor, Plus, Sun, Trash2 } from 'lucide-react';
 import type { AppSettings, UseSettingsResult, BookmarkCategoryDef } from '../../hooks';
-import { SETTING_DEFAULTS, DEFAULT_BOOKMARK_CATEGORIES } from '../../hooks';
+import { SETTING_DEFAULTS, DEFAULT_BOOKMARK_CATEGORIES, categoryColorToHex } from '../../hooks';
 import { useTheme } from '../../context';
 import { SegmentedControl, Button, IconButton } from '../../ui';
 import type { SegmentedOption } from '../../ui';
@@ -427,7 +427,7 @@ function CategoryRow({ cat, onUpdate, onDelete, canDelete }: {
         <input
           type="color"
           className={css.catColorInput}
-          value={cat.color}
+          value={categoryColorToHex(cat.color)}
           onChange={(e) => onUpdate({ ...cat, color: e.target.value })}
           title="Pick category color"
         />
