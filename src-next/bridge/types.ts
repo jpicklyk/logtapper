@@ -589,16 +589,27 @@ export function matchesAllTags(tags: string[], activeFilters: Set<string>): bool
   return true;
 }
 
+/**
+ * Case-insensitive match against an item's name, description, and tags.
+ * `q` must already be lowercased — callers typically compute it once per
+ * query rather than re-lowercasing per item.
+ */
+export function matchesQuery(
+  item: { name: string; description?: string; tags: string[] },
+  q: string,
+): boolean {
+  return (
+    item.name.toLowerCase().includes(q) ||
+    (item.description ?? '').toLowerCase().includes(q) ||
+    item.tags.some((t) => t.toLowerCase().includes(q))
+  );
+}
+
 /** Filter marketplace entries by search query (matches name, description, tags) */
 export function filterMarketplaceEntries(entries: MarketplaceEntry[], query: string): MarketplaceEntry[] {
   if (!query) return entries;
   const q = query.toLowerCase();
-  return entries.filter(
-    (e) =>
-      e.name.toLowerCase().includes(q) ||
-      (e.description ?? '').toLowerCase().includes(q) ||
-      e.tags.some((t) => t.toLowerCase().includes(q)),
-  );
+  return entries.filter((e) => matchesQuery(e, q));
 }
 
 // ---------------------------------------------------------------------------

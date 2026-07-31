@@ -1,7 +1,7 @@
 import { memo, useState, useCallback, useRef, useMemo } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { ProcessorSummary, PackSummary } from '../../bridge/types';
-import { matchesAllTags, getBareId } from '../../bridge/types';
+import { matchesAllTags, matchesQuery, getBareId } from '../../bridge/types';
 import { usePipelineCommands } from '../../hooks';
 import { useProcessors, usePacks, usePipelineChain, usePipelineActions, useFocusedSession } from '../../context';
 import { Modal, ProcessorTypeIcon, PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY, Button } from '../../ui';
@@ -171,10 +171,7 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
       // Text filter: match against pack name, description, tags, or any processor name
       if (q) {
         const matchesPack =
-          pack.name.toLowerCase().includes(q) ||
-          (pack.description ?? '').toLowerCase().includes(q) ||
-          pack.tags.some((t) => t.toLowerCase().includes(q)) ||
-          packProcs.some((p) => p.name.toLowerCase().includes(q));
+          matchesQuery(pack, q) || packProcs.some((p) => p.name.toLowerCase().includes(q));
         if (!matchesPack) continue;
       }
       // Tag filter
@@ -188,13 +185,7 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
       if (packMemberQualifiedIds.has(p.id)) continue;
       if (p.id === '__pii_anonymizer') continue;
 
-      if (q) {
-        const matchesText =
-          p.name.toLowerCase().includes(q) ||
-          p.description.toLowerCase().includes(q) ||
-          p.tags.some((t) => t.toLowerCase().includes(q));
-        if (!matchesText) continue;
-      }
+      if (q && !matchesQuery(p, q)) continue;
       if (activeTagFilters.size > 0 && !matchesAllTags(p.tags, activeTagFilters)) continue;
 
       entries.push({ kind: 'standalone', processor: p });
