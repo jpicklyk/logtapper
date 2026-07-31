@@ -15,6 +15,15 @@ use super::schema::{VarDecl, VarType};
 pub struct VarStore {
     decls: Vec<VarDecl>,
     values: HashMap<String, Dynamic>,
+    /// Internal counter maintained by the reporter engine for the `count`
+    /// aggregate type (`AggType::Count`). Unlike `values`, this is never
+    /// gated behind a `vars:` declaration -- the `count` aggregate is
+    /// documented as a zero-config aggregate ("No vars are needed because
+    /// the count aggregate maintains its own total"), so authors must not
+    /// have to declare a `_count` var for it to work. Surfaced into
+    /// `to_json()` under the `_count` key so it reaches `RunResult.vars`
+    /// the same way declared vars do (e.g. for `mcp.summary` templates).
+    count: i64,
 }
 
 impl VarStore {
@@ -27,6 +36,7 @@ impl VarStore {
         Self {
             decls: decls.to_vec(),
             values,
+            count: 0,
         }
     }
 
@@ -65,15 +75,40 @@ impl VarStore {
     }
 
     /// Serialize current state to JSON for IPC transport.
+    ///
+    /// Always includes an `_count` entry reflecting the internal counter
+    /// (see `increment_count`), unless a declared var literally named
+    /// `_count` already exists -- declared vars take priority so a legacy
+    /// processor that pre-declared `_count` keeps its own semantics.
     pub fn to_json(&self) -> HashMap<String, JsonValue> {
-        self.values
+        let mut map: HashMap<String, JsonValue> = self.values
             .iter()
             .map(|(k, v)| (k.clone(), dynamic_to_json(v)))
-            .collect()
+            .collect();
+        map.entry("_count".to_string())
+            .or_insert_with(|| JsonValue::Number(self.count.into()));
+        map
     }
 
     pub fn decls(&self) -> &[VarDecl] {
         &self.decls
+    }
+
+    /// Increment the internal `count` aggregate counter and return the new total.
+    ///
+    /// This is the mechanism behind `AggType::Count` (reporter/engine.rs):
+    /// each time the pipeline's `count` aggregate stage runs for a matching
+    /// line, it calls this instead of writing to a `_count` var (which would
+    /// require the processor author to declare one -- see `VarStore::set`,
+    /// which silently refuses undeclared names).
+    pub fn increment_count(&mut self) -> i64 {
+        self.count += 1;
+        self.count
+    }
+
+    /// Current value of the internal `count` aggregate counter.
+    pub fn count(&self) -> i64 {
+        self.count
     }
 }
 
@@ -219,6 +254,40 @@ mod tests {
         let new_rhai = Dynamic::from(new_map);
         store.update_from_rhai(&new_rhai);
         assert_eq!(store.get("score").unwrap().as_int().unwrap(), 7i64);
+    }
+
+    #[test]
+    fn to_json_includes_internal_count_defaulting_to_zero() {
+        // `_count` must be present even for a processor with no `vars:` at
+        // all, since AggType::Count (reporter/engine.rs) relies on it being
+        // surfaced without any declaration.
+        let store = VarStore::new(&[]);
+        let json = store.to_json();
+        assert_eq!(json["_count"], serde_json::json!(0));
+    }
+
+    #[test]
+    fn increment_count_updates_to_json() {
+        let mut store = VarStore::new(&[]);
+        assert_eq!(store.increment_count(), 1);
+        assert_eq!(store.increment_count(), 2);
+        assert_eq!(store.count(), 2);
+        let json = store.to_json();
+        assert_eq!(json["_count"], serde_json::json!(2));
+    }
+
+    #[test]
+    fn declared_count_var_takes_priority_over_internal_counter() {
+        // If a processor declares its own var literally named `_count`
+        // (the old, pre-fix workaround), that declared value must still win
+        // in to_json() -- the internal counter only fills the gap when no
+        // such var exists.
+        let mut decl = make_var("_count", VarType::Int);
+        decl.default = Some(serde_yaml::Value::Number(serde_yaml::Number::from(99i64)));
+        let mut store = VarStore::new(&[decl]);
+        store.increment_count(); // internal counter now 1, but declared var wins
+        let json = store.to_json();
+        assert_eq!(json["_count"], serde_json::json!(99));
     }
 
     #[test]

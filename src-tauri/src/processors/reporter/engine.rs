@@ -332,12 +332,16 @@ impl<'a> ProcessorRun<'a> {
     ) {
         match agg_type {
             AggType::Count => {
-                // Increment a `_count` var if it exists.
-                if let Some(v) = self.vars.get("_count").cloned() {
-                    if let Ok(n) = v.as_int() {
-                        self.vars.set("_count", rhai::Dynamic::from(n + 1));
-                    }
-                }
+                // Increment the engine-maintained counter -- NOT a `_count` var.
+                // `VarStore::set` silently refuses undeclared names, and nothing
+                // ever declares `_count`, so writing through `vars` here would be
+                // a silent no-op (see VarStore::increment_count doc comment).
+                // The total is surfaced into RunResult.vars["_count"] by
+                // VarStore::to_json regardless of whether the processor declares
+                // any vars at all -- matching the documented zero-config `count`
+                // aggregate ("No vars are needed because the count aggregate
+                // maintains its own total").
+                self.vars.increment_count();
             }
             AggType::CountBy => {
                 if let Some(fname) = field {
@@ -2100,5 +2104,87 @@ pipeline:
         merged.merge(snap2);
         assert_eq!(merged.emissions.len(), 5, "merge preserves all emissions");
         assert_eq!(merged.matched_line_nums.len(), 5, "merge preserves all matches");
+    }
+
+    // ── AggType::Count ───────────────────────────────────────────────────
+
+    #[test]
+    fn count_aggregate_maintains_own_total_without_declared_var() {
+        // Regression for the doc-shaped "minimal viable reporter": a `count`
+        // aggregate with NO `vars:` section at all (docs/processors/
+        // reporter-processors.md, "Simple Example: Just Filter + Extract +
+        // Count" -- "No vars are needed because the count aggregate
+        // maintains its own total"). Before the fix, AggType::Count only
+        // incremented a var literally named `_count`, which nothing ever
+        // declares, so it was a silent no-op and `_count` never appeared in
+        // `result.vars` at all.
+        let d = def(r#"
+meta:
+  id: error-counter
+  name: Error Line Counter
+pipeline:
+  - stage: filter
+    rules:
+      - type: level_min
+        level: E
+  - stage: aggregate
+    groups:
+      - type: count
+"#);
+        let mut run = ProcessorRun::new(&d);
+        // 3 lines at Error-or-above (matching), interleaved with 2 that are
+        // filtered out (Info) and must not be counted.
+        run.process_line(&make_line("T", "e1", LogLevel::Error, 1), &PipelineContext::test_default());
+        run.process_line(&make_line("T", "i1", LogLevel::Info, 2), &PipelineContext::test_default());
+        run.process_line(&make_line("T", "e2", LogLevel::Error, 3), &PipelineContext::test_default());
+        run.process_line(&make_line("T", "i2", LogLevel::Info, 4), &PipelineContext::test_default());
+        run.process_line(&make_line("T", "e3", LogLevel::Fatal, 5), &PipelineContext::test_default());
+        let result = run.finish();
+
+        // matched_line_nums still reflects every line that passed the filter,
+        // independent of the aggregate mechanism -- sanity check on the setup.
+        assert_eq!(result.matched_line_nums, vec![1, 3, 5]);
+
+        // This is the part that was broken: the count aggregate's total must
+        // reach RunResult.vars (the same place `mcp.summary.template` /
+        // `include_vars` and the dashboard read from), without the author
+        // declaring any var.
+        assert_eq!(
+            result.vars.get("_count"),
+            Some(&JsonValue::Number(3.into())),
+            "count aggregate must surface its own total as `_count` in RunResult.vars \
+             even when the processor declares no vars at all"
+        );
+    }
+
+    #[test]
+    fn count_aggregate_coexists_with_declared_vars_and_other_aggregates() {
+        // Guard against a fix that only works when `vars:` is absent, and
+        // guard the count_by aggregate (a different AggType) against
+        // regressions from touching shared aggregate-dispatch code.
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+vars:
+  - name: my_counter
+    type: int
+    default: 0
+pipeline:
+  - stage: script
+    runtime: rhai
+    src: |
+      vars.my_counter += 10;
+  - stage: aggregate
+    groups:
+      - type: count
+"#);
+        let mut run = ProcessorRun::new(&d);
+        for i in 1..=4usize {
+            run.process_line(&make_line("T", "msg", LogLevel::Info, i), &PipelineContext::test_default());
+        }
+        let result = run.finish();
+        assert_eq!(result.vars["my_counter"], JsonValue::Number(40.into()), "declared var still updates normally");
+        assert_eq!(result.vars["_count"], JsonValue::Number(4.into()), "count aggregate still totals independently of declared vars");
     }
 }
