@@ -482,7 +482,6 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
 
   const libraryValue = useMemo<PipelineLibraryCtxValue>(
     () => ({ processors: state.processors, packs: state.packs, error: state.error, dispatch }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [state.processors, state.packs, state.error],
   );
 
@@ -493,13 +492,11 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
       chainInitialized: state.chainInitialized,
       dispatch,
     }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [state.chainBySession, state.defaultChain, state.chainInitialized],
   );
 
   const resultsValue = useMemo<PipelineResultsCtxValue>(
     () => ({ resultsBySession: state.resultsBySession, dispatch }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [state.resultsBySession],
   );
 

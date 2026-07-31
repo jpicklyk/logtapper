@@ -216,7 +216,6 @@ const PaneContentInner = React.memo(function PaneContentInner({ pane, onDirtyCha
 
       case 'editor':
         return (
-          // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
           <div onClick={handleActivePaneFocus} onFocus={handleActivePaneFocus} className="fullHeight">
             <EditorTab
               tabId={activeTab.id}

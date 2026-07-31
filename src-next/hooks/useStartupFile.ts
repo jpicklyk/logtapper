@@ -30,7 +30,6 @@ export function useStartupFile() {
       if (isLts(path)) a.openWorkspace(path);
       else a.loadFile(path);
     }).catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Persistent listener for files opened while app is running.
