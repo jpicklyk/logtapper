@@ -467,6 +467,52 @@ describe('processors:loaded', () => {
     expect(state.defaultChain).toBe(seeded.defaultChain);
     expect(state.processors).toHaveLength(1);
   });
+
+  // The seed decision moved out of `usePipeline`'s per-instance refs and into
+  // the reducer when the hook was split into wiring + actions: `loadProcessors`
+  // now runs from several components and passes the localStorage seed every
+  // time, so only the reducer can know whether it is still the first load.
+  it('applies the localStorage seed on the first load only', () => {
+    const first = reduce(initialState, {
+      type: 'processors:loaded',
+      processors: [processor('p1'), processor('p2')],
+      initialChain: ['p1'],
+      initialDisabled: [],
+    });
+    expect(first.chainInitialized).toBe(true);
+
+    // A second component calling loadProcessors must not re-seed over a chain
+    // the user has edited since.
+    const edited = reduce(first, { type: 'chain:add', sessionId: null, id: 'p2' });
+    const second = pipelineReducer(edited, {
+      type: 'processors:loaded',
+      processors: [processor('p1'), processor('p2')],
+      initialChain: ['p1'],
+      initialDisabled: [],
+    });
+
+    expect(second.defaultChain.chain).toEqual(['p1', 'p2']);
+    expect(second.defaultChain).toBe(edited.defaultChain);
+  });
+
+  it('never seeds over a chain a workspace restore already set', () => {
+    // Restore can land before the library finishes loading. The seed carries the
+    // PREVIOUS workspace's chain, so applying it here would silently swap the
+    // restored session's processors.
+    const state = reduce(
+      initialState,
+      { type: 'chain:restore', sessionId: A, chain: ['restored'], disabledChainIds: [] },
+      {
+        type: 'processors:loaded',
+        processors: [processor('restored'), processor('stale')],
+        initialChain: ['stale'],
+        initialDisabled: [],
+      },
+    );
+
+    expect(chainOf(state, A)).toEqual(['restored']);
+    expect(state.defaultChain.chain).toEqual([]);
+  });
 });
 
 describe('processor:removed', () => {

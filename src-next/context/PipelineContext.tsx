@@ -85,6 +85,24 @@ export interface PipelineState {
   resultsBySession: Map<string, SessionPipelineState>;
   /** Global error (processor install/remove failures — not per-session). */
   error: string | null;
+  /**
+   * True once the processor library has loaded at least once, which is when the
+   * chain baseline (localStorage seed or workspace restore) is established.
+   * Gates the chain persist/publish effects in `usePipelineWiring`.
+   *
+   * This is reducer state rather than a hook ref on purpose: `loadProcessors`
+   * is called from components (`ProcessorPanel`, `BrowseTab`) while the effects
+   * it arms live in the singleton wiring hook, so the flag has to be visible
+   * across hook instances.
+   */
+  chainInitialized: boolean;
+  /**
+   * True once a workspace restore has authoritatively set a chain
+   * (`chain:restore`). Suppresses the localStorage seed so a restored chain is
+   * never overwritten by the previous session's default. Reducer-internal — not
+   * exposed through any context value.
+   */
+  chainRestored: boolean;
 }
 
 /** Enabled subset of a chain, given its disabled set. */
@@ -146,6 +164,8 @@ export const initialState: PipelineState = {
   defaultChain: EMPTY_CHAIN,
   resultsBySession: new Map(),
   error: null,
+  chainInitialized: false,
+  chainRestored: false,
 };
 
 /**
@@ -260,11 +280,17 @@ export function pipelineReducer(state: PipelineState, action: PipelineAction): P
 
     // ── Processor library ────────────────────────────────────────────────────
     case 'processors:loaded': {
-      const next = { ...state, processors: action.processors };
+      const next = { ...state, processors: action.processors, chainInitialized: true };
       // The startup chain seeds the DEFAULT, not any one session — sessions may
       // not exist yet at library-load time, and each inherits it until edited.
-      return action.initialChain !== undefined
-        ? withChain(next, null, action.initialChain, action.initialDisabled ?? [])
+      //
+      // Seeding is the reducer's decision, not the caller's: `loadProcessors`
+      // may run from more than one component and more than once, and a workspace
+      // restore may have landed first. Apply the seed on the FIRST load only,
+      // and never over a restored chain.
+      const seed = action.initialChain !== undefined && !state.chainInitialized && !state.chainRestored;
+      return seed
+        ? withChain(next, null, action.initialChain!, action.initialDisabled ?? [])
         : next;
     }
 
@@ -355,11 +381,14 @@ export function pipelineReducer(state: PipelineState, action: PipelineAction): P
       const nonPinned = action.chain.filter((id) => !PINNED_TAIL_IDS.has(id));
       const pinned = action.chain.filter((id) => PINNED_TAIL_IDS.has(id));
       const ordered = [...nonPinned, ...pinned];
-      if (action.sessionId) return withChain(state, action.sessionId, ordered, action.disabledChainIds);
+      // Mark the chain as restore-owned so a later `processors:loaded` does not
+      // seed the default from localStorage on top of it.
+      const restored = { ...state, chainRestored: true };
+      if (action.sessionId) return withChain(restored, action.sessionId, ordered, action.disabledChainIds);
       // Legacy single-chain workspace: set the default so every session that has
       // no chain of its own inherits it. Sessions with their own chain are left
       // alone — a v4 workspace restores those through the per-session path.
-      return withChain(state, null, ordered, action.disabledChainIds);
+      return withChain(restored, null, ordered, action.disabledChainIds);
     }
 
     // ── ADB streaming ────────────────────────────────────────────────────────
@@ -424,6 +453,8 @@ interface PipelineLibraryCtxValue {
 interface PipelineChainCtxValue {
   chainBySession: Map<string, SessionChainState>;
   defaultChain: SessionChainState;
+  /** Flips false→true once, when the processor library first loads. */
+  chainInitialized: boolean;
   dispatch: React.Dispatch<PipelineAction>;
 }
 
@@ -434,7 +465,9 @@ interface PipelineResultsCtxValue {
 
 // ── Public facade interface ──────────────────────────────────────────────────
 
-interface PipelineContextValue extends PipelineState {
+// `chainRestored` is deliberately omitted — it exists only to let the reducer
+// suppress the localStorage seed, and no consumer should branch on it.
+interface PipelineContextValue extends Omit<PipelineState, 'chainRestored'> {
   dispatch: React.Dispatch<PipelineAction>;
 }
 
@@ -457,10 +490,11 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
     () => ({
       chainBySession: state.chainBySession,
       defaultChain: state.defaultChain,
+      chainInitialized: state.chainInitialized,
       dispatch,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state.chainBySession, state.defaultChain],
+    [state.chainBySession, state.defaultChain, state.chainInitialized],
   );
 
   const resultsValue = useMemo<PipelineResultsCtxValue>(
@@ -501,7 +535,8 @@ export function usePipelineResultsCtx(): PipelineResultsCtxValue {
 }
 
 // ── Facade — reads all 3 sub-contexts, returns combined interface ─────────────
-// Used by domain hooks (usePipeline, etc.) that need cross-context access.
+// Used by domain hooks (usePipelineCommands, usePipelineWiring, etc.) that need
+// cross-context access.
 
 export function usePipelineContext(): PipelineContextValue {
   const library = usePipelineLibraryCtx();
@@ -513,6 +548,7 @@ export function usePipelineContext(): PipelineContextValue {
     error: library.error,
     chainBySession: chain.chainBySession,
     defaultChain: chain.defaultChain,
+    chainInitialized: chain.chainInitialized,
     resultsBySession: results.resultsBySession,
     dispatch: chain.dispatch,
   };
