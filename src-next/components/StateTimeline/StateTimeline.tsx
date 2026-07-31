@@ -226,7 +226,7 @@ const StateTimeline = React.memo(function StateTimeline() {
       setLoading(false);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runCount, sessionId]);
+  }, [runCount, sessionId, activeTrackers, activeReporters]);
 
   const totalLines = session?.totalLines ?? 1;
   const maxLine = Math.max(totalLines - 1, 1);
