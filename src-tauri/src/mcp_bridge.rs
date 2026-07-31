@@ -470,23 +470,26 @@ pub async fn start(handle: Handle, shutdown_rx: tokio::sync::oneshot::Receiver<(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Parse a datetime string into the same timestamp format used by the logcat
-/// parser: BASE_NS (946_684_800_000_000_000, i.e. 2000-01-01 as Unix nanos)
-/// plus day-of-year offset. This matches `parse_timestamp_ns()` in
-/// `logcat_parser.rs`.
+/// Parse a datetime string into Unix-epoch nanoseconds (UTC) — the same
+/// epoch `ParsedLineMeta::timestamp` / `LineMeta::timestamp` are on for
+/// logcat/bugreport lines, i.e. the value produced by `parse_timestamp_ns()`
+/// in `core/logcat_parser.rs`.
+///
+/// Logcat-native timestamps omit the year, so — exactly like
+/// `parse_timestamp_ns()` — the current UTC year is inferred from system
+/// time and combined with the parsed month/day via the same era-based civil
+/// calendar algorithm. This function cannot call the private
+/// `parse_timestamp_ns()` directly (different module), so it duplicates
+/// that math locally; keep the two in sync if either changes.
 ///
 /// Accepts formats:
 /// - "MM-DD HH:MM:SS.mmm"  (logcat native — recommended)
 /// - "YYYY-MM-DDThh:mm:ss[.fff]" or "YYYY-MM-DD hh:mm:ss[.fff]"
-///   (ISO 8601 — year is IGNORED; only month-day is used, since logcat
-///   timestamps have no year and are stored with a year-2000 base)
+///   (ISO 8601 — year is IGNORED; only month-day is used, matching the
+///   inferred-current-year behavior of logcat-native timestamps)
 ///
 /// Returns None if the string cannot be parsed.
-fn parse_iso_to_nanos_2000(s: &str) -> Option<i64> {
-    // Must match logcat_parser.rs: BASE_NS + yday * 86_400e9 + time nanos
-    const BASE_NS: i64 = 946_684_800_000_000_000; // 2000-01-01 00:00:00 UTC as Unix nanos
-    const MONTH_DAYS: [i64; 12] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
-
+fn parse_iso_to_unix_nanos(s: &str) -> Option<i64> {
     let s = s.trim();
     let s_normalized = s.replace('T', " ");
     let parts: Vec<&str> = s_normalized.splitn(2, ' ').collect();
@@ -511,8 +514,6 @@ fn parse_iso_to_nanos_2000(s: &str) -> Option<i64> {
         return None;
     };
 
-    let yday = MONTH_DAYS.get((month as usize).saturating_sub(1)).copied().unwrap_or(0) + (day - 1);
-
     // Parse time: "HH:MM:SS[.mmm]"
     let t: Vec<&str> = time_part.splitn(4, [':', '.']).collect();
     let h: i64 = t.first().and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -520,13 +521,41 @@ fn parse_iso_to_nanos_2000(s: &str) -> Option<i64> {
     let sec: i64 = t.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
     let ms: i64 = t.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
 
+    // Infer the current UTC year exactly like `parse_timestamp_ns()` in
+    // `core/logcat_parser.rs`, so the bound lands on the same epoch as
+    // `meta.timestamp` for logcat/bugreport lines.
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let year = 1970 + now_secs / 31_557_600; // 365.25 days
+
+    // Days from the Unix epoch to the given civil date (era-based algorithm),
+    // duplicated from `parse_timestamp_ns()` in `core/logcat_parser.rs`.
+    // https://howardhinnant.github.io/date_algorithms.html
+    fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+        let y = if m <= 2 { y - 1 } else { y };
+        let era = y.div_euclid(400);
+        let yoe = y.rem_euclid(400);
+        let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        era * 146097 + doe - 719468
+    }
+
+    let epoch_days = days_from_civil(year, month, day);
+
+    const NS_PER_DAY: i64 = 86_400_000_000_000;
+    const NS_PER_HOUR: i64 = 3_600_000_000_000;
+    const NS_PER_MIN: i64 = 60_000_000_000;
+    const NS_PER_SEC: i64 = 1_000_000_000;
+    const NS_PER_MS: i64 = 1_000_000;
+
     Some(
-        BASE_NS
-            + yday * 86_400_000_000_000
-            + h * 3_600_000_000_000
-            + m * 60_000_000_000
-            + sec * 1_000_000_000
-            + ms * 1_000_000,
+        epoch_days * NS_PER_DAY
+            + h * NS_PER_HOUR
+            + m * NS_PER_MIN
+            + sec * NS_PER_SEC
+            + ms * NS_PER_MS,
     )
 }
 
@@ -940,9 +969,10 @@ async fn h_query(
     let n = params.n.unwrap_or(50).min(200);
     let strategy = params.strategy.as_deref().unwrap_or("recent");
 
-    // Parse time range filters upfront (ISO 8601 → nanos since 2000-01-01)
-    let time_start_ns = params.time_start.as_deref().and_then(parse_iso_to_nanos_2000);
-    let time_end_ns = params.time_end.as_deref().and_then(parse_iso_to_nanos_2000);
+    // Parse time range filters upfront (ISO 8601 → Unix-epoch nanos, same
+    // epoch as meta.timestamp for logcat/bugreport lines)
+    let time_start_ns = params.time_start.as_deref().and_then(parse_iso_to_unix_nanos);
+    let time_end_ns = params.time_end.as_deref().and_then(parse_iso_to_unix_nanos);
 
     // Snapshot the lines we need without holding the lock into async territory.
     struct LineSnap {
@@ -3681,5 +3711,62 @@ mod tests {
         }
         let total_scanned: usize = chunks.iter().map(|(s, e)| e - s).sum();
         assert_eq!(total_scanned, cap);
+    }
+
+    // ── parse_iso_to_unix_nanos ──────────────────────────────────────────
+    // Regression test for the ~30-year (946,684,800s) time-filter bug: the
+    // bound this function produces must be on the SAME epoch as
+    // `meta.timestamp`, which `parse_timestamp_ns()` in
+    // `core/logcat_parser.rs` fills with true Unix-epoch nanoseconds (not
+    // nanoseconds-since-2000-01-01). Before the fix this function added a
+    // BASE_NS of 946_684_800_000_000_000, making bounds ~30 years later
+    // than the timestamps they were compared against.
+    #[test]
+    fn parse_iso_to_unix_nanos_matches_logcat_parser_epoch() {
+        // Both `parse_iso_to_unix_nanos()` and `parse_timestamp_ns()` (in
+        // core/logcat_parser.rs) infer the current UTC year from system
+        // time — the ISO input's own year is ignored (unchanged, pre-fix
+        // behavior). So the expected value must be computed the same way,
+        // using the same era-based civil-calendar algorithm, rather than
+        // hardcoded to a specific year.
+        fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+            let y = if m <= 2 { y - 1 } else { y };
+            let era = y.div_euclid(400);
+            let yoe = y.rem_euclid(400);
+            let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+            let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+            era * 146097 + doe - 719468
+        }
+        const NS_PER_DAY: i64 = 86_400_000_000_000;
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let inferred_year = 1970 + now_secs / 31_557_600;
+        let expected_unix_ns = days_from_civil(inferred_year, 7, 31) * NS_PER_DAY;
+
+        let got = parse_iso_to_unix_nanos("2026-07-31T00:00:00Z")
+            .expect("valid ISO 8601 instant should parse");
+
+        // Sanity: the old (buggy) implementation computed
+        // BASE_NS(2000-01-01 as Unix nanos) + yday * NS_PER_DAY, entirely
+        // independent of the actual/inferred year. Reproduce that formula
+        // exactly (July 31 is day-of-year 211, 0-based) and confirm the
+        // fixed function no longer produces it — the two must differ by
+        // ~the gap between year 2000 and the inferred current year.
+        const OLD_BASE_NS: i64 = 946_684_800_000_000_000; // 2000-01-01 as Unix nanos
+        const OLD_JUL_31_YDAY: i64 = 211;
+        let old_buggy_value = OLD_BASE_NS + OLD_JUL_31_YDAY * NS_PER_DAY;
+        assert_ne!(
+            got, old_buggy_value,
+            "bound must not regress to the old 2000-epoch-based value"
+        );
+
+        assert_eq!(
+            got, expected_unix_ns,
+            "parse_iso_to_unix_nanos must land on the same Unix epoch as \
+             meta.timestamp (i.e. what parse_timestamp_ns() in \
+             core/logcat_parser.rs produces)"
+        );
     }
 }
