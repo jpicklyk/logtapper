@@ -155,35 +155,6 @@ export function usePacks(): PackSummary[] {
 // Action selectors
 // ---------------------------------------------------------------------------
 
-/** @deprecated Use focused hooks: useNavigationActions, useFileActions, usePaneActions, useSettingsActions */
-export function useViewerActions() {
-  const { loadFile, openFileDialog, openInEditorDialog, startStream, stopStream, closeSession,
-          jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
-          openTab, setActiveLogPane, setActivePane, setEffectiveLineNums,
-          saveFile, saveFileAs, exportSession,
-          newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs,
-          closeWorkspace, switchWorkspace,
-          setFileAssociation, openDefaultAppsSettings, startMcpBridge, stopMcpBridge, exportAllSessions,
-        } = useActionsContext();
-  return useMemo(
-    () => ({ loadFile, openFileDialog, openInEditorDialog, startStream, stopStream, closeSession,
-             jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
-             openTab, setActiveLogPane, setActivePane, setEffectiveLineNums,
-             saveFile, saveFileAs, exportSession,
-             newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs,
-             closeWorkspace, switchWorkspace,
-             setFileAssociation, openDefaultAppsSettings, startMcpBridge, stopMcpBridge, exportAllSessions,
-           }),
-    [loadFile, openFileDialog, openInEditorDialog, startStream, stopStream, closeSession,
-     jumpToLine, jumpToMatch, setSearch, setStreamFilter, cancelStreamFilter,
-     openTab, setActiveLogPane, setActivePane, setEffectiveLineNums,
-     saveFile, saveFileAs, exportSession,
-     newWorkspace, openWorkspace, saveWorkspace, saveWorkspaceAs,
-     closeWorkspace, switchWorkspace,
-     setFileAssociation, openDefaultAppsSettings, startMcpBridge, stopMcpBridge, exportAllSessions],
-  );
-}
-
 export function useNavigationActions() {
   const { jumpToLine, jumpToMatch } = useActionsContext();
   return useMemo(() => ({ jumpToLine, jumpToMatch }), [jumpToLine, jumpToMatch]);

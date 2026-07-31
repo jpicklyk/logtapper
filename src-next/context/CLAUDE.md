@@ -115,7 +115,7 @@ These two used to diverge: `trackMutations` called only `markDirty`, while `useW
 1. Add the method signature to `WorkspaceMutationActions` interface
 2. Add the key to `MUTATION_ACTION_KEYS`
 3. Wire the implementation in `HookWiring` (inside `rawActions`)
-4. Add to the relevant selector (`usePipelineActions`, `useViewerActions`, etc.)
+4. Add to the relevant selector (`usePipelineActions`, `useFileActions`, etc.)
 5. Dirty tracking is automatic — no additional code needed
 
 Default stubs (no-op functions) ensure components always have valid action references during initialization. `HookWiring` (in `index.tsx`) instantiates domain hooks and injects real implementations via `ActionsProvider`.
