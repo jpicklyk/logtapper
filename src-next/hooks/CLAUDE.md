@@ -1,5 +1,28 @@
 # src-next/hooks/ — Domain and Utility Hooks
 
+## Wiring hooks vs. action hooks (singleton invariant)
+
+A domain hook that owns effects — bus subscriptions, Tauri listeners, timers —
+is a **wiring hook**. Wiring hooks are mounted exactly once, in
+`context/HookWiring`, and are named `use<Domain>Wiring`. Mounting one in a
+component multiplies every listener and every timer it contains by the number of
+mounted components; for non-idempotent dispatches (`adb:run-count-bump`) and for
+IPC pushes (`setSessionPipelineMeta`) that is a correctness bug, not just noise.
+
+When components need the same domain's callbacks, split the domain instead of
+mounting the wiring hook twice:
+
+| Half | Name | Effects | Mount sites |
+|---|---|---|---|
+| Wiring | `usePipelineWiring` | all of them | `context/HookWiring` only |
+| Actions | `usePipelineCommands` | **none** | any component |
+
+The wiring hook composes the action hook and re-exports its surface, so
+`HookWiring` still mounts a single hook. Any state the two halves must agree on
+(e.g. "has the chain been initialized?") belongs in the reducer, not a hook-local
+`useRef` — a ref is per-instance, so the instance that sets it is not necessarily
+the instance that reads it.
+
 ## Domain hook pattern
 
 Domain hooks read/write to their respective context via raw context hooks (imported directly from context files, not the barrel). They use refs for callback stability:

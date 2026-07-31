@@ -44,7 +44,7 @@ Seven contexts split by change frequency (principle #1):
 
 **When adding new per-session state:** Add it to `SessionDataContextValue` and create a selector hook. Components inside a `SessionDataProvider` can read it directly — no need to pass sessionId.
 
-**Global Maps remain as write targets:** Domain hooks (`usePipeline`, `useStateTracker`, `useFilterScan`) write per-session data to global Maps in PipelineContext, TrackerContext, and SessionContext. `SessionDataProvider` reads from these Maps and provides isolated slices. The old global per-session selectors (`usePipelineResults`, `useTrackerTransitions`, etc.) have been removed — all per-session reads go through `SessionDataContext` hooks.
+**Global Maps remain as write targets:** Domain hooks (`usePipelineWiring`/`usePipelineCommands`, `useStateTracker`, `useFilterScan`) write per-session data to global Maps in PipelineContext, TrackerContext, and SessionContext. `SessionDataProvider` reads from these Maps and provides isolated slices. The old global per-session selectors (`usePipelineResults`, `useTrackerTransitions`, etc.) have been removed — all per-session reads go through `SessionDataContext` hooks.
 
 ### SessionActionsContext — per-session mutation surface
 
@@ -78,7 +78,7 @@ The barrel exports selector hooks (e.g. `useSession()`, `useIsStreaming()`, `use
 
 **Internal (NOT in barrel):** raw context hooks like `useSessionContext()`, `useSessionCoreCtx()`, `useSessionPaneCtx()`, `useSessionProgressCtx()`, `useViewerContext()`, `useSearchCtx()`, `useScrollCtx()`, `useProcessorViewCtx()` are internal — only domain hooks and selectors import these directly from context files.
 
-Domain hooks (`useLogViewer`, `usePipeline`, `useStateTracker`) are co-owners of context state and need setter access.
+Domain hooks (`useLogViewer`, `usePipelineWiring`, `usePipelineCommands`, `useStateTracker`) are co-owners of context state and need setter access.
 
 ## Adding a new selector
 

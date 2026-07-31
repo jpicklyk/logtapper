@@ -1,10 +1,17 @@
-// Domain hooks (instantiated once in context/HookWiring)
+// Domain hooks — these own effects (bus/Tauri listeners, timers) and are
+// instantiated EXACTLY ONCE, in context/HookWiring. Never mount them in a
+// component: every extra instance duplicates every listener and timer inside.
 export { useLogViewer } from './useLogViewer';
 export type { LogViewerActions } from './useLogViewer';
-export { usePipeline } from './usePipeline';
-export type { PipelineActions } from './usePipeline';
+export { usePipelineWiring } from './usePipelineWiring';
 export { useStateTracker } from './useStateTracker';
 export type { StateTrackerActions } from './useStateTracker';
+
+// Effect-free action hooks — the mountable half of a domain. These hold no
+// listeners, subscriptions or timers, so any number of components may mount
+// them. New pipeline effects belong in usePipelineWiring, never here.
+export { usePipelineCommands } from './usePipelineCommands';
+export type { PipelineActions } from './usePipelineCommands';
 
 // Component-local hooks
 export { useTogglePane } from './useTogglePane';

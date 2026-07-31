@@ -20,7 +20,8 @@ import { WorkspaceProvider, useWorkspaceIdentity, useWorkspaceContext } from './
 import { SavePromptDialog } from '../ui/SavePromptDialog';
 import { useCacheManager, useDataSourceRegistry } from '../cache';
 import { useLogViewer } from '../hooks/useLogViewer';
-import { usePipeline, type PipelineActions } from '../hooks/usePipeline';
+import { usePipelineWiring } from '../hooks/usePipelineWiring';
+import type { PipelineActions } from '../hooks/usePipelineCommands';
 import { useSettings } from '../hooks/useSettings';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { useWorkspaceAutoSave } from '../hooks/useWorkspaceAutoSave';
@@ -219,10 +220,10 @@ function HookWiring({ children }: { children: ReactNode }) {
   }, []);
 
   // Auto-run scheduler (Q2): shared by the `.ltw` restore core (via useWorkspace)
-  // and useWorkspaceRestore (the `.lts` path, via usePipeline). Created once
-  // (construction is side-effect-free; it registers bus handlers only when a
-  // session must wait on indexing). pipeline.run is kept fresh via a ref that is
-  // populated right after usePipeline below — scheduleAutoRun is only ever
+  // and useWorkspaceRestore (the `.lts` path, via usePipelineWiring). Created
+  // once (construction is side-effect-free; it registers bus handlers only when
+  // a session must wait on indexing). pipeline.run is kept fresh via a ref that
+  // is populated right after usePipelineWiring below — scheduleAutoRun is only ever
   // invoked during an async restore, long after that assignment.
   const runRef = useRef<PipelineActions['run'] | null>(null);
   const autoRunSchedulerRef = useRef<AutoRunScheduler | null>(null);
@@ -244,7 +245,10 @@ function HookWiring({ children }: { children: ReactNode }) {
     [],
   );
 
-  const pipeline = usePipeline(scheduleAutoRun);
+  // THE single mount of the pipeline domain's effects. Components that need
+  // pipeline actions mount the effect-free `usePipelineCommands` instead — see
+  // the doc comment on `usePipelineWiring` for why that invariant matters.
+  const pipeline = usePipelineWiring(scheduleAutoRun);
   runRef.current = pipeline.run;
 
   useEffect(() => () => { autoRunSchedulerRef.current?.dispose(); }, []);

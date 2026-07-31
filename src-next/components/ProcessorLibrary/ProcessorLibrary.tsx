@@ -2,7 +2,7 @@ import { memo, useState, useCallback, useRef, useMemo } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { ProcessorSummary, PackSummary } from '../../bridge/types';
 import { matchesAllTags, getBareId } from '../../bridge/types';
-import { usePipeline } from '../../hooks';
+import { usePipelineCommands } from '../../hooks';
 import { useProcessors, usePacks, usePipelineChain, usePipelineActions, useFocusedSession } from '../../context';
 import { Modal, ProcessorTypeIcon, PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY, Button } from '../../ui';
 import { ProcessorDetailCard } from '../ProcessorDetailCard';
@@ -32,7 +32,7 @@ interface Props {
 }
 
 const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
-  const pipeline = usePipeline();
+  const pipeline = usePipelineCommands();
   const processors = useProcessors();
   // The library is a modal with no pane of its own — it edits the chain of the
   // session the user is looking at.

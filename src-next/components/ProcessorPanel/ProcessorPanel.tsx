@@ -28,7 +28,7 @@ import {
   useSessionPipelineProgress,
   useSessionPipelineError,
 } from '../../context';
-import { usePipeline } from '../../hooks';
+import { usePipelineCommands } from '../../hooks';
 import { ProcessorLibrary } from '../ProcessorLibrary';
 import { bus } from '../../events';
 import { storageGet, storageSet } from '../../utils';
@@ -54,7 +54,7 @@ const ProcessorPanel = React.memo(function ProcessorPanel() {
   const globalError = usePipelineGlobalError();
   // Per-session run errors take priority over global processor install/remove errors
   const pipelineError = sessionError ?? globalError;
-  const pipeline = usePipeline();
+  const pipeline = usePipelineCommands();
   const {
     removeFromChain: removeFromChainFor,
     reorderChain: reorderChainFor,

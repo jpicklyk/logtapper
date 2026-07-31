@@ -60,7 +60,7 @@ export function useStateTracker(): StateTrackerActions {
   }, [setSessionTransitionData]);
 
   // Subscribe to adb-tracker-update events (StrictMode-safe).
-  // Updates streaming session update counts, forwards to bus for usePipeline
+  // Updates streaming session update counts, forwards to bus for usePipelineWiring
   // runCount bump, and drives throttled refreshTransitionLines.
   useEffect(() => {
     let cancelled = false;
