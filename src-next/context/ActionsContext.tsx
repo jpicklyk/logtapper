@@ -75,6 +75,7 @@ export interface ViewActions {
   jumpToLine: (lineNum: number, paneId?: string) => void;
   setStreamFilter: (expr: string) => Promise<void>;
   cancelStreamFilter: () => void;
+  setTimeFilter: (start: string, end: string) => Promise<void>;
   openTab: (type: string) => void;
   setActiveLogPane: (paneId: string) => void;
   setActivePane: (paneId: string) => void;
@@ -208,6 +209,7 @@ const DEFAULT_ACTIONS: ActionsContextValue = {
   jumpToLine: (_lineNum: number, _paneId?: string) => noop(),
   setStreamFilter: (_expr: string) => noopAsync(),
   cancelStreamFilter: noop,
+  setTimeFilter: (_start: string, _end: string) => noopAsync(),
   openTab: (_type: string) => noop(),
   setActiveLogPane: (_paneId: string) => noop(),
   setActivePane: (_paneId: string) => noop(),
