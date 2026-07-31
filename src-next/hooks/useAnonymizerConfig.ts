@@ -38,6 +38,11 @@ function useConfigMutation(
       const prev = configRef.current;
       if (!prev) return;
       const next = transform(prev);
+      // Sync the ref immediately (not just on next render) so a second
+      // mutation dispatched before React re-renders reads this call's
+      // result instead of the stale `prev`, which would otherwise be lost
+      // and reverted when setAnonymizerConfig persists the earlier value.
+      configRef.current = next;
       setConfig(next);
       setAnonymizerConfig(next).catch(console.error);
     },
