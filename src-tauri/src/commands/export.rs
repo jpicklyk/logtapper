@@ -382,11 +382,23 @@ pub async fn export_all_sessions(
         vec![]
     };
 
-    // 4. Write multi-session .lts file (no locks held).
-    let dest = std::path::Path::new(&options.dest_path);
-    crate::workspace::lts::write_lts(dest, &lts_sessions, &processor_yamls, &options.editor_tabs)?;
-
-    Ok(())
+    // 4. Write multi-session .lts file (no locks held). Offloaded to the
+    // blocking pool: `write_lts` performs synchronous, CPU-bound zip
+    // compression over the (potentially large) owned buffers assembled
+    // above, and running it directly on this async command would hold a
+    // tokio worker thread for the duration of the write — stalling ADB
+    // streaming and any other pending command for the whole export.
+    // Everything moved into the closure below is already owned data (no
+    // `&AppState` or lock guard crosses this boundary), matching the
+    // pattern used by `workspace::autosave`'s flush (~line 360) and
+    // `commands::pipeline::run_pipeline` (~line 235).
+    let dest = std::path::PathBuf::from(&options.dest_path);
+    let editor_tabs = options.editor_tabs;
+    tokio::task::spawn_blocking(move || {
+        crate::workspace::lts::write_lts(&dest, &lts_sessions, &processor_yamls, &editor_tabs)
+    })
+    .await
+    .map_err(|e| format!("Export task panicked: {e}"))?
 }
 
 // ---------------------------------------------------------------------------
