@@ -2,8 +2,11 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 0 4px;
-  height: 100%;
+  padding: 3px 4px;
+  /* Content-sized row. height:100% was a leftover from the title-bar era —
+     inside the pane's flex column it made the bar a full-height flex item
+     that split the pane 50/50 with the viewer via flex-shrink. */
+  flex: none;
   -webkit-app-region: no-drag;
 }
 
