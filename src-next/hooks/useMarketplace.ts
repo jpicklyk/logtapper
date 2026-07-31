@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useMemo } from 'react';
 import type {
   Source,
   MarketplaceEntry,
@@ -259,7 +259,7 @@ export function useMarketplace(): MarketplaceState {
     bus.emit('marketplace:pack-updated', { packId: packEntry.id, sourceName });
   }, []);
 
-  return {
+  return useMemo<MarketplaceState>(() => ({
     sources,
     sourcesLoading,
     loadSources,
@@ -284,5 +284,30 @@ export function useMarketplace(): MarketplaceState {
     updateOne,
     updateAllFromSource,
     updatePack,
-  };
+  }), [
+    sources,
+    sourcesLoading,
+    loadSources,
+    addSource,
+    removeSource,
+    selectedSource,
+    selectSource,
+    entries,
+    packEntries,
+    entriesLoading,
+    entriesError,
+    fetchEntries,
+    installEntry,
+    uninstallEntry,
+    installPack,
+    uninstallPack,
+    pendingUpdates,
+    pendingPackUpdates,
+    updatesLoading,
+    updateResults,
+    checkUpdates,
+    updateOne,
+    updateAllFromSource,
+    updatePack,
+  ]);
 }
