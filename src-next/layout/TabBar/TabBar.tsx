@@ -187,16 +187,14 @@ const SortableTabButton = React.memo(function SortableTabButton({
   }, []);
 
   return (
-    <button
+    <div
       ref={setNodeRef}
       style={style}
       className={clsx(styles.tab, active && styles.active, focused && styles.focused, isDragging && styles.dragging)}
-      onClick={handleClick}
       title={tab.label}
-      {...attributes}
     >
-      {/* Drag handle — only this zone initiates drag and shows grab cursor */}
-      <span className={styles.dragHandle} {...listeners} />
+      {/* Drag handle — only this zone initiates drag (pointer or keyboard) and shows grab cursor */}
+      <span className={styles.dragHandle} {...listeners} {...attributes} />
       {editing ? (
         <input
           ref={inputRef}
@@ -209,28 +207,23 @@ const SortableTabButton = React.memo(function SortableTabButton({
           spellCheck={false}
         />
       ) : (
-        <>
+        <button type="button" className={styles.activate} onClick={handleClick}>
           {readOnly && (
             <span className={styles.readOnlyBadge} title="Read-only (Bugreport)">
               <Lock size={10} />
             </span>
           )}
           <span className={styles.label} onDoubleClick={handleDoubleClick}>{tab.label}</span>
-          {unsaved && !editing && (
+          {unsaved && (
             <span className={styles.unsavedDot} title="Unsaved changes" />
           )}
-        </>
+        </button>
       )}
       {tab.closable && !editing && (
-        <span
-          className={styles.close}
-          onClick={handleClose}
-          role="button"
-          tabIndex={-1}
-        >
+        <button type="button" className={styles.close} onClick={handleClose}>
           <X size={12} />
-        </span>
+        </button>
       )}
-    </button>
+    </div>
   );
 });

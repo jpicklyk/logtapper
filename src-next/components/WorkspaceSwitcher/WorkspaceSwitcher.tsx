@@ -114,30 +114,33 @@ export const WorkspaceSwitcher = React.memo(function WorkspaceSwitcher() {
               {workspaces.map(ws => (
                 <div
                   key={ws.id}
-                  role="button"
-                  tabIndex={0}
                   className={clsx(styles.workspaceItem, ws.id === activeId && styles.workspaceItemActive)}
-                  onClick={() => renamingId !== ws.id && handleSwitch(ws.id)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && renamingId !== ws.id) handleSwitch(ws.id); }}
                 >
-                  <span className={ws.id === activeId ? styles.activeDot : styles.inactiveDot} />
                   {renamingId === ws.id ? (
-                    <input
-                      ref={renameInputRef}
-                      className={styles.renameInput}
-                      value={renameValue}
-                      onChange={(e) => setRenameValue(e.target.value)}
-                      onBlur={commitRename}
-                      onKeyDown={handleRenameKeyDown}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  ) : (
                     <>
+                      <span className={ws.id === activeId ? styles.activeDot : styles.inactiveDot} />
+                      <input
+                        ref={renameInputRef}
+                        className={styles.renameInput}
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onBlur={commitRename}
+                        onKeyDown={handleRenameKeyDown}
+                      />
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className={styles.activateBtn}
+                      onClick={() => handleSwitch(ws.id)}
+                    >
+                      <span className={ws.id === activeId ? styles.activeDot : styles.inactiveDot} />
                       <span className={styles.wsName}>{ws.name}</span>
                       {ws.dirty && <span className={styles.wsDirty}>*</span>}
-                    </>
+                    </button>
                   )}
                   <button
+                    type="button"
                     className={styles.renameBtn}
                     onClick={(e) => handleStartRename(e, ws.id, ws.name)}
                     title="Rename workspace"
@@ -146,6 +149,7 @@ export const WorkspaceSwitcher = React.memo(function WorkspaceSwitcher() {
                   </button>
                   {ws.id !== activeId && (
                     <button
+                      type="button"
                       className={styles.closeBtn}
                       onClick={(e) => handleClose(e, ws.id)}
                       title="Close workspace"

@@ -290,20 +290,12 @@
   gap: 10px;
   width: 100%;
   padding: 8px 16px 8px 24px;
-  border: none;
   background: transparent;
-  cursor: pointer;
-  text-align: left;
   transition: background var(--transition-fast);
 }
 
 .item:hover {
   background: var(--state-hover);
-}
-
-.item:focus-visible {
-  box-shadow: var(--shadow-focus);
-  outline: none;
 }
 
 .itemSelected {
@@ -314,21 +306,36 @@
   background: color-mix(in srgb, var(--accent) 9%, transparent);
 }
 
-.itemSelected:focus-visible {
-  box-shadow: var(--shadow-focus);
-  outline: none;
-}
-
 .itemInChain {
   opacity: 0.4;
-  cursor: default;
 }
 
 .itemInChain:hover {
   background: transparent;
 }
 
-.itemInChain:focus-visible {
+/* ── Activate control (expand/collapse) — real button, sibling of checkbox ── */
+
+.itemActivate {
+  display: flex;
+  align-items: flex-start;
+  flex: 1;
+  min-width: 0;
+  gap: 10px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+}
+
+.itemInChain .itemActivate {
+  cursor: default;
+}
+
+.itemActivate:focus-visible {
   box-shadow: var(--shadow-focus);
   outline: none;
 }
@@ -347,7 +354,18 @@
   background: transparent;
   color: transparent;
   margin-top: 1px;
+  padding: 0;
+  cursor: pointer;
   transition: all var(--transition-fast);
+}
+
+.checkbox:disabled {
+  cursor: default;
+}
+
+.checkbox:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
 }
 
 .item:hover .checkbox {

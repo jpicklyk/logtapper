@@ -407,16 +407,16 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                       const partialInChain = packProcs.some((p) => chainSet.has(p.id)) && !inChain;
                       return (
                         <div key={id} className={css.itemWrapper}>
-                          <button
+                          <div
                             className={`${css.item}${isSelected ? ` ${css.itemSelected}` : ''}${inChain ? ` ${css.itemInChain}` : ''}`}
-                            onClick={() => toggleExpand(id)}
                           >
-                            <span
+                            <button
+                              type="button"
                               className={`${css.checkbox}${isSelected ? ` ${css.checkboxChecked}` : ''}${inChain ? ` ${css.checkboxChain}` : ''}`}
                               role="checkbox"
                               aria-checked={isSelected || inChain}
-                              onClick={(e) => {
-                                e.stopPropagation();
+                              disabled={inChain}
+                              onClick={() => {
                                 if (!inChain) toggleSelect(id);
                               }}
                             >
@@ -425,35 +425,41 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                                   <path d="M2 5l2.5 2.5L8 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                                 </svg>
                               )}
-                            </span>
-                            <span className={css.itemInfo}>
-                              <span className={css.itemSub}>
-                                <span className={css.packBadge}>Pack</span>
-                                <span className={css.itemName}>{pack.name}</span>
-                                <span className={css.packCount}>{packProcs.length} processors</span>
-                              </span>
-                              {pack.description && (
-                                <span className={css.itemDesc}>{pack.description}</span>
-                              )}
-                              {pack.tags.length > 0 && (
-                                <span className={css.itemTags}>
-                                  {pack.tags.map((t) => (
-                                    <span key={t} className={css.itemTag}>{t}</span>
-                                  ))}
-                                </span>
-                              )}
-                            </span>
-                            <span className={css.itemStatus}>
-                              {inChain && <span className={css.inChainLabel}>in pipeline</span>}
-                              {partialInChain && <span className={css.inChainLabel}>partial</span>}
-                            </span>
-                            <svg
-                              className={`${css.expandChevron}${isExpanded ? ` ${css.expandChevronOpen}` : ''}`}
-                              width="10" height="10" viewBox="0 0 10 10" fill="none"
+                            </button>
+                            <button
+                              type="button"
+                              className={css.itemActivate}
+                              onClick={() => toggleExpand(id)}
                             >
-                              <path d="M2.5 3.5L5 6l2.5-2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>
-                          </button>
+                              <span className={css.itemInfo}>
+                                <span className={css.itemSub}>
+                                  <span className={css.packBadge}>Pack</span>
+                                  <span className={css.itemName}>{pack.name}</span>
+                                  <span className={css.packCount}>{packProcs.length} processors</span>
+                                </span>
+                                {pack.description && (
+                                  <span className={css.itemDesc}>{pack.description}</span>
+                                )}
+                                {pack.tags.length > 0 && (
+                                  <span className={css.itemTags}>
+                                    {pack.tags.map((t) => (
+                                      <span key={t} className={css.itemTag}>{t}</span>
+                                    ))}
+                                  </span>
+                                )}
+                              </span>
+                              <span className={css.itemStatus}>
+                                {inChain && <span className={css.inChainLabel}>in pipeline</span>}
+                                {partialInChain && <span className={css.inChainLabel}>partial</span>}
+                              </span>
+                              <svg
+                                className={`${css.expandChevron}${isExpanded ? ` ${css.expandChevronOpen}` : ''}`}
+                                width="10" height="10" viewBox="0 0 10 10" fill="none"
+                              >
+                                <path d="M2.5 3.5L5 6l2.5-2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            </button>
+                          </div>
                           {isExpanded && (
                             <div className={css.packProcessorList}>
                               {packProcs.map((p) => (
@@ -475,16 +481,16 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                     const p = entry.processor;
                     return (
                       <div key={id} className={css.itemWrapper}>
-                        <button
+                        <div
                           className={`${css.item}${isSelected ? ` ${css.itemSelected}` : ''}${inChain ? ` ${css.itemInChain}` : ''}`}
-                          onClick={() => toggleExpand(id)}
                         >
-                          <span
+                          <button
+                            type="button"
                             className={`${css.checkbox}${isSelected ? ` ${css.checkboxChecked}` : ''}${inChain ? ` ${css.checkboxChain}` : ''}`}
                             role="checkbox"
                             aria-checked={isSelected || inChain}
-                            onClick={(e) => {
-                              e.stopPropagation();
+                            disabled={inChain}
+                            onClick={() => {
                               if (!inChain) toggleSelect(id);
                             }}
                           >
@@ -493,31 +499,37 @@ const ProcessorLibrary = memo(function ProcessorLibrary({ onClose }: Props) {
                                 <path d="M2 5l2.5 2.5L8 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                               </svg>
                             )}
-                          </span>
-                          <span className={css.typeIcon}>
-                            <ProcessorTypeIcon type={p.processorType} size={14} />
-                          </span>
-                          <span className={css.itemInfo}>
-                            <span className={css.itemSub}>
-                              <span className={css.itemName}>{p.name}</span>
-                              <span className={`${badgeCss.typeBadge} ${getProcTypeBadgeClass(p.processorType)}`}>
-                                {getProcTypeLabel(p.processorType)}
-                              </span>
-                            </span>
-                            {p.description && (
-                              <span className={css.itemDesc}>{p.description}</span>
-                            )}
-                          </span>
-                          <span className={css.itemStatus}>
-                            {inChain && <span className={css.inChainLabel}>in pipeline</span>}
-                          </span>
-                          <svg
-                            className={`${css.expandChevron}${isExpanded ? ` ${css.expandChevronOpen}` : ''}`}
-                            width="10" height="10" viewBox="0 0 10 10" fill="none"
+                          </button>
+                          <button
+                            type="button"
+                            className={css.itemActivate}
+                            onClick={() => toggleExpand(id)}
                           >
-                            <path d="M2.5 3.5L5 6l2.5-2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
-                        </button>
+                            <span className={css.typeIcon}>
+                              <ProcessorTypeIcon type={p.processorType} size={14} />
+                            </span>
+                            <span className={css.itemInfo}>
+                              <span className={css.itemSub}>
+                                <span className={css.itemName}>{p.name}</span>
+                                <span className={`${badgeCss.typeBadge} ${getProcTypeBadgeClass(p.processorType)}`}>
+                                  {getProcTypeLabel(p.processorType)}
+                                </span>
+                              </span>
+                              {p.description && (
+                                <span className={css.itemDesc}>{p.description}</span>
+                              )}
+                            </span>
+                            <span className={css.itemStatus}>
+                              {inChain && <span className={css.inChainLabel}>in pipeline</span>}
+                            </span>
+                            <svg
+                              className={`${css.expandChevron}${isExpanded ? ` ${css.expandChevronOpen}` : ''}`}
+                              width="10" height="10" viewBox="0 0 10 10" fill="none"
+                            >
+                              <path d="M2.5 3.5L5 6l2.5-2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          </button>
+                        </div>
                         {isExpanded && <ProcessorDetailCard processor={p} />}
                       </div>
                     );
