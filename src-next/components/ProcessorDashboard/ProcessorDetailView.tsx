@@ -1,4 +1,5 @@
 import React from 'react';
+import { ChevronRight } from 'lucide-react';
 import type { PipelineRunSummary, ProcessorSummary, VarMeta } from '../../bridge/types';
 import { isNumeric, isRankedObject, groupVars } from './utils';
 import { StatCard, RankedList, DataTable } from './SubComponents';
@@ -382,9 +383,10 @@ export const ProcessorDetailView = React.memo(function ProcessorDetailView({
               className={styles.matchesToggle}
               onClick={handleToggleMatches}
             >
-              <span className={styles.matchesArrow}>
-                {showMatches ? '>' : '>'}
-              </span>
+              <ChevronRight
+                size={10}
+                className={`${styles.matchesArrow} ${showMatches ? styles.matchesArrowOpen : ''}`}
+              />
               <span className={styles.sectionLabel}>
                 Matched Lines
                 {summary && (
