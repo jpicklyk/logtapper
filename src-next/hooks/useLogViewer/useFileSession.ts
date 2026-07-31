@@ -10,6 +10,7 @@ import { useSessionCoreCtx, useSessionProgressCtx } from '../../context/SessionC
 import { bus, emitSessionLoadedWithFocus } from '../../events/bus';
 import { getStoredFirstPaneId } from '../useWorkspaceLayout';
 import { diag, diagStart, diagEnd } from '../../utils/diagnostics';
+import { basename } from '../../utils';
 import type { SharedLogViewerRefs } from './types';
 import { planExtraSessionImport } from './multiSessionImport';
 import { genKeyFor } from './loadGeneration';
@@ -165,7 +166,7 @@ export function useFileSession(
         const alreadyOpen = Array.from(sessionsMap.values()).some((s) => s.filePath === path);
         if (alreadyOpen) {
           diag('file-load', 'skipping — .lts already open', { path });
-          const label = path.split(/[\\/]/).pop() ?? path;
+          const label = basename(path);
           bus.emit('file:lts-already-open', { label });
           return;
         }
@@ -233,7 +234,7 @@ export function useFileSession(
 
     // Create a placeholder tab immediately so the user sees feedback while the
     // backend decompresses/indexes (especially important for large .lts files).
-    const label = path.split(/[\\/]/).pop() ?? path;
+    const label = basename(path);
     diagStart(`loadFile:${label}`);
     diag('file-load', 'starting', { path: label, paneId: targetPaneId, tabId, isNewTab });
     bus.emit('session:loading', { paneId: targetPaneId, tabId, label, isNewTab });
@@ -356,7 +357,7 @@ export function useFileSession(
         return;
       }
       const tabId = crypto.randomUUID();
-      const label = payload.filePath?.split(/[\\/]/).pop() ?? payload.sourceName;
+      const label = payload.filePath ? basename(payload.filePath) : payload.sourceName;
       diag('file-load', 'bridge session-opened — creating tab', { sessionId: payload.sessionId, paneId: plan.targetPaneId, tabId, isNewTab: plan.isNewTab });
       // Placeholder tab first (mirrors the normal open), then the post-load half.
       bus.emit('session:loading', { paneId: plan.targetPaneId, tabId, label, isNewTab: plan.isNewTab });
