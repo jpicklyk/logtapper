@@ -570,7 +570,16 @@ fn truncate_var_maps(vars: &HashMap<String, Value>) -> serde_json::Map<String, V
         .collect()
 }
 
-/// Resolve multiple line numbers to raw text, returning a map of line_num -> text.
+/// Resolve multiple line numbers to raw, **un-anonymized, un-truncated**
+/// text, returning a map of line_num -> text. Must be called while holding
+/// the `sessions` lock (it borrows the locked map directly).
+///
+/// Callers MUST pipe the result through [`anonymize_line_texts`] — dropping
+/// the `sessions` lock first — before it reaches a JSON response. This
+/// function on its own does not honor the session's `mcp_anonymize` flag;
+/// serving its output directly is the Tier-2 raw-line-leak bug this pair of
+/// functions fixes (see `anonymize_for_session`'s doc comment for why the
+/// gate exists).
 fn resolve_line_texts(
     sessions: &HashMap<String, crate::core::session::AnalysisSession>,
     session_id: &str,
@@ -581,12 +590,38 @@ fn resolve_line_texts(
         if let Some(source) = session.primary_source() {
             for &ln in line_nums {
                 if let Some(raw) = source.raw_line(ln) {
-                    map.insert(ln, truncate_str(&raw, 500));
+                    map.insert(ln, raw.into_owned());
                 }
             }
         }
     }
     map
+}
+
+/// Anonymize and truncate a map of line_num -> raw text produced by
+/// [`resolve_line_texts`], honoring the session's per-session `mcp_anonymize`
+/// flag via [`anonymize_for_session`].
+///
+/// Must be called AFTER the `sessions` lock used by `resolve_line_texts` has
+/// been dropped: `anonymize_for_session` acquires `mcp_anonymize` /
+/// `anonymizer_config` / `mcp_anonymizers`, and nesting those under
+/// `sessions` violates this file's lock-ordering rule (see the module header
+/// docs and the "Lock-poisoning helpers" section above).
+///
+/// Truncation (500 chars, matching `resolve_line_texts`'s historical
+/// behavior) is applied AFTER anonymization so a redaction token is never
+/// cut mid-token by the length cap.
+fn anonymize_line_texts(
+    state: &AppState,
+    session_id: &str,
+    raw: HashMap<usize, String>,
+) -> HashMap<usize, String> {
+    raw.into_iter()
+        .map(|(ln, text)| {
+            let anonymized = anonymize_for_session(state, session_id, &text);
+            (ln, truncate_str(&anonymized, 500))
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1226,7 +1261,9 @@ async fn h_pipeline(
         }
     };
 
-    // --- Phase 2: Resolve line text from sessions (separate lock) ---
+    // --- Phase 2: Resolve line text from sessions (separate lock), then
+    // anonymize per the session's `mcp_anonymize` flag AFTER the `sessions`
+    // lock is dropped (see `anonymize_line_texts` doc comment). ---
     let line_text_map: HashMap<usize, String> = {
         // Collect all line nums we need to resolve
         let mut needed: Vec<usize> = Vec::new();
@@ -1241,8 +1278,11 @@ async fn h_pipeline(
         needed.sort_unstable();
         needed.dedup();
 
-        let sessions = lock_or_json_err!(state.sessions, "sessions");
-        resolve_line_texts(&sessions, &session_id, &needed)
+        let raw = {
+            let sessions = lock_or_json_err!(state.sessions, "sessions");
+            resolve_line_texts(&sessions, &session_id, &needed)
+        };
+        anonymize_line_texts(&state, &session_id, raw)
     };
 
     // --- Phase 3: Build JSON ---
@@ -1378,8 +1418,11 @@ async fn h_processor_detail(
             needed_lines.dedup();
 
             let line_texts: HashMap<usize, String> = if include_line_text {
-                let sessions = lock_or_json_err!(state.sessions, "sessions");
-                resolve_line_texts(&sessions, &session_id, &needed_lines)
+                let raw = {
+                    let sessions = lock_or_json_err!(state.sessions, "sessions");
+                    resolve_line_texts(&sessions, &session_id, &needed_lines)
+                };
+                anonymize_line_texts(&state, &session_id, raw)
             } else {
                 HashMap::new()
             };
@@ -1467,8 +1510,11 @@ async fn h_processor_detail(
             // Resolve line text if requested
             let line_texts: HashMap<usize, String> = if include_line_text {
                 let needed: Vec<usize> = page.iter().map(|t| t.line_num).collect();
-                let sessions = lock_or_json_err!(state.sessions, "sessions");
-                resolve_line_texts(&sessions, &session_id, &needed)
+                let raw = {
+                    let sessions = lock_or_json_err!(state.sessions, "sessions");
+                    resolve_line_texts(&sessions, &session_id, &needed)
+                };
+                anonymize_line_texts(&state, &session_id, raw)
             } else {
                 HashMap::new()
             };
@@ -3205,6 +3251,86 @@ mod tests {
         let out = anonymize_for_session(&state, "never-seen-session", raw);
         assert_ne!(out, raw);
         assert!(!out.contains("user@example.com"));
+    }
+
+    // ── anonymize_line_texts (Tier-2 raw-line-leak fix) ──────────────────────
+    // `h_pipeline` (reporter sampleMatchedLines / tracker recentTransitions)
+    // and `h_processor_detail` (include_line_text=true) both resolve raw text
+    // via `resolve_line_texts` and previously injected it straight into the
+    // JSON response as `rawLine`, never checking the session's
+    // `mcp_anonymize` flag — unlike h_query/h_search/h_lines_around/
+    // h_search_with_context, which all route through `anonymize_for_session`.
+    // These tests exercise the two-phase fix directly: `resolve_line_texts`
+    // stays a pure "fetch under lock" helper, and `anonymize_line_texts` is
+    // the new gate callers must pipe its output through afterward.
+
+    #[test]
+    fn anonymize_line_texts_redacts_pii_when_flag_true() {
+        let state = AppState::new();
+        state.mcp_anonymize.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert("sess-a".to_string(), true);
+
+        let mut raw = HashMap::new();
+        raw.insert(10usize, "contact user@example.com for access".to_string());
+        raw.insert(20usize, "no pii on this line".to_string());
+
+        let out = anonymize_line_texts(&state, "sess-a", raw);
+
+        // The PII-bearing line must no longer contain the raw email — this
+        // is exactly the field `h_pipeline` / `h_processor_detail` inject
+        // into `rawLine` in the JSON response.
+        assert!(!out[&10].contains("user@example.com"), "raw PII leaked through rawLine: {}", out[&10]);
+        assert_eq!(out[&20], "no pii on this line");
+    }
+
+    #[test]
+    fn anonymize_line_texts_serves_raw_when_flag_false() {
+        // Anonymization is opt-in per session — a session that explicitly
+        // disabled it must still get its raw text back unchanged.
+        let state = AppState::new();
+        state.mcp_anonymize.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert("sess-raw".to_string(), false);
+
+        let mut raw = HashMap::new();
+        raw.insert(5usize, "contact user@example.com for access".to_string());
+
+        let out = anonymize_line_texts(&state, "sess-raw", raw);
+        assert_eq!(out[&5], "contact user@example.com for access");
+    }
+
+    #[test]
+    fn anonymize_line_texts_fails_closed_for_unknown_session() {
+        // No `set_mcp_anonymize` signal has landed for this session yet —
+        // must anonymize by default (same fail-closed contract as
+        // `anonymize_for_session`), not serve raw PII through rawLine.
+        let state = AppState::new();
+        let mut raw = HashMap::new();
+        raw.insert(1usize, "contact user@example.com for access".to_string());
+
+        let out = anonymize_line_texts(&state, "never-seen-session", raw);
+        assert!(!out[&1].contains("user@example.com"));
+    }
+
+    #[test]
+    fn anonymize_line_texts_anonymizes_before_truncating() {
+        // Order matters: anonymize the FULL raw text first, then truncate.
+        // If it were truncated first, an email straddling the 500-char cut
+        // point would be sliced mid-token (e.g. "user@example." with no
+        // TLD) — the anonymizer's email pattern would no longer match the
+        // mangled fragment, and the "user@" prefix would leak into rawLine
+        // unredacted. Doing it in the right order redacts the whole email
+        // before the cut ever happens.
+        let state = AppState::new();
+        state.mcp_anonymize.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert("sess-a".to_string(), true);
+
+        // Email spans char 490..507 — straddles the 500-char truncation point.
+        let long_line = format!("{}user@example.com", "p".repeat(490));
+        let mut raw = HashMap::new();
+        raw.insert(1usize, long_line);
+
+        let out = anonymize_line_texts(&state, "sess-a", raw);
+        assert!(!out[&1].contains("user@"), "partial/full email leaked through rawLine: {}", out[&1]);
     }
 
     // ── Lock poisoning: `lock_or_json_err!` vs. `into_inner` recovery ───────
