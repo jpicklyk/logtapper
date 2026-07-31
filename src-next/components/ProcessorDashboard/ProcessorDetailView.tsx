@@ -239,8 +239,11 @@ export const ProcessorDetailView = React.memo(function ProcessorDetailView({
                   .sort(([a], [b]) => a.localeCompare(b))
                   .map(([key, val]) => {
                     const initialized = trackerSnapshot.initializedFields.includes(key);
+                    const rowClassName = initialized
+                      ? styles.stringRow
+                      : `${styles.stringRow} ${styles.stringRowUninitialized}`;
                     return (
-                      <div key={key} className={styles.stringRow} style={initialized ? undefined : { opacity: 0.4 }}>
+                      <div key={key} className={rowClassName}>
                         <span className={styles.stringKey}>{key}</span>
                         <span className={initialized ? styles.stringVal : styles.stringKey}>
                           {initialized ? String(val ?? '') : '--'}
