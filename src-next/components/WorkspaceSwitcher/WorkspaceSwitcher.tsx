@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import { ChevronDown, Plus, FolderOpen, Save, X, Pencil } from 'lucide-react';
 import clsx from 'clsx';
-import { useWorkspaceList, useActiveWorkspaceId, useWorkspaceActions, useWorkspaceContext } from '../../context';
+import { useWorkspaceList, useActiveWorkspaceId, useWorkspaceActions, useRenameWorkspaceAction } from '../../context';
 import styles from './WorkspaceSwitcher.module.css';
 
 /**
@@ -15,7 +15,7 @@ export const WorkspaceSwitcher = React.memo(function WorkspaceSwitcher() {
   const activeId = useActiveWorkspaceId();
   const { newWorkspace, openWorkspace, closeWorkspace, switchWorkspace,
           saveWorkspace, saveWorkspaceAs } = useWorkspaceActions();
-  const { renameWorkspace } = useWorkspaceContext();
+  const renameWorkspace = useRenameWorkspaceAction();
 
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);

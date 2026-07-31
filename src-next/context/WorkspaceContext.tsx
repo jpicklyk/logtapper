@@ -343,3 +343,8 @@ export function useWorkspaceList(): WorkspaceIdentity[] {
 export function useActiveWorkspaceId(): string | null {
   return useWorkspaceContext().activeId;
 }
+
+/** Rename a workspace by id — stable callback, narrow subscription. */
+export function useRenameWorkspaceAction(): (id: string, name: string) => void {
+  return useWorkspaceContext().renameWorkspace;
+}

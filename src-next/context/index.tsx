@@ -482,8 +482,11 @@ export {
 } from './selectors';
 
 // Re-export workspace hooks
-export { useWorkspaceIdentity, useWorkspaceList, useActiveWorkspaceId } from './WorkspaceContext';
-export { useWorkspaceContext } from './WorkspaceContext';
+export { useWorkspaceIdentity, useWorkspaceList, useActiveWorkspaceId, useRenameWorkspaceAction } from './WorkspaceContext';
+// NOTE: useWorkspaceContext (raw, broad) is intentionally NOT re-exported here —
+// it is internal to domain hooks (useWorkspace, useStartupRestore) and the
+// WorkspaceContext module itself (which defines the narrow selectors above).
+// Components must use a narrow selector instead (context/CLAUDE.md).
 
 // Re-export per-session context
 export { SessionProviders } from './SessionProviders';
