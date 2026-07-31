@@ -5,7 +5,7 @@ import type { GutterColumnDef } from './GutterColumn';
 import type { LineDecoratorDef } from './LineDecorator';
 import type { Selection } from './SelectionManager';
 import { useSelectionManager } from './SelectionManager';
-import { buildCopyText } from './copyText';
+import { buildCopyText, writeClipboard } from './copyText';
 import { useVirtualBase } from './useVirtualBase';
 import { useScrollControls } from './useScrollControls';
 import { useFetchScheduler } from './useFetchScheduler';
@@ -228,27 +228,6 @@ export default function ReadOnlyViewer({
       ? selection.box != null
       : selection.selected.size > 0;
     if (!hasSelection) return;
-
-    // Robust clipboard write: async Clipboard API with synchronous execCommand fallback.
-    // navigator.clipboard can silently fail in Tauri WebView2 without the clipboard plugin.
-    const writeClipboard = (text: string) => {
-      if (navigator.clipboard?.writeText) {
-        navigator.clipboard.writeText(text).catch(() => execCommandCopy(text));
-      } else {
-        execCommandCopy(text);
-      }
-    };
-
-    const execCommandCopy = (text: string) => {
-      const el = document.createElement('textarea');
-      el.value = text;
-      el.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
-      document.body.appendChild(el);
-      el.focus();
-      el.select();
-      document.execCommand('copy');
-      document.body.removeChild(el);
-    };
 
     const handleCopy = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'c') return;

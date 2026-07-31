@@ -4,6 +4,7 @@ import type { Bookmark } from '../../bridge/types';
 import { useFocusedSession, useNavigationActions, useSessionBookmarkActions } from '../../context';
 import { useBookmarks, useSettings } from '../../hooks';
 import type { BookmarkCategoryDef } from '../../hooks';
+import { writeClipboard } from '../../viewport';
 import BookmarkItem from './BookmarkItem';
 import { exportBookmarksAsMarkdown } from './exportMarkdown';
 import styles from './BookmarkPanel.module.css';
@@ -134,18 +135,14 @@ const BookmarkPanel = React.memo(function BookmarkPanel() {
     removeBookmark(id);
   }, [removeBookmark]);
 
-  const handleExport = useCallback(async () => {
+  const handleExport = useCallback(() => {
     const markdown = exportBookmarksAsMarkdown(bookmarks, {
       sourceName: session?.sourceName ?? undefined,
       totalLines: session?.totalLines,
     });
-    try {
-      await navigator.clipboard.writeText(markdown);
-      setExportLabel('copied');
-      setTimeout(() => setExportLabel('export'), 2000);
-    } catch {
-      // clipboard write failed — silently ignore
-    }
+    writeClipboard(markdown);
+    setExportLabel('copied');
+    setTimeout(() => setExportLabel('export'), 2000);
   }, [bookmarks, session]);
 
   if (!sessionId) {

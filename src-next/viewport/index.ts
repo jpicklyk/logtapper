@@ -21,3 +21,6 @@ export type { StreamPusher, DataSourceRegistrar } from './DataSourceRegistry';
 
 // Scroll position registry
 export { sessionScrollPositions } from './sessionScrollPositions';
+
+// Clipboard
+export { writeClipboard } from './copyText';

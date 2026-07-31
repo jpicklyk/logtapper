@@ -2,7 +2,7 @@
 
 ## Public API (exported from barrel `index.ts`)
 
-Key exports: `ReadOnlyViewer` (component), `createCacheDataSource` (factory), `useSelectionManager` (hook), `DataSource` / `StreamPusher` / `DataSourceRegistrar` / `CacheDataSource` / `GutterColumnDef` / `LineDecoratorDef` / `Selection` (interfaces/types). See `index.ts` for the full list.
+Key exports: `ReadOnlyViewer` (component), `createCacheDataSource` (factory), `useSelectionManager` (hook), `writeClipboard` (WebView2-safe clipboard write, used by `ReadOnlyViewer`'s Ctrl+C handler and by consumers outside this module such as `BookmarkPanel`), `DataSource` / `StreamPusher` / `DataSourceRegistrar` / `CacheDataSource` / `GutterColumnDef` / `LineDecoratorDef` / `Selection` (interfaces/types). See `index.ts` for the full list.
 
 `DataSourceRegistry` class, `FetchScheduler`, and `SelectionManager` internals are **not** exported. `DataSourceRegistry` construction is `CacheContext`'s responsibility — external code uses `StreamPusher` via the cache barrel.
 
