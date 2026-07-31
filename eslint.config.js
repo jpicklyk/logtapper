@@ -83,7 +83,7 @@ export default tseslint.config(
       ],
 
       // ── Convention 4: No direct invoke()/Channel outside bridge ─────
-      // ── Convention 5: No direct listen() outside bridge + 2 hooks ───
+      // ── Convention 5: No direct listen() outside bridge ─────────────
       // ── Convention 9: No deprecated useViewerActions ────────────────
       // ── Convention 10: No deprecated useSessionContext ──────────────
       'no-restricted-imports': ['error', {
