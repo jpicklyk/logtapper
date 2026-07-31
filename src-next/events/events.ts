@@ -28,7 +28,15 @@ export type AppEvents = {
    */
   'session:loaded':         { sessionId: string; paneId: string; sourceName: string; sourceType: SourceType;
                               tabId: string; isNewTab?: boolean; previousSessionId?: string; readOnly?: boolean;
-                              isIndexing?: boolean };
+                              isIndexing?: boolean;
+                              /** Correlation id stamped by a workspace restore's own `loadFile` calls
+                               *  (see `hooks/workspace/restoreCore.ts`). Lets the restore distinguish
+                               *  sessions IT produced from a concurrent user-initiated open that happens
+                               *  to complete during the restore's awaited load loop — without it, the
+                               *  restore would misattribute the other open's session and apply its own
+                               *  manifest entry's bookmarks/analyses to the wrong session. Optional and
+                               *  unset for every other emitter/consumer. */
+                              loadRequestId?: string };
   'session:closed':         { sessionId: string; paneId: string; sourceType: SourceType; tabId?: string };
   'session:focused':        { sessionId: string | null; paneId: string | null };
   'session:indexing-complete': { sessionId: string; totalLines: number };

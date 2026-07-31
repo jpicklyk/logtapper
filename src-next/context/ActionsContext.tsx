@@ -26,6 +26,10 @@ export interface WorkspaceMutationActions {
      *  Stated explicitly because the alternative — inferring it from a ref that
      *  has not re-rendered yet — is what appended duplicate tabs. */
     replace?: boolean,
+    /** Correlation id a workspace restore stamps on its own loads so the
+     *  resulting `session:loaded` event(s) can be told apart from an unrelated
+     *  concurrent open (see `hooks/workspace/restoreCore.ts`). */
+    loadRequestId?: string,
   ) => Promise<void>;
   startStream: (deviceId?: string) => Promise<void>;
   closeSession: (paneId?: string) => Promise<void>;

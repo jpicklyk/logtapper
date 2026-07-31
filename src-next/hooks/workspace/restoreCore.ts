@@ -34,12 +34,20 @@ export interface RestoreIo {
   /** `useFileSession.loadFile` — accepts the optional persisted tab id at runtime
    *  even though the public `LogViewerActions` type elides it. `sourceType`
    *  replays a persisted override so the session re-detects nothing and resolves
-   *  to the same id it had when saved. */
+   *  to the same id it had when saved.
+   *
+   *  `replace` and `loadRequestId` are declared here (rather than omitted) so
+   *  their parameter *positions* match the real `useFileSession.loadFile`
+   *  implementation exactly — restoreWorkspace always passes `undefined` for
+   *  `replace` and its own correlation id for `loadRequestId`; if the position
+   *  were wrong, the id would land in the `replace` slot at runtime. */
   loadFile: (
     path: string,
     paneId?: string,
     existingTabId?: string,
     sourceType?: SourceType,
+    replace?: boolean,
+    loadRequestId?: string,
   ) => Promise<void>;
   /** Triggers (or arms) the pipeline auto-run for a restored session, with that
    *  session's restored chain passed explicitly (see autoRunScheduler for why the
@@ -65,12 +73,21 @@ export async function restoreWorkspace(
   // schedule an auto-save of itself and, on a partial failure, overwrite the good
   // `.ltw` with the partial set. Reference-counted gate; end MUST run in finally.
   bus.emit('workspace:restore-begin');
+  // Correlation id stamped on every loadFile call this restore makes. A user
+  // can open a file (via the normal open path) while a restore load is
+  // in-flight — the awaited io.loadFile below yields the event loop, and an
+  // unrelated session:loaded for that unrelated open would otherwise land in
+  // this restore's loadedOrder slice and get attributed the wrong manifest
+  // entry's bookmarks/analyses. Filtering on this id in onSessionLoaded scopes
+  // attribution to sessions THIS restore produced.
+  const loadRequestId = crypto.randomUUID();
   try {
     // session:loaded fires synchronously inside loadFile (before its promise
     // resolves), so slicing this list around each await yields exactly the
     // sessions that load produced, in order — with their isIndexing flag.
     const loadedOrder: Array<{ sessionId: string; isIndexing?: boolean }> = [];
-    const onSessionLoaded = (p: { sessionId: string; isIndexing?: boolean }) => {
+    const onSessionLoaded = (p: { sessionId: string; isIndexing?: boolean; loadRequestId?: string }) => {
+      if (p.loadRequestId !== loadRequestId) return; // not from this restore
       loadedOrder.push({ sessionId: p.sessionId, isIndexing: p.isIndexing });
     };
     bus.on('session:loaded', onSessionLoaded);
@@ -80,7 +97,7 @@ export async function restoreWorkspace(
       for (const load of plan.loads) {
         const before = loadedOrder.length;
         try {
-          await io.loadFile(load.path, load.paneId, load.existingTabId, load.sourceType as SourceType | undefined);
+          await io.loadFile(load.path, load.paneId, load.existingTabId, load.sourceType as SourceType | undefined, undefined, loadRequestId);
         } catch (e) {
           console.warn(`[restoreWorkspace] Failed to load ${load.path}:`, e);
         }
