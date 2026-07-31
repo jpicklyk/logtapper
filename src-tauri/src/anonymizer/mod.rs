@@ -392,4 +392,53 @@ mod tests {
             );
         }
     }
+
+    /// Capitalized domains must be detected — EmailDetector's quick_screen previously
+    /// required an ASCII-lowercase byte immediately after '@', so "Gmail.com" style
+    /// domains (matched by EMAIL_RE's [a-zA-Z] domain class) were silently skipped.
+    #[test]
+    fn email_uppercase_domain_detected() {
+        let anon = LogAnonymizer::new();
+        let (out, spans) = anon.anonymize("contact@Gmail.com");
+        assert!(
+            !out.contains("contact@Gmail.com"),
+            "capitalized-domain email not replaced: {out}"
+        );
+        assert_eq!(spans.len(), 1);
+    }
+
+    /// JSESSIONID / PHPSESSID cookies in their real-world ALL-CAPS casing must be
+    /// detected — SessionIdDetector's quick_screen previously used a case-sensitive
+    /// contains() against a lowercase literal set, even though SESSION_ID_RE is (?i).
+    #[test]
+    fn session_id_uppercase_cookie_detected() {
+        let anon = LogAnonymizer::new();
+        let (out, _spans) = anon.anonymize(
+            "Set-Cookie: JSESSIONID=3F2A9C1B7E4D8A6F0B2C5E9D1A4F7B3C; Path=/",
+        );
+        assert!(
+            !out.contains("3F2A9C1B7E4D8A6F0B2C5E9D1A4F7B3C"),
+            "JSESSIONID value not replaced: {out}"
+        );
+
+        let (out2, _spans2) = anon.anonymize("PHPSESSID=abcdef0123456789abcdef0123456789");
+        assert!(
+            !out2.contains("abcdef0123456789abcdef0123456789"),
+            "PHPSESSID value not replaced: {out2}"
+        );
+    }
+
+    /// Dash-separated MAC addresses (Windows ipconfig style) must be detected —
+    /// MacDetector's quick_screen previously only checked for ':', even though MAC_RE
+    /// supports both '[:\-]' separators.
+    #[test]
+    fn mac_dash_separated_detected() {
+        let anon = LogAnonymizer::new();
+        let (out, spans) = anon.anonymize("Physical Address: 00-1A-2B-3C-4D-5E");
+        assert!(
+            !out.contains("00-1A-2B-3C-4D-5E"),
+            "dash-separated MAC not replaced: {out}"
+        );
+        assert_eq!(spans.len(), 1);
+    }
 }

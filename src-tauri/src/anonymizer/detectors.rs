@@ -118,6 +118,21 @@ fn capture_group1_matches(re: &Regex, text: &str, category: PiiCategory) -> Vec<
         .collect()
 }
 
+/// Case-insensitive substring check that avoids allocating a lowercased copy of
+/// `text` (some detectors run on every log line, so per-call allocation adds up).
+/// Used by quick_screen implementations that guard a `(?i)` regex with a literal
+/// keyword check — a case-sensitive `contains()` there would silently reject real
+/// matches in unexpected casings (e.g. all-caps cookie names).
+fn contains_ci(text: &str, needle: &str) -> bool {
+    let needle = needle.as_bytes();
+    if needle.is_empty() {
+        return true;
+    }
+    text.as_bytes()
+        .windows(needle.len())
+        .any(|w| w.eq_ignore_ascii_case(needle))
+}
+
 // ---------------------------------------------------------------------------
 // Email detector
 // ---------------------------------------------------------------------------
@@ -180,13 +195,14 @@ impl PiiDetector for EmailDetector {
         PiiCategory::Email
     }
     fn quick_screen(&self, text: &str) -> bool {
-        // The character immediately after '@' must be an ASCII lowercase letter.
-        // Real email hostnames are lowercase by universal convention; Java class
-        // references (Foo@Bar.method) and numeric domains (foo@1.2.3) fail this
-        // check before the full regex even runs.
+        // The character immediately after '@' must be an ASCII letter (either case) —
+        // EMAIL_RE's domain class is [a-zA-Z], so capitalized domains like
+        // "user@Gmail.com" or "user@ExampleCorp.io" are real matches and must not be
+        // screened out. Numeric domains (foo@1.2.3) still fail this check since a
+        // digit is neither upper nor lower ASCII alphabetic.
         text.as_bytes()
             .windows(2)
-            .any(|w| w[0] == b'@' && w[1].is_ascii_lowercase())
+            .any(|w| w[0] == b'@' && w[1].is_ascii_alphabetic())
     }
     fn find_all(&self, text: &str) -> Vec<PiiMatch> {
         // RFC 5321 dot-atom format (ASCII only).
@@ -279,7 +295,9 @@ impl PiiDetector for MacDetector {
         PiiCategory::Mac
     }
     fn quick_screen(&self, text: &str) -> bool {
-        text.contains(':')
+        // MAC_RE accepts both ':' and '-' as octet separators (Windows ipconfig prints
+        // dash-separated MACs, e.g. "00-1A-2B-3C-4D-5E"); the screen must accept both too.
+        text.contains(':') || text.contains('-')
     }
     fn find_all(&self, text: &str) -> Vec<PiiMatch> {
         let re = MAC_RE.get_or_init(|| {
@@ -339,6 +357,26 @@ impl PiiDetector for ImeiDetector {
     fn category(&self) -> PiiCategory {
         PiiCategory::Imei
     }
+    fn quick_screen(&self, text: &str) -> bool {
+        // Any match of \b\d{15}\b is, by definition, a maximal run of exactly 15
+        // consecutive ASCII digits (the \b boundaries can only land at the edges of a
+        // digit run). So a run of >=15 consecutive digits anywhere in text is a
+        // necessary condition for a match — never a false negative, only a possible
+        // false positive (e.g. a longer digit run) which just falls through to the
+        // regex as normal.
+        let mut run = 0u32;
+        for &b in text.as_bytes() {
+            if b.is_ascii_digit() {
+                run += 1;
+                if run >= 15 {
+                    return true;
+                }
+            } else {
+                run = 0;
+            }
+        }
+        false
+    }
     fn find_all(&self, text: &str) -> Vec<PiiMatch> {
         let re = IMEI_RE.get_or_init(|| Regex::new(r"\b\d{15}\b").unwrap());
         regex_matches(re, text, PiiCategory::Imei)
@@ -380,6 +418,24 @@ pub struct AndroidIdDetector;
 impl PiiDetector for AndroidIdDetector {
     fn category(&self) -> PiiCategory {
         PiiCategory::AndroidId
+    }
+    fn quick_screen(&self, text: &str) -> bool {
+        // Any match of \b[0-9a-fA-F]{16}\b necessarily contains 16 consecutive hex
+        // digits (that's what the character class requires), regardless of the \b
+        // boundary semantics around it. So a run of >=16 consecutive ASCII hex digits
+        // is a necessary condition for a match — never a false negative.
+        let mut run = 0u32;
+        for &b in text.as_bytes() {
+            if b.is_ascii_hexdigit() {
+                run += 1;
+                if run >= 16 {
+                    return true;
+                }
+            } else {
+                run = 0;
+            }
+        }
+        false
     }
     fn find_all(&self, text: &str) -> Vec<PiiMatch> {
         let re = AID_RE.get_or_init(|| {
@@ -523,7 +579,12 @@ impl PiiDetector for SessionIdDetector {
         PiiCategory::SessionId
     }
     fn quick_screen(&self, text: &str) -> bool {
-        text.contains("session") || text.contains("jsessionid") || text.contains("phpsessid")
+        // The regex is (?i) but contains() is case-sensitive. Real-world cookies are
+        // frequently ALL-CAPS (JSESSIONID is Java's default, PHPSESSID is PHP's), so a
+        // lowercase-only literal check silently drops them. "session" (case-insensitive)
+        // covers session_id / sessionid / jsessionid since all three contain it as a
+        // substring; phpsessid does not contain "session" so it needs its own check.
+        contains_ci(text, "session") || contains_ci(text, "phpsessid")
     }
     fn find_all(&self, text: &str) -> Vec<PiiMatch> {
         let re = SESSION_ID_RE.get_or_init(|| {
