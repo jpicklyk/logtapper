@@ -689,6 +689,84 @@ async fn run_streaming_task(
 // Batch flush — parses lines, appends to session, runs processors, emits events
 // ---------------------------------------------------------------------------
 
+/// One parsed line plus everything derived from it during `flush_batch`.
+/// `ctx` is the cached `LineContext` reused by trackers/reporters — it must
+/// reflect any transformer mutations (see `apply_line_transformers`), not
+/// just the parser's original output, or Layer 2 sees stale tag/fields.
+struct ParsedLine {
+    raw: String,
+    meta: ParsedLineMeta,
+    view_line: ViewLine,
+    ctx: Option<LineContext>, // cached for downstream reuse (trackers, reporters)
+    /// Snapshot of `ctx.message` from the initial parse, before PII
+    /// anonymization or transformers run. `ctx.message` itself gets
+    /// overwritten in place as those steps execute (see
+    /// `apply_line_transformers`), so trackers — which need the untouched
+    /// original for capture regexes (`pre_transform_msgs` below) — read this
+    /// field instead of `ctx.message`.
+    original_message: Option<std::sync::Arc<str>>,
+}
+
+/// Run the active transformer chain over each parsed line's cached
+/// `LineContext` and persist the transformed context back onto `pl.ctx`.
+///
+/// Previously only `pl.view_line.raw`/`.message`/`.tag` were updated from the
+/// transformed context, while `pl.ctx` itself was left untouched. Since the
+/// Layer 2 batch (`batch_ctxs` in `flush_batch`) is built from `pl.ctx`, any
+/// transformer mutation to `tag` (e.g. `ReplaceField{field:"tag"}`) or to
+/// `fields` (`SetField`/`DropField`/`AddField`/`ReplaceField`) never reached
+/// trackers/reporters and never persisted across batches — it only worked in
+/// file mode, where the transformed context is used directly. Reassigning
+/// `pl.ctx = Some(ctx)` here fixes that: `.message`/`.raw` propagation is
+/// unchanged, `.tag` and `.fields` now propagate too.
+///
+/// Returns the (possibly updated) `pii_modified` flag: set when a
+/// transformer changes the message, so downstream PII-aware steps treat the
+/// line as modified — same as the pre-existing behavior.
+fn apply_line_transformers(
+    parsed: &mut [ParsedLine],
+    transformer_runs: &mut [(String, crate::processors::transformer::engine::TransformerRun)],
+    mut pii_modified: bool,
+) -> bool {
+    for pl in parsed.iter_mut() {
+        let mut ctx = match pl.ctx {
+            Some(ref c) if pii_modified => {
+                // PII modified the message — patch the clone
+                let mut tc = c.clone();
+                tc.message = std::sync::Arc::from(pl.view_line.message.as_str());
+                tc.raw = std::sync::Arc::from(pl.view_line.raw.as_str());
+                tc
+            }
+            Some(ref c) => c.clone(),
+            None => continue, // unparseable line — skip
+        };
+
+        let mut keep = true;
+        for (_, run) in transformer_runs.iter_mut() {
+            if !run.process_line(&mut ctx) {
+                keep = false;
+                break;
+            }
+        }
+        if keep {
+            if *ctx.message != pl.view_line.message {
+                let prefix_len = pl.view_line.raw.len().saturating_sub(pl.view_line.message.len());
+                pl.view_line.raw = format!("{}{}", &pl.view_line.raw[..prefix_len], &ctx.message);
+                pl.view_line.message = ctx.message.to_string();
+                pii_modified = true; // mark so reporters see the transformed version
+            }
+            pl.view_line.tag = ctx.tag.to_string();
+            // Persist the full transformed context (tag + fields + message/raw)
+            // so the Layer 2 batch_ctxs assembly downstream picks up transformer
+            // mutations instead of re-cloning the pre-transform ctx.
+            pl.ctx = Some(ctx);
+        }
+        // Note: we don't drop lines in streaming mode — transformers
+        // only modify content, dropping would break the view stream.
+    }
+    pii_modified
+}
+
 fn flush_batch(
     lines: Vec<String>,
     session_id: &str,
@@ -736,13 +814,6 @@ fn flush_batch(
 
     // ── Step 2: Parse once — derive ParsedLineMeta, ViewLine, and LineContext
     //    from a single parse_line call (eliminates redundant parse_meta) ────────
-    struct ParsedLine {
-        raw: String,
-        meta: ParsedLineMeta,
-        view_line: ViewLine,
-        ctx: Option<LineContext>, // cached for downstream reuse (trackers, reporters)
-    }
-
     let mut parsed: Vec<ParsedLine> = Vec::with_capacity(lines.len());
     for (i, raw) in lines.into_iter().enumerate() {
         let line_num = first_new_line + i;
@@ -772,7 +843,8 @@ fn flush_batch(
                 matched_by: vec![],
                 is_context: false,
             };
-            parsed.push(ParsedLine { raw, meta, view_line, ctx: Some(ctx) });
+            let original_message = Some(std::sync::Arc::clone(&ctx.message));
+            parsed.push(ParsedLine { raw, meta, view_line, ctx: Some(ctx), original_message });
         } else {
             // Unparseable line — fallback metadata
             let meta = ParsedLineMeta {
@@ -798,7 +870,7 @@ fn flush_batch(
                 matched_by: vec![],
                 is_context: false,
             };
-            parsed.push(ParsedLine { raw, meta, view_line, ctx: None });
+            parsed.push(ParsedLine { raw, meta, view_line, ctx: None, original_message: None });
         }
     }
 
@@ -910,38 +982,10 @@ fn flush_batch(
                     }).collect();
 
                 // Apply transformers using cached LineContext (no re-parse needed).
-                for pl in &mut parsed {
-                    let mut ctx = match pl.ctx {
-                        Some(ref c) if pii_modified => {
-                            // PII modified the message — patch the clone
-                            let mut tc = c.clone();
-                            tc.message = std::sync::Arc::from(pl.view_line.message.as_str());
-                            tc.raw = std::sync::Arc::from(pl.view_line.raw.as_str());
-                            tc
-                        }
-                        Some(ref c) => c.clone(),
-                        None => continue, // unparseable line — skip
-                    };
-
-                    let mut keep = true;
-                    for (_, run) in &mut transformer_runs {
-                        if !run.process_line(&mut ctx) {
-                            keep = false;
-                            break;
-                        }
-                    }
-                    if keep {
-                        if *ctx.message != pl.view_line.message {
-                            let prefix_len = pl.view_line.raw.len().saturating_sub(pl.view_line.message.len());
-                            pl.view_line.raw = format!("{}{}", &pl.view_line.raw[..prefix_len], &ctx.message);
-                            pl.view_line.message = ctx.message.to_string();
-                            pii_modified = true; // mark so reporters see the transformed version
-                        }
-                        pl.view_line.tag = ctx.tag.to_string();
-                    }
-                    // Note: we don't drop lines in streaming mode — transformers
-                    // only modify content, dropping would break the view stream.
-                }
+                // Writes the transformed context back onto `pl.ctx` (not just
+                // `pl.view_line`) so tag/field mutations reach Layer 2 and
+                // persist across batches — see `apply_line_transformers`.
+                pii_modified = apply_line_transformers(&mut parsed, &mut transformer_runs, pii_modified);
 
                 // Re-insert ALL transformer states in one lock, gated on the
                 // epoch. This is race (c): the re-insert runs BEFORE the Step-3
@@ -1168,11 +1212,20 @@ fn flush_batch(
                 // Run Layer 2 directly (transformers already handled above)
                 let enriched: Vec<LineContext> = batch_ctxs.into_iter().flatten().collect();
 
-                // For trackers: use original (pre-PII) messages
+                // For trackers: use original (pre-PII, pre-transform) messages.
+                // Read from `pl.original_message` — a snapshot taken at parse
+                // time in Step 2 — rather than `pl.ctx.message`: since the fix
+                // for bug 443c0ad5, `pl.ctx` is reassigned to the transformed
+                // context in `apply_line_transformers`, so `pl.ctx.message` no
+                // longer holds the untouched original once a transformer ran.
                 let pre_transform_msgs: HashMap<usize, std::sync::Arc<str>> =
                     if pii_modified && !core.tracker_runs.is_empty() {
                         parsed.iter()
-                            .filter_map(|pl| pl.ctx.as_ref().map(|c| (c.source_line_num, std::sync::Arc::clone(&c.message))))
+                            .filter_map(|pl| {
+                                let line_num = pl.ctx.as_ref()?.source_line_num;
+                                let msg = pl.original_message.clone()?;
+                                Some((line_num, msg))
+                            })
                             .collect()
                     } else {
                         HashMap::new()
@@ -1694,6 +1747,119 @@ mod tests {
         assert!(
             !state.stream_tracker_state.lock().unwrap().contains_key("s1"),
             "a stopped/closed session's tracker state must not be recreated",
+        );
+    }
+
+    // ── Transformer tag/field propagation to Layer 2 (bug 443c0ad5) ──────
+    //
+    // In ADB streaming, `apply_line_transformers` used to update
+    // `pl.view_line.tag`/`.message`/`.raw` from the transformed LineContext
+    // but never reassigned `pl.ctx` itself. The later Layer 2 `batch_ctxs`
+    // assembly in `flush_batch` clones `pl.ctx` (patching only `.message`/
+    // `.raw` when `pii_modified`), so a transformer's tag/field mutations
+    // never reached trackers/reporters and never persisted — file mode was
+    // unaffected because it uses the transformed context directly.
+
+    /// Build a minimal ParsedLine the way flush_batch's Step 2 does.
+    fn make_parsed_line(tag: &str, message: &str) -> ParsedLine {
+        let ctx = LineContext {
+            raw: std::sync::Arc::from(format!("{tag}: {message}").as_str()),
+            timestamp: 0,
+            level: LogLevel::Info,
+            tag: std::sync::Arc::from(tag),
+            pid: 0,
+            tid: 0,
+            message: std::sync::Arc::from(message),
+            source_id: std::sync::Arc::from("adb"),
+            source_line_num: 0,
+            fields: HashMap::new(),
+            annotations: vec![],
+        };
+        let view_line = ViewLine {
+            line_num: 0,
+            virtual_index: 0,
+            raw: ctx.raw.to_string(),
+            level: ctx.level,
+            tag: ctx.tag.to_string(),
+            message: ctx.message.to_string(),
+            timestamp: ctx.timestamp,
+            pid: ctx.pid,
+            tid: ctx.tid,
+            source_id: ctx.source_id.to_string(),
+            highlights: vec![],
+            matched_by: vec![],
+            is_context: false,
+        };
+        let meta = ParsedLineMeta {
+            level: ctx.level,
+            tag: ctx.tag.to_string(),
+            timestamp: ctx.timestamp,
+            byte_offset: 0,
+            byte_len: 0,
+            is_section_boundary: false,
+        };
+        let original_message = Some(std::sync::Arc::clone(&ctx.message));
+        ParsedLine { raw: view_line.raw.clone(), meta, view_line, ctx: Some(ctx), original_message }
+    }
+
+    /// A transformer that retags a line (`ReplaceField{field:"tag"}`) and
+    /// sets a field (`SetField`) must have both mutations visible on
+    /// `pl.ctx` after `apply_line_transformers` runs — because that is what
+    /// flush_batch's `batch_ctxs` assembly clones for Layer 2, and what
+    /// persists as the line's cached context across batches. Before the fix
+    /// this asserted `pl.ctx.tag == "OldTag"` (unchanged) and the field
+    /// absent; after the fix both mutations are present.
+    #[test]
+    fn transformer_tag_and_field_mutation_reaches_pl_ctx() {
+        use crate::processors::transformer::engine::TransformerRun;
+        use crate::processors::transformer::schema::{TransformerDef, TransformOp};
+
+        let def = TransformerDef {
+            filter: None,
+            transforms: vec![
+                TransformOp::ReplaceField {
+                    field: "tag".to_string(),
+                    regex: "^OldTag$".to_string(),
+                    replacement: "NewTag".to_string(),
+                },
+                TransformOp::SetField {
+                    name: "severity".to_string(),
+                    value: serde_yaml::Value::String("high".to_string()),
+                },
+            ],
+            builtin: None,
+        };
+        let mut transformer_runs = vec![("retag".to_string(), TransformerRun::new(&def))];
+
+        let mut parsed = vec![make_parsed_line("OldTag", "boot complete")];
+
+        apply_line_transformers(&mut parsed, &mut transformer_runs, false);
+
+        // pl.ctx is what the Layer 2 batch_ctxs assembly clones from — it
+        // must carry the transformed tag and the newly-set field, not the
+        // parser's pre-transform values.
+        let ctx = parsed[0].ctx.as_ref().expect("ctx should still be present");
+        assert_eq!(&*ctx.tag, "NewTag", "transformer tag mutation must propagate to pl.ctx");
+        assert_eq!(
+            ctx.fields.get("severity").and_then(|v| v.as_str()),
+            Some("high"),
+            "transformer field mutation must propagate to pl.ctx"
+        );
+
+        // view_line (frontend-facing) must still reflect the retag too —
+        // this behavior must not regress.
+        assert_eq!(parsed[0].view_line.tag, "NewTag");
+
+        // Simulate flush_batch's non-pii-modified batch_ctxs assembly
+        // (`parsed.iter().map(|pl| pl.ctx.clone()).collect()`) — exactly
+        // what Layer 2 (trackers/reporters) receives.
+        let batch_ctxs: Vec<Option<LineContext>> = parsed.iter().map(|pl| pl.ctx.clone()).collect();
+        let layer2_ctx = batch_ctxs[0].as_ref().expect("line should still be present");
+        assert_eq!(&*layer2_ctx.tag, "NewTag", "Layer 2 must see the transformed tag");
+        assert_eq!(
+            layer2_ctx.fields.get("severity").and_then(|v| v.as_str()),
+            Some("high"),
+            "Layer 2 must see the transformer-set field"
         );
     }
 }
