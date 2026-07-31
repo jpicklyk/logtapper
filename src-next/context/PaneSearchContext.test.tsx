@@ -40,7 +40,7 @@ function renderStrict() {
         React.createElement(
           React.StrictMode,
           null,
-          React.createElement(PaneSearchProvider, { paneId: 'pane-1', sessionId: 'sess-1' }, children),
+          React.createElement(PaneSearchProvider, { paneId: 'pane-1', sessionId: 'sess-1', children }),
         ),
     },
   );
