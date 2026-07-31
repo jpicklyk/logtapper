@@ -188,6 +188,26 @@ pub fn write_lts(
         };
 
         for (id, filename, yaml_content) in processor_yamls {
+            // Defense-in-depth (zip-slip): `filename` is normally
+            // `id_to_filename(id)` for an id that already passed
+            // `validate_processor_id()`, but this is a public fn and not
+            // every caller is guaranteed to have re-checked it — e.g. a
+            // re-export of a `.lts`-imported processor threads an id
+            // sourced from an untrusted archive manifest
+            // (`resolve_lts_processors_raw`'s `entry.id`) through here.
+            // `commands::export::export_all_sessions` already applies this
+            // same guard before calling `write_lts`; this is belt-and-
+            // braces for any other caller of this public function. Refuse
+            // to embed a traversal-y / separator-bearing name as a zip
+            // entry — skip just this processor rather than aborting the
+            // whole write.
+            if let Err(e) = crate::processors::marketplace::ensure_filename_safe(filename) {
+                log::warn!(
+                    "write_lts: skipping processor '{id}' with unsafe archive filename '{filename}': {e}"
+                );
+                continue;
+            }
+
             proc_manifest.processors.push(LtsProcessorEntry {
                 id: id.clone(),
                 filename: filename.clone(),
@@ -305,6 +325,34 @@ pub fn read_lts(path: &Path) -> Result<LtsData, String> {
     let mut processor_yamls: HashMap<String, String> =
         HashMap::with_capacity(processor_manifest.processors.len());
     for entry_meta in &processor_manifest.processors {
+        // Defense-in-depth (zip-slip): `entry_meta.filename` / `.id` come
+        // straight out of an untrusted `.lts` archive's
+        // `processor-manifest.json` and are never validated by
+        // `validate_processor_id()` — that only runs on bare ids parsed
+        // from a processor's own YAML `meta.id`, not on manifest entries.
+        // Nothing here currently joins this name onto a real filesystem
+        // path — `archive.by_name()` below only looks the name up inside
+        // the zip's own in-memory entry table, and `resolve_lts_processors`
+        // (`commands/export.rs`) only ever writes these ids into in-memory
+        // `AppState`, never to disk — so this is not exploitable today.
+        // Still, reject unsafe entries outright rather than caching an
+        // id/filename pair that could otherwise round-trip into a *newly
+        // written* archive on re-export (see the matching guards in
+        // `export_all_sessions` and `write_lts` above).
+        if let Err(e) = crate::processors::marketplace::ensure_filename_safe(&entry_meta.filename) {
+            log::warn!(
+                "read_lts: skipping processor manifest entry with unsafe filename '{}': {e}",
+                entry_meta.filename
+            );
+            continue;
+        }
+        if let Err(e) = crate::processors::marketplace::ensure_filename_safe(&entry_meta.id) {
+            log::warn!(
+                "read_lts: skipping processor manifest entry with unsafe id '{}': {e}",
+                entry_meta.id
+            );
+            continue;
+        }
         let yaml_entry = format!("processors/{}", entry_meta.filename);
         let mut entry = archive
             .by_name(&yaml_entry)
@@ -699,6 +747,154 @@ mod tests {
         let hash_a = &loaded.processor_manifest.processors[0].sha256;
         let hash_b = &loaded.processor_manifest.processors[1].sha256;
         assert_ne!(hash_a, hash_b, "Different YAMLs must produce different hashes");
+    }
+
+    // ─── Zip-slip hardening tests ───────────────────────────────────────────
+
+    /// `write_lts` must silently skip (not abort the whole write, not panic)
+    /// a processor entry whose `filename` contains a traversal sequence —
+    /// the rest of the archive (including other, safe processors) must
+    /// still be written and readable.
+    #[test]
+    fn write_lts_skips_processor_with_unsafe_filename() {
+        let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        let zip_path = tmp.path().to_path_buf();
+        drop(tmp);
+
+        let proc_yamls = vec![
+            (
+                "good-proc".to_string(),
+                "good-proc.yaml".to_string(),
+                "id: good-proc\ntype: reporter\n".to_string(),
+            ),
+            (
+                // Simulates an id sourced from an untrusted, re-exported
+                // `.lts` manifest entry (see `resolve_lts_processors_raw`'s
+                // `entry.id`) that was never re-validated before reaching
+                // `id_to_filename()`.
+                "evil-proc".to_string(),
+                "../../evil.yaml".to_string(),
+                "id: evil-proc\ntype: reporter\n".to_string(),
+            ),
+        ];
+
+        let sessions = vec![make_session("test.log", b"data\n".to_vec(), vec![], vec![], LtsSessionMeta::default())];
+        write_lts(&zip_path, &sessions, &proc_yamls, &[]).expect("write_lts must not abort on an unsafe filename");
+
+        let loaded = read_lts(&zip_path).expect("read_lts");
+
+        assert_eq!(
+            loaded.processor_manifest.processors.len(), 1,
+            "only the safe processor should have been written to the manifest"
+        );
+        assert_eq!(loaded.processor_manifest.processors[0].id, "good-proc");
+        assert_eq!(loaded.processor_yamls.len(), 1);
+        assert!(loaded.processor_yamls.contains_key("good-proc"));
+        assert!(!loaded.processor_yamls.contains_key("evil-proc"), "unsafe entry must not have been written");
+    }
+
+    /// `read_lts` must silently skip (not error, not panic) a
+    /// `processor-manifest.json` entry whose `filename` contains a
+    /// traversal sequence — as if a `.lts` file were hand-crafted or
+    /// tampered with outside `write_lts`'s own (also-hardened) path.
+    #[test]
+    fn read_lts_skips_manifest_entry_with_unsafe_filename() {
+        let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        let zip_path = tmp.path().to_path_buf();
+        drop(tmp);
+
+        // Hand-build a minimal .lts zip (bypassing write_lts's own guard)
+        // with a processor-manifest.json entry naming a traversal-y path.
+        {
+            let manifest = LtsManifest {
+                format_version: LTS_FORMAT_VERSION,
+                sessions: vec![],
+                saved_at: 12345,
+            };
+            let proc_manifest = LtsProcessorManifest {
+                processors: vec![LtsProcessorEntry {
+                    id: "evil".to_string(),
+                    filename: "../../evil.yaml".to_string(),
+                    sha256: "deadbeef".to_string(),
+                }],
+            };
+
+            let out_file = File::create(&zip_path).expect("create zip");
+            let mut writer = zip::ZipWriter::new(out_file);
+            let deflate = SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+
+            writer.start_file("manifest.json", deflate).unwrap();
+            serde_json::to_writer(&mut writer, &manifest).unwrap();
+
+            writer.start_file("processors/processor-manifest.json", deflate).unwrap();
+            serde_json::to_writer(&mut writer, &proc_manifest).unwrap();
+
+            // Deliberately do NOT write a `processors/../../evil.yaml`
+            // entry — the point of the read-side guard is that `read_lts`
+            // must reject the manifest entry before ever attempting
+            // `archive.by_name()` on the unsafe name.
+            writer.finish().unwrap();
+        }
+
+        let loaded = read_lts(&zip_path).expect("read_lts must not error on an unsafe manifest entry");
+
+        assert!(loaded.sessions.is_empty());
+        assert!(
+            loaded.processor_yamls.is_empty(),
+            "unsafe manifest entry must not have been resolved into processor_yamls"
+        );
+    }
+
+    /// Same as above, but the `id` field (not `filename`) is the
+    /// traversal-y one — both fields are attacker-controlled in an
+    /// untrusted manifest and must be checked independently.
+    #[test]
+    fn read_lts_skips_manifest_entry_with_unsafe_id() {
+        let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        let zip_path = tmp.path().to_path_buf();
+        drop(tmp);
+
+        {
+            let manifest = LtsManifest {
+                format_version: LTS_FORMAT_VERSION,
+                sessions: vec![],
+                saved_at: 12345,
+            };
+            let proc_manifest = LtsProcessorManifest {
+                processors: vec![LtsProcessorEntry {
+                    id: "../../evil".to_string(),
+                    filename: "evil.yaml".to_string(),
+                    sha256: "deadbeef".to_string(),
+                }],
+            };
+
+            let out_file = File::create(&zip_path).expect("create zip");
+            let mut writer = zip::ZipWriter::new(out_file);
+            let deflate = SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+
+            writer.start_file("manifest.json", deflate).unwrap();
+            serde_json::to_writer(&mut writer, &manifest).unwrap();
+
+            writer.start_file("processors/processor-manifest.json", deflate).unwrap();
+            serde_json::to_writer(&mut writer, &proc_manifest).unwrap();
+
+            // filename is "safe" on its own, but write the entry anyway so
+            // this test proves the `id` check alone is sufficient to skip
+            // it even when the corresponding zip entry exists.
+            writer.start_file("processors/evil.yaml", deflate).unwrap();
+            std::io::Write::write_all(&mut writer, b"id: evil\ntype: reporter\n").unwrap();
+
+            writer.finish().unwrap();
+        }
+
+        let loaded = read_lts(&zip_path).expect("read_lts must not error on an unsafe manifest id");
+
+        assert!(
+            loaded.processor_yamls.is_empty(),
+            "manifest entry with an unsafe id must not have been resolved into processor_yamls"
+        );
     }
 
     // ─── New v2 tests ────────────────────────────────────────────────────────

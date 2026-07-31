@@ -375,6 +375,25 @@ pub async fn export_all_sessions(
                         .map(|(_, v)| v.clone())
                 })?;
                 let filename = crate::processors::marketplace::id_to_filename(&id);
+                // Defense-in-depth (zip-slip): `id` here can originate from
+                // an untrusted `.lts` archive re-exported without another
+                // trip through `validate_processor_id()` — see
+                // `resolve_lts_processors_raw`'s `entry.id`, which is parsed
+                // straight out of an attacker-controlled
+                // `processor-manifest.json` and is never validated before
+                // `active_custom_processor_ids` strips it back to bare form
+                // for export. `id_to_filename()` only escapes `@`, so a
+                // crafted id containing `..` or a path separator would
+                // otherwise become a traversal entry name
+                // (`processors/../../evil.yaml`) in the newly written
+                // archive. Refuse to embed it — skip just this processor
+                // rather than aborting the whole export.
+                if let Err(e) = crate::processors::marketplace::ensure_filename_safe(&filename) {
+                    log::warn!(
+                        "export_all_sessions: skipping processor '{id}' — unsafe archive filename derived from id: {e}"
+                    );
+                    return None;
+                }
                 Some((id, format!("{filename}.yaml"), yaml))
             })
             .collect()
