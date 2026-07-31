@@ -47,6 +47,28 @@ ruleTester.run('require-memo', rule, {
     {
       code: `const memo = require('react').memo; export const Foo = memo(() => null);`,
     },
+    // SCREAMING_SNAKE_CASE constant — starts with an uppercase letter but is
+    // not PascalCase (has underscores), and its initializer is a plain
+    // string literal, not a component (L2 — EditorTab.tsx LS_* false positive).
+    {
+      code: `export const LS_CONTENT_PREFIX = 'logtapper_scratchpad_';`,
+    },
+    // Multiple SCREAMING_SNAKE_CASE constants in one export statement.
+    {
+      code: `export const LS_MODE_PREFIX = 'a', LS_WRAP_PREFIX = 'b';`,
+    },
+    // PascalCase-named constant whose initializer is not a function/JSX —
+    // still not a component even though the name alone would pass the old
+    // (uppercase-start-only) check.
+    {
+      code: `export const DefaultLabel = 'hello';`,
+    },
+    {
+      code: `export const MaxRetries = 3;`,
+    },
+    {
+      code: `export const DefaultConfig = { retries: 3 };`,
+    },
   ],
   invalid: [
     // Default export of an identifier that was NOT wrapped in memo
@@ -72,6 +94,12 @@ ruleTester.run('require-memo', rule, {
     // Multiple declarators: first is not memo-wrapped, second is
     {
       code: `export const Bar = () => null, Baz = React.memo(() => null);`,
+      errors: [{ messageId: 'missingMemo' }],
+    },
+    // PascalCase name + call-expression initializer that isn't memo() —
+    // still flagged (e.g. an un-memoized forwardRef-style HOC wrap).
+    {
+      code: `export const Foo = forwardRef(() => null);`,
       errors: [{ messageId: 'missingMemo' }],
     },
   ],
