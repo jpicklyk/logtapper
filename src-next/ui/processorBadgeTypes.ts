@@ -44,3 +44,23 @@ export function getProcTypeMeta(type: string): [string, string] {
     PROC_TYPE_CLASS_KEY[type] ?? '',
   ];
 }
+
+/**
+ * Accent color for the most common processor type in a group (e.g. a pack).
+ * Ties break toward the first processor's type. Takes a structural type
+ * (not the full `ProcessorSummary`) so this module stays free of `bridge/`
+ * imports per the ui/ isolation rule.
+ */
+export function dominantTypeAccent(processors: Array<{ processorType: string }>): string {
+  if (processors.length === 0) return PROC_TYPE_ACCENT.reporter;
+  const counts = new Map<string, number>();
+  for (const p of processors) {
+    counts.set(p.processorType, (counts.get(p.processorType) ?? 0) + 1);
+  }
+  let dominant = processors[0].processorType;
+  let max = 0;
+  for (const [type, count] of counts) {
+    if (count > max) { max = count; dominant = type; }
+  }
+  return PROC_TYPE_ACCENT[dominant] ?? PROC_TYPE_ACCENT.reporter;
+}

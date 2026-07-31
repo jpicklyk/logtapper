@@ -48,9 +48,3 @@ export function splitValueDesc(raw: string): { value: string; desc: string } | n
   if (idx === -1) return null;
   return { value: raw.slice(0, idx), desc: raw.slice(idx + 3) };
 }
-
-export interface DashboardPackGroup {
-  packId: string;
-  packName: string;
-  processors: import('../../bridge/types').ProcessorSummary[];
-}

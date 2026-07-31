@@ -11,7 +11,7 @@ export { Toast } from './Toast/Toast';
 export type { ToastItem } from './Toast/Toast';
 export { SegmentedControl } from './SegmentedControl/SegmentedControl';
 export type { SegmentedOption } from './SegmentedControl/SegmentedControl';
-export { PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY, PROC_TYPE_DESCRIPTIONS, PROC_TYPE_ACCENT, getProcTypeMeta } from './processorBadgeTypes';
+export { PROC_TYPE_LABELS, PROC_TYPE_CLASS_KEY, PROC_TYPE_DESCRIPTIONS, PROC_TYPE_ACCENT, getProcTypeMeta, dominantTypeAccent } from './processorBadgeTypes';
 export { SavePromptDialog } from './SavePromptDialog';
 export type { SavePromptResult } from './SavePromptDialog';
 export { DropdownMenu } from './DropdownMenu';

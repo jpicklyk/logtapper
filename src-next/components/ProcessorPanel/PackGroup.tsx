@@ -3,7 +3,7 @@ import type { ProcessorSummary, PipelineRunSummary } from '../../bridge/types';
 import styles from './PackGroup.module.css';
 import ppStyles from './ProcessorPanel.module.css';
 import badgeCss from '../../ui/processorBadge.module.css';
-import { PROC_TYPE_ACCENT, getProcTypeMeta as _getProcTypeMeta } from '../../ui';
+import { dominantTypeAccent, getProcTypeMeta as _getProcTypeMeta } from '../../ui';
 import { PINNED_TAIL_IDS } from '../../context';
 
 // ── SVG Icons (local copies to keep PackGroup self-contained) ─────────────────
@@ -150,18 +150,7 @@ const PackGroup = React.memo(function PackGroup({
   pipelineRunning,
 }: PackGroupProps) {
   // Derive the accent color from the most common processor type in the pack.
-  const packAccentColor = React.useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const p of processors) {
-      counts.set(p.processorType, (counts.get(p.processorType) ?? 0) + 1);
-    }
-    let dominant = 'reporter';
-    let max = 0;
-    for (const [type, count] of counts) {
-      if (count > max) { max = count; dominant = type; }
-    }
-    return PROC_TYPE_ACCENT[dominant] ?? 'var(--accent)';
-  }, [processors]);
+  const packAccentColor = React.useMemo(() => dominantTypeAccent(processors), [processors]);
 
   const allEnabled = React.useMemo(
     () => processors.every((p) => !disabledIds.has(p.id)),

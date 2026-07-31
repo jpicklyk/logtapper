@@ -501,6 +501,43 @@ export function resolveChainProcessors(
   return resolved;
 }
 
+export interface ProcessorPackGroup {
+  pack: PackSummary;
+  processors: ProcessorSummary[];
+}
+
+/**
+ * Group a list of processors (already resolved/ordered, e.g. via
+ * `resolveChainProcessors`) into their owning packs, plus a standalone
+ * bucket for processors that don't belong to any installed pack.
+ *
+ * Pack manifests reference bare IDs ("wifi-state") while processors carry
+ * qualified IDs ("wifi-state@official"), so matching goes through
+ * `getBareId`. Within each pack, processors are emitted in `chainProcessors`
+ * order (not `pack.processorIds` order) — this preserves whatever order the
+ * caller resolved the chain in, which matters when the chain is user-
+ * reorderable (e.g. ProcessorPanel's drag-and-drop).
+ */
+export function groupProcessorsByPack(
+  chainProcessors: ProcessorSummary[],
+  packs: PackSummary[],
+): { packGroups: ProcessorPackGroup[]; standaloneProcessors: ProcessorSummary[] } {
+  const groups: ProcessorPackGroup[] = [];
+  const assigned = new Set<string>();
+
+  for (const pack of packs) {
+    const packBareIds = new Set(pack.processorIds);
+    const packProcs = chainProcessors.filter((p) => packBareIds.has(getBareId(p.id)));
+    if (packProcs.length > 0) {
+      groups.push({ pack, processors: packProcs });
+      for (const p of packProcs) assigned.add(p.id);
+    }
+  }
+
+  const standalone = chainProcessors.filter((p) => !assigned.has(p.id));
+  return { packGroups: groups, standaloneProcessors: standalone };
+}
+
 export interface Source {
   name: string;
   type: 'github' | 'local';
