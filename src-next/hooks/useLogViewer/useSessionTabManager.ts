@@ -6,7 +6,7 @@ import { useSessionCoreCtx, useSessionPaneCtx, useSessionProgressCtx } from '../
 import { useViewerContext } from '../../context/ViewerContext';
 import { bus } from '../../events/bus';
 import { sessionScrollPositions } from '../../viewport';
-import type { CacheController } from '../../cache';
+import { clearPreSeed, type CacheController } from '../../cache';
 import type { SharedLogViewerRefs } from './types';
 import { readTabPaths, saveTabPaths } from '../workspace/workspacePersistence';
 
@@ -84,6 +84,12 @@ export function useSessionTabManager(
       terminateSession(resolvedSessionId);
     }
     cacheManager.releaseSessionViews(resolvedSessionId);
+    // A session closed before its viewer ever mounted (e.g. a fast-cancelled
+    // load) may still have an optimistic pre-seed entry sitting in the
+    // module-level preSeedStore — useViewCache only consumes/clears it on
+    // allocation, which never happens if no viewer mounts. Clear it here so
+    // it doesn't leak for the app's lifetime.
+    clearPreSeed(resolvedSessionId);
     sessionScrollPositions.delete(resolvedSessionId);
 
     bus.emit('session:closed', { sessionId: resolvedSessionId, paneId: targetPaneId, sourceType, tabId });
