@@ -5,10 +5,18 @@
 //!   `heap_pct >= 80 && heap_pct < 90`
 //!   `fd_count > 500`
 //!   `result == 'FAIL' && probe_type == 'DNS'`
+//!   `fatal == true`
+//!   `failed > successful`   (compare two fields)
+//!   `sim_plmn != network_plmn`
 //!
 //! The evaluator parses a condition string into a minimal AST and evaluates
 //! it against a map of field values (from a single emission or from vars).
-//! Both numeric and string literal comparisons are supported.
+//!
+//! A comparison's right-hand operand may be a numeric literal (`90`), a
+//! single- or double-quoted string literal (`'FAIL'`), a boolean literal
+//! (`true` / `false`), or a bare identifier — which is treated as a reference
+//! to **another field** (`failed > successful`). Quote string values you want
+//! compared literally; an unquoted bare word is always a field reference.
 
 use std::collections::HashMap;
 use serde_json::Value;
@@ -31,6 +39,10 @@ pub enum CmpOp {
 pub enum CmpValue {
     Num(f64),
     Str(String),
+    Bool(bool),
+    /// A bare identifier on the right-hand side — a reference to another field,
+    /// resolved at evaluation time (e.g. `failed > successful`).
+    Field(String),
 }
 
 #[derive(Debug, Clone)]
@@ -139,6 +151,18 @@ fn tokenize(input: &str) -> Vec<String> {
     tokens
 }
 
+/// Is `s` a bare identifier token (a field name) rather than an operator,
+/// paren, number, or quoted string? Matches the identifier shape the tokenizer
+/// emits: starts with a letter or `_`, then letters/digits/`_`/`.`/`-`.
+fn is_identifier(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    s.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '-')
+}
+
 struct Parser {
     tokens: Vec<String>,
     pos: usize,
@@ -216,10 +240,20 @@ impl Parser {
         let value = if value_str.starts_with('\'') && value_str.ends_with('\'') && value_str.len() >= 2 {
             // String literal: 'FAIL', 'DNS', etc.
             CmpValue::Str(value_str[1..value_str.len()-1].to_string())
-        } else {
+        } else if value_str == "true" {
+            CmpValue::Bool(true)
+        } else if value_str == "false" {
+            CmpValue::Bool(false)
+        } else if let Ok(n) = value_str.parse::<f64>() {
             // Numeric literal
-            CmpValue::Num(value_str.parse()
-                .map_err(|_| format!("Cannot parse '{value_str}' as a number"))?)
+            CmpValue::Num(n)
+        } else if is_identifier(value_str) {
+            // Bare identifier → reference to another field (var-to-var compare).
+            CmpValue::Field(value_str.to_string())
+        } else {
+            return Err(format!(
+                "Expected a number, quoted string, boolean, or field name after operator for '{field}', got '{value_str}'"
+            ));
         };
 
         Ok(Expr::Comparison { field, op, value })
@@ -287,10 +321,59 @@ pub fn evaluate(expr: &Expr, fields: &HashMap<String, Value>) -> bool {
                         CmpOp::Neq => (field_num - n).abs() >= f64::EPSILON,
                     }
                 }
+                CmpValue::Bool(b) => {
+                    let field_bool = json_to_bool(field_val);
+                    match op {
+                        CmpOp::Eq  => field_bool == *b,
+                        CmpOp::Neq => field_bool != *b,
+                        _ => false, // ordering is not meaningful for booleans
+                    }
+                }
+                CmpValue::Field(other) => {
+                    let Some(other_val) = fields.get(other) else {
+                        return false; // missing right-hand field
+                    };
+                    compare_values(field_val, op, other_val)
+                }
             }
         }
         Expr::And(left, right) => evaluate(left, fields) && evaluate(right, fields),
         Expr::Or(left, right)  => evaluate(left, fields) || evaluate(right, fields),
+    }
+}
+
+/// Compare two field values against each other (for `field <op> field`).
+/// If both sides are strings, compare lexically; otherwise compare as numbers.
+fn compare_values(lhs: &Value, op: &CmpOp, rhs: &Value) -> bool {
+    if let (Value::String(a), Value::String(b)) = (lhs, rhs) {
+        match op {
+            CmpOp::Eq  => a == b,
+            CmpOp::Neq => a != b,
+            CmpOp::Gt  => a > b,
+            CmpOp::Gte => a >= b,
+            CmpOp::Lt  => a < b,
+            CmpOp::Lte => a <= b,
+        }
+    } else {
+        let a = json_to_f64(lhs);
+        let b = json_to_f64(rhs);
+        match op {
+            CmpOp::Gt  => a > b,
+            CmpOp::Gte => a >= b,
+            CmpOp::Lt  => a < b,
+            CmpOp::Lte => a <= b,
+            CmpOp::Eq  => (a - b).abs() < f64::EPSILON,
+            CmpOp::Neq => (a - b).abs() >= f64::EPSILON,
+        }
+    }
+}
+
+fn json_to_bool(v: &Value) -> bool {
+    match v {
+        Value::Bool(b)   => *b,
+        Value::Number(n) => n.as_f64().unwrap_or(0.0) != 0.0,
+        Value::String(s) => s.eq_ignore_ascii_case("true") || s == "1",
+        _                => false,
     }
 }
 
@@ -542,6 +625,87 @@ mod tests {
         ));
         let result = parse_condition("(heap_pct >= 90 || fd_count > 500) && heap_pct < 100");
         assert!(result.is_ok());
+    }
+
+    // --- Boolean literals and field-to-field comparisons ---
+
+    #[test]
+    fn boolean_literal_eq() {
+        assert!(eval_condition(Some("fatal == true"), &fields(&[("fatal", json!(true))])));
+        assert!(!eval_condition(Some("fatal == true"), &fields(&[("fatal", json!(false))])));
+        assert!(eval_condition(Some("fatal == false"), &fields(&[("fatal", json!(false))])));
+        assert!(eval_condition(Some("fatal != true"), &fields(&[("fatal", json!(false))])));
+    }
+
+    #[test]
+    fn boolean_literal_coerces_number_and_string() {
+        // Non-bool fields coerce: nonzero number / "true"/"1" string are truthy.
+        assert!(eval_condition(Some("race_detected == true"), &fields(&[("race_detected", json!(1))])));
+        assert!(eval_condition(Some("race_detected == false"), &fields(&[("race_detected", json!(0))])));
+        assert!(eval_condition(Some("race_detected == true"), &fields(&[("race_detected", json!("true"))])));
+    }
+
+    #[test]
+    fn field_to_field_numeric() {
+        // failed > successful — both numeric fields
+        assert!(eval_condition(Some("failed > successful"), &fields(&[("failed", json!(7)), ("successful", json!(3))])));
+        assert!(!eval_condition(Some("failed > successful"), &fields(&[("failed", json!(2)), ("successful", json!(9))])));
+    }
+
+    #[test]
+    fn field_to_field_string() {
+        // sim_plmn != network_plmn — both string fields
+        assert!(eval_condition(
+            Some("sim_plmn != network_plmn"),
+            &fields(&[("sim_plmn", json!("310260")), ("network_plmn", json!("311480"))]),
+        ));
+        assert!(!eval_condition(
+            Some("sim_plmn != network_plmn"),
+            &fields(&[("sim_plmn", json!("310260")), ("network_plmn", json!("310260"))]),
+        ));
+    }
+
+    #[test]
+    fn field_to_field_missing_rhs_field_is_false() {
+        assert!(!eval_condition(Some("failed > successful"), &fields(&[("failed", json!(7))])));
+    }
+
+    #[test]
+    fn real_shipped_conditions_now_parse_and_evaluate() {
+        // The exact conditions that logged "malformed" WARNs at startup before
+        // the grammar was widened — they must parse (not Never) and evaluate.
+        for cond in [
+            "fatal == true",
+            "race_detected == true",
+            "failed > successful",
+            "ehplmns == '' && sim_plmn != '' && network_plmn != '' && sim_plmn != network_plmn",
+        ] {
+            let parsed = parse_condition(cond);
+            assert!(parsed.is_ok(), "condition should parse: {cond}");
+            assert!(parsed.unwrap().is_some(), "condition should yield an AST: {cond}");
+        }
+
+        // ehplmn_empty: fires only when SIM has a PLMN, network has a PLMN,
+        // they differ, and the ehplmns list is empty.
+        let cond = "ehplmns == '' && sim_plmn != '' && network_plmn != '' && sim_plmn != network_plmn";
+        assert!(eval_condition(Some(cond), &fields(&[
+            ("ehplmns", json!("")),
+            ("sim_plmn", json!("310260")),
+            ("network_plmn", json!("311480")),
+        ])));
+        // Does not fire when SIM and network PLMN match.
+        assert!(!eval_condition(Some(cond), &fields(&[
+            ("ehplmns", json!("")),
+            ("sim_plmn", json!("310260")),
+            ("network_plmn", json!("310260")),
+        ])));
+    }
+
+    #[test]
+    fn garbage_rhs_still_rejected() {
+        // A non-identifier, non-literal right-hand side is still a parse error
+        // (fail-closed), not silently treated as a field.
+        assert!(parse_condition("a == >").is_err());
     }
 
     // --- Template rendering ---
