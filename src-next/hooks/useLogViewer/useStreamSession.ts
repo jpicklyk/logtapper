@@ -177,7 +177,7 @@ export function useStreamSession(
     const isNewTab = previousSessionId !== undefined;
 
     if (!isNewTab) {
-      bus.emit('session:pre-load', { paneId: targetPaneId });
+      bus.emit('session:pre-load', { paneId: targetPaneId, outgoingSessionId: previousSessionId ?? null });
       refs.resetSessionStateRef.current();
     }
 

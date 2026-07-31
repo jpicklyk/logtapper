@@ -217,7 +217,7 @@ export function useFileSession(
         cacheManager.releaseSessionViews(previousSessionId);
       }
 
-      bus.emit('session:pre-load', { paneId: targetPaneId });
+      bus.emit('session:pre-load', { paneId: targetPaneId, outgoingSessionId: previousSessionId ?? null });
 
       // Clean up any active stream on this pane
       if (refs.streamingPaneIdRef.current === targetPaneId) {

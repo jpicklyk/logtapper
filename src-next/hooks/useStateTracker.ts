@@ -4,7 +4,6 @@ import type { StateSnapshot, StateTransition } from '../bridge/types';
 import { onAdbTrackerUpdate } from '../bridge/events';
 import { getAllTransitionLines, getStateAtLine, getStateTransitions } from '../bridge/commands';
 import { useTrackerContext } from '../context/TrackerContext';
-import { useSessionCoreCtx } from '../context/SessionContext';
 import { bus } from '../events/bus';
 
 export interface StateTrackerActions {
@@ -22,11 +21,6 @@ export function useStateTracker(): StateTrackerActions {
     setSessionTransitionData,
     clearSessionData,
   } = useTrackerContext();
-
-  const { paneSessionMap } = useSessionCoreCtx();
-
-  const paneSessionMapRef = useRef(paneSessionMap);
-  paneSessionMapRef.current = paneSessionMap;
 
   // Throttled transition line refresh for streaming — at most once per 3s.
   const transitionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -99,10 +93,9 @@ export function useStateTracker(): StateTrackerActions {
 
   // Subscribe to bus events
   useEffect(() => {
-    const handlePreLoad = (e: { paneId: string }) => {
-      const outgoingSessionId = paneSessionMapRef.current.get(e.paneId);
-      if (outgoingSessionId) {
-        clearSessionData(outgoingSessionId);
+    const handlePreLoad = (e: { paneId: string; outgoingSessionId: string | null }) => {
+      if (e.outgoingSessionId) {
+        clearSessionData(e.outgoingSessionId);
       }
     };
 

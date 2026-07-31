@@ -8,9 +8,13 @@ export type AppEvents = {
    * Fired just before a file load or ADB stream starts for a given pane.
    * Consumers use `paneId` to determine whether to clear their state — only
    * the focused pane's results should be reset; background-pane loads must not
-   * disrupt what the user is currently viewing.
+   * disrupt what the user is currently viewing. `outgoingSessionId` is the
+   * session being replaced on that pane, resolved by the emitter at emit time
+   * (null when the pane was empty) — consumers must use this value directly
+   * rather than resolving it themselves via `paneSessionMap`, which is one
+   * render behind at this point in the load sequence.
    */
-  'session:pre-load':       { paneId: string };
+  'session:pre-load':       { paneId: string; outgoingSessionId: string | null };
   /**
    * Emitted immediately when a file load starts (before the backend invoke).
    * Creates a placeholder tab with the filename so the user sees immediate

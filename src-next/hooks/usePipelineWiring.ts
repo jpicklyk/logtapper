@@ -249,12 +249,9 @@ export function usePipelineWiring(
 
   // Subscribe to session:pre-load to auto-clear results for the outgoing session.
   useEffect(() => {
-    const handlePreLoad = (e: { paneId: string }) => {
-      if (e.paneId === activeLogPaneIdRef.current) {
-        const sessionId = paneSessionMapRef.current.get(e.paneId);
-        if (sessionId) {
-          dispatch({ type: 'pre-load:cleared', sessionId });
-        }
+    const handlePreLoad = (e: { paneId: string; outgoingSessionId: string | null }) => {
+      if (e.paneId === activeLogPaneIdRef.current && e.outgoingSessionId) {
+        dispatch({ type: 'pre-load:cleared', sessionId: e.outgoingSessionId });
       }
     };
     bus.on('session:pre-load', handlePreLoad);
