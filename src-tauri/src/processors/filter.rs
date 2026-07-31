@@ -5,10 +5,11 @@
 //! `FilterRule` variants only need to be added in one place.
 
 use regex::Regex;
+use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 
 use crate::core::line::{LineContext, LogLevel, PipelineContext};
-use crate::processors::reporter::schema::FilterRule;
+use crate::processors::reporter::schema::{CastType, ExtractField, FilterRule};
 
 /// Result of evaluating a single `FilterRule` against a log line.
 ///
@@ -164,6 +165,56 @@ pub fn get_or_compile<'a>(
         }
     }
     cache.get(pattern)
+}
+
+/// Cast a raw captured string per `ExtractField::cast`. `None` (the schema
+/// default) and `Some(CastType::String)` both leave the value as a JSON string.
+/// A cast that fails to parse (e.g. `cast: int` on non-numeric text) falls
+/// back to the string form rather than dropping the field.
+pub fn cast_extracted_value(raw: &str, cast: Option<&CastType>) -> JsonValue {
+    match cast {
+        Some(CastType::Int) => raw
+            .parse::<i64>()
+            .map_or_else(|_| JsonValue::String(raw.to_string()), JsonValue::from),
+        Some(CastType::Float) => raw
+            .parse::<f64>()
+            .ok()
+            .and_then(serde_json::Number::from_f64)
+            .map_or_else(|| JsonValue::String(raw.to_string()), JsonValue::Number),
+        _ => JsonValue::String(raw.to_string()),
+    }
+}
+
+/// Evaluate one `ExtractField` against a line's message: compile/cache its
+/// regex, take capture group 1 (falling back to the whole match), and cast
+/// per `field.cast`. Returns `None` when the pattern is invalid or does not
+/// match — callers skip the field in that case rather than erroring out.
+pub fn extract_field_value(
+    cache: &mut HashMap<String, Regex>,
+    field: &ExtractField,
+    line: &LineContext,
+) -> Option<JsonValue> {
+    let re = get_or_compile(cache, &field.pattern)?;
+    let caps = re.captures(&line.message)?;
+    let raw = caps.get(1).or_else(|| caps.get(0)).map_or("", |m| m.as_str());
+    Some(cast_extracted_value(raw, field.cast.as_ref()))
+}
+
+/// Run a full extract-stage field list against a line, invoking `push(name,
+/// value)` for each field that matches. Shared by the reporter engine (which
+/// pushes into a `Vec`/`SmallVec`) and the correlator engine (which inserts
+/// into a `HashMap`) — the container is the caller's choice.
+pub fn apply_extract_fields(
+    cache: &mut HashMap<String, Regex>,
+    fields: &[ExtractField],
+    line: &LineContext,
+    mut push: impl FnMut(&str, JsonValue),
+) {
+    for field in fields {
+        if let Some(val) = extract_field_value(cache, field, line) {
+            push(&field.name, val);
+        }
+    }
 }
 
 /// Parse a log-level string (short or long form) into a `LogLevel`.
@@ -448,5 +499,120 @@ mod tests {
         let line = make_line("Tag", "any message", LogLevel::Info);
         let result = rule_matches(&mut cache, &rule, &line, None);
         assert!(!result.matched);
+    }
+
+    // ── apply_extract_fields / extract_field_value / cast_extracted_value ───
+    // Shared extract-and-cast helper used by both the reporter and correlator
+    // engines (previously duplicated in each engine's `apply_extract`).
+
+    #[test]
+    fn cast_extracted_value_int_float_string() {
+        assert_eq!(cast_extracted_value("42", Some(&CastType::Int)), JsonValue::from(42i64));
+        assert_eq!(
+            cast_extracted_value("3.5", Some(&CastType::Float)),
+            JsonValue::from(3.5f64)
+        );
+        assert_eq!(
+            cast_extracted_value("hello", Some(&CastType::String)),
+            JsonValue::String("hello".to_string())
+        );
+        // No cast specified (schema default) behaves like String.
+        assert_eq!(cast_extracted_value("hello", None), JsonValue::String("hello".to_string()));
+    }
+
+    #[test]
+    fn cast_extracted_value_falls_back_to_string_on_parse_failure() {
+        // "int" cast on non-numeric text must not panic or drop the field —
+        // it falls back to the raw string, matching the old per-engine logic.
+        assert_eq!(
+            cast_extracted_value("not-a-number", Some(&CastType::Int)),
+            JsonValue::String("not-a-number".to_string())
+        );
+        assert_eq!(
+            cast_extracted_value("not-a-number", Some(&CastType::Float)),
+            JsonValue::String("not-a-number".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_field_value_uses_capture_group_1_when_present() {
+        let mut cache = HashMap::new();
+        let field = ExtractField {
+            name: "pid".to_string(),
+            pattern: r"pid=(\d+)".to_string(),
+            cast: Some(CastType::Int),
+        };
+        let line = make_line("Tag", "event pid=1234 done", LogLevel::Info);
+        let val = extract_field_value(&mut cache, &field, &line);
+        assert_eq!(val, Some(JsonValue::from(1234i64)));
+    }
+
+    #[test]
+    fn extract_field_value_falls_back_to_whole_match_without_group() {
+        let mut cache = HashMap::new();
+        let field = ExtractField {
+            name: "word".to_string(),
+            pattern: r"error".to_string(),
+            cast: None,
+        };
+        let line = make_line("Tag", "an error occurred", LogLevel::Info);
+        let val = extract_field_value(&mut cache, &field, &line);
+        assert_eq!(val, Some(JsonValue::String("error".to_string())));
+    }
+
+    #[test]
+    fn extract_field_value_none_on_invalid_pattern_or_no_match() {
+        let mut cache = HashMap::new();
+        let invalid = ExtractField {
+            name: "x".to_string(),
+            pattern: "[invalid(".to_string(),
+            cast: None,
+        };
+        let line = make_line("Tag", "message", LogLevel::Info);
+        assert_eq!(extract_field_value(&mut cache, &invalid, &line), None);
+
+        let no_match = ExtractField {
+            name: "x".to_string(),
+            pattern: r"nomatch\d+".to_string(),
+            cast: None,
+        };
+        assert_eq!(extract_field_value(&mut cache, &no_match, &line), None);
+    }
+
+    /// Both the reporter engine (pushes into a Vec) and the correlator engine
+    /// (inserts into a HashMap) call `apply_extract_fields` — this checks
+    /// that both containers end up holding identical extracted values for
+    /// the same input, i.e. the shared helper behaves the same regardless of
+    /// which container the caller pushes into.
+    #[test]
+    fn apply_extract_fields_reporter_and_correlator_containers_agree() {
+        let fields = vec![
+            ExtractField { name: "pid".to_string(), pattern: r"pid=(\d+)".to_string(), cast: Some(CastType::Int) },
+            ExtractField { name: "ratio".to_string(), pattern: r"ratio=([\d.]+)".to_string(), cast: Some(CastType::Float) },
+            ExtractField { name: "tag_word".to_string(), pattern: r"\bfail\w*".to_string(), cast: None },
+        ];
+        let line = make_line("Tag", "pid=99 ratio=0.75 failure detected", LogLevel::Info);
+
+        // Reporter-style: push into a Vec.
+        let mut cache_a = HashMap::new();
+        let mut vec_out: Vec<(String, JsonValue)> = Vec::new();
+        apply_extract_fields(&mut cache_a, &fields, &line, |name, val| {
+            vec_out.push((name.to_string(), val));
+        });
+
+        // Correlator-style: insert into a HashMap.
+        let mut cache_b = HashMap::new();
+        let mut map_out: HashMap<String, JsonValue> = HashMap::new();
+        apply_extract_fields(&mut cache_b, &fields, &line, |name, val| {
+            map_out.insert(name.to_string(), val);
+        });
+
+        assert_eq!(vec_out.len(), 3);
+        let vec_as_map: HashMap<String, JsonValue> = vec_out.into_iter().collect();
+        assert_eq!(vec_as_map, map_out);
+
+        assert_eq!(map_out.get("pid"), Some(&JsonValue::from(99i64)));
+        assert_eq!(map_out.get("ratio"), Some(&JsonValue::from(0.75f64)));
+        assert_eq!(map_out.get("tag_word"), Some(&JsonValue::String("failure".to_string())));
     }
 }

@@ -67,25 +67,11 @@ fn parse_timestamp_ns(date: &str, time: &str) -> i64 {
     let ms: i64 = t.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
 
     // Infer the current UTC year from system time.
-    let now_secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
-    // Approximate year from Unix timestamp (good enough for year inference).
-    let year = 1970 + now_secs / 31_557_600; // 365.25 days
+    let year = crate::core::infer_current_year();
 
     // Compute days from epoch to Jan 1 of `year` using the era-based algorithm.
     // https://howardhinnant.github.io/date_algorithms.html
-    fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
-        let y = if m <= 2 { y - 1 } else { y };
-        let era = y.div_euclid(400);
-        let yoe = y.rem_euclid(400);
-        let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
-        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-        era * 146097 + doe - 719468
-    }
-
-    let epoch_days = days_from_civil(year, month, day);
+    let epoch_days = crate::core::days_from_civil(year, month, day);
 
     const NS_PER_DAY: i64 = 86_400_000_000_000;
     const NS_PER_HOUR: i64 = 3_600_000_000_000;

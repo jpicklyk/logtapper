@@ -86,22 +86,14 @@ fn extract_section_name(raw: &str) -> String {
     }
 }
 
-/// Days from Unix epoch (1970-01-01) to a given civil date.
-/// Uses the era-based algorithm from https://howardhinnant.github.io/date_algorithms.html
-/// Shared with logcat_parser::parse_timestamp_ns.
-fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let yoe = y.rem_euclid(400);
-    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146097 + doe - 719468
-}
-
 /// Nanosecond offset between Jan 1 of `from_year` and Jan 1 of `to_year`.
+///
+/// `days_from_civil` is the shared era-based implementation in `core::mod`
+/// (also used by `logcat_parser::parse_timestamp_ns` and
+/// `mcp_bridge::parse_iso_to_unix_nanos`).
 fn year_offset_ns(from_year: i64, to_year: i64) -> i64 {
-    let from_days = days_from_civil(from_year, 1, 1);
-    let to_days = days_from_civil(to_year, 1, 1);
+    let from_days = crate::core::days_from_civil(from_year, 1, 1);
+    let to_days = crate::core::days_from_civil(to_year, 1, 1);
     (to_days - from_days) * 86_400_000_000_000
 }
 
@@ -112,7 +104,7 @@ fn parse_dumpstate_timestamp(year: i64, month: i64, day: i64, hour: i64, min: i6
     const NS_PER_MIN: i64 = 60_000_000_000;
     const NS_PER_SEC: i64 = 1_000_000_000;
 
-    days_from_civil(year, month, day) * NS_PER_DAY
+    crate::core::days_from_civil(year, month, day) * NS_PER_DAY
         + hour * NS_PER_HOUR
         + min * NS_PER_MIN
         + sec * NS_PER_SEC
@@ -169,11 +161,7 @@ impl BugreportParser {
         }
 
         // Determine the inferred current year (same logic as logcat_parser).
-        let now_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
-        let inferred_year = 1970 + now_secs / 31_557_600; // 365.25 days
+        let inferred_year = crate::core::infer_current_year();
 
         // If the dumpstate year matches the inferred year, no shift needed.
         if ds_year == inferred_year {
@@ -424,7 +412,7 @@ mod tests {
 
     /// Helper: expected Unix nanos for a given civil datetime (UTC).
     fn expected_ns(year: i64, month: i64, day: i64, h: i64, m: i64, s: i64, ms: i64) -> i64 {
-        days_from_civil(year, month, day) * 86_400_000_000_000
+        crate::core::days_from_civil(year, month, day) * 86_400_000_000_000
             + h * 3_600_000_000_000
             + m * 60_000_000_000
             + s * 1_000_000_000

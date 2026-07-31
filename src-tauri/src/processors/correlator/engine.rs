@@ -246,37 +246,9 @@ impl<'a> CorrelatorRun<'a> {
         line: &LineContext,
         out: &mut HashMap<String, JsonValue>,
     ) {
-        use crate::processors::reporter::schema::CastType;
-        for field in fields {
-            let pat = field.pattern.clone();
-            let Some(re) = self.get_or_compile(&pat) else {
-                continue;
-            };
-            if let Some(caps) = re.captures(&line.message) {
-                let raw = caps
-                    .get(1)
-                    .or_else(|| caps.get(0))
-                    .map_or("", |m| m.as_str());
-                let val = match &field.cast {
-                    Some(CastType::Int) => raw
-                        .parse::<i64>()
-                        .map_or_else(
-                            |_| JsonValue::String(raw.to_string()),
-                            JsonValue::from,
-                        ),
-                    Some(CastType::Float) => raw
-                        .parse::<f64>()
-                        .ok()
-                        .and_then(serde_json::Number::from_f64)
-                        .map_or_else(
-                            || JsonValue::String(raw.to_string()),
-                            JsonValue::Number,
-                        ),
-                    _ => JsonValue::String(raw.to_string()),
-                };
-                out.insert(field.name.clone(), val);
-            }
-        }
+        crate::processors::filter::apply_extract_fields(&mut self.regex_cache, fields, line, |name, val| {
+            out.insert(name.to_string(), val);
+        });
     }
 
     /// Evaluate a simple Rhai condition expression against extracted fields.
@@ -334,10 +306,6 @@ impl<'a> CorrelatorRun<'a> {
         }
 
         result
-    }
-
-    fn get_or_compile(&mut self, pattern: &str) -> Option<&Regex> {
-        crate::processors::filter::get_or_compile(&mut self.regex_cache, pattern)
     }
 }
 

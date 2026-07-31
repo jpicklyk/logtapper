@@ -484,8 +484,10 @@ pub async fn start(handle: Handle, shutdown_rx: tokio::sync::oneshot::Receiver<(
 /// `parse_timestamp_ns()` — the current UTC year is inferred from system
 /// time and combined with the parsed month/day via the same era-based civil
 /// calendar algorithm. This function cannot call the private
-/// `parse_timestamp_ns()` directly (different module), so it duplicates
-/// that math locally; keep the two in sync if either changes.
+/// `parse_timestamp_ns()` directly (different module), so it instead shares
+/// the underlying math via `core::days_from_civil()` /
+/// `core::infer_current_year()` — the same helpers `parse_timestamp_ns()`
+/// and `bugreport_parser` use.
 ///
 /// Accepts formats:
 /// - "MM-DD HH:MM:SS.mmm"  (logcat native — recommended)
@@ -529,25 +531,11 @@ fn parse_iso_to_unix_nanos(s: &str) -> Option<i64> {
     // Infer the current UTC year exactly like `parse_timestamp_ns()` in
     // `core/logcat_parser.rs`, so the bound lands on the same epoch as
     // `meta.timestamp` for logcat/bugreport lines.
-    let now_secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
-    let year = 1970 + now_secs / 31_557_600; // 365.25 days
+    let year = crate::core::infer_current_year();
 
     // Days from the Unix epoch to the given civil date (era-based algorithm),
-    // duplicated from `parse_timestamp_ns()` in `core/logcat_parser.rs`.
-    // https://howardhinnant.github.io/date_algorithms.html
-    fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
-        let y = if m <= 2 { y - 1 } else { y };
-        let era = y.div_euclid(400);
-        let yoe = y.rem_euclid(400);
-        let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
-        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-        era * 146097 + doe - 719468
-    }
-
-    let epoch_days = days_from_civil(year, month, day);
+    // shared with `parse_timestamp_ns()` in `core/logcat_parser.rs`.
+    let epoch_days = crate::core::days_from_civil(year, month, day);
 
     const NS_PER_DAY: i64 = 86_400_000_000_000;
     const NS_PER_HOUR: i64 = 3_600_000_000_000;
