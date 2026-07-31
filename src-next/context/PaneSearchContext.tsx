@@ -163,11 +163,21 @@ export function PaneSearchProvider({ paneId, sessionId, children }: Props) {
   // remounted on session switch, so without this the previous session's query,
   // match count, and match line numbers survive into the new session — and
   // match navigation would jump to line numbers from the old content.
+  //
+  // Deliberately does NOT touch effectiveLineNumsRef. React flushes child
+  // effects before parent effects within a commit, and PaneContent (a
+  // descendant of this provider) owns publishing effectiveLineNumsRef via its
+  // own effect keyed on [effectiveLineNums, sessionId] — so on a session
+  // switch, PaneContent's effect has already run and published the NEW
+  // session's scoped lines by the time this effect fires. If this effect also
+  // nulled the ref, it would clobber that fresher same-commit publish and
+  // jumpToMatch could navigate outside the filtered set until the next
+  // re-render. PaneContent's effect is unconditional on sessionId, so the ref
+  // is never left holding a stale value from the previous session.
   useEffect(() => {
     searchSeqRef.current++;
     progressUnlistenRef.current?.();
     progressUnlistenRef.current = null;
-    effectiveLineNumsRef.current = null;
     setState(EMPTY_STATE);
   }, [sessionId]);
 

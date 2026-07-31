@@ -107,11 +107,23 @@ const PaneContentInner = React.memo(function PaneContentInner({ pane, onDirtyCha
     return intersectSorted(sectionFilteredLineNums, filteredLineNums);
   }, [filteredLineNums, sectionFilteredLineNums]);
 
+  // Session this pane's search is scoped to — mirrors the sessionId passed to
+  // SessionProviders/PaneSearchProvider by the outer PaneContent below.
+  const sessionId = session?.sessionId ?? focusedSession?.sessionId ?? null;
+
   // Publish this pane's visible lines so its own match navigation can be scoped
   // to them. Each pane writes to its own PaneSearchProvider ref, so two panes no
-  // longer race over a single shared ref. Synchronous ref write during render —
-  // safe per React's ref contract, no state change.
-  setEffectiveLineNums(effectiveLineNums);
+  // longer race over a single shared ref. This is a committed effect, not a
+  // render-phase write — writing to the ref during render is itself a side
+  // effect (React may re-invoke render), and PaneSearchContext's own
+  // [sessionId] effect relies on this effect having already run (child
+  // effects flush before parent effects) to avoid clobbering a stale value.
+  // Keyed on sessionId too, not just effectiveLineNums, so a session switch
+  // that happens to compute the same (e.g. null) value still republishes —
+  // otherwise the ref would keep the previous session's scoped lines.
+  useEffect(() => {
+    setEffectiveLineNums(effectiveLineNums);
+  }, [effectiveLineNums, sessionId, setEffectiveLineNums]);
 
   const handleLogPaneFocus = useCallback(() => {
     setActiveLogPane(pane.id);
