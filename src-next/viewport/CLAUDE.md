@@ -12,7 +12,7 @@ Use `createCacheDataSource({ sessionId, viewCache, fetchLines, registry })` — 
 
 ## FetchScheduler
 
-Lives inside `ReadOnlyViewer`. Computes two-phase fetch: viewport range first (immediate), then directional prefetch (debounced based on scroll velocity). Not exported — ReadOnlyViewer owns the scheduling logic.
+`FetchScheduler.ts` — computes two-phase fetch: viewport range first (immediate), then directional prefetch (debounced based on scroll velocity). Used exclusively by `useFetchScheduler.ts` (its sole consumer), which `ReadOnlyViewer` calls to own the scheduling logic. Not exported from the barrel — moved here from `cache/` (U65) since it has no dependency on `CacheManager` internals and only ever had the one consumer.
 
 ## Selection model
 

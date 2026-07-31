@@ -1,6 +1,6 @@
 import { useRef, useEffect } from 'react';
 import type { VirtualItem } from '@tanstack/react-virtual';
-import { FetchScheduler } from '../cache';
+import { FetchScheduler } from './FetchScheduler';
 import { diag, diagStart, diagEnd } from '../utils/diagnostics';
 import type { DataSource } from './DataSource';
 
