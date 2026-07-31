@@ -3335,8 +3335,12 @@ mod tests {
         state.mcp_anonymize.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert("sess-a".to_string(), true);
 
-        // Email spans char 490..507 — straddles the 500-char truncation point.
-        let long_line = format!("{}user@example.com", "p".repeat(490));
+        // Email spans char 490..506 — straddles the 500-char truncation point.
+        // The prefix ends in a space so the email sits on a word boundary
+        // (EMAIL_RE is `\b`-anchored with a bounded local part; without a
+        // boundary a 490-char word prefix would prevent any match at all,
+        // which is unrelated to the ordering this test checks).
+        let long_line = format!("{} user@example.com", "p".repeat(489));
         let mut raw = HashMap::new();
         raw.insert(1usize, long_line);
 

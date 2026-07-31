@@ -184,6 +184,20 @@ fn is_android_artifact(m: &str) -> bool {
         if REV_PREFIXES.iter().any(|&p| first_label.eq_ignore_ascii_case(p)) {
             return true;
         }
+
+        // Check 4: CamelCase first label => Java class reference, not a domain.
+        // Fully-qualified Java refs in Android logs look like `Auth@TokenRepository.init`
+        // — the segment after `@` is a class name with an *internal* capital letter.
+        // Real domains are conventionally all-lowercase; a leading capital
+        // (`Gmail.com`) is fine and must still be redacted, so only an uppercase
+        // letter *after* the first character marks the artifact.
+        if first_label
+            .bytes()
+            .skip(1)
+            .any(|b| b.is_ascii_uppercase())
+        {
+            return true;
+        }
     }
     false
 }
