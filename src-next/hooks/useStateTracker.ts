@@ -28,8 +28,6 @@ export function useStateTracker(): StateTrackerActions {
   const paneSessionMapRef = useRef(paneSessionMap);
   paneSessionMapRef.current = paneSessionMap;
 
-  const unlistenRef = useRef<UnlistenFn | null>(null);
-
   // Throttled transition line refresh for streaming — at most once per 3s.
   const transitionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingTransitionRefreshRef = useRef<string | null>(null);
@@ -64,6 +62,7 @@ export function useStateTracker(): StateTrackerActions {
   // runCount bump, and drives throttled refreshTransitionLines.
   useEffect(() => {
     let cancelled = false;
+    let unlisten: UnlistenFn | null = null;
     onAdbTrackerUpdate((payload) => {
       if (cancelled) return;
       const { trackerId, transitionCount, sessionId } = payload;
@@ -86,11 +85,11 @@ export function useStateTracker(): StateTrackerActions {
       }
     }).then((fn) => {
       if (cancelled) fn();
-      else unlistenRef.current = fn;
+      else unlisten = fn;
     });
     return () => {
       cancelled = true;
-      unlistenRef.current?.();
+      unlisten?.();
       if (transitionRefreshTimerRef.current) {
         clearTimeout(transitionRefreshTimerRef.current);
         transitionRefreshTimerRef.current = null;
