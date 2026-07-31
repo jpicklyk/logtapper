@@ -178,10 +178,11 @@ pub struct SignalDef {
     /// Condition expression evaluated against emission fields (e.g. "heap_pct >= 90").
     #[serde(default)]
     pub condition: Option<String>,
-    /// Pre-parsed condition AST, populated by `SchemaContract::prepare_conditions()`.
-    /// Skipped during serialization — in-memory only.
+    /// Pre-parsed condition state, populated by `SchemaContract::prepare_conditions()`.
+    /// Skipped during serialization — in-memory only. `None` means conditions
+    /// have not been prepared yet; after preparation this is always `Some`.
     #[serde(skip)]
-    pub parsed_condition: Option<super::signals::Expr>,
+    pub parsed_condition: Option<super::signals::ParsedCondition>,
     /// Emission fields to include in signal output.
     #[serde(default)]
     pub fields: Vec<String>,
@@ -196,15 +197,31 @@ pub struct SignalDef {
 impl SchemaContract {
     /// Pre-parse signal conditions into ASTs for efficient repeated evaluation.
     /// Called once at install/load time so `h_insights` skips parsing on every call.
+    ///
+    /// A signal with no `condition` string is recorded as `ParsedCondition::Always`
+    /// (fires on every emission/aggregate check, unchanged from before). A signal
+    /// whose `condition` string fails to parse is recorded as `ParsedCondition::Never`
+    /// so it can never fire — this must NOT be silently dropped back to "no condition",
+    /// which would make a malformed condition (e.g. a typo like `1_000`) behave as
+    /// always-true instead of never-true. See `signals::eval_parsed_condition()`.
     pub fn prepare_conditions(&mut self) {
-        use super::signals::parse_condition;
+        use super::signals::{parse_condition, ParsedCondition};
         if let Some(ref mut mcp) = self.mcp {
             for signal in &mut mcp.signals {
-                if let Some(ref cond_str) = signal.condition {
-                    if let Ok(Some(expr)) = parse_condition(cond_str) {
-                        signal.parsed_condition = Some(expr);
-                    }
-                }
+                signal.parsed_condition = Some(match &signal.condition {
+                    None => ParsedCondition::Always,
+                    Some(cond_str) => match parse_condition(cond_str) {
+                        Ok(None) => ParsedCondition::Always,
+                        Ok(Some(expr)) => ParsedCondition::Expr(expr),
+                        Err(e) => {
+                            log::warn!(
+                                "[marketplace] signal '{}' has malformed condition {cond_str:?}: {e} — it will never fire",
+                                signal.name
+                            );
+                            ParsedCondition::Never
+                        }
+                    },
+                });
             }
         }
     }
@@ -609,8 +626,80 @@ mcp:
         schema.prepare_conditions();
 
         let mcp = schema.mcp.as_ref().unwrap();
-        assert!(mcp.signals[0].parsed_condition.is_some(), "heap_critical should have parsed AST");
-        assert!(mcp.signals[1].parsed_condition.is_some(), "heap_warning should have parsed AST");
-        assert!(mcp.signals[2].parsed_condition.is_none(), "no_condition should remain None");
+        assert!(
+            matches!(mcp.signals[0].parsed_condition, Some(super::super::signals::ParsedCondition::Expr(_))),
+            "heap_critical should have parsed AST"
+        );
+        assert!(
+            matches!(mcp.signals[1].parsed_condition, Some(super::super::signals::ParsedCondition::Expr(_))),
+            "heap_warning should have parsed AST"
+        );
+        assert!(
+            matches!(mcp.signals[2].parsed_condition, Some(super::super::signals::ParsedCondition::Always)),
+            "no_condition should be recorded as Always (fires unconditionally), not None"
+        );
+    }
+
+    /// Regression test for item 2dee8668: a malformed MCP signal condition must
+    /// evaluate to "never fires", not "always fires". Before the fix,
+    /// `prepare_conditions()` discarded the `Err` from `parse_condition()` and
+    /// left `parsed_condition = None`, which `eval_parsed_condition()` treated
+    /// as "no condition" (always true) — the opposite of `eval_condition()`'s
+    /// fail-closed contract for the same malformed string.
+    #[test]
+    fn prepare_conditions_malformed_condition_never_fires() {
+        use super::super::signals::eval_parsed_condition;
+
+        let yaml = r#"
+source_types: ["logcat"]
+mcp:
+  signals:
+    - name: malformed
+      severity: warning
+      condition: "duration_ms > 1_000"
+      fields: [duration_ms]
+    - name: no_condition
+      severity: info
+      fields: [duration_ms]
+    - name: valid
+      severity: warning
+      condition: "duration_ms > 1000"
+      fields: [duration_ms]
+"#;
+        let mut schema: SchemaContract = serde_yaml::from_str(yaml).unwrap();
+        schema.prepare_conditions();
+        let mcp = schema.mcp.as_ref().unwrap();
+
+        let mut high = std::collections::HashMap::new();
+        high.insert("duration_ms".to_string(), serde_json::json!(5000));
+        let mut low = std::collections::HashMap::new();
+        low.insert("duration_ms".to_string(), serde_json::json!(100));
+
+        // (a) malformed condition ("1_000" fails f64 parsing) must NEVER fire,
+        // even though the field value would satisfy the intended comparison.
+        assert!(
+            !eval_parsed_condition(mcp.signals[0].parsed_condition.as_ref(), &high),
+            "malformed condition must never fire"
+        );
+
+        // (b) no condition at all must still ALWAYS fire — unchanged behavior.
+        assert!(
+            eval_parsed_condition(mcp.signals[1].parsed_condition.as_ref(), &high),
+            "signal with no condition should always fire"
+        );
+        assert!(
+            eval_parsed_condition(mcp.signals[1].parsed_condition.as_ref(), &low),
+            "signal with no condition should always fire regardless of field values"
+        );
+
+        // (c) a valid condition must still evaluate correctly both ways.
+        assert!(
+            eval_parsed_condition(mcp.signals[2].parsed_condition.as_ref(), &high),
+            "valid condition should fire when satisfied"
+        );
+        assert!(
+            !eval_parsed_condition(mcp.signals[2].parsed_condition.as_ref(), &low),
+            "valid condition should not fire when unsatisfied"
+        );
     }
 }

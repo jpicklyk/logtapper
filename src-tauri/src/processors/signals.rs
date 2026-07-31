@@ -44,6 +44,24 @@ pub enum Expr {
     Or(Box<Expr>, Box<Expr>),
 }
 
+/// Pre-parsed state of a signal's `condition`, computed once by
+/// `SchemaContract::prepare_conditions()` and cached on `SignalDef::parsed_condition`.
+///
+/// This distinguishes "no condition was written" (always fires) from
+/// "a condition was written but failed to parse" (must never fire) — the two
+/// were conflated as `None` before, which made a malformed condition silently
+/// behave like an unconditional signal (fail-open) instead of matching
+/// `eval_condition()`'s fail-closed contract for parse errors.
+#[derive(Debug, Clone)]
+pub enum ParsedCondition {
+    /// No condition string was given for this signal — always fires.
+    Always,
+    /// A condition string was given but failed to parse — never fires.
+    Never,
+    /// Condition parsed successfully into an AST.
+    Expr(Expr),
+}
+
 // ---------------------------------------------------------------------------
 // Parser — recursive descent over tokens
 // ---------------------------------------------------------------------------
@@ -290,11 +308,19 @@ pub fn eval_condition(
     }
 }
 
-/// Evaluate a pre-parsed `Expr` against a field map.
-/// If `parsed` is `None` (no condition was defined), always returns `true`.
-pub fn eval_parsed_condition(parsed: Option<&Expr>, fields: &HashMap<String, Value>) -> bool {
+/// Evaluate a pre-parsed condition against a field map.
+///
+/// - `Some(ParsedCondition::Always)` (no condition was defined) → `true`.
+/// - `Some(ParsedCondition::Never)` (condition failed to parse) → `false`,
+///   matching `eval_condition()`'s fail-closed behavior for a parse error.
+/// - `Some(ParsedCondition::Expr(expr))` → evaluated normally.
+/// - `None` (conditions not yet prepared via `prepare_conditions()`) → `true`,
+///   the same default as the pre-fix "no condition" case.
+pub fn eval_parsed_condition(parsed: Option<&ParsedCondition>, fields: &HashMap<String, Value>) -> bool {
     match parsed {
-        Some(expr) => evaluate(expr, fields),
+        Some(ParsedCondition::Always) => true,
+        Some(ParsedCondition::Never) => false,
+        Some(ParsedCondition::Expr(expr)) => evaluate(expr, fields),
         None => true,
     }
 }
