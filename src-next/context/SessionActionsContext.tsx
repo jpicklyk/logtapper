@@ -8,7 +8,7 @@ import {
   publishAnalysis, updateAnalysis, deleteAnalysis,
   createWatch, cancelWatch,
 } from '../bridge/commands';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 
 // ---------------------------------------------------------------------------
 // Context value

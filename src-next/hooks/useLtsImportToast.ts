@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 import type { ToastItem } from '../ui';
 import { nextToastId } from './useToast';
 import { isLts } from './workspace/restorePlan';

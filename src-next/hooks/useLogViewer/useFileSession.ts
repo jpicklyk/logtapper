@@ -7,7 +7,7 @@ import { onFileIndexProgress, onFileIndexComplete, onBridgeSessionOpened } from 
 import { preSeedSession, clearPreSeed } from '../../cache';
 import type { CacheController } from '../../cache';
 import { useSessionCoreCtx, useSessionProgressCtx } from '../../context/SessionContext';
-import { bus, emitSessionLoadedWithFocus } from '../../events/bus';
+import { bus, emitSessionLoadedWithFocus } from '../../events';
 import { getStoredFirstPaneId } from '../useWorkspaceLayout';
 import { diag, diagStart, diagEnd } from '../../utils/diagnostics';
 import { basename } from '../../utils';

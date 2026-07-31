@@ -33,7 +33,7 @@ import { collectEditorTabsForSave, buildAppStatePayload } from '../hooks/workspa
 import { pushWorkspaceEnvelope, toEnvelopeOptions } from '../hooks/workspace/envelopeSync';
 import { STORAGE_KEY } from '../hooks/workspace/workspaceTypes';
 import { storageGetJSON } from '../utils';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 
 /**
  * Inner component that has access to context setters (inside providers)

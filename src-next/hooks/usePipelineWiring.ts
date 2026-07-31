@@ -10,7 +10,7 @@ import {
 } from '../bridge/commands';
 import { onPipelineProgress } from '../bridge/events';
 import { usePipelineContext } from '../context/PipelineContext';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 import { useWorkspaceRestore } from './useWorkspaceRestore';
 import { usePipelineCommands, type PipelineActions } from './usePipelineCommands';
 import { saveChainToStorage } from './pipelineChainStorage';

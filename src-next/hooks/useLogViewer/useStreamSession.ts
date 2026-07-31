@@ -5,7 +5,7 @@ import { startAdbStream, stopAdbStream } from '../../bridge/commands';
 import { onAdbStreamStopped } from '../../bridge/events';
 import { useSessionCoreCtx } from '../../context/SessionContext';
 import { loadSettings } from '../../hooks';
-import { bus, emitSessionLoadedWithFocus } from '../../events/bus';
+import { bus, emitSessionLoadedWithFocus } from '../../events';
 import type { CacheController } from '../../cache';
 import type { StreamPusher } from '../../viewport';
 import type { SharedLogViewerRefs } from './types';

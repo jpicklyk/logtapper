@@ -4,7 +4,7 @@ import { onWorkspaceRestored } from '../bridge/events';
 import type { PipelineAction } from '../context/PipelineContext';
 import type { ProcessorSummary } from '../bridge/types';
 import { setSessionPipelineMeta } from '../bridge/commands';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 
 /**
  * Listens for `workspace-restored` Tauri events. For every source it restores

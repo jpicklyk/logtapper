@@ -9,7 +9,7 @@ import {
   getProcessorVars,
 } from '../bridge/commands';
 import { usePipelineContext } from '../context/PipelineContext';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 import { loadChainFromStorage, loadDisabledFromStorage } from './pipelineChainStorage';
 
 export interface PipelineActions {

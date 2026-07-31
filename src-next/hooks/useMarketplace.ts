@@ -25,7 +25,7 @@ import {
   saveSourcesToDisk,
 } from '../bridge/commands';
 import { useMarketplaceContext } from '../context/MarketplaceContext';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 
 /** Map a MarketplacePackEntry to the install_pack_from_marketplace payload shape
  *  (backend field name is snake_case: processor_ids). Shared by installPack and

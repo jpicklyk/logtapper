@@ -9,7 +9,10 @@
 | Export | From | Description |
 |---|---|---|
 | `bus` | `bus.ts` | Singleton mitt instance — `bus.emit()`, `bus.on()`, `bus.off()` |
+| `emitSessionLoadedWithFocus` | `bus.ts` | Emits `session:loaded` then conditionally `session:focused` (skipped if a synchronous `layout:pane-session-remap` already handled focus) |
 | `AppEvents` | `events.ts` | Type map defining all event names and payloads |
+
+All consumers outside `events/` import from this barrel (`../events` / `../../events` / etc.), never from `./bus` directly — internal files within `events/` may still import from `./bus` directly (same-module), and test files may import internals for white-box testing per the barrel rule's exception.
 
 ## Adding a new event
 

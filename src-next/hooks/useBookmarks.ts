@@ -3,7 +3,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
 import type { Bookmark } from '../bridge/types';
 import { listBookmarks } from '../bridge/commands';
 import { onBookmarkUpdate } from '../bridge/events';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 
 export interface BookmarkState {
   bookmarks: Bookmark[];

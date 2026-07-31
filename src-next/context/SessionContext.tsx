@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, useReducer, useCallback, useEffect, type ReactNode } from 'react';
 import type { LoadResult } from '../bridge/types';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 import { diag } from '../utils/diagnostics';
 
 export interface IndexingProgress {

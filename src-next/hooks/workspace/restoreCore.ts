@@ -10,7 +10,7 @@
  * (both depend on live React state); everything else (`restore_workspace_session`,
  * the bus, the pure planner/pairing helpers) is imported directly.
  */
-import { bus } from '../../events/bus';
+import { bus } from '../../events';
 import { restoreWorkspaceSession } from '../../bridge/commands';
 import type { LoadWorkspaceSessionData, LtwEditorTab, SourceType } from '../../bridge/types';
 import { pairArtifactsWithSessions } from './artifactPairing';

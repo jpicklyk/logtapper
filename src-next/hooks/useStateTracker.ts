@@ -4,7 +4,7 @@ import type { StateSnapshot, StateTransition } from '../bridge/types';
 import { onAdbTrackerUpdate } from '../bridge/events';
 import { getAllTransitionLines, getStateAtLine, getStateTransitions } from '../bridge/commands';
 import { useTrackerContext } from '../context/TrackerContext';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 
 export interface StateTrackerActions {
   /** Fetch all transition line numbers for a session after a pipeline run. */

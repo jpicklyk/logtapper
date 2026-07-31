@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { bus } from '../../events/bus';
+import { bus } from '../../events';
 
 export interface FocusTrackingHandle {
   focusedLogviewerTabId: string | null;

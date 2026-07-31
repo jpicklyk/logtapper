@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { onAnalysisUpdate } from '../bridge/events';
 import { getAnalysis } from '../bridge/commands';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 import type { ToastItem } from '../ui';
 import { nextToastId } from './useToast';
 

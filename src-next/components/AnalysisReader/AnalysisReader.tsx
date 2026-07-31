@@ -4,7 +4,7 @@ import type { AnalysisArtifact, AnalysisSeverity } from '../../bridge/types';
 import { severityColor } from '../../bridge/types';
 import { useSession, useNavigationActions } from '../../context';
 import { useAnalysis } from '../../hooks';
-import { bus } from '../../events/bus';
+import { bus } from '../../events';
 import { formatShortDateTime } from '../../utils';
 import MarkdownSection from './MarkdownSection';
 import styles from './AnalysisReader.module.css';

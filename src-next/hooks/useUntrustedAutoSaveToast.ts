@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useWorkspaceActions } from '../context';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 import type { ToastItem } from '../ui';
 import { formatShortDateTime } from '../utils';
 import { nextToastId } from './useToast';

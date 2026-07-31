@@ -3,7 +3,7 @@ import { useWorkspaceContext } from '../context/WorkspaceContext';
 import { loadWorkspaceV4 } from '../bridge/commands';
 import type { LoadWorkspaceV4Result } from '../bridge/types';
 import type { WorkspaceIdentity } from '../bridge/workspaceTypes';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 import { storageGetJSON, storageRemove } from '../utils';
 import { getStoredLogviewerTabs, collectEditorTabsForSave, readTabPaths } from './workspace/workspacePersistence';
 import { STORAGE_KEY } from './workspace/workspaceTypes';

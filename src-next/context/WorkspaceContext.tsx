@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 import { onWorkspaceAutoSaved } from '../bridge/events';
 import type { WorkspaceIdentity, WorkspaceListState } from '../bridge/workspaceTypes';
 import {

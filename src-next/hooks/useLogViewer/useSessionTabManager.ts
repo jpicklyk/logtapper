@@ -4,7 +4,7 @@ import { getLines, closeSession as closeSessionCmd } from '../../bridge/commands
 import { updateStreamProcessors, updateStreamTrackers, updateStreamTransformers } from '../../bridge/commands';
 import { useSessionCoreCtx, useSessionPaneCtx, useSessionProgressCtx } from '../../context/SessionContext';
 import { useViewerContext } from '../../context/ViewerContext';
-import { bus } from '../../events/bus';
+import { bus } from '../../events';
 import { sessionScrollPositions } from '../../viewport';
 import { clearPreSeed, type CacheController } from '../../cache';
 import type { SharedLogViewerRefs } from './types';

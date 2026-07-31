@@ -4,7 +4,7 @@ import { useWorkspaceContext } from '../context/WorkspaceContext';
 import { saveWorkspaceV4, loadWorkspaceV4, saveAppState, beginWorkspaceSwitch } from '../bridge/commands';
 import type { WorkspaceIdentity } from '../bridge/workspaceTypes';
 
-import { bus } from '../events/bus';
+import { bus } from '../events';
 import { basename, dirname, storageGetJSON } from '../utils';
 import { collectEditorTabsForSave, performAutoSave, buildAppStatePayload } from './workspace/workspacePersistence';
 import { STORAGE_KEY } from './workspace/workspaceTypes';

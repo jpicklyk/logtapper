@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 import type { ExportAllOptions, ProcessorSummary, SourceType } from '../bridge/types';
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import { bus } from '../../events/bus';
+import { bus } from '../../events';
 import { onBridgeSessionClosed } from '../../bridge/events';
 import type { CenterTabType, BottomTabType, CenterPane, DropZone, EditorTabState, SplitNode } from './workspaceTypes';
 import { TAB_LABELS } from './workspaceTypes';
