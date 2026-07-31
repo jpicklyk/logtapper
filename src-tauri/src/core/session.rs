@@ -476,21 +476,21 @@ impl AnalysisSession {
             file_src.extend_index(new_offsets, new_line_meta, sentinel, done);
         }
         if done {
-            // Rebuild sections from the completed index. Clone the mmap Arc and
-            // needed metadata to avoid overlapping borrows with tag_interner.
-            if let Some(file_src) = self.file_source() {
-                let source_type = file_src.source_type.clone();
-                let line_meta_snapshot: Vec<LineMeta> = file_src.line_meta.clone();
-                let mmap_clone = Arc::clone(&file_src.mmap);
-                let line_index_snapshot: Vec<u64> = file_src.line_index.clone();
-                let sections = build_section_index(
-                    &line_meta_snapshot,
-                    &source_type,
+            // Rebuild sections from the completed index. build_section_index
+            // only takes shared borrows (&[LineMeta], &SourceType,
+            // &TagInterner, &[u8], &[u64]), so self.source and
+            // self.tag_interner can be borrowed immutably at the same time —
+            // no clone of line_meta/line_index/mmap is needed here.
+            let sections = self.file_source().map(|file_src| {
+                build_section_index(
+                    &file_src.line_meta,
+                    &file_src.source_type,
                     &self.tag_interner,
-                    mmap_clone.as_ref(),
-                    &line_index_snapshot,
-                );
-                // Re-borrow mutably to set sections
+                    file_src.mmap.as_ref(),
+                    &file_src.line_index,
+                )
+            });
+            if let Some(sections) = sections {
                 if let Some(file_src) = self.file_source_mut() {
                     file_src.set_sections(sections);
                 }

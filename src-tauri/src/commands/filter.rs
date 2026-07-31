@@ -6,9 +6,10 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::{lock_or_err, AppState};
 use crate::core::filter::{
-    line_matches_criteria, FilterCriteria, FilterSession, FilterStatus,
+    line_matches_criteria_with_needles, FilterCriteria, FilterSession, FilterStatus,
 };
 use crate::core::line::{LogLevel, ViewLine};
+use crate::core::parser::LogParser;
 use crate::core::session::parser_for;
 
 // ---------------------------------------------------------------------------
@@ -114,6 +115,15 @@ pub async fn create_filter(
 // Background filter scanning
 // ---------------------------------------------------------------------------
 
+/// Whether `criteria` actually filters on `pid` — i.e. whether
+/// `line_matches_criteria`/`line_matches_criteria_with_needles` will ever
+/// consult the `pid` argument. Mirrors the exact condition those functions
+/// use (`Some(pids) if !pids.is_empty()`) so the scan loop can skip parsing
+/// each line for its pid when the filter doesn't need it.
+fn criteria_needs_pid(criteria: &FilterCriteria) -> bool {
+    criteria.pids.as_ref().is_some_and(|p| !p.is_empty())
+}
+
 /// `compiled_regex` is compiled and validated by `create_filter` before the
 /// task is spawned, so this path never has to decide what a bad pattern means.
 async fn scan_filter_background(
@@ -127,6 +137,23 @@ async fn scan_filter_background(
 
     let total_lines = filter.total_lines.load(Ordering::Relaxed);
     let mut scanned = 0usize;
+
+    // Text/tag needles are immutable for the whole scan — precompute the
+    // lowercased forms once (mirrors `compiled_regex`, which is compiled
+    // once by `create_filter` rather than per line) instead of letting
+    // `line_matches_criteria` re-lowercase them on every scanned line.
+    let needles = filter.criteria.precompute_needles();
+
+    // Only parse a line for `pid` when the filter actually filters on pid —
+    // otherwise every line pays for a full parse just to read a field that's
+    // never checked.
+    let needs_pid = criteria_needs_pid(&filter.criteria);
+
+    // Allocate the parser once for the whole scan (the source's type can't
+    // change mid-scan) instead of once per line. Lazily created on the first
+    // batch that successfully resolves the source, then reused by every
+    // subsequent batch.
+    let mut parser: Option<Box<dyn LogParser>> = None;
 
     while scanned < total_lines && !filter.is_cancelled() {
         let batch_end = (scanned + BATCH_SIZE).min(total_lines);
@@ -143,6 +170,10 @@ async fn scan_filter_background(
                 break;
             };
 
+            if needs_pid && parser.is_none() {
+                parser = Some(parser_for(source.source_type()));
+            }
+
             let mut matches = Vec::new();
             for i in scanned..batch_end {
                 let Some(raw_cow) = source.raw_line(i) else { continue };
@@ -150,14 +181,21 @@ async fn scan_filter_background(
                 let Some(meta) = source.meta_at(i) else { continue };
 
                 let tag = session.resolve_tag(meta.tag_id);
-                // We need pid — parse the line for it, or use 0 as fallback
-                let parser = parser_for(source.source_type());
-                let pid = parser
-                    .parse_line(raw, source.id(), i)
-                    .map_or(0, |ctx| ctx.pid);
+                // pid is only worth parsing for when the filter has a pid
+                // criterion; otherwise fall back to 0 (matches the old
+                // behavior when parsing failed to produce a pid).
+                let pid = if needs_pid {
+                    parser
+                        .as_deref()
+                        .and_then(|p| p.parse_line(raw, source.id(), i))
+                        .map_or(0, |ctx| ctx.pid)
+                } else {
+                    0
+                };
 
-                if line_matches_criteria(
+                if line_matches_criteria_with_needles(
                     &filter.criteria,
+                    &needles,
                     raw,
                     meta.level,
                     tag,
@@ -393,4 +431,83 @@ fn uuid_v4() -> String {
         (rand_part >> 32) as u16 & 0x3fff | 0x8000,
         rand_part & 0x0000_ffff_ffff_ffff,
     )
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── criteria_needs_pid ──────────────────────────────────────────────────
+    // `scan_filter_background` only allocates a parser and parses each line
+    // for its pid when the filter actually has a pid criterion — this is the
+    // exact decision that gates that work, so it must match the condition
+    // `line_matches_criteria`/`line_matches_criteria_with_needles` use to
+    // decide whether `pid` matters at all.
+
+    #[test]
+    fn criteria_needs_pid_false_when_unset() {
+        let c = FilterCriteria::default();
+        assert!(!criteria_needs_pid(&c));
+    }
+
+    #[test]
+    fn criteria_needs_pid_false_when_empty_list() {
+        let mut c = FilterCriteria::default();
+        c.pids = Some(vec![]);
+        assert!(!criteria_needs_pid(&c));
+    }
+
+    #[test]
+    fn criteria_needs_pid_true_when_pids_configured() {
+        let mut c = FilterCriteria::default();
+        c.pids = Some(vec![1234]);
+        assert!(criteria_needs_pid(&c));
+    }
+
+    // ── pid filtering correctness (mirrors what scan_filter_background relies on) ──
+    // These don't exercise the async scan loop directly (that needs a live
+    // Tauri AppHandle), but they pin the two behaviors the loop depends on:
+    // a filter WITH a pid criterion must still discriminate on the parsed
+    // pid, and a filter WITHOUT one must match irrespective of whatever pid
+    // value is passed in (i.e. it's safe to skip parsing and pass 0).
+
+    #[test]
+    fn pid_criterion_present_still_filters_by_pid() {
+        let mut c = FilterCriteria::default();
+        c.text_search = Some("crash".to_string());
+        c.pids = Some(vec![1234]);
+        assert!(criteria_needs_pid(&c));
+        let needles = c.precompute_needles();
+
+        assert!(line_matches_criteria_with_needles(
+            &c, &needles, "app crash detected", LogLevel::Error, "", 0, 1234, None
+        ));
+        assert!(!line_matches_criteria_with_needles(
+            &c, &needles, "app crash detected", LogLevel::Error, "", 0, 9999, None
+        ));
+    }
+
+    #[test]
+    fn no_pid_criterion_matches_regardless_of_pid_value() {
+        let mut c = FilterCriteria::default();
+        c.text_search = Some("crash".to_string());
+        assert!(!criteria_needs_pid(&c));
+        let needles = c.precompute_needles();
+
+        // Same result no matter what pid is passed — confirms it's safe for
+        // the scan loop to skip parsing (and pass the placeholder 0) when
+        // criteria_needs_pid is false.
+        let with_zero = line_matches_criteria_with_needles(
+            &c, &needles, "app crash detected", LogLevel::Error, "", 0, 0, None
+        );
+        let with_nonzero = line_matches_criteria_with_needles(
+            &c, &needles, "app crash detected", LogLevel::Error, "", 0, 4242, None
+        );
+        assert!(with_zero);
+        assert_eq!(with_zero, with_nonzero);
+    }
 }

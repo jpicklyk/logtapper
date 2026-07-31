@@ -82,14 +82,12 @@ fn build_chart(
 ) -> ChartData {
     let emission_maps: Vec<HashMap<String, JsonValue>> =
         emissions.iter().map(|e| e.fields.iter().cloned().collect()).collect();
-    let emission_refs: Vec<&HashMap<String, JsonValue>> =
-        emission_maps.iter().collect();
 
     let series = match spec.chart_type.as_str() {
-        "bar" | "pie" => build_bar_series(spec, &emission_refs),
-        "time_series" | "area" => build_time_series(spec, &emission_refs),
-        "scatter" => build_scatter_series(spec, &emission_refs),
-        "histogram" => build_histogram_series(spec, &emission_refs),
+        "bar" | "pie" => build_bar_series(spec, &emission_maps),
+        "time_series" | "area" => build_time_series(spec, &emission_maps),
+        "scatter" => build_scatter_series(spec, &emission_maps),
+        "histogram" => build_histogram_series(spec, &emission_maps),
         _ => vec![],
     };
 
@@ -125,14 +123,13 @@ fn build_chart(
 
 fn build_bar_series(
     spec: &ChartSpec,
-    emissions: &[&HashMap<String, JsonValue>],
+    emissions: &[HashMap<String, JsonValue>],
 ) -> Vec<DataSeries> {
     let Some(x_field) = spec.x.as_ref().and_then(|x| x.field.as_deref()) else {
         return vec![];
     };
 
-    let owned: Vec<HashMap<String, JsonValue>> = emissions.iter().map(|&m| m.clone()).collect();
-    let counts = count_by_field(&owned, x_field);
+    let counts = count_by_field(emissions, x_field);
 
     let points: Vec<DataPoint> = counts
         .into_iter()
@@ -158,7 +155,7 @@ fn build_bar_series(
 
 fn build_time_series(
     spec: &ChartSpec,
-    emissions: &[&HashMap<String, JsonValue>],
+    emissions: &[HashMap<String, JsonValue>],
 ) -> Vec<DataSeries> {
     let Some(x_spec) = &spec.x else {
         return vec![];
@@ -168,10 +165,8 @@ fn build_time_series(
     };
     let interval = x_spec.bucket.as_deref().unwrap_or("1m");
 
-    let owned: Vec<HashMap<String, JsonValue>> = emissions.iter().map(|&m| m.clone()).collect();
-
     if let Some(group_field) = &spec.group_by {
-        let grouped = count_by_time_grouped(&owned, time_field, group_field, interval);
+        let grouped = count_by_time_grouped(emissions, time_field, group_field, interval);
         grouped
             .into_iter()
             .map(|(group, pts)| DataSeries {
@@ -189,7 +184,7 @@ fn build_time_series(
             })
             .collect()
     } else {
-        let pts = count_by_time(&owned, time_field, interval);
+        let pts = count_by_time(emissions, time_field, interval);
         vec![DataSeries {
             label: "count".to_string(),
             color: None,
@@ -212,7 +207,7 @@ fn build_time_series(
 
 fn build_scatter_series(
     spec: &ChartSpec,
-    emissions: &[&HashMap<String, JsonValue>],
+    emissions: &[HashMap<String, JsonValue>],
 ) -> Vec<DataSeries> {
     let x_field = spec.x.as_ref().and_then(|x| x.field.as_deref()).unwrap_or("x");
     let y_field = spec.y.as_ref().and_then(|y| y.field.as_deref()).unwrap_or("y");
@@ -235,7 +230,7 @@ fn build_scatter_series(
 
 fn build_histogram_series(
     spec: &ChartSpec,
-    emissions: &[&HashMap<String, JsonValue>],
+    emissions: &[HashMap<String, JsonValue>],
 ) -> Vec<DataSeries> {
     let field = spec.x.as_ref().and_then(|x| x.field.as_deref()).unwrap_or("value");
     let bins = spec.bins.unwrap_or(20) as usize;
@@ -335,13 +330,101 @@ mod tests {
         m
     }
 
+    fn bar_spec() -> ChartSpec {
+        ChartSpec {
+            id: "bar".to_string(),
+            chart_type: "bar".to_string(),
+            title: "Bar".to_string(),
+            description: None,
+            source: "emissions".to_string(),
+            x: Some(AxisSpec { field: Some("category".to_string()), label: None, bucket: None, aggregation: None }),
+            y: None,
+            group_by: None,
+            color_by: None,
+            stacked: false,
+            bins: None,
+            range: None,
+            color_scale: None,
+            interactive: false,
+            annotations: Vec::new(),
+            timeline: None,
+        }
+    }
+
+    fn time_series_spec() -> ChartSpec {
+        ChartSpec {
+            id: "ts".to_string(),
+            chart_type: "time_series".to_string(),
+            title: "Time Series".to_string(),
+            description: None,
+            source: "emissions".to_string(),
+            x: Some(AxisSpec { field: Some("ts".to_string()), label: None, bucket: Some("1m".to_string()), aggregation: None }),
+            y: None,
+            group_by: None,
+            color_by: None,
+            stacked: false,
+            bins: None,
+            range: None,
+            color_scale: None,
+            interactive: false,
+            annotations: Vec::new(),
+            timeline: None,
+        }
+    }
+
+    // Regression coverage for the redundant-clone fix in build_chart /
+    // build_bar_series / build_time_series: emissions are cloned into owned
+    // HashMaps exactly once (in build_chart) and then borrowed straight
+    // through to count_by_field/count_by_time — no second clone into a
+    // fresh `owned` vec inside the series builders. These tests exercise
+    // the full build_chart path end-to-end to confirm chart output is
+    // unaffected by removing that second clone.
+    #[test]
+    fn build_chart_bar_counts_by_field() {
+        let spec = bar_spec();
+        let emissions = vec![
+            Emission { line_num: 0, fields: vec![("category".to_string(), json!("a"))] },
+            Emission { line_num: 1, fields: vec![("category".to_string(), json!("a"))] },
+            Emission { line_num: 2, fields: vec![("category".to_string(), json!("b"))] },
+        ];
+        let vars: HashMap<String, JsonValue> = HashMap::new();
+
+        let chart = build_chart(&spec, &emissions, &vars);
+        assert_eq!(chart.series.len(), 1);
+        let points = &chart.series[0].points;
+        assert_eq!(points.len(), 2);
+        let a = points.iter().find(|p| p.label.as_deref() == Some("a")).unwrap();
+        assert_eq!(a.y, 2.0);
+        let b = points.iter().find(|p| p.label.as_deref() == Some("b")).unwrap();
+        assert_eq!(b.y, 1.0);
+    }
+
+    #[test]
+    fn build_chart_time_series_counts_by_bucket() {
+        let spec = time_series_spec();
+        let emissions = vec![
+            Emission { line_num: 0, fields: vec![("ts".to_string(), json!(0i64))] },
+            Emission { line_num: 1, fields: vec![("ts".to_string(), json!(1_000_000_000i64))] },
+            Emission { line_num: 2, fields: vec![("ts".to_string(), json!(120_000_000_000i64))] },
+        ];
+        let vars: HashMap<String, JsonValue> = HashMap::new();
+
+        let chart = build_chart(&spec, &emissions, &vars);
+        assert_eq!(chart.series.len(), 1);
+        let points = &chart.series[0].points;
+        // First two emissions land in the same 1-minute bucket, the third
+        // (at 2 minutes) lands in a different one.
+        assert_eq!(points.len(), 2);
+        let total: f64 = points.iter().map(|p| p.y).sum();
+        assert_eq!(total, 3.0);
+    }
+
     #[test]
     fn histogram_with_varying_values_bins_normally() {
         let spec = histogram_spec(Some(4), None);
         let owned = vec![emission(0.0), emission(1.0), emission(2.0), emission(3.0)];
-        let refs: Vec<&HashMap<String, JsonValue>> = owned.iter().collect();
 
-        let series = build_histogram_series(&spec, &refs);
+        let series = build_histogram_series(&spec, &owned);
         assert_eq!(series.len(), 1);
         let total: f64 = series[0].points.iter().map(|p| p.y).sum();
         assert_eq!(total, 4.0, "every sample must land in some bin");
@@ -355,9 +438,8 @@ mod tests {
         // silently produced "no chart" instead of "one bin, N samples".
         let spec = histogram_spec(Some(10), None);
         let owned = vec![emission(42.0), emission(42.0), emission(42.0)];
-        let refs: Vec<&HashMap<String, JsonValue>> = owned.iter().collect();
 
-        let series = build_histogram_series(&spec, &refs);
+        let series = build_histogram_series(&spec, &owned);
         assert_eq!(series.len(), 1, "constant-value samples must still produce a series");
         assert_eq!(series[0].points.len(), 1, "all samples collapse into a single bin");
         assert_eq!(series[0].points[0].y, 3.0, "the single bin must hold the full sample count");
@@ -370,9 +452,8 @@ mod tests {
         // underlying values vary — same bin_width == 0.0 guard.
         let spec = histogram_spec(Some(10), Some([5.0, 5.0]));
         let owned = vec![emission(5.0), emission(5.0)];
-        let refs: Vec<&HashMap<String, JsonValue>> = owned.iter().collect();
 
-        let series = build_histogram_series(&spec, &refs);
+        let series = build_histogram_series(&spec, &owned);
         assert_eq!(series.len(), 1);
         assert_eq!(series[0].points.len(), 1);
         assert_eq!(series[0].points[0].y, 2.0);
@@ -385,9 +466,8 @@ mod tests {
         // even computed. Must remain unchanged by the fix above.
         let spec = histogram_spec(Some(10), None);
         let owned: Vec<HashMap<String, JsonValue>> = Vec::new();
-        let refs: Vec<&HashMap<String, JsonValue>> = owned.iter().collect();
 
-        let series = build_histogram_series(&spec, &refs);
+        let series = build_histogram_series(&spec, &owned);
         assert!(series.is_empty());
     }
 }

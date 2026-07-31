@@ -552,6 +552,40 @@ fn parse_iso_to_unix_nanos(s: &str) -> Option<i64> {
     )
 }
 
+/// Case-insensitive substring test that avoids allocating a lowercased copy
+/// of `haystack` for the common case where the haystack is pure ASCII (log
+/// lines almost always are). `needle_lower` must already be lowercased via
+/// `str::to_lowercase()`.
+///
+/// ASCII lowering is a 1:1 byte mapping and agrees with Unicode
+/// `to_lowercase()` for ASCII input, so a byte-wise sliding-window scan is
+/// safe and exact for that case — no allocation, no per-line String copy.
+/// For a haystack containing any non-ASCII byte we fall back to the
+/// original `haystack.to_lowercase().contains(needle_lower)` so Unicode
+/// case-folding edge cases (e.g. Turkish İ -> "i̇", two chars) still match
+/// exactly as before.
+///
+/// Used by `h_query`'s message filter, which previously called
+/// `raw.to_lowercase()` on every scanned line (up to `MCP_SCAN_LINE_CAP`
+/// lines per request) just to run a substring test.
+fn contains_ignore_case(haystack: &str, needle_lower: &str) -> bool {
+    if needle_lower.is_empty() {
+        return true;
+    }
+    if haystack.is_ascii() {
+        let hay_bytes = haystack.as_bytes();
+        let needle_bytes = needle_lower.as_bytes();
+        if needle_bytes.len() > hay_bytes.len() {
+            return false;
+        }
+        hay_bytes
+            .windows(needle_bytes.len())
+            .any(|w| w.iter().zip(needle_bytes).all(|(a, b)| a.to_ascii_lowercase() == *b))
+    } else {
+        haystack.to_lowercase().contains(needle_lower)
+    }
+}
+
 /// Truncate a string to at most `max_chars` characters, appending "..." if cut.
 /// Uses char boundaries to avoid splitting multi-byte UTF-8 sequences.
 fn truncate_str(s: &str, max_chars: usize) -> String {
@@ -1109,9 +1143,10 @@ async fn h_query(
                     if let Some(ref tf) = params.tag {
                         if session.resolve_tag(meta.tag_id) != tf { continue; }
                     }
-                    // Message filter (case-insensitive)
+                    // Message filter (case-insensitive) — avoids allocating
+                    // a lowercased copy of `raw` per scanned line.
                     if let Some(ref needle) = msg_needle {
-                        if !raw.to_lowercase().contains(needle.as_str()) { continue; }
+                        if !contains_ignore_case(&raw, needle.as_str()) { continue; }
                     }
                     // Level filter
                     if let Some(ref lf) = params.level {
@@ -1143,6 +1178,16 @@ async fn h_query(
     // ── PII anonymization applied inline ────────────────────────────────────
     // Per-session flag (signalled via set_mcp_anonymize, fails closed for an
     // unknown session) — see `resolve_should_anonymize` / `anonymize_for_session`.
+    //
+    // Deliberately NOT truncated (unlike h_search/h_search_with_context/
+    // h_lines_around, which all cap `raw` via `anonymize_scan_line`/
+    // `truncate_str`). h_query has no `max_line_chars` param and its doc
+    // ("Returns the raw line text plus level and tag metadata") makes no
+    // truncation caveat, unlike h_search_with_context's tool doc which
+    // spells the cap out explicitly. `n` is also capped at 200 (vs.
+    // max_results on the search endpoints), keeping worst-case payload size
+    // bounded without needing a per-line cap. Adding truncation here would
+    // silently change this endpoint's response shape for existing callers.
     let mut tag_counts: HashMap<String, usize> = HashMap::new();
     let mut level_counts: HashMap<&str, usize> = HashMap::new();
 
@@ -3600,6 +3645,57 @@ mod tests {
         let raw = "contact user@example.com for access";
         let out = anonymize_for_session(&state, "sess-a", raw);
         assert_eq!(out, raw, "flag=false must still serve raw text after recovery");
+    }
+
+    // ── contains_ignore_case ────────────────────────────────────────────────
+    // h_query's message filter used to lowercase the whole raw line on every
+    // scanned line; contains_ignore_case must match the exact same lines
+    // without that per-line allocation.
+
+    #[test]
+    fn contains_ignore_case_matches_mixed_case_ascii() {
+        let needle = "error".to_lowercase();
+        assert!(contains_ignore_case("System ERROR: boot failed", &needle));
+        assert!(contains_ignore_case("system error: boot failed", &needle));
+        assert!(contains_ignore_case("SyStEm ErRoR: boot failed", &needle));
+        assert!(!contains_ignore_case("System is fine", &needle));
+    }
+
+    #[test]
+    fn contains_ignore_case_matches_original_to_lowercase_semantics() {
+        // Cross-check against the original `haystack.to_lowercase().contains(needle)`
+        // behavior for a battery of mixed-case ASCII lines.
+        let cases: &[(&str, &str, bool)] = &[
+            ("ActivityManager: Process died", "process", true),
+            ("ActivityManager: Process died", "PROCESS", true),
+            ("no match here", "xyz", false),
+            ("", "a", false),
+            ("anything", "", true),
+            ("EdgeCaseAtEnd", "atend", true),
+            ("EdgeCaseAtEnd", "ATEND", true),
+        ];
+        for &(haystack, needle, expected) in cases {
+            let needle_lower = needle.to_lowercase();
+            assert_eq!(
+                contains_ignore_case(haystack, &needle_lower),
+                expected,
+                "haystack={haystack:?} needle={needle:?}"
+            );
+            assert_eq!(
+                contains_ignore_case(haystack, &needle_lower),
+                haystack.to_lowercase().contains(&needle_lower),
+                "mismatch vs to_lowercase().contains() for haystack={haystack:?} needle={needle:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn contains_ignore_case_falls_back_for_non_ascii_haystack() {
+        // Non-ASCII haystack takes the allocating fallback path — verify it
+        // still matches Unicode-aware `to_lowercase()` semantics exactly.
+        let needle = "CAFÉ".to_lowercase();
+        assert!(contains_ignore_case("visit the café today", &needle));
+        assert!(!contains_ignore_case("visit the cafe today", &needle));
     }
 
     // ── truncate_str / max_line_chars ────────────────────────────────────────

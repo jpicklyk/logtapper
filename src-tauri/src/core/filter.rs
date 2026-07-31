@@ -63,6 +63,36 @@ impl FilterCriteria {
             .map(Some)
             .map_err(|e| format!("Invalid regex '{pattern}': {e}"))
     }
+
+    /// Precompute the lowercased `text_search` and `tags` needles used by
+    /// [`line_matches_criteria_with_needles`].
+    ///
+    /// Call this once per scan — exactly like [`compile_regex`] — and pass
+    /// the result to every `line_matches_criteria_with_needles` call instead
+    /// of letting the needles be re-lowercased on every line. The criteria
+    /// are immutable for the whole scan, so re-lowercasing `text_search`/
+    /// `tags` per line (as the plain [`line_matches_criteria`] does, for
+    /// backward-compat single-call use) is wasted allocation repeated once
+    /// per scanned line.
+    pub fn precompute_needles(&self) -> PrecomputedNeedles {
+        PrecomputedNeedles {
+            text_search_lower: self.text_search.as_ref().map(|t| t.to_lowercase()),
+            tags_lower: self
+                .tags
+                .as_ref()
+                .map(|tags| tags.iter().map(|t| t.to_lowercase()).collect()),
+        }
+    }
+}
+
+/// Lowercased needles precomputed once per scan by
+/// [`FilterCriteria::precompute_needles`]. See that method's doc for why this
+/// exists — mirrors how a regex is compiled once via `compile_regex()`
+/// rather than per line.
+#[derive(Debug, Clone, Default)]
+pub struct PrecomputedNeedles {
+    text_search_lower: Option<String>,
+    tags_lower: Option<Vec<String>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -193,8 +223,45 @@ impl FilterSession {
 /// `tag` is the resolved tag string, `timestamp` is ns since 2000-01-01,
 /// `pid` is the process ID.
 /// `compiled_regex` is a pre-compiled regex (pass None if no regex in criteria).
+///
+/// This re-lowercases `criteria.text_search`/`criteria.tags` on every call,
+/// which is fine for one-off checks (e.g. a single watch evaluation) but
+/// wasteful in a full-scan hot loop over many lines with the same immutable
+/// criteria. Scan loops should call [`FilterCriteria::precompute_needles`]
+/// once and use [`line_matches_criteria_with_needles`] instead.
 pub fn line_matches_criteria(
     criteria: &FilterCriteria,
+    raw: &str,
+    level: LogLevel,
+    tag: &str,
+    timestamp: i64,
+    pid: i32,
+    compiled_regex: Option<&regex::Regex>,
+) -> bool {
+    line_matches_criteria_impl(criteria, None, raw, level, tag, timestamp, pid, compiled_regex)
+}
+
+/// Same as [`line_matches_criteria`], but takes needles precomputed once per
+/// scan via [`FilterCriteria::precompute_needles`] instead of re-lowercasing
+/// `text_search`/`tags` on every call. Use this in scan loops that evaluate
+/// the same (immutable-for-the-scan) criteria against many lines.
+pub fn line_matches_criteria_with_needles(
+    criteria: &FilterCriteria,
+    needles: &PrecomputedNeedles,
+    raw: &str,
+    level: LogLevel,
+    tag: &str,
+    timestamp: i64,
+    pid: i32,
+    compiled_regex: Option<&regex::Regex>,
+) -> bool {
+    line_matches_criteria_impl(criteria, Some(needles), raw, level, tag, timestamp, pid, compiled_regex)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn line_matches_criteria_impl(
+    criteria: &FilterCriteria,
+    needles: Option<&PrecomputedNeedles>,
     raw: &str,
     level: LogLevel,
     tag: &str,
@@ -206,10 +273,18 @@ pub fn line_matches_criteria(
 
     let mut checks: Vec<bool> = Vec::new();
 
-    // Text search (case-insensitive substring)
+    // Text search (case-insensitive substring). The needle (criteria.text_search)
+    // is immutable for the whole scan, so a caller scanning many lines should
+    // supply it precomputed via `needles` rather than have it lowercased here
+    // on every call.
     if let Some(ref text) = criteria.text_search {
-        let needle = text.to_lowercase();
-        checks.push(raw.to_lowercase().contains(&needle));
+        match needles.and_then(|n| n.text_search_lower.as_deref()) {
+            Some(needle) => checks.push(raw.to_lowercase().contains(needle)),
+            None => {
+                let needle = text.to_lowercase();
+                checks.push(raw.to_lowercase().contains(&needle));
+            }
+        }
     }
 
     // Regex match
@@ -231,11 +306,20 @@ pub fn line_matches_criteria(
         }
     }
 
-    // Tag filter
+    // Tag filter. `tags_lower` (the configured needle list) is immutable for
+    // the whole scan; `tag_lower` (this line's resolved tag) necessarily
+    // varies per line and can't be hoisted.
     if let Some(ref tags) = criteria.tags {
         if !tags.is_empty() {
             let tag_lower = tag.to_lowercase();
-            checks.push(tags.iter().any(|t| tag_lower.contains(&t.to_lowercase() as &str)));
+            match needles.and_then(|n| n.tags_lower.as_deref()) {
+                Some(tags_lower) => {
+                    checks.push(tags_lower.iter().any(|t| tag_lower.contains(t.as_str())));
+                }
+                None => {
+                    checks.push(tags.iter().any(|t| tag_lower.contains(&t.to_lowercase() as &str)));
+                }
+            }
         }
     }
 
@@ -539,5 +623,79 @@ mod tests {
         assert!(line_matches_criteria(&c, "app crash detected", LogLevel::Error, "", 0, 1234, None));
         assert!(!line_matches_criteria(&c, "app crash detected", LogLevel::Error, "", 0, 5678, None));
         assert!(!line_matches_criteria(&c, "app running fine", LogLevel::Error, "", 0, 1234, None));
+    }
+
+    // ── PrecomputedNeedles / line_matches_criteria_with_needles ─────────────
+    // Needle lowercasing (text_search, tags) is hoisted out of the per-line
+    // hot loop into `precompute_needles()`, called once per scan. These
+    // tests verify the needle-aware path matches the exact same lines as the
+    // original per-call `line_matches_criteria` for text and tag filters,
+    // case-insensitively.
+
+    #[test]
+    fn precomputed_text_search_matches_same_as_unhoisted() {
+        let mut c = make_criteria();
+        c.text_search = Some("ERROR".to_string());
+        let needles = c.precompute_needles();
+
+        let cases = ["Something error happened", "SOMETHING ERROR HAPPENED", "All is fine", "ErRoR mid-word"];
+        for raw in cases {
+            let expected = line_matches_criteria(&c, raw, LogLevel::Info, "", 0, 0, None);
+            let actual = line_matches_criteria_with_needles(&c, &needles, raw, LogLevel::Info, "", 0, 0, None);
+            assert_eq!(actual, expected, "mismatch for raw={raw:?}");
+        }
+        assert!(line_matches_criteria_with_needles(&c, &needles, "an ERROR occurred", LogLevel::Info, "", 0, 0, None));
+        assert!(!line_matches_criteria_with_needles(&c, &needles, "all good", LogLevel::Info, "", 0, 0, None));
+    }
+
+    #[test]
+    fn precomputed_tag_filter_matches_same_as_unhoisted() {
+        let mut c = make_criteria();
+        c.tags = Some(vec!["Activity".to_string(), "SystemServer".to_string()]);
+        let needles = c.precompute_needles();
+
+        let cases: &[(&str, bool)] = &[
+            ("ActivityManager", true),
+            ("activitymanager", true),
+            ("ACTIVITYTHREAD", true),
+            ("SystemServer", true),
+            ("Zygote", false),
+        ];
+        for &(tag, expected) in cases {
+            let via_old = line_matches_criteria(&c, "x", LogLevel::Info, tag, 0, 0, None);
+            let via_new = line_matches_criteria_with_needles(&c, &needles, "x", LogLevel::Info, tag, 0, 0, None);
+            assert_eq!(via_old, expected, "baseline mismatch for tag={tag:?}");
+            assert_eq!(via_new, expected, "hoisted-needle mismatch for tag={tag:?}");
+        }
+    }
+
+    #[test]
+    fn precomputed_needles_combine_with_pid_and_regex() {
+        let mut c = make_criteria();
+        c.combine = CombineMode::And;
+        c.text_search = Some("crash".to_string());
+        c.tags = Some(vec!["Zygote".to_string()]);
+        c.pids = Some(vec![1234]);
+        let needles = c.precompute_needles();
+
+        assert!(line_matches_criteria_with_needles(
+            &c, &needles, "app CRASH detected", LogLevel::Error, "ZYGOTE", 0, 1234, None
+        ));
+        assert!(!line_matches_criteria_with_needles(
+            &c, &needles, "app CRASH detected", LogLevel::Error, "ZYGOTE", 0, 5678, None
+        ));
+        assert!(!line_matches_criteria_with_needles(
+            &c, &needles, "app running fine", LogLevel::Error, "ZYGOTE", 0, 1234, None
+        ));
+    }
+
+    #[test]
+    fn precompute_needles_is_none_when_criteria_unset() {
+        let c = make_criteria();
+        let needles = c.precompute_needles();
+        // No text_search/tags configured — should behave identically to the
+        // no-filter case for both entry points.
+        assert!(line_matches_criteria(&c, "anything", LogLevel::Info, "AnyTag", 0, 0, None));
+        assert!(line_matches_criteria_with_needles(&c, &needles, "anything", LogLevel::Info, "AnyTag", 0, 0, None));
     }
 }

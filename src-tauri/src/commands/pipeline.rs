@@ -589,29 +589,25 @@ pub fn execute_pipeline(
     // ── Finalize all results ─────────────────────────────────────────────────
     let output = core.finish(&forward_pii);
 
-    // ── Store state tracker + correlator results ─────────────────────────────
-    // Overwritten unconditionally (even with an empty map) for the same reason
-    // `pipeline_results` below is: a rerun that deselects every tracker/
-    // correlator (or whose source-type exclusion drops them all) must not
-    // leave the previous run's results stranded and still served to the UI
-    // and MCP bridge. `output.tracker_results` / `output.correlator_results`
-    // hold exactly one entry per selected def for *this* run (built from
-    // `PipelineCore::tracker_runs` / `correlator_runs`, seeded from `defs` —
-    // see `pipeline_core.rs::finish`), so an empty map here means "no such
-    // processors ran this time", not "ran and produced nothing".
-    store_tracker_and_correlator_results(
-        state,
-        session_id,
-        output.tracker_results,
-        output.correlator_results,
-    );
-
     // ── Collect summaries ────────────────────────────────────────────────────
+    // Order preserved from before this fix: reporter, state tracker,
+    // transformer, correlator. Tracker/correlator summary counts are read
+    // from `output` via borrowed `.get()` lookups (in the same
+    // `defs.tracker_defs` / `defs.correlator_defs` order the old
+    // re-lock-and-read code used) BEFORE `output.tracker_results` /
+    // `output.correlator_results` are moved (not cloned) into
+    // `store_tracker_and_correlator_results` further down — this avoids
+    // re-locking `state.state_tracker_results` / `state.correlator_results`
+    // afterward just to read back the same data this run already produced.
     let mut summaries: Vec<PipelineRunSummary> = Vec::new();
     let mut session_pipeline_results: HashMap<String, _> = HashMap::new();
 
-    // Reporter results
-    for (proc_id, result) in &output.reporter_results {
+    // Reporter results — consume `output.reporter_results` by value so each
+    // RunResult (which owns a Vec<Emission>, potentially large) is moved
+    // straight into `session_pipeline_results` instead of being deep-cloned.
+    // Only `first_script_error` (a small `Option<String>`) still needs a
+    // clone, since the summary and the stored result both need it.
+    for (proc_id, result) in output.reporter_results {
         summaries.push(PipelineRunSummary {
             processor_id: proc_id.clone(),
             matched_lines: result.matched_line_nums.len(),
@@ -621,25 +617,21 @@ pub fn execute_pipeline(
             scanned_from,
             skipped: None,
         });
-        session_pipeline_results.insert(proc_id.clone(), result.clone());
+        session_pipeline_results.insert(proc_id, result);
     }
 
     // StateTracker summaries (transition count as matched_lines)
-    if let Ok(str_results) = state.state_tracker_results.lock() {
-        if let Some(session_str) = str_results.get(session_id) {
-            for (tracker_id, _) in &defs.tracker_defs {
-                if let Some(result) = session_str.get(tracker_id.as_str()) {
-                    summaries.push(PipelineRunSummary {
-                        processor_id: tracker_id.clone(),
-                        matched_lines: result.transitions.len(),
-                        emission_count: 0,
-                        script_errors: 0,
-                        first_script_error: None,
-                        scanned_from,
-                        skipped: None,
-                    });
-                }
-            }
+    for (tracker_id, _) in &defs.tracker_defs {
+        if let Some(result) = output.tracker_results.get(tracker_id.as_str()) {
+            summaries.push(PipelineRunSummary {
+                processor_id: tracker_id.clone(),
+                matched_lines: result.transitions.len(),
+                emission_count: 0,
+                script_errors: 0,
+                first_script_error: None,
+                scanned_from,
+                skipped: None,
+            });
         }
     }
 
@@ -657,23 +649,38 @@ pub fn execute_pipeline(
     }
 
     // Correlator summaries (event count as emission_count)
-    if let Ok(cr) = state.correlator_results.lock() {
-        if let Some(session_map) = cr.get(session_id) {
-            for (corr_id, _) in &defs.correlator_defs {
-                if let Some(result) = session_map.get(corr_id.as_str()) {
-                    summaries.push(PipelineRunSummary {
-                        processor_id: corr_id.clone(),
-                        matched_lines: result.events.len(),
-                        emission_count: result.events.len(),
-                        script_errors: 0,
-                        first_script_error: None,
-                        scanned_from,
-                        skipped: None,
-                    });
-                }
-            }
+    for (corr_id, _) in &defs.correlator_defs {
+        if let Some(result) = output.correlator_results.get(corr_id.as_str()) {
+            summaries.push(PipelineRunSummary {
+                processor_id: corr_id.clone(),
+                matched_lines: result.events.len(),
+                emission_count: result.events.len(),
+                script_errors: 0,
+                first_script_error: None,
+                scanned_from,
+                skipped: None,
+            });
         }
     }
+
+    // ── Store state tracker + correlator results ─────────────────────────────
+    // Overwritten unconditionally (even with an empty map) for the same reason
+    // `pipeline_results` below is: a rerun that deselects every tracker/
+    // correlator (or whose source-type exclusion drops them all) must not
+    // leave the previous run's results stranded and still served to the UI
+    // and MCP bridge. `output.tracker_results` / `output.correlator_results`
+    // hold exactly one entry per selected def for *this* run (built from
+    // `PipelineCore::tracker_runs` / `correlator_runs`, seeded from `defs` —
+    // see `pipeline_core.rs::finish`), so an empty map here means "no such
+    // processors ran this time", not "ran and produced nothing". Moved (not
+    // cloned) into storage — the summary counts above were already extracted
+    // from borrowed references.
+    store_tracker_and_correlator_results(
+        state,
+        session_id,
+        output.tracker_results,
+        output.correlator_results,
+    );
 
     {
         let mut pr = lock_or_err(&state.pipeline_results, "pipeline_results")?;

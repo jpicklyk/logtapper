@@ -1479,13 +1479,25 @@ pub async fn get_dumpstate_metadata(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<DumpstateMetadata, String> {
-    let sessions = lock_or_err(&state.sessions, "sessions")?;
+    get_dumpstate_metadata_inner(&state, &session_id).await
+}
 
-    let session = sessions
-        .get(&session_id)
-        .ok_or_else(|| format!("Session '{session_id}' not found"))?;
-
-    let source = session.primary_source().ok_or("No sources in session")?;
+/// Inner implementation taking `&AppState` directly (rather than Tauri's
+/// `State<'_, AppState>` wrapper) so it can be exercised in unit tests
+/// without a running Tauri app — mirrors `close_session_inner` /
+/// `stop_mcp_bridge_inner` elsewhere in `commands/`.
+pub(crate) async fn get_dumpstate_metadata_inner(
+    state: &AppState,
+    session_id: &str,
+) -> Result<DumpstateMetadata, String> {
+    let total_lines = {
+        let sessions = lock_or_err(&state.sessions, "sessions")?;
+        let session = sessions
+            .get(session_id)
+            .ok_or_else(|| format!("Session '{session_id}' not found"))?;
+        let source = session.primary_source().ok_or("No sources in session")?;
+        source.total_lines()
+    };
 
     let mut meta = DumpstateMetadata {
         build_string: None,
@@ -1506,102 +1518,137 @@ pub async fn get_dumpstate_metadata(
     let mut kernel_next = false; // next plain content line after KERNEL VERSION header
     let mut in_props_section = false;
     let mut passed_first_section = false;
+    let mut done = false;
 
-    for (i, line_m) in source.line_meta_slice().iter().enumerate() {
-        let raw_cow = source.raw_line(i);
-        let raw = raw_cow.as_deref().unwrap_or("").trim_end_matches(['\r', '\n']);
+    // Scanned in chunks, re-acquiring the session lock per chunk and yielding
+    // in between — same pattern as `search_logs` above. Reusing
+    // `SEARCH_CHUNK_SIZE` as the chunk/yield interval keeps this in step with
+    // that established rhythm rather than inventing a second tuning knob.
+    let mut chunk_start = 0;
+    while chunk_start < total_lines && !done {
+        let chunk_end = (chunk_start + SEARCH_CHUNK_SIZE).min(total_lines);
 
-        // Detect section boundaries from tag field (BugreportParser sets tag on ------ lines).
-        if raw.starts_with("------") {
-            if !raw.contains("was the duration of") {
-                // Section start header.
-                passed_first_section = true;
-                let tag = session.resolve_tag(line_m.tag_id);
-                in_kernel_section = tag == "KERNEL VERSION";
-                in_props_section = tag == "SYSTEM PROPERTIES";
-                kernel_next = in_kernel_section;
-            }
-            continue;
-        }
-
-        // Skip decorative separators and == dumpstate: lines.
-        if raw.starts_with("====") || raw.starts_with("==") {
-            continue;
-        }
-
-        if in_kernel_section && kernel_next && !raw.trim().is_empty() {
-            meta.kernel_version = Some(raw.trim().to_string());
-            kernel_next = false;
-            in_kernel_section = false;
-            continue;
-        }
-
-        if in_props_section {
-            // Pattern: [ro.build.version.sdk]: [34]
-            if let Some(rest) = raw.strip_prefix("[ro.build.version.sdk]: [") {
-                meta.sdk_version = rest.strip_suffix(']').map(str::trim).map(String::from);
-            } else if let Some(rest) = raw.strip_prefix("[ro.product.model]: [") {
-                meta.device_model = rest.strip_suffix(']').map(str::trim).map(String::from);
-            } else if let Some(rest) = raw.strip_prefix("[ro.product.manufacturer]: [") {
-                meta.manufacturer = rest.strip_suffix(']').map(str::trim).map(String::from);
-            }
-            continue;
-        }
-
-        // Header lines before the first section.
-        if !passed_first_section {
-            if raw.starts_with("Build: ") && meta.build_string.is_none() {
-                let value = raw["Build: ".len()..].trim().to_string();
-                // Extract build type from trailing "(user)" / "(userdebug)" / "(eng)".
-                if let (Some(lp), Some(rp)) = (value.rfind('('), value.rfind(')')) {
-                    if lp < rp {
-                        meta.build_type = Some(value[lp + 1..rp].to_string());
-                    }
-                }
-                meta.build_string = Some(value);
-            } else if raw.starts_with("Build fingerprint: '") && meta.build_fingerprint.is_none() {
-                let fp = raw["Build fingerprint: '".len()..]
-                    .trim_end_matches('\'')
-                    .trim()
-                    .to_string();
-                // Extract OS version from fingerprint: brand/product/device:RELEASE/id/...
-                // Third `:` separates device from RELEASE.
-                if let Some(colon_pos) = fp.find(':') {
-                    let after = &fp[colon_pos + 1..];
-                    if let Some(slash_pos) = after.find('/') {
-                        meta.os_version = Some(after[..slash_pos].to_string());
-                    }
-                }
-                meta.build_fingerprint = Some(fp);
-            } else if raw.starts_with("Bootloader: ") && meta.bootloader.is_none() {
-                meta.bootloader = Some(raw["Bootloader: ".len()..].trim().to_string());
-            } else if raw.contains("androidboot.serialno") && meta.serial.is_none() {
-                // Handles both:
-                //   androidboot.serialno = "R52X10EJCFA"        (standalone line)
-                //   ...androidboot.serialno=R52X10EJCFA ...     (kernel cmdline)
-                if let Some(sn_pos) = raw.find("androidboot.serialno") {
-                    let after = raw[sn_pos + "androidboot.serialno".len()..].trim_start_matches(' ');
-                    if let Some(rest) = after.strip_prefix('=') {
-                        let rest = rest.trim_start_matches([' ', '"']);
-                        let val: String = rest.chars().take_while(|&c| c != ' ' && c != '"').collect();
-                        if !val.is_empty() {
-                            meta.serial = Some(val);
-                        }
-                    }
-                }
-            } else if raw.starts_with("Uptime: ") && meta.uptime.is_none() {
-                meta.uptime = Some(raw["Uptime: ".len()..].trim().to_string());
-            }
-        }
-
-        // Stop scanning once we have all header data and have seen system properties.
-        if passed_first_section
-            && in_props_section
-            && meta.sdk_version.is_some()
-            && meta.device_model.is_some()
-            && meta.manufacturer.is_some()
         {
-            break;
+            let sessions = lock_or_err(&state.sessions, "sessions")?;
+            let session = sessions
+                .get(session_id)
+                .ok_or_else(|| format!("Session '{session_id}' not found"))?;
+            let source = session.primary_source().ok_or("No sources in session")?;
+
+            for i in chunk_start..chunk_end {
+                let Some(line_m) = source.meta_at(i) else {
+                    continue;
+                };
+                let raw_cow = source.raw_line(i);
+                let raw = raw_cow.as_deref().unwrap_or("").trim_end_matches(['\r', '\n']);
+
+                // Detect section boundaries from tag field (BugreportParser sets tag on ------ lines).
+                if raw.starts_with("------") {
+                    if !raw.contains("was the duration of") {
+                        // Section start header.
+                        passed_first_section = true;
+                        let tag = session.resolve_tag(line_m.tag_id);
+                        in_kernel_section = tag == "KERNEL VERSION";
+                        in_props_section = tag == "SYSTEM PROPERTIES";
+                        kernel_next = in_kernel_section;
+                    }
+                    continue;
+                }
+
+                // Skip decorative separators and == dumpstate: lines.
+                if raw.starts_with("====") || raw.starts_with("==") {
+                    continue;
+                }
+
+                if in_kernel_section && kernel_next && !raw.trim().is_empty() {
+                    meta.kernel_version = Some(raw.trim().to_string());
+                    kernel_next = false;
+                    in_kernel_section = false;
+                    continue;
+                }
+
+                if in_props_section {
+                    // Pattern: [ro.build.version.sdk]: [34]
+                    if let Some(rest) = raw.strip_prefix("[ro.build.version.sdk]: [") {
+                        meta.sdk_version = rest.strip_suffix(']').map(str::trim).map(String::from);
+                    } else if let Some(rest) = raw.strip_prefix("[ro.product.model]: [") {
+                        meta.device_model = rest.strip_suffix(']').map(str::trim).map(String::from);
+                    } else if let Some(rest) = raw.strip_prefix("[ro.product.manufacturer]: [") {
+                        meta.manufacturer = rest.strip_suffix(']').map(str::trim).map(String::from);
+                    }
+
+                    // Stop scanning once we have all header data, the kernel
+                    // version, and every system property we track. This check
+                    // MUST live here, before this branch's own `continue` —
+                    // every in_props_section iteration previously fell through
+                    // to that `continue` before a check placed after the loop
+                    // body could ever run, making the old break unreachable
+                    // dead code (every call scanned the whole source).
+                    if passed_first_section
+                        && meta.kernel_version.is_some()
+                        && meta.sdk_version.is_some()
+                        && meta.device_model.is_some()
+                        && meta.manufacturer.is_some()
+                    {
+                        done = true;
+                        break;
+                    }
+
+                    continue;
+                }
+
+                // Header lines before the first section.
+                if !passed_first_section {
+                    if raw.starts_with("Build: ") && meta.build_string.is_none() {
+                        let value = raw["Build: ".len()..].trim().to_string();
+                        // Extract build type from trailing "(user)" / "(userdebug)" / "(eng)".
+                        if let (Some(lp), Some(rp)) = (value.rfind('('), value.rfind(')')) {
+                            if lp < rp {
+                                meta.build_type = Some(value[lp + 1..rp].to_string());
+                            }
+                        }
+                        meta.build_string = Some(value);
+                    } else if raw.starts_with("Build fingerprint: '") && meta.build_fingerprint.is_none() {
+                        let fp = raw["Build fingerprint: '".len()..]
+                            .trim_end_matches('\'')
+                            .trim()
+                            .to_string();
+                        // Extract OS version from fingerprint: brand/product/device:RELEASE/id/...
+                        // Third `:` separates device from RELEASE.
+                        if let Some(colon_pos) = fp.find(':') {
+                            let after = &fp[colon_pos + 1..];
+                            if let Some(slash_pos) = after.find('/') {
+                                meta.os_version = Some(after[..slash_pos].to_string());
+                            }
+                        }
+                        meta.build_fingerprint = Some(fp);
+                    } else if raw.starts_with("Bootloader: ") && meta.bootloader.is_none() {
+                        meta.bootloader = Some(raw["Bootloader: ".len()..].trim().to_string());
+                    } else if raw.contains("androidboot.serialno") && meta.serial.is_none() {
+                        // Handles both:
+                        //   androidboot.serialno = "R52X10EJCFA"        (standalone line)
+                        //   ...androidboot.serialno=R52X10EJCFA ...     (kernel cmdline)
+                        if let Some(sn_pos) = raw.find("androidboot.serialno") {
+                            let after = raw[sn_pos + "androidboot.serialno".len()..].trim_start_matches(' ');
+                            if let Some(rest) = after.strip_prefix('=') {
+                                let rest = rest.trim_start_matches([' ', '"']);
+                                let val: String = rest.chars().take_while(|&c| c != ' ' && c != '"').collect();
+                                if !val.is_empty() {
+                                    meta.serial = Some(val);
+                                }
+                            }
+                        }
+                    } else if raw.starts_with("Uptime: ") && meta.uptime.is_none() {
+                        meta.uptime = Some(raw["Uptime: ".len()..].trim().to_string());
+                    }
+                }
+            }
+        } // lock released
+
+        chunk_start = chunk_end;
+
+        if !done {
+            tokio::task::yield_now().await;
         }
     }
 
@@ -2698,5 +2745,198 @@ mod tests {
     #[ignore = "requires Tauri AppHandle — run as integration test with the running app"]
     fn load_lts_file_inner_returns_one_result_per_session() {
         // Intentionally empty — serves as a documentation stub for future integration test.
+    }
+
+    // -------------------------------------------------------------------------
+    // get_dumpstate_metadata_inner — early-exit reachability (bug 9716f391d)
+    // -------------------------------------------------------------------------
+    //
+    // Before the fix, the "stop scanning once everything is found" check sat
+    // AFTER the loop body's per-branch `continue`s, so it was unreachable dead
+    // code: every `in_props_section` iteration hit `continue` first, and every
+    // call scanned the entire source regardless of how early the needed data
+    // appeared. These tests build a source where the header, kernel version,
+    // and all three system properties appear within the first dozen lines,
+    // followed by tens of thousands of additional lines — including, crucially,
+    // a SECOND, differently-valued occurrence of each system property. The
+    // props-section fields (`sdk_version` / `device_model` / `manufacturer`)
+    // have no `.is_none()` guard, so without early-exit the second occurrence
+    // would silently overwrite the first as the scan continued to EOF. The
+    // returned metadata therefore only matches the FIRST occurrence if the
+    // scan actually stopped once the completion condition was met.
+
+    /// Header + kernel section + the three system properties, each appearing
+    /// exactly once. Shared prefix for both fixtures below.
+    fn dumpstate_base_prefix() -> String {
+        let mut out = String::new();
+        out.push_str("========================================================\n");
+        out.push_str("== dumpstate: 2024-01-15 10:00:00\n");
+        out.push_str("========================================================\n");
+        out.push_str("Build: userdebug/product/device:14/UP1A.231005.007/1234567:userdebug/test-keys (userdebug)\n");
+        out.push_str("Build fingerprint: 'brand/product/device:14/UP1A.231005.007/1234567:userdebug/test-keys'\n");
+        out.push_str("Bootloader: unknown\n");
+        out.push_str("androidboot.serialno=ABC123XYZ\n");
+        out.push_str("Uptime: up 1 day, 2:03\n");
+        out.push_str("------ KERNEL VERSION (uname -a) ------\n");
+        out.push_str("Linux localhost 5.15.0-test #1 SMP PREEMPT\n");
+        out.push_str("------ 0.001s was the duration of 'KERNEL VERSION' ------\n");
+        out.push_str("------ SYSTEM PROPERTIES ------\n");
+        out.push_str("[ro.build.version.sdk]: [34]\n");
+        out.push_str("[ro.product.model]: [Pixel Test]\n");
+        out.push_str("[ro.product.manufacturer]: [Google]\n");
+        out
+    }
+
+    /// Base prefix followed by `junk_lines` unrelated property lines, then a
+    /// SECOND, differently-valued occurrence of every tracked property, then
+    /// more junk, then the section footer. The props-section fields
+    /// (`sdk_version` / `device_model` / `manufacturer`) have no `.is_none()`
+    /// guard, so without early-exit the second occurrence silently overwrites
+    /// the first as the scan continues to EOF — this is the fixture that
+    /// catches a regression back to the old unreachable-break behavior.
+    fn dumpstate_fixture_with_overwrite_trap(junk_lines: usize) -> Vec<u8> {
+        let mut out = dumpstate_base_prefix();
+
+        // Spans multiple SEARCH_CHUNK_SIZE-sized chunks, so the test also
+        // exercises the chunk/re-lock/yield boundary — not just a
+        // single-chunk scan.
+        for i in 0..junk_lines {
+            out.push_str(&format!("[some.other.prop.{i}]: [junk-{i}]\n"));
+        }
+
+        out.push_str("[ro.build.version.sdk]: [999]\n");
+        out.push_str("[ro.product.model]: [Should Not Appear]\n");
+        out.push_str("[ro.product.manufacturer]: [Should Not Appear]\n");
+        for i in 0..2_000 {
+            out.push_str(&format!("[trailing.prop.{i}]: [more-junk-{i}]\n"));
+        }
+        out.push_str("------ 0.001s was the duration of 'SYSTEM PROPERTIES' ------\n");
+
+        out.into_bytes()
+    }
+
+    /// Base prefix with each field appearing exactly once — an ordinary,
+    /// non-adversarial dumpstate file with no trap and no early-exit pressure.
+    fn dumpstate_fixture_minimal() -> Vec<u8> {
+        let mut out = dumpstate_base_prefix();
+        out.push_str("------ 0.001s was the duration of 'SYSTEM PROPERTIES' ------\n");
+        out.into_bytes()
+    }
+
+    fn insert_bugreport_session(state: &AppState, session_id: &str, data: Vec<u8>) {
+        let mut session = AnalysisSession::new(session_id.to_string());
+        session
+            .add_zip_source(data, "src1".to_string(), "bugreport.txt".to_string())
+            .expect("add_zip_source");
+        state.sessions.lock().unwrap().insert(session_id.to_string(), session);
+    }
+
+    #[tokio::test]
+    async fn get_dumpstate_metadata_stops_early_and_keeps_first_values() {
+        let state = make_state();
+        // 25,000 junk lines sit AFTER the fields are found. The scan should
+        // never reach them (it breaks out of the very first chunk), which is
+        // exactly what this test is checking — see the "crosses chunk
+        // boundary" test below for the case where completion genuinely spans
+        // multiple re-locked chunks.
+        let data = dumpstate_fixture_with_overwrite_trap(25_000);
+        insert_bugreport_session(&state, "sess-dumpstate", data);
+
+        let meta = get_dumpstate_metadata_inner(&state, "sess-dumpstate")
+            .await
+            .expect("get_dumpstate_metadata_inner");
+
+        assert_eq!(meta.build_fingerprint.as_deref(), Some("brand/product/device:14/UP1A.231005.007/1234567:userdebug/test-keys"));
+        assert_eq!(meta.os_version.as_deref(), Some("14"));
+        assert_eq!(meta.build_type.as_deref(), Some("userdebug"));
+        assert_eq!(meta.bootloader.as_deref(), Some("unknown"));
+        assert_eq!(meta.serial.as_deref(), Some("ABC123XYZ"));
+        assert_eq!(meta.uptime.as_deref(), Some("up 1 day, 2:03"));
+        assert_eq!(meta.kernel_version.as_deref(), Some("Linux localhost 5.15.0-test #1 SMP PREEMPT"));
+
+        // The load-bearing assertions: these must hold the FIRST occurrence's
+        // values, not the second ("999" / "Should Not Appear") that sits tens
+        // of thousands of lines later. That is only possible if the scan
+        // actually stopped once these were first found.
+        assert_eq!(meta.sdk_version.as_deref(), Some("34"),
+            "must keep the first sdk_version, proving the scan stopped before the second occurrence");
+        assert_eq!(meta.device_model.as_deref(), Some("Pixel Test"),
+            "must keep the first device_model, proving the scan stopped before the second occurrence");
+        assert_eq!(meta.manufacturer.as_deref(), Some("Google"),
+            "must keep the first manufacturer, proving the scan stopped before the second occurrence");
+    }
+
+    #[tokio::test]
+    async fn get_dumpstate_metadata_matches_full_scan_when_data_is_sparse() {
+        // Regression guard for the "preserve the exact metadata result"
+        // requirement: an ordinary file with no duplicate/trap data must
+        // still parse identically to a full, un-early-exited scan.
+        let state = make_state();
+        let data = dumpstate_fixture_minimal();
+        insert_bugreport_session(&state, "sess-dumpstate-small", data);
+
+        let meta = get_dumpstate_metadata_inner(&state, "sess-dumpstate-small")
+            .await
+            .expect("get_dumpstate_metadata_inner");
+
+        assert_eq!(meta.sdk_version.as_deref(), Some("34"));
+        assert_eq!(meta.device_model.as_deref(), Some("Pixel Test"));
+        assert_eq!(meta.manufacturer.as_deref(), Some("Google"));
+        assert_eq!(meta.kernel_version.as_deref(), Some("Linux localhost 5.15.0-test #1 SMP PREEMPT"));
+    }
+
+    #[tokio::test]
+    async fn get_dumpstate_metadata_missing_session_errors() {
+        let state = make_state();
+        let result = get_dumpstate_metadata_inner(&state, "does-not-exist").await;
+        assert!(result.is_err(), "unknown session id must error, not panic");
+    }
+
+    #[tokio::test]
+    async fn get_dumpstate_metadata_completes_across_chunk_boundary() {
+        // Padding sits BETWEEN the kernel section and the system properties
+        // section, so the completion point (all four fields found) lands past
+        // line 10,000 — SEARCH_CHUNK_SIZE — meaning the outer chunk loop must
+        // re-acquire the session lock, yield, and continue with `in_kernel_section`
+        // / `kernel_next` / `passed_first_section` / the partially-filled `meta`
+        // all correctly carried over from the first chunk before the second
+        // chunk can find the remaining fields.
+        let mut out = String::new();
+        out.push_str("========================================================\n");
+        out.push_str("== dumpstate: 2024-01-15 10:00:00\n");
+        out.push_str("========================================================\n");
+        out.push_str("Build: userdebug/product/device:14/UP1A.231005.007/1234567:userdebug/test-keys (userdebug)\n");
+        out.push_str("Build fingerprint: 'brand/product/device:14/UP1A.231005.007/1234567:userdebug/test-keys'\n");
+        out.push_str("Bootloader: unknown\n");
+        out.push_str("androidboot.serialno=ABC123XYZ\n");
+        out.push_str("Uptime: up 1 day, 2:03\n");
+        out.push_str("------ KERNEL VERSION (uname -a) ------\n");
+        out.push_str("Linux localhost 5.15.0-test #1 SMP PREEMPT\n");
+        out.push_str("------ 0.001s was the duration of 'KERNEL VERSION' ------\n");
+        // Padding: harmless content lines that fall through every branch as a
+        // no-op (passed_first_section is already true, so they don't match
+        // the header-field block either). Pushes the props section well past
+        // the SEARCH_CHUNK_SIZE (10,000) boundary.
+        for i in 0..12_000 {
+            out.push_str(&format!("padding line {i}\n"));
+        }
+        out.push_str("------ SYSTEM PROPERTIES ------\n");
+        out.push_str("[ro.build.version.sdk]: [34]\n");
+        out.push_str("[ro.product.model]: [Pixel Test]\n");
+        out.push_str("[ro.product.manufacturer]: [Google]\n");
+        out.push_str("------ 0.001s was the duration of 'SYSTEM PROPERTIES' ------\n");
+
+        let state = make_state();
+        insert_bugreport_session(&state, "sess-dumpstate-crossing", out.into_bytes());
+
+        let meta = get_dumpstate_metadata_inner(&state, "sess-dumpstate-crossing")
+            .await
+            .expect("get_dumpstate_metadata_inner");
+
+        assert_eq!(meta.kernel_version.as_deref(), Some("Linux localhost 5.15.0-test #1 SMP PREEMPT"),
+            "kernel_version found in chunk 1 must survive into chunk 2");
+        assert_eq!(meta.sdk_version.as_deref(), Some("34"));
+        assert_eq!(meta.device_model.as_deref(), Some("Pixel Test"));
+        assert_eq!(meta.manufacturer.as_deref(), Some("Google"));
     }
 }
