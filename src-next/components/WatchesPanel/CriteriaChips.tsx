@@ -1,20 +1,12 @@
 import React from 'react';
 import type { FilterCriteria } from '../../bridge/types';
+import { LEVEL_SHORT } from '../../bridge/types';
 import styles from './WatchesPanel.module.css';
 import clsx from 'clsx';
 
 interface CriteriaChipsProps {
   criteria: FilterCriteria;
 }
-
-const LEVEL_SHORT: Record<string, string> = {
-  Verbose: 'V',
-  Debug: 'D',
-  Info: 'I',
-  Warn: 'W',
-  Error: 'E',
-  Fatal: 'F',
-};
 
 const DANGER_LEVELS = new Set(['Error', 'Fatal']);
 const WARNING_LEVELS = new Set(['Warn']);

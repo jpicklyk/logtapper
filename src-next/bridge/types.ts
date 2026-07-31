@@ -692,6 +692,35 @@ export interface FilterCriteria {
   combine?: CombineMode;
 }
 
+/** Short single-letter labels for LogLevel, used in compact chip/text displays. */
+export const LEVEL_SHORT: Record<string, string> = {
+  Verbose: 'V',
+  Debug: 'D',
+  Info: 'I',
+  Warn: 'W',
+  Error: 'E',
+  Fatal: 'F',
+};
+
+/**
+ * Ordered list of human-readable parts describing a FilterCriteria (text
+ * search, regex, levels, tags, pids). Consumers decide how to turn the array
+ * into UI — e.g. join into a single string for a toast message. Doesn't cover
+ * `combine` — callers that need to call out OR-mode (e.g. CriteriaChips'
+ * accent chip) render that separately.
+ */
+export function describeCriteriaParts(criteria: FilterCriteria): string[] {
+  const parts: string[] = [];
+  if (criteria.textSearch) parts.push(`text:${criteria.textSearch}`);
+  if (criteria.regex) parts.push(`/${criteria.regex}/`);
+  if (criteria.logLevels?.length) {
+    parts.push(criteria.logLevels.map((l) => LEVEL_SHORT[l] ?? l).join(','));
+  }
+  if (criteria.tags?.length) parts.push(`tag:${criteria.tags.join(',')}`);
+  if (criteria.pids?.length) parts.push(`pid:${criteria.pids.join(',')}`);
+  return parts;
+}
+
 export interface FilterCreateResult {
   filterId: string;
   sessionId: string;
