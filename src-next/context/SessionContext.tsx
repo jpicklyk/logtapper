@@ -14,6 +14,7 @@ export interface FilterState {
   streamFilter: string;
   timeFilterStart: string;
   timeFilterEnd: string;
+  timeFilterLineNums: number[] | null;
   filterScanning: boolean;
   filteredLineNums: number[] | null;
   filterParseError: string | null;
@@ -24,6 +25,7 @@ const DEFAULT_FILTER_STATE: FilterState = {
   streamFilter: '',
   timeFilterStart: '',
   timeFilterEnd: '',
+  timeFilterLineNums: null,
   filterScanning: false,
   filteredLineNums: null,
   filterParseError: null,
@@ -32,7 +34,7 @@ const DEFAULT_FILTER_STATE: FilterState = {
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
-interface SessionState {
+export interface SessionState {
   sessions: Map<string, LoadResult>;
   paneSessionMap: Map<string, string>;
   loadingPaneIds: Set<string>;
@@ -44,7 +46,7 @@ interface SessionState {
   activePaneId: string | null;
 }
 
-const initialState: SessionState = {
+export const initialState: SessionState = {
   sessions: new Map(),
   paneSessionMap: new Map(),
   loadingPaneIds: new Set(),
@@ -58,7 +60,7 @@ const initialState: SessionState = {
 
 // ── Actions ───────────────────────────────────────────────────────────────────
 
-type SessionAction =
+export type SessionAction =
   | { type: 'session:registered'; paneId: string; result: LoadResult }
   | { type: 'session:unregistered'; paneId: string }
   | { type: 'session:updated'; sessionId: string; updater: (prev: LoadResult) => LoadResult }
@@ -76,7 +78,7 @@ type SessionAction =
 
 // ── Reducer ───────────────────────────────────────────────────────────────────
 
-function sessionReducer(state: SessionState, action: SessionAction): SessionState {
+export function sessionReducer(state: SessionState, action: SessionAction): SessionState {
   diag('context', `reducer: ${action.type}`, 'sessionId' in action ? { sessionId: (action as { sessionId?: string }).sessionId } : undefined);
   switch (action.type) {
     case 'session:registered': {
