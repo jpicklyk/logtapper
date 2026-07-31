@@ -337,7 +337,7 @@ describe('CacheManager', () => {
     const h2 = mgr.allocateView('s2');
 
     expect(mgr.getPriority('s2')).toBe('visible');
-    expect(h2.allocation).toBe(30_000);
+    expect(h2.allocation).toBe(40_000);
   });
 
   it('setFocus changes allocations', () => {
@@ -349,7 +349,7 @@ describe('CacheManager', () => {
     expect(mgr.getPriority('s2')).toBe('focused');
     expect(mgr.getPriority('s1')).toBe('visible');
     expect(h2.allocation).toBe(60_000);
-    expect(h1.allocation).toBe(30_000);
+    expect(h1.allocation).toBe(40_000);
   });
 
   it('releaseView reclaims budget and redistributes', () => {
@@ -404,10 +404,10 @@ describe('CacheManager', () => {
     const h2 = mgr.allocateView('s2');
     const h3 = mgr.allocateView('s3');
 
-    // s1 = focused (60k), s2 + s3 = visible (30k / 2 = 15k each)
+    // s1 = focused (60k), s2 + s3 = visible (40k / 2 = 20k each)
     expect(h1.allocation).toBe(60_000);
-    expect(h2.allocation).toBe(15_000);
-    expect(h3.allocation).toBe(15_000);
+    expect(h2.allocation).toBe(20_000);
+    expect(h3.allocation).toBe(20_000);
   });
 
   // -----------------------------------------------------------------------
@@ -423,11 +423,11 @@ describe('CacheManager', () => {
       visibleHandles.push(mgr.allocateView(`v${i}`));
     }
 
-    // visibleBudget = 30,000, perVisible = floor(30000/9) = 3333 — above MIN_FLOOR
+    // visibleBudget = 40,000, perVisible = floor(40000/9) = 4444 — above MIN_FLOOR
     // No clamping needed, so focused keeps full 60% allocation
     expect(focused.allocation).toBe(60_000);
     for (const h of visibleHandles) {
-      expect(h.allocation).toBe(Math.floor(30_000 / 9)); // 3333 exactly
+      expect(h.allocation).toBe(Math.floor(40_000 / 9)); // 4444 exactly
     }
 
     // Verify total does not exceed budget (floor truncation may leave slack)
@@ -446,11 +446,11 @@ describe('CacheManager', () => {
       visibleHandles.push(mgr.allocateView(`v${i}`));
     }
 
-    // visibleBudget = floor(20000 * 0.3) = 6000, perVisible = 6000/15 = 400
+    // visibleBudget = floor(20000 * 0.4) = 8000, perVisible = floor(8000/15) = 533
     // Each visible view clamped to MIN_FLOOR=2000
-    // Floor overshoot = 15 * (2000 - 400) = 24,000
+    // Floor overshoot = 15 * (2000 - 533) = 22,005
     // focusedBudget = floor(20000 * 0.6) = 12,000
-    // adjustedFocused = max(2000, 12000 - 24000) = 2000 (clamped to own floor)
+    // adjustedFocused = max(2000, 12000 - 22005) = 2000 (clamped to own floor)
     expect(focused.allocation).toBe(2000);
     for (const h of visibleHandles) {
       expect(h.allocation).toBe(2000);
@@ -458,8 +458,8 @@ describe('CacheManager', () => {
   });
 
   it('floor clamping reduces focused but not below MIN_FLOOR', () => {
-    // Design a scenario where overshoot would push focused below floor
-    const mgr = new CacheManager(30_000);
+    // Design a scenario where clamping trims focused but leaves it above floor
+    const mgr = new CacheManager(20_000);
     const focused = mgr.allocateView('f');
     const v1 = mgr.allocateView('v1');
     const v2 = mgr.allocateView('v2');
@@ -467,11 +467,11 @@ describe('CacheManager', () => {
     const v4 = mgr.allocateView('v4');
     const v5 = mgr.allocateView('v5');
 
-    // visibleBudget = floor(30000*0.3) = 9000, perVisible = 9000/5 = 1800
-    // Each clamped to 2000, overshoot = 5 * (2000 - 1800) = 1000
-    // focusedBudget = floor(30000*0.6) = 18000
-    // adjusted = max(2000, 18000 - 1000) = 17000
-    expect(focused.allocation).toBe(17_000);
+    // visibleBudget = floor(20000*0.4) = 8000, perVisible = 8000/5 = 1600
+    // Each clamped to 2000, overshoot = 5 * (2000 - 1600) = 2000
+    // focusedBudget = floor(20000*0.6) = 12000
+    // adjusted = max(2000, 12000 - 2000) = 10000
+    expect(focused.allocation).toBe(10_000);
     expect(v1.allocation).toBe(2000);
     expect(v2.allocation).toBe(2000);
     expect(v3.allocation).toBe(2000);
@@ -651,11 +651,11 @@ describe('CacheManager', () => {
     expect(focusedViews).toHaveLength(1);
     expect(visibleViews).toHaveLength(1);
 
-    // The focused one gets 60%, the visible one gets 30%
+    // The focused one gets 60%, the visible one gets 40%
     const focusedHandle = bPri === 'focused' ? hb : hc;
     const visibleHandle = bPri === 'focused' ? hc : hb;
     expect(focusedHandle.allocation).toBe(60_000);
-    expect(visibleHandle.allocation).toBe(30_000);
+    expect(visibleHandle.allocation).toBe(40_000);
   });
 });
 

@@ -1,8 +1,17 @@
 import type { ViewLine } from '../bridge/types';
 import { diag } from '../utils/diagnostics';
 
-/** Priority tiers for cache allocation. */
-export type ViewPriority = 'focused' | 'visible' | 'background';
+/**
+ * Priority tiers for cache allocation.
+ *
+ * There is deliberately no 'background' tier. One existed but was unreachable —
+ * `allocateView` only ever assigns 'focused' or 'visible' and no API promoted a
+ * view into it — so its 10% share of the budget was stranded whenever two or
+ * more views existed. Rather than add the missing `markBackground` API for a
+ * distinction nothing needed, the tier was removed and its fraction folded into
+ * the visible share.
+ */
+export type ViewPriority = 'focused' | 'visible';
 
 // ── Public interfaces (narrow API surface) ────────────────────────────
 
@@ -37,8 +46,7 @@ export interface CacheController {
 /** Budget fractions per priority tier. */
 const PRIORITY_FRACTIONS: Record<ViewPriority, number> = {
   focused: 0.6,
-  visible: 0.3,
-  background: 0.1,
+  visible: 0.4,
 };
 
 /** Minimum lines a view is guaranteed even in the lowest tier. */
@@ -349,35 +357,24 @@ export class CacheManager implements CacheController {
 
   /**
    * Redistribute budget across all views based on priorities.
-   * Focused: 60%, Visible (non-focused): 30% shared, Background: 10% shared.
+   * Focused: 60%, Visible (all non-focused): 40% shared.
    * Accounts for MIN_FLOOR enforcement to avoid exceeding total budget.
    */
   private _redistribute(): void {
     if (this._views.size === 0) return;
 
-    // Classify views
+    // Classify views — every non-focused view is 'visible'.
     const focused: string[] = [];
     const visible: string[] = [];
-    const background: string[] = [];
 
     for (const [id] of this._views) {
-      if (id === this._focusedId) {
-        focused.push(id);
-      } else {
-        // Non-focused views default to 'visible' unless explicitly set
-        const entry = this._views.get(id)!;
-        if (entry.priority === 'background') {
-          background.push(id);
-        } else {
-          visible.push(id);
-        }
-      }
+      if (id === this._focusedId) focused.push(id);
+      else visible.push(id);
     }
 
     // Update priorities
     for (const id of focused) this._views.get(id)!.priority = 'focused';
     for (const id of visible) this._views.get(id)!.priority = 'visible';
-    for (const id of background) this._views.get(id)!.priority = 'background';
 
     // Single-view optimization: give it the full budget
     if (this._views.size === 1) {
@@ -388,19 +385,14 @@ export class CacheManager implements CacheController {
     // Compute raw allocations
     const focusedBudget = Math.floor(this._totalBudget * PRIORITY_FRACTIONS.focused);
     const visibleBudget = Math.floor(this._totalBudget * PRIORITY_FRACTIONS.visible);
-    const backgroundBudget = Math.floor(this._totalBudget * PRIORITY_FRACTIONS.background);
 
     const perVisible = visible.length > 0 ? Math.floor(visibleBudget / visible.length) : 0;
-    const perBackground = background.length > 0 ? Math.floor(backgroundBudget / background.length) : 0;
 
     // Account for MIN_FLOOR clamping: count how many non-focused views
     // will be clamped up to the floor and compute the overshoot.
     let floorOvershoot = 0;
     if (perVisible < MIN_FLOOR) {
       floorOvershoot += visible.length * (MIN_FLOOR - perVisible);
-    }
-    if (perBackground < MIN_FLOOR) {
-      floorOvershoot += background.length * (MIN_FLOOR - perBackground);
     }
 
     // Reduce focused allocation to absorb the floor overshoot (down to its own floor)
@@ -411,9 +403,6 @@ export class CacheManager implements CacheController {
     }
     for (const id of visible) {
       this._views.get(id)!.handle.setAllocation(perVisible);
-    }
-    for (const id of background) {
-      this._views.get(id)!.handle.setAllocation(perBackground);
     }
   }
 }
