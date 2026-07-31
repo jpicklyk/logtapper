@@ -1,6 +1,6 @@
 import { useCallback, useRef, useEffect } from 'react';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { AdbProcessorUpdate, PipelineProgress } from '../bridge/types';
+import type { UnlistenFn } from '@tauri-apps/api/event';
+import type { AdbProcessorUpdate } from '../bridge/types';
 import { useSessionCoreCtx, useSessionPaneCtx } from '../context/SessionContext';
 import {
   listProcessors,
@@ -8,6 +8,7 @@ import {
   setMcpAnonymize,
   setSessionPipelineMeta,
 } from '../bridge/commands';
+import { onPipelineProgress } from '../bridge/events';
 import { usePipelineContext } from '../context/PipelineContext';
 import { bus } from '../events/bus';
 import { useWorkspaceRestore } from './useWorkspaceRestore';
@@ -64,7 +65,6 @@ export function usePipelineWiring(
     [],
   );
 
-  const unlistenRef = useRef<UnlistenFn | null>(null);
   const metaSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Previous chain state, for diffing which sessions to notify. */
   const prevChainsRef = useRef<{ byS: typeof chainBySession; def: typeof defaultChain } | null>(null);
@@ -182,17 +182,22 @@ export function usePipelineWiring(
   // Subscribe to pipeline-progress events (StrictMode-safe)
   useEffect(() => {
     let cancelled = false;
-    listen<PipelineProgress>('pipeline-progress', (event) => {
+    let unlisten: UnlistenFn | null = null;
+    onPipelineProgress((payload) => {
       if (cancelled) return;
-      const { sessionId } = event.payload;
-      dispatch({ type: 'run:progress', sessionId, current: event.payload.linesProcessed, total: event.payload.totalLines });
+      dispatch({
+        type: 'run:progress',
+        sessionId: payload.sessionId,
+        current: payload.linesProcessed,
+        total: payload.totalLines,
+      });
     }).then((fn) => {
       if (cancelled) fn();
-      else unlistenRef.current = fn;
+      else unlisten = fn;
     });
     return () => {
       cancelled = true;
-      unlistenRef.current?.();
+      unlisten?.();
     };
   }, [dispatch]);
 
