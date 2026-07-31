@@ -173,6 +173,22 @@ export function sessionReducer(state: SessionState, action: SessionAction): Sess
     }
 
     case 'indexing:progress': {
+      // Ignore late events for sessions that have already closed (or never
+      // existed) — otherwise a stale progress tick recreates an orphan
+      // entry that nothing will ever clean up.
+      if (!state.sessions.has(action.sessionId)) return state;
+
+      const hasEntry = state.indexingProgressBySession.has(action.sessionId);
+      if (action.progress === null) {
+        if (!hasEntry) return state; // already cleared — no-op
+        const indexingProgressBySession = new Map(state.indexingProgressBySession);
+        indexingProgressBySession.delete(action.sessionId);
+        return { ...state, indexingProgressBySession };
+      }
+
+      if (hasEntry && state.indexingProgressBySession.get(action.sessionId) === action.progress) {
+        return state; // unchanged — no-op
+      }
       const indexingProgressBySession = new Map(state.indexingProgressBySession);
       indexingProgressBySession.set(action.sessionId, action.progress);
       return { ...state, indexingProgressBySession };
