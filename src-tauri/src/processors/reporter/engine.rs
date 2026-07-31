@@ -196,6 +196,7 @@ impl<'a> ProcessorRun<'a> {
                             line.timestamp,
                             group.window_ms,
                             group.threshold,
+                            line.source_line_num,
                         );
                     }
                 }
@@ -327,6 +328,7 @@ impl<'a> ProcessorRun<'a> {
         timestamp: i64,
         window_ms: Option<u64>,
         threshold: Option<usize>,
+        current_line_num: usize,
     ) {
         match agg_type {
             AggType::Count => {
@@ -377,9 +379,8 @@ impl<'a> ProcessorRun<'a> {
                     // Rising edge: emit burst event.
                     self.burst_active.insert(key.clone());
                     let count_in_window = window.len();
-                    let line_num = self.matched_line_nums.last().copied().unwrap_or(0);
                     self.emissions.push(Emission {
-                        line_num,
+                        line_num: current_line_num,
                         fields: vec![
                             ("burst_key".to_string(), JsonValue::String(key)),
                             ("count_in_window".to_string(), JsonValue::Number(count_in_window.into())),
@@ -1128,6 +1129,26 @@ pipeline:
                    Some(&JsonValue::String("mykey".to_string())));
         assert_eq!(get_field(&result.emissions[0], "count_in_window"),
                    Some(&JsonValue::Number(5.into())));
+        assert_eq!(result.emissions[0].line_num, 5,
+                   "burst emission must be stamped with the triggering line's number, not the previous matched line");
+    }
+
+    #[test]
+    fn burst_fires_on_first_matched_line_stamps_that_line_num() {
+        // Regression: when the burst threshold is reached on the very FIRST matched
+        // line, matched_line_nums is still empty at the time apply_aggregate runs
+        // (it's only appended after the pipeline loop in process_line). The old
+        // implementation read matched_line_nums.last() and silently defaulted to 0.
+        // The emission must instead carry the current triggering line's own number.
+        let d = def(&burst_def_yaml(2000, 1));
+        let mut run = ProcessorRun::new(&d);
+        let base = 1_000_000_000_000i64;
+        run.process_line(&make_line_ts("T", "key=onlyone event", LogLevel::Error, 7, base),
+            &PipelineContext::test_default());
+        let result = run.finish();
+        assert_eq!(result.emissions.len(), 1, "threshold of 1 fires on the first matched line");
+        assert_eq!(result.emissions[0].line_num, 7,
+                   "burst firing on the first matched line must stamp that line's number, not 0");
     }
 
     #[test]
