@@ -82,7 +82,6 @@ export type AppEvents = {
   /** Fired by workspace fallback path when a session was registered under a placeholder
    *  pane ID (e.g. 'primary') but the tab was actually placed in a different pane. */
   'layout:pane-session-remap': { originalPaneId: string; actualPaneId: string; sessionId: string };
-  'navigate:jump':          { lineNum: number };
 
   // ── Selection ───────────────────────────────────────────────────────────
   /** Fired when the user changes line selection in a log viewer.
