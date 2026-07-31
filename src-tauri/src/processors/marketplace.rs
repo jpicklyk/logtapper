@@ -254,7 +254,13 @@ pub const CATEGORIES: &[&str] = &[
 ];
 
 /// Validate that a bare processor ID (without source qualifier) does not
-/// contain the namespace separator `@`.
+/// contain the namespace separator `@`, path separators, traversal
+/// sequences, or otherwise resemble a filesystem path.
+///
+/// This is the primary defense against path traversal / arbitrary-file-write:
+/// the validated ID is later escaped by `id_to_filename()` and joined onto
+/// the app's `processors/` directory to form the on-disk YAML path, so it
+/// must never be able to name a file outside that directory.
 pub fn validate_processor_id(id: &str) -> Result<(), String> {
     if id.contains(NAMESPACE_SEP) {
         return Err(format!(
@@ -263,6 +269,33 @@ pub fn validate_processor_id(id: &str) -> Result<(), String> {
     }
     if id.is_empty() {
         return Err("Processor ID must not be empty".to_string());
+    }
+    if id.contains('/') || id.contains('\\') {
+        return Err(format!(
+            "Processor ID '{id}' must not contain path separators ('/' or '\\\\')"
+        ));
+    }
+    if id.contains("..") {
+        return Err(format!(
+            "Processor ID '{id}' must not contain '..'"
+        ));
+    }
+    if id.starts_with('~') {
+        return Err(format!(
+            "Processor ID '{id}' must not start with '~'"
+        ));
+    }
+    // Reject drive-letter / absolute-path patterns such as "C:" or "C:\foo".
+    let bytes = id.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        return Err(format!(
+            "Processor ID '{id}' must not look like an absolute path"
+        ));
+    }
+    if id.chars().any(|c| c.is_control()) {
+        return Err(format!(
+            "Processor ID '{id}' must not contain control characters"
+        ));
     }
     Ok(())
 }
@@ -306,6 +339,30 @@ pub fn id_to_filename(id: &str) -> String {
     id.replace(NAMESPACE_SEP, NAMESPACE_DISK_ESC)
 }
 
+/// Defense-in-depth: verify a filename derived from a processor ID (typically
+/// the output of `id_to_filename()`, including qualified `id@source` forms
+/// that `validate_processor_id()` does not see directly) contains no path
+/// separators, traversal sequences, or control characters before it is
+/// joined onto the on-disk `processors/` directory.
+///
+/// `validate_processor_id()` is the primary defense for bare IDs parsed from
+/// YAML; this is a last-line-of-defense check at the actual filesystem join
+/// sites, since some callers (marketplace install, auto-update) build the
+/// on-disk filename from a qualified ID that is assembled outside that path.
+pub fn ensure_filename_safe(filename: &str) -> Result<(), String> {
+    if filename.is_empty()
+        || filename.contains('/')
+        || filename.contains('\\')
+        || filename.contains("..")
+        || filename.chars().any(|c| c.is_control())
+    {
+        return Err(format!(
+            "Refusing to write processor file with unsafe name derived from ID: '{filename}'"
+        ));
+    }
+    Ok(())
+}
+
 /// Reverse the filename escaping to recover the original processor ID.
 pub fn filename_to_id(filename: &str) -> String {
     filename.replace(NAMESPACE_DISK_ESC, &NAMESPACE_SEP.to_string())
@@ -325,6 +382,41 @@ mod tests {
         assert!(validate_processor_id("__pii_anonymizer").is_ok());
         assert!(validate_processor_id("heap@official").is_err());
         assert!(validate_processor_id("").is_err());
+    }
+
+    #[test]
+    fn validate_id_rejects_path_traversal() {
+        assert!(validate_processor_id("../../evil").is_err());
+        assert!(validate_processor_id("..\\..\\evil").is_err());
+        assert!(validate_processor_id("a/b").is_err());
+        assert!(validate_processor_id("a\\b").is_err());
+        assert!(validate_processor_id("C:/Users/x/foo").is_err());
+        assert!(validate_processor_id("/etc/passwd").is_err());
+    }
+
+    #[test]
+    fn validate_id_accepts_legitimate_ids() {
+        // validate_processor_id operates on the *bare* ID (see doc comment on
+        // is_lts_scoped / from_yaml call site) — qualified `id@source` forms
+        // are assembled separately via qualified_id() and are never passed
+        // to this function directly, so '@' remains rejected by design.
+        assert!(validate_processor_id("wifi-state").is_ok());
+        assert!(validate_processor_id("system-server-heap").is_ok());
+    }
+
+    #[test]
+    fn ensure_filename_safe_rejects_traversal_and_separators() {
+        assert!(ensure_filename_safe("../../evil").is_err());
+        assert!(ensure_filename_safe("a/b").is_err());
+        assert!(ensure_filename_safe("a\\b").is_err());
+        assert!(ensure_filename_safe("").is_err());
+    }
+
+    #[test]
+    fn ensure_filename_safe_accepts_escaped_qualified_id() {
+        // id_to_filename() output for a legitimate qualified id.
+        let filename = id_to_filename("wifi-state@official");
+        assert!(ensure_filename_safe(&filename).is_ok());
     }
 
     #[test]

@@ -167,12 +167,13 @@ async fn startup_update_check(handle: tauri::AppHandle) {
                     let final_yaml = format!("{}{}", yaml, commands::sources::build_provenance_yaml(&source.name, &entry.version, &entry.sha256));
                     if let Ok(mut def) = AnyProcessor::from_yaml(&final_yaml) {
                         def.source = Some(source.name.clone());
-                        // Persist to disk.
-                        if let Ok(data_dir) = handle.path().app_data_dir() {
-                            let proc_dir = data_dir.join("processors");
-                            let _ = std::fs::create_dir_all(&proc_dir);
-                            let filename = marketplace::id_to_filename(&qid);
-                            let _ = std::fs::write(proc_dir.join(format!("{filename}.yaml")), &final_yaml);
+                        // Persist to disk. `qid` is a qualified `id@source` string
+                        // assembled from the marketplace index, not validated by
+                        // validate_processor_id() directly — persist_processor()
+                        // re-checks the resulting filename before writing.
+                        if let Err(e) = commands::processors::persist_processor(&handle, &qid, &final_yaml) {
+                            eprintln!("Skipping auto-update for {qid}: {e}");
+                            continue;
                         }
                         if let Ok(mut procs) = state.processors.lock() {
                             procs.insert(qid.clone(), def);

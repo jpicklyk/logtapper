@@ -12,6 +12,10 @@ pub(crate) fn persist_processor(app: &AppHandle, id: &str, yaml: &str) -> Result
     let proc_dir = data_dir.join("processors");
     std::fs::create_dir_all(&proc_dir).map_err(|e| e.to_string())?;
     let filename = marketplace::id_to_filename(id);
+    // Defense-in-depth: `id` may be a qualified `id@source` string assembled
+    // outside validate_processor_id() (see marketplace install / auto-update
+    // call sites), so re-check the actual on-disk filename before writing.
+    marketplace::ensure_filename_safe(&filename)?;
     std::fs::write(proc_dir.join(format!("{filename}.yaml")), yaml)
         .map_err(|e| format!("Failed to persist processor: {e}"))
 }
@@ -94,6 +98,9 @@ fn validate_and_install(
 fn delete_processor_file(app: &AppHandle, id: &str) {
     if let Ok(data_dir) = app.path().app_data_dir() {
         let filename = marketplace::id_to_filename(id);
+        if marketplace::ensure_filename_safe(&filename).is_err() {
+            return;
+        }
         let _ = std::fs::remove_file(
             data_dir.join("processors").join(format!("{filename}.yaml"))
         );
