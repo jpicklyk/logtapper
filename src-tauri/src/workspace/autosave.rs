@@ -96,11 +96,20 @@ pub struct WorkspaceEnvelope {
 /// about to serialise still belong to this shell — every cache site funnels
 /// through here, so the stamp can never be forgotten. A poisoned `sessions`
 /// lock degrades to an empty stamp (guard disabled for this envelope, i.e. the
-/// pre-existing behaviour), never a panic.
+/// pre-existing behaviour), never a panic. A poisoned `workspace_envelope`
+/// lock logs and drops this update, matching the flush-side degrade paths in
+/// [`flush`] / [`flush_now_blocking`], never a panic.
 pub fn cache_envelope(state: &AppState, mut envelope: WorkspaceEnvelope) {
     envelope.session_ids = snapshot_session_ids(state).unwrap_or_default();
-    if let Ok(mut guard) = state.workspace_envelope.lock() {
-        *guard = Some(envelope);
+    match state.workspace_envelope.lock() {
+        Ok(mut guard) => *guard = Some(envelope),
+        Err(_) => {
+            // Matches the flush-side degrade paths below (`flush` /
+            // `flush_now_blocking`): log and skip rather than silently
+            // dropping the update, so a poisoned lock is at least visible in
+            // the logs instead of quietly losing the frontend's envelope push.
+            log::warn!("[autosave] workspace_envelope lock poisoned; dropping cache_envelope update");
+        }
     }
     // A re-stamp means the workspace has settled onto a known session set — the
     // switch's restore completed (a restore always ends by re-caching the

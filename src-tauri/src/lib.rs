@@ -345,13 +345,16 @@ pub fn run() {
                     auto_update: false,
                     last_checked: None,
                 };
-                let json_to_write = {
-                    let mut sources = state.sources.lock().unwrap();
+                let json_to_write = if let Ok(mut sources) = state.sources.lock() {
                     sources.push(official);
                     serde_json::to_string_pretty(&*sources).ok()
+                } else {
+                    None
                 };
                 if let Some(json) = json_to_write {
-                    let _ = std::fs::write(&sources_path, json);
+                    if let Err(e) = std::fs::write(&sources_path, json) {
+                        eprintln!("Failed to write sources.json: {e}");
+                    }
                 }
             } else {
                 let loaded = commands::sources::load_sources(app.handle());

@@ -213,7 +213,7 @@ pub(crate) fn open_file_inner(
 
     let file_size = std::fs::metadata(effective_path_obj)
         .map(|m| m.len())
-        .unwrap_or(0);
+        .map_err(|e| format!("Failed to read metadata for {effective_path}: {e}"))?;
 
     // Derive stable IDs from the original path (not the temp extraction).
     // Deterministic per (canonical path, length, content prefix, source-type
@@ -512,9 +512,15 @@ pub(crate) fn emit_workspace_restored(
 ) {
     let has_chain = !meta.active_processor_ids.is_empty();
     if has_chain {
-        if let Ok(mut map) = state.session_pipeline_meta.lock() {
-            map.insert(session_id.to_string(), meta.clone());
-        }
+        // `session_pipeline_meta` is a flat, independently-keyed map (see the
+        // poison-recovery split documented at the top of `mcp_bridge.rs`), so a
+        // panicking writer cannot leave it torn — recover via `into_inner`
+        // rather than silently dropping this update on poison.
+        let mut map = state
+            .session_pipeline_meta
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        map.insert(session_id.to_string(), meta.clone());
     }
 
     if bm_count > 0 || an_count > 0 || has_chain {
@@ -1199,22 +1205,16 @@ pub async fn get_lines(
             let start = center.saturating_sub(half);
             let end = (center + half + 1).min(total_lines);
 
-            let sub_req = LineRequest {
-                session_id: request.session_id.clone(),
-                mode: ViewMode::Full,
-                offset: start,
-                count: end - start,
-                context: 0,
-                processor_id: None,
-                search: request.search.clone(),
-            };
-
-            // Recurse with Full mode for the sub-window
-            drop(sessions); // release lock before recursive call
+            // Build the sub-window inline. This is NOT a recursive call into the
+            // `ViewMode::Full` arm above — it can't be, since that arm always
+            // reports `is_context: false` while this one marks every line but
+            // `center` as context. Re-acquire the session lock after dropping
+            // it below (`get_lines` itself is not re-entered).
+            drop(sessions); // release lock before re-acquiring below
             let state_ref: &AppState = &state;
             let inner_sessions = lock_or_err(&state_ref.sessions, "sessions")?;
             let inner_session = inner_sessions
-                .get(&sub_req.session_id)
+                .get(&request.session_id)
                 .ok_or("Session not found")?;
             let inner_source = inner_session.primary_source().ok_or("No source")?;
 
@@ -1222,7 +1222,7 @@ pub async fn get_lines(
             for i in start..end {
                 let raw = inner_source.raw_line(i).as_deref().unwrap_or("").to_string();
                 let meta = inner_source.meta_at(i);
-                let highlights = sub_req
+                let highlights = request
                     .search
                     .as_ref()
                     .map(|q| compute_search_highlights(&raw, q))

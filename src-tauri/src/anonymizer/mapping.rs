@@ -65,14 +65,24 @@ impl PiiMappings {
     }
 
     /// Return (or create) the token for `raw`, deterministically.
+    ///
+    /// Each of `forward` / `counters` / `reverse` is a flat, independently-keyed
+    /// map with no cross-field invariant tying it to the others (mirroring the
+    /// poison-recovery split documented at the top of `mcp_bridge.rs`), so a
+    /// panicking holder cannot leave any single one of them torn — recover via
+    /// `PoisonError::into_inner` rather than propagating the panic here too.
     pub fn token_for(&self, raw: &str, category: PiiCategory) -> String {
-        let mut fwd: MutexGuard<HashMap<String, String>> = self.forward.lock().unwrap();
+        let mut fwd: MutexGuard<HashMap<String, String>> =
+            self.forward.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(token) = fwd.get(raw) {
             return token.clone();
         }
 
         // New value — assign next counter for this category.
-        let mut counters = self.counters.lock().unwrap();
+        let mut counters = self
+            .counters
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let n = counters.entry(category).or_insert(0);
         *n += 1;
         let token = format!("<{}-{}>", category.prefix(), n);
@@ -81,7 +91,7 @@ impl PiiMappings {
         drop(fwd); // release before acquiring reverse
         self.reverse
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(token.clone(), raw.to_string());
 
         token
@@ -89,12 +99,19 @@ impl PiiMappings {
 
     /// Look up the original value for a token (reversible mode only).
     pub fn reveal(&self, token: &str) -> Option<String> {
-        self.reverse.lock().unwrap().get(token).cloned()
+        self.reverse
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(token)
+            .cloned()
     }
 
     /// Snapshot of all forward mappings for display/export.
     pub fn all_mappings(&self) -> HashMap<String, String> {
-        self.forward.lock().unwrap().clone()
+        self.forward
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 }
 

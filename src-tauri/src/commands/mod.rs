@@ -90,15 +90,12 @@ pub struct AppState {
     /// session that happened to share bridge traffic with an anonymized one.
     pub mcp_anonymize: Mutex<HashMap<String, bool>>,
     /// StateTracker results: sessionId -> trackerId -> StateTrackerResult.
-    #[allow(dead_code)]
     pub state_tracker_results: Mutex<HashMap<String, HashMap<String, StateTrackerResult>>>,
     /// Correlator results: sessionId -> correlatorId -> CorrelatorResult.
     pub correlator_results: Mutex<HashMap<String, HashMap<String, CorrelatorResult>>>,
     /// Continuous StateTracker state for live streaming.
-    #[allow(dead_code)]
     pub stream_tracker_state: Mutex<HashMap<String, HashMap<String, ContinuousTrackerState>>>,
     /// Continuous Transformer state for live streaming.
-    #[allow(dead_code)]
     pub stream_transformer_state: Mutex<HashMap<String, HashMap<String, ContinuousTransformerState>>>,
     /// Per-session generation stamp guarding the ADB streaming
     /// extract-process-reinsert pattern (see `commands::adb::flush_batch`).
