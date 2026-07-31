@@ -25,7 +25,7 @@ use tauri::{AppHandle, Emitter, Manager, Wry};
 use crate::anonymizer::LogAnonymizer;
 use crate::commands::AppState;
 use crate::processors::{AnyProcessor, ProcessorKind};
-use crate::processors::marketplace::{resolve_processor_id, split_qualified_id};
+use crate::processors::marketplace::{resolve_processor_id_checked, split_qualified_id};
 use crate::processors::reporter::engine::RunResult;
 use crate::processors::state_tracker::engine::build_defaults;
 use crate::processors::state_tracker::types::StateTransition;
@@ -1468,8 +1468,10 @@ async fn h_processor_detail(
     // Resolve bare → qualified ID and check processor type in a single lock.
     let (resolved_id, processor_type) = {
         let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let resolved = resolve_processor_id(&procs, &processor_id)
-            .unwrap_or_else(|| processor_id.clone());
+        let resolved = match resolve_processor_id_checked(&procs, &processor_id) {
+            Ok(r) => r.unwrap_or_else(|| processor_id.clone()),
+            Err(e) => return Json(json!({ "error": e, "processorId": processor_id, "sessionId": session_id })),
+        };
         let ptype = procs.get(&resolved).map(|p| p.processor_type().to_string());
         (resolved, ptype)
     };
@@ -1802,7 +1804,10 @@ async fn h_state_at_line(
     // Resolve bare ID → qualified ID (e.g. "wifi-state" → "wifi-state@official")
     let resolved_id = {
         let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        resolve_processor_id(&procs, &tracker_id).unwrap_or_else(|| tracker_id.clone())
+        match resolve_processor_id_checked(&procs, &tracker_id) {
+            Ok(r) => r.unwrap_or_else(|| tracker_id.clone()),
+            Err(e) => return Json(json!({ "error": e, "sessionId": session_id, "trackerId": tracker_id })),
+        }
     };
 
     // Resolve transitions from pipeline or stream state. Deliberately two
@@ -2095,7 +2100,10 @@ async fn h_processor_defs_single(
     let state = handle.state::<AppState>();
 
     let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let resolved = resolve_processor_id(&procs, &processor_id);
+    let resolved = match resolve_processor_id_checked(&procs, &processor_id) {
+        Ok(r) => r,
+        Err(e) => return Json(json!({ "error": e, "processorId": processor_id })),
+    };
     let Some(p) = resolved.as_ref().and_then(|rid| procs.get(rid)) else {
         return Json(json!({ "error": "processor not found", "processorId": processor_id }));
     };
@@ -3058,9 +3066,13 @@ async fn h_run_pipeline(
     let processor_ids: Vec<String> = match body.processor_ids {
         Some(ids) if !ids.is_empty() => {
             let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            ids.into_iter()
-                .map(|id| resolve_processor_id(&procs, &id).unwrap_or(id))
-                .collect()
+            let resolved: Result<Vec<String>, String> = ids.into_iter()
+                .map(|id| resolve_processor_id_checked(&procs, &id).map(|r| r.unwrap_or(id)))
+                .collect();
+            match resolved {
+                Ok(v) => v,
+                Err(e) => return Json(json!({ "error": e, "sessionId": session_id })),
+            }
         }
         _ => {
             let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -4020,6 +4032,74 @@ mod tests {
             "parse_iso_to_unix_nanos must land on the same Unix epoch as \
              meta.timestamp (i.e. what parse_timestamp_ns() in \
              core/logcat_parser.rs produces)"
+        );
+    }
+
+    // ── resolve_processor_id_checked at the MCP bridge call sites ───────────
+    // `h_processor_detail`, `h_state_at_line`, `h_processor_defs_single`, and
+    // `h_run_pipeline` all used to resolve bare processor ids via the plain
+    // `resolve_processor_id`, which silently tie-broke when a bare id (e.g.
+    // "wifi-state") matched more than one installed qualified id — the same
+    // ambiguity `run_pipeline` was already fixed to reject via
+    // `resolve_processor_id_checked` (see processors/marketplace.rs). These
+    // four call sites now route through the checked variant too and turn an
+    // `Err` into this file's `Json({"error": ...})` response shape instead of
+    // resolving unpredictably.
+    //
+    // The handlers themselves take `State<Handle>` (a live Axum/Tauri
+    // `AppHandle<Wry>`), which — per this suite's established constraint (see
+    // `poisoned_sessions_probe` above) — is impractical to construct here.
+    // `resolve_processor_id_checked`'s own ambiguous/unambiguous contract is
+    // already covered by unit tests in processors/marketplace.rs. What these
+    // tests cover is the seam actually reachable from this file: that calling
+    // it against a `state.processors`-shaped store (keyed exactly as
+    // `AppState::processors` is) reproduces the `Ok`/`Err` split each call
+    // site now matches on, using the identical `&procs, &id` call shape used
+    // at all four sites.
+
+    #[test]
+    fn resolve_processor_id_checked_errors_on_ambiguous_bare_id_like_bridge_call_sites() {
+        // Mirrors state.processors: keyed by qualified id, value type doesn't
+        // matter to resolution (the real store holds AnyProcessor).
+        let mut procs: HashMap<String, ()> = HashMap::new();
+        procs.insert("wifi-state@official".to_string(), ());
+        procs.insert("wifi-state@my-team".to_string(), ());
+
+        let result = resolve_processor_id_checked(&procs, "wifi-state");
+        assert!(
+            result.is_err(),
+            "ambiguous bare id must surface as Err for the bridge handlers to map into a JSON error, not resolve silently"
+        );
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("wifi-state@official") && msg.contains("wifi-state@my-team"),
+            "error should name every candidate so the MCP client can disambiguate: {msg}"
+        );
+    }
+
+    #[test]
+    fn resolve_processor_id_checked_resolves_unambiguous_bare_id_like_bridge_call_sites() {
+        let mut procs: HashMap<String, ()> = HashMap::new();
+        procs.insert("wifi-state@official".to_string(), ());
+        procs.insert("other-proc@official".to_string(), ());
+
+        // Unambiguous bare id resolves — the "found" path each handler
+        // still falls through to on `Ok(Some(..))`.
+        assert_eq!(
+            resolve_processor_id_checked(&procs, "wifi-state"),
+            Ok(Some("wifi-state@official".to_string()))
+        );
+
+        // Not-found stays `Ok(None)` — handlers preserve today's not-found
+        // behavior (h_processor_detail/h_state_at_line fall back to the
+        // original bare id via unwrap_or_else; h_processor_defs_single
+        // returns its existing "processor not found" error).
+        assert_eq!(resolve_processor_id_checked(&procs, "no-such-proc"), Ok(None));
+
+        // Exact qualified id still resolves even with duplicates present.
+        assert_eq!(
+            resolve_processor_id_checked(&procs, "wifi-state@official"),
+            Ok(Some("wifi-state@official".to_string()))
         );
     }
 }
