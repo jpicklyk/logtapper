@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useMemo, useSyncExternalStore } from 'react';
 import { storageGetJSON, storageSetJSON, storageRemove } from '../utils';
 
 export interface BookmarkCategoryDef {
@@ -84,24 +84,57 @@ export interface UseSettingsResult {
   resetSettings: () => void;
 }
 
+// ── Module-level settings store ──────────────────────────────────────────────
+// Settings are global to the app but read by many unrelated subtrees
+// (HookWiring, AppShell, LogViewer, StateTimeline, BookmarkPanel, ...).
+// Holding them in per-instance `useState` meant `updateSetting` mutated only the
+// calling instance while every other one kept its mount-time snapshot — the
+// cache-budget sync, stream line cap and bookmark categories only picked up new
+// values after a restart. One module-level store shared via `useSyncExternalStore`
+// gives every consumer the same snapshot and re-renders all of them on update.
+//
+// The snapshot is a stable reference between updates (the useSyncExternalStore
+// contract): `getSettingsSnapshot` returns the stored object, never a fresh one.
+// localStorage remains the persistence layer; `loadSettings()` is the seed.
+
+let _settings: AppSettings = loadSettings();
+const _listeners = new Set<() => void>();
+
+function _notify(): void {
+  for (const fn of _listeners) fn();
+}
+
+/** Internal — exported for white-box tests. Not part of the hooks barrel. */
+export function subscribeSettings(onStoreChange: () => void): () => void {
+  _listeners.add(onStoreChange);
+  return () => { _listeners.delete(onStoreChange); };
+}
+
+/** Internal — exported for white-box tests. Not part of the hooks barrel. */
+export function getSettingsSnapshot(): AppSettings {
+  return _settings;
+}
+
+/** Internal — the store mutator behind `useSettings().updateSetting`. */
+export function updateSetting<K extends keyof AppSettings>(key: K, value: AppSettings[K]): void {
+  _settings = { ..._settings, [key]: value };
+  storageSetJSON(STORAGE_KEY, _settings);
+  _notify();
+}
+
+/** Internal — the store mutator behind `useSettings().resetSettings`. */
+export function resetSettings(): void {
+  _settings = { ...SETTING_DEFAULTS };
+  storageRemove(STORAGE_KEY);
+  _notify();
+}
+
+/**
+ * Shared app settings. Every call site reads the same snapshot; any
+ * `updateSetting` / `resetSettings` re-renders all mounted consumers.
+ */
 export function useSettings(): UseSettingsResult {
-  const [settings, setSettings] = useState<AppSettings>(loadSettings);
+  const settings = useSyncExternalStore(subscribeSettings, getSettingsSnapshot);
 
-  const updateSetting = useCallback(
-    <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
-      setSettings((prev) => {
-        const next = { ...prev, [key]: value };
-        storageSetJSON(STORAGE_KEY, next);
-        return next;
-      });
-    },
-    [],
-  );
-
-  const resetSettings = useCallback(() => {
-    setSettings({ ...SETTING_DEFAULTS });
-    storageRemove(STORAGE_KEY);
-  }, []);
-
-  return { settings, updateSetting, resetSettings };
+  return useMemo(() => ({ settings, updateSetting, resetSettings }), [settings]);
 }
