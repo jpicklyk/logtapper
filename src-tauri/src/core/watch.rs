@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use serde::Serialize;
 
-use crate::core::filter::FilterCriteria;
+use crate::core::filter::{FilterCriteria, PrecomputedNeedles};
 
 /// A live watch that evaluates new lines against filter criteria.
 /// Reuses the Phase 1 FilterCriteria and line_matches_criteria evaluation.
@@ -12,6 +12,12 @@ pub struct WatchSession {
     pub criteria: FilterCriteria,
     /// Compiled regex from criteria.regex (compiled once on creation).
     pub compiled_regex: Option<regex::Regex>,
+    /// Lowercased text_search/tags needles, precomputed once on creation
+    /// (criteria is immutable for the life of the watch) — see
+    /// [`FilterCriteria::precompute_needles`]. Passed to
+    /// `line_matches_criteria_with_needles` on every `flush_batch` evaluation
+    /// instead of re-lowercasing per line.
+    pub needles: PrecomputedNeedles,
     /// Running total of matches across all batches.
     total_matches: AtomicU32,
     /// Whether this watch is still active (can be cancelled).
@@ -29,12 +35,14 @@ impl WatchSession {
         criteria: FilterCriteria,
     ) -> Result<Self, String> {
         let compiled_regex = criteria.compile_regex()?;
+        let needles = criteria.precompute_needles();
 
         Ok(Self {
             watch_id,
             session_id,
             criteria,
             compiled_regex,
+            needles,
             total_matches: AtomicU32::new(0),
             active: AtomicBool::new(true),
         })

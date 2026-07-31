@@ -109,7 +109,7 @@ pub fn evaluate_watches(
     session_id: &str,
     lines: &[WatchLineRef<'_>],
 ) -> Vec<(String, u32, u32)> {
-    use crate::core::filter::line_matches_criteria;
+    use crate::core::filter::line_matches_criteria_with_needles;
 
     let Ok(watches) = state.active_watches.lock() else {
         return vec![];
@@ -127,8 +127,9 @@ pub fn evaluate_watches(
 
         let mut new_matches = 0u32;
         for wl in lines {
-            if line_matches_criteria(
+            if line_matches_criteria_with_needles(
                 &watch.criteria,
+                &watch.needles,
                 wl.raw,
                 wl.level,
                 wl.tag,
@@ -147,4 +148,111 @@ pub fn evaluate_watches(
     }
 
     results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::filter::FilterCriteria;
+    use crate::core::line::LogLevel;
+    use std::sync::Arc;
+
+    // ── evaluate_watches / needle precomputation ────────────────────────────
+    // `evaluate_watches` used to call the plain `line_matches_criteria`, which
+    // re-lowercases `text_search`/`tags` for every line in the batch. It now
+    // reuses `WatchSession::needles`, precomputed once in `WatchSession::new`
+    // (mirroring `compiled_regex`), via `line_matches_criteria_with_needles`.
+    // This test proves the switch didn't change *which* lines match: a
+    // case-insensitive text needle and a case-insensitive tag needle must
+    // still match lines whose casing differs from the criteria.
+
+    fn register_watch(state: &AppState, session_id: &str, criteria: FilterCriteria) -> String {
+        let watch = Arc::new(
+            WatchSession::new("w1".to_string(), session_id.to_string(), criteria).unwrap(),
+        );
+        let watch_id = watch.watch_id.clone();
+        state
+            .active_watches
+            .lock()
+            .unwrap()
+            .entry(session_id.to_string())
+            .or_default()
+            .push(watch);
+        watch_id
+    }
+
+    #[test]
+    fn evaluate_watches_matches_case_insensitive_text_and_tag_via_precomputed_needles() {
+        let state = AppState::default();
+        let session_id = "s1";
+        let criteria = FilterCriteria {
+            text_search: Some("ErRoR".to_string()),
+            tags: Some(vec!["NetWork".to_string()]),
+            ..Default::default()
+        };
+        let watch_id = register_watch(&state, session_id, criteria);
+
+        let lines = vec![
+            // Matches: text differs in case from needle, tag differs in case too.
+            WatchLineRef {
+                raw: "01-01 12:00:00.000 E/NETWORK: error occurred",
+                tag: "NETWORK",
+                level: LogLevel::Error,
+                timestamp: 1000,
+                pid: 100,
+            },
+            // Does not match: wrong tag.
+            WatchLineRef {
+                raw: "01-01 12:00:00.000 E/Other: ERROR occurred",
+                tag: "Other",
+                level: LogLevel::Error,
+                timestamp: 1001,
+                pid: 100,
+            },
+            // Does not match: text missing.
+            WatchLineRef {
+                raw: "01-01 12:00:00.000 I/Network: all good",
+                tag: "Network",
+                level: LogLevel::Info,
+                timestamp: 1002,
+                pid: 100,
+            },
+        ];
+
+        let results = evaluate_watches(&state, session_id, &lines);
+
+        assert_eq!(results.len(), 1, "expected exactly one watch to report matches");
+        let (id, new_matches, total_matches) = &results[0];
+        assert_eq!(id, &watch_id);
+        assert_eq!(*new_matches, 1, "only the first line should match");
+        assert_eq!(*total_matches, 1);
+    }
+
+    #[test]
+    fn evaluate_watches_skips_cancelled_watches() {
+        let state = AppState::default();
+        let session_id = "s1";
+        let criteria = FilterCriteria {
+            text_search: Some("error".to_string()),
+            ..Default::default()
+        };
+        register_watch(&state, session_id, criteria);
+        {
+            let watches = state.active_watches.lock().unwrap();
+            for w in watches.get(session_id).unwrap() {
+                w.cancel();
+            }
+        }
+
+        let lines = vec![WatchLineRef {
+            raw: "error occurred",
+            tag: "Tag",
+            level: LogLevel::Error,
+            timestamp: 1000,
+            pid: 100,
+        }];
+
+        let results = evaluate_watches(&state, session_id, &lines);
+        assert!(results.is_empty(), "cancelled watches must not be evaluated");
+    }
 }
