@@ -42,7 +42,7 @@ const LEFT_TOP_ITEMS = [
 
 export const AppShell = React.memo(function AppShell({ workspace }: AppShellProps) {
   const { settingsHook, anonymizerConfig, settingsOpen, closeSettings, toasts, dismissToast } =
-    useAppShellSetup({ openCenterTab: workspace.openCenterTab });
+    useAppShellSetup({ openCenterTab: workspace.openCenterTab, centerTree: workspace.centerTree });
 
   const { leftBottomItems, rightTopItems } = useToolbarItems({
     bottomPaneVisible: workspace.bottomPaneVisible,
