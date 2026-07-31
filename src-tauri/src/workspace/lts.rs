@@ -137,86 +137,88 @@ pub fn write_lts(
         saved_at: super::now_ms(),
     };
 
-    let out_file = File::create(dest)
-        .map_err(|e| format!("Failed to create .lts file '{}': {e}", dest.display()))?;
-    let mut writer = zip::ZipWriter::new(out_file);
+    // Written atomically: content lands in a sibling `.lts.tmp` file first and
+    // is only renamed over `dest` once fully flushed, so a crash, full disk, or
+    // per-session write error mid-stream can never truncate or corrupt the
+    // previous good `.lts` file (see `workspace::write_atomic`).
+    super::write_atomic(dest, "lts.tmp", |out_file| {
+        let mut writer = zip::ZipWriter::new(out_file);
 
-    let deflate_opts = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
-    let stored_opts = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored)
-        .large_file(true);
+        let deflate_opts = SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        let stored_opts = SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored)
+            .large_file(true);
 
-    // 1. manifest.json (Deflated)
-    super::zip_write_json(&mut writer, "manifest.json", deflate_opts, &manifest)?;
+        // 1. manifest.json (Deflated)
+        super::zip_write_json(&mut writer, "manifest.json", deflate_opts, &manifest)?;
 
-    // 2. Per-session entries
-    for (idx, session) in sessions.iter().enumerate() {
-        let source_entry = format!("sessions/{idx}/source/{}", session.source_filename);
+        // 2. Per-session entries
+        for (idx, session) in sessions.iter().enumerate() {
+            let source_entry = format!("sessions/{idx}/source/{}", session.source_filename);
+            writer
+                .start_file(&source_entry, stored_opts)
+                .map_err(|e| format!("Failed to start source entry '{source_entry}': {e}"))?;
+            std::io::Write::write_all(&mut writer, &session.source_bytes)
+                .map_err(|e| format!("Failed to write source bytes for session {idx}: {e}"))?;
+
+            super::zip_write_json(
+                &mut writer,
+                &format!("sessions/{idx}/artifacts/bookmarks.json"),
+                deflate_opts,
+                &session.bookmarks,
+            )?;
+            super::zip_write_json(
+                &mut writer,
+                &format!("sessions/{idx}/artifacts/analyses.json"),
+                deflate_opts,
+                &session.analyses,
+            )?;
+            super::zip_write_json(
+                &mut writer,
+                &format!("sessions/{idx}/artifacts/session-meta.json"),
+                deflate_opts,
+                &session.session_meta,
+            )?;
+        }
+
+        // 3. processors/<filename>.yaml + build processor manifest (Deflated)
+        let mut proc_manifest = LtsProcessorManifest {
+            processors: Vec::with_capacity(processor_yamls.len()),
+        };
+
+        for (id, filename, yaml_content) in processor_yamls {
+            proc_manifest.processors.push(LtsProcessorEntry {
+                id: id.clone(),
+                filename: filename.clone(),
+                sha256: super::sha256_hex(yaml_content),
+            });
+
+            let yaml_entry = format!("processors/{filename}");
+            writer
+                .start_file(&yaml_entry, deflate_opts)
+                .map_err(|e| format!("Failed to start processor entry '{yaml_entry}': {e}"))?;
+            std::io::Write::write_all(&mut writer, yaml_content.as_bytes())
+                .map_err(|e| format!("Failed to write processor YAML '{yaml_entry}': {e}"))?;
+        }
+
+        // 4. processors/processor-manifest.json (Deflated)
+        super::zip_write_json(
+            &mut writer,
+            "processors/processor-manifest.json",
+            deflate_opts,
+            &proc_manifest,
+        )?;
+
+        // 5. editor-tabs.json (Deflated) — omitted when empty
+        if !editor_tabs.is_empty() {
+            super::zip_write_json(&mut writer, "editor-tabs.json", deflate_opts, &editor_tabs)?;
+        }
+
         writer
-            .start_file(&source_entry, stored_opts)
-            .map_err(|e| format!("Failed to start source entry '{source_entry}': {e}"))?;
-        std::io::Write::write_all(&mut writer, &session.source_bytes)
-            .map_err(|e| format!("Failed to write source bytes for session {idx}: {e}"))?;
-
-        super::zip_write_json(
-            &mut writer,
-            &format!("sessions/{idx}/artifacts/bookmarks.json"),
-            deflate_opts,
-            &session.bookmarks,
-        )?;
-        super::zip_write_json(
-            &mut writer,
-            &format!("sessions/{idx}/artifacts/analyses.json"),
-            deflate_opts,
-            &session.analyses,
-        )?;
-        super::zip_write_json(
-            &mut writer,
-            &format!("sessions/{idx}/artifacts/session-meta.json"),
-            deflate_opts,
-            &session.session_meta,
-        )?;
-    }
-
-    // 3. processors/<filename>.yaml + build processor manifest (Deflated)
-    let mut proc_manifest = LtsProcessorManifest {
-        processors: Vec::with_capacity(processor_yamls.len()),
-    };
-
-    for (id, filename, yaml_content) in processor_yamls {
-        proc_manifest.processors.push(LtsProcessorEntry {
-            id: id.clone(),
-            filename: filename.clone(),
-            sha256: super::sha256_hex(yaml_content),
-        });
-
-        let yaml_entry = format!("processors/{filename}");
-        writer
-            .start_file(&yaml_entry, deflate_opts)
-            .map_err(|e| format!("Failed to start processor entry '{yaml_entry}': {e}"))?;
-        std::io::Write::write_all(&mut writer, yaml_content.as_bytes())
-            .map_err(|e| format!("Failed to write processor YAML '{yaml_entry}': {e}"))?;
-    }
-
-    // 4. processors/processor-manifest.json (Deflated)
-    super::zip_write_json(
-        &mut writer,
-        "processors/processor-manifest.json",
-        deflate_opts,
-        &proc_manifest,
-    )?;
-
-    // 5. editor-tabs.json (Deflated) — omitted when empty
-    if !editor_tabs.is_empty() {
-        super::zip_write_json(&mut writer, "editor-tabs.json", deflate_opts, &editor_tabs)?;
-    }
-
-    writer
-        .finish()
-        .map_err(|e| format!("Failed to finalise .lts zip: {e}"))?;
-
-    Ok(())
+            .finish()
+            .map_err(|e| format!("Failed to finalise .lts zip: {e}"))
+    })
 }
 
 /// Read a `.lts` zip file from `path` and return all embedded data.
@@ -1018,5 +1020,66 @@ mod tests {
         let sess = &loaded.sessions[0];
         assert_eq!(sess.source_bytes.len(), original.len(), "byte count must match");
         assert_eq!(sess.source_bytes, original, "source bytes must be bit-for-bit identical after Stored round-trip");
+    }
+
+    // ─── Atomic-write regression tests ─────────────────────────────────────
+    //
+    // `write_lts` now builds the zip inside `workspace::write_atomic` instead
+    // of truncating `dest` directly with `File::create`. Atomicity itself
+    // (temp file -> fsync -> rename, dest untouched on any failure) is
+    // structurally guaranteed and exhaustively covered by the generic
+    // `write_atomic_*` tests in `workspace::mod.rs`
+    // (`write_atomic_creates_new_file`, `write_atomic_replaces_existing_file`,
+    // `write_atomic_failure_leaves_dest_untouched`). The tests below verify
+    // `write_lts` actually routes through that primitive (no leftover temp
+    // file, sibling naming) and that a full overwrite of a pre-existing file
+    // at `dest` still round-trips correctly.
+
+    /// After a successful `write_lts`, no sibling `.lts.tmp` temp file is left
+    /// behind — proves the write goes through `write_atomic`'s
+    /// create-temp/fsync/rename sequence rather than writing `dest` in place.
+    #[test]
+    fn lts_write_leaves_no_leftover_temp_file() {
+        let dir = tempfile::tempdir().expect("tmpdir");
+        let zip_path = dir.path().join("workspace.lts");
+        let tmp_path = zip_path.with_extension("lts.tmp");
+
+        let sessions = vec![make_session("test.log", b"data\n".to_vec(), vec![], vec![], LtsSessionMeta::default())];
+        write_lts(&zip_path, &sessions, &[], &[]).expect("write_lts");
+
+        assert!(zip_path.exists(), "destination .lts file must exist after a successful write");
+        assert!(!tmp_path.exists(), "no leftover .lts.tmp temp file should remain after a successful write");
+
+        // Sanity: the file that landed at dest is a valid, readable .lts archive.
+        let loaded = read_lts(&zip_path).expect("read_lts on freshly written file");
+        assert_eq!(loaded.sessions.len(), 1);
+    }
+
+    /// A successful `write_lts` to a path that already holds a previous
+    /// (unrelated, non-zip) file fully replaces its content — proving the
+    /// rename-based swap performed by `write_atomic` overwrites the previous
+    /// good save rather than corrupting it in place.
+    #[test]
+    fn lts_write_fully_replaces_previous_file_content() {
+        let dir = tempfile::tempdir().expect("tmpdir");
+        let zip_path = dir.path().join("workspace.lts");
+
+        // Simulate a previous "good" save sitting at `dest` with unrelated bytes.
+        std::fs::write(&zip_path, b"not-a-zip-previous-save").expect("seed previous file");
+
+        let sessions = vec![make_session(
+            "after.log",
+            b"new content after overwrite\n".to_vec(),
+            vec![make_bookmark(1)],
+            vec![],
+            LtsSessionMeta::default(),
+        )];
+        write_lts(&zip_path, &sessions, &[], &[]).expect("write_lts over existing file");
+
+        let loaded = read_lts(&zip_path).expect("read_lts after overwrite");
+        assert_eq!(loaded.sessions.len(), 1);
+        assert_eq!(loaded.sessions[0].source_filename, "after.log");
+        assert_eq!(loaded.sessions[0].source_bytes, b"new content after overwrite\n");
+        assert_eq!(loaded.sessions[0].bookmarks.len(), 1);
     }
 }
