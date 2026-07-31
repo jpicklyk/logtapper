@@ -215,7 +215,7 @@ const StatePanel = React.memo(function StatePanel() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, runCount, activeTrackers.length, selectedLine]);
+  }, [session, runCount, activeTrackers, selectedLine]);
 
   const trackerMeta = useMemo(() => {
     const map = new Map<string, ProcessorSummary>();
