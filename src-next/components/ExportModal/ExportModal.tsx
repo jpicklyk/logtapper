@@ -36,6 +36,7 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
   const [includeBookmarks, setIncludeBookmarks] = useState(true);
   const [includeAnalyses, setIncludeAnalyses] = useState(true);
   const [includeProcessors, setIncludeProcessors] = useState(true);
+  const [editorTabCount, setEditorTabCount] = useState(0);
 
   useEffect(() => {
     if (!open) {
@@ -45,8 +46,10 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
       setIncludeBookmarks(true);
       setIncludeAnalyses(true);
       setIncludeProcessors(true);
+      setEditorTabCount(0);
       return;
     }
+    setEditorTabCount(countEditorTabs());
     let cancelled = false;
     setLoading(true);
     getExportAllSessionsInfo().then(data => {
@@ -97,7 +100,6 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
   const title = multiSession ? 'Export Sessions' : 'Export Session';
   const totalBookmarks = info?.sessions.reduce((sum, s) => sum + s.bookmarkCount, 0) ?? 0;
   const totalAnalyses = info?.sessions.reduce((sum, s) => sum + s.analysisCount, 0) ?? 0;
-  const editorTabCount = open ? countEditorTabs() : 0;
 
   return (
     <Modal open={open} onClose={onClose} title={title} width={400}>
