@@ -13,7 +13,9 @@ use crate::core::line::PipelineContext;
 use crate::core::log_source::{decode_line_bytes, Encoding, FileLogSource, ZipLogSource};
 use crate::core::session::parser_for;
 use crate::processors::ProcessorKind;
+use crate::processors::correlator::engine::CorrelatorResult;
 use crate::processors::marketplace::resolve_processor_id;
+use crate::processors::state_tracker::types::StateTrackerResult;
 
 // ---------------------------------------------------------------------------
 // Progress event payload
@@ -536,19 +538,22 @@ pub fn execute_pipeline(
     // ── Finalize all results ─────────────────────────────────────────────────
     let output = core.finish(&forward_pii);
 
-    // ── Store state tracker results ──────────────────────────────────────────
-    if !output.tracker_results.is_empty() {
-        if let Ok(mut str_results) = state.state_tracker_results.lock() {
-            str_results.insert(session_id.to_string(), output.tracker_results.clone());
-        }
-    }
-
-    // ── Store correlator results ─────────────────────────────────────────────
-    if !output.correlator_results.is_empty() {
-        if let Ok(mut cr) = state.correlator_results.lock() {
-            cr.insert(session_id.to_string(), output.correlator_results.clone());
-        }
-    }
+    // ── Store state tracker + correlator results ─────────────────────────────
+    // Overwritten unconditionally (even with an empty map) for the same reason
+    // `pipeline_results` below is: a rerun that deselects every tracker/
+    // correlator (or whose source-type exclusion drops them all) must not
+    // leave the previous run's results stranded and still served to the UI
+    // and MCP bridge. `output.tracker_results` / `output.correlator_results`
+    // hold exactly one entry per selected def for *this* run (built from
+    // `PipelineCore::tracker_runs` / `correlator_runs`, seeded from `defs` —
+    // see `pipeline_core.rs::finish`), so an empty map here means "no such
+    // processors ran this time", not "ran and produced nothing".
+    store_tracker_and_correlator_results(
+        state,
+        session_id,
+        output.tracker_results,
+        output.correlator_results,
+    );
 
     // ── Collect summaries ────────────────────────────────────────────────────
     let mut summaries: Vec<PipelineRunSummary> = Vec::new();
@@ -632,6 +637,28 @@ pub fn execute_pipeline(
     Ok(summaries)
 }
 
+/// Overwrite this session's `state_tracker_results` / `correlator_results`
+/// entries with the current run's output, unconditionally — including with
+/// an empty map when this run had no trackers/correlators. Without this, a
+/// rerun that deselects every tracker or correlator (or whose source-type
+/// exclusion drops them all) leaves the previous run's stale results in
+/// place forever, since `close_session` / `stop_adb_stream` are otherwise the
+/// only code that removes entries from these maps. Mirrors the unconditional
+/// `pipeline_results` overwrite in `execute_pipeline`.
+fn store_tracker_and_correlator_results(
+    state: &AppState,
+    session_id: &str,
+    tracker_results: HashMap<String, StateTrackerResult>,
+    correlator_results: HashMap<String, CorrelatorResult>,
+) {
+    if let Ok(mut str_results) = state.state_tracker_results.lock() {
+        str_results.insert(session_id.to_string(), tracker_results);
+    }
+    if let Ok(mut cr) = state.correlator_results.lock() {
+        cr.insert(session_id.to_string(), correlator_results);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // stop_pipeline — sets cancellation flag for the active pipeline run
 // ---------------------------------------------------------------------------
@@ -677,6 +704,7 @@ mod tests {
     use crate::core::log_source::StreamLogSource;
     use crate::core::session::SourceType;
     use crate::processors::reporter::schema::ReporterDef;
+    use crate::processors::state_tracker::types::StateTransition;
 
     /// Build a StreamLogSource with `n` lines pushed, then evict the first
     /// `evicted` of them (writing them to a real spill file, exactly like a
@@ -1025,5 +1053,119 @@ pipeline:
         // execute_pipeline. Reaching the assertion proves the subsequent run
         // proceeds rather than erroring out forever.
         let _guard = next.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    }
+
+    // ── Stale tracker/correlator results must not survive a rerun that ──────
+    // ── deselects them (bug f220a66b) ────────────────────────────────────────
+    //
+    // `execute_pipeline` itself needs a Tauri `AppHandle` + a populated
+    // session (see `poisoned_run_lock_does_not_brick_subsequent_runs` above),
+    // so it can't be driven end-to-end in a unit test. This exercises the
+    // extracted `store_tracker_and_correlator_results` helper directly — the
+    // exact call `execute_pipeline` makes with `output.tracker_results` /
+    // `output.correlator_results` from `PipelineCore::finish` — which is
+    // where the bug lived and where the fix was applied.
+
+    fn sample_tracker_result(tracker_id: &str) -> StateTrackerResult {
+        StateTrackerResult {
+            tracker_id: tracker_id.to_string(),
+            transitions: vec![StateTransition {
+                line_num: 1,
+                timestamp: 0,
+                transition_name: "on".to_string(),
+                changes: HashMap::new(),
+            }],
+            final_state: HashMap::new(),
+            source_sections: Vec::new(),
+            mode: Default::default(),
+        }
+    }
+
+    fn sample_correlator_result() -> CorrelatorResult {
+        CorrelatorResult {
+            guidance: None,
+            events: vec![],
+        }
+    }
+
+    #[test]
+    fn rerun_with_no_trackers_or_correlators_clears_stale_session_entries() {
+        let state = AppState::new();
+        let session_id = "sess-stale-tracker";
+
+        // First run: a tracker and a correlator were selected and produced
+        // results — mirrors execute_pipeline storing a non-empty
+        // `output.tracker_results` / `output.correlator_results`.
+        let mut first_trackers = HashMap::new();
+        first_trackers.insert("wifi-state".to_string(), sample_tracker_result("wifi-state"));
+        let mut first_correlators = HashMap::new();
+        first_correlators.insert("boot-corr".to_string(), sample_correlator_result());
+        store_tracker_and_correlator_results(
+            &state,
+            session_id,
+            first_trackers,
+            first_correlators,
+        );
+        assert!(
+            state.state_tracker_results.lock().unwrap().get(session_id).is_some(),
+            "precondition: first run's tracker result must be stored"
+        );
+        assert!(
+            state.correlator_results.lock().unwrap().get(session_id).is_some(),
+            "precondition: first run's correlator result must be stored"
+        );
+
+        // Second run: the tracker and correlator were deselected, so
+        // PipelineCore::finish produced empty maps this time (no tracker_runs
+        // / correlator_runs entries — see pipeline_core.rs::finish). Before
+        // the fix, execute_pipeline's `if !output.tracker_results.is_empty()`
+        // guard skipped the insert entirely, leaving the first run's stale
+        // "wifi-state" / "boot-corr" entries in place forever.
+        store_tracker_and_correlator_results(&state, session_id, HashMap::new(), HashMap::new());
+
+        let trackers_after = state.state_tracker_results.lock().unwrap();
+        let session_trackers = trackers_after
+            .get(session_id)
+            .expect("session entry must still exist (as an empty map), not be stale");
+        assert!(
+            session_trackers.is_empty(),
+            "deselected tracker's stale result must be cleared, found: {session_trackers:?}"
+        );
+
+        let correlators_after = state.correlator_results.lock().unwrap();
+        let session_correlators = correlators_after
+            .get(session_id)
+            .expect("session entry must still exist (as an empty map), not be stale");
+        assert!(
+            session_correlators.is_empty(),
+            "deselected correlator's stale result must be cleared"
+        );
+    }
+
+    #[test]
+    fn rerun_with_different_trackers_replaces_rather_than_merges() {
+        // A rerun that swaps which tracker is selected must not leave the old
+        // tracker's entry alongside the new one under the same session.
+        let state = AppState::new();
+        let session_id = "sess-swap-tracker";
+
+        let mut first = HashMap::new();
+        first.insert("tracker-a".to_string(), sample_tracker_result("tracker-a"));
+        store_tracker_and_correlator_results(&state, session_id, first, HashMap::new());
+
+        let mut second = HashMap::new();
+        second.insert("tracker-b".to_string(), sample_tracker_result("tracker-b"));
+        store_tracker_and_correlator_results(&state, session_id, second, HashMap::new());
+
+        let results = state.state_tracker_results.lock().unwrap();
+        let session_trackers = results.get(session_id).unwrap();
+        assert!(
+            !session_trackers.contains_key("tracker-a"),
+            "the previous run's deselected tracker must not linger"
+        );
+        assert!(
+            session_trackers.contains_key("tracker-b"),
+            "the current run's tracker must be present"
+        );
     }
 }
