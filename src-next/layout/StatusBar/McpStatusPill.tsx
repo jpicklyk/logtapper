@@ -1,5 +1,5 @@
 import React from 'react';
-import { useMcpStatus } from '../../hooks';
+import { useMcpStatus, useSettings } from '../../hooks';
 import type { McpConnState } from '../../hooks';
 import styles from './McpStatusPill.module.css';
 
@@ -12,7 +12,8 @@ const DOT_CLASS: Record<McpConnState, string> = {
 };
 
 export const McpStatusPill = React.memo(function McpStatusPill() {
-  const { connState, label, running, port } = useMcpStatus();
+  const { settings } = useSettings();
+  const { connState, label, running, port } = useMcpStatus(settings.mcpBridgeEnabled);
   const tip = running
     ? `MCP Bridge: ${label} - 127.0.0.1:${port}`
     : `MCP Bridge: ${label}`;

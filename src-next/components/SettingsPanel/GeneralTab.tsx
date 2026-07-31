@@ -201,7 +201,7 @@ export const GeneralTab = memo(function GeneralTab({ settings, onUpdate }: Gener
 // ── MCP Integration section ───────────────────────────────────────────────
 
 const McpIntegrationSection = memo(function McpIntegrationSection({ settings, onUpdate }: GeneralTabProps) {
-  const { connState, port } = useMcpStatus();
+  const { connState, port } = useMcpStatus(settings.mcpBridgeEnabled);
   const { startMcpBridge, stopMcpBridge } = useSettingsActions();
   const [pending, setPending] = useState(false);
 
