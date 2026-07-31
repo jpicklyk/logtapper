@@ -198,6 +198,11 @@ pub(crate) fn resolve_should_anonymize(flags: &HashMap<String, bool>, session_id
 /// Locks `mcp_anonymize`, then (only when anonymizing) `anonymizer_config`
 /// and `mcp_anonymizers`, each acquired and released in turn. Never held
 /// across an `.await`; never nested with `sessions` or `pipeline_results`.
+/// Enforced at every call site: `h_query`, `h_search`, `h_search_with_context`,
+/// and `h_lines_around` all collect RAW text under the `sessions` lock first,
+/// drop it, and only then call this function (directly or via
+/// [`anonymize_scan_line`] / [`anonymize_line_texts`]) — `sessions` is never
+/// held while this function's own locks are acquired.
 ///
 /// Also called from `commands::export::export_all_sessions` (after its
 /// `sessions` lock has been dropped, mirroring the `resolve_line_texts` /
@@ -662,6 +667,24 @@ fn anonymize_line_texts(
             (ln, truncate_str(&anonymized, 500))
         })
         .collect()
+}
+
+/// Anonymize + truncate a single raw line's text for MCP scan-result output,
+/// honoring the session's per-session `mcp_anonymize` flag via
+/// [`anonymize_for_session`]. Truncation is applied AFTER anonymization (same
+/// ordering rationale as [`anonymize_line_texts`]) so a redaction token is
+/// never cut mid-token by the length cap.
+///
+/// Shared by `h_search` (matched line + context_before/context_after),
+/// `h_search_with_context` (context lines), and `h_lines_around` (each
+/// returned line) — all three call this AFTER the `sessions` lock used to
+/// collect the raw text has been dropped, mirroring the `resolve_line_texts`
+/// / `anonymize_line_texts` split above. Factored out as a pure function (no
+/// locking beyond what `anonymize_for_session` itself does) so the
+/// transformation is unit-testable without a live Tauri `AppHandle`.
+fn anonymize_scan_line(state: &AppState, session_id: &str, raw: &str, max_chars: usize) -> String {
+    let clean = anonymize_for_session(state, session_id, raw);
+    truncate_str(&clean, max_chars)
 }
 
 // ---------------------------------------------------------------------------
@@ -1861,7 +1884,10 @@ async fn h_search(
         }
     };
 
-    // Scan lines
+    // Scan lines. Fields hold RAW (un-anonymized) text collected under the
+    // `sessions` lock — anonymization happens afterward, once the lock is
+    // dropped (see `anonymize_scan_line`), so `sessions` is never held across
+    // the anonymizer's own locks.
     struct MatchResult {
         line_num: usize,
         raw: String,
@@ -1918,15 +1944,14 @@ async fn h_search(
                         .filter_map(|j| caps.get(j).map(|m| m.as_str().to_string()))
                         .collect();
 
-                    // Context lines — anonymized (if enabled for this session) before
-                    // truncation, same as the matched line itself below.
+                    // Context lines — RAW text only. Anonymization happens
+                    // after the `sessions` lock (held by this block) is
+                    // dropped — see the module-level "Chunked scan helpers"
+                    // docs and `anonymize_scan_line`.
                     let context_before: Vec<(usize, String)> = if context > 0 {
                         let start = i.saturating_sub(context);
                         (start..i)
-                            .filter_map(|j| source.raw_line(j).map(|r| {
-                                let clean = anonymize_for_session(&state, &session_id, &r);
-                                (j, truncate_str(&clean, 500))
-                            }))
+                            .filter_map(|j| source.raw_line(j).map(|r| (j, r.into_owned())))
                             .collect()
                     } else {
                         vec![]
@@ -1935,19 +1960,15 @@ async fn h_search(
                     let context_after: Vec<(usize, String)> = if context > 0 {
                         let end = (i + 1 + context).min(live_total);
                         ((i + 1)..end)
-                            .filter_map(|j| source.raw_line(j).map(|r| {
-                                let clean = anonymize_for_session(&state, &session_id, &r);
-                                (j, truncate_str(&clean, 500))
-                            }))
+                            .filter_map(|j| source.raw_line(j).map(|r| (j, r.into_owned())))
                             .collect()
                     } else {
                         vec![]
                     };
 
-                    let clean_raw = anonymize_for_session(&state, &session_id, &raw);
                     results.push(MatchResult {
                         line_num: i,
-                        raw: truncate_str(&clean_raw, 500),
+                        raw: raw.into_owned(),
                         captures,
                         context_before,
                         context_after,
@@ -1961,24 +1982,27 @@ async fn h_search(
 
     let truncated = session_lost || (cap_applied && results.len() < limit);
 
+    // Anonymize + truncate here, AFTER the `sessions` lock (used only inside
+    // the chunked scan loop above) has been dropped — see `anonymize_scan_line`.
     let total_matches = results.len();
     let results_json: Vec<Value> = results.into_iter().map(|m| {
+        let clean_raw = anonymize_scan_line(&state, &session_id, &m.raw, 500);
         let mut entry = json!({
             "lineNum": m.line_num,
-            "raw": m.raw,
+            "raw": clean_raw,
         });
         if !m.captures.is_empty() {
             entry.as_object_mut().map(|o| o.insert("captures".to_string(), json!(m.captures)));
         }
         if !m.context_before.is_empty() {
             let before: Vec<Value> = m.context_before.into_iter()
-                .map(|(ln, text)| json!({ "lineNum": ln, "raw": text }))
+                .map(|(ln, text)| json!({ "lineNum": ln, "raw": anonymize_scan_line(&state, &session_id, &text, 500) }))
                 .collect();
             entry.as_object_mut().map(|o| o.insert("contextBefore".to_string(), json!(before)));
         }
         if !m.context_after.is_empty() {
             let after: Vec<Value> = m.context_after.into_iter()
-                .map(|(ln, text)| json!({ "lineNum": ln, "raw": text }))
+                .map(|(ln, text)| json!({ "lineNum": ln, "raw": anonymize_scan_line(&state, &session_id, &text, 500) }))
                 .collect();
             entry.as_object_mut().map(|o| o.insert("contextAfter".to_string(), json!(after)));
         }
@@ -2428,24 +2452,52 @@ async fn h_lines_around(
     let after = params.after.unwrap_or(20).min(100);
     let center = params.line;
 
-    get_session_and_source!(state, session_id => sessions, session, source);
+    // Collect RAW (un-anonymized) lines under the `sessions` lock in a
+    // scoped block, so the lock is dropped before anonymization runs below
+    // — see the module header's lock-discipline rule and `anonymize_scan_line`.
+    struct LineAroundSnap {
+        line_num: usize,
+        level: &'static str,
+        tag: String,
+        raw: String,
+        is_center: bool,
+    }
 
-    let total = source.total_lines();
-    let start = center.saturating_sub(before);
-    let end = (center + after + 1).min(total);
+    let (snaps, total): (Vec<LineAroundSnap>, usize) = {
+        get_session_and_source!(state, session_id => sessions, session, source);
 
-    let lines: Vec<Value> = (start..end)
-        .filter_map(|i| {
-            let raw = source.raw_line(i)?;
-            let meta = source.meta_at(i)?;
-            let clean = anonymize_for_session(&state, &session_id, &raw);
-            Some(json!({
-                "lineNum": i,
-                "level": meta.level.as_str(),
-                "tag": session.resolve_tag(meta.tag_id),
-                "raw": truncate_str(&clean, 500),
-                "isCenter": i == center,
-            }))
+        let total = source.total_lines();
+        let start = center.saturating_sub(before);
+        let end = (center + after + 1).min(total);
+
+        let snaps: Vec<LineAroundSnap> = (start..end)
+            .filter_map(|i| {
+                let raw = source.raw_line(i)?;
+                let meta = source.meta_at(i)?;
+                Some(LineAroundSnap {
+                    line_num: i,
+                    level: meta.level.as_str(),
+                    tag: session.resolve_tag(meta.tag_id).to_string(),
+                    raw: raw.into_owned(),
+                    is_center: i == center,
+                })
+            })
+            .collect();
+
+        (snaps, total)
+    };
+
+    // Anonymize + truncate AFTER the `sessions` lock above has been dropped.
+    let lines: Vec<Value> = snaps
+        .into_iter()
+        .map(|s| {
+            json!({
+                "lineNum": s.line_num,
+                "level": s.level,
+                "tag": s.tag,
+                "raw": anonymize_scan_line(&state, &session_id, &s.raw, 500),
+                "isCenter": s.is_center,
+            })
         })
         .collect();
 
@@ -2532,7 +2584,22 @@ async fn h_search_with_context(
     let cap_applied = scan_window_capped(range_start, requested_end, MCP_SCAN_LINE_CAP);
     let range_end = capped_range_end(range_start, requested_end, MCP_SCAN_LINE_CAP);
 
-    let mut results: Vec<Value> = Vec::new();
+    // RAW (un-anonymized) context-line snapshot — anonymization is deferred
+    // until after the `sessions` lock (held only inside the chunked scan
+    // loop below) is dropped, mirroring `h_search` / `h_lines_around`.
+    struct ContextLineSnap {
+        line_num: usize,
+        level: &'static str,
+        tag: String,
+        raw: String,
+        is_match: bool,
+    }
+    struct ContextMatchSnap {
+        match_line_num: usize,
+        context: Vec<ContextLineSnap>,
+    }
+
+    let mut results: Vec<ContextMatchSnap> = Vec::new();
     let mut skipped: usize = 0;
     // Counted across the whole (possibly capped) scan range, not just the
     // returned page, so callers can tell how much is left to paginate
@@ -2570,29 +2637,28 @@ async fn h_search_with_context(
                     if results.len() >= max_results {
                         continue;
                     }
-                    // Build context
+                    // Build context — RAW text only, no anonymization here.
                     let ctx_start = i.saturating_sub(context_lines);
                     let ctx_end = (i + context_lines + 1).min(live_total);
 
-                    let context: Vec<Value> = (ctx_start..ctx_end)
+                    let context: Vec<ContextLineSnap> = (ctx_start..ctx_end)
                         .filter_map(|j| {
                             let line_raw = source.raw_line(j)?;
                             let meta = source.meta_at(j)?;
-                            let clean = anonymize_for_session(&state, &session_id, &line_raw);
-                            Some(json!({
-                                "lineNum": j,
-                                "level": meta.level.as_str(),
-                                "tag": session.resolve_tag(meta.tag_id),
-                                "raw": truncate_str(&clean, max_line_chars),
-                                "isMatch": j == i,
-                            }))
+                            Some(ContextLineSnap {
+                                line_num: j,
+                                level: meta.level.as_str(),
+                                tag: session.resolve_tag(meta.tag_id).to_string(),
+                                raw: line_raw.into_owned(),
+                                is_match: j == i,
+                            })
                         })
                         .collect();
 
-                    results.push(json!({
-                        "matchLineNum": i,
-                        "context": context,
-                    }));
+                    results.push(ContextMatchSnap {
+                        match_line_num: i,
+                        context,
+                    });
                 }
             }
         }
@@ -2602,6 +2668,25 @@ async fn h_search_with_context(
 
     let truncated = session_lost || cap_applied;
 
+    // Anonymize + truncate here, AFTER the `sessions` lock above has been
+    // dropped — see `anonymize_scan_line`.
+    let returned = results.len();
+    let results_json: Vec<Value> = results.into_iter().map(|m| {
+        let context: Vec<Value> = m.context.into_iter().map(|c| {
+            json!({
+                "lineNum": c.line_num,
+                "level": c.level,
+                "tag": c.tag,
+                "raw": anonymize_scan_line(&state, &session_id, &c.raw, max_line_chars),
+                "isMatch": c.is_match,
+            })
+        }).collect();
+        json!({
+            "matchLineNum": m.match_line_num,
+            "context": context,
+        })
+    }).collect();
+
     Json(json!({
         "sessionId": session_id,
         "query": params.query,
@@ -2609,13 +2694,13 @@ async fn h_search_with_context(
         // True count across the whole scan range, independent of max_results
         // and offset. `returned` is how many are in this page.
         "matchCount": total_matches,
-        "returned": results.len(),
+        "returned": returned,
         "maxResults": max_results,
         "contextLines": context_lines,
         "offset": offset,
         "maxLineChars": max_line_chars,
         "totalLinesInSession": total,
-        "matches": results,
+        "matches": results_json,
         "scannedLines": lines_scanned,
         "truncated": truncated,
     }))
@@ -3376,6 +3461,90 @@ mod tests {
 
         let out = anonymize_line_texts(&state, "sess-a", raw);
         assert!(!out[&1].contains("user@"), "partial/full email leaked through rawLine: {}", out[&1]);
+    }
+
+    // ── anonymize_scan_line (h_search / h_search_with_context / h_lines_around) ─
+    // These three handlers used to call `anonymize_for_session` (which locks
+    // `mcp_anonymize` / `anonymizer_config` / `mcp_anonymizers`) WHILE still
+    // holding the `sessions` lock from their chunked scan loop — a lock-order
+    // violation of this file's own header rule ("copy/clone the data needed,
+    // drop the `sessions` lock, THEN build the JSON response"). The fix moves
+    // anonymization to run after `sessions` is dropped, funneled through this
+    // shared helper. A live Axum/Tauri `Handle<Wry>` is impractical to
+    // construct in this test suite (see `poisoned_sessions_probe`'s doc
+    // comment for the same constraint), so — exactly like
+    // `anonymize_line_texts` above — these tests exercise the extracted
+    // post-lock transformation directly to prove anonymization is still
+    // applied (and still ordered before truncation) with the lock dropped.
+
+    #[test]
+    fn anonymize_scan_line_redacts_pii_when_flag_true() {
+        let state = AppState::new();
+        state.mcp_anonymize.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert("sess-a".to_string(), true);
+
+        let raw = "contact user@example.com for access";
+        let out = anonymize_scan_line(&state, "sess-a", raw, 500);
+        assert_ne!(out, raw);
+        assert!(!out.contains("user@example.com"), "raw PII leaked: {out}");
+    }
+
+    #[test]
+    fn anonymize_scan_line_serves_raw_when_flag_false() {
+        // Anonymization is opt-in per session — matches h_search's contract
+        // of honoring the session's mcp_anonymize flag, not a global switch.
+        let state = AppState::new();
+        state.mcp_anonymize.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert("sess-raw".to_string(), false);
+
+        let raw = "contact user@example.com for access";
+        let out = anonymize_scan_line(&state, "sess-raw", raw, 500);
+        assert_eq!(out, raw);
+    }
+
+    #[test]
+    fn anonymize_scan_line_fails_closed_for_unknown_session() {
+        // No `set_mcp_anonymize` signal has landed for this session — must
+        // anonymize by default (same fail-closed contract as
+        // `anonymize_for_session` / `anonymize_line_texts`), matching what
+        // h_search / h_search_with_context / h_lines_around must do for a
+        // session the frontend hasn't signalled a state for yet.
+        let state = AppState::new();
+        let raw = "contact user@example.com for access";
+        let out = anonymize_scan_line(&state, "never-seen-session", raw, 500);
+        assert!(!out.contains("user@example.com"), "raw PII leaked for unrecognized session: {out}");
+    }
+
+    #[test]
+    fn anonymize_scan_line_anonymizes_before_truncating() {
+        // Same ordering requirement as `anonymize_line_texts`: h_search's
+        // matched line, its contextBefore/contextAfter lines, and
+        // h_search_with_context's/h_lines_around's context lines are all
+        // truncated at up to 500/max_line_chars characters — if truncation
+        // ran first, an email straddling the cut point would be sliced
+        // mid-token and leak its unredacted prefix.
+        let state = AppState::new();
+        state.mcp_anonymize.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert("sess-a".to_string(), true);
+
+        let long_line = format!("{} user@example.com", "p".repeat(489));
+        let out = anonymize_scan_line(&state, "sess-a", &long_line, 500);
+        assert!(!out.contains("user@"), "partial/full email leaked: {out}");
+    }
+
+    #[test]
+    fn anonymize_scan_line_truncates_after_anonymizing_respects_custom_cap() {
+        // h_search_with_context accepts a caller-supplied `max_line_chars`
+        // (up to 8000) instead of the fixed 500 h_search/h_lines_around use —
+        // verify the cap is still honored post-anonymization.
+        let state = AppState::new();
+        state.mcp_anonymize.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert("sess-a".to_string(), false); // flag off: raw passes through unchanged
+
+        let long = "x".repeat(600);
+        let out = anonymize_scan_line(&state, "sess-a", &long, 500);
+        assert!(out.ends_with("..."));
+        assert_eq!(out.chars().count(), 503);
     }
 
     // ── Lock poisoning: `lock_or_json_err!` vs. `into_inner` recovery ───────
