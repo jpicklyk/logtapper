@@ -31,6 +31,10 @@ export function useSearchNavigation(refs: SharedLogViewerRefs): SearchNavigation
   const searchRef = useRef<SearchQuery | null>(null);
   const processorIdRef = useRef<string | null>(null);
   const searchProgressUnlistenRef = useRef<UnlistenFn | null>(null);
+  // Bumped on every handleSearch call so a registration that resolves after a
+  // newer search has started can detect it is stale (mirrors filterScanGenRef
+  // in useFilterScan.ts).
+  const searchGenRef = useRef(0);
 
   const reset = useCallback(() => {
     setSearch(null);
@@ -38,6 +42,7 @@ export function useSearchNavigation(refs: SharedLogViewerRefs): SearchNavigation
     setCurrentMatchIndex(0);
     setProcessorId(null);
     processorIdRef.current = null;
+    searchGenRef.current++;
     searchProgressUnlistenRef.current?.();
     searchProgressUnlistenRef.current = null;
   }, [setSearch, setCurrentMatchIndex, setProcessorId]);
@@ -49,6 +54,8 @@ export function useSearchNavigation(refs: SharedLogViewerRefs): SearchNavigation
     setSearch(query);
     searchRef.current = query;
     setCurrentMatchIndex(0);
+
+    const gen = ++searchGenRef.current;
 
     searchProgressUnlistenRef.current?.();
     searchProgressUnlistenRef.current = null;
@@ -62,6 +69,9 @@ export function useSearchNavigation(refs: SharedLogViewerRefs): SearchNavigation
     let jumpedToFirst = false;
 
     const unlisten = await onSearchProgress((payload: SearchProgress) => {
+      // Stale listener from a superseded search — ignore instead of pushing
+      // into the current search's accumulatedMatches/summary.
+      if (searchGenRef.current !== gen) return;
       if (payload.sessionId !== sess.sessionId) return;
 
       if (payload.newMatches.length > 0) {
@@ -83,10 +93,20 @@ export function useSearchNavigation(refs: SharedLogViewerRefs): SearchNavigation
         searchProgressUnlistenRef.current = null;
       }
     });
+
+    if (searchGenRef.current !== gen) {
+      // A newer search started while this one's listener was still
+      // registering — the ref already belongs to (or is being set up by) the
+      // newer call. Unregister this stale listener immediately rather than
+      // storing it into the shared ref, where it would orphan the newer one.
+      unlisten();
+      return;
+    }
     searchProgressUnlistenRef.current = unlisten;
 
     try {
       const summary = await searchLogs(sess.sessionId, query);
+      if (searchGenRef.current !== gen) return;
       setSearchSummary(summary);
       setCurrentMatchIndex(0);
       if (summary.matchLineNums.length > 0 && !jumpedToFirst) {
@@ -96,8 +116,10 @@ export function useSearchNavigation(refs: SharedLogViewerRefs): SearchNavigation
     } catch (e) {
       console.error('Search error:', e);
     } finally {
-      searchProgressUnlistenRef.current?.();
-      searchProgressUnlistenRef.current = null;
+      if (searchGenRef.current === gen) {
+        searchProgressUnlistenRef.current?.();
+        searchProgressUnlistenRef.current = null;
+      }
     }
   }, [refs.sessionRef, setSearch, setSearchSummary, setCurrentMatchIndex, setScrollToLine, setJumpSeq]);
 
