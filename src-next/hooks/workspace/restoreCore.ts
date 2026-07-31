@@ -92,6 +92,20 @@ export async function restoreWorkspace(
     };
     bus.on('session:loaded', onSessionLoaded);
 
+    // U6: a session's indexing can complete in the gap between its
+    // session:loaded (which carries the isIndexing snapshot below) and the
+    // scheduleAutoRun call further down, which only runs after an awaited
+    // restoreWorkspaceSession per pair. Subscribing before any load starts
+    // means we catch that completion instead of missing it — scheduleAutoRun
+    // is told below to treat any such session as already-indexed instead of
+    // arming a one-shot for an indexing-complete that already fired (which
+    // would otherwise wait forever, since the event never fires twice).
+    const indexingCompletedIds = new Set<string>();
+    const onIndexingComplete = (p: { sessionId: string }) => {
+      indexingCompletedIds.add(p.sessionId);
+    };
+    bus.on('session:indexing-complete', onIndexingComplete);
+
     const producedSessionIdsPerLoad: string[][] = [];
     try {
       for (const load of plan.loads) {
@@ -127,36 +141,47 @@ export async function restoreWorkspace(
     const warnings = [...plan.warnings, ...pairingWarnings];
     for (const w of warnings) console.warn(`[restoreWorkspace] ${w}`);
 
-    // Restore artifacts per session, then trigger that session's own auto-run.
-    // Restores are independent — each targets its own session_id-keyed slices of
-    // AppState (bookmarks/analyses/pipeline meta) and emits its own scoped
-    // workspace-restored event, so run them in parallel. What must stay ordered
-    // is local to each pair: "this session's restore resolves before this
-    // session's own auto-run is scheduled" — Promise.all over per-pair async
-    // callbacks preserves that while letting sessions restore concurrently.
-    await Promise.all(pairs.map(async ({ sessionId, data }) => {
-      try {
-        await restoreWorkspaceSession({
-          sessionId,
-          bookmarks: data.bookmarks,
-          analyses: data.analyses,
-          activeProcessorIds: data.activeProcessorIds,
-          disabledProcessorIds: data.disabledProcessorIds,
-        });
-      } catch (e) {
-        console.warn(`[restoreWorkspace] Failed to restore artifacts for ${sessionId}:`, e);
-        return;
-      }
-      // Only sessions with a restored chain, and not owned by the `.lts` path.
-      if (data.activeProcessorIds.length > 0 && !ltsSessionIds.has(sessionId)) {
-        io.scheduleAutoRun(
-          sessionId,
-          isIndexingBySession.get(sessionId),
-          data.activeProcessorIds,
-          data.disabledProcessorIds,
-        );
-      }
-    }));
+    try {
+      // Restore artifacts per session, then trigger that session's own auto-run.
+      // Restores are independent — each targets its own session_id-keyed slices of
+      // AppState (bookmarks/analyses/pipeline meta) and emits its own scoped
+      // workspace-restored event, so run them in parallel. What must stay ordered
+      // is local to each pair: "this session's restore resolves before this
+      // session's own auto-run is scheduled" — Promise.all over per-pair async
+      // callbacks preserves that while letting sessions restore concurrently.
+      await Promise.all(pairs.map(async ({ sessionId, data }) => {
+        try {
+          await restoreWorkspaceSession({
+            sessionId,
+            bookmarks: data.bookmarks,
+            analyses: data.analyses,
+            activeProcessorIds: data.activeProcessorIds,
+            disabledProcessorIds: data.disabledProcessorIds,
+          });
+        } catch (e) {
+          console.warn(`[restoreWorkspace] Failed to restore artifacts for ${sessionId}:`, e);
+          return;
+        }
+        // Only sessions with a restored chain, and not owned by the `.lts` path.
+        if (data.activeProcessorIds.length > 0 && !ltsSessionIds.has(sessionId)) {
+          // If indexing-complete already arrived for this session (raced ahead
+          // of us getting here), treat it as not-indexing so scheduleAutoRun
+          // runs now instead of arming a one-shot for an event that already
+          // fired and will never fire again.
+          const isIndexing = indexingCompletedIds.has(sessionId) ? false : isIndexingBySession.get(sessionId);
+          io.scheduleAutoRun(
+            sessionId,
+            isIndexing,
+            data.activeProcessorIds,
+            data.disabledProcessorIds,
+          );
+        }
+      }));
+    } finally {
+      // All scheduleAutoRun decisions above have been made (or skipped on
+      // error) — stop tracking regardless of outcome.
+      bus.off('session:indexing-complete', onIndexingComplete);
+    }
 
     // View-state: editor tabs + layout blob. Only when localStorage did not
     // already restore them (else they self-restore from their own keys and this
