@@ -18,6 +18,12 @@ use crate::core::parser::LogParser;
 static THREADTIME_RE: OnceLock<Regex> = OnceLock::new();
 static BRIEF_RE: OnceLock<Regex> = OnceLock::new();
 
+// Logcat timestamps omit the year, so it's inferred once from system time
+// (see `parse_timestamp_ns`) and cached for the lifetime of the process —
+// querying `SystemTime::now()` per line was measurable overhead on large
+// files and the inferred year is already only approximate.
+static INFERRED_YEAR: OnceLock<i64> = OnceLock::new();
+
 fn threadtime_re() -> &'static Regex {
     THREADTIME_RE.get_or_init(|| {
         // Handles 2-field, 3-field numeric, and named-UID prefixes:
@@ -66,8 +72,8 @@ fn parse_timestamp_ns(date: &str, time: &str) -> i64 {
     let s: i64 = t.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
     let ms: i64 = t.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
 
-    // Infer the current UTC year from system time.
-    let year = crate::core::infer_current_year();
+    // Infer the current UTC year from system time (cached — see `INFERRED_YEAR`).
+    let year = *INFERRED_YEAR.get_or_init(crate::core::infer_current_year);
 
     // Compute days from epoch to Jan 1 of `year` using the era-based algorithm.
     // https://howardhinnant.github.io/date_algorithms.html
@@ -190,23 +196,21 @@ fn parse_threadtime(raw: &str, source_id: &str, line_num: usize) -> Option<LineC
     let date = caps.get(1)?.as_str();
     let time_str = caps.get(2)?.as_str();
     // Groups 3/4 are always present. Group 5 is the optional third numeric field (UID prefix).
-    // When group 5 is Some (3-field format): groups 3/4 = first two nums, group 5 = third num,
-    // then group 6 = level, 7 = tag, 8 = message.
-    // When group 5 is None (2-field format): groups 3/4 = PID/TID,
-    // group 6 = level, 7 = tag, 8 = message.
-    let (pid, tid, level_idx, tag_idx, msg_idx) = if caps.get(5).is_some() {
-        // 3-field: group3=first, group4=second (PID), group5=third (TID)
+    // When group 5 is Some (3-field format): group 4 = PID, group 5 = TID.
+    // When group 5 is None (2-field format): groups 3/4 = PID/TID.
+    // Group 6 = level, 7 = tag, 8 = message — fixed offsets regardless of format.
+    let (pid, tid) = if let Some(tid_m) = caps.get(5) {
         let pid: i32 = caps.get(4).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-        let tid: i32 = caps.get(5).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-        (pid, tid, 6usize, 7usize, 8usize)
+        let tid: i32 = tid_m.as_str().parse().unwrap_or(0);
+        (pid, tid)
     } else {
         let pid: i32 = caps.get(3).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
         let tid: i32 = caps.get(4).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-        (pid, tid, 6usize, 7usize, 8usize)
+        (pid, tid)
     };
-    let level_char = caps.get(level_idx)?.as_str();
-    let tag: Arc<str> = Arc::from(caps.get(tag_idx)?.as_str().trim());
-    let message: Arc<str> = Arc::from(caps.get(msg_idx)?.as_str());
+    let level_char = caps.get(6)?.as_str();
+    let tag: Arc<str> = Arc::from(caps.get(7)?.as_str().trim());
+    let message: Arc<str> = Arc::from(caps.get(8)?.as_str());
 
     Some(LineContext {
         raw: Arc::from(raw),

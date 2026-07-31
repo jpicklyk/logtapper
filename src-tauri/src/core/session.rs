@@ -670,7 +670,9 @@ fn intern_parsed_meta(parsed: ParsedLineMeta, interner: &mut TagInterner) -> Lin
 }
 
 /// Parse a single line's bytes and push results into the index/meta vectors.
-/// Handles encoding-aware decode. For UTF-16, uses `decode_buf` to avoid per-line allocation.
+/// Handles encoding-aware decode. UTF-16 lines are decoded via
+/// `decode_line_bytes`, which allocates an owned `String` per line
+/// (`Cow::Owned`) — there is no shared buffer to reuse across calls.
 #[allow(clippy::too_many_arguments)]
 fn index_one_line(
     data: &[u8],
@@ -678,7 +680,6 @@ fn index_one_line(
     end: usize,
     encoding: Encoding,
     parser: &dyn LogParser,
-    decode_buf: &mut String,
     line_index: &mut Vec<u64>,
     line_meta: &mut Vec<LineMeta>,
     interner: &mut TagInterner,
@@ -729,10 +730,6 @@ fn index_one_line(
         }
     };
 
-    // Suppress unused-variable warning — decode_buf is used by decode_line_bytes indirectly
-    // via the Cow::Owned path for UTF-16, but Rust can't see that through the function call.
-    let _ = decode_buf;
-
     line_index.push(start as u64);
     line_meta.push(intern_parsed_meta(parsed, interner));
 }
@@ -749,7 +746,6 @@ fn build_line_index(
     let estimate = (data.len() / 120).max(1024);
     let mut line_index: Vec<u64> = Vec::with_capacity(estimate + 1);
     let mut line_meta: Vec<LineMeta> = Vec::with_capacity(estimate);
-    let mut decode_buf = String::new();
 
     let mut start = encoding.bom_len();
     let len = data.len();
@@ -759,20 +755,20 @@ fn build_line_index(
         let mut i = start;
         while i + 1 < len {
             if is_utf16_lf(data[i], data[i + 1], be) {
-                index_one_line(data, start, i, encoding, parser.as_ref(), &mut decode_buf, &mut line_index, &mut line_meta, interner);
+                index_one_line(data, start, i, encoding, parser.as_ref(), &mut line_index, &mut line_meta, interner);
                 start = i + 2;
             }
             i += 2;
         }
     } else {
         for nl_pos in memchr_iter(b'\n', data) {
-            index_one_line(data, start, nl_pos, encoding, parser.as_ref(), &mut decode_buf, &mut line_index, &mut line_meta, interner);
+            index_one_line(data, start, nl_pos, encoding, parser.as_ref(), &mut line_index, &mut line_meta, interner);
             start = nl_pos + 1;
         }
     }
 
     if start < len {
-        index_one_line(data, start, len, encoding, parser.as_ref(), &mut decode_buf, &mut line_index, &mut line_meta, interner);
+        index_one_line(data, start, len, encoding, parser.as_ref(), &mut line_index, &mut line_meta, interner);
     }
 
     line_index.push(len as u64);
@@ -797,14 +793,13 @@ pub(crate) fn build_partial_line_index(
     let mut line_meta: Vec<LineMeta> = Vec::with_capacity(estimate);
     let mut start = 0usize;
     let mut end_byte = 0usize;
-    let mut decode_buf = String::new();
     let be = encoding == Encoding::Utf16Be;
 
     if encoding.is_utf16() {
         let mut i = 0usize;
         while i + 1 < data.len() {
             if is_utf16_lf(data[i], data[i + 1], be) {
-                index_one_line(data, start, i, encoding, parser, &mut decode_buf, &mut line_index, &mut line_meta, interner);
+                index_one_line(data, start, i, encoding, parser, &mut line_index, &mut line_meta, interner);
                 end_byte = i + 2;
                 start = end_byte;
                 if end_byte >= scan_limit && scan_limit < data.len() {
@@ -815,7 +810,7 @@ pub(crate) fn build_partial_line_index(
         }
     } else {
         for nl_pos in memchr_iter(b'\n', data) {
-            index_one_line(data, start, nl_pos, encoding, parser, &mut decode_buf, &mut line_index, &mut line_meta, interner);
+            index_one_line(data, start, nl_pos, encoding, parser, &mut line_index, &mut line_meta, interner);
             end_byte = nl_pos + 1;
             start = nl_pos + 1;
             if end_byte >= scan_limit && scan_limit < data.len() {
@@ -825,7 +820,7 @@ pub(crate) fn build_partial_line_index(
     }
 
     if start < data.len() && scan_limit == data.len() {
-        index_one_line(data, start, data.len(), encoding, parser, &mut decode_buf, &mut line_index, &mut line_meta, interner);
+        index_one_line(data, start, data.len(), encoding, parser, &mut line_index, &mut line_meta, interner);
         end_byte = data.len();
     }
 

@@ -415,21 +415,45 @@ pub fn close_filter(
 // UUID helper
 // ---------------------------------------------------------------------------
 
+/// Splitmix64 finalizer — cheap bit-avalanche so a low-entropy seed still
+/// spreads across all 64 output bits (no crate dependency required).
+fn splitmix64(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^ (x >> 31)
+}
+
 fn uuid_v4() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    // No `rand` crate dependency in this crate. `nanos` alone previously fed
+    // the top two groups directly via `nanos >> 96` / `>> 80` — but a
+    // nanosecond epoch timestamp never gets anywhere near 2^80, so those
+    // shifts were always 0 and every generated id started "00000000-0000".
+    // Mix the timestamp through splitmix64 instead so every group of the
+    // output varies, and fold in a process-wide counter so back-to-back
+    // calls landing on the same (or a coarser-resolution) timestamp still
+    // produce distinct ids.
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_nanos();
-    // Simple pseudo-UUID from timestamp + random bits
-    let rand_part: u64 = (nanos as u64).wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        .as_nanos() as u64;
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+
+    let hi = splitmix64(nanos ^ counter.wrapping_mul(0x2545_F491_4F6C_DD1D));
+    let lo = splitmix64(hi ^ counter);
+
     format!(
         "{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}",
-        (nanos >> 96) as u32,
-        (nanos >> 80) as u16,
-        (rand_part >> 48) as u16 & 0x0fff,
-        (rand_part >> 32) as u16 & 0x3fff | 0x8000,
-        rand_part & 0x0000_ffff_ffff_ffff,
+        (hi >> 32) as u32,
+        (hi >> 16) as u16,
+        (hi & 0x0fff) as u16,
+        ((lo >> 48) as u16 & 0x3fff) | 0x8000,
+        lo & 0x0000_ffff_ffff_ffff,
     )
 }
 
@@ -440,6 +464,45 @@ fn uuid_v4() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── uuid_v4 ──────────────────────────────────────────────────────────────
+    // Regression: the old implementation shifted a nanosecond-resolution u128
+    // timestamp right by 96/80 bits for the first two groups, which are
+    // always 0 for any real epoch timestamp — every id started with the
+    // literal prefix "00000000-0000".
+
+    #[test]
+    fn uuid_v4_does_not_start_with_static_zero_prefix() {
+        let id = uuid_v4();
+        assert!(
+            !id.starts_with("00000000-0000"),
+            "uuid_v4 must not reproduce the old always-zero prefix, got: {id}"
+        );
+    }
+
+    #[test]
+    fn uuid_v4_has_expected_shape() {
+        let id = uuid_v4();
+        let groups: Vec<&str> = id.split('-').collect();
+        assert_eq!(groups.len(), 5, "uuid must have 5 hyphen-separated groups: {id}");
+        assert_eq!(groups[0].len(), 8);
+        assert_eq!(groups[1].len(), 4);
+        assert_eq!(groups[2].len(), 4);
+        assert_eq!(groups[3].len(), 4);
+        assert_eq!(groups[4].len(), 12);
+        assert!(groups[2].starts_with('4'), "version nibble must be 4: {id}");
+        let variant_nibble = groups[3].chars().next().unwrap();
+        assert!(
+            matches!(variant_nibble, '8' | '9' | 'a' | 'b'),
+            "variant nibble must be 8/9/a/b: {id}"
+        );
+    }
+
+    #[test]
+    fn uuid_v4_generates_distinct_ids_back_to_back() {
+        let ids: std::collections::HashSet<String> = (0..100).map(|_| uuid_v4()).collect();
+        assert_eq!(ids.len(), 100, "back-to-back uuid_v4 calls must not collide");
+    }
 
     // ── criteria_needs_pid ──────────────────────────────────────────────────
     // `scan_filter_background` only allocates a parser and parses each line

@@ -22,6 +22,10 @@ fn kernel_re() -> &'static Regex {
     })
 }
 
+/// Kernel timestamps are seconds since boot; converted to nanos since
+/// 2000-01-01 UTC, offset from epoch, and used as-is.
+const KERNEL_TS_BASE_NS: i64 = 946_684_800_000_000_000;
+
 /// Convert kmsg level integer to LogLevel.
 fn kmsg_level(n: u64) -> LogLevel {
     match n & 7 {
@@ -46,10 +50,7 @@ impl LogParser for KernelParser {
             .map_or(LogLevel::Info, kmsg_level);
 
         let timestamp_sec: f64 = caps.get(2)?.as_str().parse().ok()?;
-        // Convert to nanos since 2000-01-01 UTC
-        // Kernel timestamps are seconds since boot — we use them as-is offset from epoch
-        const BASE_NS: i64 = 946_684_800_000_000_000;
-        let timestamp = BASE_NS + (timestamp_sec * 1_000_000_000.0) as i64;
+        let timestamp = KERNEL_TS_BASE_NS + (timestamp_sec * 1_000_000_000.0) as i64;
 
         let tag: Arc<str> = caps
             .get(3).map_or_else(|| Arc::from("kernel"), |m| Arc::from(m.as_str()));
@@ -72,11 +73,28 @@ impl LogParser for KernelParser {
     }
 
     fn parse_meta(&self, raw: &str, byte_offset: usize) -> Option<ParsedLineMeta> {
-        let ctx = self.parse_line(raw, "", 0)?;
+        // Extract only level/tag/timestamp directly from the regex captures,
+        // rather than building a full `LineContext` (which would allocate
+        // `raw`/`tag`/`message`/`source_id` as `Arc<str>` just to discard
+        // most of them immediately).
+        let caps = kernel_re().captures(raw)?;
+
+        let level = caps
+            .get(1)
+            .and_then(|m| m.as_str().parse::<u64>().ok())
+            .map_or(LogLevel::Info, kmsg_level);
+
+        let timestamp_sec: f64 = caps.get(2)?.as_str().parse().ok()?;
+        let timestamp = KERNEL_TS_BASE_NS + (timestamp_sec * 1_000_000_000.0) as i64;
+
+        let tag = caps
+            .get(3)
+            .map_or_else(|| "kernel".to_string(), |m| m.as_str().to_string());
+
         Some(ParsedLineMeta {
-            level: ctx.level,
-            tag: ctx.tag.to_string(),
-            timestamp: ctx.timestamp,
+            level,
+            tag,
+            timestamp,
             byte_offset,
             byte_len: raw.len(),
             is_section_boundary: false,

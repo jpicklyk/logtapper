@@ -1395,6 +1395,14 @@ fn flush_batch(
                         }
                     });
 
+                    // Unlike `adb-batch` / `adb-processor-update`, tracker updates are
+                    // still delivered via this app-wide `app.emit()` broadcast rather
+                    // than the `on_event: Channel<AdbStreamEvent>` used elsewhere in
+                    // this function. That's a deliberate, currently-unmigrated gap —
+                    // not an oversight to "fix" in passing here: tracker-update
+                    // frequency is far lower than batch/processor updates, and the
+                    // frontend listens for this event name directly, so switching the
+                    // transport is a frontend-contract change that needs its own review.
                     for (t_id, transition_count) in event_data {
                         let _ = app.emit("adb-tracker-update", AdbTrackerUpdate {
                             session_id: session_id.to_string(),

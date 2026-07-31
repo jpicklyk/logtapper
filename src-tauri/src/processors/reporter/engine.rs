@@ -14,6 +14,22 @@ use crate::scripting::engine::ScriptEngine;
 /// Inline field storage — most extract stages produce <= 4 fields per line.
 type FieldVec = SmallVec<[(String, JsonValue); 4]>;
 
+/// `PipelineStage::Correlate` deserializes successfully inside a reporter YAML
+/// (the variant must stay, or existing installed YAMLs fail to parse), but the
+/// reporter engine never executes it — cross-source correlation is handled by
+/// a separate `correlator` processor type, not a reporter pipeline stage. A
+/// `correlate` stage in a reporter pipeline is a silent no-op at
+/// `process_line` (see the `PipelineStage::Correlate` match arm there); warn
+/// once at construction time so an author who writes one finds out.
+fn warn_on_correlate_stage(def: &ReporterDef) {
+    if def.pipeline.iter().any(|s| matches!(s, PipelineStage::Correlate(_))) {
+        log::warn!(
+            "reporter '{}': pipeline contains a 'correlate' stage, which reporters do not execute (use a 'correlator' processor instead) — it will be silently skipped",
+            def.meta.id
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Emission — one row pushed via emit() or the aggregate stage
 // ---------------------------------------------------------------------------
@@ -92,6 +108,7 @@ impl<'a> ProcessorRun<'a> {
     }
 
     pub fn new(def: &'a ReporterDef) -> Self {
+        warn_on_correlate_stage(def);
         let sorted_filter_rules = Self::build_sorted_filter_rules(def);
         Self {
             vars: VarStore::new(&def.vars),
@@ -111,6 +128,7 @@ impl<'a> ProcessorRun<'a> {
 
     /// Create a run seeded with previously saved state for continuous (streaming) processing.
     pub fn new_seeded(def: &'a ReporterDef, state: ContinuousRunState) -> Self {
+        warn_on_correlate_stage(def);
         let sorted_filter_rules = Self::build_sorted_filter_rules(def);
         Self {
             vars: state.vars,
@@ -201,7 +219,10 @@ impl<'a> ProcessorRun<'a> {
                     }
                 }
                 PipelineStage::Correlate(_) | PipelineStage::Output(_) => {
-                    // Correlate is handled in Phase 3; Output is consumed at the end.
+                    // Correlate is never executed here — reporters don't run
+                    // correlation (see `warn_on_correlate_stage`, called from
+                    // `new`/`new_seeded`, which flags this at construction
+                    // time). Output is consumed at the end.
                 }
             }
         }
@@ -318,7 +339,7 @@ impl<'a> ProcessorRun<'a> {
                 if let Some(fname) = field {
                     if let Some(JsonValue::String(group)) = fields.iter().find(|(k, _)| k == fname).map(|(_, v)| v) {
                         self.emissions.push(Emission {
-                            line_num: 0,
+                            line_num: current_line_num,
                             fields: vec![
                                 (fname.to_string(), JsonValue::String(group.clone())),
                                 ("_count".to_string(), JsonValue::Number(1.into())),
@@ -1220,6 +1241,36 @@ pipeline:
         assert_eq!(result.emissions.len(), 1);
         assert_eq!(get_field(&result.emissions[0], "burst_key"),
                    Some(&JsonValue::String("_default".to_string())));
+    }
+
+    // ── CountBy ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn count_by_emission_stamps_current_line_num() {
+        // Regression: CountBy emissions used to hardcode line_num: 0. They must
+        // carry the triggering line's own source_line_num, like BurstDetector does.
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+pipeline:
+  - stage: extract
+    fields:
+      - name: key
+        pattern: 'key=(\w+)'
+  - stage: aggregate
+    groups:
+      - type: count_by
+        field: key
+"#);
+        let mut run = ProcessorRun::new(&d);
+        run.process_line(&make_line("T", "key=alpha event", LogLevel::Info, 17), &PipelineContext::test_default());
+        let result = run.finish();
+        assert_eq!(result.emissions.len(), 1);
+        assert_eq!(result.emissions[0].line_num, 17,
+                   "count_by emission must be stamped with the triggering line's number, not 0");
+        assert_eq!(get_field(&result.emissions[0], "key"),
+                   Some(&JsonValue::String("alpha".to_string())));
     }
 
     // ── into_continuous_state drain tests ────────────────────────────────

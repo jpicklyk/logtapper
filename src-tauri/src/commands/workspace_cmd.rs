@@ -105,6 +105,57 @@ pub(crate) fn entry_refs(entries: &[SessionEntry]) -> Vec<(
         .collect()
 }
 
+/// Shared save sequence for `save_workspace_v4` and `auto_save_workspace`:
+/// cache the workspace envelope, snapshot session data, then write the
+/// `.ltw` file under `state.ltw_write_lock` (serialised against the
+/// background flush's write to the same file).
+///
+/// `envelope_ltw_path` is the one point where the two callers differ:
+/// `save_workspace_v4` caches its explicit dest path so a background flush
+/// can rebuild this exact shell; `auto_save_workspace` caches `None` because
+/// it always recomputes `workspaces/{id}.ltw` itself.
+#[allow(clippy::too_many_arguments)]
+fn write_workspace_snapshot(
+    state: &AppState,
+    dest_path: &Path,
+    workspace_id: &str,
+    workspace_name: &str,
+    envelope_ltw_path: Option<String>,
+    editor_tabs: &[LtwEditorTab],
+    layout: Option<&LtwLayout>,
+    chain: &LtwPipelineChain,
+) -> Result<(), String> {
+    autosave::cache_envelope(
+        state,
+        WorkspaceEnvelope {
+            workspace_id: workspace_id.to_string(),
+            workspace_name: workspace_name.to_string(),
+            ltw_path: envelope_ltw_path,
+            editor_tabs: editor_tabs.to_vec(),
+            layout: layout.cloned(),
+            pipeline_chain: chain.clone(),
+            // Stamped by cache_envelope from the live session set; ignored here.
+            session_ids: Vec::new(),
+            updated_at: now_ms(),
+        },
+    );
+
+    let entries = collect_session_data(state)?;
+
+    // Serialise against the background flush's write on the same file.
+    let _guard = state.ltw_write_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    ltw_v4::write_ltw(
+        dest_path,
+        workspace_name,
+        Some(workspace_id),
+        &entry_refs(&entries),
+        chain,
+        editor_tabs,
+        layout,
+    )?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Save workspace (.ltw v4)
 // ---------------------------------------------------------------------------
@@ -134,37 +185,18 @@ pub async fn save_workspace_v4(
         disabled_ids: options.disabled_chain_ids,
     };
 
-    // Cache the envelope before writing so a backend flush can rebuild this
-    // workspace shell (explicit save → ltw_path is the chosen path).
-    autosave::cache_envelope(
+    // Explicit save → ltw_path is the chosen dest path, so a background flush
+    // can rebuild this exact workspace shell.
+    write_workspace_snapshot(
         &state,
-        WorkspaceEnvelope {
-            workspace_id: options.workspace_id.clone(),
-            workspace_name: options.workspace_name.clone(),
-            ltw_path: Some(options.dest_path.clone()),
-            editor_tabs: options.editor_tabs.clone(),
-            layout: options.layout.clone(),
-            pipeline_chain: chain.clone(),
-            // Stamped by cache_envelope from the live session set; ignored here.
-            session_ids: Vec::new(),
-            updated_at: now_ms(),
-        },
-    );
-
-    let entries = collect_session_data(&state)?;
-
-    // Serialise against the background flush's write on the same file.
-    let _guard = state.ltw_write_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    ltw_v4::write_ltw(
         Path::new(&options.dest_path),
+        &options.workspace_id,
         &options.workspace_name,
-        Some(&options.workspace_id),
-        &entry_refs(&entries),
-        &chain,
+        Some(options.dest_path.clone()),
         &options.editor_tabs,
         options.layout.as_ref(),
-    )?;
-    Ok(())
+        &chain,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -206,38 +238,18 @@ pub async fn auto_save_workspace(
         disabled_ids: options.disabled_chain_ids,
     };
 
-    // Cache the envelope before writing. ltw_path is None: this is the id-keyed
-    // auto-save, so a backend flush recomputes `workspaces/{id}.ltw` itself.
-    autosave::cache_envelope(
+    // ltw_path is None: this is the id-keyed auto-save, so a backend flush
+    // recomputes `workspaces/{id}.ltw` itself.
+    write_workspace_snapshot(
         &state,
-        WorkspaceEnvelope {
-            workspace_id: options.workspace_id.clone(),
-            workspace_name: options.workspace_name.clone(),
-            ltw_path: None,
-            editor_tabs: options.editor_tabs.clone(),
-            layout: options.layout.clone(),
-            pipeline_chain: chain.clone(),
-            // Stamped by cache_envelope from the live session set; ignored here.
-            session_ids: Vec::new(),
-            updated_at: now_ms(),
-        },
-    );
-
-    let entries = collect_session_data(&state)?;
-
-    {
-        // Serialise against the background flush's write on the same file.
-        let _guard = state.ltw_write_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        ltw_v4::write_ltw(
-            &dest,
-            &options.workspace_name,
-            Some(&options.workspace_id),
-            &entry_refs(&entries),
-            &chain,
-            &options.editor_tabs,
-            options.layout.as_ref(),
-        )?;
-    }
+        &dest,
+        &options.workspace_id,
+        &options.workspace_name,
+        None,
+        &options.editor_tabs,
+        options.layout.as_ref(),
+        &chain,
+    )?;
 
     dest.to_str()
         .map(str::to_string)
@@ -452,4 +464,93 @@ pub async fn save_app_state_cmd(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     app_state::save_app_state(&path, &state)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_ltw_path(tag: &str) -> std::path::PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!(
+            "logtapper_workspace_cmd_test_{}_{}_{}.ltw",
+            std::process::id(),
+            tag,
+            now_ms()
+        ));
+        p
+    }
+
+    /// `save_workspace_v4` and `auto_save_workspace` were extracted onto the
+    /// shared `write_workspace_snapshot` helper. They differ only in which
+    /// path they target and what they cache as the envelope's `ltw_path` —
+    /// the `.ltw` file itself must come out identical (aside from
+    /// `saved_at`, which is a fresh timestamp per call) regardless of which
+    /// caller shape drives the helper.
+    #[test]
+    fn write_workspace_snapshot_produces_equivalent_ltw_for_both_callers() {
+        let state = AppState::default();
+        let chain = LtwPipelineChain {
+            chain: vec!["proc-a".to_string(), "proc-b".to_string()],
+            disabled_ids: vec!["proc-b".to_string()],
+        };
+        let editor_tabs: Vec<LtwEditorTab> = Vec::new();
+
+        let dest_explicit = temp_ltw_path("explicit");
+        let dest_auto = temp_ltw_path("auto");
+
+        // Mirrors save_workspace_v4: envelope caches the explicit dest path.
+        write_workspace_snapshot(
+            &state,
+            &dest_explicit,
+            "ws-1",
+            "My Workspace",
+            Some(dest_explicit.to_string_lossy().to_string()),
+            &editor_tabs,
+            None,
+            &chain,
+        )
+        .expect("explicit save should succeed");
+
+        // Mirrors auto_save_workspace: envelope caches None.
+        write_workspace_snapshot(
+            &state,
+            &dest_auto,
+            "ws-1",
+            "My Workspace",
+            None,
+            &editor_tabs,
+            None,
+            &chain,
+        )
+        .expect("auto-save should succeed");
+
+        let a = ltw_v4::read_ltw(&dest_explicit).expect("read explicit-save file");
+        let b = ltw_v4::read_ltw(&dest_auto).expect("read auto-save file");
+
+        assert_eq!(a.manifest.workspace_name, b.manifest.workspace_name);
+        assert_eq!(a.manifest.workspace_id, b.manifest.workspace_id);
+        assert_eq!(a.pipeline_chain.chain, b.pipeline_chain.chain);
+        assert_eq!(a.pipeline_chain.disabled_ids, b.pipeline_chain.disabled_ids);
+        assert_eq!(a.manifest.sessions.len(), 0, "no sessions were open in AppState::default()");
+        assert_eq!(b.manifest.sessions.len(), 0);
+
+        // The last call (auto-save) is what's cached; its ltw_path must be
+        // None, matching auto_save_workspace's own semantics.
+        let cached = state
+            .workspace_envelope
+            .lock()
+            .expect("envelope lock")
+            .clone()
+            .expect("envelope should be cached");
+        assert_eq!(cached.ltw_path, None);
+        assert_eq!(cached.workspace_id, "ws-1");
+
+        let _ = std::fs::remove_file(&dest_explicit);
+        let _ = std::fs::remove_file(&dest_auto);
+    }
 }

@@ -16,7 +16,15 @@ pub fn validate_script(src: &str) -> Result<(), String> {
 pub fn check_complexity(src: &str, max_nodes: usize) -> Result<(), String> {
     let engine = make_validation_engine();
     let ast = engine.compile(src).map_err(|e| e.to_string())?;
-    // Approximate node count via debug representation length — a rough proxy.
+    // Approximate node count via debug representation length — a rough proxy,
+    // not an actual node count. Rhai exposes a real recursive AST walker
+    // (`AST::walk`, visiting every `ASTNode`), but only under the `internals`
+    // feature, which this crate does not enable (see `rhai` dependency in
+    // Cargo.toml) — enabling it purely for this estimate would pull in an
+    // unstable API surface for a soft complexity gate. Debug-string length
+    // correlates well enough with node count in practice (every node
+    // contributes roughly-constant text) to catch pathological scripts,
+    // which is all this gate needs to do.
     let approx = format!("{ast:?}").len();
     if approx > max_nodes * 100 {
         return Err(format!(
