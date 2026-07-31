@@ -7,14 +7,14 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::{lock_or_err, AppState};
 use crate::commands::pipeline_core::{
-    excluded_by_declared_source_types, excluded_by_source_type, PartitionedDefs, PipelineCore,
+    excluded_by_declared_source_types, PartitionedDefs, PipelineCore,
 };
 use crate::core::line::PipelineContext;
 use crate::core::log_source::{decode_line_bytes, Encoding, FileLogSource, ZipLogSource};
 use crate::core::session::parser_for;
 use crate::processors::ProcessorKind;
 use crate::processors::correlator::engine::CorrelatorResult;
-use crate::processors::marketplace::resolve_processor_id;
+use crate::processors::marketplace::resolve_processor_id_checked;
 use crate::processors::state_tracker::types::StateTrackerResult;
 
 // ---------------------------------------------------------------------------
@@ -67,10 +67,12 @@ pub struct PipelineRunSummary {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkipReason {
-    /// Stable machine-readable discriminant. Currently only
-    /// `"source_type_mismatch"`.
+    /// Stable machine-readable discriminant: `"source_type_mismatch"` for the
+    /// declared-`schema.source_types` exclusion, or
+    /// `"source_type_filter_excluded"` for an embedded `source_type_is`
+    /// filter rule that excludes this source.
     pub reason: &'static str,
-    /// The processor's declared `source_types`.
+    /// The declared or filter-embedded `source_types` that caused exclusion.
     pub declared: Vec<String>,
     /// The session's actual source type.
     pub actual: String,
@@ -94,6 +96,31 @@ fn source_type_skip(
         skipped: Some(SkipReason {
             reason: "source_type_mismatch",
             declared: declared.to_vec(),
+            actual: actual.to_string(),
+        }),
+    }
+}
+
+/// Build the summary row for a processor excluded by an embedded
+/// `source_type_is` filter rule (as opposed to declared `schema.source_types`
+/// metadata — see [`source_type_skip`]). Same shape, distinct `reason`, so
+/// consumers can tell the two exclusion sources apart without re-deriving
+/// which pass produced the row.
+fn source_type_filter_skip(
+    processor_id: &str,
+    declared: Vec<String>,
+    actual: &crate::core::session::SourceType,
+) -> PipelineRunSummary {
+    PipelineRunSummary {
+        processor_id: processor_id.to_string(),
+        matched_lines: 0,
+        emission_count: 0,
+        script_errors: 0,
+        first_script_error: None,
+        scanned_from: 0,
+        skipped: Some(SkipReason {
+            reason: "source_type_filter_excluded",
+            declared,
             actual: actual.to_string(),
         }),
     }
@@ -307,7 +334,13 @@ pub fn execute_pipeline(
     {
         let procs = lock_or_err(&state.processors, "processors")?;
         for id in processor_ids {
-            let resolved = resolve_processor_id(&procs, id)
+            // Surface ambiguity rather than silently guessing: if `id` is a
+            // bare id that matches more than one installed source (e.g.
+            // `wifi-state@official` and `wifi-state@my-team`), fail the run
+            // instead of picking one — same "explicit, not silent" principle
+            // as the source-type skip rows below.
+            let resolved = resolve_processor_id_checked(&procs, id)
+                .map_err(|e| format!("Cannot run pipeline: {e}"))?
                 .unwrap_or_else(|| id.clone());
             if let Some(p) = procs.get(resolved.as_str()) {
                 if let Some(schema) = p.schema.as_ref() {
@@ -422,26 +455,44 @@ pub fn execute_pipeline(
     }
 
     // ── Pre-filter: exclude processors whose source_type filter doesn't match ─
-    defs.reporter_defs.retain(|(_, def)| {
-        !def.pipeline.iter().any(|stage| {
-            if let crate::processors::reporter::schema::PipelineStage::Filter(f) = stage {
-                excluded_by_source_type(&f.rules, &source_type)
-            } else {
-                false
-            }
-        })
-    });
-    defs.tracker_defs.retain(|(_, def)| {
-        !def.transitions.iter().any(|t| {
-            t.filter.source_type.as_ref()
-                .is_some_and(|st| !source_type.matches_str(st))
-        })
-    });
-    defs.correlator_defs.retain(|(_, def)| {
-        def.sources.iter().any(|src| {
-            !excluded_by_source_type(&src.filter, &source_type)
-        })
-    });
+    // Same principle as the declared-source_types pass above: a processor
+    // dropped here because an embedded `source_type_is` filter rule excludes
+    // this source must surface as a skip row, not vanish from the summary —
+    // otherwise it is indistinguishable from one that ran and matched
+    // nothing. `find_embedded_source_type_exclusions` is the single source of
+    // truth for "who gets excluded and why" (it inspects a different place
+    // per processor kind: a reporter's filter stage, a tracker's transition
+    // filters, or a correlator's per-source filters); the retains below just
+    // act on its answer.
+    let embedded_exclusions =
+        crate::commands::pipeline_core::find_embedded_source_type_exclusions(&defs, &source_type);
+    let excluded_reporter_ids: std::collections::HashSet<&str> = embedded_exclusions
+        .reporter_ids
+        .iter()
+        .map(|(id, _)| id.as_str())
+        .collect();
+    let excluded_tracker_ids: std::collections::HashSet<&str> = embedded_exclusions
+        .tracker_ids
+        .iter()
+        .map(|(id, _)| id.as_str())
+        .collect();
+    let excluded_correlator_ids: std::collections::HashSet<&str> = embedded_exclusions
+        .correlator_ids
+        .iter()
+        .map(|(id, _)| id.as_str())
+        .collect();
+    defs.reporter_defs.retain(|(id, _)| !excluded_reporter_ids.contains(id.as_str()));
+    defs.tracker_defs.retain(|(id, _)| !excluded_tracker_ids.contains(id.as_str()));
+    defs.correlator_defs.retain(|(id, _)| !excluded_correlator_ids.contains(id.as_str()));
+    for (id, declared) in embedded_exclusions.reporter_ids {
+        skipped.push(source_type_filter_skip(&id, declared, &source_type));
+    }
+    for (id, declared) in embedded_exclusions.tracker_ids {
+        skipped.push(source_type_filter_skip(&id, declared, &source_type));
+    }
+    for (id, declared) in embedded_exclusions.correlator_ids {
+        skipped.push(source_type_filter_skip(&id, declared, &source_type));
+    }
 
     let pipeline_ctx = PipelineContext {
         source_type: source_type.clone(),

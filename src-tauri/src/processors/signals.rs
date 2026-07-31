@@ -186,7 +186,10 @@ impl Parser {
         if self.peek() == Some("(") {
             self.consume();
             let expr = self.parse_or()?;
-            if self.peek() == Some(")") { self.consume(); }
+            match self.peek() {
+                Some(")") => { self.consume(); }
+                _ => return Err("Expected closing ')'".to_string()),
+            }
             return Ok(expr);
         }
 
@@ -236,6 +239,15 @@ pub fn parse_condition(condition: &str) -> Result<Option<Expr>, String> {
     }
     let mut parser = Parser::new(tokens);
     let expr = parser.parse_or()?;
+    if parser.pos != parser.tokens.len() {
+        // Unconsumed trailing tokens — e.g. "heap_pct >= 90 fd_count > 500"
+        // (missing `&&`/`||`) or a stray extra `)`. Silently ignoring them
+        // would drop part of the condition rather than reject it, so treat
+        // this as a parse error — `eval_condition()` and
+        // `prepare_conditions()` both already fail closed on `Err`.
+        let remaining = parser.tokens[parser.pos..].join(" ");
+        return Err(format!("Unexpected trailing tokens: '{remaining}'"));
+    }
     Ok(Some(expr))
 }
 
@@ -487,6 +499,49 @@ mod tests {
         let result = parse_condition("result == 'FAIL' && probe_type == 'DNS'");
         assert!(result.is_ok());
         assert!(result.unwrap().is_some());
+    }
+
+    #[test]
+    fn trailing_tokens_after_comparison_are_a_parse_error() {
+        // Two comparisons with no connecting `&&`/`||` — before the fix,
+        // parse_condition parsed only the first comparison and silently
+        // dropped "fd_count > 500", so the condition matched on heap_pct
+        // alone. It must now be rejected instead.
+        let result = parse_condition("heap_pct >= 90 fd_count > 500");
+        assert!(result.is_err(), "trailing unconsumed tokens must be a parse error");
+
+        // And it must flow through eval_condition's fail-closed path rather
+        // than silently evaluating just the first comparison.
+        let f = fields(&[("heap_pct", json!(95)), ("fd_count", json!(10))]);
+        assert!(
+            !eval_condition(Some("heap_pct >= 90 fd_count > 500"), &f),
+            "a malformed trailing-token condition must never fire"
+        );
+    }
+
+    #[test]
+    fn missing_close_paren_is_a_parse_error() {
+        let result = parse_condition("(heap_pct >= 90");
+        assert!(result.is_err(), "an unclosed '(' must be a parse error");
+    }
+
+    #[test]
+    fn stray_trailing_close_paren_is_a_parse_error() {
+        let result = parse_condition("heap_pct >= 90)");
+        assert!(result.is_err(), "an extra trailing ')' must be a parse error");
+    }
+
+    #[test]
+    fn valid_parenthesized_condition_still_parses() {
+        // Guard against the fixed trailing-token/paren checks rejecting
+        // legitimately balanced, fully-consumed expressions.
+        let f = fields(&[("heap_pct", json!(95)), ("fd_count", json!(10))]);
+        assert!(eval_condition(
+            Some("(heap_pct >= 90 || fd_count > 500) && heap_pct < 100"),
+            &f
+        ));
+        let result = parse_condition("(heap_pct >= 90 || fd_count > 500) && heap_pct < 100");
+        assert!(result.is_ok());
     }
 
     // --- Template rendering ---

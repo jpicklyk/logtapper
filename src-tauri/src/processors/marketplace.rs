@@ -330,24 +330,81 @@ pub fn split_qualified_id(qid: &str) -> (&str, Option<&str>) {
     }
 }
 
+/// Non-`.lts`-scoped keys in `store` whose bare id equals `id`, used by both
+/// [`resolve_processor_id`] and [`resolve_processor_id_checked`] so their
+/// notions of "what matches" cannot drift apart.
+fn bare_id_matches<'a, V>(
+    store: &'a std::collections::HashMap<String, V>,
+    id: &str,
+) -> Vec<&'a String> {
+    store
+        .keys()
+        .filter(|key| {
+            let (bare, ns) = split_qualified_id(key);
+            bare == id && !ns.is_some_and(|n| n.starts_with(LTS_NS_PREFIX))
+        })
+        .collect()
+}
+
 /// Resolve a processor ID that may be bare (e.g. `"wifi-state"`) or already
-/// qualified (e.g. `"wifi-state@official"`).  Tries exact key match first,
+/// qualified (e.g. `"wifi-state@official"`). Tries exact key match first,
 /// then scans for `{bare_id}@*`.
+///
+/// **Deterministic tie-break:** if the bare id matches more than one
+/// installed source (e.g. `wifi-state@official` and `wifi-state@my-team`),
+/// resolution previously iterated a `HashMap`'s keys and returned whichever
+/// one the (unspecified) iteration order produced first — nondeterministic
+/// across runs and even across calls in the same run. This now sorts the
+/// matches and returns the lexicographically smallest qualified id
+/// (`{bare}@{source}`), so the same store always resolves the same way.
+///
+/// This tie-break exists so every existing caller of this exact signature
+/// (several go through `Option<String>` today, e.g. the MCP bridge) keeps
+/// compiling and gets deterministic behavior for free. It still silently
+/// picks a winner, though — callers that should instead reject an ambiguous
+/// bare id outright (surfacing it to the user rather than guessing) should
+/// use [`resolve_processor_id_checked`], e.g. `run_pipeline`'s processor
+/// resolution in `commands/pipeline.rs`.
 pub fn resolve_processor_id<V>(store: &std::collections::HashMap<String, V>, id: &str) -> Option<String> {
     if store.contains_key(id) {
         return Some(id.to_string());
     }
-    for key in store.keys() {
-        let (bare, ns) = split_qualified_id(key);
-        if bare == id {
-            // Skip session-scoped .lts entries — they must be resolved by exact key only.
-            if ns.is_some_and(|n| n.starts_with(LTS_NS_PREFIX)) {
-                continue;
-            }
-            return Some(key.clone());
+    let mut matches = bare_id_matches(store, id);
+    matches.sort();
+    matches.into_iter().next().cloned()
+}
+
+/// Like [`resolve_processor_id`], but reports ambiguity instead of silently
+/// applying the tie-break: if the bare id matches more than one installed
+/// source, returns `Err` describing every match rather than picking one.
+///
+/// Prefer this over `resolve_processor_id` at call sites where resolving to
+/// the "wrong" one of two same-named processors would be a correctness
+/// problem worth surfacing (e.g. before running a pipeline against installed
+/// processors) rather than a UX nuisance to paper over with a tie-break.
+pub fn resolve_processor_id_checked<V>(
+    store: &std::collections::HashMap<String, V>,
+    id: &str,
+) -> Result<Option<String>, String> {
+    if store.contains_key(id) {
+        return Ok(Some(id.to_string()));
+    }
+    let mut matches = bare_id_matches(store, id);
+    match matches.len() {
+        0 => Ok(None),
+        1 => Ok(Some(matches.remove(0).clone())),
+        _ => {
+            matches.sort();
+            let candidates = matches
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(format!(
+                "Processor id '{id}' is ambiguous — it matches multiple installed sources: {candidates}. Use a qualified id (id@source) to disambiguate."
+            ))
         }
     }
-    None
 }
 
 /// Escape a processor ID for use as a filename on disk.
@@ -595,6 +652,58 @@ mcp:
         assert_eq!(
             resolve_processor_id(&store, "wifi-state"),
             Some("wifi-state@official".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_processor_id_deterministic_across_duplicate_sources() {
+        // Same bare id installed from two non-lts sources — previously this
+        // scanned a HashMap's keys and returned whichever the (unspecified)
+        // iteration order produced first, which could vary call to call.
+        // It must now always resolve to the same (lexicographically
+        // smallest) qualified id, regardless of insertion order.
+        let mut store_a: std::collections::HashMap<String, ()> = std::collections::HashMap::new();
+        store_a.insert("wifi-state@official".to_string(), ());
+        store_a.insert("wifi-state@my-team".to_string(), ());
+
+        let mut store_b: std::collections::HashMap<String, ()> = std::collections::HashMap::new();
+        store_b.insert("wifi-state@my-team".to_string(), ());
+        store_b.insert("wifi-state@official".to_string(), ());
+
+        let resolved_a = resolve_processor_id(&store_a, "wifi-state");
+        let resolved_b = resolve_processor_id(&store_b, "wifi-state");
+        assert_eq!(resolved_a, resolved_b, "resolution must not depend on insertion/iteration order");
+        assert_eq!(resolved_a, Some("wifi-state@my-team".to_string()), "must pick the lexicographically smallest qualified id");
+    }
+
+    #[test]
+    fn resolve_processor_id_checked_errors_on_ambiguous_bare_id() {
+        let mut store: std::collections::HashMap<String, ()> = std::collections::HashMap::new();
+        store.insert("wifi-state@official".to_string(), ());
+        store.insert("wifi-state@my-team".to_string(), ());
+
+        let result = resolve_processor_id_checked(&store, "wifi-state");
+        assert!(result.is_err(), "ambiguous bare id must be reported, not silently resolved");
+        let msg = result.unwrap_err();
+        assert!(msg.contains("wifi-state@official") && msg.contains("wifi-state@my-team"),
+            "error should name every candidate: {msg}");
+    }
+
+    #[test]
+    fn resolve_processor_id_checked_resolves_unambiguous_bare_id() {
+        let mut store: std::collections::HashMap<String, ()> = std::collections::HashMap::new();
+        store.insert("wifi-state@official".to_string(), ());
+        store.insert("other-proc@official".to_string(), ());
+
+        assert_eq!(
+            resolve_processor_id_checked(&store, "wifi-state"),
+            Ok(Some("wifi-state@official".to_string()))
+        );
+        assert_eq!(resolve_processor_id_checked(&store, "no-such-proc"), Ok(None));
+        // Exact qualified match still resolves even with duplicates present.
+        assert_eq!(
+            resolve_processor_id_checked(&store, "wifi-state@official"),
+            Ok(Some("wifi-state@official".to_string()))
         );
     }
 

@@ -259,7 +259,22 @@ fn build_histogram_series(
 
     let bin_width = (max - min) / bins as f64;
     if bin_width <= 0.0 {
-        return vec![];
+        // min == max (every sampled value is identical) or an explicit
+        // degenerate `range` was supplied — there's no width to distribute
+        // across `bins`, but the samples are real. Report them as a single
+        // bin holding the full count instead of an empty series, which
+        // previously made a constant-value field indistinguishable from "no
+        // data at all" to every chart consumer.
+        return vec![DataSeries {
+            label: field.to_string(),
+            color: None,
+            points: vec![DataPoint {
+                x: min,
+                y: vals.len() as f64,
+                label: None,
+                timeline_pos: None,
+            }],
+        }];
     }
 
     let mut counts = vec![0usize; bins];
@@ -281,4 +296,98 @@ fn build_histogram_series(
         .collect();
 
     vec![DataSeries { label: field.to_string(), color: None, points }]
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::processors::schema::AxisSpec;
+    use serde_json::json;
+
+    fn histogram_spec(bins: Option<u32>, range: Option<[f64; 2]>) -> ChartSpec {
+        ChartSpec {
+            id: "hist".to_string(),
+            chart_type: "histogram".to_string(),
+            title: "Histogram".to_string(),
+            description: None,
+            source: "emissions".to_string(),
+            x: Some(AxisSpec { field: Some("value".to_string()), label: None, bucket: None, aggregation: None }),
+            y: None,
+            group_by: None,
+            color_by: None,
+            stacked: false,
+            bins,
+            range,
+            color_scale: None,
+            interactive: false,
+            annotations: Vec::new(),
+            timeline: None,
+        }
+    }
+
+    fn emission(value: f64) -> HashMap<String, JsonValue> {
+        let mut m = HashMap::new();
+        m.insert("value".to_string(), json!(value));
+        m
+    }
+
+    #[test]
+    fn histogram_with_varying_values_bins_normally() {
+        let spec = histogram_spec(Some(4), None);
+        let owned = vec![emission(0.0), emission(1.0), emission(2.0), emission(3.0)];
+        let refs: Vec<&HashMap<String, JsonValue>> = owned.iter().collect();
+
+        let series = build_histogram_series(&spec, &refs);
+        assert_eq!(series.len(), 1);
+        let total: f64 = series[0].points.iter().map(|p| p.y).sum();
+        assert_eq!(total, 4.0, "every sample must land in some bin");
+    }
+
+    #[test]
+    fn histogram_with_constant_values_yields_single_bin_with_full_count() {
+        // Before the fix: min == max => bin_width == 0.0 => the guard
+        // returned an empty Vec<DataSeries>, so a processor whose sampled
+        // field never varies (e.g. every emission has the same fd_count)
+        // silently produced "no chart" instead of "one bin, N samples".
+        let spec = histogram_spec(Some(10), None);
+        let owned = vec![emission(42.0), emission(42.0), emission(42.0)];
+        let refs: Vec<&HashMap<String, JsonValue>> = owned.iter().collect();
+
+        let series = build_histogram_series(&spec, &refs);
+        assert_eq!(series.len(), 1, "constant-value samples must still produce a series");
+        assert_eq!(series[0].points.len(), 1, "all samples collapse into a single bin");
+        assert_eq!(series[0].points[0].y, 3.0, "the single bin must hold the full sample count");
+        assert_eq!(series[0].points[0].x, 42.0, "the single bin's x should be the constant value");
+    }
+
+    #[test]
+    fn histogram_with_degenerate_explicit_range_yields_single_bin() {
+        // An explicit `range: [5, 5]` is equally degenerate even if the
+        // underlying values vary — same bin_width == 0.0 guard.
+        let spec = histogram_spec(Some(10), Some([5.0, 5.0]));
+        let owned = vec![emission(5.0), emission(5.0)];
+        let refs: Vec<&HashMap<String, JsonValue>> = owned.iter().collect();
+
+        let series = build_histogram_series(&spec, &refs);
+        assert_eq!(series.len(), 1);
+        assert_eq!(series[0].points.len(), 1);
+        assert_eq!(series[0].points[0].y, 2.0);
+    }
+
+    #[test]
+    fn histogram_with_no_samples_still_yields_empty_series() {
+        // Unrelated to the bin_width==0 guard — an empty input has no values
+        // at all, so `vals.is_empty()` short-circuits before min/max are
+        // even computed. Must remain unchanged by the fix above.
+        let spec = histogram_spec(Some(10), None);
+        let owned: Vec<HashMap<String, JsonValue>> = Vec::new();
+        let refs: Vec<&HashMap<String, JsonValue>> = owned.iter().collect();
+
+        let series = build_histogram_series(&spec, &refs);
+        assert!(series.is_empty());
+    }
 }

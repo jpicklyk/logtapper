@@ -670,6 +670,130 @@ pub fn excluded_by_source_type(
     })
 }
 
+/// The `source_type_is` values embedded in a filter-rule set, regardless of
+/// whether they currently match. Callers use this to build a skip row's
+/// `declared` list once they already know (via [`excluded_by_source_type`])
+/// that the rule set excludes the session's source type — kept as a separate
+/// pass over the same rules rather than folded into `excluded_by_source_type`
+/// so that function's bool-returning contract doesn't change.
+pub fn source_type_is_values(rules: &[FilterRule]) -> Vec<String> {
+    rules
+        .iter()
+        .filter_map(|rule| match rule {
+            FilterRule::SourceTypeIs { source_type } => Some(source_type.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Every reporter/tracker/correlator id excluded by an embedded
+/// `source_type_is` filter rule, paired with the declared source type(s) that
+/// caused the exclusion. Returned by [`find_embedded_source_type_exclusions`].
+///
+/// Deliberately a plain data struct rather than the `PipelineRunSummary` skip
+/// row itself — `pipeline_core` has no dependency on `commands::pipeline`, so
+/// the caller (`execute_pipeline`) converts each entry into a skip row.
+pub struct EmbeddedSourceTypeExclusions {
+    pub reporter_ids: Vec<(String, Vec<String>)>,
+    pub tracker_ids: Vec<(String, Vec<String>)>,
+    pub correlator_ids: Vec<(String, Vec<String>)>,
+}
+
+/// Identify every reporter, tracker, and correlator in `defs` that an
+/// embedded `source_type_is` filter rule excludes for `source_type`, without
+/// mutating `defs`.
+///
+/// This is the single source of truth `execute_pipeline` reads to both
+/// `retain()` the survivors and emit skip rows for the excluded ones. Before
+/// this existed, the retain predicates in `commands/pipeline.rs` silently
+/// dropped matching processors with no corresponding skip row — unlike the
+/// declared-`schema.source_types` exclusion pass, which has always reported
+/// skip rows. A processor that is dropped from the run must be
+/// distinguishable from one that ran and matched nothing; see
+/// `PipelineRunSummary::skipped` in `commands/pipeline.rs`.
+pub fn find_embedded_source_type_exclusions(
+    defs: &PartitionedDefs,
+    source_type: &crate::core::session::SourceType,
+) -> EmbeddedSourceTypeExclusions {
+    let reporter_ids = defs
+        .reporter_defs
+        .iter()
+        .filter_map(|(id, def)| {
+            let declared: Vec<String> = def
+                .pipeline
+                .iter()
+                .filter_map(|stage| {
+                    if let PipelineStage::Filter(f) = stage {
+                        if excluded_by_source_type(&f.rules, source_type) {
+                            return Some(source_type_is_values(&f.rules));
+                        }
+                    }
+                    None
+                })
+                .flatten()
+                .collect();
+            if declared.is_empty() {
+                None
+            } else {
+                Some((id.clone(), declared))
+            }
+        })
+        .collect();
+
+    let tracker_ids = defs
+        .tracker_defs
+        .iter()
+        .filter_map(|(id, def)| {
+            let declared: Vec<String> = def
+                .transitions
+                .iter()
+                .filter_map(|t| {
+                    t.filter.source_type.as_ref().and_then(|st| {
+                        if !source_type.matches_str(st) {
+                            Some(st.clone())
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect();
+            if declared.is_empty() {
+                None
+            } else {
+                Some((id.clone(), declared))
+            }
+        })
+        .collect();
+
+    let correlator_ids = defs
+        .correlator_defs
+        .iter()
+        .filter_map(|(id, def)| {
+            let any_source_matches = def
+                .sources
+                .iter()
+                .any(|src| !excluded_by_source_type(&src.filter, source_type));
+            if any_source_matches {
+                return None;
+            }
+            // Every source's filter excludes this session's source type: the
+            // correlator can never see a line, so it is excluded wholesale.
+            let declared: Vec<String> = def
+                .sources
+                .iter()
+                .flat_map(|src| source_type_is_values(&src.filter))
+                .collect();
+            Some((id.clone(), declared))
+        })
+        .collect();
+
+    EmbeddedSourceTypeExclusions {
+        reporter_ids,
+        tracker_ids,
+        correlator_ids,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Pre-filter helpers (moved from pipeline.rs)
 // ---------------------------------------------------------------------------
@@ -1499,5 +1623,146 @@ pipeline:
             excluded_by_declared_source_types(&v(&["dumpstate"]), &SourceType::Bugreport),
             "a Bugreport source must NOT run a processor declaring dumpstate"
         );
+    }
+
+    // ── find_embedded_source_type_exclusions ────────────────────────────────
+    //
+    // Before this existed, a processor excluded by an embedded
+    // `source_type_is` filter rule (as opposed to declared
+    // `schema.source_types` metadata) simply vanished from `defs` in
+    // `commands::pipeline::execute_pipeline` with no corresponding skip row —
+    // unlike the declared-metadata exclusion pass, which has always reported
+    // one. These tests exercise the identification logic in isolation (the
+    // retain + skip-row wiring lives in `execute_pipeline` and is exercised
+    // indirectly through it).
+
+    fn empty_partitioned_defs() -> PartitionedDefs {
+        PartitionedDefs {
+            transformer_defs: Vec::new(),
+            reporter_defs: Vec::new(),
+            tracker_defs: Vec::new(),
+            correlator_defs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn reporter_with_embedded_source_type_is_is_excluded_and_reported() {
+        let yaml = r#"
+meta:
+  id: kernel_only_reporter
+  name: Kernel Only
+pipeline:
+  - stage: filter
+    rules:
+      - type: source_type_is
+        source_type: Kernel
+"#;
+        let def = ReporterDef::from_yaml(yaml).unwrap();
+        let mut defs = empty_partitioned_defs();
+        defs.reporter_defs.push(("kernel_only_reporter".to_string(), Arc::new(def)));
+
+        let excl = find_embedded_source_type_exclusions(&defs, &SourceType::Logcat);
+        assert_eq!(excl.reporter_ids.len(), 1, "reporter must be reported as excluded, not silently dropped");
+        assert_eq!(excl.reporter_ids[0].0, "kernel_only_reporter");
+        assert_eq!(excl.reporter_ids[0].1, vec!["Kernel".to_string()]);
+        assert!(excl.tracker_ids.is_empty());
+        assert!(excl.correlator_ids.is_empty());
+    }
+
+    #[test]
+    fn reporter_with_matching_source_type_is_not_excluded() {
+        let yaml = r#"
+meta:
+  id: kernel_only_reporter
+  name: Kernel Only
+pipeline:
+  - stage: filter
+    rules:
+      - type: source_type_is
+        source_type: Kernel
+"#;
+        let def = ReporterDef::from_yaml(yaml).unwrap();
+        let mut defs = empty_partitioned_defs();
+        defs.reporter_defs.push(("kernel_only_reporter".to_string(), Arc::new(def)));
+
+        let excl = find_embedded_source_type_exclusions(&defs, &SourceType::Kernel);
+        assert!(excl.reporter_ids.is_empty(), "a matching source type must not be excluded");
+    }
+
+    #[test]
+    fn tracker_with_embedded_source_type_mismatch_is_excluded_and_reported() {
+        let yaml = r#"
+transitions:
+  - name: anything
+    filter:
+      source_type: Kernel
+    set:
+      seen: true
+"#;
+        let def: StateTrackerDef = serde_yaml::from_str(yaml).unwrap();
+        let mut defs = empty_partitioned_defs();
+        defs.tracker_defs.push(("kernel_tracker".to_string(), Arc::new(def)));
+
+        let excl = find_embedded_source_type_exclusions(&defs, &SourceType::Logcat);
+        assert_eq!(excl.tracker_ids.len(), 1, "tracker must be reported as excluded, not silently dropped");
+        assert_eq!(excl.tracker_ids[0].0, "kernel_tracker");
+        assert_eq!(excl.tracker_ids[0].1, vec!["Kernel".to_string()]);
+    }
+
+    #[test]
+    fn correlator_excluded_only_when_every_source_mismatches() {
+        // src_a requires Kernel (mismatches Logcat), src_b has no source-type
+        // restriction at all — so on a Logcat session the correlator can
+        // still see src_b's lines and must NOT be excluded.
+        let yaml = r#"
+sources:
+  - id: src_a
+    filter:
+      - type: source_type_is
+        source_type: Kernel
+  - id: src_b
+    filter:
+      - type: tag_match
+        tags: ["TagB"]
+correlate:
+  trigger: src_b
+  within_lines: 100
+  emit: "test"
+"#;
+        let def: CorrelatorDef = serde_yaml::from_str(yaml).unwrap();
+        let mut defs = empty_partitioned_defs();
+        defs.correlator_defs.push(("mixed_correlator".to_string(), Arc::new(def)));
+
+        let excl = find_embedded_source_type_exclusions(&defs, &SourceType::Logcat);
+        assert!(excl.correlator_ids.is_empty(), "a correlator with at least one non-excluded source must still run");
+    }
+
+    #[test]
+    fn correlator_excluded_when_all_sources_mismatch() {
+        let yaml = r#"
+sources:
+  - id: src_a
+    filter:
+      - type: source_type_is
+        source_type: Kernel
+  - id: src_b
+    filter:
+      - type: source_type_is
+        source_type: Bugreport
+correlate:
+  trigger: src_b
+  within_lines: 100
+  emit: "test"
+"#;
+        let def: CorrelatorDef = serde_yaml::from_str(yaml).unwrap();
+        let mut defs = empty_partitioned_defs();
+        defs.correlator_defs.push(("all_mismatch_correlator".to_string(), Arc::new(def)));
+
+        let excl = find_embedded_source_type_exclusions(&defs, &SourceType::Logcat);
+        assert_eq!(excl.correlator_ids.len(), 1, "correlator must be reported as excluded when every source mismatches");
+        assert_eq!(excl.correlator_ids[0].0, "all_mismatch_correlator");
+        let mut declared = excl.correlator_ids[0].1.clone();
+        declared.sort();
+        assert_eq!(declared, vec!["Bugreport".to_string(), "Kernel".to_string()]);
     }
 }
