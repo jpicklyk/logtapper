@@ -21,7 +21,7 @@ import { describe, it, expect, vi } from 'vitest';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react';
 import type { SplitNode, Tab } from './workspaceTypes';
-import { findLeafByPaneId, updateLeaf } from './splitTreeHelpers';
+import { findLeafByPaneId, findTabAcrossTree, updateLeaf } from './splitTreeHelpers';
 import {
   applySessionLoaded,
   type SessionLoadedEvent,
@@ -31,8 +31,18 @@ import { bus } from '../../events/bus';
 // Mocks must be declared before the useCenterTree import so the module
 // resolver picks them up (vi.mock calls are hoisted, but keep the order
 // explicit for readability, matching editorTabPersistence.test.ts).
+//
+// bridgeMock.handler captures the callback useCenterTree registers via
+// onBridgeSessionClosed, so U10's bridge-close-loop test can invoke it
+// directly instead of relying on a real Tauri event.
+const bridgeMock = vi.hoisted(() => ({
+  handler: null as ((e: { sessionId: string }) => void) | null,
+}));
 vi.mock('../../bridge/events', () => ({
-  onBridgeSessionClosed: () => Promise.resolve(() => {}),
+  onBridgeSessionClosed: (handler: (e: { sessionId: string }) => void) => {
+    bridgeMock.handler = handler;
+    return Promise.resolve(() => {});
+  },
 }));
 
 // useCenterTree pulls in EditorTab (for the LS_*_PREFIX constants), whose
@@ -553,5 +563,190 @@ describe('U9: openCenterTab does not create orphaned localStorage keys under Str
 
     const filePathKeys = Object.keys(localStorage).filter((k) => k.startsWith('logtapper_editor_filepath_'));
     expect(filePathKeys).toEqual([`logtapper_editor_filepath_${tab!.id}`]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// U10: dropTabOnPane computes landingPaneId (and the whole next tree) from
+// treeRef.current BEFORE calling updateTree, instead of reassigning
+// `landingPaneId` from inside the setState updater. The old code depended on
+// React invoking the updater eagerly and synchronously so the post-update
+// emit would see the reassigned value — that currently holds for plain
+// setState updaters, but it is an implementation detail, not a contract (and
+// the reassignment itself was deterministic given the same input tree, so it
+// did not actually diverge across a StrictMode double-invoke the way U9's
+// crypto.randomUUID() call did). These tests render under React.StrictMode
+// anyway, as a regression guard, and assert the emit is always addressed to
+// the pane that really holds the moved tab in the committed tree.
+// ---------------------------------------------------------------------------
+
+describe('U10: dropTabOnPane computes landingPaneId before updateTree (StrictMode-safe)', () => {
+  function renderCenterTreeStrict(initialTree: SplitNode) {
+    const activeLogPaneIdRef = { current: null as string | null };
+    const paneSessionMapRef = { current: new Map<string, string>() };
+    const activateSessionForPane = vi.fn();
+    const openBottomPane = vi.fn();
+
+    return renderHook(
+      () =>
+        useCenterTree(
+          { activeLogPaneIdRef, paneSessionMapRef, activateSessionForPane, openBottomPane },
+          initialTree,
+        ),
+      { wrapper: ({ children }) => React.createElement(React.StrictMode, null, children) },
+    );
+  }
+
+  it('creates exactly one new pane when splitting off a tab, even under StrictMode double-invoke', () => {
+    const fromPaneId = 'pane-1';
+    const toPaneId = 'pane-2';
+    const tabA = makeLogviewerTab('tab-A');
+    const tabB = makeLogviewerTab('tab-B');
+    const initialTree: SplitNode = {
+      type: 'split',
+      id: 'split-root',
+      direction: 'horizontal',
+      ratio: 0.5,
+      children: [makeTree(fromPaneId, [tabA]), makeTree(toPaneId, [tabB])],
+    };
+
+    const { result } = renderCenterTreeStrict(initialTree);
+
+    const emitted: Array<{ tabId: string; paneId: string }> = [];
+    const onActivated = (payload: { tabId: string; paneId: string }) => emitted.push(payload);
+    bus.on('layout:logviewer-tab-activated', onActivated);
+
+    act(() => {
+      result.current.dropTabOnPane(tabA.id, fromPaneId, toPaneId, 'right');
+    });
+
+    bus.off('layout:logviewer-tab-activated', onActivated);
+
+    // Exactly one activation event, addressed to the pane that actually holds
+    // tab-A in the committed tree — not a phantom id from a discarded
+    // StrictMode invocation.
+    expect(emitted).toHaveLength(1);
+    const landingPaneId = emitted[0].paneId;
+    const leaf = findLeafByPaneId(result.current.treeRef.current, landingPaneId);
+    expect(leaf?.pane.tabs.map((t) => t.id)).toEqual([tabA.id]);
+
+    // fromPaneId collapsed away (its only tab moved out); the tree now has
+    // exactly two leaves: toPaneId (unchanged) and the new pane holding tab-A.
+    const allLeafPaneIds: string[] = [];
+    (function walk(n: SplitNode) {
+      if (n.type === 'leaf') allLeafPaneIds.push(n.pane.id);
+      else {
+        walk(n.children[0]);
+        walk(n.children[1]);
+      }
+    })(result.current.treeRef.current);
+    expect(allLeafPaneIds).toHaveLength(2);
+    expect(allLeafPaneIds).toContain(toPaneId);
+  });
+
+  it('missing-toLeaf fallback lands the tab in firstLeaf and the emit uses that pane, not a phantom id', () => {
+    const fromPaneId = 'pane-1';
+    const otherPaneId = 'pane-2';
+    const tabA = makeLogviewerTab('tab-A');
+    const tabB = makeLogviewerTab('tab-B');
+    const tabC = makeLogviewerTab('tab-C');
+    const initialTree: SplitNode = {
+      type: 'split',
+      id: 'split-root',
+      direction: 'horizontal',
+      ratio: 0.5,
+      children: [makeTree(fromPaneId, [tabA, tabB]), makeTree(otherPaneId, [tabC])],
+    };
+
+    const { result } = renderCenterTreeStrict(initialTree);
+
+    const emitted: Array<{ tabId: string; paneId: string }> = [];
+    const onActivated = (payload: { tabId: string; paneId: string }) => emitted.push(payload);
+    bus.on('layout:logviewer-tab-activated', onActivated);
+
+    act(() => {
+      // 'pane-ghost' never existed in the tree — simulates a stale/invalid drop target.
+      result.current.dropTabOnPane(tabA.id, fromPaneId, 'pane-ghost', 'right');
+    });
+
+    bus.off('layout:logviewer-tab-activated', onActivated);
+
+    expect(emitted).toHaveLength(1);
+    const landingPaneId = emitted[0].paneId;
+    // firstLeaf of the post-removal tree is fromPaneId itself (still the
+    // first leaf — only its tab list changed) — the tab lands back in its
+    // own pane rather than the nonexistent target.
+    expect(landingPaneId).toBe(fromPaneId);
+    const leaf = findLeafByPaneId(result.current.treeRef.current, fromPaneId);
+    expect(leaf?.pane.tabs.map((t) => t.id)).toEqual([tabB.id, tabA.id]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// U10: the bridge-initiated close loop threads a local tree value through its
+// per-iteration lookups instead of assuming treeRef.current updates
+// synchronously between successive closeTab() calls.
+// ---------------------------------------------------------------------------
+
+describe('U10: bridge-initiated multi-tab session close threads a local tree value', () => {
+  it('closes every tab bound to the session, even across a pane collapse mid-loop', async () => {
+    const paneAId = 'pane-A';
+    const paneBId = 'pane-B';
+    const tabA = makeLogviewerTab('tab-A');
+    const tabB = makeLogviewerTab('tab-B');
+    const initialTree: SplitNode = {
+      type: 'split',
+      id: 'split-root',
+      direction: 'horizontal',
+      ratio: 0.5,
+      children: [makeTree(paneAId, [tabA]), makeTree(paneBId, [tabB])],
+    };
+
+    const activeLogPaneIdRef = { current: null as string | null };
+    const paneSessionMapRef = { current: new Map<string, string>() };
+    const activateSessionForPane = vi.fn();
+    const openBottomPane = vi.fn();
+
+    const { result } = renderHook(() =>
+      useCenterTree(
+        { activeLogPaneIdRef, paneSessionMapRef, activateSessionForPane, openBottomPane },
+        initialTree,
+      ),
+    );
+
+    // Bind both tabs to the same session, as the bridge-close path expects.
+    act(() => {
+      bus.emit('session:loaded', {
+        sourceName: 'a.txt',
+        paneId: paneAId,
+        sourceType: 'Logcat',
+        sessionId: 'shared-session',
+        tabId: tabA.id,
+      });
+      bus.emit('session:loaded', {
+        sourceName: 'b.txt',
+        paneId: paneBId,
+        sourceType: 'Logcat',
+        sessionId: 'shared-session',
+        tabId: tabB.id,
+      });
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(bridgeMock.handler).not.toBeNull();
+
+    act(() => {
+      bridgeMock.handler!({ sessionId: 'shared-session' });
+    });
+
+    // Both tabs are gone — closeTab collapsed pane-A after tab-A closed, and
+    // the loop still found tab-B via the threaded local tree, not a stale
+    // treeRef snapshot taken before either close applied.
+    const finalTree = result.current.treeRef.current;
+    expect(findTabAcrossTree(finalTree, tabA.id)).toBeNull();
+    expect(findTabAcrossTree(finalTree, tabB.id)).toBeNull();
   });
 });
