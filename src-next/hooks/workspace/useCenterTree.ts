@@ -21,6 +21,7 @@ import {
 import { LS_FILEPATH_PREFIX, LS_CONTENT_PREFIX, LS_MODE_PREFIX, LS_WRAP_PREFIX } from '../../components/EditorTab';
 import { storageSet } from '../../utils';
 import { applySessionLoading, applySessionLoaded, applyCloseTab } from './sessionTreeOps';
+import { readTabPaths, saveTabPaths } from './workspacePersistence';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -506,9 +507,9 @@ export function useCenterTree(
       // Reverse-lookup tabId from tabSessionMap (tabId → sessionId).
       const [tabId] = tabIdsForSession(tabSessionMapRef.current, e.sessionId);
       if (tabId) {
-        const tabPaths = JSON.parse(localStorage.getItem('logtapper_tab_paths') ?? '{}');
+        const tabPaths = readTabPaths();
         tabPaths[tabId] = e.path;
-        localStorage.setItem('logtapper_tab_paths', JSON.stringify(tabPaths));
+        saveTabPaths(tabPaths);
       }
     };
 
