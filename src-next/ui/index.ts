@@ -16,5 +16,7 @@ export { SavePromptDialog } from './SavePromptDialog';
 export type { SavePromptResult } from './SavePromptDialog';
 export { DropdownMenu } from './DropdownMenu';
 export type { DropdownMenuProps, MenuItem } from './DropdownMenu';
+export { useAnchoredPanel } from './useAnchoredPanel';
+export type { UseAnchoredPanelOptions, UseAnchoredPanelResult } from './useAnchoredPanel';
 export * from './processorTypeIcons';
 export * from './categoryMeta';

@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, Plus, FolderOpen, Save, X, Pencil } from 'lucide-react';
 import clsx from 'clsx';
 import { useWorkspaceList, useActiveWorkspaceId, useWorkspaceActions, useRenameWorkspaceAction } from '../../context';
+import { useAnchoredPanel } from '../../ui';
 import styles from './WorkspaceSwitcher.module.css';
 
 /**
@@ -18,9 +19,6 @@ export const WorkspaceSwitcher = React.memo(function WorkspaceSwitcher() {
   const renameWorkspace = useRenameWorkspaceAction();
 
   const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
-  const [panelStyle, setPanelStyle] = useState<React.CSSProperties | null>(null);
 
   // Inline rename state
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -31,46 +29,12 @@ export const WorkspaceSwitcher = React.memo(function WorkspaceSwitcher() {
   const displayName = activeWs?.name ?? 'LogTapper';
   const isDirty = activeWs?.dirty ?? false;
 
-  // Position panel below trigger
-  useLayoutEffect(() => {
-    if (open && triggerRef.current) {
-      const rect = triggerRef.current.getBoundingClientRect();
-      const top = rect.bottom + 4;
-      let left = rect.left;
-      const panelWidth = 260;
-      if (left + panelWidth > window.innerWidth) {
-        left = rect.right - panelWidth;
-      }
-      if (left < 4) left = 4;
-      setPanelStyle({ position: 'fixed', top, left, zIndex: 1050 });
-    } else {
-      setPanelStyle(null);
-    }
-  }, [open]);
-
-  // Close on outside click
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (
-        triggerRef.current?.contains(e.target as Node) ||
-        panelRef.current?.contains(e.target as Node)
-      ) return;
-      setOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
-
-  // Close on Escape
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [open]);
+  const closePanel = useCallback(() => setOpen(false), []);
+  const { triggerRef, panelRef, panelStyle } = useAnchoredPanel<HTMLButtonElement, HTMLDivElement>({
+    open,
+    onClose: closePanel,
+    panelWidth: 260,
+  });
 
   const handleToggle = useCallback(() => setOpen(prev => !prev), []);
 
