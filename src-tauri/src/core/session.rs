@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use crate::core::bugreport_parser::BugreportParser;
 use crate::core::kernel_parser::KernelParser;
@@ -197,7 +197,19 @@ pub struct AnalysisSession {
     /// Absolute path of the loaded file, if this is a file-backed session.
     pub file_path: Option<String>,
     /// Holds the extracted temp file for zip-backed sessions. The temp file is
-    /// deleted when the session is dropped. Must outlive the mmap.
+    /// deleted when the session is dropped. Must outlive the mmap: `source`
+    /// (which owns this session's own `Arc<Mmap>`) is declared before this
+    /// field, so struct drop order unmaps the file before `temp_file`'s `Drop`
+    /// tries to delete it.
+    ///
+    /// That drop-order guarantee only holds for THIS session's own strong
+    /// `Arc<Mmap>`. Anything else that needs the mmap's bytes past the initial
+    /// synchronous scan (e.g. the background indexer spawned for progressive
+    /// indexing, see `commands::files::run_background_indexer`) must be handed
+    /// a [`Weak`] — see [`Self::add_source_partial_typed`] — so it can never
+    /// keep the mapping alive past this session's own drop and defeat the
+    /// guarantee on Windows, where a delete of a still-mapped file silently
+    /// fails and orphans the (potentially multi-GB) extracted temp file.
     pub temp_file: Option<tempfile::NamedTempFile>,
     /// The source-type label a caller explicitly supplied at open, replacing
     /// content detection. `None` means the type was detected.
@@ -378,14 +390,20 @@ impl AnalysisSession {
     }
 
     /// Like `add_source_from_file` but only indexes the first `max_bytes` synchronously.
-    /// Returns `(Arc<Mmap>, total_file_bytes, bytes_consumed)`.
+    /// Returns `(Weak<Mmap>, total_file_bytes, bytes_consumed)`.
     /// The caller is responsible for background-indexing the remainder.
+    ///
+    /// The returned handle is a [`Weak`], not an [`Arc`], deliberately: the
+    /// session's own `FileLogSource` holds the only strong `Arc<Mmap>`, so a
+    /// caller that outlives the session (e.g. a spawned background indexing
+    /// task) can never keep the mapping alive past the session's own drop.
+    /// See the `temp_file` field doc for why that matters on Windows.
     pub fn add_source_partial(
         &mut self,
         path: &Path,
         source_id: String,
         max_bytes: usize,
-    ) -> Result<(Arc<Mmap>, usize, usize), String> {
+    ) -> Result<(Weak<Mmap>, usize, usize), String> {
         self.add_source_partial_typed(path, source_id, max_bytes, None)
     }
 
@@ -403,7 +421,7 @@ impl AnalysisSession {
         source_id: String,
         max_bytes: usize,
         source_type_override: Option<SourceType>,
-    ) -> Result<(Arc<Mmap>, usize, usize), String> {
+    ) -> Result<(Weak<Mmap>, usize, usize), String> {
         let file = File::open(path).map_err(|e| format!("Cannot open '{}': {e}", path.display()))?;
         let mmap = Arc::new(
             unsafe { Mmap::map(&file) }.map_err(|e| format!("Cannot mmap file: {e}"))?,
@@ -424,7 +442,11 @@ impl AnalysisSession {
         let is_indexing = bytes_consumed < total_bytes;
 
         let has_crlf = detect_crlf(mmap.as_ref(), encoding);
-        let mmap_clone = Arc::clone(&mmap);
+        // Weak, not a clone of the strong Arc: this session's `FileLogSource`
+        // below is the ONLY strong owner. A caller (e.g. the background
+        // indexer) that upgrades this handle can never keep the mapping
+        // mapped past this session's own drop.
+        let mmap_weak = Arc::downgrade(&mmap);
         self.source = Some(Box::new(FileLogSource {
             source_id,
             source_name: name,
@@ -438,7 +460,7 @@ impl AnalysisSession {
             encoding,
         }));
 
-        Ok((mmap_clone, total_bytes, bytes_consumed))
+        Ok((mmap_weak, total_bytes, bytes_consumed))
     }
 
     /// Extend the file source index with new entries from background indexing.
@@ -1449,6 +1471,81 @@ mod tests {
         let c = AnalysisSession::new("same-content-id".into());
         assert_ne!(c.generation(), a.generation());
         assert_ne!(c.generation(), b.generation());
+    }
+
+    // --- add_source_partial_typed mmap ownership tests ---
+    //
+    // These pin the invariant the d65f2e9b fix relies on: the session's own
+    // FileLogSource is the ONLY strong owner of the mmap. add_source_partial
+    // (and _typed) must hand callers a Weak so a long-lived holder — in
+    // production, the background indexer spawned in commands::files — can
+    // never keep the mapping alive past the session's own drop. That in turn
+    // is what lets `temp_file`'s Drop (declared after `source` in struct
+    // field order) reliably delete a zip-extracted temp file on Windows,
+    // where a delete of a still-mapped file silently fails.
+
+    #[test]
+    fn add_source_partial_returns_weak_that_upgrades_while_session_is_alive() {
+        let temp_path = write_temp_logcat_file("session_weak_alive");
+
+        let mut session = AnalysisSession::new("weak-alive-sess".into());
+        let (weak_mmap, total_bytes, bytes_consumed) = session
+            .add_source_partial(&temp_path, "src-0".to_string(), 1_000_000)
+            .expect("add_source_partial should open + index the file");
+
+        assert!(total_bytes > 0);
+        assert_eq!(bytes_consumed, total_bytes, "small file indexes in one pass");
+        assert!(
+            weak_mmap.upgrade().is_some(),
+            "the mmap must be upgradable while the owning session is still alive"
+        );
+
+        let _ = std::fs::remove_file(&temp_path);
+    }
+
+    #[test]
+    fn add_source_partial_weak_does_not_upgrade_after_session_dropped() {
+        let temp_path = write_temp_logcat_file("session_weak_dropped");
+
+        let weak_mmap = {
+            let mut session = AnalysisSession::new("weak-dropped-sess".into());
+            let (weak_mmap, _, _) = session
+                .add_source_partial(&temp_path, "src-0".to_string(), 1_000_000)
+                .expect("add_source_partial should open + index the file");
+            assert!(weak_mmap.upgrade().is_some(), "precondition: mmap live before drop");
+            weak_mmap
+            // `session` — and with it the ONLY strong Arc<Mmap> — drops here.
+        };
+
+        assert!(
+            weak_mmap.upgrade().is_none(),
+            "a Weak<Mmap> returned by add_source_partial must not upgrade once its \
+             owning session has been dropped — a caller that outlived the session \
+             (e.g. a background indexer) must not be able to resurrect a strong \
+             reference and keep the mapping alive past the session's own drop"
+        );
+
+        let _ = std::fs::remove_file(&temp_path);
+    }
+
+    /// Helper: write a small real logcat-shaped file to the temp dir with a
+    /// unique name, returning its path. Used by tests that need a genuine
+    /// on-disk file for `add_source_partial` (which mmaps via `File::open`,
+    /// unlike `make_file_source`'s anonymous mmap).
+    fn write_temp_logcat_file(label: &str) -> std::path::PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let mut path = std::env::temp_dir();
+        path.push(format!("logtapper_{label}_{unique}.log"));
+        std::fs::write(
+            &path,
+            "01-01 00:00:00.000  1000  1000 I TestTag: first line\n\
+             01-01 00:00:00.001  1000  1000 I TestTag: second line\n",
+        )
+        .expect("write temp log file");
+        path
     }
 
     // --- meta_at() correctness tests ---

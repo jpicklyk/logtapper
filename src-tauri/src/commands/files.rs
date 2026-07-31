@@ -3,7 +3,7 @@ use regex::Regex;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tempfile::NamedTempFile;
 
@@ -277,7 +277,12 @@ pub(crate) fn open_file_inner(
     session.source_type_override = override_label;
     // Hold the temp file handle in the session so it persists (deleted on drop).
     session.temp_file = _temp_file;
-    let (mmap_arc, total_bytes, bytes_consumed) =
+    // `mmap_weak` is a Weak, not a strong Arc: the session's own FileLogSource
+    // (inserted into `sessions` below) is the only strong owner of the mmap.
+    // Handing the background indexer a Weak means it can never keep the
+    // mapping alive past this session's own drop/removal — see the
+    // `temp_file` field doc on AnalysisSession and `add_source_partial_typed`.
+    let (mmap_weak, total_bytes, bytes_consumed) =
         session.add_source_partial_typed(
             effective_path_obj,
             source_id.clone(),
@@ -340,7 +345,7 @@ pub(crate) fn open_file_inner(
         tokio::spawn(async move {
             run_background_indexer(
                 sid,
-                mmap_arc,
+                mmap_weak,
                 source_type,
                 encoding,
                 bytes_consumed,
@@ -816,7 +821,7 @@ fn indexer_cancelled(
 #[allow(clippy::too_many_arguments)]
 async fn run_background_indexer(
     session_id: String,
-    mmap: Arc<Mmap>,
+    mmap: Weak<Mmap>,
     source_type: crate::core::session::SourceType,
     encoding: crate::core::log_source::Encoding,
     start_byte: usize,
@@ -832,20 +837,38 @@ async fn run_background_indexer(
 
     let state = app.state::<AppState>();
     let parser = parser_for(&source_type);
-    let data: &[u8] = mmap.as_ref();
 
     // BugreportParser is stateful: it must see the `== dumpstate:` header to
     // set dumpstate_year before it can year-correct logcat timestamps.  The
     // header was in the initial chunk (already indexed), so re-feed that one
     // line to the fresh parser before it processes the remaining chunks.
+    //
+    // Upgraded under the `sessions` lock, same as every other use of `mmap`
+    // below — see the comment on the main loop's upgrade for why that matters.
     if matches!(source_type, crate::core::session::SourceType::Bugreport | crate::core::session::SourceType::Dumpstate) && start_byte > 0 {
-        let initial_text: String = if encoding.is_utf16() {
-            crate::core::log_source::decode_utf16_bytes(
-                &data[encoding.bom_len()..start_byte.min(data.len())],
-                encoding == crate::core::log_source::Encoding::Utf16Be,
-            ).unwrap_or_default()
-        } else {
-            std::str::from_utf8(&data[..start_byte.min(data.len())]).unwrap_or("").to_string()
+        let initial_text = {
+            let Ok(sessions) = state.sessions.lock() else {
+                return;
+            };
+            let Some(session) = sessions.get(&session_id) else {
+                return;
+            };
+            if session.generation() != expected_generation {
+                return;
+            }
+            let Some(mmap_strong) = mmap.upgrade() else {
+                return;
+            };
+            let data: &[u8] = mmap_strong.as_ref();
+            let end = start_byte.min(data.len());
+            if encoding.is_utf16() {
+                crate::core::log_source::decode_utf16_bytes(
+                    &data[encoding.bom_len()..end],
+                    encoding == crate::core::log_source::Encoding::Utf16Be,
+                ).unwrap_or_default()
+            } else {
+                std::str::from_utf8(&data[..end]).unwrap_or("").to_string()
+            }
         };
         for line in initial_text.lines() {
             if line.trim_start().starts_with("== dumpstate:") {
@@ -860,14 +883,15 @@ async fn run_background_indexer(
     let mut cursor = start_byte;
     let mut total_indexed: usize = initial_line_count;
 
-    while cursor < data.len() {
+    // `total_bytes` is the mmap's fixed length (captured once at open — a
+    // memory map never resizes), so it is used as the loop bound instead of
+    // re-reading `data.len()` from a live mapping outside the lock below.
+    while cursor < total_bytes {
         // Stop on an explicit cancel (Ok) OR a dropped sender (Err(Closed)) —
         // see `indexer_cancelled`. Only Err(Empty) continues.
         if indexer_cancelled(cancel_rx.try_recv()) {
             return;
         }
-
-        let remaining = &data[cursor..];
 
         // Call build_partial_line_index under the session lock so the tag interner
         // is available. memchr-based scanning of 8 MB chunks completes in < 1 ms,
@@ -892,32 +916,58 @@ async fn run_background_indexer(
                 return;
             }
 
-            let (mut chunk_index, mut chunk_meta, bytes_in_chunk) =
-                crate::core::session::build_partial_line_index(
-                    remaining,
-                    parser.as_ref(),
-                    &mut session.tag_interner,
-                    CHUNK_BYTES,
-                    encoding,
-                );
+            // Upgrade the Weak mmap handle INSIDE the same `sessions` mutex
+            // that `close_session_inner` locks to remove the session (and,
+            // via struct field drop order, delete `temp_file`). That shared
+            // lock serializes the two operations: either this indexer wins
+            // the lock first, upgrades successfully, and drops its strong
+            // `Arc<Mmap>` again before releasing the lock (well before close
+            // can run) — or the close wins first, and this indexer observes
+            // the session already gone via `get_mut` above and returns
+            // without ever upgrading. There is no interleaving in which this
+            // task can hold a strong `Arc<Mmap>` at the moment the session's
+            // own `Arc` — and therefore `temp_file` — drops.
+            let Some(mmap_strong) = mmap.upgrade() else {
+                // Session's FileLogSource (and its Arc<Mmap>) is already gone.
+                return;
+            };
+            let data: &[u8] = mmap_strong.as_ref();
 
-            if bytes_in_chunk == 0 {
-                // No progress — break out of the loop.
-                // Return (0, 0) to signal the outer loop to break.
+            if cursor >= data.len() {
+                // Defensive: total_bytes should always equal data.len() for an
+                // immutable mapping, but never index out of bounds if not.
                 (0usize, 0usize)
             } else {
-                let sentinel = crate::core::session::adjust_and_strip_sentinel(
-                    &mut chunk_index, &mut chunk_meta, cursor, bytes_in_chunk,
-                );
+                let remaining = &data[cursor..];
+                let (mut chunk_index, mut chunk_meta, bytes_in_chunk) =
+                    crate::core::session::build_partial_line_index(
+                        remaining,
+                        parser.as_ref(),
+                        &mut session.tag_interner,
+                        CHUNK_BYTES,
+                        encoding,
+                    );
 
-                let new_cursor = cursor + bytes_in_chunk;
-                let done = new_cursor >= data.len();
-                let chunk_line_count = chunk_meta.len();
+                if bytes_in_chunk == 0 {
+                    // No progress — break out of the loop.
+                    // Return (0, 0) to signal the outer loop to break.
+                    (0usize, 0usize)
+                } else {
+                    let sentinel = crate::core::session::adjust_and_strip_sentinel(
+                        &mut chunk_index, &mut chunk_meta, cursor, bytes_in_chunk,
+                    );
 
-                session.extend_source_index(chunk_index, chunk_meta, sentinel, done);
+                    let new_cursor = cursor + bytes_in_chunk;
+                    let done = new_cursor >= total_bytes;
+                    let chunk_line_count = chunk_meta.len();
 
-                (chunk_line_count, bytes_in_chunk)
+                    session.extend_source_index(chunk_index, chunk_meta, sentinel, done);
+
+                    (chunk_line_count, bytes_in_chunk)
+                }
             }
+            // `mmap_strong` (and `data`, which borrows it) drop here, still
+            // inside the `sessions` lock.
         }; // session lock released
 
         if bytes_in_chunk == 0 {
@@ -925,7 +975,7 @@ async fn run_background_indexer(
         }
 
         cursor += bytes_in_chunk;
-        let done = cursor >= data.len();
+        let done = cursor >= total_bytes;
         total_indexed += chunk_line_count;
 
         let _ = app.emit(
@@ -1862,19 +1912,25 @@ mod tests {
         .expect("write temp log file");
 
         // Build a session over the file — this opens the memory map — and register it.
-        {
+        // `add_source_partial` returns a Weak<Mmap> (the handle handed to the
+        // background indexer in production) rather than a strong Arc clone —
+        // keep it here and assert it can no longer upgrade after close, below.
+        // Holding a Weak must NOT keep the mapping alive, unlike the old Arc
+        // clone this test used to discard to avoid masking a leak.
+        let weak_mmap = {
             let mut session = AnalysisSession::new(id.to_string());
             session.file_path = Some(temp_path.to_string_lossy().to_string());
-            // add_source_partial returns an Arc<Mmap> clone intended for the background
-            // indexer. Drop it immediately (`let _ =`) so the ONLY live mapping handle is
-            // the one owned by the session's FileLogSource — otherwise this test would
-            // pass even if close_session_inner leaked the session's copy.
-            let _ = session
+            let (weak_mmap, _, _) = session
                 .add_source_partial(&temp_path, "src-0".to_string(), 1_000_000)
                 .expect("add_source_partial should open + index the file");
             state.sessions.lock().unwrap().insert(id.to_string(), session);
-        }
+            weak_mmap
+        };
         assert!(state.sessions.lock().unwrap().contains_key(id));
+        assert!(
+            weak_mmap.upgrade().is_some(),
+            "precondition: the mmap must still be live before close"
+        );
 
         // Close: removes the session, dropping the FileLogSource and its mmap.
         close_session_inner(&state, None, id).unwrap();
@@ -1883,6 +1939,19 @@ mod tests {
         assert!(
             !state.sessions.lock().unwrap().contains_key(id),
             "session id must be gone from the sessions map after close"
+        );
+
+        // (a.5) The Weak handle a background indexer would have held can no
+        // longer be upgraded — the session's own Arc<Mmap> was the only
+        // strong owner, and it is gone. This is the ownership invariant that
+        // lets temp_file's Drop reliably delete a zip-extracted temp file:
+        // nothing outside the session can resurrect a strong reference to
+        // the mapping once the session itself has been dropped.
+        assert!(
+            weak_mmap.upgrade().is_none(),
+            "a Weak<Mmap> handed to a background indexer must not upgrade after \
+             the owning session is closed — otherwise it could keep the mapping \
+             alive past temp_file's Drop and orphan the extracted file on Windows"
         );
 
         // (b) The file can now be renamed. On Windows this FAILS with an access/sharing
