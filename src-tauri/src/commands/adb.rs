@@ -563,16 +563,68 @@ pub async fn get_package_pids(
         .map_err(|e| format!("adb error: {e}"))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let pids: Vec<u32> = stdout
+    Ok(parse_pidof_output(&stdout))
+}
+
+/// Parse whitespace-separated PIDs from `adb shell pidof` stdout. Extracted
+/// from `get_package_pids` so the parsing logic is unit-testable without
+/// spawning `adb`.
+fn parse_pidof_output(stdout: &str) -> Vec<u32> {
+    stdout
         .split_whitespace()
         .filter_map(|s| s.parse().ok())
-        .collect();
-    Ok(pids)
+        .collect()
+}
+
+/// Decide the single `--pid` value (if any) to pass to `adb logcat` given the
+/// PIDs resolved for a package filter.
+///
+/// `adb logcat --pid` accepts exactly one PID — Android's logcat parses it
+/// into a single `g_pid` variable that a repeated `--pid` flag simply
+/// overwrites, it does not union multiple PIDs. So for a multi-process
+/// package we deliberately filter on only the first PID `pidof` reported
+/// (typically the main process) rather than passing multiple `--pid` flags,
+/// which would silently filter on the last one only and drop the rest
+/// without any indication why. `None` means "stream unfiltered" — used when
+/// the package has no running process to filter by.
+fn resolve_pid_filter(pids: &[u32]) -> Option<u32> {
+    pids.first().copied()
 }
 
 // ---------------------------------------------------------------------------
 // Background streaming task
 // ---------------------------------------------------------------------------
+
+/// Remove this session's cancel-sender entry from `AppState::stream_tasks`.
+/// Idempotent — safe to call even if `stop_adb_stream` already removed the
+/// entry (the normal user-initiated-stop path).
+fn remove_stream_task(state: &AppState, session_id: &str) {
+    if let Ok(mut tasks) = state.stream_tasks.lock() {
+        tasks.remove(session_id);
+    }
+}
+
+/// RAII guard that removes this session's `stream_tasks` entry when
+/// `run_streaming_task` exits, on every exit path — adb spawn failure,
+/// stdout-capture failure, EOF/device disconnect, and the explicit
+/// cancellation branch — not just the `stop_adb_stream` command path.
+///
+/// Without this, a task that ended on its own (adb crash, device unplugged,
+/// EOF) left a stale cancel-sender in the map forever: it leaks, and a later
+/// `stop_adb_stream` call for that session id would find the entry and send
+/// on a channel whose receiver was already dropped (a harmless no-op, but
+/// the entry itself never goes away without this guard, and `close_session`
+/// is the only other remover).
+struct StreamTaskGuard {
+    app: AppHandle,
+    session_id: String,
+}
+
+impl Drop for StreamTaskGuard {
+    fn drop(&mut self) {
+        remove_stream_task(&self.app.state::<AppState>(), &self.session_id);
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 async fn run_streaming_task(
@@ -585,6 +637,14 @@ async fn run_streaming_task(
     max_raw_lines: usize,
     on_event: Channel<AdbStreamEvent>,
 ) {
+    // Ensures the `stream_tasks` cancel-sender entry for this session is
+    // removed no matter how this function returns below (spawn failure,
+    // stdout-capture failure, EOF, cancellation, or a future early return).
+    let _stream_task_guard = StreamTaskGuard {
+        app: app.clone(),
+        session_id: session_id.clone(),
+    };
+
     // Build adb command.  -T 1 = replay the last 1 buffered entry then
     // stream new lines only, avoiding a full ring-buffer dump on connect.
     let mut cmd = Command::new("adb");
@@ -600,9 +660,48 @@ async fn run_streaming_task(
         .stderr(std::process::Stdio::piped())  // capture so errors surface in logs
         .kill_on_drop(true);
 
-    // If package filter specified, add PID filter
+    // If package filter specified, resolve it to a numeric PID via `pidof`
+    // and filter by that. `adb logcat --pid` requires a numeric PID, not a
+    // package name — passing the package name directly (as this used to)
+    // means adb either rejects the flag outright or, depending on version,
+    // silently ignores it and streams everything unfiltered.
     if let Some(ref pkg) = package_filter {
-        cmd.arg("--pid").arg(pkg);
+        match get_package_pids(device_serial.clone(), pkg.clone()).await {
+            Ok(pids) => match resolve_pid_filter(&pids) {
+                Some(pid) => {
+                    if pids.len() > 1 {
+                        eprintln!(
+                            "[adb] package '{pkg}' has {} running PIDs on {device_serial}; \
+                             filtering by PID {pid} only (adb logcat --pid accepts a single PID)",
+                            pids.len()
+                        );
+                    }
+                    cmd.arg("--pid").arg(pid.to_string());
+                }
+                None => {
+                    // Package has no running process (not launched yet, or
+                    // crashed before the stream connected). `--pid` isn't
+                    // dynamic — we can't "wait and retry" without restarting
+                    // the whole logcat process — so the least-surprising
+                    // choice is to fall back to an unfiltered stream (with a
+                    // warning) rather than erroring out the whole session or
+                    // silently showing nothing forever.
+                    eprintln!(
+                        "[adb] package '{pkg}' has no running PID on {device_serial}; \
+                         streaming unfiltered"
+                    );
+                }
+            },
+            Err(e) => {
+                // Resolving PIDs itself failed (adb not on PATH, device
+                // disconnected mid-resolve, etc). Fall back to unfiltered
+                // rather than aborting the stream over a filter convenience
+                // feature.
+                eprintln!(
+                    "[adb] failed to resolve PIDs for package '{pkg}': {e}; streaming unfiltered"
+                );
+            }
+        }
     }
 
     let mut child = match cmd.spawn() {
@@ -1861,5 +1960,84 @@ mod tests {
             Some("high"),
             "Layer 2 must see the transformer-set field"
         );
+    }
+
+    // ── package_filter → --pid resolution (bug 54328172a) ────────────────
+    //
+    // `adb logcat --pid` requires a numeric PID, not a package name. These
+    // test the pure decision helpers extracted from `get_package_pids` /
+    // `run_streaming_task`'s package-filter handling.
+
+    #[test]
+    fn parse_pidof_output_parses_multiple_pids() {
+        assert_eq!(parse_pidof_output("1234 5678"), vec![1234, 5678]);
+    }
+
+    #[test]
+    fn parse_pidof_output_empty_when_not_running() {
+        // `pidof` prints nothing (empty stdout) when the package has no
+        // running process.
+        assert_eq!(parse_pidof_output(""), Vec::<u32>::new());
+        assert_eq!(parse_pidof_output("\n"), Vec::<u32>::new());
+    }
+
+    #[test]
+    fn parse_pidof_output_ignores_unparseable_tokens() {
+        // Defensive: garbage tokens (e.g. stray adb warnings on stdout)
+        // don't crash parsing, just get filtered out.
+        assert_eq!(parse_pidof_output("1234 not-a-pid 5678"), vec![1234, 5678]);
+    }
+
+    #[test]
+    fn resolve_pid_filter_none_when_no_pids() {
+        assert_eq!(resolve_pid_filter(&[]), None, "no running process -> unfiltered stream");
+    }
+
+    #[test]
+    fn resolve_pid_filter_single_pid() {
+        assert_eq!(resolve_pid_filter(&[4242]), Some(4242));
+    }
+
+    #[test]
+    fn resolve_pid_filter_multiple_pids_picks_first() {
+        // adb logcat --pid only accepts one PID; we deliberately filter on
+        // the first one pidof reported rather than passing multiple --pid
+        // flags (which would silently filter on the last one only).
+        assert_eq!(resolve_pid_filter(&[100, 200, 300]), Some(100));
+    }
+
+    // ── stream_tasks cleanup on task exit (bug 54328172b) ─────────────────
+    //
+    // `run_streaming_task` itself can't be driven end-to-end here: it takes
+    // an `AppHandle`, which (as noted in files.rs's LTS test module) cannot
+    // be constructed outside a running Tauri app. `remove_stream_task` is
+    // the exact operation `StreamTaskGuard::drop` performs on every exit
+    // path (spawn failure, stdout-capture failure, EOF/disconnect,
+    // cancellation) — extracted specifically so this boundary is testable
+    // without an AppHandle.
+
+    #[test]
+    fn remove_stream_task_clears_entry() {
+        let state = AppState::new();
+        let (tx, _rx) = tokio::sync::oneshot::channel::<()>();
+        state.stream_tasks.lock().unwrap().insert("s1".to_string(), tx);
+        assert!(state.stream_tasks.lock().unwrap().contains_key("s1"));
+
+        remove_stream_task(&state, "s1");
+
+        assert!(
+            !state.stream_tasks.lock().unwrap().contains_key("s1"),
+            "stream_tasks entry must be removed when the streaming task exits"
+        );
+    }
+
+    #[test]
+    fn remove_stream_task_is_idempotent_when_already_removed() {
+        // Simulates the ordinary user-initiated stop: `stop_adb_stream`
+        // already removed the entry before the task's own exit-path cleanup
+        // (the guard) runs. Must not panic.
+        let state = AppState::new();
+        remove_stream_task(&state, "missing");
+        assert!(!state.stream_tasks.lock().unwrap().contains_key("missing"));
     }
 }
