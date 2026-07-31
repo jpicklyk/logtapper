@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { ProcessorSummary, PipelineRunSummary, PipelineProgress, PackSummary } from '../../bridge/types';
-import { getBareId } from '../../bridge/types';
+import { resolveChainProcessors, groupProcessorsByPack } from '../../bridge/types';
 import { PINNED_TAIL_IDS } from '../../context';
 
 const LS_EXPANDED_PACKS_KEY = 'logtapper_pipeline_expanded_packs';
@@ -79,17 +79,9 @@ export function useChainGroups({
     [lastResults],
   );
 
-  const processorsById = useMemo(
-    () => new Map(processors.map((p) => [p.id, p])),
-    [processors],
-  );
-
   const allChainProcessors = useMemo(
-    () =>
-      pipelineChain
-        .map((id) => processorsById.get(id))
-        .filter(Boolean) as NonNullable<(typeof processors)[0]>[],
-    [pipelineChain, processorsById],
+    () => resolveChainProcessors(pipelineChain, processors),
+    [pipelineChain, processors],
   );
 
   const sortableProcessors = useMemo(
@@ -110,32 +102,14 @@ export function useChainGroups({
 
   // ── Pack grouping ──
 
-  // Build pack groups from packs that have at least one processor in the sortable chain.
-  // Pack manifests use bare IDs ("wifi-state") but chain uses qualified IDs ("wifi-state@official").
-  const { packGroups, standaloneProcessors } = useMemo(() => {
-    // Map bare ID → chain processor for pack resolution
-    const chainByBareId = new Map(
-      sortableProcessors.map((p) => [getBareId(p.id), p]),
-    );
-
-    const groups: Array<{ pack: PackSummary; processors: NonNullable<typeof processors>[0][] }> = [];
-    const usedIds = new Set<string>();
-
-    for (const pack of packs) {
-      const packProcs = pack.processorIds
-        .map((bareId) => chainByBareId.get(bareId))
-        .filter(Boolean) as NonNullable<typeof processors>[0][];
-      if (packProcs.length > 0) {
-        groups.push({ pack, processors: packProcs });
-        packProcs.forEach((p) => usedIds.add(p.id));
-      }
-    }
-
-    // Standalone = in sortable chain but not belonging to any pack
-    const standalone = sortableProcessors.filter((p) => !usedIds.has(p.id));
-
-    return { packGroups: groups, standaloneProcessors: standalone };
-  }, [sortableProcessors, packs]);
+  // Build pack groups from packs that have at least one processor in the sortable
+  // chain. Processors within each pack are ordered by `sortableProcessors` (chain
+  // order), not `pack.processorIds` (manifest order) — this list is drag-reorderable
+  // (see ProcessorPanel's DndContext), so it must reflect the user's chain order.
+  const { packGroups, standaloneProcessors } = useMemo(
+    () => groupProcessorsByPack(sortableProcessors, packs),
+    [sortableProcessors, packs],
+  );
 
   // Stable lookup: packId → processor IDs (qualified), used by pack-level handlers.
   // Keyed by packId so handlers don't need to close over per-pack data.

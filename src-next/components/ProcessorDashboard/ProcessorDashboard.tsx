@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { ChevronRight } from 'lucide-react';
 import type { PipelineRunSummary, ProcessorSummary } from '../../bridge/types';
-import { getBareId } from '../../bridge/types';
+import { resolveChainProcessors, groupProcessorsByPack } from '../../bridge/types';
 import {
   useSession,
   useProcessors,
@@ -10,10 +10,9 @@ import {
   useNavigationActions,
   useSessionPipelineResults,
 } from '../../context';
-import { PROC_TYPE_ACCENT } from '../../ui';
+import { dominantTypeAccent } from '../../ui';
 import { useProcessorDetail } from './useProcessorDetail';
 import { ProcessorDetailView } from './ProcessorDetailView';
-import type { DashboardPackGroup } from './utils';
 import styles from './ProcessorDashboard.module.css';
 
 // ── Main component ───────────────────────────────────────────────────────────
@@ -32,32 +31,16 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
   const sessionId = session?.sessionId ?? null;
 
   const activeProcessors = useMemo(
-    () =>
-      activeProcessorIds
-        .map((id) => processors.find((p) => p.id === id))
-        .filter(Boolean) as NonNullable<(typeof processors)[0]>[],
+    () => resolveChainProcessors(activeProcessorIds, processors),
     [activeProcessorIds, processors],
   );
 
   // Group processors by pack (bare-ID join — packId on ProcessorSummary
   // is not reliably populated for marketplace processors)
-  const { packGroups, standaloneProcessors } = useMemo(() => {
-    const groups: DashboardPackGroup[] = [];
-    const assigned = new Set<string>();
-
-    for (const pack of packs) {
-      const packProcs = activeProcessors.filter((p) =>
-        pack.processorIds.includes(getBareId(p.id)),
-      );
-      if (packProcs.length > 0) {
-        groups.push({ packId: pack.id, packName: pack.name, processors: packProcs });
-        for (const p of packProcs) assigned.add(p.id);
-      }
-    }
-
-    const standalone = activeProcessors.filter((p) => !assigned.has(p.id));
-    return { packGroups: groups, standaloneProcessors: standalone };
-  }, [activeProcessors, packs]);
+  const { packGroups, standaloneProcessors } = useMemo(
+    () => groupProcessorsByPack(activeProcessors, packs),
+    [activeProcessors, packs],
+  );
 
   // Plain function — toggleGroup is only used via inline arrow on a plain button,
   // so useCallback provides no memo benefit here.
@@ -170,33 +153,23 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
           </div>
         )}
         {packGroups.map((group) => {
-          const isCollapsed = collapsedGroups.has(group.packId);
+          const isCollapsed = collapsedGroups.has(group.pack.id);
           const groupMatches = group.processors.reduce((n, p) => {
             const s = getSummary(p.id);
             return n + (s?.matchedLines ?? 0);
           }, 0);
-          // Use the most common processor type's accent color for the pack
-          const typeCounts = new Map<ProcessorSummary['processorType'], number>();
-          for (const p of group.processors) {
-            typeCounts.set(p.processorType, (typeCounts.get(p.processorType) ?? 0) + 1);
-          }
-          let dominantType: ProcessorSummary['processorType'] = group.processors[0]?.processorType ?? 'reporter';
-          let maxCount = 0;
-          for (const [type, count] of typeCounts) {
-            if (count > maxCount) { maxCount = count; dominantType = type; }
-          }
-          const accentColor = PROC_TYPE_ACCENT[dominantType] ?? 'var(--proc-reporter)';
+          const accentColor = dominantTypeAccent(group.processors);
           return (
-            <div key={group.packId} className={styles.packGroup}>
+            <div key={group.pack.id} className={styles.packGroup}>
               <button
                 className={styles.packHeader}
-                onClick={() => toggleGroup(group.packId)}
+                onClick={() => toggleGroup(group.pack.id)}
               >
                 <div
                   className={styles.packAccent}
                   style={{ '--pack-accent': accentColor } as React.CSSProperties}
                 />
-                <span className={styles.packName}>{group.packName}</span>
+                <span className={styles.packName}>{group.pack.name}</span>
                 {isCollapsed && runCount > 0 && (
                   <span className={styles.packStats}>{groupMatches.toLocaleString()}</span>
                 )}

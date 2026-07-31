@@ -90,6 +90,32 @@
   background: var(--bg-selected);
 }
 
+/* Real button wrapping the dot/name/dirty-marker — the row's primary
+   "activate" control, kept as a sibling of renameBtn/closeBtn rather than
+   nesting them inside a role="button" row (invalid ARIA nesting). */
+.activateBtn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.activateBtn:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .activeDot {
   width: 6px;
   height: 6px;

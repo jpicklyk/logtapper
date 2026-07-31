@@ -1,15 +1,17 @@
 import React, { useEffect, useRef } from 'react';
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import { listen } from '@tauri-apps/api/event';
+import { onWorkspaceRestored } from '../bridge/events';
 import type { PipelineAction } from '../context/PipelineContext';
 import type { ProcessorSummary } from '../bridge/types';
-import type { WorkspaceRestoredPayload } from '../bridge/types';
 import { setSessionPipelineMeta } from '../bridge/commands';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 
 /**
  * Listens for `workspace-restored` Tauri events. For every source it restores
- * the pipeline chain (`chain:restore` + backend meta push + `hasRestoredRef`).
+ * the pipeline chain (`chain:restore` + backend meta push).
+ *
+ * Mounted ONLY by `usePipelineWiring` — it registers a Tauri listener, so a
+ * second mount would push `setSessionPipelineMeta` twice per restored session.
  *
  * Auto-run ownership is split by the payload's `source` tag (see
  * `emit_workspace_restored`):
@@ -35,7 +37,6 @@ import { bus } from '../events/bus';
 export function useWorkspaceRestore(
   dispatch: React.Dispatch<PipelineAction>,
   processors: ProcessorSummary[],
-  hasRestoredRef: React.MutableRefObject<boolean>,
   scheduleAutoRun: (sessionId: string, isIndexing: boolean | undefined, chain: string[], disabled: string[]) => void,
 ): void {
   const processorsRef = useRef(processors);
@@ -53,9 +54,9 @@ export function useWorkspaceRestore(
     let unlisten: UnlistenFn | null = null;
     const pendingLoaded = pendingLoadedRef.current;
 
-    listen<WorkspaceRestoredPayload>('workspace-restored', (event) => {
+    onWorkspaceRestored((payload) => {
       if (cancelled) return;
-      const { sessionId, activeProcessorIds, disabledProcessorIds, source } = event.payload;
+      const { sessionId, activeProcessorIds, disabledProcessorIds, source } = payload;
       if (!activeProcessorIds || activeProcessorIds.length === 0) return;
 
       // Filter to only installed processors, allowing session-scoped .lts processors through.
@@ -64,9 +65,9 @@ export function useWorkspaceRestore(
       const validDisabled = (disabledProcessorIds ?? []).filter((id) => installedIds.has(id) || id.includes('@lts-'));
       if (validActive.length === 0) return;
 
-      // Signal that a workspace restore set the chain (prevents localStorage override)
-      hasRestoredRef.current = true;
-
+      // `chain:restore` also marks the chain as restore-owned in the reducer,
+      // which is what prevents a later `processors:loaded` from seeding the
+      // default back over it from localStorage.
       // Override THIS session's chain with its workspace-saved state. A legacy
       // workspace that stored no per-session chain never reaches here (the
       // empty-activeProcessorIds guard above returns), so that session falls

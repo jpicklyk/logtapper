@@ -3,7 +3,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
 import type { AnalysisArtifact } from '../bridge/types';
 import { listAnalyses, getAnalysis } from '../bridge/commands';
 import { onAnalysisUpdate } from '../bridge/events';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 
 export interface AnalysisState {
   artifacts: AnalysisArtifact[];

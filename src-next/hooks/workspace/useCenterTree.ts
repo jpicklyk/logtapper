@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import { bus } from '../../events/bus';
+import { bus } from '../../events';
 import { onBridgeSessionClosed } from '../../bridge/events';
 import type { CenterTabType, BottomTabType, CenterPane, DropZone, EditorTabState, SplitNode } from './workspaceTypes';
 import { TAB_LABELS } from './workspaceTypes';
@@ -20,7 +20,8 @@ import {
 } from './splitTreeHelpers';
 import { LS_FILEPATH_PREFIX, LS_CONTENT_PREFIX, LS_MODE_PREFIX, LS_WRAP_PREFIX } from '../../components/EditorTab';
 import { storageSet } from '../../utils';
-import { applySessionLoading, applySessionLoaded } from './sessionTreeOps';
+import { applySessionLoading, applySessionLoaded, applyCloseTab } from './sessionTreeOps';
+import { readTabPaths, saveTabPaths } from './workspacePersistence';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -67,7 +68,13 @@ export function useCenterTree(
   options: UseCenterTreeOptions,
   savedCenterTree: SplitNode,
 ): CenterTreeHandle {
-  const { activeLogPaneIdRef, paneSessionMapRef, activateSessionForPane, openBottomPane } = options;
+  const { activeLogPaneIdRef, paneSessionMapRef, activateSessionForPane } = options;
+
+  // Read injected options from a ref inside the []-deps bus-subscription effect
+  // below, so it doesn't need to re-subscribe (or go stale) when the caller
+  // passes a new options object identity. Mirrors useLayoutPreset's optionsRef.
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
 
   const [centerTree, setCenterTree] = useState<SplitNode>(savedCenterTree);
   const treeRef = useRef<SplitNode>(centerTree);
@@ -130,32 +137,7 @@ export function useCenterTree(
       bus.emit('layout:logviewer-tab-closed', { tabId, paneId, sessionId });
     }
 
-    updateTree((tree) => {
-      const treeLeaf = findLeafByPaneId(tree, paneId);
-      if (!treeLeaf) return tree;
-      const tab = treeLeaf.pane.tabs.find((t) => t.id === tabId);
-      if (!tab) return tree;
-
-      const remainingTabs = treeLeaf.pane.tabs.filter((t) => t.id !== tabId);
-
-      if (remainingTabs.length === 0) {
-        // Last tab — try to collapse this leaf (return sibling)
-        const collapsed = removeLeaf(tree, paneId);
-        if (collapsed) return collapsed;
-        // Root leaf — keep it but empty
-        return updateLeaf(tree, paneId, () => ({
-          id: treeLeaf.pane.id,
-          tabs: [],
-          activeTabId: '',
-        }));
-      }
-
-      return updateLeaf(tree, paneId, (pane) => ({
-        ...pane,
-        tabs: remainingTabs,
-        activeTabId: pane.activeTabId === tabId ? remainingTabs[0].id : pane.activeTabId,
-      }));
-    });
+    updateTree((tree) => applyCloseTab(tree, tabId, paneId));
 
     // If the closed tab was active and the next active tab is a logviewer, activate its session.
     if (closingTab?.type === 'logviewer' && isActiveTab && leaf) {
@@ -246,44 +228,56 @@ export function useCenterTree(
   }, [updateTree]);
 
   const openCenterTab = useCallback((type: CenterTabType, label?: string, filePath?: string, editorState?: EditorTabState) => {
-    updateTree((tree) => {
-      // 1. If a tab of this type already exists (and no filePath — reuse tab), activate it
-      if (!filePath) {
-        const existing = findTabByType(tree, type);
-        if (existing && !editorState) {
-          if (existing.pane.activeTabId === existing.tab.id) return tree;
-          return updateLeaf(tree, existing.pane.id, (pane) => ({
+    // Decide using treeRef.current (synchronously current committed state) BEFORE
+    // calling updateTree — mirrors the onSessionLoaded/onSessionLoading pattern.
+    // StrictMode calls the updateTree updater twice with the same prev; if
+    // makeTab (crypto.randomUUID) and storageSet ran inside that updater, the
+    // first (discarded) invocation's UUID would seed orphaned localStorage keys
+    // — including full editor content — that are never cleaned up (U9 fix).
+    const tree = treeRef.current;
+
+    // 1. If a tab of this type already exists (and no filePath — reuse tab), activate it
+    if (!filePath) {
+      const existing = findTabByType(tree, type);
+      if (existing && !editorState) {
+        if (existing.pane.activeTabId === existing.tab.id) return;
+        updateTree((t) =>
+          updateLeaf(t, existing.pane.id, (pane) => ({
             ...pane,
             activeTabId: existing.tab.id,
-          }));
-        }
+          })),
+        );
+        return;
       }
+    }
 
-      // 2. Add to the focused pane (or first leaf as fallback)
-      const focPaneId = activeLogPaneIdRef.current;
-      const target = (focPaneId ? findLeafByPaneId(tree, focPaneId) : null) ?? firstLeaf(tree);
-      const tab = makeTab(type, label);
+    // 2. Add to the focused pane (or first leaf as fallback)
+    const focPaneId = activeLogPaneIdRef.current;
+    const target = (focPaneId ? findLeafByPaneId(tree, focPaneId) : null) ?? firstLeaf(tree);
+    const tab = makeTab(type, label);
 
-      // Pre-seed localStorage with the file path so EditorTab picks it up on mount.
-      if (filePath) {
-        storageSet(LS_FILEPATH_PREFIX + tab.id, filePath);
+    // Pre-seed localStorage with the file path so EditorTab picks it up on mount.
+    if (filePath) {
+      storageSet(LS_FILEPATH_PREFIX + tab.id, filePath);
+    }
+
+    // Pre-seed localStorage with editor state so EditorTab picks it up on mount.
+    if (editorState && type === 'editor') {
+      storageSet(LS_CONTENT_PREFIX + tab.id, editorState.content);
+      storageSet(LS_MODE_PREFIX + tab.id, editorState.viewMode);
+      if (editorState.wordWrap) {
+        storageSet(LS_WRAP_PREFIX + tab.id, 'true');
       }
+    }
 
-      // Pre-seed localStorage with editor state so EditorTab picks it up on mount.
-      if (editorState && type === 'editor') {
-        storageSet(LS_CONTENT_PREFIX + tab.id, editorState.content);
-        storageSet(LS_MODE_PREFIX + tab.id, editorState.viewMode);
-        if (editorState.wordWrap) {
-          storageSet(LS_WRAP_PREFIX + tab.id, 'true');
-        }
-      }
-
-      return updateLeaf(tree, target.pane.id, (pane) => ({
+    // Pure updater — only applies the pre-built tab, never generates one.
+    updateTree((t) =>
+      updateLeaf(t, target.pane.id, (pane) => ({
         ...pane,
         tabs: [...pane.tabs, tab],
         activeTabId: tab.id,
-      }));
-    });
+      })),
+    );
   }, [updateTree, activeLogPaneIdRef]);
 
   const dropTabOnPane = useCallback((
@@ -319,67 +313,80 @@ export function useCenterTree(
         ? remainingFromTabs[0]
         : null;
 
-    updateTree((tree) => {
-      const fromLeaf = findLeafByPaneId(tree, fromPaneId);
-      if (!fromLeaf) return tree;
-      const tab = fromLeaf.pane.tabs.find((t) => t.id === tabId);
-      if (!tab) return tree;
+    // Compute the full next tree — including the missing-toLeaf fallback that
+    // used to reassign `landingPaneId` from inside the updater — BEFORE calling
+    // updateTree. `landingPaneId` was being mutated inside the setState updater,
+    // making the updater impure: it depends on React invoking it eagerly and
+    // synchronously so the reassignment is visible by the time the post-update
+    // emit below reads `landingPaneId`. That currently holds for plain setState
+    // updaters, but it is an implementation detail, not a contract — and every
+    // other mutation in this hook (see `L7`/`L10`/`U9` above) is deliberately
+    // computed outside the updater for the same reason. All of this only ever
+    // reads treeRef.current and pure tree helpers, so it is safe to run once,
+    // outside the updater (U10 fix).
+    const tree = treeRef.current;
+    let nextTree = tree;
+    const fromLeaf = findLeafByPaneId(tree, fromPaneId);
+    const tab = fromLeaf?.pane.tabs.find((t) => t.id === tabId);
 
-      if (fromPaneId === toPaneId && zone === 'center') return tree;
-
+    if (fromLeaf && tab && !(fromPaneId === toPaneId && zone === 'center')) {
       const remainingTabs = fromLeaf.pane.tabs.filter((t) => t.id !== tabId);
 
       // Splitting off the last tab of a pane onto itself = no-op
-      if (fromPaneId === toPaneId && remainingTabs.length === 0) return tree;
+      if (!(fromPaneId === toPaneId && remainingTabs.length === 0)) {
+        // Remove tab from source
+        let updated: SplitNode;
+        if (remainingTabs.length === 0) {
+          const collapsed = removeLeaf(tree, fromPaneId);
+          updated = collapsed ?? tree;
+        } else {
+          updated = updateLeaf(tree, fromPaneId, (pane) => ({
+            ...pane,
+            tabs: remainingTabs,
+            activeTabId: pane.activeTabId === tabId ? remainingTabs[0].id : pane.activeTabId,
+          }));
+        }
 
-      // Remove tab from source
-      let updated: SplitNode;
-      if (remainingTabs.length === 0) {
-        const collapsed = removeLeaf(tree, fromPaneId);
-        updated = collapsed ?? tree;
-      } else {
-        updated = updateLeaf(tree, fromPaneId, (pane) => ({
-          ...pane,
-          tabs: remainingTabs,
-          activeTabId: pane.activeTabId === tabId ? remainingTabs[0].id : pane.activeTabId,
-        }));
+        if (zone === 'center') {
+          nextTree = updateLeaf(updated, toPaneId, (pane) => ({
+            ...pane,
+            tabs: [...pane.tabs, tab],
+            activeTabId: tab.id,
+          }));
+        } else {
+          const toLeaf = findLeafByPaneId(updated, toPaneId);
+          if (!toLeaf) {
+            const target = firstLeaf(updated);
+            landingPaneId = target.pane.id;
+            nextTree = updateLeaf(updated, target.pane.id, (pane) => ({
+              ...pane,
+              tabs: [...pane.tabs, tab],
+              activeTabId: tab.id,
+            }));
+          } else {
+            const newPane: CenterPane = { id: newPaneId, tabs: [tab], activeTabId: tab.id };
+            const direction = zone === 'left' || zone === 'right' ? 'horizontal' : 'vertical';
+            const newFirst = zone === 'left' || zone === 'top';
+            const newLeafNode: SplitNode = { type: 'leaf', id: crypto.randomUUID(), pane: newPane };
+            const existingLeafNode: SplitNode = { ...toLeaf };
+
+            const splitNode: SplitNode = {
+              type: 'split',
+              id: crypto.randomUUID(),
+              direction,
+              children: newFirst ? [newLeafNode, existingLeafNode] : [existingLeafNode, newLeafNode],
+              ratio: 0.5,
+            };
+
+            nextTree = replaceNode(updated, toLeaf.id, splitNode);
+          }
+        }
       }
+    }
 
-      if (zone === 'center') {
-        return updateLeaf(updated, toPaneId, (pane) => ({
-          ...pane,
-          tabs: [...pane.tabs, tab],
-          activeTabId: tab.id,
-        }));
-      }
+    // Pure identity updater — the tree was already fully computed above.
+    updateTree(() => nextTree);
 
-      const toLeaf = findLeafByPaneId(updated, toPaneId);
-      if (!toLeaf) {
-        const target = firstLeaf(updated);
-        landingPaneId = target.pane.id;
-        return updateLeaf(updated, target.pane.id, (pane) => ({
-          ...pane,
-          tabs: [...pane.tabs, tab],
-          activeTabId: tab.id,
-        }));
-      }
-
-      const newPane: CenterPane = { id: newPaneId, tabs: [tab], activeTabId: tab.id };
-      const direction = zone === 'left' || zone === 'right' ? 'horizontal' : 'vertical';
-      const newFirst = zone === 'left' || zone === 'top';
-      const newLeafNode: SplitNode = { type: 'leaf', id: crypto.randomUUID(), pane: newPane };
-      const existingLeafNode: SplitNode = { ...toLeaf };
-
-      const splitNode: SplitNode = {
-        type: 'split',
-        id: crypto.randomUUID(),
-        direction,
-        children: newFirst ? [newLeafNode, existingLeafNode] : [existingLeafNode, newLeafNode],
-        ratio: 0.5,
-      };
-
-      return replaceNode(updated, toLeaf.id, splitNode);
-    });
     const movedTab = preFromLeaf?.pane.tabs.find((t) => t.id === tabId);
     if (!isNoOpDrop && movedTab?.type === 'logviewer') {
       const sessionId = tabSessionMapRef.current.get(tabId) ?? '';
@@ -457,7 +464,7 @@ export function useCenterTree(
         }
       }
       if (e.hasTrackers) {
-        openBottomPane('timeline');
+        optionsRef.current.openBottomPane('timeline');
       }
     };
 
@@ -500,9 +507,9 @@ export function useCenterTree(
       // Reverse-lookup tabId from tabSessionMap (tabId → sessionId).
       const [tabId] = tabIdsForSession(tabSessionMapRef.current, e.sessionId);
       if (tabId) {
-        const tabPaths = JSON.parse(localStorage.getItem('logtapper_tab_paths') ?? '{}');
+        const tabPaths = readTabPaths();
         tabPaths[tabId] = e.path;
-        localStorage.setItem('logtapper_tab_paths', JSON.stringify(tabPaths));
+        saveTabPaths(tabPaths);
       }
     };
 
@@ -545,11 +552,20 @@ export function useCenterTree(
       if (cancelled) return;
       // Snapshot matching tabIds before mutating — closeTab deletes map entries.
       const tabIds = tabIdsForSession(tabSessionMapRef.current, sessionId);
+      // Thread a local tree value through the per-iteration lookups instead of
+      // re-reading treeRef.current between closeTab() calls. Relying on
+      // treeRef being updated synchronously between iterations assumes React
+      // invokes the setState updater eagerly — an implementation detail, not
+      // a guarantee. applyCloseTab is the exact same pure mutation closeTab
+      // applies via updateTree, so replaying it locally keeps this loop's
+      // view of the tree in lockstep with the real one regardless of when
+      // React actually commits (U10 fix).
+      let localTree = treeRef.current;
       for (const tabId of tabIds) {
-        // treeRef.current updates synchronously between closeTab calls, so each
-        // lookup sees the latest tree. Missing tab → skip (no throw).
-        const found = findTabAcrossTree(treeRef.current, tabId);
-        if (found) closeTab(tabId, found.pane.id);
+        const found = findTabAcrossTree(localTree, tabId);
+        if (!found) continue; // Missing tab → skip (no throw).
+        closeTab(tabId, found.pane.id);
+        localTree = applyCloseTab(localTree, tabId, found.pane.id);
       }
     }).then((fn) => {
       if (cancelled) fn();

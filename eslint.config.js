@@ -83,7 +83,7 @@ export default tseslint.config(
       ],
 
       // ── Convention 4: No direct invoke()/Channel outside bridge ─────
-      // ── Convention 5: No direct listen() outside bridge + 2 hooks ───
+      // ── Convention 5: No direct listen() outside bridge ─────────────
       // ── Convention 9: No deprecated useViewerActions ────────────────
       // ── Convention 10: No deprecated useSessionContext ──────────────
       'no-restricted-imports': ['error', {
@@ -192,11 +192,7 @@ export default tseslint.config(
             group: ['**/cache/CacheManager*'],
             message: 'Import from cache barrel (cache/index.ts), not CacheManager directly.',
           },
-          {
-            group: ['**/cache/FetchScheduler*'],
-            message: 'Import from cache barrel (cache/index.ts), not FetchScheduler directly.',
-          },
-          // Convention 8: Barrel imports for ui/ and hooks/ internals
+          // Convention 8: Barrel imports for ui/, hooks/, and viewport/ internals
           {
             group: ['**/ui/Modal/Modal'],
             message: "Import Modal from the ui barrel ('../../ui'), not from ui/Modal/Modal directly.",
@@ -208,6 +204,10 @@ export default tseslint.config(
           {
             group: ['**/hooks/useMarketplace'],
             message: "Import from the hooks barrel ('../../hooks'), not from hooks/useMarketplace directly.",
+          },
+          {
+            group: ['**/viewport/FetchScheduler*'],
+            message: 'FetchScheduler is internal to viewport/ (used only by useFetchScheduler) — not exported from the barrel.',
           },
         ],
       }],
@@ -248,25 +248,4 @@ export default tseslint.config(
     },
   },
 
-  // hooks/usePipeline.ts — allowed listen() but NOT invoke()
-  {
-    files: ['src-next/hooks/usePipeline.ts'],
-    rules: {
-      'no-restricted-imports': ['error', {
-        patterns: [
-          {
-            group: ['@tauri-apps/api/core'],
-            importNames: ['invoke', 'Channel'],
-            message: 'Use bridge/commands wrappers instead of direct invoke()/Channel.',
-          },
-          // listen() is allowed for this hook — omitted from patterns
-          {
-            group: ['**/context/SessionContext*'],
-            importNames: ['useSessionContext'],
-            message: 'useSessionContext is deprecated. Use useSessionCoreCtx, useSessionPaneCtx, or useSessionProgressCtx directly.',
-          },
-        ],
-      }],
-    },
-  },
 );

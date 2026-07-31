@@ -1,7 +1,6 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import { getMcpStatus } from '../bridge/commands';
 import type { McpStatus } from '../bridge/types';
-import { loadSettings } from './useSettings';
 
 const MCP_ACTIVE_THRESHOLD_SECS = 30;
 const MCP_POLL_INTERVAL_MS = 5_000;
@@ -23,9 +22,12 @@ const MCP_CONN_LABELS: Record<McpConnState, string> = {
   disabled: 'disabled',
 };
 
-export function deriveConnState(status: McpStatus | null): McpConnState {
+/** Pure — takes `mcpBridgeEnabled` as a parameter rather than reading settings
+ *  from localStorage itself, so it can run safely during render. Callers
+ *  source the flag from their own reactive `useSettings()`/settings prop. */
+export function deriveConnState(status: McpStatus | null, mcpBridgeEnabled: boolean): McpConnState {
   if (status === null) return 'checking';
-  if (!status.running && !loadSettings().mcpBridgeEnabled) return 'disabled';
+  if (!status.running && !mcpBridgeEnabled) return 'disabled';
   if (!status.running) return 'offline';
   if (status.idleSecs === null) return 'ready';
   if (status.idleSecs <= MCP_ACTIVE_THRESHOLD_SECS) return 'connected';
@@ -82,10 +84,15 @@ function getSnapshot(): McpStatus | null {
 /**
  * Shared hook for MCP bridge status polling.
  * Uses a module-level singleton so multiple consumers share one polling interval.
+ *
+ * `mcpBridgeEnabled` is supplied by the caller's own reactive settings source
+ * (`useSettings()` state or a `settings` prop) rather than read here — reading
+ * localStorage directly during render would re-run the parse/migration scan on
+ * every render and wouldn't reliably re-render when the setting changes.
  */
-export function useMcpStatus(): McpStatusInfo {
+export function useMcpStatus(mcpBridgeEnabled: boolean): McpStatusInfo {
   const status = useSyncExternalStore(subscribe, getSnapshot);
-  const connState = deriveConnState(status);
+  const connState = deriveConnState(status, mcpBridgeEnabled);
 
   return useMemo(() => ({
     connState,

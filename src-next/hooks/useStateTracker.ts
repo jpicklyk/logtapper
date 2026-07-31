@@ -4,8 +4,7 @@ import type { StateSnapshot, StateTransition } from '../bridge/types';
 import { onAdbTrackerUpdate } from '../bridge/events';
 import { getAllTransitionLines, getStateAtLine, getStateTransitions } from '../bridge/commands';
 import { useTrackerContext } from '../context/TrackerContext';
-import { useSessionCoreCtx } from '../context/SessionContext';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 
 export interface StateTrackerActions {
   /** Fetch all transition line numbers for a session after a pipeline run. */
@@ -22,13 +21,6 @@ export function useStateTracker(): StateTrackerActions {
     setSessionTransitionData,
     clearSessionData,
   } = useTrackerContext();
-
-  const { paneSessionMap } = useSessionCoreCtx();
-
-  const paneSessionMapRef = useRef(paneSessionMap);
-  paneSessionMapRef.current = paneSessionMap;
-
-  const unlistenRef = useRef<UnlistenFn | null>(null);
 
   // Throttled transition line refresh for streaming — at most once per 3s.
   const transitionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -60,10 +52,11 @@ export function useStateTracker(): StateTrackerActions {
   }, [setSessionTransitionData]);
 
   // Subscribe to adb-tracker-update events (StrictMode-safe).
-  // Updates streaming session update counts, forwards to bus for usePipeline
+  // Updates streaming session update counts, forwards to bus for usePipelineWiring
   // runCount bump, and drives throttled refreshTransitionLines.
   useEffect(() => {
     let cancelled = false;
+    let unlisten: UnlistenFn | null = null;
     onAdbTrackerUpdate((payload) => {
       if (cancelled) return;
       const { trackerId, transitionCount, sessionId } = payload;
@@ -86,11 +79,11 @@ export function useStateTracker(): StateTrackerActions {
       }
     }).then((fn) => {
       if (cancelled) fn();
-      else unlistenRef.current = fn;
+      else unlisten = fn;
     });
     return () => {
       cancelled = true;
-      unlistenRef.current?.();
+      unlisten?.();
       if (transitionRefreshTimerRef.current) {
         clearTimeout(transitionRefreshTimerRef.current);
         transitionRefreshTimerRef.current = null;
@@ -100,10 +93,9 @@ export function useStateTracker(): StateTrackerActions {
 
   // Subscribe to bus events
   useEffect(() => {
-    const handlePreLoad = (e: { paneId: string }) => {
-      const outgoingSessionId = paneSessionMapRef.current.get(e.paneId);
-      if (outgoingSessionId) {
-        clearSessionData(outgoingSessionId);
+    const handlePreLoad = (e: { paneId: string; outgoingSessionId: string | null }) => {
+      if (e.outgoingSessionId) {
+        clearSessionData(e.outgoingSessionId);
       }
     };
 

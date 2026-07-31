@@ -32,6 +32,9 @@ const BookmarkCreateDialog = React.memo(function BookmarkCreateDialog({
   const [submitting, setSubmitting] = useState(false);
 
   const labelRef = useRef<HTMLInputElement>(null);
+  // Token identifying the request the in-flight label fetch belongs to. Compared
+  // in the .then/.catch handlers so a slow fetch from a previously opened
+  // dialog can't clobber the label of a newer request.
   const labelFetchedRef = useRef<string | null>(null);
 
   // When a new request arrives, reset the form and auto-fetch the default label
@@ -42,7 +45,9 @@ const BookmarkCreateDialog = React.memo(function BookmarkCreateDialog({
     setCategory('observation');
     setNote('');
     setSubmitting(false);
-    labelFetchedRef.current = null;
+
+    const token = `${request.sessionId}:${request.lineNumber}`;
+    labelFetchedRef.current = token;
 
     // Auto-generate a label from the log line if none provided
     if (!request.defaultLabel) {
@@ -55,7 +60,7 @@ const BookmarkCreateDialog = React.memo(function BookmarkCreateDialog({
         context: 0,
       })
         .then((result) => {
-          if (labelFetchedRef.current !== null) return; // request changed
+          if (labelFetchedRef.current !== token) return; // request changed
           const line = result.lines[0];
           if (line) {
             const generated = line.tag
@@ -67,13 +72,13 @@ const BookmarkCreateDialog = React.memo(function BookmarkCreateDialog({
           }
         })
         .catch(() => {
+          if (labelFetchedRef.current !== token) return; // request changed
           setLabel((prev) => (prev === '' ? `Line ${lineNumber + 1}` : prev));
         });
     }
 
     // Focus the label input after next paint
     requestAnimationFrame(() => labelRef.current?.select());
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request]);
 
   const handleSubmit = useCallback(

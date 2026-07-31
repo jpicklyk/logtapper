@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import type { MarketplaceEntry, MarketplacePackEntry, ProcessorSummary } from '../../bridge/types';
-import { makeQualifiedId, filterMarketplaceEntries, matchesAllTags } from '../../bridge/types';
+import { makeQualifiedId, filterMarketplaceEntries, matchesAllTags, matchesQuery } from '../../bridge/types';
 import type { MarketplaceState } from '../../hooks';
-import { usePipeline } from '../../hooks';
+import { usePipelineCommands } from '../../hooks';
 import { useProcessors, usePacks } from '../../context';
 import { PROC_TYPE_LABELS } from '../../ui';
 import { MarketplaceEntryRow } from './MarketplaceEntryRow';
@@ -32,7 +32,7 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
     uninstallPack,
   } = marketplace;
 
-  const pipeline = usePipeline();
+  const pipeline = usePipelineCommands();
   const processors = useProcessors();
   const installedPacks = usePacks();
   const [filter, setFilter] = useState('');
@@ -201,12 +201,7 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
     let result = packEntries;
     if (filter) {
       const q = filter.toLowerCase();
-      result = result.filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) ||
-          (p.description ?? '').toLowerCase().includes(q) ||
-          p.tags.some((t) => t.toLowerCase().includes(q)),
-      );
+      result = result.filter((p) => matchesQuery(p, q));
     }
     if (activeTagFilters.size > 0) {
       result = result.filter((p) => matchesAllTags(p.tags, activeTagFilters));

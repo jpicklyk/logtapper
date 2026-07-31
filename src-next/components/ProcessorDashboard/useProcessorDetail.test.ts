@@ -17,7 +17,7 @@ import type { MatchedLine } from '../../bridge/types';
 const mockGetVars = vi.fn<(sid: string, pid: string) => Promise<Record<string, unknown>>>();
 
 vi.mock('../../hooks', () => ({
-  usePipeline: () => ({ getVars: mockGetVars }),
+  usePipelineCommands: () => ({ getVars: mockGetVars }),
   useCorrelatorResult: () => ({ result: null, loading: false, error: null }),
 }));
 

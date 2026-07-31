@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { MatchedLine, StateTransition, StateSnapshot, CorrelatorResult } from '../../bridge/types';
 import { getMatchedLines, getPiiMappings, getStateTransitions, getStateAtLine } from '../../bridge/commands';
-import { usePipeline, useCorrelatorResult } from '../../hooks';
+import { usePipelineCommands, useCorrelatorResult } from '../../hooks';
 
 export interface UseProcessorDetailParams {
   selectedId: string | null;
@@ -31,7 +31,7 @@ export function useProcessorDetail({
   runCount,
   processorType,
 }: UseProcessorDetailParams): UseProcessorDetailResult {
-  const pipeline = usePipeline();
+  const pipeline = usePipelineCommands();
 
   const [vars, setVars] = useState<Record<string, unknown> | null>(null);
   const [piiMappings, setPiiMappings] = useState<Record<string, string>>({});

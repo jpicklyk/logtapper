@@ -1,14 +1,21 @@
 import { useCallback, useRef } from 'react';
-import type { UnlistenFn } from '@tauri-apps/api/event';
-import type { SearchQuery, SearchProgress, LineWindow } from '../../bridge/types';
-import { getLines, searchLogs } from '../../bridge/commands';
-import { onSearchProgress } from '../../bridge/events';
+import type { LineWindow } from '../../bridge/types';
+import { getLines } from '../../bridge/commands';
 import { useViewerContext } from '../../context/ViewerContext';
 import type { SharedLogViewerRefs } from './types';
 
+/**
+ * Scroll targeting, processor-view selection, and line fetching for the log
+ * viewer.
+ *
+ * Search itself is NOT here. Query state, the `search-progress` subscription,
+ * and match navigation are per-pane and owned by `PaneSearchContext`, which
+ * addresses its jumps at a single pane. This hook used to carry a second,
+ * global copy of that same accumulate-progress / jump-to-first-match algorithm
+ * writing into a context nothing rendered; it was removed rather than kept in
+ * sync. `jumpToLine` is the seam the pane provider scrolls through.
+ */
 export interface SearchNavigationResult {
-  handleSearch: (query: SearchQuery | null) => void;
-  jumpToMatch: (direction: 1 | -1) => void;
   jumpToLine: (lineNum: number, paneId?: string) => void;
   jumpToEnd: () => void;
   fetchLines: (offset: number, count: number) => Promise<LineWindow>;
@@ -19,127 +26,18 @@ export interface SearchNavigationResult {
 
 export function useSearchNavigation(refs: SharedLogViewerRefs): SearchNavigationResult {
   const {
-    setSearch,
-    setSearchSummary,
-    setCurrentMatchIndex,
     setScrollToLine,
     setJumpSeq,
     setJumpPaneId,
     setProcessorId,
   } = useViewerContext();
 
-  const searchRef = useRef<SearchQuery | null>(null);
   const processorIdRef = useRef<string | null>(null);
-  const searchProgressUnlistenRef = useRef<UnlistenFn | null>(null);
 
   const reset = useCallback(() => {
-    setSearch(null);
-    searchRef.current = null;
-    setCurrentMatchIndex(0);
     setProcessorId(null);
     processorIdRef.current = null;
-    searchProgressUnlistenRef.current?.();
-    searchProgressUnlistenRef.current = null;
-  }, [setSearch, setCurrentMatchIndex, setProcessorId]);
-
-  // Cleanup on unmount
-  // Note: parent orchestrator calls adbBatchUnlisten cleanup; search unlisten is internal
-  const handleSearch = useCallback(async (query: SearchQuery | null) => {
-    const sess = refs.sessionRef.current;
-    setSearch(query);
-    searchRef.current = query;
-    setCurrentMatchIndex(0);
-
-    searchProgressUnlistenRef.current?.();
-    searchProgressUnlistenRef.current = null;
-
-    if (!sess || !query) {
-      setSearchSummary(null);
-      return;
-    }
-
-    const accumulatedMatches: number[] = [];
-    let jumpedToFirst = false;
-
-    const unlisten = await onSearchProgress((payload: SearchProgress) => {
-      if (payload.sessionId !== sess.sessionId) return;
-
-      if (payload.newMatches.length > 0) {
-        accumulatedMatches.push(...payload.newMatches);
-        setSearchSummary((prev) => ({
-          totalMatches: payload.matchedSoFar,
-          matchLineNums: [...accumulatedMatches],
-          byLevel: prev?.byLevel ?? {},
-          byTag: prev?.byTag ?? {},
-        }));
-        if (!jumpedToFirst) {
-          jumpedToFirst = true;
-          setScrollToLine(accumulatedMatches[0]);
-        }
-      }
-
-      if (payload.done) {
-        searchProgressUnlistenRef.current?.();
-        searchProgressUnlistenRef.current = null;
-      }
-    });
-    searchProgressUnlistenRef.current = unlisten;
-
-    try {
-      const summary = await searchLogs(sess.sessionId, query);
-      setSearchSummary(summary);
-      setCurrentMatchIndex(0);
-      if (summary.matchLineNums.length > 0 && !jumpedToFirst) {
-        setScrollToLine(summary.matchLineNums[0]);
-        setJumpSeq((s) => s + 1);
-      }
-    } catch (e) {
-      console.error('Search error:', e);
-    } finally {
-      searchProgressUnlistenRef.current?.();
-      searchProgressUnlistenRef.current = null;
-    }
-  }, [refs.sessionRef, setSearch, setSearchSummary, setCurrentMatchIndex, setScrollToLine, setJumpSeq]);
-
-  const jumpToMatch = useCallback(
-    (direction: 1 | -1) => {
-      setSearchSummary((summary) => {
-        if (!summary || summary.matchLineNums.length === 0) return summary;
-
-        // Scope matches to the currently visible lines (intersection of all active
-        // filters: stream filter + section filter). If no filter is active,
-        // effectiveLineNumsRef is null and all matches are navigable.
-        const effectiveLines = refs.effectiveLineNumsRef.current;
-        const matches = effectiveLines
-          ? summary.matchLineNums.filter((ln) => {
-              // Binary search in the sorted effectiveLines array — O(log n).
-              let lo = 0;
-              let hi = effectiveLines.length - 1;
-              while (lo <= hi) {
-                const mid = (lo + hi) >>> 1;
-                if (effectiveLines[mid] === ln) return true;
-                if (effectiveLines[mid] < ln) lo = mid + 1;
-                else hi = mid - 1;
-              }
-              return false;
-            })
-          : summary.matchLineNums;
-
-        if (matches.length === 0) return summary;
-
-        setCurrentMatchIndex((idx) => {
-          const len = matches.length;
-          const next = (idx + direction + len) % len;
-          setScrollToLine(matches[next]);
-          setJumpPaneId(refs.activeLogPaneIdRef.current ?? null);
-          setJumpSeq((s) => s + 1);
-          return next;
-        });
-        return summary;
-      });
-    },
-    [refs.activeLogPaneIdRef, refs.effectiveLineNumsRef, setSearchSummary, setCurrentMatchIndex, setScrollToLine, setJumpPaneId, setJumpSeq],
-  );
+  }, [setProcessorId]);
 
   const jumpToLine = useCallback((lineNum: number, paneId?: string) => {
     setScrollToLine(lineNum);
@@ -170,7 +68,6 @@ export function useSearchNavigation(refs: SharedLogViewerRefs): SearchNavigation
       count,
       context: 3,
       processorId: pid ?? undefined,
-      search: searchRef.current ?? undefined,
     });
   }, [refs.sessionRef]);
 
@@ -185,8 +82,6 @@ export function useSearchNavigation(refs: SharedLogViewerRefs): SearchNavigation
   }, [setProcessorId]);
 
   return {
-    handleSearch,
-    jumpToMatch,
     jumpToLine,
     jumpToEnd,
     fetchLines,

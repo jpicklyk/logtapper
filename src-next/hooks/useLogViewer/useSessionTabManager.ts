@@ -4,9 +4,9 @@ import { getLines, closeSession as closeSessionCmd } from '../../bridge/commands
 import { updateStreamProcessors, updateStreamTrackers, updateStreamTransformers } from '../../bridge/commands';
 import { useSessionCoreCtx, useSessionPaneCtx, useSessionProgressCtx } from '../../context/SessionContext';
 import { useViewerContext } from '../../context/ViewerContext';
-import { bus } from '../../events/bus';
+import { bus } from '../../events';
 import { sessionScrollPositions } from '../../viewport';
-import type { CacheController } from '../../cache';
+import { clearPreSeed, type CacheController } from '../../cache';
 import type { SharedLogViewerRefs } from './types';
 import { readTabPaths, saveTabPaths } from '../workspace/workspacePersistence';
 
@@ -33,22 +33,18 @@ export function useSessionTabManager(
 
   const {
     setProcessorId,
-    setSearch,
-    setSearchSummary,
-    setCurrentMatchIndex,
     setScrollToLine,
     setJumpPaneId,
     setJumpSeq,
   } = useViewerContext();
 
   // Clear session-scoped viewer state when switching tabs.
-  // Filter state is per-session in SessionContext — no reset needed here.
+  // Filter state is per-session in SessionContext, and search state is per-pane
+  // in PaneSearchContext (which clears itself on sessionId change) — neither
+  // needs a reset here.
   const resetViewerState = useCallback(() => {
     setProcessorId(null);
-    setSearch(null);
-    setSearchSummary(null);
-    setCurrentMatchIndex(0);
-  }, [setProcessorId, setSearch, setSearchSummary, setCurrentMatchIndex]);
+  }, [setProcessorId]);
 
   const closeSession = useCallback(async (paneId?: string, tabId?: string, sessionId?: string) => {
     const targetPaneId = paneId ?? activeLogPaneId ?? DEFAULT_PANE_ID;
@@ -88,6 +84,12 @@ export function useSessionTabManager(
       terminateSession(resolvedSessionId);
     }
     cacheManager.releaseSessionViews(resolvedSessionId);
+    // A session closed before its viewer ever mounted (e.g. a fast-cancelled
+    // load) may still have an optimistic pre-seed entry sitting in the
+    // module-level preSeedStore — useViewCache only consumes/clears it on
+    // allocation, which never happens if no viewer mounts. Clear it here so
+    // it doesn't leak for the app's lifetime.
+    clearPreSeed(resolvedSessionId);
     sessionScrollPositions.delete(resolvedSessionId);
 
     bus.emit('session:closed', { sessionId: resolvedSessionId, paneId: targetPaneId, sourceType, tabId });

@@ -44,25 +44,17 @@ function simulateMemo<T>(
 const stableNoopAsync = () => Promise.resolve();
 const stableNoop = () => { /* stub */ };
 
-const viewerDeps = [
+const fileDeps = [
   stableNoopAsync,  // loadFile
   stableNoopAsync,  // openFileDialog
   stableNoopAsync,  // openInEditorDialog
-  stableNoopAsync,  // startStream
-  stableNoopAsync,  // stopStream
-  stableNoopAsync,  // closeSession
-  stableNoop,       // jumpToLine
-  stableNoop,       // jumpToMatch
-  stableNoop,       // setSearch
-  stableNoopAsync,  // setStreamFilter
-  stableNoop,       // cancelStreamFilter
-  stableNoop,       // openTab
-  stableNoop,       // setActiveLogPane
-  stableNoop,       // setActivePane
-  stableNoop,       // setEffectiveLineNums
   stableNoopAsync,  // saveFile
   stableNoopAsync,  // saveFileAs
   stableNoop,       // exportSession
+  stableNoopAsync,  // exportAllSessions
+  stableNoopAsync,  // startStream
+  stableNoopAsync,  // stopStream
+  stableNoopAsync,  // closeSession
 ];
 
 const pipelineDeps = [
@@ -75,22 +67,22 @@ const pipelineDeps = [
 ];
 
 // ---------------------------------------------------------------------------
-// useViewerActions — memoization tests
+// useFileActions — memoization tests
 // ---------------------------------------------------------------------------
 
-describe('useViewerActions (L4: useMemo wrapping)', () => {
+describe('useFileActions (L4: useMemo wrapping)', () => {
   it('returns the same object reference when deps are stable', () => {
     const cache: { value: Record<string, unknown> | undefined; deps: unknown[] | undefined } = {
       value: undefined,
       deps: undefined,
     };
     const factory = () => ({
-      loadFile: viewerDeps[0],
-      openFileDialog: viewerDeps[1],
+      loadFile: fileDeps[0],
+      openFileDialog: fileDeps[1],
     });
 
-    const first = simulateMemo(factory, viewerDeps, cache);
-    const second = simulateMemo(factory, viewerDeps, cache);
+    const first = simulateMemo(factory, fileDeps, cache);
+    const second = simulateMemo(factory, fileDeps, cache);
 
     expect(first).toBe(second);
   });
@@ -101,13 +93,13 @@ describe('useViewerActions (L4: useMemo wrapping)', () => {
       deps: undefined,
     };
     const factory = () => ({
-      loadFile: viewerDeps[0],
+      loadFile: fileDeps[0],
     });
 
-    const first = simulateMemo(factory, viewerDeps, cache);
+    const first = simulateMemo(factory, fileDeps, cache);
 
     // Simulate a dep changing (e.g., a callback was replaced)
-    const newDeps = [...viewerDeps];
+    const newDeps = [...fileDeps];
     newDeps[0] = () => Promise.resolve(); // new reference
     const second = simulateMemo(factory, newDeps, cache);
 

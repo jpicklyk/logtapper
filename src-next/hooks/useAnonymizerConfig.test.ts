@@ -260,4 +260,27 @@ describe('mutation correctness', () => {
     const sentConfig = mockSetConfig.mock.calls[0][0] as AnonymizerConfig;
     expect(sentConfig).toEqual(result.current.config);
   });
+
+  // -------------------------------------------------------------------------
+  // U4 — two mutations dispatched before React re-renders must not lose the
+  // first one. applyMutation previously read `prev` from configRef.current,
+  // which is only synced on render — a second synchronous mutation call
+  // would read the same stale `prev` and overwrite the first mutation's
+  // result when both setConfig calls are batched into a single render.
+  // -------------------------------------------------------------------------
+  it('two mutations dispatched synchronously (before re-render) both apply', async () => {
+    const macDetector = makeDetector({ id: 'mac', label: 'MAC' });
+    const { result } = await renderLoaded(makeConfig([makeDetector(), macDetector]));
+
+    act(() => {
+      // Both calls happen in the same synchronous batch, before React
+      // commits a re-render — configRef.current would only reflect the
+      // fixture value unless applyMutation syncs the ref itself.
+      result.current.toggleDetector('email', false);
+      result.current.togglePattern('mac', 0, false);
+    });
+
+    expect(result.current.config?.detectors.find((d) => d.id === 'email')?.enabled).toBe(false);
+    expect(result.current.config?.detectors.find((d) => d.id === 'mac')?.patterns[0].enabled).toBe(false);
+  });
 });

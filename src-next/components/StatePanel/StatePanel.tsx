@@ -1,16 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { ChevronRight } from 'lucide-react';
 import type { StateSnapshot, ProcessorSummary } from '../../bridge/types';
+import { resolveChainProcessors } from '../../bridge/types';
 import {
   useSession,
   useProcessors,
   usePipelineChain,
   useSessionPipelineResults,
-  useSessionTrackerTransitions,
 } from '../../context';
-import { useStateTracker } from '../../hooks';
-import { bus } from '../../events';
-import type { AppEvents } from '../../events';
+import { useStateTracker, useSelection } from '../../hooks';
 import styles from './StatePanel.module.css';
 
 interface TrackerState {
@@ -105,33 +103,20 @@ const StatePanel = React.memo(function StatePanel() {
   const processors = useProcessors();
   const pipelineChain = usePipelineChain(session?.sessionId ?? null);
   const { runCount } = useSessionPipelineResults();
-  useSessionTrackerTransitions();
   const stateTracker = useStateTracker();
   const [trackerStates, setTrackerStates] = useState<TrackerState[]>([]);
   const hasDataRef = useRef(false);
 
-  const [selectedLine, setSelectedLine] = useState<number | null>(null);
+  const { anchor: selectedLine } = useSelection(
+    { sessionId: session?.sessionId ?? null },
+    { clearOnMismatch: true },
+  );
 
-  useEffect(() => {
-    const handler = (ev: AppEvents['selection:changed']) => {
-      if (ev.sessionId === session?.sessionId) {
-        setSelectedLine(ev.anchor);
-      } else {
-        setSelectedLine(null);
-      }
-    };
-    bus.on('selection:changed', handler);
-    return () => { bus.off('selection:changed', handler); };
-  }, [session?.sessionId]);
-
-  const activeTrackers = useMemo<ProcessorSummary[]>(() => {
-    return pipelineChain
-      .map((id) => processors.find((p) => p.id === id))
-      .filter(
-        (p): p is ProcessorSummary =>
-          p != null && p.processorType === 'state_tracker',
-      );
-  }, [pipelineChain, processors]);
+  const activeTrackers = useMemo<ProcessorSummary[]>(
+    () => resolveChainProcessors(pipelineChain, processors)
+      .filter((p) => p.processorType === 'state_tracker'),
+    [pipelineChain, processors],
+  );
 
   // Snapshot-mode results don't change with line selection — cache them and
   // only invalidate on pipeline re-run or session change.
@@ -139,6 +124,8 @@ const StatePanel = React.memo(function StatePanel() {
   const lastRunCountRef = useRef<number>(-1);
 
   useEffect(() => {
+    let cancelled = false;
+
     if (!session || activeTrackers.length === 0) {
       setTrackerStates([]);
       hasDataRef.current = false;
@@ -186,6 +173,8 @@ const StatePanel = React.memo(function StatePanel() {
         });
       }),
     ).then((results) => {
+      if (cancelled) return;
+
       const next: TrackerState[] = results.map((r, i) => {
         if (r.status === 'fulfilled') return r.value;
         return {
@@ -208,8 +197,12 @@ const StatePanel = React.memo(function StatePanel() {
         return next;
       });
     });
+
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, runCount, activeTrackers.length, selectedLine]);
+  }, [session, runCount, activeTrackers, selectedLine]);
 
   const trackerMeta = useMemo(() => {
     const map = new Map<string, ProcessorSummary>();

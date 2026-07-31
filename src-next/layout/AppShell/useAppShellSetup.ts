@@ -15,13 +15,14 @@ import {
 import { useFileActions, useWorkspaceActions } from '../../context';
 import { startMcpBridge } from '../../bridge/commands';
 import { bus } from '../../events';
-import type { WorkspaceLayoutState } from '../../hooks';
+import type { WorkspaceLayoutState, SplitNode } from '../../hooks';
 
 interface UseAppShellSetupParams {
   openCenterTab: WorkspaceLayoutState['openCenterTab'];
+  centerTree: SplitNode;
 }
 
-export function useAppShellSetup({ openCenterTab }: UseAppShellSetupParams) {
+export function useAppShellSetup({ openCenterTab, centerTree }: UseAppShellSetupParams) {
   const settingsHook = useSettings();
   const anonymizerConfig = useAnonymizerConfig();
   const { toasts, addToast, dismissToast } = useToast();
@@ -53,7 +54,7 @@ export function useAppShellSetup({ openCenterTab }: UseAppShellSetupParams) {
   const { newWorkspace, saveWorkspace } = useWorkspaceActions();
   useFileShortcuts({ openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession, newWorkspace, saveWorkspace });
   useStartupFile();
-  useEditorTabRestore(openCenterTab);
+  useEditorTabRestore(openCenterTab, centerTree);
 
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
 

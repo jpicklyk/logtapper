@@ -9,24 +9,26 @@ Seven contexts split by change frequency (principle #1):
 | `WorkspaceContext` | Low (save/open/dirty flag) — outermost provider |
 | `SessionContext` | Low (session load/close) — internally split into 3 sub-contexts |
 | `SessionDataContext` | Per-session (pipeline results, tracker transitions, filter, indexing) — one provider per pane + sidebar |
-| `ViewerContext` | Medium (search, navigation) — internally split into 3 sub-contexts |
+| `ViewerContext` | Medium (scroll targeting, processor view) — internally split into 2 sub-contexts |
+| `PaneSearchContext` | Medium-high (query, match progress) — one provider per pane |
 | `PipelineContext` | Mixed (processors stable, results fast) |
 | `TrackerContext` | Fast (~50ms during streaming) |
 | `ActionsContext` | Never (stable callbacks, mutation tracking) |
 
 ### ViewerContext sub-context split
 
-`ViewerContext.tsx` contains 3 internal sub-contexts to isolate re-renders by change frequency:
+`ViewerContext.tsx` contains 2 internal sub-contexts to isolate re-renders by change frequency:
 
 | Sub-context | State | Frequency | Selector hooks |
 |---|---|---|---|
-| `SearchCtx` | `search`, `searchSummary`, `currentMatchIndex` | medium-high | `useSearch()`, `useSearchQuery()` |
 | `ScrollCtx` | `scrollToLine`, `jumpSeq`, `jumpPaneId` | medium | `useScrollTarget()` |
 | `ProcessorViewCtx` | `processorId` | low | `useProcessorId()` |
 
-`ViewerProvider` nests all 3 providers and owns all `useState` calls. The narrow hooks (`useSearchCtx`, `useScrollCtx`, `useProcessorViewCtx`) are used by `selectors.ts` so each selector subscribes to only its relevant sub-context.
+`ViewerProvider` nests both providers and owns all `useState` calls. The narrow hooks (`useScrollCtx`, `useProcessorViewCtx`) are used by `selectors.ts` so each selector subscribes to only its relevant sub-context.
 
-`useViewerContext()` is a facade that reads all 3 sub-contexts — used by writer hooks (`useLogViewer`, `useSearchNavigation`, `useSessionTabManager`) that need setter access across all viewer state.
+`useViewerContext()` is a facade that reads both sub-contexts — used by writer hooks (`useLogViewer`, `useSearchNavigation`, `useSessionTabManager`) that need setter access across all viewer state.
+
+**Search is not in ViewerContext.** A third `SearchCtx` sub-context held `search` / `searchSummary` / `currentMatchIndex` until search went per-pane. Afterwards every setter still had callers (`useSearchNavigation`, `useSessionTabManager`, `useLogViewer`) but no component read the state, so a whole second search execution path — its own `search-progress` subscription and its own accumulate/jump-to-first-match loop — ran on every query and rendered nothing. It was removed along with the `setSearch` / `jumpToMatch` / `setEffectiveLineNums` view actions that fed it. Search state, its backend call, and match navigation live only in `PaneSearchContext` (`usePaneSearch`, `usePaneSearchQuery`, `usePaneSearchActions`); it scrolls through the still-global `jumpToLine(lineNum, paneId)`.
 
 ### SessionDataContext — per-session isolation
 
@@ -44,7 +46,7 @@ Seven contexts split by change frequency (principle #1):
 
 **When adding new per-session state:** Add it to `SessionDataContextValue` and create a selector hook. Components inside a `SessionDataProvider` can read it directly — no need to pass sessionId.
 
-**Global Maps remain as write targets:** Domain hooks (`usePipeline`, `useStateTracker`, `useFilterScan`) write per-session data to global Maps in PipelineContext, TrackerContext, and SessionContext. `SessionDataProvider` reads from these Maps and provides isolated slices. The old global per-session selectors (`usePipelineResults`, `useTrackerTransitions`, etc.) have been removed — all per-session reads go through `SessionDataContext` hooks.
+**Global Maps remain as write targets:** Domain hooks (`usePipelineWiring`/`usePipelineCommands`, `useStateTracker`, `useFilterScan`) write per-session data to global Maps in PipelineContext, TrackerContext, and SessionContext. `SessionDataProvider` reads from these Maps and provides isolated slices. The old global per-session selectors (`usePipelineResults`, `useTrackerTransitions`, etc.) have been removed — all per-session reads go through `SessionDataContext` hooks.
 
 ### SessionActionsContext — per-session mutation surface
 
@@ -78,7 +80,7 @@ The barrel exports selector hooks (e.g. `useSession()`, `useIsStreaming()`, `use
 
 **Internal (NOT in barrel):** raw context hooks like `useSessionContext()`, `useSessionCoreCtx()`, `useSessionPaneCtx()`, `useSessionProgressCtx()`, `useViewerContext()`, `useSearchCtx()`, `useScrollCtx()`, `useProcessorViewCtx()` are internal — only domain hooks and selectors import these directly from context files.
 
-Domain hooks (`useLogViewer`, `usePipeline`, `useStateTracker`) are co-owners of context state and need setter access.
+Domain hooks (`useLogViewer`, `usePipelineWiring`, `usePipelineCommands`, `useStateTracker`) are co-owners of context state and need setter access.
 
 ## Adding a new selector
 
@@ -103,7 +105,7 @@ Domain hooks (`useLogViewer`, `usePipeline`, `useStateTracker`) are co-owners of
 | Category | Interface | Tracked? | Examples |
 |---|---|---|---|
 | **WorkspaceMutationActions** | `WorkspaceMutationActions` | Yes — auto-wrapped by `trackMutations()` | `loadFile`, `closeSession`, `addToChain`, `reorderChain` |
-| **ViewActions** | `ViewActions` | No — pass through unchanged | `jumpToLine`, `setSearch`, `runPipeline`, `openTab` |
+| **ViewActions** | `ViewActions` | No — pass through unchanged | `jumpToLine`, `setStreamFilter`, `runPipeline`, `openTab` |
 
 **Enforcement mechanism:** `MUTATION_ACTION_KEYS` is the single registry of tracked actions. `trackMutations()` wraps each registered key so it fires **both** halves of the dirty signal: `markDirty()` (WorkspaceContext flag → title bar, close prompt) and `bus.emit('workspace:mutated')` (schedules the debounced auto-save). Applied once in `HookWiring` — the single wiring point. No scattered `bus.emit('workspace:mutated')` needed for actions that flow through here.
 
@@ -115,7 +117,7 @@ These two used to diverge: `trackMutations` called only `markDirty`, while `useW
 1. Add the method signature to `WorkspaceMutationActions` interface
 2. Add the key to `MUTATION_ACTION_KEYS`
 3. Wire the implementation in `HookWiring` (inside `rawActions`)
-4. Add to the relevant selector (`usePipelineActions`, `useViewerActions`, etc.)
+4. Add to the relevant selector (`usePipelineActions`, `useFileActions`, etc.)
 5. Dirty tracking is automatic — no additional code needed
 
 Default stubs (no-op functions) ensure components always have valid action references during initialization. `HookWiring` (in `index.tsx`) instantiates domain hooks and injects real implementations via `ActionsProvider`.

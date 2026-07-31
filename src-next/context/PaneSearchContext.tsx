@@ -76,6 +76,10 @@ export function PaneSearchProvider({ paneId, sessionId, children }: Props) {
   paneIdRef.current = paneId;
   const jumpToLineRef = useRef(jumpToLine);
   jumpToLineRef.current = jumpToLine;
+  // Mirrors `state` during render so jumpToMatch can read the current match
+  // summary synchronously, outside the setState updater (U13 fix below).
+  const stateRef = useRef(state);
+  stateRef.current = state;
   const effectiveLineNumsRef = useRef<number[] | null>(null);
   const progressUnlistenRef = useRef<UnlistenFn | null>(null);
   /** Guards against a stale in-flight search resolving over a newer one. */
@@ -159,11 +163,21 @@ export function PaneSearchProvider({ paneId, sessionId, children }: Props) {
   // remounted on session switch, so without this the previous session's query,
   // match count, and match line numbers survive into the new session — and
   // match navigation would jump to line numbers from the old content.
+  //
+  // Deliberately does NOT touch effectiveLineNumsRef. React flushes child
+  // effects before parent effects within a commit, and PaneContent (a
+  // descendant of this provider) owns publishing effectiveLineNumsRef via its
+  // own effect keyed on [effectiveLineNums, sessionId] — so on a session
+  // switch, PaneContent's effect has already run and published the NEW
+  // session's scoped lines by the time this effect fires. If this effect also
+  // nulled the ref, it would clobber that fresher same-commit publish and
+  // jumpToMatch could navigate outside the filtered set until the next
+  // re-render. PaneContent's effect is unconditional on sessionId, so the ref
+  // is never left holding a stale value from the previous session.
   useEffect(() => {
     searchSeqRef.current++;
     progressUnlistenRef.current?.();
     progressUnlistenRef.current = null;
-    effectiveLineNumsRef.current = null;
     setState(EMPTY_STATE);
   }, [sessionId]);
 
@@ -175,26 +189,29 @@ export function PaneSearchProvider({ paneId, sessionId, children }: Props) {
   }, []);
 
   const jumpToMatch = useCallback((direction: 1 | -1) => {
-    setState((prev) => {
-      const summary = prev.searchSummary;
-      if (!summary || summary.matchLineNums.length === 0) return prev;
+    // Compute the next match index from stateRef.current (synchronously current
+    // committed state) BEFORE touching setState, so jumpToLine is called exactly
+    // once at the top level rather than inside the setState updater — StrictMode
+    // double-invokes updaters, which would fire the scroll side effect twice.
+    const prev = stateRef.current;
+    const summary = prev.searchSummary;
+    if (!summary || summary.matchLineNums.length === 0) return;
 
-      // Scope matches to this pane's visible lines (stream filter ∩ section
-      // filter). Null means no filter is active and every match is navigable.
-      const effective = effectiveLineNumsRef.current;
-      const matches = effective
-        ? summary.matchLineNums.filter((ln) => binaryIncludes(effective, ln))
-        : summary.matchLineNums;
+    // Scope matches to this pane's visible lines (stream filter ∩ section
+    // filter). Null means no filter is active and every match is navigable.
+    const effective = effectiveLineNumsRef.current;
+    const matches = effective
+      ? summary.matchLineNums.filter((ln) => binaryIncludes(effective, ln))
+      : summary.matchLineNums;
 
-      if (matches.length === 0) return prev;
+    if (matches.length === 0) return;
 
-      const next = (prev.currentMatchIndex + direction + matches.length) % matches.length;
-      // Scroll is a side effect, but this updater is pure with respect to state:
-      // the jump is addressed to this pane and is idempotent under StrictMode's
-      // double-invoke, so a repeated call re-targets the same line.
-      jumpToLineRef.current(matches[next], paneIdRef.current ?? undefined);
-      return { ...prev, currentMatchIndex: next };
-    });
+    const next = (prev.currentMatchIndex + direction + matches.length) % matches.length;
+    jumpToLineRef.current(matches[next], paneIdRef.current ?? undefined);
+
+    // Pure updater — only applies the pre-computed index, and only if state
+    // hasn't moved on since we read it above (defensive bail against a race).
+    setState((p) => (p === prev ? { ...p, currentMatchIndex: next } : p));
   }, []);
 
   const actions = useMemo<PaneSearchActions>(

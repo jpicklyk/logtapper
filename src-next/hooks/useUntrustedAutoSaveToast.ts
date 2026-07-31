@@ -1,10 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { useWorkspaceActions } from '../context';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 import type { ToastItem } from '../ui';
 import { formatShortDateTime } from '../utils';
-
-let toastCounter = 0;
+import { nextToastId } from './useToast';
 
 /**
  * Surfaces the Q3 "untrusted auto-save" notice (design:
@@ -44,7 +43,7 @@ export function useUntrustedAutoSaveToast(addToast: (toast: ToastItem) => void):
       reasons: string[];
     }) => {
       addToastRef.current({
-        id: `untrusted-autosave-${++toastCounter}`,
+        id: nextToastId('untrusted-autosave'),
         title: 'Auto-saved workspace not restored',
         message:
           `An auto-saved workspace from ${formatShortDateTime(e.savedAt, true)} was found but ` +

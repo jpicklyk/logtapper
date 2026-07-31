@@ -21,6 +21,7 @@
  */
 import type { LtwManifestSession, LoadWorkspaceSessionData } from '../../bridge/types';
 import type { SessionLoadOutcome } from './artifactPairing';
+import { normalizePath } from './restoreTrust';
 
 /** One `loadFile(path, paneId?, existingTabId?)` the core will perform. */
 export interface RestoreLoad {
@@ -105,8 +106,9 @@ function planRestore(input: PlanInput, applyLtwViewState: boolean): RestorePlan 
 
   const ltsAlreadyHandled = (path: string): boolean => {
     if (!isLts(path)) return false;
-    if (handledLtsPaths.has(path)) return true;
-    handledLtsPaths.add(path);
+    const key = normalizePath(path);
+    if (handledLtsPaths.has(key)) return true;
+    handledLtsPaths.add(key);
     return false;
   };
 
@@ -115,7 +117,7 @@ function planRestore(input: PlanInput, applyLtwViewState: boolean): RestorePlan 
   //    unmatched entries load as fresh tabs.
   for (let i = 0; i < sessions.length; i++) {
     const path = sessions[i].filePath;
-    const tab = storedTabs.find((t) => !claimed.has(t.tabId) && tabPaths[t.tabId] === path);
+    const tab = storedTabs.find((t) => !claimed.has(t.tabId) && normalizePath(tabPaths[t.tabId] ?? '') === normalizePath(path));
     if (tab) claimed.add(tab.tabId);
 
     if (ltsAlreadyHandled(path)) {

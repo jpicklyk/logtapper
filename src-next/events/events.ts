@@ -8,9 +8,13 @@ export type AppEvents = {
    * Fired just before a file load or ADB stream starts for a given pane.
    * Consumers use `paneId` to determine whether to clear their state — only
    * the focused pane's results should be reset; background-pane loads must not
-   * disrupt what the user is currently viewing.
+   * disrupt what the user is currently viewing. `outgoingSessionId` is the
+   * session being replaced on that pane, resolved by the emitter at emit time
+   * (null when the pane was empty) — consumers must use this value directly
+   * rather than resolving it themselves via `paneSessionMap`, which is one
+   * render behind at this point in the load sequence.
    */
-  'session:pre-load':       { paneId: string };
+  'session:pre-load':       { paneId: string; outgoingSessionId: string | null };
   /**
    * Emitted immediately when a file load starts (before the backend invoke).
    * Creates a placeholder tab with the filename so the user sees immediate
@@ -28,7 +32,15 @@ export type AppEvents = {
    */
   'session:loaded':         { sessionId: string; paneId: string; sourceName: string; sourceType: SourceType;
                               tabId: string; isNewTab?: boolean; previousSessionId?: string; readOnly?: boolean;
-                              isIndexing?: boolean };
+                              isIndexing?: boolean;
+                              /** Correlation id stamped by a workspace restore's own `loadFile` calls
+                               *  (see `hooks/workspace/restoreCore.ts`). Lets the restore distinguish
+                               *  sessions IT produced from a concurrent user-initiated open that happens
+                               *  to complete during the restore's awaited load loop — without it, the
+                               *  restore would misattribute the other open's session and apply its own
+                               *  manifest entry's bookmarks/analyses to the wrong session. Optional and
+                               *  unset for every other emitter/consumer. */
+                              loadRequestId?: string };
   'session:closed':         { sessionId: string; paneId: string; sourceType: SourceType; tabId?: string };
   'session:focused':        { sessionId: string | null; paneId: string | null };
   'session:indexing-complete': { sessionId: string; totalLines: number };
@@ -74,7 +86,6 @@ export type AppEvents = {
   /** Fired by workspace fallback path when a session was registered under a placeholder
    *  pane ID (e.g. 'primary') but the tab was actually placed in a different pane. */
   'layout:pane-session-remap': { originalPaneId: string; actualPaneId: string; sessionId: string };
-  'navigate:jump':          { lineNum: number };
 
   // ── Selection ───────────────────────────────────────────────────────────
   /** Fired when the user changes line selection in a log viewer.
@@ -102,8 +113,11 @@ export type AppEvents = {
   };
 
   // ── Analysis ──────────────────────────────────────────────────────────────
-  /** Fired when the user selects an analysis artifact to view in the center tab. */
-  'analysis:open':          { artifactId: string };
+  /** Fired when the user selects an analysis artifact to view in the center tab.
+   *  `sessionId` targets the specific pane's AnalysisReader — with analysis tabs
+   *  open in two panes for different sessions, an untargeted event would land
+   *  on whichever reader mounted last regardless of which session it belongs to. */
+  'analysis:open':          { artifactId: string; sessionId: string };
   /** Fired when the local UI publishes an analysis — used by useAnalysisToast to suppress toasts. */
   'analysis:published-local':    { artifactId: string };
   /** Fired when an analysis is published externally (e.g. via MCP bridge), not by local UI. */

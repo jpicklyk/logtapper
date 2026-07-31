@@ -1,7 +1,7 @@
 import { createContext, useContext, useReducer, useCallback, useEffect, useMemo, type ReactNode } from 'react';
 import type { Source, UpdateAvailable, PackUpdateAvailable } from '../bridge/types';
 import { getPendingUpdates, getPendingPackUpdates, checkUpdates as checkUpdatesCmd, listSources } from '../bridge/commands';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 

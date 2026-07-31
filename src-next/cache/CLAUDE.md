@@ -42,7 +42,7 @@ CacheManager (singleton, configurable line budget)
   │
   ├─ ViewCacheHandle "pane-A-session1" (focused priority share, LRU eviction)
   ├─ ViewCacheHandle "pane-B-session1" (visible priority share, LRU eviction)
-  └─ ViewCacheHandle "pane-C-session1" (background priority share, LRU eviction)
+  └─ ViewCacheHandle "pane-C-session1" (visible priority share, LRU eviction)
 
 CacheDataSource (per-viewer, stateless facade over ViewCacheHandle)
   │
@@ -61,7 +61,9 @@ Key separation: `broadcastToSession` handles bounded storage (LRU); `pushStreami
 
 ## Budget Allocation
 
-`CacheManager` distributes the total budget across views by priority: focused > visible > background. Single-view: 100% of budget. Every view is guaranteed a minimum floor regardless of budget math. `CacheProvider` accepts a `budget` prop that is reactive.
+`CacheManager` distributes the total budget across views by priority: the focused view takes 60%, and all other views share the remaining 40% equally. Single-view: 100% of budget. Every view is guaranteed a minimum floor regardless of budget math. `CacheProvider` accepts a `budget` prop that is reactive.
+
+There are only these two tiers. A third `background` tier existed but nothing ever assigned it — `allocateView` sets 'focused' or 'visible' and no API promoted a view further down — so its 10% share was permanently stranded whenever two or more views existed. It was removed rather than given the missing promotion API; if a genuine background tier is ever needed, add it together with the call site that assigns it.
 
 ## Common Mistakes to Avoid
 

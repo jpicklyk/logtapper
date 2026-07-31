@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 import { performAutoSave } from './workspace/workspacePersistence';
 import { pushWorkspaceEnvelope, toEnvelopeOptions } from './workspace/envelopeSync';
 import { createAutoSaveGate } from './workspace/autoSaveGate';

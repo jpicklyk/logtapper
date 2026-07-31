@@ -161,7 +161,7 @@ function selectCandidate(entry: RestoreEntryFields, headers: RestoreCandidateHea
  *  Lowercasing suits the Windows/NTFS target (case-insensitive filesystem); it
  *  never introduces a *false* match between two genuinely different paths, only
  *  bridges case/separator variants of the same one. */
-function normalizePath(p: string): string {
+export function normalizePath(p: string): string {
   return p.replace(/\\/g, '/').toLowerCase();
 }
 

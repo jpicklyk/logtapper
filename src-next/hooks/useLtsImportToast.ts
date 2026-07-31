@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 import type { ToastItem } from '../ui';
-
-let toastCounter = 0;
+import { nextToastId } from './useToast';
+import { isLts } from './workspace/restorePlan';
 
 /**
  * Shows toast notifications for .lts file import events:
@@ -15,16 +15,16 @@ export function useLtsImportToast(addToast: (toast: ToastItem) => void): void {
 
   useEffect(() => {
     const onLoading = (e: { label: string }) => {
-      if (!e.label.endsWith('.lts')) return;
+      if (!isLts(e.label)) return;
       addToastRef.current({
-        id: `lts-import-${++toastCounter}`,
+        id: nextToastId('lts-import'),
         title: 'Importing session',
         message: e.label,
       });
     };
     const onAlreadyOpen = (e: { label: string }) => {
       addToastRef.current({
-        id: `lts-already-open-${++toastCounter}`,
+        id: nextToastId('lts-already-open'),
         title: 'Already imported',
         message: `${e.label} is already open`,
       });

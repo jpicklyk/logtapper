@@ -1,5 +1,5 @@
 import { useCallback, useRef, useEffect } from 'react';
-import type { SearchQuery, LoadResult, LineWindow } from '../../bridge/types';
+import type { LoadResult, LineWindow } from '../../bridge/types';
 import { useSessionCoreCtx, useSessionPaneCtx } from '../../context/SessionContext';
 import { useViewerContext } from '../../context/ViewerContext';
 import type { CacheController } from '../../cache';
@@ -20,8 +20,6 @@ export interface LogViewerActions {
   setTimeFilter: (start: string, end: string) => Promise<void>;
   /** Fetch lines from backend for file mode. Returns a LineWindow. */
   fetchLines: (offset: number, count: number) => Promise<LineWindow>;
-  handleSearch: (query: SearchQuery | null) => void;
-  jumpToMatch: (direction: 1 | -1) => void;
   jumpToLine: (lineNum: number, paneId?: string) => void;
   jumpToEnd: () => void;
   setProcessorView: (processorId: string) => void;
@@ -33,25 +31,13 @@ export interface LogViewerActions {
   filteredLineNums: number[] | null;
   filterParseError: string | null;
   timeFilterLineNums: number[] | null;
-  /**
-   * Called by PaneContent on every render to keep effectiveLineNumsRef current.
-   * The ref is read by useSearchNavigation to scope search navigation to the
-   * filtered/section-visible lines only.
-   */
-  setEffectiveLineNums: (lineNums: number[] | null) => void;
 }
 
 export function useLogViewer(cacheManager: CacheController, registry: StreamPusher): LogViewerActions {
   const { sessions, paneSessionMap } = useSessionCoreCtx();
   const { activeLogPaneId } = useSessionPaneCtx();
 
-  const {
-    setSearch,
-    setSearchSummary,
-    setCurrentMatchIndex,
-    setScrollToLine,
-    setJumpSeq,
-  } = useViewerContext();
+  const { setScrollToLine } = useViewerContext();
 
   // ---------------------------------------------------------------------------
   // Create SharedLogViewerRefs — all refs created once (never recreated)
@@ -73,7 +59,6 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
       packagePidsRef:          { current: new Map() },
       appendFilterMatchesRef:  { current: null },
       resetSessionStateRef:    { current: () => {} },
-      effectiveLineNumsRef:    { current: null },
     };
   }
   const refs = refsContainer.current;
@@ -115,19 +100,12 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     searchNavResetRef.current();
     const sid = refs.sessionRef.current?.sessionId ?? '';
     if (sid) cacheManager.clearSession(sid);
-    setSearch(null);
-    setSearchSummary(null);
-    setCurrentMatchIndex(0);
     // Use null rather than 0: setting scrollToLine=0 triggers the scroll effect
     // which sets autoScroll=false, defeating tailMode auto-scroll for streaming
     // sessions. The viewer resets virtualBase to 0 on its own when the data
     // source changes (dataSource.sourceId effect in ReadOnlyViewer).
     setScrollToLine(null);
-  }, [
-    cacheManager, refs.sessionRef,
-    setSearch, setSearchSummary, setCurrentMatchIndex,
-    setScrollToLine, setJumpSeq,
-  ]);
+  }, [cacheManager, refs.sessionRef, setScrollToLine]);
 
   // Wire resetSessionState into refs so useStreamSession can call it
   // when starting a stream into an empty pane (not a new-tab scenario).
@@ -158,16 +136,11 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
     filteredLineNums:   filterScan.filteredLineNums,
     filterParseError:   filterScan.filterParseError,
     timeFilterLineNums: filterScan.timeFilterLineNums,
-    handleSearch:       searchNav.handleSearch,
-    jumpToMatch:        searchNav.jumpToMatch,
     jumpToLine:         searchNav.jumpToLine,
     jumpToEnd:          searchNav.jumpToEnd,
     fetchLines:         searchNav.fetchLines,
     setProcessorView:   searchNav.setProcessorView,
     clearProcessorView: searchNav.clearProcessorView,
     closeSession:       tabManager.closeSession,
-    setEffectiveLineNums: (lineNums: number[] | null) => {
-      refs.effectiveLineNumsRef.current = lineNums;
-    },
   };
 }

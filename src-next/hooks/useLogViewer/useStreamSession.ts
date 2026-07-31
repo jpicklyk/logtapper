@@ -5,7 +5,7 @@ import { startAdbStream, stopAdbStream } from '../../bridge/commands';
 import { onAdbStreamStopped } from '../../bridge/events';
 import { useSessionCoreCtx } from '../../context/SessionContext';
 import { loadSettings } from '../../hooks';
-import { bus, emitSessionLoadedWithFocus } from '../../events/bus';
+import { bus, emitSessionLoadedWithFocus } from '../../events';
 import type { CacheController } from '../../cache';
 import type { StreamPusher } from '../../viewport';
 import type { SharedLogViewerRefs } from './types';
@@ -177,7 +177,7 @@ export function useStreamSession(
     const isNewTab = previousSessionId !== undefined;
 
     if (!isNewTab) {
-      bus.emit('session:pre-load', { paneId: targetPaneId });
+      bus.emit('session:pre-load', { paneId: targetPaneId, outgoingSessionId: previousSessionId ?? null });
       refs.resetSessionStateRef.current();
     }
 

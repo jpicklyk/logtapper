@@ -50,6 +50,17 @@ const LEGACY_COLOR_MIGRATION: Record<string, string> = {
   '#484f58': 'var(--text-dimmed)',
 };
 
+const VAR_TO_HEX: Record<string, string> = Object.fromEntries(
+  Object.entries(LEGACY_COLOR_MIGRATION).map(([hex, cssVar]) => [cssVar, hex]),
+);
+
+/** Resolve a stored category color to a concrete hex for native <input type="color">,
+ *  which rejects CSS custom properties (the browser silently falls back to #000000).
+ *  Custom user picks are already hex and pass through unchanged. */
+export function categoryColorToHex(color: string): string {
+  return VAR_TO_HEX[color] ?? (color.startsWith('var(') ? '#8b949e' : color);
+}
+
 function migrateBookmarkColors(cats: BookmarkCategoryDef[]): BookmarkCategoryDef[] {
   let changed = false;
   const migrated = cats.map((cat) => {

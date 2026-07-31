@@ -184,6 +184,30 @@
 
 /* ── Label & close ───────────────────────────────────────────────────────── */
 
+/* Real button wrapping the label/badge/dot — the tab's primary "activate"
+   control, kept as a sibling of .close rather than nesting .close inside a
+   whole-row button (invalid ARIA + keyboard-unreachable close control). */
+.activate {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.activate:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
 .label {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -209,9 +233,14 @@
   justify-content: center;
   width: 16px;
   height: 16px;
+  flex-shrink: 0;
+  border: none;
   border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--text-muted);
   opacity: 0;
+  padding: 0;
+  cursor: pointer;
   transition: opacity var(--transition-fast), background var(--transition-fast);
 }
 
@@ -223,6 +252,12 @@
 .close:hover {
   background: var(--bg-overlay);
   color: var(--text);
+}
+
+.close:focus-visible {
+  box-shadow: var(--shadow-focus);
+  outline: none;
+  opacity: 1;
 }
 
 /* ── Add tab button ──────────────────────────────────────────────────────── */
@@ -248,7 +283,7 @@
   color: var(--text);
 }
 
-.tab:focus-visible {
+.dragHandle:focus-visible {
   box-shadow: var(--shadow-focus);
   outline: none;
 }

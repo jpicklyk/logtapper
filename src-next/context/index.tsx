@@ -20,7 +20,8 @@ import { WorkspaceProvider, useWorkspaceIdentity, useWorkspaceContext } from './
 import { SavePromptDialog } from '../ui/SavePromptDialog';
 import { useCacheManager, useDataSourceRegistry } from '../cache';
 import { useLogViewer } from '../hooks/useLogViewer';
-import { usePipeline, type PipelineActions } from '../hooks/usePipeline';
+import { usePipelineWiring } from '../hooks/usePipelineWiring';
+import type { PipelineActions } from '../hooks/usePipelineCommands';
 import { useSettings } from '../hooks/useSettings';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { useWorkspaceAutoSave } from '../hooks/useWorkspaceAutoSave';
@@ -32,7 +33,7 @@ import { collectEditorTabsForSave, buildAppStatePayload } from '../hooks/workspa
 import { pushWorkspaceEnvelope, toEnvelopeOptions } from '../hooks/workspace/envelopeSync';
 import { STORAGE_KEY } from '../hooks/workspace/workspaceTypes';
 import { storageGetJSON } from '../utils';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 
 /**
  * Inner component that has access to context setters (inside providers)
@@ -219,10 +220,10 @@ function HookWiring({ children }: { children: ReactNode }) {
   }, []);
 
   // Auto-run scheduler (Q2): shared by the `.ltw` restore core (via useWorkspace)
-  // and useWorkspaceRestore (the `.lts` path, via usePipeline). Created once
-  // (construction is side-effect-free; it registers bus handlers only when a
-  // session must wait on indexing). pipeline.run is kept fresh via a ref that is
-  // populated right after usePipeline below — scheduleAutoRun is only ever
+  // and useWorkspaceRestore (the `.lts` path, via usePipelineWiring). Created
+  // once (construction is side-effect-free; it registers bus handlers only when
+  // a session must wait on indexing). pipeline.run is kept fresh via a ref that
+  // is populated right after usePipelineWiring below — scheduleAutoRun is only ever
   // invoked during an async restore, long after that assignment.
   const runRef = useRef<PipelineActions['run'] | null>(null);
   const autoRunSchedulerRef = useRef<AutoRunScheduler | null>(null);
@@ -244,7 +245,10 @@ function HookWiring({ children }: { children: ReactNode }) {
     [],
   );
 
-  const pipeline = usePipeline(scheduleAutoRun);
+  // THE single mount of the pipeline domain's effects. Components that need
+  // pipeline actions mount the effect-free `usePipelineCommands` instead — see
+  // the doc comment on `usePipelineWiring` for why that invariant matters.
+  const pipeline = usePipelineWiring(scheduleAutoRun);
   runRef.current = pipeline.run;
 
   useEffect(() => () => { autoRunSchedulerRef.current?.dispose(); }, []);
@@ -370,14 +374,12 @@ function HookWiring({ children }: { children: ReactNode }) {
     openInEditorDialog,
     stopStream: logViewer.stopStream,
     jumpToLine: logViewer.jumpToLine,
-    jumpToMatch: logViewer.jumpToMatch,
-    setSearch: logViewer.handleSearch,
     setStreamFilter: logViewer.setStreamFilter,
     cancelStreamFilter: logViewer.cancelStreamFilter,
+    setTimeFilter: logViewer.setTimeFilter,
     openTab: (type: string) => { bus.emit('layout:open-tab', { type }); },
     setActiveLogPane,
     setActivePane,
-    setEffectiveLineNums: logViewer.setEffectiveLineNums,
     saveFile,
     saveFileAs,
     exportSession,
@@ -389,9 +391,8 @@ function HookWiring({ children }: { children: ReactNode }) {
     exportAllSessions,
   }), [logViewer.loadFile, logViewer.startStream, logViewer.stopStream, logViewer.closeSession,
        installProcessor, removeProcessor, loadProcessorFromFile,
-       logViewer.jumpToLine, logViewer.jumpToMatch,
-       logViewer.handleSearch, logViewer.setStreamFilter, logViewer.cancelStreamFilter,
-       logViewer.setEffectiveLineNums,
+       logViewer.jumpToLine,
+       logViewer.setStreamFilter, logViewer.cancelStreamFilter, logViewer.setTimeFilter,
        addToChain, addPackToChain, removeFromChain, reorderChain, toggleChainEnabled,
        pipeline.run, pipeline.stop, pipeline.clearResults,
        openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession,
@@ -453,7 +454,6 @@ export {
   useIsLoading,
   useIsLoadingForPane,
   useSessionError,
-  useSearch,
   useScrollTarget,
   usePipelineChain,
   useActiveProcessorIds,
@@ -466,7 +466,6 @@ export {
 export { PINNED_TAIL_IDS } from './PipelineContext';
 
 export {
-  useViewerActions,
   useNavigationActions,
   useFileActions,
   usePaneActions,
@@ -474,7 +473,6 @@ export {
   usePipelineActions,
   useTrackerActions,
   useProcessorId,
-  useSearchQuery,
   useStreamFilter,
   useSetSessionFilter,
   useTotalLines,
@@ -485,8 +483,11 @@ export {
 } from './selectors';
 
 // Re-export workspace hooks
-export { useWorkspaceIdentity, useWorkspaceList, useActiveWorkspaceId } from './WorkspaceContext';
-export { useWorkspaceContext } from './WorkspaceContext';
+export { useWorkspaceIdentity, useWorkspaceList, useActiveWorkspaceId, useRenameWorkspaceAction } from './WorkspaceContext';
+// NOTE: useWorkspaceContext (raw, broad) is intentionally NOT re-exported here —
+// it is internal to domain hooks (useWorkspace, useStartupRestore) and the
+// WorkspaceContext module itself (which defines the narrow selectors above).
+// Components must use a narrow selector instead (context/CLAUDE.md).
 
 // Re-export per-session context
 export { SessionProviders } from './SessionProviders';

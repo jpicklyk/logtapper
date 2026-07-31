@@ -5,8 +5,16 @@
  * re-renders from parent context consumers.
  *
  * Checks ExportDefaultDeclaration and ExportNamedDeclaration in component files.
- * An export is considered a component if the identifier starts with an uppercase
- * letter. The rule verifies the identifier was assigned via React.memo() or memo().
+ * An export is considered a component candidate if its identifier is strict
+ * PascalCase (uppercase start, letters/digits only — no underscores, so
+ * SCREAMING_SNAKE_CASE constants like `LS_CONTENT_PREFIX` don't qualify just
+ * because they start with an uppercase letter). For `export const` — the only
+ * shape that can hold non-component data — the initializer must ALSO look
+ * like a component definition (a function, or a call that could be a
+ * HOC-wrapped component such as `React.memo(...)`/`memo(...)`/`forwardRef(...)`)
+ * before it's flagged; a plain PascalCase-named string/number/object constant
+ * is not a component and is left alone. The rule verifies the identifier was
+ * assigned via React.memo() or memo().
  */
 
 /** @type {import('eslint').Rule.RuleModule} */
@@ -50,10 +58,29 @@ module.exports = {
     }
 
     /**
-     * Check if a name looks like a React component (starts with uppercase).
+     * Check if a name looks like a React component: strict PascalCase
+     * (uppercase start, letters/digits only). Rejects SCREAMING_SNAKE_CASE
+     * and any name containing an underscore — those are constants, not
+     * components, even though they start with an uppercase letter.
      */
     function isComponentName(name) {
-      return typeof name === 'string' && /^[A-Z]/.test(name);
+      return typeof name === 'string' && /^[A-Z][A-Za-z0-9]*$/.test(name);
+    }
+
+    /**
+     * Whether an initializer expression looks like a component definition —
+     * a function (arrow or regular) or a call expression that could be a
+     * HOC-wrapped component (`React.memo(...)`, `memo(...)`,
+     * `forwardRef(...)`, etc.) or JSX returned directly. Excludes plain data
+     * literals (strings, numbers, objects, arrays, template literals) so a
+     * PascalCase-named constant isn't mistaken for a component.
+     */
+    function looksLikeComponentInitializer(node) {
+      if (!node) return false;
+      if (node.type === 'ArrowFunctionExpression' || node.type === 'FunctionExpression') return true;
+      if (node.type === 'CallExpression') return true;
+      if (node.type === 'JSXElement' || node.type === 'JSXFragment') return true;
+      return false;
     }
 
     return {
@@ -105,6 +132,7 @@ module.exports = {
             if (
               declarator.id.type === 'Identifier' &&
               isComponentName(declarator.id.name) &&
+              looksLikeComponentInitializer(declarator.init) &&
               !isMemoCall(declarator.init)
             ) {
               // Skip if previously tracked as memo-wrapped (shouldn't happen with

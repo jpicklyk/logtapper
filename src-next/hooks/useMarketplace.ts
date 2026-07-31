@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useMemo } from 'react';
 import type {
   Source,
   MarketplaceEntry,
@@ -25,7 +25,24 @@ import {
   saveSourcesToDisk,
 } from '../bridge/commands';
 import { useMarketplaceContext } from '../context/MarketplaceContext';
-import { bus } from '../events/bus';
+import { bus } from '../events';
+
+/** Map a MarketplacePackEntry to the install_pack_from_marketplace payload shape
+ *  (backend field name is snake_case: processor_ids). Shared by installPack and
+ *  updatePack — updating a pack is just re-installing it from the same entry. */
+function toPackInstallPayload(packEntry: MarketplacePackEntry) {
+  return {
+    id: packEntry.id,
+    name: packEntry.name,
+    version: packEntry.version,
+    description: packEntry.description,
+    path: packEntry.path,
+    tags: packEntry.tags,
+    sha256: packEntry.sha256,
+    category: packEntry.category,
+    processor_ids: packEntry.processorIds,
+  };
+}
 
 export interface MarketplaceState {
   // Sources
@@ -142,17 +159,7 @@ export function useMarketplace(): MarketplaceState {
 
   const installPack = useCallback(
     async (sourceName: string, packEntry: MarketplacePackEntry): Promise<PackSummary> => {
-      const summary = await installPackCmd(sourceName, {
-        id: packEntry.id,
-        name: packEntry.name,
-        version: packEntry.version,
-        description: packEntry.description,
-        path: packEntry.path,
-        tags: packEntry.tags,
-        sha256: packEntry.sha256,
-        category: packEntry.category,
-        processor_ids: packEntry.processorIds,
-      });
+      const summary = await installPackCmd(sourceName, toPackInstallPayload(packEntry));
       bus.emit('marketplace:processor-installed', { processorId: summary.id, sourceName });
       return summary;
     },
@@ -226,17 +233,14 @@ export function useMarketplace(): MarketplaceState {
         }
         return next;
       });
-      const successIds = new Set(results.filter((r) => r.success).map((r) => r.processorId));
-      if (successIds.size > 0) {
-        // Context decrements via bus events — no local setPendingUpdates needed
-        for (const r of results) {
-          if (r.success) {
-            bus.emit('marketplace:processor-updated', {
-              processorId: r.processorId,
-              oldVersion: r.oldVersion,
-              newVersion: r.newVersion,
-            });
-          }
+      // Context decrements via bus events — no local setPendingUpdates needed
+      for (const r of results) {
+        if (r.success) {
+          bus.emit('marketplace:processor-updated', {
+            processorId: r.processorId,
+            oldVersion: r.oldVersion,
+            newVersion: r.newVersion,
+          });
         }
       }
     } catch {
@@ -245,21 +249,11 @@ export function useMarketplace(): MarketplaceState {
   }, []);
 
   const updatePack = useCallback(async (sourceName: string, packEntry: MarketplacePackEntry) => {
-    await installPackCmd(sourceName, {
-      id: packEntry.id,
-      name: packEntry.name,
-      version: packEntry.version,
-      description: packEntry.description,
-      path: packEntry.path,
-      tags: packEntry.tags,
-      sha256: packEntry.sha256,
-      category: packEntry.category,
-      processor_ids: packEntry.processorIds,
-    });
+    await installPackCmd(sourceName, toPackInstallPayload(packEntry));
     bus.emit('marketplace:pack-updated', { packId: packEntry.id, sourceName });
   }, []);
 
-  return {
+  return useMemo<MarketplaceState>(() => ({
     sources,
     sourcesLoading,
     loadSources,
@@ -284,5 +278,30 @@ export function useMarketplace(): MarketplaceState {
     updateOne,
     updateAllFromSource,
     updatePack,
-  };
+  }), [
+    sources,
+    sourcesLoading,
+    loadSources,
+    addSource,
+    removeSource,
+    selectedSource,
+    selectSource,
+    entries,
+    packEntries,
+    entriesLoading,
+    entriesError,
+    fetchEntries,
+    installEntry,
+    uninstallEntry,
+    installPack,
+    uninstallPack,
+    pendingUpdates,
+    pendingPackUpdates,
+    updatesLoading,
+    updateResults,
+    checkUpdates,
+    updateOne,
+    updateAllFromSource,
+    updatePack,
+  ]);
 }

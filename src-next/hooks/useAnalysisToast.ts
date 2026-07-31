@@ -2,10 +2,9 @@ import { useEffect, useRef } from 'react';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { onAnalysisUpdate } from '../bridge/events';
 import { getAnalysis } from '../bridge/commands';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 import type { ToastItem } from '../ui';
-
-let toastCounter = 0;
+import { nextToastId } from './useToast';
 
 /**
  * Subscribes directly to the Tauri `analysis-update` event at AppShell level
@@ -49,13 +48,13 @@ export function useAnalysisToast(addToast: (toast: ToastItem) => void) {
       getAnalysis(payload.sessionId, payload.artifactId)
         .then((artifact) => {
           if (cancelled) return;
-          const id = `analysis-toast-${++toastCounter}`;
+          const id = nextToastId('analysis-toast');
           addToast({
             id,
             title: 'New Analysis',
             message: artifact.title,
             onClick: () => {
-              bus.emit('analysis:open', { artifactId: artifact.id });
+              bus.emit('analysis:open', { artifactId: artifact.id, sessionId: payload.sessionId });
               bus.emit('layout:open-tab', { type: 'analysis' });
             },
           });

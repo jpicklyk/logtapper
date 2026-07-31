@@ -10,7 +10,6 @@ import type {
   PackSummary,
   PipelineRunSummary,
   MatchedLine,
-  ChartData,
   RegistryEntry,
   DumpstateMetadata,
   AdbDevice,
@@ -202,17 +201,6 @@ export function getMatchedLines(
   processorId: string,
 ): Promise<MatchedLine[]> {
   return invoke('get_matched_lines', { sessionId, processorId });
-}
-
-// ---------------------------------------------------------------------------
-// Phase 3 — Charts
-// ---------------------------------------------------------------------------
-
-export function getChartData(
-  sessionId: string,
-  processorId: string,
-): Promise<ChartData[]> {
-  return invoke('get_chart_data', { sessionId, processorId });
 }
 
 export function getTimelineData(

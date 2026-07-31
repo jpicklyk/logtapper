@@ -1,5 +1,4 @@
 import { useState, useCallback, useRef } from 'react';
-import { buildCopyText } from './copyText';
 
 export interface Selection {
   anchor: number | null;
@@ -14,13 +13,12 @@ const EMPTY_SELECTION: Selection = {
   mode: 'line',
 };
 
-export function useSelectionManager(getLineText: (lineNum: number) => string | undefined): {
+export function useSelectionManager(): {
   selection: Selection;
   handleLineClick: (lineNum: number, e: React.MouseEvent) => void;
   handlePointerDown: (lineNum: number, col: number, e: React.PointerEvent) => void;
   handlePointerMove: (lineNum: number, col: number, e: React.PointerEvent) => void;
   handlePointerUp: () => void;
-  handleCopy: () => void;
   clear: () => void;
 } {
   const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION);
@@ -93,11 +91,6 @@ export function useSelectionManager(getLineText: (lineNum: number) => string | u
     capturedElement.current = null;
   }, []);
 
-  const handleCopy = useCallback(() => {
-    const text = buildCopyText(selection, getLineText);
-    if (text != null) navigator.clipboard.writeText(text);
-  }, [selection, getLineText]);
-
   const clear = useCallback(() => {
     setSelection(EMPTY_SELECTION);
   }, []);
@@ -108,7 +101,6 @@ export function useSelectionManager(getLineText: (lineNum: number) => string | u
     handlePointerDown,
     handlePointerMove,
     handlePointerUp,
-    handleCopy,
     clear,
   };
 }

@@ -7,9 +7,10 @@ import { onFileIndexProgress, onFileIndexComplete, onBridgeSessionOpened } from 
 import { preSeedSession, clearPreSeed } from '../../cache';
 import type { CacheController } from '../../cache';
 import { useSessionCoreCtx, useSessionProgressCtx } from '../../context/SessionContext';
-import { bus, emitSessionLoadedWithFocus } from '../../events/bus';
+import { bus, emitSessionLoadedWithFocus } from '../../events';
 import { getStoredFirstPaneId } from '../useWorkspaceLayout';
 import { diag, diagStart, diagEnd } from '../../utils/diagnostics';
+import { basename } from '../../utils';
 import type { SharedLogViewerRefs } from './types';
 import { planExtraSessionImport } from './multiSessionImport';
 import { genKeyFor } from './loadGeneration';
@@ -68,9 +69,9 @@ export function useFileSession(
     result: LoadResult,
     targetPaneId: string,
     tabId: string,
-    opts: { isNewTab: boolean; previousSessionId?: string; path: string },
+    opts: { isNewTab: boolean; previousSessionId?: string; path: string; loadRequestId?: string },
   ) => {
-    const { isNewTab, previousSessionId, path } = opts;
+    const { isNewTab, previousSessionId, path, loadRequestId } = opts;
 
     // Optimistic fetch: pre-populate cache while React propagates session state.
     // When useViewCache allocates the handle it will consume these pre-seeded lines,
@@ -113,6 +114,7 @@ export function useFileSession(
         previousSessionId,
         readOnly: isBugreportLike(result.sourceType) ? true : undefined,
         isIndexing: result.isIndexing,
+        loadRequestId,
       },
       { sessionId: result.sessionId, paneId: targetPaneId },
     );
@@ -150,6 +152,11 @@ export function useFileSession(
     existingTabId?: string,
     sourceType?: SourceType,
     replace?: boolean,
+    // Stamped by a workspace restore (`hooks/workspace/restoreCore.ts`) so the
+    // session:loaded event(s) this load produces can be told apart from an
+    // unrelated concurrent open. See the `loadRequestId` doc on
+    // AppEvents['session:loaded'].
+    loadRequestId?: string,
   ) => {
     // Prevent duplicate imports: if this .lts file already has an active session, skip.
     // Check live session context (via ref) rather than localStorage which can be stale.
@@ -159,7 +166,7 @@ export function useFileSession(
         const alreadyOpen = Array.from(sessionsMap.values()).some((s) => s.filePath === path);
         if (alreadyOpen) {
           diag('file-load', 'skipping — .lts already open', { path });
-          const label = path.split(/[\\/]/).pop() ?? path;
+          const label = basename(path);
           bus.emit('file:lts-already-open', { label });
           return;
         }
@@ -211,7 +218,7 @@ export function useFileSession(
         cacheManager.releaseSessionViews(previousSessionId);
       }
 
-      bus.emit('session:pre-load', { paneId: targetPaneId });
+      bus.emit('session:pre-load', { paneId: targetPaneId, outgoingSessionId: previousSessionId ?? null });
 
       // Clean up any active stream on this pane
       if (refs.streamingPaneIdRef.current === targetPaneId) {
@@ -227,7 +234,7 @@ export function useFileSession(
 
     // Create a placeholder tab immediately so the user sees feedback while the
     // backend decompresses/indexes (especially important for large .lts files).
-    const label = path.split(/[\\/]/).pop() ?? path;
+    const label = basename(path);
     diagStart(`loadFile:${label}`);
     diag('file-load', 'starting', { path: label, paneId: targetPaneId, tabId, isNewTab });
     bus.emit('session:loading', { paneId: targetPaneId, tabId, label, isNewTab });
@@ -249,7 +256,7 @@ export function useFileSession(
       }
 
       // Post-load half: register the session and create/activate its tab.
-      registerLoadedSession(result, targetPaneId, tabId, { isNewTab, previousSessionId, path });
+      registerLoadedSession(result, targetPaneId, tabId, { isNewTab, previousSessionId, path, loadRequestId });
 
       // Register additional sessions from multi-session .lts import.
       const extraActions = planExtraSessionImport(
@@ -280,6 +287,7 @@ export function useFileSession(
               previousSessionId: action.previousSessionId,
               readOnly: action.readOnly || undefined,
               isIndexing: action.session.isIndexing,
+              loadRequestId,
             });
             break;
           case 'persistTabPath': {
@@ -349,7 +357,7 @@ export function useFileSession(
         return;
       }
       const tabId = crypto.randomUUID();
-      const label = payload.filePath?.split(/[\\/]/).pop() ?? payload.sourceName;
+      const label = payload.filePath ? basename(payload.filePath) : payload.sourceName;
       diag('file-load', 'bridge session-opened — creating tab', { sessionId: payload.sessionId, paneId: plan.targetPaneId, tabId, isNewTab: plan.isNewTab });
       // Placeholder tab first (mirrors the normal open), then the post-load half.
       bus.emit('session:loading', { paneId: plan.targetPaneId, tabId, label, isNewTab: plan.isNewTab });

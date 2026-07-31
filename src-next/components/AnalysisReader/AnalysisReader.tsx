@@ -4,7 +4,7 @@ import type { AnalysisArtifact, AnalysisSeverity } from '../../bridge/types';
 import { severityColor } from '../../bridge/types';
 import { useSession, useNavigationActions } from '../../context';
 import { useAnalysis } from '../../hooks';
-import { bus } from '../../events/bus';
+import { bus } from '../../events';
 import { formatShortDateTime } from '../../utils';
 import MarkdownSection from './MarkdownSection';
 import styles from './AnalysisReader.module.css';
@@ -16,14 +16,18 @@ const AnalysisReader = React.memo(function AnalysisReader() {
   const { jumpToLine } = useNavigationActions();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // Listen for analysis:open events from the left pane list
+  // Listen for analysis:open events from the left pane list. `sessionId` on
+  // the event targets a specific pane's reader — with analysis tabs open in
+  // two panes for different sessions, an event meant for the other pane must
+  // be ignored here rather than stealing this pane's selection.
   useEffect(() => {
-    const handler = ({ artifactId }: { artifactId: string }) => {
+    const handler = ({ artifactId, sessionId: targetSessionId }: { artifactId: string; sessionId: string }) => {
+      if (targetSessionId !== sessionId) return;
       setSelectedId(artifactId);
     };
     bus.on('analysis:open', handler);
     return () => { bus.off('analysis:open', handler); };
-  }, []);
+  }, [sessionId]);
 
   // Auto-select first artifact if none selected
   useEffect(() => {
@@ -32,7 +36,15 @@ const AnalysisReader = React.memo(function AnalysisReader() {
     }
   }, [selectedId, artifacts]);
 
-  // Clear selection if the selected artifact was deleted
+  // Clear selection if the selected artifact was deleted — fall back to the
+  // first remaining artifact (or null if none remain) so the panel doesn't
+  // stick on the empty placeholder forever.
+  useEffect(() => {
+    if (selectedId !== null && !artifacts.some((a) => a.id === selectedId)) {
+      setSelectedId(artifacts[0]?.id ?? null);
+    }
+  }, [selectedId, artifacts]);
+
   const artifact: AnalysisArtifact | undefined = artifacts.find((a) => a.id === selectedId);
 
   const handleJump = useCallback((lineNum: number) => {

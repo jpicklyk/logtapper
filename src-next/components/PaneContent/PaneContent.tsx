@@ -12,6 +12,7 @@ import { useSessionForPane, useIsLoadingForPane, usePaneActions, useStreamFilter
 import type { CenterPane } from '../../hooks';
 import { useLogViewerActions } from './useLogViewerActions';
 import { bus } from '../../events';
+import { intersectAllSorted } from '../../utils';
 import styles from './PaneContent.module.css';
 
 interface Props {
@@ -19,24 +20,6 @@ interface Props {
   onDirtyChanged?: (tabId: string, isDirty: boolean) => void;
   onFilePathChanged?: (tabId: string, newLabel: string) => void;
 }
-
-/** Sorted merge intersection of two sorted number arrays. O(n+m). */
-function intersectSorted(a: number[], b: number[]): number[] {
-  const result: number[] = [];
-  let i = 0, j = 0;
-  while (i < a.length && j < b.length) {
-    if (a[i] === b[j]) {
-      result.push(a[i]);
-      i++; j++;
-    } else if (a[i] < b[j]) {
-      i++;
-    } else {
-      j++;
-    }
-  }
-  return result;
-}
-
 
 /** Must match the CSS animation duration for noticeSlideOut. */
 const NOTICE_EXIT_MS = 400;
@@ -47,10 +30,13 @@ const PaneContentInner = React.memo(function PaneContentInner({ pane, onDirtyCha
   const session = useSessionForPane(pane.id);
   const focusedSession = useFocusedSession();
   const isLoading = useIsLoadingForPane(pane.id);
-  const { setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter } = usePaneActions();
+  const { setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter, setTimeFilter } = usePaneActions();
   const { setEffectiveLineNums } = usePaneSearchActions();
   const { fetchLines } = useLogViewerActions(pane.id);
-  const { value: filterValue, scanning: filterScanning, filteredLineNums, parseError: filterParseError, sectionFilteredLineNums } = useStreamFilter(pane.id);
+  const {
+    value: filterValue, scanning: filterScanning, filteredLineNums, parseError: filterParseError,
+    sectionFilteredLineNums, timeFilterStart, timeFilterEnd, timeFilterLineNums,
+  } = useStreamFilter(pane.id);
 
   // ── Bookmark creation dialog ──────────────────────────────────────────────
   const [bookmarkRequest, setBookmarkRequest] = useState<BookmarkCreateRequest | null>(null);
@@ -100,18 +86,28 @@ const PaneContentInner = React.memo(function PaneContentInner({ pane, onDirtyCha
     };
   }, [pane.id]);
 
-  const effectiveLineNums = useMemo(() => {
-    if (!filteredLineNums && !sectionFilteredLineNums) return null;
-    if (!filteredLineNums) return sectionFilteredLineNums;
-    if (!sectionFilteredLineNums) return filteredLineNums;
-    return intersectSorted(sectionFilteredLineNums, filteredLineNums);
-  }, [filteredLineNums, sectionFilteredLineNums]);
+  const effectiveLineNums = useMemo(
+    () => intersectAllSorted([sectionFilteredLineNums, filteredLineNums, timeFilterLineNums]),
+    [filteredLineNums, sectionFilteredLineNums, timeFilterLineNums],
+  );
+
+  // Session this pane's search is scoped to — mirrors the sessionId passed to
+  // SessionProviders/PaneSearchProvider by the outer PaneContent below.
+  const sessionId = session?.sessionId ?? focusedSession?.sessionId ?? null;
 
   // Publish this pane's visible lines so its own match navigation can be scoped
   // to them. Each pane writes to its own PaneSearchProvider ref, so two panes no
-  // longer race over a single shared ref. Synchronous ref write during render —
-  // safe per React's ref contract, no state change.
-  setEffectiveLineNums(effectiveLineNums);
+  // longer race over a single shared ref. This is a committed effect, not a
+  // render-phase write — writing to the ref during render is itself a side
+  // effect (React may re-invoke render), and PaneSearchContext's own
+  // [sessionId] effect relies on this effect having already run (child
+  // effects flush before parent effects) to avoid clobbering a stale value.
+  // Keyed on sessionId too, not just effectiveLineNums, so a session switch
+  // that happens to compute the same (e.g. null) value still republishes —
+  // otherwise the ref would keep the previous session's scoped lines.
+  useEffect(() => {
+    setEffectiveLineNums(effectiveLineNums);
+  }, [effectiveLineNums, sessionId, setEffectiveLineNums]);
 
   const handleLogPaneFocus = useCallback(() => {
     setActiveLogPane(pane.id);
@@ -159,7 +155,16 @@ const PaneContentInner = React.memo(function PaneContentInner({ pane, onDirtyCha
         }
         return (
           <div className={styles.logviewerPane} onClick={handleLogPaneFocus} onFocus={handleLogPaneFocus}>
-            {session && <SearchBar paneId={pane.id} disabled={!session} />}
+            {session && (
+              <SearchBar
+                paneId={pane.id}
+                disabled={!session}
+                onTimeFilter={setTimeFilter}
+                timeStart={timeFilterStart}
+                timeEnd={timeFilterEnd}
+                timeFilterCount={timeFilterLineNums ? timeFilterLineNums.length : null}
+              />
+            )}
             {session && (
               <StreamFilterBar
                 value={filterValue}
@@ -204,7 +209,6 @@ const PaneContentInner = React.memo(function PaneContentInner({ pane, onDirtyCha
 
       case 'editor':
         return (
-          // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
           <div onClick={handleActivePaneFocus} onFocus={handleActivePaneFocus} className="fullHeight">
             <EditorTab
               tabId={activeTab.id}

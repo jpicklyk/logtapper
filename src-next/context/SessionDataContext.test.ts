@@ -29,7 +29,7 @@ function extractFilterSlice(
   sessionId: string | null,
 ): FilterState {
   const empty: FilterState = {
-    streamFilter: '', timeFilterStart: '', timeFilterEnd: '',
+    streamFilter: '', timeFilterStart: '', timeFilterEnd: '', timeFilterLineNums: null,
     filterScanning: false, filteredLineNums: null,
     filterParseError: null, sectionFilteredLineNums: null,
   };
@@ -136,6 +136,7 @@ describe('filter slice extraction', () => {
       streamFilter: 'level:error',
       timeFilterStart: '12:00',
       timeFilterEnd: '13:00',
+      timeFilterLineNums: null,
       filterScanning: true,
       filteredLineNums: [1, 5, 10],
       filterParseError: null,
@@ -194,6 +195,7 @@ describe('empty defaults', () => {
       streamFilter: '',
       timeFilterStart: '',
       timeFilterEnd: '',
+      timeFilterLineNums: null,
       filterScanning: false,
       filteredLineNums: null,
       filterParseError: null,
@@ -212,12 +214,12 @@ describe('empty defaults', () => {
 describe('cross-session isolation', () => {
   it('changing session B data does not affect session A slice references', () => {
     const filterA: FilterState = {
-      streamFilter: 'tag:MyApp', timeFilterStart: '', timeFilterEnd: '',
+      streamFilter: 'tag:MyApp', timeFilterStart: '', timeFilterEnd: '', timeFilterLineNums: null,
       filterScanning: false, filteredLineNums: [1, 2, 3],
       filterParseError: null, sectionFilteredLineNums: null,
     };
     const filterB: FilterState = {
-      streamFilter: 'level:warn', timeFilterStart: '', timeFilterEnd: '',
+      streamFilter: 'level:warn', timeFilterStart: '', timeFilterEnd: '', timeFilterLineNums: null,
       filterScanning: true, filteredLineNums: null,
       filterParseError: null, sectionFilteredLineNums: null,
     };

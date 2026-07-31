@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import {
   getLines,
   getPackagePids,
@@ -188,8 +188,7 @@ export function useFilterScan(cacheManager: CacheController, refs: SharedLogView
   const filterScanning = currentFilterState?.filterScanning ?? false;
   const filteredLineNums = currentFilterState?.filteredLineNums ?? null;
   const filterParseError = currentFilterState?.filterParseError ?? null;
-
-  const [timeFilterLineNums, setTimeFilterLineNums] = useState<number[] | null>(null);
+  const timeFilterLineNums = currentFilterState?.timeFilterLineNums ?? null;
 
   const filterScanGenRef = useRef(0);
 
@@ -214,11 +213,13 @@ export function useFilterScan(cacheManager: CacheController, refs: SharedLogView
   const reset = useCallback(() => {
     cancelActiveBackendFilter();
     const sessionId = refs.sessionRef.current?.sessionId;
+    // resetSessionFilter drops the session's whole FilterState entry, which
+    // includes timeFilterLineNums — no separate clear needed now that it's
+    // per-session state instead of a hook-global useState.
     if (sessionId) resetSessionFilter(sessionId);
     refs.filterAstRef.current = null;
     refs.filterAstSessionIdRef.current = null;
     refs.packagePidsRef.current = new Map();
-    setTimeFilterLineNums(null);
   }, [cancelActiveBackendFilter, refs.filterAstRef, refs.filterAstSessionIdRef, refs.packagePidsRef, refs.sessionRef, resetSessionFilter]);
 
   const setStreamFilter = useCallback(async (expr: string) => {
@@ -382,8 +383,12 @@ export function useFilterScan(cacheManager: CacheController, refs: SharedLogView
       onFilterProgress((progress) => {
         handlerChain = handlerChain.then(() => handleProgress(progress)).catch(() => {});
       }).then((fn) => {
-        if (listenerDone) {
-          fn(); // already done — unregister immediately
+        if (listenerDone || filterScanGenRef.current !== gen) {
+          // Already done, or a newer scan started while this listener was
+          // still registering — unregister immediately instead of storing a
+          // stale listener into filterUnlistenRef, which would orphan the
+          // newer scan's own listener.
+          fn();
         } else {
           unlisten = fn;
           filterUnlistenRef.current = fn;
@@ -450,13 +455,11 @@ export function useFilterScan(cacheManager: CacheController, refs: SharedLogView
     const sess = refs.sessionRef.current;
     if (sess) setSessionFilter(sess.sessionId, { timeFilterStart: start, timeFilterEnd: end });
 
-    if (!start.trim() && !end.trim()) {
-      setTimeFilterLineNums(null);
-      return;
-    }
+    // No session to scope the result lines to — nothing further to update.
+    if (!sess) return;
 
-    if (!sess) {
-      setTimeFilterLineNums(null);
+    if (!start.trim() && !end.trim()) {
+      setSessionFilter(sess.sessionId, { timeFilterLineNums: null });
       return;
     }
 
@@ -468,7 +471,7 @@ export function useFilterScan(cacheManager: CacheController, refs: SharedLogView
         startTime: start.trim() || undefined,
         endTime: end.trim() || undefined,
       });
-      setTimeFilterLineNums(summary.matchLineNums);
+      setSessionFilter(sess.sessionId, { timeFilterLineNums: summary.matchLineNums });
     } catch (e) {
       console.error('Time filter error:', e);
     }

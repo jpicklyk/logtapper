@@ -2,7 +2,7 @@
 
 ## Public API (exported from barrel `index.ts`)
 
-Key exports: `ReadOnlyViewer` (component), `createCacheDataSource` (factory), `useSelectionManager` (hook), `DataSource` / `StreamPusher` / `DataSourceRegistrar` / `CacheDataSource` / `GutterColumnDef` / `LineDecoratorDef` / `Selection` (interfaces/types). See `index.ts` for the full list.
+Key exports: `ReadOnlyViewer` (component), `createCacheDataSource` (factory), `useSelectionManager` (hook), `writeClipboard` (WebView2-safe clipboard write, used by `ReadOnlyViewer`'s Ctrl+C handler and by consumers outside this module such as `BookmarkPanel`), `DataSource` / `StreamPusher` / `DataSourceRegistrar` / `CacheDataSource` / `GutterColumnDef` / `LineDecoratorDef` / `Selection` (interfaces/types). See `index.ts` for the full list.
 
 `DataSourceRegistry` class, `FetchScheduler`, and `SelectionManager` internals are **not** exported. `DataSourceRegistry` construction is `CacheContext`'s responsibility — external code uses `StreamPusher` via the cache barrel.
 
@@ -12,7 +12,7 @@ Use `createCacheDataSource({ sessionId, viewCache, fetchLines, registry })` — 
 
 ## FetchScheduler
 
-Lives inside `ReadOnlyViewer`. Computes two-phase fetch: viewport range first (immediate), then directional prefetch (debounced based on scroll velocity). Not exported — ReadOnlyViewer owns the scheduling logic.
+`FetchScheduler.ts` — computes two-phase fetch: viewport range first (immediate), then directional prefetch (debounced based on scroll velocity). Used exclusively by `useFetchScheduler.ts` (its sole consumer), which `ReadOnlyViewer` calls to own the scheduling logic. Not exported from the barrel — moved here from `cache/` (U65) since it has no dependency on `CacheManager` internals and only ever had the one consumer.
 
 ## Selection model
 

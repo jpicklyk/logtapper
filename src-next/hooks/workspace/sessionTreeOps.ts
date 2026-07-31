@@ -7,7 +7,7 @@
  */
 import type { SplitNode, Tab } from './workspaceTypes';
 import type { AppEvents } from '../../events/events';
-import { findLeafByPaneId, findTabByType, firstLeaf, updateLeaf } from './splitTreeHelpers';
+import { findLeafByPaneId, findTabByType, firstLeaf, removeLeaf, updateLeaf } from './splitTreeHelpers';
 
 // ---------------------------------------------------------------------------
 // Event types — aliased from AppEvents where possible
@@ -194,6 +194,45 @@ export function applySessionLoaded(
   }
 
   return { tree: nextTree, tabIdToDelete, emitTabActivated, emitPaneRemap };
+}
+
+// ---------------------------------------------------------------------------
+// applyCloseTab — remove one tab from the tree, collapsing an emptied leaf
+// ---------------------------------------------------------------------------
+
+/**
+ * Apply closeTab's tree mutation in isolation. Extracted so callers that need
+ * to know the tree's shape AFTER a close — without waiting for React to
+ * commit the corresponding setState — can compute it locally (see the
+ * bridge-initiated close loop in useCenterTree, U10 fix), instead of assuming
+ * treeRef.current updates synchronously between successive closeTab() calls.
+ * Returns the same tree reference if paneId/tabId aren't found (no-op).
+ */
+export function applyCloseTab(tree: SplitNode, tabId: string, paneId: string): SplitNode {
+  const treeLeaf = findLeafByPaneId(tree, paneId);
+  if (!treeLeaf) return tree;
+  const tab = treeLeaf.pane.tabs.find((t) => t.id === tabId);
+  if (!tab) return tree;
+
+  const remainingTabs = treeLeaf.pane.tabs.filter((t) => t.id !== tabId);
+
+  if (remainingTabs.length === 0) {
+    // Last tab — try to collapse this leaf (return sibling)
+    const collapsed = removeLeaf(tree, paneId);
+    if (collapsed) return collapsed;
+    // Root leaf — keep it but empty
+    return updateLeaf(tree, paneId, () => ({
+      id: treeLeaf.pane.id,
+      tabs: [],
+      activeTabId: '',
+    }));
+  }
+
+  return updateLeaf(tree, paneId, (pane) => ({
+    ...pane,
+    tabs: remainingTabs,
+    activeTabId: pane.activeTabId === tabId ? remainingTabs[0].id : pane.activeTabId,
+  }));
 }
 
 // ---------------------------------------------------------------------------

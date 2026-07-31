@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
-import { bus } from '../events/bus';
-import type { SearchQuery, ExportAllOptions, ProcessorSummary, SourceType } from '../bridge/types';
+import { bus } from '../events';
+import type { ExportAllOptions, ProcessorSummary, SourceType } from '../bridge/types';
 
 // ---------------------------------------------------------------------------
 // Action categories
@@ -26,6 +26,10 @@ export interface WorkspaceMutationActions {
      *  Stated explicitly because the alternative — inferring it from a ref that
      *  has not re-rendered yet — is what appended duplicate tabs. */
     replace?: boolean,
+    /** Correlation id a workspace restore stamps on its own loads so the
+     *  resulting `session:loaded` event(s) can be told apart from an unrelated
+     *  concurrent open (see `hooks/workspace/restoreCore.ts`). */
+    loadRequestId?: string,
   ) => Promise<void>;
   startStream: (deviceId?: string) => Promise<void>;
   closeSession: (paneId?: string) => Promise<void>;
@@ -66,15 +70,15 @@ export interface ViewActions {
   runPipeline: () => Promise<void>;
   stopPipeline: () => void;
   clearResults: () => void;
+  /** Scroll a pane (or the focused pane when `paneId` is omitted) to a line.
+   *  Per-pane search navigation (`PaneSearchContext`) jumps through this. */
   jumpToLine: (lineNum: number, paneId?: string) => void;
-  jumpToMatch: (direction: 1 | -1) => void;
-  setSearch: (query: SearchQuery | null) => void;
   setStreamFilter: (expr: string) => Promise<void>;
   cancelStreamFilter: () => void;
+  setTimeFilter: (start: string, end: string) => Promise<void>;
   openTab: (type: string) => void;
   setActiveLogPane: (paneId: string) => void;
   setActivePane: (paneId: string) => void;
-  setEffectiveLineNums: (lineNums: number[] | null) => void;
   saveFile: () => Promise<void>;
   saveFileAs: () => Promise<void>;
   exportSession: () => void;
@@ -203,14 +207,12 @@ const DEFAULT_ACTIONS: ActionsContextValue = {
   stopPipeline: noop,
   clearResults: noop,
   jumpToLine: (_lineNum: number, _paneId?: string) => noop(),
-  jumpToMatch: (_direction: 1 | -1) => noop(),
-  setSearch: (_query: SearchQuery | null) => noop(),
   setStreamFilter: (_expr: string) => noopAsync(),
   cancelStreamFilter: noop,
+  setTimeFilter: (_start: string, _end: string) => noopAsync(),
   openTab: (_type: string) => noop(),
   setActiveLogPane: (_paneId: string) => noop(),
   setActivePane: (_paneId: string) => noop(),
-  setEffectiveLineNums: (_lineNums: number[] | null) => noop(),
   saveFile: () => noopAsync(),
   saveFileAs: () => noopAsync(),
   exportSession: noop,

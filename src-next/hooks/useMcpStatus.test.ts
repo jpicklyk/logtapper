@@ -2,34 +2,16 @@
  * Tests for pure helper functions extracted from useMcpStatus.
  *
  * - statusChanged  — determines whether a new McpStatus differs from the cached one
- * - deriveConnState — maps an McpStatus to a McpConnState label
+ * - deriveConnState — maps an McpStatus + mcpBridgeEnabled flag to a McpConnState label
  *
- * Neither function renders a hook; both are tested as plain functions.
- * deriveConnState calls loadSettings(), so we mock the useSettings module.
+ * deriveConnState used to call loadSettings() itself (a localStorage read +
+ * migration scan) on every render (U20) — it is now a pure function that takes
+ * mcpBridgeEnabled as a parameter, sourced by the caller from its own reactive
+ * settings state. Neither function renders a hook; both are tested as plain
+ * functions.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { MockInstance } from 'vitest';
-
-// Mock useSettings before importing the module under test so that
-// loadSettings() never touches localStorage during tests.
-vi.mock('./useSettings', async (importOriginal) => {
-  const original = await importOriginal<typeof import('./useSettings')>();
-  return {
-    ...original,
-    loadSettings: vi.fn(() => ({ ...original.SETTING_DEFAULTS })),
-  };
-});
-
+import { describe, it, expect } from 'vitest';
 import { statusChanged, deriveConnState } from './useMcpStatus';
-import { loadSettings } from './useSettings';
-import { SETTING_DEFAULTS } from './useSettings';
-
-const mockLoadSettings = loadSettings as unknown as MockInstance;
-
-beforeEach(() => {
-  // Reset to default settings (mcpBridgeEnabled: false) before each test.
-  mockLoadSettings.mockReturnValue({ ...SETTING_DEFAULTS });
-});
 
 // ---------------------------------------------------------------------------
 // statusChanged
@@ -77,32 +59,30 @@ describe('statusChanged', () => {
 
 describe('deriveConnState', () => {
   it('returns "checking" when status is null', () => {
-    expect(deriveConnState(null)).toBe('checking');
+    expect(deriveConnState(null, false)).toBe('checking');
   });
 
   it('returns "disabled" when not running and mcpBridgeEnabled is false', () => {
-    mockLoadSettings.mockReturnValue({ ...SETTING_DEFAULTS, mcpBridgeEnabled: false });
-    expect(deriveConnState({ running: false, port: 40404, idleSecs: null })).toBe('disabled');
+    expect(deriveConnState({ running: false, port: 40404, idleSecs: null }, false)).toBe('disabled');
   });
 
   it('returns "offline" when not running and mcpBridgeEnabled is true', () => {
-    mockLoadSettings.mockReturnValue({ ...SETTING_DEFAULTS, mcpBridgeEnabled: true });
-    expect(deriveConnState({ running: false, port: 40404, idleSecs: null })).toBe('offline');
+    expect(deriveConnState({ running: false, port: 40404, idleSecs: null }, true)).toBe('offline');
   });
 
   it('returns "ready" when running and idleSecs is null (never connected)', () => {
-    expect(deriveConnState({ running: true, port: 40404, idleSecs: null })).toBe('ready');
+    expect(deriveConnState({ running: true, port: 40404, idleSecs: null }, false)).toBe('ready');
   });
 
   it('returns "connected" when running and idleSecs is 10 (below threshold)', () => {
-    expect(deriveConnState({ running: true, port: 40404, idleSecs: 10 })).toBe('connected');
+    expect(deriveConnState({ running: true, port: 40404, idleSecs: 10 }, false)).toBe('connected');
   });
 
   it('returns "connected" when running and idleSecs is 30 (at threshold boundary)', () => {
-    expect(deriveConnState({ running: true, port: 40404, idleSecs: 30 })).toBe('connected');
+    expect(deriveConnState({ running: true, port: 40404, idleSecs: 30 }, false)).toBe('connected');
   });
 
   it('returns "ready" when running and idleSecs is 31 (above threshold)', () => {
-    expect(deriveConnState({ running: true, port: 40404, idleSecs: 31 })).toBe('ready');
+    expect(deriveConnState({ running: true, port: 40404, idleSecs: 31 }, false)).toBe('ready');
   });
 });

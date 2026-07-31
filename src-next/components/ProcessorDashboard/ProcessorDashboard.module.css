@@ -430,6 +430,10 @@
   font-size: 11px;
 }
 
+.stringRowUninitialized {
+  opacity: 0.4;
+}
+
 .stringKey {
   color: var(--text-dimmed);
   min-width: 100px;
@@ -528,8 +532,15 @@
 }
 
 .matchesArrow {
-  font-size: 10px;
+  display: flex;
+  align-items: center;
   color: var(--text-dimmed);
+  flex-shrink: 0;
+  transition: transform var(--transition-fast);
+}
+
+.matchesArrowOpen {
+  transform: rotate(90deg);
 }
 
 .matchesBody {

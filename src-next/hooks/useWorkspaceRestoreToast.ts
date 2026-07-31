@@ -1,11 +1,9 @@
 import { useEffect, useRef } from 'react';
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import { listen } from '@tauri-apps/api/event';
+import { onWorkspaceRestored } from '../bridge/events';
 import type { ToastItem } from '../ui';
-import type { WorkspaceRestoredPayload } from '../bridge/types';
-import { bus } from '../events/bus';
-
-let toastCounter = 0;
+import { bus } from '../events';
+import { nextToastId } from './useToast';
 
 /**
  * Listens for `workspace-restored` Tauri events and shows a toast
@@ -35,15 +33,15 @@ export function useWorkspaceRestoreToast(addToast: (toast: ToastItem) => void) {
       if (parts.length === 0) return;
 
       addToast({
-        id: `workspace-restore-${++toastCounter}`,
+        id: nextToastId('workspace-restore'),
         title: 'Workspace restored',
         message: `Restored ${parts.join(' and ')}`,
       });
     };
 
-    listen<WorkspaceRestoredPayload>('workspace-restored', (event) => {
+    onWorkspaceRestored((payload) => {
       if (cancelled) return;
-      const { bookmarkCount, analysisCount, activeProcessorIds } = event.payload;
+      const { bookmarkCount, analysisCount, activeProcessorIds } = payload;
       const procCount = (activeProcessorIds ?? []).length;
 
       // Accumulate counts across rapid successive events (multi-session .lts)
@@ -77,7 +75,7 @@ export function useWorkspaceRestoreToast(addToast: (toast: ToastItem) => void) {
     const onWarnings = ({ warnings }: { warnings: string[] }) => {
       if (warnings.length === 0) return;
       addToast({
-        id: `workspace-restore-warning-${++toastCounter}`,
+        id: nextToastId('workspace-restore-warning'),
         title: 'Workspace restored with warnings',
         message: warnings.join('\n'),
       });

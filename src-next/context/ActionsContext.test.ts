@@ -102,11 +102,11 @@ describe('trackMutations', () => {
   it('does not call markDirty for non-mutation actions', () => {
     const markDirty = vi.fn();
     const jumpToLine = vi.fn();
-    const setSearch = vi.fn();
-    const actions = trackMutations({ jumpToLine, setSearch }, markDirty);
+    const openTab = vi.fn();
+    const actions = trackMutations({ jumpToLine, openTab }, markDirty);
 
     actions.jumpToLine!(42);
-    actions.setSearch!(null);
+    actions.openTab!('logviewer');
     expect(markDirty).not.toHaveBeenCalled();
   });
 
@@ -157,7 +157,7 @@ describe('MUTATION_ACTION_KEYS', () => {
   it('does not contain view actions', () => {
     const set = MUTATION_ACTION_KEYS as ReadonlySet<string>;
     expect(set.has('jumpToLine')).toBe(false);
-    expect(set.has('setSearch')).toBe(false);
+    expect(set.has('setStreamFilter')).toBe(false);
     expect(set.has('openTab')).toBe(false);
     expect(set.has('runPipeline')).toBe(false);
   });

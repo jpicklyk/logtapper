@@ -1,56 +1,42 @@
 import { useCallback, useRef, useEffect } from 'react';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { AdbProcessorUpdate, PipelineProgress } from '../bridge/types';
+import type { UnlistenFn } from '@tauri-apps/api/event';
+import type { AdbProcessorUpdate } from '../bridge/types';
 import { useSessionCoreCtx, useSessionPaneCtx } from '../context/SessionContext';
 import {
   listProcessors,
   listPacks,
-  loadProcessorYaml,
-  uninstallProcessor,
-  runPipeline,
-  stopPipeline,
-  getProcessorVars,
   setMcpAnonymize,
   setSessionPipelineMeta,
 } from '../bridge/commands';
+import { onPipelineProgress } from '../bridge/events';
 import { usePipelineContext } from '../context/PipelineContext';
-import { storageGetJSON, storageSetJSON } from '../utils';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 import { useWorkspaceRestore } from './useWorkspaceRestore';
+import { usePipelineCommands, type PipelineActions } from './usePipelineCommands';
+import { saveChainToStorage } from './pipelineChainStorage';
 
-const LS_KEY = 'logtapper_pipeline_chain';
-const LS_DISABLED_KEY = 'logtapper_pipeline_disabled';
-
-function loadChainFromStorage(validIds: Set<string>): string[] {
-  const parsed = storageGetJSON<unknown>(LS_KEY, []);
-  if (!Array.isArray(parsed)) return [];
-  return (parsed as unknown[]).filter((id): id is string => typeof id === 'string' && validIds.has(id));
-}
-
-function loadDisabledFromStorage(chainIds: Set<string>): string[] {
-  const parsed = storageGetJSON<unknown>(LS_DISABLED_KEY, []);
-  if (!Array.isArray(parsed)) return [];
-  // Only keep IDs that are actually in the chain
-  return (parsed as unknown[]).filter((id): id is string => typeof id === 'string' && chainIds.has(id));
-}
-
-export interface PipelineActions {
-  loadProcessors: () => Promise<void>;
-  installFromYaml: (yaml: string) => Promise<void>;
-  removeProcessor: (id: string) => Promise<void>;
-  run: (sessionId: string, anonymize?: boolean, override?: { chain: string[]; disabled: string[] }) => Promise<void>;
-  stop: (sessionId: string) => Promise<void>;
-  getVars: (sessionId: string, processorId: string) => Promise<Record<string, unknown>>;
-  clearResults: (sessionId: string) => void;
-}
-
-export function usePipeline(
-  // The wiring instance (HookWiring) passes the shared auto-run scheduler; the
-  // few components that also call usePipeline for its stateless actions get the
-  // no-op default so they never drive a second auto-run.
-  scheduleAutoRun: (sessionId: string, isIndexing: boolean | undefined, chain: string[], disabled: string[]) => void = () => {},
+/**
+ * SINGLETON. Mount this exactly once — in `context/HookWiring` — and nowhere
+ * else. It owns every effect in the pipeline domain: the `pipeline-progress`
+ * Tauri listener, the bus subscriptions (`stream:started`,
+ * `pipeline:adb-processor-batch`, `pipeline:adb-tracker-update`,
+ * `session:pre-load`, `session:closed`, marketplace refresh), the shared
+ * run-count throttle timer, the chain persist/publish effect, and the
+ * `workspace-restored` listener via `useWorkspaceRestore`.
+ *
+ * Components that need pipeline actions mount `usePipelineCommands` instead,
+ * which is effect-free and therefore duplicable. Adding an effect here is free;
+ * adding one to `usePipelineCommands` multiplies it by the number of mounted
+ * components, which is the bug this split exists to prevent.
+ *
+ * Returns the same `PipelineActions` surface so `HookWiring` needs only this
+ * one hook.
+ */
+export function usePipelineWiring(
+  scheduleAutoRun: (sessionId: string, isIndexing: boolean | undefined, chain: string[], disabled: string[]) => void,
 ): PipelineActions {
-  const { processors, chainBySession, defaultChain, resultsBySession, dispatch } = usePipelineContext();
+  const actions = usePipelineCommands();
+  const { processors, chainBySession, defaultChain, chainInitialized, dispatch } = usePipelineContext();
 
   // localStorage and the chain-changed bus event describe the DEFAULT chain —
   // the template a new session inherits. Per-session chains are persisted
@@ -60,25 +46,12 @@ export function usePipeline(
   const disabledChainIds = defaultChain.disabled;
 
   // Track the focused pane so session:pre-load can resolve the outgoing sessionId.
-  const { paneSessionMap, sessions } = useSessionCoreCtx();
+  const { paneSessionMap } = useSessionCoreCtx();
   const { activeLogPaneId } = useSessionPaneCtx();
-  const sessionsRef = useRef(sessions);
-  sessionsRef.current = sessions;
   const activeLogPaneIdRef = useRef(activeLogPaneId);
   activeLogPaneIdRef.current = activeLogPaneId;
   const paneSessionMapRef = useRef(paneSessionMap);
   paneSessionMapRef.current = paneSessionMap;
-
-  // Refs for stable access in callbacks without stale closures
-  const processorsRef = useRef(processors);
-  processorsRef.current = processors;
-  const pipelineChainRef = useRef(pipelineChain);
-  pipelineChainRef.current = pipelineChain;
-  const disabledChainIdsRef = useRef(disabledChainIds);
-  disabledChainIdsRef.current = disabledChainIds;
-
-  const resultsBySessionRef = useRef(resultsBySession);
-  resultsBySessionRef.current = resultsBySession;
 
   const chainBySessionRef = useRef(chainBySession);
   chainBySessionRef.current = chainBySession;
@@ -92,20 +65,24 @@ export function usePipeline(
     [],
   );
 
-  const unlistenRef = useRef<UnlistenFn | null>(null);
-  const chainInitializedRef = useRef(false);
-  const hasRestoredChainRef = useRef(false);
   const metaSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Previous chain state, for diffing which sessions to notify. */
   const prevChainsRef = useRef<{ byS: typeof chainBySession; def: typeof defaultChain } | null>(null);
   /** Sessions with a chain edit awaiting the debounced backend meta push. */
   const pendingMetaRef = useRef<Set<string>>(new Set());
 
+  // `chainInitialized` is reducer state (PipelineContext), not a per-hook ref.
+  // It has to be shared: the component that calls `loadProcessors` is not the
+  // one that owns this effect, so a per-instance ref left the persist effect
+  // permanently disarmed on the wiring instance (and armed on whichever
+  // component happened to load the library first).
+  const chainInitializedRef = useRef(chainInitialized);
+  chainInitializedRef.current = chainInitialized;
+
   // Persist chain + disabled state to localStorage + backend whenever they change
   useEffect(() => {
-    if (!chainInitializedRef.current) return;
-    storageSetJSON(LS_KEY, pipelineChain);
-    storageSetJSON(LS_DISABLED_KEY, disabledChainIds);
+    if (!chainInitialized) return;
+    saveChainToStorage(pipelineChain, disabledChainIds);
 
     // Emit one TARGETED event per session whose chain actually changed. Resolving
     // a single sessionId from the focused pane (as this once did) pushed the
@@ -163,12 +140,12 @@ export function usePipeline(
     }, 500);
     // chainBySession is a dependency because a per-session edit must re-push
     // that session's meta, not just changes to the default.
-  }, [pipelineChain, disabledChainIds, chainBySession, chainFor]);
+  }, [chainInitialized, pipelineChain, disabledChainIds, chainBySession, defaultChain, chainFor]);
 
   // Push chain to backend when a session becomes active (handles the case where
   // the chain was initialized from localStorage before any session was loaded).
   useEffect(() => {
-    if (!chainInitializedRef.current) return;
+    if (!chainInitialized) return;
     const sessionId = paneSessionMap.get(activeLogPaneId ?? '');
     if (!sessionId) return;
     // Push the session's OWN chain. Pushing the default here would clobber a
@@ -178,7 +155,7 @@ export function usePipeline(
     const own = chainFor(sessionId);
     setSessionPipelineMeta(sessionId, own.chain, own.disabled).catch(() => {});
     setMcpAnonymize(sessionId, own.chain.includes('__pii_anonymizer')).catch(() => {});
-  }, [activeLogPaneId, paneSessionMap, chainFor]);
+  }, [chainInitialized, activeLogPaneId, paneSessionMap, chainFor]);
 
   // Cleanup debounce timer on unmount
   useEffect(() => () => {
@@ -205,17 +182,22 @@ export function usePipeline(
   // Subscribe to pipeline-progress events (StrictMode-safe)
   useEffect(() => {
     let cancelled = false;
-    listen<PipelineProgress>('pipeline-progress', (event) => {
+    let unlisten: UnlistenFn | null = null;
+    onPipelineProgress((payload) => {
       if (cancelled) return;
-      const { sessionId } = event.payload;
-      dispatch({ type: 'run:progress', sessionId, current: event.payload.linesProcessed, total: event.payload.totalLines });
+      dispatch({
+        type: 'run:progress',
+        sessionId: payload.sessionId,
+        current: payload.linesProcessed,
+        total: payload.totalLines,
+      });
     }).then((fn) => {
       if (cancelled) fn();
-      else unlistenRef.current = fn;
+      else unlisten = fn;
     });
     return () => {
       cancelled = true;
-      unlistenRef.current?.();
+      unlisten?.();
     };
   }, [dispatch]);
 
@@ -226,7 +208,9 @@ export function usePipeline(
 
   useEffect(() => {
     // Shared trailing-throttle for runCount bumps — coalesces processor and tracker
-    // updates into one dispatch per 2s window.
+    // updates into one dispatch per 2s window. `adb:run-count-bump` is NOT
+    // idempotent (the reducer does runCount + 1), so exactly one throttle may
+    // exist per app — hence this effect living in the singleton wiring hook.
     const scheduleRunCountBump = (sessionId: string) => {
       pendingRunCountBumpRef.current = sessionId;
       if (!streamRunCountTimerRef.current) {
@@ -265,12 +249,9 @@ export function usePipeline(
 
   // Subscribe to session:pre-load to auto-clear results for the outgoing session.
   useEffect(() => {
-    const handlePreLoad = (e: { paneId: string }) => {
-      if (e.paneId === activeLogPaneIdRef.current) {
-        const sessionId = paneSessionMapRef.current.get(e.paneId);
-        if (sessionId) {
-          dispatch({ type: 'pre-load:cleared', sessionId });
-        }
+    const handlePreLoad = (e: { paneId: string; outgoingSessionId: string | null }) => {
+      if (e.paneId === activeLogPaneIdRef.current && e.outgoingSessionId) {
+        dispatch({ type: 'pre-load:cleared', sessionId: e.outgoingSessionId });
       }
     };
     bus.on('session:pre-load', handlePreLoad);
@@ -302,135 +283,10 @@ export function usePipeline(
     };
   }, [dispatch]);
 
-  const loadProcessors = useCallback(async () => {
-    try {
-      const [list, packs] = await Promise.all([listProcessors(), listPacks()]);
-      dispatch({ type: 'packs:loaded', packs });
-      if (!chainInitializedRef.current) {
-        chainInitializedRef.current = true;
-        if (hasRestoredChainRef.current) {
-          // Workspace restore already set the chain — don't overwrite from localStorage
-          dispatch({ type: 'processors:loaded', processors: list });
-        } else {
-          const validIds = new Set(list.map((p) => p.id));
-          const initialChain = loadChainFromStorage(validIds);
-          const initialDisabled = loadDisabledFromStorage(new Set(initialChain));
-          dispatch({ type: 'processors:loaded', processors: list, initialChain, initialDisabled });
-        }
-      } else {
-        dispatch({ type: 'processors:loaded', processors: list });
-      }
-    } catch (e) {
-      dispatch({ type: 'error:set', error: String(e) });
-    }
-  }, [dispatch]);
-
-  const installFromYaml = useCallback(async (yaml: string) => {
-    dispatch({ type: 'error:clear' });
-    try {
-      const processor = await loadProcessorYaml(yaml);
-      dispatch({ type: 'processor:installed', processor });
-    } catch (e) {
-      dispatch({ type: 'error:set', error: String(e) });
-      throw e;
-    }
-  }, [dispatch]);
-
-  const removeProcessor = useCallback(async (id: string) => {
-    try {
-      await uninstallProcessor(id);
-      dispatch({ type: 'processor:removed', id });
-    } catch (e) {
-      dispatch({ type: 'error:set', error: String(e) });
-    }
-  }, [dispatch]);
-
-  const run = useCallback(
-    async (
-      sessionId: string,
-      anonymize = false,
-      override?: { chain: string[]; disabled: string[] },
-    ) => {
-      let chain: string[];
-      let disabled: Set<string>;
-      if (override) {
-        // Auto-run after a workspace restore: use the session's restored chain
-        // directly. `chain:restore` (dispatched by useWorkspaceRestore) only
-        // reaches pipelineChainRef on the next render, which has not happened yet
-        // when this fires — reading the ref would run a stale/empty chain and
-        // no-op (the exact bug §Q2 fixes). Filter to installed processors,
-        // mirroring useWorkspaceRestore's chain:restore filter.
-        const installed = new Set(processorsRef.current.map((p) => p.id));
-        chain = override.chain.filter((id) => installed.has(id) || id.includes('@lts-'));
-        disabled = new Set(override.disabled);
-      } else {
-        // Run THIS session's own chain. Reading the default here would run the
-        // wrong processors for any session whose chain has diverged — the exact
-        // cross-session bug per-session chains exist to fix.
-        const own = chainFor(sessionId);
-        chain = own.chain;
-        disabled = new Set(own.disabled);
-      }
-      const effectiveChain = chain.filter((id) => !disabled.has(id));
-      if (effectiveChain.length === 0) return;
-      dispatch({ type: 'run:started', sessionId });
-      try {
-        const results = await runPipeline(sessionId, effectiveChain, anonymize);
-        // Compute newRunCount before dispatching — the reducer will set runCount to this value.
-        const prevState = resultsBySessionRef.current.get(sessionId);
-        const newRunCount = (prevState?.runCount ?? 0) + 1;
-        dispatch({ type: 'run:complete', sessionId, results, newRunCount });
-
-        // Determine which processor types are active in this run
-        const chainSet = new Set(effectiveChain);
-        const activeProcessors = processorsRef.current.filter((p) => chainSet.has(p.id));
-        bus.emit('pipeline:completed', {
-          sessionId,
-          runCount: newRunCount,
-          hasTrackers: activeProcessors.some((p) => p.processorType === 'state_tracker'),
-          hasReporters: activeProcessors.some((p) => p.processorType === 'reporter'),
-          hasCorrelators: activeProcessors.some((p) => p.processorType === 'correlator'),
-        });
-      } catch (e) {
-        dispatch({ type: 'run:failed', sessionId, error: String(e) });
-      }
-    },
-    [dispatch, chainFor],
-  );
-
   // ── Workspace restore: set pipeline chain (all sources) + own the .lts-path
   //    auto-run through the shared scheduler. The .ltw path's auto-run is owned
   //    by the restore core; useWorkspaceRestore acts only on `source: "lts"`.
-  useWorkspaceRestore(dispatch, processors, hasRestoredChainRef, scheduleAutoRun);
+  useWorkspaceRestore(dispatch, processors, scheduleAutoRun);
 
-  const clearResults = useCallback((sessionId: string) => {
-    dispatch({ type: 'results:cleared', sessionId });
-    bus.emit('pipeline:cleared', undefined);
-  }, [dispatch]);
-
-  // Note: the backend `stopPipeline()` sets a single global cancellation flag —
-  // it does not support per-session cancellation. The sessionId here only scopes
-  // the frontend state transition. True per-session stop requires backend changes.
-  const stop = useCallback(async (sessionId: string) => {
-    try {
-      await stopPipeline();
-    } finally {
-      dispatch({ type: 'run:stopped', sessionId });
-    }
-  }, [dispatch]);
-
-  const getVars = useCallback(
-    async (sessionId: string, processorId: string) => getProcessorVars(sessionId, processorId),
-    [],
-  );
-
-  return {
-    loadProcessors,
-    installFromYaml,
-    removeProcessor,
-    run,
-    stop,
-    getVars,
-    clearResults,
-  };
+  return actions;
 }

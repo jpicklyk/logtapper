@@ -1,26 +1,15 @@
 import { useEffect, useRef } from 'react';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import type { WatchMatchEvent, FilterCriteria } from '../bridge/types';
+import { describeCriteriaParts } from '../bridge/types';
 import { onWatchMatch } from '../bridge/events';
 import { listWatches } from '../bridge/commands';
 import type { ToastItem } from '../ui';
-
-let toastCounter = 0;
+import { nextToastId } from './useToast';
 
 /** Build a short human-readable summary of filter criteria. */
 function describeCriteria(criteria: FilterCriteria): string {
-  const parts: string[] = [];
-  if (criteria.textSearch) parts.push(`text:${criteria.textSearch}`);
-  if (criteria.regex) parts.push(`/${criteria.regex}/`);
-  if (criteria.logLevels?.length) {
-    const short: Record<string, string> = {
-      Verbose: 'V', Debug: 'D', Info: 'I', Warn: 'W', Error: 'E', Fatal: 'F',
-    };
-    parts.push(criteria.logLevels.map((l) => short[l] ?? l).join(','));
-  }
-  if (criteria.tags?.length) parts.push(`tag:${criteria.tags.join(',')}`);
-  if (criteria.pids?.length) parts.push(`pid:${criteria.pids.join(',')}`);
-  return parts.join(' ') || 'watch';
+  return describeCriteriaParts(criteria).join(' ') || 'watch';
 }
 
 const DEBOUNCE_MS = 2000;
@@ -50,7 +39,7 @@ export function useWatchToast(addToast: (toast: ToastItem) => void) {
       for (const [watchId, data] of acc) {
         const criteria = criteriaMapRef.current.get(watchId);
         const summary = criteria ? describeCriteria(criteria) : watchId.slice(0, 8);
-        const id = `watch-toast-${++toastCounter}`;
+        const id = nextToastId('watch-toast');
         addToastRef.current({
           id,
           title: 'Watch Match',

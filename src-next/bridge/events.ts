@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { AdbStreamStopped, AdbTrackerUpdate, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress, BookmarkUpdateEvent, AnalysisUpdateEvent, WatchMatchEvent, LoadResult } from './types';
+import type { AdbStreamStopped, AdbTrackerUpdate, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress, PipelineProgress, BookmarkUpdateEvent, AnalysisUpdateEvent, WatchMatchEvent, LoadResult, WorkspaceRestoredPayload, LtsEditorTabPayload } from './types';
 
 // ---------------------------------------------------------------------------
 // ADB streaming events
@@ -48,49 +48,18 @@ export function onSearchProgress(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 1 — Progress
+// Pipeline run progress
 // ---------------------------------------------------------------------------
 
-export interface ProgressPayload {
-  sessionId: string;
-  processed: number;
-  total: number;
-  phase: string;
-}
-
-export function onProgress(
-  cb: (p: ProgressPayload) => void,
+/**
+ * Per-processor progress during a pipeline run. Emitted by `pipeline.rs`; the
+ * payload is `PipelineProgress` from `types.ts`, the TypeScript mirror of the
+ * Rust struct.
+ */
+export function onPipelineProgress(
+  cb: (payload: PipelineProgress) => void,
 ): Promise<UnlistenFn> {
-  return listen<ProgressPayload>('pipeline-progress', (e) => cb(e.payload));
-}
-
-// ---------------------------------------------------------------------------
-// Phase 2 — Pipeline results
-// ---------------------------------------------------------------------------
-
-export interface PipelineResultPayload {
-  processorId: string;
-  matchLineNums: number[];
-  batchIndex: number;
-  done: boolean;
-}
-
-export function onPipelineResults(
-  cb: (p: PipelineResultPayload) => void,
-): Promise<UnlistenFn> {
-  return listen<PipelineResultPayload>('pipeline-results', (e) => cb(e.payload));
-}
-
-// ---------------------------------------------------------------------------
-// Phase 3 — Chart updates
-// ---------------------------------------------------------------------------
-
-export function onChartUpdate(
-  processorId: string,
-  chartId: string,
-  cb: (data: unknown) => void,
-): Promise<UnlistenFn> {
-  return listen(`chart-update-${processorId}-${chartId}`, (e) => cb(e.payload));
+  return listen<PipelineProgress>('pipeline-progress', (e) => cb(e.payload));
 }
 
 // ---------------------------------------------------------------------------
@@ -204,5 +173,36 @@ export function onWorkspaceAutoSaved(
   cb: (payload: WorkspaceAutoSavedPayload) => void,
 ): Promise<UnlistenFn> {
   return listen<WorkspaceAutoSavedPayload>('workspace-auto-saved', (e) => cb(e.payload));
+}
+
+// ---------------------------------------------------------------------------
+// Workspace restored (`.ltw`/`.lts` load) — chain restore + toast summary
+// ---------------------------------------------------------------------------
+
+/**
+ * Emitted after a workspace or `.lts` file finishes restoring. Consumed by
+ * `useWorkspaceRestore` (pipeline chain restore + auto-run scheduling) and
+ * `useWorkspaceRestoreToast` (bookmark/analysis/pipeline restore summary
+ * toast) — both subscribe independently to the same event.
+ */
+export function onWorkspaceRestored(
+  cb: (payload: WorkspaceRestoredPayload) => void,
+): Promise<UnlistenFn> {
+  return listen<WorkspaceRestoredPayload>('workspace-restored', (e) => cb(e.payload));
+}
+
+// ---------------------------------------------------------------------------
+// `.lts` editor tab restore
+// ---------------------------------------------------------------------------
+
+/**
+ * Emitted while restoring a `.lts` file's embedded editor (scratch) tabs.
+ * Consumed by `useEditorTabRestore`, which opens each tab not already open
+ * in the current center tree (dedup by label).
+ */
+export function onLtsEditorTabs(
+  cb: (payload: LtsEditorTabPayload[]) => void,
+): Promise<UnlistenFn> {
+  return listen<LtsEditorTabPayload[]>('lts-editor-tabs', (e) => cb(e.payload));
 }
 

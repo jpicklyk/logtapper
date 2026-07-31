@@ -32,3 +32,27 @@ export function buildCopyText(
     .join('\n');
   return text;
 }
+
+/** Synchronous fallback copy via a hidden textarea + execCommand. */
+function execCommandCopy(text: string): void {
+  const el = document.createElement('textarea');
+  el.value = text;
+  el.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+  document.body.appendChild(el);
+  el.focus();
+  el.select();
+  document.execCommand('copy');
+  document.body.removeChild(el);
+}
+
+/**
+ * Robust clipboard write: async Clipboard API with synchronous execCommand fallback.
+ * navigator.clipboard can silently fail in Tauri WebView2 without the clipboard plugin.
+ */
+export function writeClipboard(text: string): void {
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).catch(() => execCommandCopy(text));
+  } else {
+    execCommandCopy(text);
+  }
+}

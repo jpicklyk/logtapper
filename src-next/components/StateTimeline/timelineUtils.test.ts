@@ -32,6 +32,11 @@ describe('formatTs', () => {
 // ── fmtDuration ───────────────────────────────────────────────────────────────
 
 describe('fmtDuration', () => {
+  // Consolidated onto the app-wide composite-unit duration convention (U52) —
+  // shared with FileInfoPanel's formatDuration via utils/timeFormat. Only the
+  // sub-millisecond branch (unique to this dense-timeline use) is preserved
+  // as-is; everything >=1ms now matches FileInfoPanel's "Nm Ns"-style output
+  // instead of a single decimal unit.
   it('sub-ms: returns microseconds', () => {
     expect(fmtDuration(500_000)).toBe('500.0us');
   });
@@ -44,16 +49,16 @@ describe('fmtDuration', () => {
     expect(fmtDuration(5_000_000)).toBe('5ms');
   });
 
-  it('seconds: 2.5e9 ns = 2.50s', () => {
-    expect(fmtDuration(2_500_000_000)).toBe('2.50s');
+  it('seconds: 2.5e9 ns = 2.5s', () => {
+    expect(fmtDuration(2_500_000_000)).toBe('2.5s');
   });
 
-  it('minutes: 90e9 ns = 1.5m', () => {
-    expect(fmtDuration(90_000_000_000)).toBe('1.5m');
+  it('minutes: 90e9 ns = 1m 30s', () => {
+    expect(fmtDuration(90_000_000_000)).toBe('1m 30s');
   });
 
-  it('hours: 7200e9 ns = 2.00h', () => {
-    expect(fmtDuration(7_200_000_000_000)).toBe('2.00h');
+  it('hours: 7200e9 ns = 2h 0m', () => {
+    expect(fmtDuration(7_200_000_000_000)).toBe('2h 0m');
   });
 });
 

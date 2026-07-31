@@ -1,6 +1,6 @@
 import { useRef, useEffect } from 'react';
 import type { VirtualItem } from '@tanstack/react-virtual';
-import { FetchScheduler } from '../cache';
+import { FetchScheduler } from './FetchScheduler';
 import { diag, diagStart, diagEnd } from '../utils/diagnostics';
 import type { DataSource } from './DataSource';
 
@@ -89,7 +89,14 @@ export function useFetchScheduler(
               bumpCacheVersion();
             })
             .catch(console.error)
-            .finally(() => { fetchInFlightRef.current = false; });
+            .finally(() => {
+              fetchInFlightRef.current = false;
+              // Same recovery as the phase-1 branch below: if the viewport
+              // scrolled during this in-flight prefetch, reportScroll's queued
+              // range was ignored by the fetchInFlightRef guard. forceFetch
+              // clears dedup so the current viewport position is re-evaluated.
+              schedulerRef.current?.forceFetch();
+            });
         }
         return;
       }
@@ -152,8 +159,10 @@ export function useFetchScheduler(
     const lastActual = virtualBase + last;
 
     // Cancel stale in-flight prefetch when scrolling fast — don't let
-    // an old prefetch block the post-settle viewport fetch
-    if (scheduler.velocity >= 5 && fetchInFlightRef.current) {
+    // an old prefetch block the post-settle viewport fetch. Uses the
+    // scheduler's own isSettled (velocity < its configured threshold)
+    // instead of a hardcoded value duplicating DEFAULT_VELOCITY_THRESHOLD.
+    if (!scheduler.isSettled && fetchInFlightRef.current) {
       fetchGenRef.current++;
       fetchInFlightRef.current = false;
     }

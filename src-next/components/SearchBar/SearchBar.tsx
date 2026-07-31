@@ -38,14 +38,29 @@ export const SearchBar = React.memo<SearchBarProps>(function SearchBar({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Sync local input state whenever the stored (per-session) bounds change —
+  // e.g. switching tabs to a session with its own time filter, or the store
+  // clearing back to '' after a debounced onTimeFilter('', '') round-trips.
+  // This intentionally fires on every prop change, not just the empty case:
+  // per-session storage means `timeStart`/`timeEnd` can go from one session's
+  // populated bounds directly to another session's populated bounds, and the
+  // local inputs must reflect the newly-focused session, not the previous one.
   useEffect(() => {
-    if (timeStart === '' && timeEnd === '') {
-      setLocalStart('');
-      setLocalEnd('');
-      localStartRef.current = '';
-      localEndRef.current = '';
-    }
+    setLocalStart(timeStart);
+    setLocalEnd(timeEnd);
+    localStartRef.current = timeStart;
+    localEndRef.current = timeEnd;
   }, [timeStart, timeEnd]);
+
+  // Clear pending debounce timers on unmount — otherwise a debounced
+  // setSearch/onTimeFilter fires ~250-400ms later against a pane/session
+  // context that has already closed.
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      if (timeDebounceRef.current) clearTimeout(timeDebounceRef.current);
+    };
+  }, []);
 
   const triggerSearch = useCallback(
     (value: string, regex: boolean, cs: boolean) => {

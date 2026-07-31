@@ -1,4 +1,5 @@
 import React from 'react';
+import { ChevronRight } from 'lucide-react';
 import type { PipelineRunSummary, ProcessorSummary, VarMeta } from '../../bridge/types';
 import { isNumeric, isRankedObject, groupVars } from './utils';
 import { StatCard, RankedList, DataTable } from './SubComponents';
@@ -238,8 +239,11 @@ export const ProcessorDetailView = React.memo(function ProcessorDetailView({
                   .sort(([a], [b]) => a.localeCompare(b))
                   .map(([key, val]) => {
                     const initialized = trackerSnapshot.initializedFields.includes(key);
+                    const rowClassName = initialized
+                      ? styles.stringRow
+                      : `${styles.stringRow} ${styles.stringRowUninitialized}`;
                     return (
-                      <div key={key} className={styles.stringRow} style={initialized ? undefined : { opacity: 0.4 }}>
+                      <div key={key} className={rowClassName}>
                         <span className={styles.stringKey}>{key}</span>
                         <span className={initialized ? styles.stringVal : styles.stringKey}>
                           {initialized ? String(val ?? '') : '--'}
@@ -382,9 +386,10 @@ export const ProcessorDetailView = React.memo(function ProcessorDetailView({
               className={styles.matchesToggle}
               onClick={handleToggleMatches}
             >
-              <span className={styles.matchesArrow}>
-                {showMatches ? '>' : '>'}
-              </span>
+              <ChevronRight
+                size={10}
+                className={`${styles.matchesArrow} ${showMatches ? styles.matchesArrowOpen : ''}`}
+              />
               <span className={styles.sectionLabel}>
                 Matched Lines
                 {summary && (

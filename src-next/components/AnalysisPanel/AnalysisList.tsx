@@ -5,7 +5,7 @@ import { severityColor } from '../../bridge/types';
 import { useSession, usePaneActions } from '../../context';
 import { useAnalysis } from '../../hooks';
 import { useSessionAnalysisActions } from '../../context';
-import { bus } from '../../events/bus';
+import { bus } from '../../events';
 import styles from './AnalysisList.module.css';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -105,9 +105,21 @@ const AnalysisItem = React.memo(function AnalysisItem({ artifact, onOpen, onDele
     e.stopPropagation();
     onDelete(artifact.id);
   }, [artifact.id, onDelete]);
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onOpen(artifact.id);
+    }
+  }, [artifact.id, onOpen]);
 
   return (
-    <div className={styles.card} onClick={handleClick} role="button" tabIndex={0}>
+    <div
+      className={styles.card}
+      onClick={handleClick}
+      onKeyDown={handleKeyDown}
+      role="button"
+      tabIndex={0}
+    >
       {/* Top severity bar */}
       <div
         className={styles.cardSeverityBar}
@@ -192,9 +204,10 @@ const AnalysisList = React.memo(function AnalysisList() {
   const { openTab } = usePaneActions();
 
   const handleOpen = useCallback((artifactId: string) => {
-    bus.emit('analysis:open', { artifactId });
+    if (!sessionId) return;
+    bus.emit('analysis:open', { artifactId, sessionId });
     openTab('analysis');
-  }, [openTab]);
+  }, [openTab, sessionId]);
 
   const handleDelete = useCallback((artifactId: string) => {
     deleteSessionAnalysis(artifactId);

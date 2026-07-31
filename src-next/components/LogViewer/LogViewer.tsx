@@ -9,6 +9,7 @@ import {
   useScrollTarget,
   usePaneSearchQuery,
   useSessionTrackerTransitions,
+  useIsActiveLogPane,
 } from '../../context';
 import { useBookmarks, useBookmarkLines, useBookmarkLookup, useSettings } from '../../hooks';
 import { bus } from '../../events';
@@ -33,6 +34,7 @@ const LogViewer = React.memo(function LogViewer({
   // focus moves to a pane without a session (e.g. Scratch), wiping all lines.
   const session = useSessionForPane(paneId);
   const isStreaming = useIsStreamingForPane(paneId);
+  const isActiveLogPane = useIsActiveLogPane(paneId);
   const totalLines = session?.totalLines ?? 0;
   const search = usePaneSearchQuery();
   const cacheManager = useCacheManager();
@@ -121,12 +123,10 @@ const LogViewer = React.memo(function LogViewer({
     dataSourceRef.current = null;
 
     if (!sessionId || !viewCache) {
-      console.debug('[LogViewer] dataSource → null', { sessionId, hasViewCache: !!viewCache, paneId });
       setDataSource(null);
       return;
     }
 
-    console.debug('[LogViewer] dataSource → created', { sessionId, paneId, totalLines });
     const ds = createCacheDataSource({
       sessionId,
       viewCache,
@@ -333,8 +333,12 @@ const LogViewer = React.memo(function LogViewer({
     [emitBookmarkRequest],
   );
 
-  // Ctrl+B keyboard shortcut
+  // Ctrl+B keyboard shortcut. Gated on this pane being the active log pane —
+  // each LogViewer retains its own selection even when unfocused, so without
+  // this guard two panes with selections would both emit a create-request
+  // and open two bookmark dialogs from a single keypress.
   useEffect(() => {
+    if (!isActiveLogPane) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
         const sel = lastSelectionRef.current;
@@ -345,7 +349,7 @@ const LogViewer = React.memo(function LogViewer({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [emitBookmarkRequest]);
+  }, [emitBookmarkRequest, isActiveLogPane]);
 
   if (!dataSource) {
     return (

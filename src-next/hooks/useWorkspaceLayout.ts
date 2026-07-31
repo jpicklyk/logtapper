@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { isBugreportLike } from '../bridge/types';
 import { storageRemove } from '../utils';
-import { bus } from '../events/bus';
+import { bus } from '../events';
 import type { AppEvents } from '../events/events';
 import { useSessionCoreCtx, useSessionPaneCtx } from '../context/SessionContext';
 import {

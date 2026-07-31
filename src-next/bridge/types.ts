@@ -407,34 +407,6 @@ export interface PipelineProgress {
 }
 
 // ---------------------------------------------------------------------------
-// Chart types (Phase 3)
-// ---------------------------------------------------------------------------
-
-export interface DataPoint {
-  x: number;
-  y: number;
-  label?: string;
-  timelinePos?: number;
-}
-
-export interface DataSeries {
-  label: string;
-  color?: string;
-  points: DataPoint[];
-}
-
-export interface ChartData {
-  id: string;
-  chartType: string;
-  title: string;
-  description?: string;
-  series: DataSeries[];
-  xAxis: { label: string; field: string | null };
-  yAxis: { label: string; field: string | null };
-  interactive: boolean;
-}
-
-// ---------------------------------------------------------------------------
 // Timeline sparkline types
 // ---------------------------------------------------------------------------
 
@@ -481,6 +453,61 @@ export function makeQualifiedId(id: string, source: string): string {
 export function getBareId(qualifiedId: string): string {
   const at = qualifiedId.lastIndexOf('@');
   return at > 0 ? qualifiedId.substring(0, at) : qualifiedId;
+}
+
+/**
+ * Resolve pipeline chain IDs to their ProcessorSummary objects via a Map
+ * lookup, preserving chain order. IDs that don't resolve (e.g. a processor
+ * referenced by a persisted chain but no longer installed) are dropped.
+ */
+export function resolveChainProcessors(
+  chainIds: string[],
+  processors: ProcessorSummary[],
+): ProcessorSummary[] {
+  const byId = new Map(processors.map((p) => [p.id, p]));
+  const resolved: ProcessorSummary[] = [];
+  for (const id of chainIds) {
+    const p = byId.get(id);
+    if (p) resolved.push(p);
+  }
+  return resolved;
+}
+
+export interface ProcessorPackGroup {
+  pack: PackSummary;
+  processors: ProcessorSummary[];
+}
+
+/**
+ * Group a list of processors (already resolved/ordered, e.g. via
+ * `resolveChainProcessors`) into their owning packs, plus a standalone
+ * bucket for processors that don't belong to any installed pack.
+ *
+ * Pack manifests reference bare IDs ("wifi-state") while processors carry
+ * qualified IDs ("wifi-state@official"), so matching goes through
+ * `getBareId`. Within each pack, processors are emitted in `chainProcessors`
+ * order (not `pack.processorIds` order) — this preserves whatever order the
+ * caller resolved the chain in, which matters when the chain is user-
+ * reorderable (e.g. ProcessorPanel's drag-and-drop).
+ */
+export function groupProcessorsByPack(
+  chainProcessors: ProcessorSummary[],
+  packs: PackSummary[],
+): { packGroups: ProcessorPackGroup[]; standaloneProcessors: ProcessorSummary[] } {
+  const groups: ProcessorPackGroup[] = [];
+  const assigned = new Set<string>();
+
+  for (const pack of packs) {
+    const packBareIds = new Set(pack.processorIds);
+    const packProcs = chainProcessors.filter((p) => packBareIds.has(getBareId(p.id)));
+    if (packProcs.length > 0) {
+      groups.push({ pack, processors: packProcs });
+      for (const p of packProcs) assigned.add(p.id);
+    }
+  }
+
+  const standalone = chainProcessors.filter((p) => !assigned.has(p.id));
+  return { packGroups: groups, standaloneProcessors: standalone };
 }
 
 export interface Source {
@@ -534,16 +561,27 @@ export function matchesAllTags(tags: string[], activeFilters: Set<string>): bool
   return true;
 }
 
+/**
+ * Case-insensitive match against an item's name, description, and tags.
+ * `q` must already be lowercased — callers typically compute it once per
+ * query rather than re-lowercasing per item.
+ */
+export function matchesQuery(
+  item: { name: string; description?: string; tags: string[] },
+  q: string,
+): boolean {
+  return (
+    item.name.toLowerCase().includes(q) ||
+    (item.description ?? '').toLowerCase().includes(q) ||
+    item.tags.some((t) => t.toLowerCase().includes(q))
+  );
+}
+
 /** Filter marketplace entries by search query (matches name, description, tags) */
 export function filterMarketplaceEntries(entries: MarketplaceEntry[], query: string): MarketplaceEntry[] {
   if (!query) return entries;
   const q = query.toLowerCase();
-  return entries.filter(
-    (e) =>
-      e.name.toLowerCase().includes(q) ||
-      (e.description ?? '').toLowerCase().includes(q) ||
-      e.tags.some((t) => t.toLowerCase().includes(q)),
-  );
+  return entries.filter((e) => matchesQuery(e, q));
 }
 
 // ---------------------------------------------------------------------------
@@ -624,6 +662,35 @@ export interface FilterCriteria {
   timeEnd?: number;
   pids?: number[];
   combine?: CombineMode;
+}
+
+/** Short single-letter labels for LogLevel, used in compact chip/text displays. */
+export const LEVEL_SHORT: Record<string, string> = {
+  Verbose: 'V',
+  Debug: 'D',
+  Info: 'I',
+  Warn: 'W',
+  Error: 'E',
+  Fatal: 'F',
+};
+
+/**
+ * Ordered list of human-readable parts describing a FilterCriteria (text
+ * search, regex, levels, tags, pids). Consumers decide how to turn the array
+ * into UI — e.g. join into a single string for a toast message. Doesn't cover
+ * `combine` — callers that need to call out OR-mode (e.g. CriteriaChips'
+ * accent chip) render that separately.
+ */
+export function describeCriteriaParts(criteria: FilterCriteria): string[] {
+  const parts: string[] = [];
+  if (criteria.textSearch) parts.push(`text:${criteria.textSearch}`);
+  if (criteria.regex) parts.push(`/${criteria.regex}/`);
+  if (criteria.logLevels?.length) {
+    parts.push(criteria.logLevels.map((l) => LEVEL_SHORT[l] ?? l).join(','));
+  }
+  if (criteria.tags?.length) parts.push(`tag:${criteria.tags.join(',')}`);
+  if (criteria.pids?.length) parts.push(`pid:${criteria.pids.join(',')}`);
+  return parts;
 }
 
 export interface FilterCreateResult {
