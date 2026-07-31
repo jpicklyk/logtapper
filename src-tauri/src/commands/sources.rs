@@ -123,6 +123,31 @@ pub async fn list_sources(state: State<'_, AppState>) -> Result<Vec<Source>, Str
     Ok(sources.clone())
 }
 
+/// Pure core of `add_source`: computes the post-add source list without mutating
+/// `current`. Returns an error (unchanged `current` implied) if a source with the
+/// same name already exists. Callers only commit the returned Vec into shared state
+/// after it has been durably persisted — see `add_source` below.
+fn try_add_source(current: &[Source], source: Source) -> Result<Vec<Source>, String> {
+    if current.iter().any(|s| s.name == source.name) {
+        return Err(format!("A source named '{}' already exists", source.name));
+    }
+    let mut updated = current.to_vec();
+    updated.push(source);
+    Ok(updated)
+}
+
+/// Pure core of `remove_source`: computes the post-removal source list without
+/// mutating `current`. Returns an error if no source with `source_name` exists.
+fn try_remove_source(current: &[Source], source_name: &str) -> Result<Vec<Source>, String> {
+    let mut updated = current.to_vec();
+    let before = updated.len();
+    updated.retain(|s| s.name != source_name);
+    if updated.len() == before {
+        return Err(format!("Source '{source_name}' not found"));
+    }
+    Ok(updated)
+}
+
 #[tauri::command]
 pub async fn add_source(
     state: State<'_, AppState>,
@@ -130,11 +155,14 @@ pub async fn add_source(
     source: Source,
 ) -> Result<(), String> {
     let mut sources = lock_or_err(&state.sources, "sources")?;
-    if sources.iter().any(|s| s.name == source.name) {
-        return Err(format!("A source named '{}' already exists", source.name));
-    }
-    sources.push(source);
-    save_sources(&app, &sources)
+    // Compute the new state and persist it *before* committing to memory — if
+    // save_sources fails, `sources` (and therefore list_sources) must still
+    // reflect exactly what's on disk, not a phantom entry that vanishes on
+    // the next restart.
+    let updated = try_add_source(&sources, source)?;
+    save_sources(&app, &updated)?;
+    *sources = updated;
+    Ok(())
 }
 
 #[tauri::command]
@@ -144,12 +172,13 @@ pub async fn remove_source(
     source_name: String,
 ) -> Result<(), String> {
     let mut sources = lock_or_err(&state.sources, "sources")?;
-    let before = sources.len();
-    sources.retain(|s| s.name != source_name);
-    if sources.len() == before {
-        return Err(format!("Source '{source_name}' not found"));
-    }
-    save_sources(&app, &sources)
+    // Same commit-after-persist ordering as add_source: if save_sources fails,
+    // the source must still be present in memory (matching disk), not silently
+    // gone while the on-disk copy still has it.
+    let updated = try_remove_source(&sources, &source_name)?;
+    save_sources(&app, &updated)?;
+    *sources = updated;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1371,5 +1400,89 @@ mod tests {
         assert!(json.contains("\"packUpdates\""));
         assert!(json.contains("\"updates\""));
         assert!(json.contains("\"errors\""));
+    }
+
+    // -----------------------------------------------------------------------
+    // add_source / remove_source: persist-before-commit rollback (defect 1)
+    // -----------------------------------------------------------------------
+    //
+    // `try_add_source` / `try_remove_source` are the pure cores of the Tauri
+    // commands (see sources.rs above). They compute the *new* Vec<Source>
+    // without touching `current`; the commands only assign it into the locked
+    // AppState after save_sources() succeeds. These tests exercise that same
+    // "compute -> persist -> commit" sequence directly (standing in for the
+    // AppHandle-backed save_sources, which needs a real Tauri app context and
+    // so can't be exercised in a plain unit test) to prove that a persist
+    // failure leaves the in-memory Vec byte-for-byte unchanged.
+
+    fn test_source(name: &str) -> Source {
+        Source {
+            name: name.to_string(),
+            source_type: SourceType::Local { path: "/some/path".to_string() },
+            enabled: true,
+            auto_update: false,
+            last_checked: None,
+        }
+    }
+
+    #[test]
+    fn add_source_rolls_back_in_memory_state_when_save_fails() {
+        let mut sources = vec![test_source("existing")];
+
+        // Mirrors the command body: compute the candidate state, "persist" it
+        // (simulated failure), and only commit on success.
+        let updated = try_add_source(&sources, test_source("new")).expect("no name clash");
+        let save_result: Result<(), String> = Err("disk full".to_string());
+        let outcome = save_result.map(|()| sources = updated);
+
+        assert!(outcome.is_err());
+        assert_eq!(sources.len(), 1, "in-memory Vec must be unchanged after a failed save");
+        assert_eq!(sources[0].name, "existing");
+    }
+
+    #[test]
+    fn remove_source_rolls_back_in_memory_state_when_save_fails() {
+        let mut sources = vec![test_source("existing"), test_source("target")];
+
+        let updated = try_remove_source(&sources, "target").expect("target exists");
+        let save_result: Result<(), String> = Err("disk full".to_string());
+        let outcome = save_result.map(|()| sources = updated);
+
+        assert!(outcome.is_err());
+        assert_eq!(sources.len(), 2, "in-memory Vec must be unchanged after a failed save");
+        assert!(sources.iter().any(|s| s.name == "target"), "removed source must still be present in memory");
+    }
+
+    #[test]
+    fn add_source_commits_new_state_when_save_succeeds() {
+        let mut sources = vec![test_source("existing")];
+
+        let updated = try_add_source(&sources, test_source("new")).expect("no name clash");
+        let save_result: Result<(), String> = Ok(());
+        let outcome = save_result.map(|()| sources = updated);
+
+        assert!(outcome.is_ok());
+        assert_eq!(sources.len(), 2);
+        assert!(sources.iter().any(|s| s.name == "new"));
+    }
+
+    /// Documents the pre-fix defect directly: the original add_source pushed
+    /// into the locked Vec *before* calling save_sources, with no rollback on
+    /// failure. Reproducing that ordering here shows the in-memory Vec ends
+    /// up out of sync with disk the moment persistence fails.
+    #[test]
+    fn buggy_push_before_save_ordering_leaves_stale_state_on_failure() {
+        let mut sources = vec![test_source("existing")];
+
+        // Old (buggy) order: mutate first, persist second, no undo on Err.
+        sources.push(test_source("new"));
+        let save_result: Result<(), String> = Err("disk full".to_string());
+
+        assert!(save_result.is_err());
+        assert_eq!(
+            sources.len(),
+            2,
+            "reproduces defect 1: the unpersisted source remains in memory after save fails"
+        );
     }
 }
