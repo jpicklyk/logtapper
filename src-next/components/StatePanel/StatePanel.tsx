@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { ChevronRight } from 'lucide-react';
 import type { StateSnapshot, ProcessorSummary } from '../../bridge/types';
+import { resolveChainProcessors } from '../../bridge/types';
 import {
   useSession,
   useProcessors,
@@ -122,14 +123,11 @@ const StatePanel = React.memo(function StatePanel() {
     return () => { bus.off('selection:changed', handler); };
   }, [session?.sessionId]);
 
-  const activeTrackers = useMemo<ProcessorSummary[]>(() => {
-    return pipelineChain
-      .map((id) => processors.find((p) => p.id === id))
-      .filter(
-        (p): p is ProcessorSummary =>
-          p != null && p.processorType === 'state_tracker',
-      );
-  }, [pipelineChain, processors]);
+  const activeTrackers = useMemo<ProcessorSummary[]>(
+    () => resolveChainProcessors(pipelineChain, processors)
+      .filter((p) => p.processorType === 'state_tracker'),
+    [pipelineChain, processors],
+  );
 
   // Snapshot-mode results don't change with line selection — cache them and
   // only invalidate on pipeline re-run or session change.

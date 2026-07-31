@@ -483,6 +483,24 @@ export function getBareId(qualifiedId: string): string {
   return at > 0 ? qualifiedId.substring(0, at) : qualifiedId;
 }
 
+/**
+ * Resolve pipeline chain IDs to their ProcessorSummary objects via a Map
+ * lookup, preserving chain order. IDs that don't resolve (e.g. a processor
+ * referenced by a persisted chain but no longer installed) are dropped.
+ */
+export function resolveChainProcessors(
+  chainIds: string[],
+  processors: ProcessorSummary[],
+): ProcessorSummary[] {
+  const byId = new Map(processors.map((p) => [p.id, p]));
+  const resolved: ProcessorSummary[] = [];
+  for (const id of chainIds) {
+    const p = byId.get(id);
+    if (p) resolved.push(p);
+  }
+  return resolved;
+}
+
 export interface Source {
   name: string;
   type: 'github' | 'local';

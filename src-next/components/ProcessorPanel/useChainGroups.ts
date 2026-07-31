@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { ProcessorSummary, PipelineRunSummary, PipelineProgress, PackSummary } from '../../bridge/types';
-import { getBareId } from '../../bridge/types';
+import { getBareId, resolveChainProcessors } from '../../bridge/types';
 import { PINNED_TAIL_IDS } from '../../context';
 
 const LS_EXPANDED_PACKS_KEY = 'logtapper_pipeline_expanded_packs';
@@ -79,17 +79,9 @@ export function useChainGroups({
     [lastResults],
   );
 
-  const processorsById = useMemo(
-    () => new Map(processors.map((p) => [p.id, p])),
-    [processors],
-  );
-
   const allChainProcessors = useMemo(
-    () =>
-      pipelineChain
-        .map((id) => processorsById.get(id))
-        .filter(Boolean) as NonNullable<(typeof processors)[0]>[],
-    [pipelineChain, processorsById],
+    () => resolveChainProcessors(pipelineChain, processors),
+    [pipelineChain, processors],
   );
 
   const sortableProcessors = useMemo(

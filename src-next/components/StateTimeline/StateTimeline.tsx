@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TimelineSeriesData, ProcessorSummary, Bookmark } from '../../bridge/types';
+import { resolveChainProcessors } from '../../bridge/types';
 import type { AppEvents } from '../../events/events';
 import { getTimelineData } from '../../bridge/commands';
 import { Button } from '../../ui';
@@ -131,21 +132,21 @@ const StateTimeline = React.memo(function StateTimeline() {
     return () => { bus.off('selection:changed', handler); };
   }, [session?.sessionId]);
 
-  const activeTrackers = useMemo<ProcessorSummary[]>(
-    () =>
-      pipelineChain
-        .map((id) => processors.find((p) => p.id === id))
-        .filter((p): p is ProcessorSummary =>
-          p != null && p.processorType === 'state_tracker' && p.trackerTimeline !== false),
+  const chainProcessors = useMemo(
+    () => resolveChainProcessors(pipelineChain, processors),
     [pipelineChain, processors],
   );
 
+  const activeTrackers = useMemo<ProcessorSummary[]>(
+    () => chainProcessors.filter(
+      (p) => p.processorType === 'state_tracker' && p.trackerTimeline !== false,
+    ),
+    [chainProcessors],
+  );
+
   const activeReporters = useMemo<ProcessorSummary[]>(
-    () =>
-      pipelineChain
-        .map((id) => processors.find((p) => p.id === id))
-        .filter((p): p is ProcessorSummary => p != null && p.processorType === 'reporter'),
-    [pipelineChain, processors],
+    () => chainProcessors.filter((p) => p.processorType === 'reporter'),
+    [chainProcessors],
   );
 
   // Fetch timeline data when the session or pipeline run changes.

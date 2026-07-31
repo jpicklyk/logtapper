@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { ChevronRight } from 'lucide-react';
 import type { PipelineRunSummary, ProcessorSummary } from '../../bridge/types';
-import { getBareId } from '../../bridge/types';
+import { getBareId, resolveChainProcessors } from '../../bridge/types';
 import {
   useSession,
   useProcessors,
@@ -32,10 +32,7 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
   const sessionId = session?.sessionId ?? null;
 
   const activeProcessors = useMemo(
-    () =>
-      activeProcessorIds
-        .map((id) => processors.find((p) => p.id === id))
-        .filter(Boolean) as NonNullable<(typeof processors)[0]>[],
+    () => resolveChainProcessors(activeProcessorIds, processors),
     [activeProcessorIds, processors],
   );
 
