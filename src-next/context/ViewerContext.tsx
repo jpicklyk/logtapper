@@ -1,18 +1,8 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
-import type { SearchQuery, SearchSummary } from '../bridge/types';
 
 // ---------------------------------------------------------------------------
 // Sub-context value types
 // ---------------------------------------------------------------------------
-
-interface SearchContextValue {
-  search: SearchQuery | null;
-  searchSummary: SearchSummary | null;
-  currentMatchIndex: number;
-  setSearch: React.Dispatch<React.SetStateAction<SearchQuery | null>>;
-  setSearchSummary: React.Dispatch<React.SetStateAction<SearchSummary | null>>;
-  setCurrentMatchIndex: React.Dispatch<React.SetStateAction<number>>;
-}
 
 interface ScrollContextValue {
   scrollToLine: number | null;
@@ -30,33 +20,28 @@ interface ProcessorViewContextValue {
 }
 
 // Combined type for the facade hook (used by writer hooks — internal only)
-interface ViewerContextValue extends SearchContextValue, ScrollContextValue, ProcessorViewContextValue {}
+interface ViewerContextValue extends ScrollContextValue, ProcessorViewContextValue {}
 
 // ---------------------------------------------------------------------------
-// Three internal sub-contexts (not exported from barrel)
+// Two internal sub-contexts (not exported from barrel)
+//
+// Search state is NOT here — it is per-pane and lives in PaneSearchContext.
+// A global SearchCtx existed until the per-pane migration; it survived as a
+// write-only store (every setter had callers, no reader did) and was removed.
 // ---------------------------------------------------------------------------
 
-const SearchCtx = createContext<SearchContextValue | null>(null);
 const ScrollCtx = createContext<ScrollContextValue | null>(null);
 const ProcessorViewCtx = createContext<ProcessorViewContextValue | null>(null);
 
 // ---------------------------------------------------------------------------
-// Provider — nests all 3 sub-contexts, owns all state
+// Provider — nests both sub-contexts, owns all state
 // ---------------------------------------------------------------------------
 
 export function ViewerProvider({ children }: { children: ReactNode }) {
-  const [search, setSearch] = useState<SearchQuery | null>(null);
-  const [searchSummary, setSearchSummary] = useState<SearchSummary | null>(null);
-  const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
   const [scrollToLine, setScrollToLine] = useState<number | null>(null);
   const [jumpSeq, setJumpSeq] = useState(0);
   const [jumpPaneId, setJumpPaneId] = useState<string | null>(null);
   const [processorId, setProcessorId] = useState<string | null>(null);
-
-  const searchValue = useMemo<SearchContextValue>(() => ({
-    search, searchSummary, currentMatchIndex,
-    setSearch, setSearchSummary, setCurrentMatchIndex,
-  }), [search, searchSummary, currentMatchIndex]);
 
   const scrollValue = useMemo<ScrollContextValue>(() => ({
     scrollToLine, jumpSeq, jumpPaneId,
@@ -68,25 +53,17 @@ export function ViewerProvider({ children }: { children: ReactNode }) {
   }), [processorId]);
 
   return (
-    <SearchCtx.Provider value={searchValue}>
-      <ScrollCtx.Provider value={scrollValue}>
-        <ProcessorViewCtx.Provider value={processorViewValue}>
-          {children}
-        </ProcessorViewCtx.Provider>
-      </ScrollCtx.Provider>
-    </SearchCtx.Provider>
+    <ScrollCtx.Provider value={scrollValue}>
+      <ProcessorViewCtx.Provider value={processorViewValue}>
+        {children}
+      </ProcessorViewCtx.Provider>
+    </ScrollCtx.Provider>
   );
 }
 
 // ---------------------------------------------------------------------------
 // Narrow hooks — used by selectors.ts for frequency-isolated reads
 // ---------------------------------------------------------------------------
-
-export function useSearchCtx(): SearchContextValue {
-  const ctx = useContext(SearchCtx);
-  if (!ctx) throw new Error('useSearchCtx must be used within a ViewerProvider');
-  return ctx;
-}
 
 export function useScrollCtx(): ScrollContextValue {
   const ctx = useContext(ScrollCtx);
@@ -101,14 +78,13 @@ export function useProcessorViewCtx(): ProcessorViewContextValue {
 }
 
 // ---------------------------------------------------------------------------
-// Facade — reads all 3 sub-contexts, returns combined interface.
+// Facade — reads both sub-contexts, returns combined interface.
 // Used by writer hooks (useLogViewer, useSearchNavigation, useSessionTabManager)
 // that need setter access across all viewer state.
 // ---------------------------------------------------------------------------
 
 export function useViewerContext(): ViewerContextValue {
-  const searchCtx = useSearchCtx();
   const scrollCtx = useScrollCtx();
   const processorViewCtx = useProcessorViewCtx();
-  return { ...searchCtx, ...scrollCtx, ...processorViewCtx };
+  return { ...scrollCtx, ...processorViewCtx };
 }

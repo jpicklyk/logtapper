@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
-import type { LoadResult, SearchQuery, SearchSummary, ProcessorSummary, PackSummary, Source, UpdateAvailable } from '../bridge/types';
+import type { LoadResult, ProcessorSummary, PackSummary, Source, UpdateAvailable } from '../bridge/types';
 import { useSessionCoreCtx, useSessionPaneCtx, useSessionProgressCtx, type IndexingProgress } from './SessionContext';
-import { useSearchCtx, useScrollCtx, useProcessorViewCtx } from './ViewerContext';
+import { useScrollCtx, useProcessorViewCtx } from './ViewerContext';
 import { usePipelineLibraryCtx, usePipelineChainCtx, type SessionChainState } from './PipelineContext';
 import { useActionsContext } from './ActionsContext';
 import { useMarketplaceContext } from './MarketplaceContext';
@@ -99,11 +99,6 @@ export function useSessionError(): string | null {
 // Viewer selectors
 // ---------------------------------------------------------------------------
 
-export function useSearch(): { query: SearchQuery | null; summary: SearchSummary | null; matchIndex: number } {
-  const { search, searchSummary, currentMatchIndex } = useSearchCtx();
-  return { query: search, summary: searchSummary, matchIndex: currentMatchIndex };
-}
-
 export function useScrollTarget(): { lineNum: number | null; seq: number; paneId: string | null } {
   const { scrollToLine, jumpSeq, jumpPaneId } = useScrollCtx();
   return { lineNum: scrollToLine, seq: jumpSeq, paneId: jumpPaneId };
@@ -156,8 +151,8 @@ export function usePacks(): PackSummary[] {
 // ---------------------------------------------------------------------------
 
 export function useNavigationActions() {
-  const { jumpToLine, jumpToMatch } = useActionsContext();
-  return useMemo(() => ({ jumpToLine, jumpToMatch }), [jumpToLine, jumpToMatch]);
+  const { jumpToLine } = useActionsContext();
+  return useMemo(() => ({ jumpToLine }), [jumpToLine]);
 }
 
 export function useFileActions() {
@@ -174,12 +169,10 @@ export function useFileActions() {
 
 export function usePaneActions() {
   const { setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter,
-          setEffectiveLineNums, openTab, setSearch } = useActionsContext();
+          openTab } = useActionsContext();
   return useMemo(
-    () => ({ setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter,
-             setEffectiveLineNums, openTab, setSearch }),
-    [setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter,
-     setEffectiveLineNums, openTab, setSearch],
+    () => ({ setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter, openTab }),
+    [setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter, openTab],
   );
 }
 
@@ -269,10 +262,6 @@ export function useStreamFilter(paneId: string): {
     parseError: state?.filterParseError ?? null,
     sectionFilteredLineNums: state?.sectionFilteredLineNums ?? null,
   }), [state]);
-}
-
-export function useSearchQuery(): SearchQuery | null {
-  return useSearchCtx().search;
 }
 
 export function useTotalLines(): number {

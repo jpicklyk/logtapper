@@ -33,22 +33,18 @@ export function useSessionTabManager(
 
   const {
     setProcessorId,
-    setSearch,
-    setSearchSummary,
-    setCurrentMatchIndex,
     setScrollToLine,
     setJumpPaneId,
     setJumpSeq,
   } = useViewerContext();
 
   // Clear session-scoped viewer state when switching tabs.
-  // Filter state is per-session in SessionContext — no reset needed here.
+  // Filter state is per-session in SessionContext, and search state is per-pane
+  // in PaneSearchContext (which clears itself on sessionId change) — neither
+  // needs a reset here.
   const resetViewerState = useCallback(() => {
     setProcessorId(null);
-    setSearch(null);
-    setSearchSummary(null);
-    setCurrentMatchIndex(0);
-  }, [setProcessorId, setSearch, setSearchSummary, setCurrentMatchIndex]);
+  }, [setProcessorId]);
 
   const closeSession = useCallback(async (paneId?: string, tabId?: string, sessionId?: string) => {
     const targetPaneId = paneId ?? activeLogPaneId ?? DEFAULT_PANE_ID;
