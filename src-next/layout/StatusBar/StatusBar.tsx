@@ -136,7 +136,7 @@ export const StatusBar = React.memo(function StatusBar({ activeLogPaneId }: Stat
 
         {hasRange && (
           <span className={CLS_CHIP_SEL}>
-            Sel {fmtLn(selection.range![0])}{EN_DASH}{fmtLn(selection.range![1])} ({fmtLn(rangeCount)})
+            Sel {fmtLn(selection.range![0])}{EN_DASH}{fmtLn(selection.range![1])} ({rangeCount.toLocaleString()})
           </span>
         )}
 

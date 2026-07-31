@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Tests for ref-write correctness in useCenterTree (L7 and L10 fixes).
  *
@@ -16,13 +17,35 @@
  * applySessionLoading) directly to verify the correct behavior without needing
  * a React renderer.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { renderHook, act } from '@testing-library/react';
 import type { SplitNode, Tab } from './workspaceTypes';
 import { findLeafByPaneId, updateLeaf } from './splitTreeHelpers';
 import {
   applySessionLoaded,
   type SessionLoadedEvent,
 } from './sessionTreeOps';
+import { bus } from '../../events/bus';
+
+// Mocks must be declared before the useCenterTree import so the module
+// resolver picks them up (vi.mock calls are hoisted, but keep the order
+// explicit for readability, matching editorTabPersistence.test.ts).
+vi.mock('../../bridge/events', () => ({
+  onBridgeSessionClosed: () => Promise.resolve(() => {}),
+}));
+
+// useCenterTree pulls in EditorTab (for the LS_*_PREFIX constants), whose
+// module graph reaches ThemeContext's module-load `window.matchMedia` call —
+// unavailable in the jsdom test environment. Mock the constants directly,
+// same pattern as editorTabPersistence.test.ts / useWorkspace.test.ts.
+vi.mock('../../components/EditorTab', () => ({
+  LS_CONTENT_PREFIX: 'logtapper_scratchpad_',
+  LS_MODE_PREFIX: 'logtapper_editor_mode_',
+  LS_WRAP_PREFIX: 'logtapper_editor_wrap_',
+  LS_FILEPATH_PREFIX: 'logtapper_editor_filepath_',
+}));
+
+import { useCenterTree } from './useCenterTree';
 
 // ---------------------------------------------------------------------------
 // Tree factories
@@ -344,5 +367,107 @@ describe('L1 + L7: render-time sync ensures treeRef reflects committed state', (
     } else {
       throw new Error('Expected leaf node');
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V4: dropTabOnPane must not emit layout:logviewer-tab-activated for a no-op
+// self-drop.
+//
+// Dragging a pane's sole tab onto that same pane's own edge zone (fromPaneId
+// === toPaneId, zone !== 'center') is a no-op: the tree updater bails out
+// without creating a new pane. Before the fix, `landingPaneId` was still
+// pre-set to a freshly generated (never-created) pane id, and the
+// post-update emit fired unconditionally with that phantom id — corrupting
+// downstream pane/session bookkeeping (useSessionTabManager would activate a
+// session for a pane that doesn't exist).
+// ---------------------------------------------------------------------------
+
+describe('V4: dropTabOnPane skips emit on no-op self-drop', () => {
+  function renderCenterTree(initialTree: SplitNode) {
+    const activeLogPaneIdRef = { current: null as string | null };
+    const paneSessionMapRef = { current: new Map<string, string>() };
+    const activateSessionForPane = vi.fn();
+    const openBottomPane = vi.fn();
+
+    return renderHook(() =>
+      useCenterTree(
+        { activeLogPaneIdRef, paneSessionMapRef, activateSessionForPane, openBottomPane },
+        initialTree,
+      ),
+    );
+  }
+
+  it('does not emit layout:logviewer-tab-activated when a pane\'s sole tab is dropped on its own edge zone', () => {
+    const paneId = 'pane-1';
+    const tab = makeLogviewerTab('tab-A');
+    const initialTree = makeTree(paneId, [tab]);
+
+    const { result } = renderCenterTree(initialTree);
+
+    const emitted: unknown[] = [];
+    const onActivated = (payload: unknown) => emitted.push(payload);
+    bus.on('layout:logviewer-tab-activated', onActivated);
+
+    act(() => {
+      result.current.dropTabOnPane(tab.id, paneId, paneId, 'right');
+    });
+
+    bus.off('layout:logviewer-tab-activated', onActivated);
+
+    expect(emitted).toHaveLength(0);
+    // Tree is unchanged — the tab is still in its original pane.
+    const leaf = findLeafByPaneId(result.current.treeRef.current, paneId);
+    expect(leaf?.pane.tabs.map((t) => t.id)).toEqual([tab.id]);
+  });
+
+  it('does not emit layout:logviewer-tab-activated for the same-pane center no-op', () => {
+    const paneId = 'pane-1';
+    const tabA = makeLogviewerTab('tab-A');
+    const tabB = makeLogviewerTab('tab-B');
+    const initialTree = makeTree(paneId, [tabA, tabB]);
+
+    const { result } = renderCenterTree(initialTree);
+
+    const emitted: unknown[] = [];
+    const onActivated = (payload: unknown) => emitted.push(payload);
+    bus.on('layout:logviewer-tab-activated', onActivated);
+
+    act(() => {
+      result.current.dropTabOnPane(tabA.id, paneId, paneId, 'center');
+    });
+
+    bus.off('layout:logviewer-tab-activated', onActivated);
+
+    expect(emitted).toHaveLength(0);
+  });
+
+  it('still emits layout:logviewer-tab-activated for a real cross-pane drop', () => {
+    const fromPaneId = 'pane-1';
+    const toPaneId = 'pane-2';
+    const tabA = makeLogviewerTab('tab-A');
+    const tabB = makeLogviewerTab('tab-B');
+    const initialTree: SplitNode = {
+      type: 'split',
+      id: 'split-1',
+      direction: 'horizontal',
+      ratio: 0.5,
+      children: [makeTree(fromPaneId, [tabA]), makeTree(toPaneId, [tabB])],
+    };
+
+    const { result } = renderCenterTree(initialTree);
+
+    const emitted: Array<{ tabId: string; paneId: string }> = [];
+    const onActivated = (payload: { tabId: string; paneId: string }) => emitted.push(payload);
+    bus.on('layout:logviewer-tab-activated', onActivated);
+
+    act(() => {
+      result.current.dropTabOnPane(tabA.id, fromPaneId, toPaneId, 'center');
+    });
+
+    bus.off('layout:logviewer-tab-activated', onActivated);
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({ tabId: tabA.id, paneId: toPaneId });
   });
 });

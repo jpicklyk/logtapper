@@ -306,6 +306,14 @@ export function useCenterTree(
     const movedTabWasActive = preFromLeaf?.pane.activeTabId === tabId;
     const remainingFromTabs = (preFromLeaf?.pane.tabs ?? []).filter((t) => t.id !== tabId);
     const isSamePaneNoOp = fromPaneId === toPaneId && zone === 'center';
+    // Dragging a pane's sole tab onto that same pane's edge zone is also a no-op:
+    // the updater bails out below (mirrors the `remainingTabs.length === 0` check
+    // inside updateTree) without ever creating the pane `landingPaneId` points at.
+    // Without this guard the post-update emit below would fire with a phantom
+    // paneId, activating a session for a pane that doesn't exist.
+    const isSamePaneSoleTabNoOp =
+      fromPaneId === toPaneId && zone !== 'center' && remainingFromTabs.length === 0;
+    const isNoOpDrop = isSamePaneNoOp || isSamePaneSoleTabNoOp;
     const newActiveFromTab =
       !isSamePaneNoOp && movedTabWasActive && remainingFromTabs.length > 0
         ? remainingFromTabs[0]
@@ -373,7 +381,7 @@ export function useCenterTree(
       return replaceNode(updated, toLeaf.id, splitNode);
     });
     const movedTab = preFromLeaf?.pane.tabs.find((t) => t.id === tabId);
-    if (movedTab?.type === 'logviewer') {
+    if (!isNoOpDrop && movedTab?.type === 'logviewer') {
       const sessionId = tabSessionMapRef.current.get(tabId) ?? '';
       bus.emit('layout:logviewer-tab-activated', { tabId, paneId: landingPaneId, sessionId, reason: 'drag' });
     }
