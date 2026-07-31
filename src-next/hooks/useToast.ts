@@ -7,12 +7,25 @@ const AUTO_DISMISS_MS = 8000;
 export function useToast() {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  // Mirrors `toasts` so addToast/dismissToast/auto-dismiss can compute their
+  // next list without reading it inside a setState updater. Synced at render
+  // time (safety net) AND immediately after every setToasts call below (the
+  // L7 pattern from useCenterTree.ts) — multiple mutations can happen
+  // synchronously within the same event before React re-renders, so the
+  // render-time sync alone is not enough to keep it current between them.
+  const toastsRef = useRef(toasts);
+  toastsRef.current = toasts;
 
   // Schedule auto-dismiss for a toast
   const scheduleAutoDismiss = useCallback((id: string) => {
     const timer = setTimeout(() => {
       timersRef.current.delete(id);
-      setToasts((prev) => prev.filter((t) => t.id !== id));
+      let next: ToastItem[] | undefined;
+      setToasts((prev) => {
+        next = prev.filter((t) => t.id !== id);
+        return next;
+      });
+      if (next !== undefined) toastsRef.current = next;
     }, AUTO_DISMISS_MS);
     timersRef.current.set(id, timer);
   }, []);
@@ -28,19 +41,22 @@ export function useToast() {
 
   const addToast = useCallback(
     (toast: ToastItem) => {
-      setToasts((prev) => {
-        const next = [...prev, toast];
-        // Drop oldest if over cap
-        if (next.length > MAX_TOASTS) {
-          const removed = next.shift()!;
-          const timer = timersRef.current.get(removed.id);
-          if (timer) {
-            clearTimeout(timer);
-            timersRef.current.delete(removed.id);
-          }
+      // Pre-compute the over-cap eviction from toastsRef.current and clear the
+      // evicted toast's timer BEFORE calling setState, instead of mutating
+      // timersRef from inside the setState updater — StrictMode double-invokes
+      // updaters, which would clear (and delete the map entry for) the same
+      // timer twice (U14 fix).
+      const next = [...toastsRef.current, toast];
+      if (next.length > MAX_TOASTS) {
+        const removed = next.shift()!;
+        const timer = timersRef.current.get(removed.id);
+        if (timer) {
+          clearTimeout(timer);
+          timersRef.current.delete(removed.id);
         }
-        return next;
-      });
+      }
+      toastsRef.current = next;
+      setToasts(next);
       scheduleAutoDismiss(toast.id);
     },
     [scheduleAutoDismiss],
@@ -52,7 +68,12 @@ export function useToast() {
       clearTimeout(timer);
       timersRef.current.delete(id);
     }
-    setToasts((prev) => prev.filter((t) => t.id !== id));
+    let next: ToastItem[] | undefined;
+    setToasts((prev) => {
+      next = prev.filter((t) => t.id !== id);
+      return next;
+    });
+    if (next !== undefined) toastsRef.current = next;
   }, []);
 
   return { toasts, addToast, dismissToast };
