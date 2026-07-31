@@ -42,7 +42,7 @@ export { useWatchList } from './useWatchList';
 export type { UseWatchListReturn } from './useWatchList';
 export { useMarketplace } from './useMarketplace';
 export type { MarketplaceState } from './useMarketplace';
-export { useToast } from './useToast';
+export { useToast, nextToastId } from './useToast';
 export { useAnalysisToast } from './useAnalysisToast';
 export { useWatchToast } from './useWatchToast';
 export { useLtsImportToast } from './useLtsImportToast';

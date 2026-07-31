@@ -4,6 +4,16 @@ import type { ToastItem } from '../ui';
 const MAX_TOASTS = 3;
 const AUTO_DISMISS_MS = 8000;
 
+// Module-level counter shared by every toast-producing hook (useAnalysisToast,
+// useLtsImportToast, useUntrustedAutoSaveToast, useWatchToast,
+// useWorkspaceRestoreToast) so each gets a unique id without its own counter.
+let toastCounter = 0;
+
+/** Build a unique toast id: `${prefix}-${n}`. */
+export function nextToastId(prefix: string): string {
+  return `${prefix}-${++toastCounter}`;
+}
+
 export function useToast() {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());

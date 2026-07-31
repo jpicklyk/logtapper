@@ -4,8 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import type { ToastItem } from '../ui';
 import type { WorkspaceRestoredPayload } from '../bridge/types';
 import { bus } from '../events/bus';
-
-let toastCounter = 0;
+import { nextToastId } from './useToast';
 
 /**
  * Listens for `workspace-restored` Tauri events and shows a toast
@@ -35,7 +34,7 @@ export function useWorkspaceRestoreToast(addToast: (toast: ToastItem) => void) {
       if (parts.length === 0) return;
 
       addToast({
-        id: `workspace-restore-${++toastCounter}`,
+        id: nextToastId('workspace-restore'),
         title: 'Workspace restored',
         message: `Restored ${parts.join(' and ')}`,
       });
@@ -77,7 +76,7 @@ export function useWorkspaceRestoreToast(addToast: (toast: ToastItem) => void) {
     const onWarnings = ({ warnings }: { warnings: string[] }) => {
       if (warnings.length === 0) return;
       addToast({
-        id: `workspace-restore-warning-${++toastCounter}`,
+        id: nextToastId('workspace-restore-warning'),
         title: 'Workspace restored with warnings',
         message: warnings.join('\n'),
       });

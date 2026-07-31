@@ -4,8 +4,7 @@ import type { WatchMatchEvent, FilterCriteria } from '../bridge/types';
 import { onWatchMatch } from '../bridge/events';
 import { listWatches } from '../bridge/commands';
 import type { ToastItem } from '../ui';
-
-let toastCounter = 0;
+import { nextToastId } from './useToast';
 
 /** Build a short human-readable summary of filter criteria. */
 function describeCriteria(criteria: FilterCriteria): string {
@@ -50,7 +49,7 @@ export function useWatchToast(addToast: (toast: ToastItem) => void) {
       for (const [watchId, data] of acc) {
         const criteria = criteriaMapRef.current.get(watchId);
         const summary = criteria ? describeCriteria(criteria) : watchId.slice(0, 8);
-        const id = `watch-toast-${++toastCounter}`;
+        const id = nextToastId('watch-toast');
         addToastRef.current({
           id,
           title: 'Watch Match',

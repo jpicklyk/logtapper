@@ -4,8 +4,7 @@ import { onAnalysisUpdate } from '../bridge/events';
 import { getAnalysis } from '../bridge/commands';
 import { bus } from '../events/bus';
 import type { ToastItem } from '../ui';
-
-let toastCounter = 0;
+import { nextToastId } from './useToast';
 
 /**
  * Subscribes directly to the Tauri `analysis-update` event at AppShell level
@@ -49,7 +48,7 @@ export function useAnalysisToast(addToast: (toast: ToastItem) => void) {
       getAnalysis(payload.sessionId, payload.artifactId)
         .then((artifact) => {
           if (cancelled) return;
-          const id = `analysis-toast-${++toastCounter}`;
+          const id = nextToastId('analysis-toast');
           addToast({
             id,
             title: 'New Analysis',
