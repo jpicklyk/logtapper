@@ -36,7 +36,15 @@ const AnalysisReader = React.memo(function AnalysisReader() {
     }
   }, [selectedId, artifacts]);
 
-  // Clear selection if the selected artifact was deleted
+  // Clear selection if the selected artifact was deleted — fall back to the
+  // first remaining artifact (or null if none remain) so the panel doesn't
+  // stick on the empty placeholder forever.
+  useEffect(() => {
+    if (selectedId !== null && !artifacts.some((a) => a.id === selectedId)) {
+      setSelectedId(artifacts[0]?.id ?? null);
+    }
+  }, [selectedId, artifacts]);
+
   const artifact: AnalysisArtifact | undefined = artifacts.find((a) => a.id === selectedId);
 
   const handleJump = useCallback((lineNum: number) => {
