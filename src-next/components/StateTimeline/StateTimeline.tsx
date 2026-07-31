@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TimelineSeriesData, ProcessorSummary, Bookmark } from '../../bridge/types';
 import { resolveChainProcessors } from '../../bridge/types';
-import type { AppEvents } from '../../events/events';
 import { getTimelineData } from '../../bridge/commands';
 import { Button } from '../../ui';
 import {
@@ -11,8 +10,7 @@ import {
   useNavigationActions,
   useSessionPipelineResults,
 } from '../../context';
-import { useStateTracker, useBookmarks, useSettings } from '../../hooks';
-import { bus } from '../../events';
+import { useStateTracker, useBookmarks, useSettings, useSelection } from '../../hooks';
 import { clamp } from '../../utils';
 import styles from './StateTimeline.module.css';
 import {
@@ -118,19 +116,10 @@ const StateTimeline = React.memo(function StateTimeline() {
   const interactRef = useRef<HTMLDivElement>(null);
 
   // Selection cursor(s) driven by the event bus
-  const [selectedRange, setSelectedRange] = useState<[number, number] | null>(null);
-
-  useEffect(() => {
-    const handler = (ev: AppEvents['selection:changed']) => {
-      if (ev.sessionId === session?.sessionId) {
-        setSelectedRange(ev.range);
-      } else {
-        setSelectedRange(null);
-      }
-    };
-    bus.on('selection:changed', handler);
-    return () => { bus.off('selection:changed', handler); };
-  }, [session?.sessionId]);
+  const { range: selectedRange } = useSelection(
+    { sessionId: session?.sessionId ?? null },
+    { clearOnMismatch: true },
+  );
 
   const chainProcessors = useMemo(
     () => resolveChainProcessors(pipelineChain, processors),

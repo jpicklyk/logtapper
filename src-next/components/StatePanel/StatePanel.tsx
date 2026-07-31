@@ -8,9 +8,7 @@ import {
   usePipelineChain,
   useSessionPipelineResults,
 } from '../../context';
-import { useStateTracker } from '../../hooks';
-import { bus } from '../../events';
-import type { AppEvents } from '../../events';
+import { useStateTracker, useSelection } from '../../hooks';
 import styles from './StatePanel.module.css';
 
 interface TrackerState {
@@ -109,19 +107,10 @@ const StatePanel = React.memo(function StatePanel() {
   const [trackerStates, setTrackerStates] = useState<TrackerState[]>([]);
   const hasDataRef = useRef(false);
 
-  const [selectedLine, setSelectedLine] = useState<number | null>(null);
-
-  useEffect(() => {
-    const handler = (ev: AppEvents['selection:changed']) => {
-      if (ev.sessionId === session?.sessionId) {
-        setSelectedLine(ev.anchor);
-      } else {
-        setSelectedLine(null);
-      }
-    };
-    bus.on('selection:changed', handler);
-    return () => { bus.off('selection:changed', handler); };
-  }, [session?.sessionId]);
+  const { anchor: selectedLine } = useSelection(
+    { sessionId: session?.sessionId ?? null },
+    { clearOnMismatch: true },
+  );
 
   const activeTrackers = useMemo<ProcessorSummary[]>(
     () => resolveChainProcessors(pipelineChain, processors)

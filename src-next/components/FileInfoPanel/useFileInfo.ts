@@ -4,8 +4,8 @@ import type { IndexingProgress } from '../../context';
 import { getDumpstateMetadata, getSections, getSessionMetadata } from '../../bridge/commands';
 import { isBugreportLike } from '../../bridge/types';
 import type { DumpstateMetadata } from '../../bridge/types';
-import type { AppEvents } from '../../events/events';
 import { bus } from '../../events';
+import { useSelection } from '../../hooks';
 import { absoluteLineToFilteredIndex } from '../LogViewer/scrollMapping';
 import type { SectionEntry } from './FileInfoPanel';
 
@@ -195,16 +195,7 @@ export function useFileInfo(paneId: string | null): FileInfoData {
   // Track user line selection via event bus — drives section highlighting
   // when the user clicks lines in the log viewer (not just programmatic jumps).
   // Cleared when a programmatic jump fires so jumpToLine always wins.
-  const [selectedLine, setSelectedLine] = useState<number | null>(null);
-
-  useEffect(() => {
-    const handler = (ev: AppEvents['selection:changed']) => {
-      if (ev.paneId !== paneId) return;
-      setSelectedLine(ev.anchor);
-    };
-    bus.on('selection:changed', handler);
-    return () => { bus.off('selection:changed', handler); };
-  }, [paneId]);
+  const { anchor: selectedLine } = useSelection({ paneId });
 
   // When a programmatic jump is active, suppress the user's selected line so
   // effectiveScrollToLine takes over for section tracking. Derived at render time
