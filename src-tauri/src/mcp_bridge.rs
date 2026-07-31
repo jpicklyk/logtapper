@@ -178,7 +178,12 @@ fn processor_id_matches(candidate: &str, filter: Option<&String>) -> bool {
 ///
 /// Pulled out as a pure function (no locking, no `AppState`) so the decision
 /// itself is unit-testable without spinning up Axum or Tauri state.
-fn resolve_should_anonymize(flags: &HashMap<String, bool>, session_id: &str) -> bool {
+///
+/// Also reused by `commands::export::export_all_sessions` — export must gate
+/// on the same per-session state as the bridge rather than inventing a
+/// second anonymization decision, or the two could disagree about whether a
+/// given session's raw text is safe to hand out.
+pub(crate) fn resolve_should_anonymize(flags: &HashMap<String, bool>, session_id: &str) -> bool {
     flags.get(session_id).copied().unwrap_or(true)
 }
 
@@ -193,7 +198,13 @@ fn resolve_should_anonymize(flags: &HashMap<String, bool>, session_id: &str) -> 
 /// Locks `mcp_anonymize`, then (only when anonymizing) `anonymizer_config`
 /// and `mcp_anonymizers`, each acquired and released in turn. Never held
 /// across an `.await`; never nested with `sessions` or `pipeline_results`.
-fn anonymize_for_session(state: &AppState, session_id: &str, raw: &str) -> String {
+///
+/// Also called from `commands::export::export_all_sessions` (after its
+/// `sessions` lock has been dropped, mirroring the `resolve_line_texts` /
+/// `anonymize_line_texts` split below) so exported `.lts` archives honor the
+/// same per-session anonymization flag as MCP bridge reads, instead of
+/// writing raw Tier-1 bytes unconditionally.
+pub(crate) fn anonymize_for_session(state: &AppState, session_id: &str, raw: &str) -> String {
     let should_anonymize = {
         let flags = state.mcp_anonymize.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         resolve_should_anonymize(&flags, session_id)

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use memmap2::Mmap;
 use serde::{Deserialize, Serialize};
@@ -6,6 +6,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::{lock_or_err, AppState};
 use crate::core::log_source::{FileLogSource, ZipLogSource, StreamLogSource};
+use crate::mcp_bridge::{anonymize_for_session, resolve_should_anonymize};
 use crate::workspace::lts::{LtsEditorTab, LtsSessionData, LtsSessionMeta};
 
 // ---------------------------------------------------------------------------
@@ -98,6 +99,27 @@ pub(crate) fn all_active_custom_processor_ids(
 pub(crate) fn snapshot_stream_bytes(source: &StreamLogSource) -> Vec<u8> {
     let mut buf: Vec<u8> = Vec::new();
     let _ = source.write_stream_lines(&mut buf);
+    buf
+}
+
+/// Anonymize each line in `lines` for `session_id` (honoring that session's
+/// `mcp_anonymize` flag via [`anonymize_for_session`]) and reassemble into
+/// the exact byte layout `write_lts` expects for a session's `source_bytes`:
+/// one record per line, `\n`-terminated, in original order. Used for the
+/// `SourceRef::RawLines` path in `export_all_sessions` (called only after
+/// the `sessions` lock has been dropped — see that function's step 1b/2).
+///
+/// Pulled out as a standalone helper (taking `&AppState` rather than the
+/// Tauri `State<'_, AppState>` extractor, and no `AppHandle`) so it is
+/// directly unit-testable without spinning up a Tauri app — mirroring how
+/// `mcp_bridge::resolve_should_anonymize` is tested as a pure function.
+fn anonymize_lines_to_bytes(state: &AppState, session_id: &str, lines: &[String]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    for line in lines {
+        let anonymized = anonymize_for_session(state, session_id, line);
+        buf.extend_from_slice(anonymized.as_bytes());
+        buf.push(b'\n');
+    }
     buf
 }
 
@@ -203,6 +225,11 @@ pub async fn export_all_sessions(
         Mmap(Arc<Mmap>),
         Zip(Arc<Vec<u8>>),
         Stream(Vec<u8>),
+        /// Owned, per-line raw text captured for a session whose
+        /// `mcp_anonymize` flag is set. Anonymized line-by-line (via
+        /// `anonymize_for_session`) once the `sessions` lock has been
+        /// dropped — see step 2 below — instead of being written raw.
+        RawLines(Vec<String>),
     }
 
     // 0. Stop any active ADB streams so no new lines arrive mid-export.
@@ -229,15 +256,42 @@ pub async fn export_all_sessions(
         }
     }
 
-    // 1. Collect all session IDs and snapshot source references under brief lock.
+    // 1a. Snapshot the per-session MCP-anonymize flags *before* taking the
+    // `sessions` lock. `anonymize_for_session` / `resolve_should_anonymize`
+    // (from `mcp_bridge`) must never be called while `sessions` is held —
+    // see their doc comments — so the anonymize decision has to be made
+    // from data captured outside that lock.
+    let anonymize_flags: HashMap<String, bool> = {
+        let flags = lock_or_err(&state.mcp_anonymize, "mcp_anonymize")?;
+        flags.clone()
+    };
+
+    // 1b. Collect all session IDs and snapshot source references under brief lock.
+    //
+    // Sessions with anonymization enabled (same per-session flag the MCP
+    // bridge honors, via `resolve_should_anonymize`) get their raw text
+    // captured line-by-line here as owned `String`s (`SourceRef::RawLines`)
+    // instead of the raw byte snapshot, so no unanonymized Tier-1 text is
+    // ever copied toward the archive. `raw_line`/`total_lines` are on the
+    // `LogSource` trait and work uniformly across `FileLogSource`,
+    // `ZipLogSource`, and `StreamLogSource` (the latter transparently
+    // covering evicted/spilled lines), so this path needs no per-type
+    // downcasting. Non-anonymized sessions keep the original fast
+    // Arc-clone / byte-snapshot path unchanged.
     let session_snapshots: Vec<(String, String, SourceRef)> = {
         let sessions = lock_or_err(&state.sessions, "sessions")?;
         let mut result = Vec::with_capacity(sessions.len());
         for (session_id, session) in sessions.iter() {
+            let should_anonymize = resolve_should_anonymize(&anonymize_flags, session_id);
             let (name, sref) = match session.primary_source() {
                 Some(src) => {
                     let name = src.name().to_string();
-                    let sref = if let Some(file_src) = src.as_any().downcast_ref::<FileLogSource>() {
+                    let sref = if should_anonymize {
+                        let lines: Vec<String> = (0..src.total_lines())
+                            .filter_map(|i| src.raw_line(i).map(|c| c.into_owned()))
+                            .collect();
+                        SourceRef::RawLines(lines)
+                    } else if let Some(file_src) = src.as_any().downcast_ref::<FileLogSource>() {
                         SourceRef::Mmap(Arc::clone(file_src.mmap()))
                     } else if let Some(zip_src) = src.as_any().downcast_ref::<ZipLogSource>() {
                         SourceRef::Zip(Arc::clone(zip_src.data()))
@@ -256,7 +310,8 @@ pub async fn export_all_sessions(
         }
         result
     };
-    // sessions lock dropped — data copies happen outside the lock
+    // sessions lock dropped — data copies (and anonymization, for
+    // RawLines sessions) happen outside the lock
 
     // 2. Build per-session data, copying source bytes outside the lock.
     let session_ids: Vec<String> = session_snapshots.iter().map(|(id, _, _)| id.clone()).collect();
@@ -283,6 +338,10 @@ pub async fn export_all_sessions(
             SourceRef::Mmap(mmap) => mmap.to_vec(),
             SourceRef::Zip(data) => data.as_ref().clone(),
             SourceRef::Stream(bytes) => bytes,
+            // Anonymize outside the `sessions` lock (dropped above), one
+            // line at a time, then reassemble — preserving line order and
+            // count exactly.
+            SourceRef::RawLines(lines) => anonymize_lines_to_bytes(&state, &session_id, &lines),
         };
 
         let session_meta: LtsSessionMeta =
@@ -609,5 +668,124 @@ mod tests {
         let bytes = snapshot_stream_bytes(&src);
         let text = std::str::from_utf8(&bytes).expect("bytes must be valid UTF-8");
         assert_eq!(text, "spill-a\nspill-b\n");
+    }
+
+    // ---------------------------------------------------------------------------
+    // anonymize_lines_to_bytes tests — item 44906851
+    //
+    // export_all_sessions used to snapshot raw session bytes (mmap.to_vec() /
+    // zip buffer clone / reconstructed stream text) and write them byte-for-byte
+    // via workspace::lts::write_lts, with no anonymizer call anywhere in this
+    // file. A session with PII anonymization enabled (the same per-session
+    // `mcp_anonymize` flag the MCP bridge honors) would still export raw,
+    // unredacted PII into the .lts archive. `anonymize_lines_to_bytes` is the
+    // fix: it is what `SourceRef::RawLines` sessions are now routed through
+    // (see `export_all_sessions`, step 1b/2) before their bytes ever reach
+    // `write_lts`.
+    //
+    // A full round-trip test of `export_all_sessions` itself is impractical
+    // here: the command takes `AppHandle` (used for `app.emit` and
+    // `read_processor_yaml`'s `app_data_dir()`), and there is no precedent
+    // elsewhere in this crate for constructing a `AppHandle`/`State` pair in a
+    // unit test (see `commands/files.rs` around its multi-session test comment).
+    // So — per the fallback this task explicitly allows — these tests exercise
+    // `anonymize_lines_to_bytes` directly, which is the exact same function
+    // (and the exact same `AppState::mcp_anonymize` / `anonymizer_config` /
+    // `mcp_anonymizers` state) the export path calls. The gap left uncovered
+    // is purely the surrounding glue in `export_all_sessions` (SourceRef
+    // selection while holding `sessions`, and the write_lts call) — not the
+    // anonymization decision or the redaction itself.
+    // ---------------------------------------------------------------------------
+
+    /// Session with anonymization enabled (`mcp_anonymize` flag = true, the
+    /// same flag the MCP bridge reads): exported line text must have PII
+    /// replaced by tokens, and the raw PII values must be absent. Line count
+    /// (and therefore line ordering) must be preserved exactly.
+    #[test]
+    fn anonymize_lines_to_bytes_redacts_pii_when_flag_enabled() {
+        let state = AppState::new();
+        state
+            .mcp_anonymize
+            .lock()
+            .unwrap()
+            .insert("sess-anon".to_string(), true);
+
+        let lines = vec![
+            "connecting to 192.168.1.100 now".to_string(),
+            "user email is user@example.com, please contact".to_string(),
+            "no pii on this line at all".to_string(),
+        ];
+
+        let bytes = anonymize_lines_to_bytes(&state, "sess-anon", &lines);
+        let text = String::from_utf8(bytes).expect("output must be valid UTF-8");
+
+        assert!(
+            !text.contains("192.168.1.100"),
+            "raw IP must not appear in an anonymized export: {text}"
+        );
+        assert!(
+            !text.contains("user@example.com"),
+            "raw email must not appear in an anonymized export: {text}"
+        );
+        assert!(
+            text.contains("<IPv4-") && text.contains("<EMAIL-"),
+            "expected PII to be replaced with anonymizer tokens: {text}"
+        );
+
+        let out_lines: Vec<&str> = text.lines().collect();
+        assert_eq!(out_lines.len(), 3, "line count must be preserved exactly");
+        assert_eq!(
+            out_lines[2], "no pii on this line at all",
+            "line order must be preserved; non-PII line must round-trip unchanged"
+        );
+    }
+
+    /// Session without anonymization enabled (`mcp_anonymize` flag = false,
+    /// explicitly disabled — e.g. `__pii_anonymizer` removed from the chain):
+    /// exported line text must be byte-for-byte identical to the raw input,
+    /// preserving the pre-fix behavior for sessions that never asked to be
+    /// anonymized.
+    #[test]
+    fn anonymize_lines_to_bytes_passes_through_raw_when_flag_disabled() {
+        let state = AppState::new();
+        state
+            .mcp_anonymize
+            .lock()
+            .unwrap()
+            .insert("sess-raw".to_string(), false);
+
+        let lines = vec![
+            "connecting to 192.168.1.100 now".to_string(),
+            "user email is user@example.com, please contact".to_string(),
+        ];
+
+        let bytes = anonymize_lines_to_bytes(&state, "sess-raw", &lines);
+        let text = String::from_utf8(bytes).expect("output must be valid UTF-8");
+
+        assert_eq!(
+            text,
+            "connecting to 192.168.1.100 now\nuser email is user@example.com, please contact\n",
+            "raw (non-anonymized) session must export byte-for-byte unchanged"
+        );
+    }
+
+    /// A session with no explicit `mcp_anonymize` entry at all (never
+    /// signalled by the frontend, e.g. a session that was never focused)
+    /// must still be anonymized — `resolve_should_anonymize` fails closed to
+    /// `true` for an unknown session, and export must honor that same
+    /// fail-closed default rather than assuming raw export is safe.
+    #[test]
+    fn anonymize_lines_to_bytes_fails_closed_for_unsignalled_session() {
+        let state = AppState::new(); // no mcp_anonymize entry for "sess-unknown"
+
+        let lines = vec!["contact user@example.com for access".to_string()];
+
+        let bytes = anonymize_lines_to_bytes(&state, "sess-unknown", &lines);
+        let text = String::from_utf8(bytes).expect("output must be valid UTF-8");
+
+        assert!(
+            !text.contains("user@example.com"),
+            "an unsignalled session must fail closed to anonymized, not raw: {text}"
+        );
     }
 }
