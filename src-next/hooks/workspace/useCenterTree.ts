@@ -67,7 +67,13 @@ export function useCenterTree(
   options: UseCenterTreeOptions,
   savedCenterTree: SplitNode,
 ): CenterTreeHandle {
-  const { activeLogPaneIdRef, paneSessionMapRef, activateSessionForPane, openBottomPane } = options;
+  const { activeLogPaneIdRef, paneSessionMapRef, activateSessionForPane } = options;
+
+  // Read injected options from a ref inside the []-deps bus-subscription effect
+  // below, so it doesn't need to re-subscribe (or go stale) when the caller
+  // passes a new options object identity. Mirrors useLayoutPreset's optionsRef.
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
 
   const [centerTree, setCenterTree] = useState<SplitNode>(savedCenterTree);
   const treeRef = useRef<SplitNode>(centerTree);
@@ -457,7 +463,7 @@ export function useCenterTree(
         }
       }
       if (e.hasTrackers) {
-        openBottomPane('timeline');
+        optionsRef.current.openBottomPane('timeline');
       }
     };
 
