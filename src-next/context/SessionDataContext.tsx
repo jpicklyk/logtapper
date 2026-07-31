@@ -16,6 +16,7 @@ const EMPTY_FILTER: FilterState = {
   streamFilter: '',
   timeFilterStart: '',
   timeFilterEnd: '',
+  timeFilterLineNums: null,
   filterScanning: false,
   filteredLineNums: null,
   filterParseError: null,
