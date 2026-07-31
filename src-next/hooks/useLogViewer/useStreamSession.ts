@@ -77,20 +77,23 @@ export function useStreamSession(
       lostLineCount: payload.lostLineCount,
     }));
 
-    // Incremental filter: check only new lines from this batch
+    // Incremental filter: check only new lines from this batch. The AST is
+    // applied only when it belongs to the streaming session — the focused
+    // pane's filter must not capture (or be polluted by) another pane's
+    // stream in multi-pane layouts.
     const ast = refs.filterAstRef.current;
-    if (ast) {
+    if (ast && refs.filterAstSessionIdRef.current === payload.sessionId) {
       const pids = refs.packagePidsRef.current;
       const newMatches = payload.lines
         .filter((line) => matchesFilter(ast, line, pids))
         .map((line) => line.lineNum);
       if (newMatches.length > 0) {
-        refs.appendFilterMatchesRef.current?.(newMatches);
+        refs.appendFilterMatchesRef.current?.(payload.sessionId, newMatches);
       }
     }
   }, [cacheManager, registry, updateSession,
-      refs.streamingSessionIdRef, refs.filterAstRef, refs.packagePidsRef,
-      refs.appendFilterMatchesRef]);
+      refs.streamingSessionIdRef, refs.filterAstRef, refs.filterAstSessionIdRef,
+      refs.packagePidsRef, refs.appendFilterMatchesRef]);
 
   // Wire scheduleReconnectRef once. The effect has empty deps; it reads dynamic
   // values (settings, startStream) through refs so no re-creation is needed.

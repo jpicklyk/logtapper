@@ -49,7 +49,7 @@ For expressions the backend cannot reduce at all (top-level `NOT`, `tid:`, fully
 
 ## `appendMatches` contract
 
-`appendMatches(lineNums: number[])` is exposed on `FilterScanResult` and called via ref by `useStreamSession`. It appends line numbers to the session's `filteredLineNums` in context. It is a no-op when no filter is active (the caller checks `filterAstRef.current` before calling).
+`appendMatches(sessionId: string, lineNums: number[])` is exposed on `FilterScanResult` and called via ref by `useStreamSession`, which passes the **streaming** session's id (`payload.sessionId`). It appends line numbers to that session's `filteredLineNums` in context — never resolve the target from `sessionRef` (the focused session), which can belong to a different pane while a stream runs. The caller applies the filter AST only when `filterAstRef.current` is set **and** `filterAstSessionIdRef.current` matches the batch's session.
 
 ---
 

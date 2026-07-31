@@ -24,11 +24,15 @@ export interface SharedLogViewerRefs {
 
   // Filter AST (useFilterScan writes; useStreamSession reads in handleAdbBatch)
   filterAstRef: MutableRefObject<FilterNode | null>;
+  // Session the current filter AST belongs to. handleAdbBatch must only apply
+  // the AST to batches from this session — the focused session (sessionRef) can
+  // be a different pane's session while a stream is running.
+  filterAstSessionIdRef: MutableRefObject<string | null>;
   packagePidsRef: MutableRefObject<Map<string, number[]>>;
 
   // Incremental filter bridge: useFilterScan writes a stable callback here;
   // useStreamSession calls it from handleAdbBatch without a setState dep.
-  appendFilterMatchesRef: MutableRefObject<((lineNums: number[]) => void) | null>;
+  appendFilterMatchesRef: MutableRefObject<((sessionId: string, lineNums: number[]) => void) | null>;
 
   // Orchestrator writes this after defining resetSessionState so useStreamSession
   // can call it from startStream without being in the hook signature.

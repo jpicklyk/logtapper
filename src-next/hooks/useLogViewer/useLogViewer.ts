@@ -69,6 +69,7 @@ export function useLogViewer(cacheManager: CacheController, registry: StreamPush
       streamDeviceSerialRef:   { current: null },
       adbStoppedUnlistenRef:   { current: null },
       filterAstRef:            { current: null },
+      filterAstSessionIdRef:   { current: null },
       packagePidsRef:          { current: new Map() },
       appendFilterMatchesRef:  { current: null },
       resetSessionStateRef:    { current: () => {} },

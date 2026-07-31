@@ -24,8 +24,10 @@ export interface FilterScanResult {
   /** Cancel any active scan and clear results without changing the stored expression. */
   cancelStreamFilter: () => void;
   setTimeFilter: (start: string, end: string) => Promise<void>;
-  /** Append newly matched line numbers from an ADB batch. Called via ref by useStreamSession. */
-  appendMatches: (lineNums: number[]) => void;
+  /** Append newly matched line numbers from an ADB batch to the given session's
+   *  filter state. Called via ref by useStreamSession, which passes the
+   *  streaming session's id — never resolve the target from the focused session. */
+  appendMatches: (sessionId: string, lineNums: number[]) => void;
   reset: () => void;
 }
 
@@ -205,21 +207,19 @@ export function useFilterScan(cacheManager: CacheController, refs: SharedLogView
     filterUnlistenRef.current = null;
   }, []);
 
-  const appendMatches = useCallback((lineNums: number[]) => {
-    if (lineNums.length > 0) {
-      const sessionId = refs.sessionRef.current?.sessionId;
-      if (sessionId) appendSessionFilterMatches(sessionId, lineNums);
-    }
-  }, [appendSessionFilterMatches, refs.sessionRef]);
+  const appendMatches = useCallback((sessionId: string, lineNums: number[]) => {
+    if (lineNums.length > 0) appendSessionFilterMatches(sessionId, lineNums);
+  }, [appendSessionFilterMatches]);
 
   const reset = useCallback(() => {
     cancelActiveBackendFilter();
     const sessionId = refs.sessionRef.current?.sessionId;
     if (sessionId) resetSessionFilter(sessionId);
     refs.filterAstRef.current = null;
+    refs.filterAstSessionIdRef.current = null;
     refs.packagePidsRef.current = new Map();
     setTimeFilterLineNums(null);
-  }, [cancelActiveBackendFilter, refs.filterAstRef, refs.packagePidsRef, refs.sessionRef, resetSessionFilter]);
+  }, [cancelActiveBackendFilter, refs.filterAstRef, refs.filterAstSessionIdRef, refs.packagePidsRef, refs.sessionRef, resetSessionFilter]);
 
   const setStreamFilter = useCallback(async (expr: string) => {
     const sess = refs.sessionRef.current;
@@ -230,6 +230,7 @@ export function useFilterScan(cacheManager: CacheController, refs: SharedLogView
       cancelActiveBackendFilter();
       if (sess) setSessionFilter(sess.sessionId, { filterParseError: null, filteredLineNums: null });
       refs.filterAstRef.current = null;
+      refs.filterAstSessionIdRef.current = null;
       return;
     }
 
@@ -240,16 +241,19 @@ export function useFilterScan(cacheManager: CacheController, refs: SharedLogView
     } catch (e) {
       if (sess) setSessionFilter(sess.sessionId, { filterParseError: e instanceof FilterParseError ? e.message : String(e), filteredLineNums: null });
       refs.filterAstRef.current = null;
+      refs.filterAstSessionIdRef.current = null;
       return;
     }
 
     if (!ast) {
       refs.filterAstRef.current = null;
+      refs.filterAstSessionIdRef.current = null;
       if (sess) setSessionFilter(sess.sessionId, { filteredLineNums: null });
       return;
     }
 
     refs.filterAstRef.current = ast;
+    refs.filterAstSessionIdRef.current = sess?.sessionId ?? null;
 
     const packageNames = extractPackageNames(ast);
     const serial = refs.streamDeviceSerialRef.current;
@@ -321,6 +325,13 @@ export function useFilterScan(cacheManager: CacheController, refs: SharedLogView
       let lastFetched = 0;
       let listenerDone = false;
       let unlisten: (() => void) | null = null;
+      // The backend emits progress faster than one getFilteredLines round-trip
+      // on large files, and each handler run awaits the page fetch before
+      // advancing lastFetched — interleaved runs would read a stale lastFetched
+      // and fetch overlapping pages (duplicate, out-of-order matches). Runs are
+      // therefore serialized on this chain: each starts after the previous
+      // one has committed.
+      let handlerChain: Promise<void> = Promise.resolve();
 
       const handleProgress = async (progress: { filterId: string; matchedSoFar: number; done: boolean }) => {
         if (listenerDone || progress.filterId !== filterId) return;
@@ -368,7 +379,9 @@ export function useFilterScan(cacheManager: CacheController, refs: SharedLogView
         }
       };
 
-      onFilterProgress(handleProgress).then((fn) => {
+      onFilterProgress((progress) => {
+        handlerChain = handlerChain.then(() => handleProgress(progress)).catch(() => {});
+      }).then((fn) => {
         if (listenerDone) {
           fn(); // already done — unregister immediately
         } else {
@@ -429,8 +442,8 @@ export function useFilterScan(cacheManager: CacheController, refs: SharedLogView
         setSessionFilter(sess.sessionId, { filteredLineNums: [...matches], filterScanning: false });
       }
     }
-  }, [cancelActiveBackendFilter, cacheManager, setSessionFilter, refs.filterAstRef, refs.packagePidsRef,
-      refs.streamDeviceSerialRef, refs.sessionRef]);
+  }, [cancelActiveBackendFilter, cacheManager, setSessionFilter, refs.filterAstRef, refs.filterAstSessionIdRef,
+      refs.packagePidsRef, refs.streamDeviceSerialRef, refs.sessionRef]);
 
 
   const setTimeFilter = useCallback(async (start: string, end: string) => {
@@ -466,7 +479,8 @@ export function useFilterScan(cacheManager: CacheController, refs: SharedLogView
     const sessionId = refs.sessionRef.current?.sessionId;
     if (sessionId) setSessionFilter(sessionId, { filterScanning: false, filteredLineNums: null, filterParseError: null });
     refs.filterAstRef.current = null;
-  }, [cancelActiveBackendFilter, refs.filterAstRef, refs.sessionRef, setSessionFilter]);
+    refs.filterAstSessionIdRef.current = null;
+  }, [cancelActiveBackendFilter, refs.filterAstRef, refs.filterAstSessionIdRef, refs.sessionRef, setSessionFilter]);
 
   return {
     filterScanning,

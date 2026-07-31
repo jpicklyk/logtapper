@@ -51,10 +51,13 @@ const EditorTab = React.memo(function EditorTab({
   const savedContentRef = useRef(value);
   const prevTabIdRef = useRef(tabId);
 
-  // On mount, load from disk if a file path was persisted (overrides stale localStorage).
+  // On mount and on tab switch, load from disk if a file path was persisted for
+  // this tab (overrides stale localStorage). The path must come from storage
+  // keyed by tabId — filePathRef still holds the outgoing tab's path when this
+  // effect runs during a switch (it is declared before the switch effect below).
   useEffect(() => {
     let cancelled = false;
-    const fp = filePathRef.current;
+    const fp = storageGet(LS_FILEPATH_PREFIX + tabId) || null;
     if (fp) {
       readTextFile(fp).then(content => {
         if (cancelled) return;
