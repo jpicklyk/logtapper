@@ -3,7 +3,9 @@ use regex::Regex;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, Weak};
+use std::sync::Weak;
+#[cfg(test)]
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tempfile::NamedTempFile;
 
