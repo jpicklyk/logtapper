@@ -192,9 +192,10 @@ const AnalysisList = React.memo(function AnalysisList() {
   const { openTab } = usePaneActions();
 
   const handleOpen = useCallback((artifactId: string) => {
-    bus.emit('analysis:open', { artifactId });
+    if (!sessionId) return;
+    bus.emit('analysis:open', { artifactId, sessionId });
     openTab('analysis');
-  }, [openTab]);
+  }, [openTab, sessionId]);
 
   const handleDelete = useCallback((artifactId: string) => {
     deleteSessionAnalysis(artifactId);

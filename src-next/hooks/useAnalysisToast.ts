@@ -55,7 +55,7 @@ export function useAnalysisToast(addToast: (toast: ToastItem) => void) {
             title: 'New Analysis',
             message: artifact.title,
             onClick: () => {
-              bus.emit('analysis:open', { artifactId: artifact.id });
+              bus.emit('analysis:open', { artifactId: artifact.id, sessionId: payload.sessionId });
               bus.emit('layout:open-tab', { type: 'analysis' });
             },
           });

@@ -16,14 +16,18 @@ const AnalysisReader = React.memo(function AnalysisReader() {
   const { jumpToLine } = useNavigationActions();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // Listen for analysis:open events from the left pane list
+  // Listen for analysis:open events from the left pane list. `sessionId` on
+  // the event targets a specific pane's reader — with analysis tabs open in
+  // two panes for different sessions, an event meant for the other pane must
+  // be ignored here rather than stealing this pane's selection.
   useEffect(() => {
-    const handler = ({ artifactId }: { artifactId: string }) => {
+    const handler = ({ artifactId, sessionId: targetSessionId }: { artifactId: string; sessionId: string }) => {
+      if (targetSessionId !== sessionId) return;
       setSelectedId(artifactId);
     };
     bus.on('analysis:open', handler);
     return () => { bus.off('analysis:open', handler); };
-  }, []);
+  }, [sessionId]);
 
   // Auto-select first artifact if none selected
   useEffect(() => {

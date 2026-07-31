@@ -113,8 +113,11 @@ export type AppEvents = {
   };
 
   // ── Analysis ──────────────────────────────────────────────────────────────
-  /** Fired when the user selects an analysis artifact to view in the center tab. */
-  'analysis:open':          { artifactId: string };
+  /** Fired when the user selects an analysis artifact to view in the center tab.
+   *  `sessionId` targets the specific pane's AnalysisReader — with analysis tabs
+   *  open in two panes for different sessions, an untargeted event would land
+   *  on whichever reader mounted last regardless of which session it belongs to. */
+  'analysis:open':          { artifactId: string; sessionId: string };
   /** Fired when the local UI publishes an analysis — used by useAnalysisToast to suppress toasts. */
   'analysis:published-local':    { artifactId: string };
   /** Fired when an analysis is published externally (e.g. via MCP bridge), not by local UI. */
