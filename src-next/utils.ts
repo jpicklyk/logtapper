@@ -7,6 +7,37 @@ export function clamp(val: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, val));
 }
 
+/** Sorted merge intersection of two sorted number arrays. O(n+m). */
+export function intersectSorted(a: number[], b: number[]): number[] {
+  const result: number[] = [];
+  let i = 0, j = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      result.push(a[i]);
+      i++; j++;
+    } else if (a[i] < b[j]) {
+      i++;
+    } else {
+      j++;
+    }
+  }
+  return result;
+}
+
+/**
+ * Intersects any number of active (non-null) sorted line-number filters —
+ * e.g. section filter, stream filter, and time filter results in the log
+ * viewer. A `null` entry means that filter is inactive and is skipped — it
+ * does not narrow the result. Returns `null` (unfiltered) only when every
+ * filter is inactive; an active filter matching zero lines still narrows
+ * the result to `[]`.
+ */
+export function intersectAllSorted(filters: Array<number[] | null>): number[] | null {
+  const active = filters.filter((f): f is number[] => f !== null);
+  if (active.length === 0) return null;
+  return active.reduce((acc, cur) => intersectSorted(acc, cur));
+}
+
 /** Extract the filename from a path (handles both / and \ separators). */
 export function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path;

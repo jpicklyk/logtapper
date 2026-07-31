@@ -169,10 +169,10 @@ export function useFileActions() {
 
 export function usePaneActions() {
   const { setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter,
-          openTab } = useActionsContext();
+          setTimeFilter, openTab } = useActionsContext();
   return useMemo(
-    () => ({ setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter, openTab }),
-    [setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter, openTab],
+    () => ({ setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter, setTimeFilter, openTab }),
+    [setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter, setTimeFilter, openTab],
   );
 }
 
@@ -250,6 +250,9 @@ export function useStreamFilter(paneId: string): {
   filteredLineNums: number[] | null;
   parseError: string | null;
   sectionFilteredLineNums: number[] | null;
+  timeFilterStart: string;
+  timeFilterEnd: string;
+  timeFilterLineNums: number[] | null;
 } {
   const { paneSessionMap } = useSessionCoreCtx();
   const { filterStateBySession } = useSessionProgressCtx();
@@ -261,6 +264,9 @@ export function useStreamFilter(paneId: string): {
     filteredLineNums: state?.filteredLineNums ?? null,
     parseError: state?.filterParseError ?? null,
     sectionFilteredLineNums: state?.sectionFilteredLineNums ?? null,
+    timeFilterStart: state?.timeFilterStart ?? '',
+    timeFilterEnd: state?.timeFilterEnd ?? '',
+    timeFilterLineNums: state?.timeFilterLineNums ?? null,
   }), [state]);
 }
 
