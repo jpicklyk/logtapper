@@ -248,25 +248,4 @@ export default tseslint.config(
     },
   },
 
-  // hooks/usePipeline.ts — allowed listen() but NOT invoke()
-  {
-    files: ['src-next/hooks/usePipeline.ts'],
-    rules: {
-      'no-restricted-imports': ['error', {
-        patterns: [
-          {
-            group: ['@tauri-apps/api/core'],
-            importNames: ['invoke', 'Channel'],
-            message: 'Use bridge/commands wrappers instead of direct invoke()/Channel.',
-          },
-          // listen() is allowed for this hook — omitted from patterns
-          {
-            group: ['**/context/SessionContext*'],
-            importNames: ['useSessionContext'],
-            message: 'useSessionContext is deprecated. Use useSessionCoreCtx, useSessionPaneCtx, or useSessionProgressCtx directly.',
-          },
-        ],
-      }],
-    },
-  },
 );
