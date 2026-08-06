@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use tauri::State;
+use tauri::{Emitter, State};
 
 use crate::commands::{lock_or_err, AppState};
 use crate::workspace::app_state::{self, AppStateFile};
@@ -24,12 +24,17 @@ use serde::{Deserialize, Serialize};
 pub(crate) type SessionEntry = (
     LtwManifestSession,
     Vec<crate::core::bookmark::Bookmark>,
-    Vec<crate::core::analysis::AnalysisArtifact>,
     SessionMeta,
 );
 
-/// Snapshot all open sessions and their artifacts from AppState.
-/// Acquires locks briefly: sessions once, bookmarks/analyses/meta once each.
+/// Snapshot all open sessions and their bookmarks from AppState.
+/// Acquires locks briefly: sessions once, bookmarks/meta once each.
+///
+/// Analyses are workspace-owned (not keyed by session) and are no longer part
+/// of this per-session snapshot — they are collected separately via
+/// [`crate::commands::workspace_sync::snapshot_workspace_analyses`] and
+/// written to the top-level `analyses.json` entry in the `.ltw` (see
+/// `workspace::ltw_v4`).
 pub(crate) fn collect_session_data(state: &AppState) -> Result<Vec<SessionEntry>, String> {
     // Snapshot session info under brief lock
     // (id, file_path, source_name, source_type, source_type_override)
@@ -55,7 +60,6 @@ pub(crate) fn collect_session_data(state: &AppState) -> Result<Vec<SessionEntry>
     let mut entries = Vec::with_capacity(session_info.len());
     {
         let bm_guard = lock_or_err(&state.bookmarks, "bookmarks")?;
-        let an_guard = lock_or_err(&state.analyses, "analyses")?;
         let meta_guard = lock_or_err(&state.session_pipeline_meta, "session_pipeline_meta")?;
         for (session_id, file_path, source_name, source_type, source_type_override) in session_info {
             entries.push((
@@ -64,9 +68,14 @@ pub(crate) fn collect_session_data(state: &AppState) -> Result<Vec<SessionEntry>
                     source_name,
                     source_type,
                     source_type_override,
+                    // T8: stamp the live session id so a later restore can
+                    // detect drift — the file at `file_path` changed since this
+                    // save (deterministic ids mean a content change re-derives
+                    // a different id) and any analysis reference keyed to this
+                    // id would otherwise silently point at the wrong lines.
+                    expected_session_id: Some(session_id.clone()),
                 },
                 bm_guard.get(&session_id).cloned().unwrap_or_default(),
-                an_guard.get(&session_id).cloned().unwrap_or_default(),
                 meta_guard.get(&session_id).cloned().unwrap_or_default(),
             ));
         }
@@ -96,12 +105,11 @@ pub(crate) fn snapshot_session_ids(state: &AppState) -> Result<Vec<String>, Stri
 pub(crate) fn entry_refs(entries: &[SessionEntry]) -> Vec<(
     LtwManifestSession,
     &[crate::core::bookmark::Bookmark],
-    &[crate::core::analysis::AnalysisArtifact],
     &SessionMeta,
 )> {
     entries
         .iter()
-        .map(|(m, b, a, meta)| (m.clone(), b.as_slice(), a.as_slice(), meta))
+        .map(|(m, b, meta)| (m.clone(), b.as_slice(), meta))
         .collect()
 }
 
@@ -141,6 +149,7 @@ fn write_workspace_snapshot(
     );
 
     let entries = collect_session_data(state)?;
+    let workspace_analyses = crate::commands::workspace_sync::snapshot_workspace_analyses(state);
 
     // Serialise against the background flush's write on the same file.
     let _guard = state.ltw_write_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -149,6 +158,7 @@ fn write_workspace_snapshot(
         workspace_name,
         Some(workspace_id),
         &entry_refs(&entries),
+        &workspace_analyses,
         chain,
         editor_tabs,
         layout,
@@ -342,6 +352,10 @@ pub async fn begin_workspace_switch(state: State<'_, AppState>) -> Result<(), St
 #[serde(rename_all = "camelCase")]
 pub struct LoadWorkspaceSessionData {
     pub bookmarks: Vec<crate::core::bookmark::Bookmark>,
+    /// Legacy per-session analyses payload — populated only when the source
+    /// `.ltw` predates the analyses migration (see `LtwSessionData::analyses`
+    /// / `workspace::ltw_v4` module doc). Current files always read `[]` here;
+    /// the workspace's real analyses are on [`LoadWorkspaceResult::analyses`].
     pub analyses: Vec<crate::core::analysis::AnalysisArtifact>,
     pub active_processor_ids: Vec<String>,
     pub disabled_processor_ids: Vec<String>,
@@ -363,6 +377,10 @@ pub struct LoadWorkspaceResult {
     pub pipeline_chain: LtwPipelineChain,
     pub editor_tabs: Vec<LtwEditorTab>,
     pub layout: Option<LtwLayout>,
+    /// Workspace-level analyses (top-level `analyses.json`). Empty for a
+    /// pre-migration file — see [`LoadWorkspaceSessionData::analyses`] for
+    /// where that data surfaces instead.
+    pub analyses: Vec<crate::core::analysis::AnalysisArtifact>,
     /// Per-session artifacts ordered to match `sessions` by index.
     pub session_data: Vec<LoadWorkspaceSessionData>,
 }
@@ -387,6 +405,7 @@ pub async fn load_workspace_v4(path: String) -> Result<LoadWorkspaceResult, Stri
         pipeline_chain: data.pipeline_chain,
         editor_tabs: data.editor_tabs,
         layout: data.layout,
+        analyses: data.analyses,
         session_data,
     })
 }
@@ -407,7 +426,25 @@ pub struct RestoreSessionOptions {
 }
 
 /// Restore bookmarks, analyses, and pipeline meta for a session that was just
-/// loaded as part of a `.ltw` workspace restore. Emits `workspace-restored`.
+/// loaded as part of a `.ltw` workspace restore. Emits `workspace-restored`,
+/// and — only when at least one LEGACY per-session analysis was actually
+/// merged into the workspace-owned store (`options.analyses` is non-empty
+/// only for a pre-migration `.ltw`; see `LoadWorkspaceSessionData::analyses`)
+/// — also emits `analysis-update` (`restored`) so the frontend re-lists.
+///
+/// Without this second emit, a legacy `.ltw`'s per-session analyses land in
+/// `AppState::analyses` (via `restore_artifacts`) but the frontend's analysis
+/// list — already fetched earlier in the restore sequence, before this
+/// session's artifacts existed — never learns anything changed, so those
+/// analyses stay invisible until the app restarts (or something else happens
+/// to trigger a re-list). Current (post-migration) `.ltw` files carry their
+/// analyses in the top-level `analyses.json` / `LoadWorkspaceResult::analyses`
+/// instead and go through `set_workspace_analyses`, which already emits this
+/// same event — so this path only matters for legacy files. Gated on
+/// `an_count > 0` to avoid a gratuitous re-list on every bookmark-only
+/// restore. Autosave is suppressed during a workspace restore (see
+/// `AppState::autosave_switch_suppressed_until`), so this emit has no
+/// persistence side effect.
 #[tauri::command]
 pub async fn restore_workspace_session(
     state: State<'_, AppState>,
@@ -435,6 +472,18 @@ pub async fn restore_workspace_session(
         meta,
         "workspace",
     );
+
+    if an_count > 0 {
+        let _ = app.emit(
+            "analysis-update",
+            crate::core::analysis::AnalysisUpdateEvent {
+                artifact_id: String::new(),
+                action: "restored".to_string(),
+                session_ids: vec![],
+                session_id: None,
+            },
+        );
+    }
 
     Ok(())
 }

@@ -2,14 +2,29 @@ import React from 'react';
 import Markdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { AnalysisSection } from '../../bridge/types';
+import type { AnalysisSection, SourceReference } from '../../bridge/types';
 import { severityColor } from '../../bridge/types';
 import LineReference from './LineReference';
 import styles from './AnalysisReader.module.css';
 
+/**
+ * A section reference augmented with resolution info computed once by
+ * AnalysisReader (from `useSessionLabels()`). Keeping the data precomputed —
+ * rather than passing a resolver callback down — keeps this component's
+ * props stable data, not a function reference that changes identity.
+ */
+export interface ResolvedReference extends SourceReference {
+  resolved: boolean;
+  sourceLabel?: string;
+}
+
+export interface ResolvedSection extends Omit<AnalysisSection, 'references'> {
+  references: ResolvedReference[];
+}
+
 interface Props {
-  section: AnalysisSection;
-  onJumpToLine: (lineNum: number) => void;
+  section: ResolvedSection;
+  onJump: (reference: SourceReference) => void;
 }
 
 const markdownComponents: Components = {
@@ -22,13 +37,13 @@ const markdownComponents: Components = {
   },
 };
 
-const MarkdownSection = React.memo(function MarkdownSection({ section, onJumpToLine }: Props) {
+const MarkdownSection = React.memo(function MarkdownSection({ section, onJump }: Props) {
   const borderColor = section.severity
     ? severityColor(section.severity)
     : 'var(--border-subtle)';
 
   return (
-    <div className={styles.section} style={{ borderLeftColor: borderColor }}>
+    <div className={styles.section} style={{ '--section-accent': borderColor } as React.CSSProperties}>
       <div className={styles.sectionHeader}>
         <h3 className={styles.sectionHeading}>{section.heading}</h3>
         {section.severity && (
@@ -46,7 +61,7 @@ const MarkdownSection = React.memo(function MarkdownSection({ section, onJumpToL
             <LineReference
               key={`${ref.lineNumber}-${i}`}
               reference={ref}
-              onJump={onJumpToLine}
+              onJump={onJump}
             />
           ))}
         </div>

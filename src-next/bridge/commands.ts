@@ -408,37 +408,43 @@ export function deleteBookmark(sessionId: string, bookmarkId: string): Promise<v
 // ---------------------------------------------------------------------------
 
 export function publishAnalysis(
-  sessionId: string,
   title: string,
   sections: AnalysisSection[],
+  sessionId?: string | null,
 ): Promise<AnalysisArtifact> {
-  return invoke('publish_analysis', { sessionId, title, sections });
+  return invoke('publish_analysis', { sessionId: sessionId ?? null, title, sections });
 }
 
 export function updateAnalysis(
-  sessionId: string,
   artifactId: string,
   title?: string,
   sections?: AnalysisSection[],
 ): Promise<AnalysisArtifact> {
   return invoke('update_analysis', {
-    sessionId,
     artifactId,
     title: title ?? null,
     sections: sections ?? null,
   });
 }
 
-export function listAnalyses(sessionId: string): Promise<AnalysisArtifact[]> {
-  return invoke('list_analyses', { sessionId });
+/** Workspace-owned analyses list. Pass a sessionId to filter to analyses that
+ *  reference that session; omit (or pass null/undefined) for the full list. */
+export function listAnalyses(sessionId?: string | null): Promise<AnalysisArtifact[]> {
+  return invoke('list_analyses', { sessionId: sessionId ?? null });
 }
 
-export function getAnalysis(sessionId: string, artifactId: string): Promise<AnalysisArtifact> {
-  return invoke('get_analysis', { sessionId, artifactId });
+export function getAnalysis(artifactId: string): Promise<AnalysisArtifact> {
+  return invoke('get_analysis', { artifactId });
 }
 
-export function deleteAnalysis(sessionId: string, artifactId: string): Promise<void> {
-  return invoke('delete_analysis', { sessionId, artifactId });
+export function deleteAnalysis(artifactId: string): Promise<void> {
+  return invoke('delete_analysis', { artifactId });
+}
+
+/** Wholesale replace the workspace analyses store (used by workspace restore).
+ *  Does not schedule an autosave flush. */
+export function setWorkspaceAnalyses(analyses: AnalysisArtifact[]): Promise<void> {
+  return invoke('set_workspace_analyses', { analyses });
 }
 
 // ---------------------------------------------------------------------------

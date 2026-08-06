@@ -133,7 +133,7 @@ function ok(data: unknown): { content: Array<{ type: "text"; text: string }> } {
 
 const server = new McpServer({
   name: "logtapper",
-  version: "1.2.0",
+  version: "1.3.0",
   description:
     "Query live Android log sessions loaded in LogTapper. " +
     "Use these tools to inspect log content, state-tracker events, and " +
@@ -866,12 +866,30 @@ server.tool(
 server.tool(
   "logtapper_analyses",
   "Manage analysis artifacts — structured narratives with line references that " +
-    "appear in the LogTapper UI. Use 'list' to see all analyses, 'get' for full " +
-    "content, 'publish' to create a new analysis, 'update' to revise, or 'delete' " +
-    "to remove. Each analysis has a title and sections with headings, body text, " +
-    "optional severity, and line references.",
+    "appear in the LogTapper UI. Analyses are workspace-owned, not session-owned: " +
+    "a single analysis may reference lines across multiple sessions (or none at " +
+    "all) via a per-reference sessionId. Use 'list' to see analyses, 'get' for " +
+    "full content, 'publish' to create a new analysis, 'update' to revise, or " +
+    "'delete' to remove. Each analysis has a title and sections with headings, " +
+    "body text, optional severity, and line references. Omit session_id to " +
+    "operate workspace-wide ('list' returns every analysis, 'publish' creates one " +
+    "with no session verification and unattributed references stay unattributed). " +
+    "Pass session_id to scope 'list' to analyses referencing that session, or to " +
+    "have 'publish' verify the session exists and stamp any reference lacking its " +
+    "own sessionId with it. 'get', 'update', and 'delete' always resolve by " +
+    "artifact_id alone (artifact IDs are workspace-unique) — session_id is not " +
+    "needed for those and is ignored if passed. A reference left unresolved (no " +
+    "sessionId, and none inferred from a session-scoped publish) still displays " +
+    "in the UI but cannot be attributed to a specific session's log lines.",
   {
-    session_id: z.string().describe("Session ID"),
+    session_id: z
+      .string()
+      .optional()
+      .describe(
+        "Session ID. Optional: scopes 'list'/'publish' to a session; ignored by " +
+          "'get'/'update'/'delete', which resolve by artifact_id alone. Omit for " +
+          "workspace-wide list/publish."
+      ),
     action: z
       .enum(["list", "get", "publish", "update", "delete"])
       .describe("Action: list, get, publish, update, or delete"),
@@ -902,6 +920,15 @@ server.tool(
                   .enum(["Annotation", "Anchor"])
                   .optional()
                   .describe("Highlight style: 'Annotation' (subtle) or 'Anchor' (prominent). Default 'Annotation'."),
+                sessionId: z
+                  .string()
+                  .optional()
+                  .describe(
+                    "Session this reference's line numbers belong to. Omit to " +
+                      "attribute it to the tool call's session_id (session-scoped " +
+                      "publish), or leave it unattributed (workspace publish with " +
+                      "no session_id)."
+                  ),
               })
             )
             .optional()
@@ -912,45 +939,46 @@ server.tool(
       .describe("Analysis sections (required for publish, optional for update)"),
   },
   async ({ session_id, action, artifact_id, title, sections }) => {
-    const sid = encodeURIComponent(session_id);
+    const sid = session_id ? encodeURIComponent(session_id) : undefined;
     try {
       switch (action) {
         case "list":
-          return ok(await bridgeGet(`/mcp/sessions/${sid}/analyses`));
+          return ok(
+            await bridgeGet(sid ? `/mcp/sessions/${sid}/analyses` : "/mcp/analyses")
+          );
         case "get":
           if (!artifact_id) {
             return ok({ error: "artifact_id is required for 'get'" });
           }
           return ok(
-            await bridgeGet(
-              `/mcp/sessions/${sid}/analyses/${encodeURIComponent(artifact_id)}`
-            )
+            await bridgeGet(`/mcp/analyses/${encodeURIComponent(artifact_id)}`)
           );
         case "publish":
           if (!title || !sections) {
             return ok({ error: "title and sections are required for 'publish'" });
           }
           return ok(
-            await bridgePost(`/mcp/sessions/${sid}/analyses`, { title, sections })
+            await bridgePost(
+              sid ? `/mcp/sessions/${sid}/analyses` : "/mcp/analyses",
+              { title, sections }
+            )
           );
         case "update":
           if (!artifact_id) {
             return ok({ error: "artifact_id is required for 'update'" });
           }
           return ok(
-            await bridgePut(
-              `/mcp/sessions/${sid}/analyses/${encodeURIComponent(artifact_id)}`,
-              { title, sections }
-            )
+            await bridgePut(`/mcp/analyses/${encodeURIComponent(artifact_id)}`, {
+              title,
+              sections,
+            })
           );
         case "delete":
           if (!artifact_id) {
             return ok({ error: "artifact_id is required for 'delete'" });
           }
           return ok(
-            await bridgeDelete(
-              `/mcp/sessions/${sid}/analyses/${encodeURIComponent(artifact_id)}`
-            )
+            await bridgeDelete(`/mcp/analyses/${encodeURIComponent(artifact_id)}`)
           );
       }
     } catch (err) {

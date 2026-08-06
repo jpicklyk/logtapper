@@ -35,8 +35,6 @@ export { useAnonymizerConfig } from './useAnonymizerConfig';
 export type { UseAnonymizerConfigResult } from './useAnonymizerConfig';
 export { useBookmarks, useBookmarkLines, useBookmarkLookup } from './useBookmarks';
 export type { BookmarkState } from './useBookmarks';
-export { useAnalysis } from './useAnalysis';
-export type { AnalysisState } from './useAnalysis';
 export { useWatchList } from './useWatchList';
 export type { UseWatchListReturn } from './useWatchList';
 export { useMarketplace } from './useMarketplace';

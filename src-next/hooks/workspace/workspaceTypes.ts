@@ -63,7 +63,9 @@ export interface WorkspaceLayoutState {
   resizeSplit: (splitNodeId: string, ratio: number) => void;
   renameTab: (tabId: string, label: string) => void;
   setTabUnsaved: (tabId: string, isDirty: boolean) => void;
-  openCenterTab: (type: CenterTabType, label?: string, filePath?: string, editorState?: EditorTabState) => void;
+  /** Returns the pane id the tab was activated (reuse) or created in — null
+   *  only if there was no leaf to place it in. */
+  openCenterTab: (type: CenterTabType, label?: string, filePath?: string, editorState?: EditorTabState) => string | null;
   dropTabOnPane: (tabId: string, fromPaneId: string, toPaneId: string, zone: DropZone) => void;
   /** Reset the center tree to a single empty pane (for workspace clear/switch). */
   clearTree: () => void;

@@ -203,7 +203,7 @@ const PaneContentInner = React.memo(function PaneContentInner({ pane, onDirtyCha
       case 'analysis':
         return (
           <div className="fullHeight">
-            <AnalysisReader />
+            <AnalysisReader paneId={pane.id} />
           </div>
         );
 

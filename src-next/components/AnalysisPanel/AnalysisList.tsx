@@ -1,11 +1,11 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Trash2, ExternalLink, MapPin } from 'lucide-react';
 import type { AnalysisArtifact, AnalysisSection, AnalysisSeverity } from '../../bridge/types';
 import { severityColor } from '../../bridge/types';
-import { useSession, usePaneActions } from '../../context';
-import { useAnalysis } from '../../hooks';
-import { useSessionAnalysisActions } from '../../context';
-import { bus } from '../../events';
+import { useSession, usePaneActions, useWorkspaceAnalyses, useSessionLabels } from '../../context';
+import { useAnalysisActions } from '../../context';
+import { attributeArtifact, artifactAppliesToSession, type ArtifactAttribution } from './analysisAttribution';
+import SourceChips from './SourceChips';
 import styles from './AnalysisList.module.css';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -50,7 +50,7 @@ function extractExcerpt(body: string, maxLen = 120): string {
     .replace(/\s{2,}/g, ' ')             // collapse whitespace
     .trim();
   if (plain.length <= maxLen) return plain;
-  return plain.slice(0, maxLen).replace(/\s+\S*$/, '') + '\u2026';
+  return plain.slice(0, maxLen).replace(/\s+\S*$/, '') + '…';
 }
 
 function relativeTime(epochMs: number): string {
@@ -86,11 +86,12 @@ const SectionRow = React.memo(function SectionRow({
 
 interface ItemProps {
   artifact: AnalysisArtifact;
+  attribution: ArtifactAttribution;
   onOpen: (id: string) => void;
   onDelete: (id: string) => void;
 }
 
-const AnalysisItem = React.memo(function AnalysisItem({ artifact, onOpen, onDelete }: ItemProps) {
+const AnalysisItem = React.memo(function AnalysisItem({ artifact, attribution, onOpen, onDelete }: ItemProps) {
   const severity = highestSeverity(artifact);
   const sevCounts = useMemo(() => severityCounts(artifact.sections), [artifact.sections]);
   const refCount = useMemo(() => totalRefs(artifact), [artifact.sections]);
@@ -142,16 +143,19 @@ const AnalysisItem = React.memo(function AnalysisItem({ artifact, onOpen, onDele
       {/* Meta row: time + stats */}
       <div className={styles.cardMeta}>
         <span>{relativeTime(artifact.createdAt)}</span>
-        <span className={styles.metaDivider}>{'\u00b7'}</span>
+        <span className={styles.metaDivider}>{'·'}</span>
         <span>{artifact.sections.length} section{artifact.sections.length !== 1 ? 's' : ''}</span>
         {refCount > 0 && (
           <>
-            <span className={styles.metaDivider}>{'\u00b7'}</span>
+            <span className={styles.metaDivider}>{'·'}</span>
             <MapPin size={10} className={styles.metaIcon} />
             <span>{refCount} ref{refCount !== 1 ? 's' : ''}</span>
           </>
         )}
       </div>
+
+      {/* Source attribution chips */}
+      <SourceChips attribution={attribution} />
 
       {/* Severity breakdown pills */}
       {sevCounts.length > 0 && (
@@ -198,28 +202,47 @@ const AnalysisItem = React.memo(function AnalysisItem({ artifact, onOpen, onDele
 
 const AnalysisList = React.memo(function AnalysisList() {
   const session = useSession();
-  const sessionId = session?.sessionId ?? null;
-  const { artifacts, analysisLoading } = useAnalysis(sessionId);
-  const { deleteSessionAnalysis } = useSessionAnalysisActions();
-  const { openTab } = usePaneActions();
+  const focusedSessionId = session?.sessionId ?? null;
+  // Analyses are workspace-owned — they outlive the file/session that
+  // produced them, so the list shows the full workspace set by default.
+  // "This file only" opts into filtering down to the focused session.
+  const { artifacts, analysisLoading } = useWorkspaceAnalyses();
+  const labels = useSessionLabels();
+  const { deleteAnalysis } = useAnalysisActions();
+  const { openAnalysis } = usePaneActions();
+  const [fileOnly, setFileOnly] = useState(false);
+
+  const sortedArtifacts = useMemo(
+    () => [...artifacts].sort((a, b) => b.createdAt - a.createdAt),
+    [artifacts],
+  );
+
+  const attributions = useMemo(() => {
+    const map = new Map<string, ArtifactAttribution>();
+    for (const a of sortedArtifacts) map.set(a.id, attributeArtifact(a, labels));
+    return map;
+  }, [sortedArtifacts, labels]);
+
+  const visibleArtifacts = useMemo(() => {
+    if (!fileOnly) return sortedArtifacts;
+    if (!focusedSessionId) return [];
+    return sortedArtifacts.filter((a) => {
+      const attribution = attributions.get(a.id);
+      return attribution ? artifactAppliesToSession(attribution, focusedSessionId) : false;
+    });
+  }, [fileOnly, focusedSessionId, sortedArtifacts, attributions]);
 
   const handleOpen = useCallback((artifactId: string) => {
-    if (!sessionId) return;
-    bus.emit('analysis:open', { artifactId, sessionId });
-    openTab('analysis');
-  }, [openTab, sessionId]);
+    openAnalysis(artifactId);
+  }, [openAnalysis]);
 
   const handleDelete = useCallback((artifactId: string) => {
-    deleteSessionAnalysis(artifactId);
-  }, [deleteSessionAnalysis]);
+    deleteAnalysis(artifactId);
+  }, [deleteAnalysis]);
 
-  if (!sessionId) {
-    return (
-      <div className={styles.root}>
-        <div className={styles.empty}>No session loaded.</div>
-      </div>
-    );
-  }
+  const handleFileOnlyToggle = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setFileOnly(e.target.checked);
+  }, []);
 
   return (
     <div className={styles.root}>
@@ -228,20 +251,33 @@ const AnalysisList = React.memo(function AnalysisList() {
         {artifacts.length > 0 && (
           <span className={styles.headerCount}>{artifacts.length}</span>
         )}
+        <label className={styles.fileOnlyToggle}>
+          <input
+            type="checkbox"
+            checked={fileOnly}
+            onChange={handleFileOnlyToggle}
+            className={styles.fileOnlyCheckbox}
+          />
+          This file only
+        </label>
       </div>
       {analysisLoading && artifacts.length === 0 && (
-        <div className={styles.empty}>Loading{'\u2026'}</div>
+        <div className={styles.empty}>Loading{'…'}</div>
       )}
       {!analysisLoading && artifacts.length === 0 && (
         <div className={styles.empty}>
           No analyses yet.{'\n'}Claude can publish analyses via MCP.
         </div>
       )}
+      {!analysisLoading && artifacts.length > 0 && visibleArtifacts.length === 0 && (
+        <div className={styles.empty}>No analyses reference this file.</div>
+      )}
       <div className={styles.list}>
-        {artifacts.map((a) => (
+        {visibleArtifacts.map((a) => (
           <AnalysisItem
             key={a.id}
             artifact={a}
+            attribution={attributions.get(a.id)!}
             onOpen={handleOpen}
             onDelete={handleDelete}
           />

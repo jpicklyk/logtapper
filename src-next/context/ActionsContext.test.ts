@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { tracked, trackMutations, MUTATION_ACTION_KEYS } from './ActionsContext';
+import { tracked, trackMutations, MUTATION_ACTION_KEYS, ARTIFACT_MUTATION_ACTION_KEYS } from './ActionsContext';
 
 // ---------------------------------------------------------------------------
 // tracked() — wraps a function with a post-execution callback
@@ -132,6 +132,87 @@ describe('trackMutations', () => {
     // These are NOT in MUTATION_ACTION_KEYS — they manage clean/dirty themselves
     expect(actions.newWorkspace).toBe(newWorkspace);
     expect(actions.saveWorkspace).toBe(saveWorkspace);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// trackMutations() — artifact-tracked actions (analysis mutations)
+// ---------------------------------------------------------------------------
+describe('trackMutations — artifact-tracked actions', () => {
+  it('wraps publishAnalysis and calls markDirty after it resolves', async () => {
+    const markDirty = vi.fn();
+    const publishAnalysis = vi.fn(async () => ({ id: 'art-1' }));
+    const actions = trackMutations({ publishAnalysis } as never, markDirty);
+
+    expect(actions.publishAnalysis).not.toBe(publishAnalysis);
+    await actions.publishAnalysis!('title', []);
+    expect(markDirty).toHaveBeenCalledOnce();
+  });
+
+  it('wraps updateAnalysis and deleteAnalysis', async () => {
+    const markDirty = vi.fn();
+    const updateAnalysis = vi.fn(async () => ({ id: 'art-1' }));
+    const deleteAnalysis = vi.fn(async () => {});
+    const actions = trackMutations({ updateAnalysis, deleteAnalysis } as never, markDirty);
+
+    await actions.updateAnalysis!('art-1', 'new title');
+    await actions.deleteAnalysis!('art-1');
+    expect(markDirty).toHaveBeenCalledTimes(2);
+  });
+
+  it('emits workspace:mutated with source "artifact" for artifact-tracked actions', async () => {
+    const emitted: Array<{ event: string; payload: unknown }> = [];
+    // Spy on the real bus (mitt) rather than mocking the module — trackMutations
+    // imports `bus` directly, so intercepting emit here observes exactly what
+    // it calls.
+    const { bus } = await import('../events');
+    const onAny = (payload: unknown) => emitted.push({ event: 'workspace:mutated', payload });
+    bus.on('workspace:mutated', onAny);
+
+    const markDirty = vi.fn();
+    const deleteAnalysis = vi.fn(async () => {});
+    const actions = trackMutations({ deleteAnalysis } as never, markDirty);
+    await actions.deleteAnalysis!('art-1');
+
+    bus.off('workspace:mutated', onAny);
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].payload).toEqual({ source: 'artifact' });
+  });
+
+  it('emits workspace:mutated with source "workspace" for workspace-tracked actions', async () => {
+    const emitted: Array<{ event: string; payload: unknown }> = [];
+    const { bus } = await import('../events');
+    const onAny = (payload: unknown) => emitted.push({ event: 'workspace:mutated', payload });
+    bus.on('workspace:mutated', onAny);
+
+    const markDirty = vi.fn();
+    const addToChain = vi.fn();
+    const actions = trackMutations({ addToChain }, markDirty);
+    actions.addToChain!('proc-1');
+
+    bus.off('workspace:mutated', onAny);
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].payload).toEqual({ source: 'workspace' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ARTIFACT_MUTATION_ACTION_KEYS — registry completeness + disjointness
+// ---------------------------------------------------------------------------
+describe('ARTIFACT_MUTATION_ACTION_KEYS', () => {
+  it('contains exactly the analysis mutation actions', () => {
+    const set = ARTIFACT_MUTATION_ACTION_KEYS as ReadonlySet<string>;
+    expect(set.size).toBe(3);
+    expect(set.has('publishAnalysis')).toBe(true);
+    expect(set.has('updateAnalysis')).toBe(true);
+    expect(set.has('deleteAnalysis')).toBe(true);
+  });
+
+  it('is disjoint from MUTATION_ACTION_KEYS', () => {
+    const artifactKeys = ARTIFACT_MUTATION_ACTION_KEYS as ReadonlySet<string>;
+    const workspaceKeys = MUTATION_ACTION_KEYS as ReadonlySet<string>;
+    const intersection = [...artifactKeys].filter((k) => workspaceKeys.has(k));
+    expect(intersection).toEqual([]);
   });
 });
 

@@ -82,7 +82,10 @@ export type AppEvents = {
   'pipeline:adb-tracker-update': AdbTrackerUpdate;
 
   // ── Layout / navigation ───────────────────────────────────────────────────
-  'layout:open-tab':        { type: string; label?: string; filePath?: string; editorState?: EditorTabState };
+  /** `analysisArtifactId` is set when opening (or reusing) an `'analysis'`
+   *  tab for a specific artifact — the handler emits a targeted `analysis:open`
+   *  once it knows which pane the tab landed in. */
+  'layout:open-tab':        { type: string; label?: string; filePath?: string; editorState?: EditorTabState; analysisArtifactId?: string };
   /** Fired when a logviewer tab is explicitly closed via the UI tab bar. */
   'layout:logviewer-tab-closed': { tabId: string; paneId: string; sessionId: string };
   /** Fired when the user switches to a logviewer tab that has its own session.
@@ -121,14 +124,19 @@ export type AppEvents = {
 
   // ── Analysis ──────────────────────────────────────────────────────────────
   /** Fired when the user selects an analysis artifact to view in the center tab.
-   *  `sessionId` targets the specific pane's AnalysisReader — with analysis tabs
-   *  open in two panes for different sessions, an untargeted event would land
-   *  on whichever reader mounted last regardless of which session it belongs to. */
-  'analysis:open':          { artifactId: string; sessionId: string };
+   *  `paneId` targets the specific pane's AnalysisReader — analyses are now
+   *  workspace-owned (not session-scoped), so with analysis tabs open in two
+   *  panes an untargeted event would land on whichever reader mounted last
+   *  regardless of which pane it was meant for. Always paired with the pane
+   *  id that `layout:open-tab`'s handler resolved the tab into — see
+   *  `useWorkspaceLayout`'s `onOpenTab`. */
+  'analysis:open':          { artifactId: string; paneId: string };
   /** Fired when the local UI publishes an analysis — used by useAnalysisToast to suppress toasts. */
   'analysis:published-local':    { artifactId: string };
-  /** Fired when an analysis is published externally (e.g. via MCP bridge), not by local UI. */
-  'analysis:published-external': { artifactId: string; title: string; sessionId: string };
+  /** Fired when an analysis is published externally (e.g. via MCP bridge), not by local UI.
+   *  `sessionId` is the artifact's best-effort primary session attribution —
+   *  null when unattributed (matches `SourceReference.sessionId`). */
+  'analysis:published-external': { artifactId: string; title: string; sessionId: string | null };
 
   // ── Pane focus ─────────────────────────────────────────────────────────
   /** Fired when any pane receives user interaction. Does not affect session routing. */

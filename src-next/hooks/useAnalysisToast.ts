@@ -12,7 +12,8 @@ import { nextToastId } from './useToast';
  * for externally-published analyses (e.g. via MCP bridge).
  *
  * Local publishes are tracked via the `analysis:published-local` bus event
- * (emitted by useAnalysis) so they don't trigger a toast.
+ * (emitted by `ActionsContext`'s `publishAnalysis`) so they don't trigger a
+ * toast.
  */
 export function useAnalysisToast(addToast: (toast: ToastItem) => void) {
   /** IDs published by the local UI — skip toasting these. */
@@ -44,8 +45,12 @@ export function useAnalysisToast(addToast: (toast: ToastItem) => void) {
         return;
       }
 
-      // External publish — fetch title then show toast
-      getAnalysis(payload.sessionId, payload.artifactId)
+      // External publish — fetch title then show toast. The toast path is
+      // session-free (open routes through layout:open-tab by artifactId), so
+      // narrative-only / workspace-level publishes with no session
+      // attribution toast like any other.
+      const targetSessionId = payload.sessionId;
+      getAnalysis(payload.artifactId)
         .then((artifact) => {
           if (cancelled) return;
           const id = nextToastId('analysis-toast');
@@ -54,8 +59,7 @@ export function useAnalysisToast(addToast: (toast: ToastItem) => void) {
             title: 'New Analysis',
             message: artifact.title,
             onClick: () => {
-              bus.emit('analysis:open', { artifactId: artifact.id, sessionId: payload.sessionId });
-              bus.emit('layout:open-tab', { type: 'analysis' });
+              bus.emit('layout:open-tab', { type: 'analysis', analysisArtifactId: artifact.id });
             },
           });
 
@@ -63,7 +67,7 @@ export function useAnalysisToast(addToast: (toast: ToastItem) => void) {
           bus.emit('analysis:published-external', {
             artifactId: artifact.id,
             title: artifact.title,
-            sessionId: payload.sessionId,
+            sessionId: targetSessionId,
           });
         })
         .catch(() => {

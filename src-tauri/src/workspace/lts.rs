@@ -406,10 +406,10 @@ mod tests {
     fn make_artifact() -> AnalysisArtifact {
         AnalysisArtifact {
             id: "art-1".to_string(),
-            session_id: "sess-1".to_string(),
             title: "Test Analysis".to_string(),
             created_at: 2000,
             sections: vec![],
+            legacy_session_id: None,
         }
     }
 

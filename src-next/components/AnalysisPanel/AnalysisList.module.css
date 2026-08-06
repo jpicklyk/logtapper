@@ -18,10 +18,29 @@
   letter-spacing: 0.04em;
   color: var(--text-muted);
   border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
 }
 
 .headerLabel {
   flex: 1;
+}
+
+.fileOnlyToggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text-dimmed);
+  cursor: pointer;
+  user-select: none;
+}
+
+.fileOnlyCheckbox {
+  margin: 0;
+  cursor: pointer;
 }
 
 .headerCount {

@@ -45,7 +45,11 @@ export interface CenterTreeHandle {
   resizeSplit: (splitNodeId: string, ratio: number) => void;
   renameTab: (tabId: string, label: string) => void;
   setTabUnsaved: (tabId: string, isDirty: boolean) => void;
-  openCenterTab: (type: CenterTabType, label?: string, filePath?: string, editorState?: EditorTabState) => void;
+  /** Returns the pane id the tab was activated in (existing reuse) or created
+   *  in (new tab) — null only if there is no leaf to place it in. Callers
+   *  (e.g. `layout:open-tab`'s handler) use this to target a follow-up event
+   *  at the pane that now owns the tab. */
+  openCenterTab: (type: CenterTabType, label?: string, filePath?: string, editorState?: EditorTabState) => string | null;
   dropTabOnPane: (tabId: string, fromPaneId: string, toPaneId: string, zone: DropZone) => void;
   /** Reset the center tree to a single empty pane (for workspace clear/switch). */
   clearTree: () => void;
@@ -240,14 +244,14 @@ export function useCenterTree(
     if (!filePath) {
       const existing = findTabByType(tree, type);
       if (existing && !editorState) {
-        if (existing.pane.activeTabId === existing.tab.id) return;
+        if (existing.pane.activeTabId === existing.tab.id) return existing.pane.id;
         updateTree((t) =>
           updateLeaf(t, existing.pane.id, (pane) => ({
             ...pane,
             activeTabId: existing.tab.id,
           })),
         );
-        return;
+        return existing.pane.id;
       }
     }
 
@@ -278,6 +282,7 @@ export function useCenterTree(
         activeTabId: tab.id,
       })),
     );
+    return target.pane.id;
   }, [updateTree, activeLogPaneIdRef]);
 
   const dropTabOnPane = useCallback((

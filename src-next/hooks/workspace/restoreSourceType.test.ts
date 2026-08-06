@@ -30,6 +30,7 @@ describe('RestoreIo.loadFile adapters must forward every argument', () => {
         return Promise.resolve();
       },
       scheduleAutoRun: () => {},
+      setWorkspaceAnalyses: () => Promise.resolve(),
     };
     return { io, calls };
   }
@@ -40,6 +41,7 @@ describe('RestoreIo.loadFile adapters must forward every argument', () => {
     const truncating: RestoreIo = {
       loadFile: (path, paneId, existingTabId) => io.loadFile(path, paneId, existingTabId),
       scheduleAutoRun: () => {},
+      setWorkspaceAnalyses: () => Promise.resolve(),
     };
 
     await truncating.loadFile('/logs/board.txt', 'p1', 't1', 'Kernel');
@@ -52,6 +54,7 @@ describe('RestoreIo.loadFile adapters must forward every argument', () => {
     const forwarding: RestoreIo = {
       loadFile: (...args) => io.loadFile(...args),
       scheduleAutoRun: () => {},
+      setWorkspaceAnalyses: () => Promise.resolve(),
     };
 
     await forwarding.loadFile('/logs/board.txt', 'p1', 't1', 'Kernel');
@@ -65,6 +68,7 @@ describe('RestoreIo.loadFile adapters must forward every argument', () => {
     const forwarding: RestoreIo = {
       loadFile: (...args) => io.loadFile(...args),
       scheduleAutoRun: () => {},
+      setWorkspaceAnalyses: () => Promise.resolve(),
     };
 
     await forwarding.loadFile('/logs/board.txt', undefined, undefined, 'Dumpstate');

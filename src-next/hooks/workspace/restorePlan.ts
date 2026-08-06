@@ -45,6 +45,12 @@ export interface RestoreLoad {
    *  override is part of the identity preimage. Only manifest-derived loads can
    *  carry this; a localStorage-only tab has no record of it. */
   sourceType?: string;
+  /** The session id the manifest recorded for this file at save time (T8),
+   *  when the entry carried one. Only manifest-derived loads can carry this —
+   *  a localStorage-only tab has no manifest entry to read it from. The core
+   *  compares this against the id this load actually produces to detect a
+   *  file that changed on disk since the workspace was saved. */
+  expectedSessionId?: string;
 }
 
 export interface RestorePlan {
@@ -134,6 +140,7 @@ function planRestore(input: PlanInput, applyLtwViewState: boolean): RestorePlan 
       dataIndex: i,
       isActive: tab?.isActive ?? false,
       sourceType: sessions[i].sourceTypeOverride,
+      expectedSessionId: sessions[i].expectedSessionId,
     });
   }
 

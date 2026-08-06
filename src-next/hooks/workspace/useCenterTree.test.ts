@@ -683,6 +683,83 @@ describe('U10: dropTabOnPane computes landingPaneId before updateTree (StrictMod
 });
 
 // ---------------------------------------------------------------------------
+// openCenterTab returns the pane id the tab landed in, so a bus-event
+// handler that opened the tab (e.g. layout:open-tab -> analysis:open) can
+// target a follow-up event at that pane without a second lookup.
+// ---------------------------------------------------------------------------
+
+describe('openCenterTab return value (targeted analysis open)', () => {
+  function renderCenterTree(initialTree: SplitNode) {
+    const activeLogPaneIdRef = { current: null as string | null };
+    const paneSessionMapRef = { current: new Map<string, string>() };
+    const activateSessionForPane = vi.fn();
+    const openBottomPane = vi.fn();
+
+    return renderHook(() =>
+      useCenterTree(
+        { activeLogPaneIdRef, paneSessionMapRef, activateSessionForPane, openBottomPane },
+        initialTree,
+      ),
+    );
+  }
+
+  it('returns the pane id of a newly created tab', () => {
+    const paneId = 'pane-1';
+    const initialTree = makeTree(paneId, []);
+    const { result } = renderCenterTree(initialTree);
+
+    let returned: string | null = null;
+    act(() => {
+      returned = result.current.openCenterTab('analysis');
+    });
+
+    expect(returned).toBe(paneId);
+    const leaf = findLeafByPaneId(result.current.treeRef.current, paneId);
+    expect(leaf?.pane.tabs.map((t) => t.type)).toContain('analysis');
+  });
+
+  it('returns the pane id of a reused tab that was not yet active', () => {
+    const paneId = 'pane-1';
+    const logTab = makeLogviewerTab('tab-log');
+    const analysisTab: Tab = { id: 'tab-analysis', type: 'analysis', label: 'Analysis', closable: true };
+    // logTab is active; analysisTab exists but is not the active tab.
+    const initialTree = makeTree(paneId, [logTab, analysisTab]);
+    const { result } = renderCenterTree(initialTree);
+
+    let returned: string | null = null;
+    act(() => {
+      returned = result.current.openCenterTab('analysis');
+    });
+
+    expect(returned).toBe(paneId);
+    const leaf = findLeafByPaneId(result.current.treeRef.current, paneId);
+    expect(leaf?.pane.activeTabId).toBe(analysisTab.id);
+  });
+
+  it('returns the pane id of a tab that is already the active tab (no-op reuse)', () => {
+    const paneId = 'pane-1';
+    const analysisTab: Tab = { id: 'tab-analysis', type: 'analysis', label: 'Analysis', closable: true };
+    const initialTree: SplitNode = {
+      type: 'leaf',
+      id: 'leaf-1',
+      pane: { id: paneId, tabs: [analysisTab], activeTabId: analysisTab.id },
+    };
+    const { result } = renderCenterTree(initialTree);
+
+    let returned: string | null = null;
+    act(() => {
+      returned = result.current.openCenterTab('analysis');
+    });
+
+    expect(returned).toBe(paneId);
+    // Tree is unchanged — still the exact same tab, still active.
+    const leaf = findLeafByPaneId(result.current.treeRef.current, paneId);
+    expect(leaf?.pane.activeTabId).toBe(analysisTab.id);
+    expect(leaf?.pane.tabs).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // U10: the bridge-initiated close loop threads a local tree value through its
 // per-iteration lookups instead of assuming treeRef.current updates
 // synchronously between successive closeTab() calls.

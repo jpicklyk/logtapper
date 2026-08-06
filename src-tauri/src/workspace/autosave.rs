@@ -28,6 +28,7 @@ use crate::commands::workspace_cmd::{
     collect_session_data, entry_refs, snapshot_session_ids, SessionEntry,
 };
 use crate::commands::AppState;
+use crate::core::analysis::AnalysisArtifact;
 use crate::workspace::app_state::{load_app_state, save_app_state};
 use crate::workspace::ltw_v4::{self, LtwEditorTab, LtwLayout, LtwPipelineChain};
 
@@ -348,6 +349,11 @@ async fn flush(app: &AppHandle) {
         return;
     }
 
+    // Analyses are workspace-owned, not part of `entries` — collected
+    // separately so a flush persists them even with zero sessions open (e.g.
+    // an MCP publish against a workspace with no file currently loaded).
+    let workspace_analyses = crate::commands::workspace_sync::snapshot_workspace_analyses(&state);
+
     // Resolve paths (these need the AppHandle) before handing owned data to the
     // blocking pool.
     let ws_dir = match crate::workspace::workspace_dir(app) {
@@ -378,6 +384,7 @@ async fn flush(app: &AppHandle) {
             &app_state_path,
             &envelope,
             &entries,
+            &workspace_analyses,
             &ltw_lock,
             &as_lock,
             EVICT_KEEP,
@@ -480,6 +487,10 @@ pub fn flush_now_blocking(app: &AppHandle) {
         return;
     }
 
+    // Analyses are workspace-owned, not part of `entries` — see the matching
+    // comment in `flush()`.
+    let workspace_analyses = crate::commands::workspace_sync::snapshot_workspace_analyses(&state);
+
     let ws_dir = match crate::workspace::workspace_dir(app) {
         Ok(d) => d,
         Err(e) => {
@@ -503,6 +514,7 @@ pub fn flush_now_blocking(app: &AppHandle) {
         &app_state_path,
         &envelope,
         &entries,
+        &workspace_analyses,
         &state.ltw_write_lock,
         &state.app_state_write_lock,
         EVICT_KEEP,
@@ -537,6 +549,7 @@ pub fn write_flush_blocking(
     app_state_path: &Path,
     envelope: &WorkspaceEnvelope,
     entries: &[SessionEntry],
+    workspace_analyses: &[AnalysisArtifact],
     ltw_write_lock: &Mutex<()>,
     app_state_write_lock: &Mutex<()>,
     keep: usize,
@@ -551,6 +564,7 @@ pub fn write_flush_blocking(
             &envelope.workspace_name,
             Some(&envelope.workspace_id),
             &refs,
+            workspace_analyses,
             &envelope.pipeline_chain,
             &envelope.editor_tabs,
             envelope.layout.as_ref(),
@@ -949,7 +963,7 @@ mod tests {
         let as_lock = Mutex::new(());
 
         let saved_at =
-            write_flush_blocking(&dest, &ws_dir, &app_state_path, &env, &[], &ltw_lock, &as_lock, EVICT_KEEP)
+            write_flush_blocking(&dest, &ws_dir, &app_state_path, &env, &[], &[], &ltw_lock, &as_lock, EVICT_KEEP)
                 .unwrap();
 
         // .ltw written at the id-keyed path and readable.
@@ -1040,7 +1054,7 @@ mod tests {
         let dest = flush_dest(&env, &ws_dir);
         let ltw_lock = Mutex::new(());
         let as_lock = Mutex::new(());
-        write_flush_blocking(&dest, &ws_dir, &app_state_path, &env, &[], &ltw_lock, &as_lock, EVICT_KEEP).unwrap();
+        write_flush_blocking(&dest, &ws_dir, &app_state_path, &env, &[], &[], &ltw_lock, &as_lock, EVICT_KEEP).unwrap();
 
         let ltw_count = std::fs::read_dir(&ws_dir).unwrap().flatten()
             .filter(|e| e.path().extension().is_some_and(|x| x == "ltw")).count();
@@ -1069,7 +1083,7 @@ mod tests {
             let (ws_dir, app_state_path, dest) = (ws_dir.clone(), app_state_path.clone(), dest.clone());
             let (ltw_lock, as_lock, env) = (ltw_lock.clone(), as_lock.clone(), env.clone());
             handles.push(std::thread::spawn(move || {
-                write_flush_blocking(&dest, &ws_dir, &app_state_path, &env, &[], &ltw_lock, &as_lock, EVICT_KEEP)
+                write_flush_blocking(&dest, &ws_dir, &app_state_path, &env, &[], &[], &ltw_lock, &as_lock, EVICT_KEEP)
             }));
         }
         for h in handles {
@@ -1077,5 +1091,52 @@ mod tests {
         }
         // If any two writes had interleaved, the zip would be corrupt.
         assert!(ltw_v4::read_ltw(&dest).is_ok(), "serialised writes leave a valid .ltw");
+    }
+
+    /// An MCP publish against a workspace with no file currently open must
+    /// still flush the analyses — analyses are workspace-owned, not gated on
+    /// any session being live. `session_snapshot_diverges(&[], &[])` is false
+    /// (an empty envelope records no expectation), and an empty
+    /// `collect_session_data` result is not itself an error, so this must
+    /// succeed and persist the workspace-level `analyses.json`.
+    #[test]
+    fn write_flush_persists_workspace_analyses_with_zero_sessions() {
+        let dir = tempdir().unwrap();
+        let ws_dir = dir.path().join("workspaces");
+        std::fs::create_dir_all(&ws_dir).unwrap();
+        let app_state_path = dir.path().join("app-state.json");
+        save_app_state(&app_state_path, &AppStateFile::default()).unwrap();
+
+        let env = envelope("mcp-only", None);
+        let dest = flush_dest(&env, &ws_dir);
+        let ltw_lock = Mutex::new(());
+        let as_lock = Mutex::new(());
+
+        let workspace_analyses = vec![AnalysisArtifact {
+            id: "art-mcp".into(),
+            title: "Published without an open session".into(),
+            created_at: 0,
+            sections: vec![],
+            legacy_session_id: None,
+        }];
+
+        let saved_at = write_flush_blocking(
+            &dest,
+            &ws_dir,
+            &app_state_path,
+            &env,
+            &[],
+            &workspace_analyses,
+            &ltw_lock,
+            &as_lock,
+            EVICT_KEEP,
+        )
+        .unwrap();
+
+        let data = ltw_v4::read_ltw(&dest).unwrap();
+        assert_eq!(data.manifest.saved_at, saved_at);
+        assert!(data.manifest.sessions.is_empty(), "zero sessions must not block the analyses flush");
+        assert_eq!(data.analyses.len(), 1);
+        assert_eq!(data.analyses[0].id, "art-mcp");
     }
 }

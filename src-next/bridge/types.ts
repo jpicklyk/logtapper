@@ -804,6 +804,9 @@ export interface SourceReference {
   endLine: number | null;
   label: string;
   highlightType: HighlightTypeAnnotation;
+  /** Which session this reference's line numbers resolve against. `null`
+   *  means unattributed/unresolved. */
+  sessionId: string | null;
 }
 
 export interface AnalysisSection {
@@ -815,16 +818,16 @@ export interface AnalysisSection {
 
 export interface AnalysisArtifact {
   id: string;
-  sessionId: string;
   title: string;
   createdAt: number;
   sections: AnalysisSection[];
 }
 
 export interface AnalysisUpdateEvent {
-  sessionId: string;
-  action: 'published' | 'updated' | 'deleted';
   artifactId: string;
+  action: 'published' | 'updated' | 'deleted' | 'restored';
+  sessionIds: string[];
+  sessionId: string | null;
 }
 
 export interface WorkspaceRestoredPayload {
@@ -947,6 +950,12 @@ export interface LtwManifestSession {
    *  replaying `sourceType` would freeze detection, so a later fix to the
    *  detector could never reach an already-saved workspace. */
   sourceTypeOverride?: string;
+  /** The session id this entry's file resolved to when the workspace was
+   *  saved (T8). Restore re-derives the id for the same file and compares it
+   *  against this value — a mismatch means the file's content changed since
+   *  the save, so any analysis reference keyed to the old id is now
+   *  unresolved. Absent on a manifest written before this field existed. */
+  expectedSessionId?: string;
 }
 
 export interface LtwPipelineChain {
@@ -989,6 +998,9 @@ export interface SyncWorkspaceEnvelopeOptions {
 
 export interface LoadWorkspaceSessionData {
   bookmarks: Bookmark[];
+  /** Legacy per-session analyses payload — populated only when the source
+   *  `.ltw` predates the analyses migration. Current files always carry `[]`
+   *  here; the workspace's real analyses are on `LoadWorkspaceV4Result.analyses`. */
   analyses: AnalysisArtifact[];
   activeProcessorIds: string[];
   disabledProcessorIds: string[];
@@ -1005,6 +1017,10 @@ export interface LoadWorkspaceV4Result {
   pipelineChain: LtwPipelineChain;
   editorTabs: LtwEditorTab[];
   layout: unknown | null;
+  /** Workspace-level analyses (top-level `analyses.json`). Empty for a
+   *  pre-migration file — see `LoadWorkspaceSessionData.analyses` for where
+   *  that data surfaces instead. */
+  analyses: AnalysisArtifact[];
   /** Per-session artifacts ordered to match `sessions` by index. */
   sessionData: LoadWorkspaceSessionData[];
 }

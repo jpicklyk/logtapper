@@ -71,6 +71,7 @@ export function useStartupRestore(deps: StartupRestoreDeps): void {
       loadFile: (...args) => depsRef.current.loadFile(...args),
       scheduleAutoRun: (sessionId, isIndexing, chain, disabled) =>
         depsRef.current.scheduleAutoRun(sessionId, isIndexing, chain, disabled),
+      setWorkspaceAnalyses: (analyses) => depsRef.current.setWorkspaceAnalyses(analyses),
     };
 
     const readStoredTabs = (): StoredTab[] => getStoredLogviewerTabs();
@@ -104,7 +105,7 @@ export function useStartupRestore(deps: StartupRestoreDeps): void {
         storedTabs: readStoredTabs(), tabPaths: readTabPaths(), hasLocalLayout: hasLocalLayout(),
       });
       const warnings = await restoreWorkspace(
-        { workspaceName: active.name, filePath: '', sessionData: [], editorTabs: [], layout: null },
+        { workspaceName: active.name, filePath: '', sessionData: [], editorTabs: [], layout: null, analyses: [] },
         plan, io,
       );
       if (cancelled) return;
@@ -180,6 +181,7 @@ export function useStartupRestore(deps: StartupRestoreDeps): void {
             sessionData: result.sessionData,
             editorTabs: result.editorTabs,
             layout: result.layout,
+            analyses: result.analyses,
           },
           plan, io,
         );

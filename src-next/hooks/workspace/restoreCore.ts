@@ -12,14 +12,15 @@
  */
 import { bus } from '../../events';
 import { restoreWorkspaceSession } from '../../bridge/commands';
-import type { LoadWorkspaceSessionData, LtwEditorTab, SourceType } from '../../bridge/types';
+import type { AnalysisArtifact, LoadWorkspaceSessionData, LtwEditorTab, SourceType } from '../../bridge/types';
+import { basename } from '../../utils';
 import { pairArtifactsWithSessions } from './artifactPairing';
 import { buildEditorTabEvents } from './workspacePersistence';
 import { buildRestoreOutcomes, isLts, type RestorePlan } from './restorePlan';
 
 /** The `.ltw`-derived data the core consumes (subset of `LoadWorkspaceV4Result`).
  *  For the pure-localStorage fallback the caller passes empty `sessionData` /
- *  `editorTabs` and a null `layout`. */
+ *  `editorTabs`, an empty `analyses`, and a null `layout`. */
 export interface RestoreResult {
   workspaceName: string;
   /** The restored `.ltw` path (empty string for a pure-localStorage restore —
@@ -28,6 +29,11 @@ export interface RestoreResult {
   sessionData: LoadWorkspaceSessionData[];
   editorTabs: LtwEditorTab[];
   layout: unknown | null;
+  /** Workspace-level analyses (`LoadWorkspaceV4Result.analyses`). Replaces the
+   *  in-memory workspace analysis store wholesale before any session loads —
+   *  see `restoreWorkspace`. Empty for a pure-localStorage restore, which
+   *  correctly clears the store (there is nothing to restore it from). */
+  analyses: AnalysisArtifact[];
 }
 
 export interface RestoreIo {
@@ -58,6 +64,10 @@ export interface RestoreIo {
     chain: string[],
     disabled: string[],
   ) => void;
+  /** Wholesale-replace the workspace analysis store. Called once, before any
+   *  session load, so the per-session artifact restores below (which upsert
+   *  by artifact id) land on top of the right base set rather than racing it. */
+  setWorkspaceAnalyses: (analyses: AnalysisArtifact[]) => Promise<void>;
 }
 
 /**
@@ -73,6 +83,19 @@ export async function restoreWorkspace(
   // schedule an auto-save of itself and, on a partial failure, overwrite the good
   // `.ltw` with the partial set. Reference-counted gate; end MUST run in finally.
   bus.emit('workspace:restore-begin');
+  const warnings: string[] = [...plan.warnings];
+  try {
+    // Replace the workspace analysis store wholesale before any session load
+    // starts, so the legacy per-pair merges below (restoreWorkspaceSession —
+    // backend upserts by artifact id) land on top of the correct base set
+    // instead of racing a load that might resolve first. A failure here must
+    // not abort the restore — the workspace still has sessions to bring back.
+    await io.setWorkspaceAnalyses(result.analyses);
+  } catch (e) {
+    const msg = `Failed to restore workspace analyses: ${e}`;
+    console.warn(`[restoreWorkspace] ${msg}`);
+    warnings.push(msg);
+  }
   // Correlation id stamped on every loadFile call this restore makes. A user
   // can open a file (via the normal open path) while a restore load is
   // in-flight — the awaited io.loadFile below yields the event loop, and an
@@ -123,6 +146,46 @@ export async function restoreWorkspace(
 
     const isIndexingBySession = new Map(loadedOrder.map((x) => [x.sessionId, x.isIndexing]));
 
+    // T8: expected-session-id diagnostic. A manifest entry that recorded the
+    // session id it resolved to at save time (`expectedSessionId`) lets restore
+    // detect drift: ids are deterministic and content-derived, so if the file at
+    // that path changed since the save, this load re-derives a *different* id
+    // and every analysis reference keyed to the old one is now unresolved.
+    // Silent when the produced id matches, the load failed (nothing was
+    // produced — already covered by the pairing warning above), or the entry
+    // predates this field (legacy manifest, no `expectedSessionId`).
+    const drifted = plan.loads.filter((load, i) => {
+      if (!load.expectedSessionId) return false;
+      const produced = producedSessionIdsPerLoad[i]?.[0];
+      return !!produced && produced !== load.expectedSessionId;
+    });
+
+    // Counted in ONE pass over every reference, rather than re-walking the whole
+    // analysis set once per drifted load (that was O(loads x artifacts x refs)
+    // on the restore critical path, all to produce a warning string). Built
+    // lazily: the common no-drift restore touches the analysis set not at all.
+    const refCountBySession = new Map<string, number>();
+    if (drifted.length > 0) {
+      for (const artifact of result.analyses) {
+        for (const section of artifact.sections ?? []) {
+          for (const ref of section.references ?? []) {
+            if (!ref.sessionId) continue;
+            refCountBySession.set(ref.sessionId, (refCountBySession.get(ref.sessionId) ?? 0) + 1);
+          }
+        }
+      }
+    }
+
+    drifted.forEach((load) => {
+      const refCount = refCountBySession.get(load.expectedSessionId!) ?? 0;
+      const label = basename(load.path);
+      warnings.push(
+        refCount > 0
+          ? `${label} changed since the workspace was saved; ${refCount} analysis reference(s) for it are now unresolved.`
+          : `${label} changed since the workspace was saved.`,
+      );
+    });
+
     // Sessions produced by a `.lts` load are auto-run by useWorkspaceRestore on
     // the backend's `source: "lts"` emission (which carries the `.lts`'s own
     // per-session chain and covers embedded sessions beyond the first, which
@@ -138,8 +201,11 @@ export async function restoreWorkspace(
 
     const outcomes = buildRestoreOutcomes(plan.loads, producedSessionIdsPerLoad, result.sessionData);
     const { pairs, warnings: pairingWarnings } = pairArtifactsWithSessions(outcomes);
-    const warnings = [...plan.warnings, ...pairingWarnings];
-    for (const w of warnings) console.warn(`[restoreWorkspace] ${w}`);
+    // Append to the outer `warnings` (seeded with plan.warnings + any
+    // setWorkspaceAnalyses failure above) rather than rebuilding it, so none
+    // of those earlier warnings are lost.
+    warnings.push(...pairingWarnings);
+    for (const w of pairingWarnings) console.warn(`[restoreWorkspace] ${w}`);
 
     try {
       // Restore artifacts per session, then trigger that session's own auto-run.

@@ -1,40 +1,65 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { FileSearch } from 'lucide-react';
-import type { AnalysisArtifact, AnalysisSeverity } from '../../bridge/types';
+import type { AnalysisArtifact, AnalysisSeverity, SourceReference } from '../../bridge/types';
 import { severityColor } from '../../bridge/types';
-import { useSession, useNavigationActions } from '../../context';
-import { useAnalysis } from '../../hooks';
+import { useNavigationActions, useWorkspaceAnalyses, useSessionLabels } from '../../context';
+import { attributeArtifact, SourceChips } from '../AnalysisPanel';
 import { bus } from '../../events';
 import { formatShortDateTime } from '../../utils';
 import MarkdownSection from './MarkdownSection';
+import type { ResolvedSection } from './MarkdownSection';
+import { takePendingAnalysisSelection } from './pendingSelection';
 import styles from './AnalysisReader.module.css';
 
-const AnalysisReader = React.memo(function AnalysisReader() {
-  const session = useSession();
-  const sessionId = session?.sessionId ?? null;
-  const { artifacts } = useAnalysis(sessionId);
+interface Props {
+  /** The pane this reader is mounted in — targets the `analysis:open` bus
+   *  event so a selection made in one pane's list doesn't steal another
+   *  pane's already-open analysis tab. */
+  paneId: string;
+}
+
+const AnalysisReader = React.memo(function AnalysisReader({ paneId }: Props) {
+  // Analyses are workspace-owned, not session-scoped — the reader shows
+  // whichever artifact was selected regardless of what's open in this pane.
+  const { artifacts } = useWorkspaceAnalyses();
+  const labels = useSessionLabels();
   const { jumpToLine } = useNavigationActions();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // Listen for analysis:open events from the left pane list. `sessionId` on
-  // the event targets a specific pane's reader — with analysis tabs open in
-  // two panes for different sessions, an event meant for the other pane must
-  // be ignored here rather than stealing this pane's selection.
+  // Listen for analysis:open events targeted at this pane. `paneId` on the
+  // event is the pane `layout:open-tab`'s handler resolved the analysis tab
+  // into — with analysis tabs open in two panes, an event meant for the
+  // other pane must be ignored here rather than stealing this pane's selection.
   useEffect(() => {
-    const handler = ({ artifactId, sessionId: targetSessionId }: { artifactId: string; sessionId: string }) => {
-      if (targetSessionId !== sessionId) return;
+    const handler = ({ artifactId, paneId: targetPaneId }: { artifactId: string; paneId: string }) => {
+      if (targetPaneId !== paneId) return;
       setSelectedId(artifactId);
     };
     bus.on('analysis:open', handler);
     return () => { bus.off('analysis:open', handler); };
-  }, [sessionId]);
+  }, [paneId]);
 
-  // Auto-select first artifact if none selected
+  // Resolve the initial selection: prefer a pending selection seeded by
+  // useWorkspaceLayout's onOpenTab (the new-tab / reuse-inactive-tab open
+  // paths — this reader didn't exist yet when the click fired, so it missed
+  // the live `analysis:open` bus event above and must self-serve on mount),
+  // else fall back to auto-selecting the first artifact.
+  //
+  // `takePendingAnalysisSelection` deletes on read, so StrictMode's double
+  // effect-invoke would see it return the value once then null — using a
+  // functional update for the fallback branch makes this safe regardless:
+  // React applies queued updates for `selectedId` in order, so a fallback
+  // update queued after the direct `setSelectedId(pending)` still resolves
+  // against the just-applied pending value (`prev !== null` short-circuits),
+  // rather than clobbering it with `artifacts[0]`.
   useEffect(() => {
-    if (selectedId === null && artifacts.length > 0) {
-      setSelectedId(artifacts[0].id);
+    const pending = takePendingAnalysisSelection(paneId);
+    if (pending !== null) {
+      setSelectedId(pending);
+      return;
     }
-  }, [selectedId, artifacts]);
+    setSelectedId((prev) => (prev !== null ? prev : (artifacts.length > 0 ? artifacts[0].id : null)));
+  }, [paneId, artifacts]);
 
   // Clear selection if the selected artifact was deleted — fall back to the
   // first remaining artifact (or null if none remain) so the panel doesn't
@@ -47,10 +72,29 @@ const AnalysisReader = React.memo(function AnalysisReader() {
 
   const artifact: AnalysisArtifact | undefined = artifacts.find((a) => a.id === selectedId);
 
-  const handleJump = useCallback((lineNum: number) => {
-    // Target this reader's session so a second open session's viewer stays put.
-    jumpToLine(lineNum, undefined, sessionId ?? undefined);
-  }, [jumpToLine, sessionId]);
+  const attribution = useMemo(() => {
+    if (!artifact) return null;
+    return attributeArtifact(artifact, labels);
+  }, [artifact, labels]);
+
+  // Resolve each section's references against the current session labels
+  // once here, rather than passing a resolver callback down — keeps
+  // MarkdownSection's props stable data instead of a function reference.
+  const resolvedSections: ResolvedSection[] = useMemo(() => {
+    if (!artifact) return [];
+    return artifact.sections.map((section) => ({
+      ...section,
+      references: section.references.map((ref) => ({
+        ...ref,
+        resolved: ref.sessionId !== null && labels.has(ref.sessionId),
+        sourceLabel: ref.sessionId !== null ? labels.get(ref.sessionId) : undefined,
+      })),
+    }));
+  }, [artifact, labels]);
+
+  const handleJump = useCallback((reference: SourceReference) => {
+    jumpToLine(reference.lineNumber, undefined, reference.sessionId ?? undefined);
+  }, [jumpToLine]);
 
   const severityCounts = useMemo(() => {
     if (!artifact) return {} as Partial<Record<AnalysisSeverity, number>>;
@@ -63,20 +107,11 @@ const AnalysisReader = React.memo(function AnalysisReader() {
 
   const SEVERITY_ORDER: AnalysisSeverity[] = ['Critical', 'Error', 'Warning', 'Info'];
 
-  if (!sessionId) {
-    return (
-      <div className={styles.emptyState}>
-        <FileSearch size={40} strokeWidth={1} />
-        <p>Open a log file to view analyses.</p>
-      </div>
-    );
-  }
-
   if (artifacts.length === 0) {
     return (
       <div className={styles.emptyState}>
         <FileSearch size={40} strokeWidth={1} />
-        <p>No analyses for this session.</p>
+        <p>No analyses in this workspace.</p>
         <span className={styles.emptyHint}>
           Claude can publish analyses via the MCP analysis tool.
         </span>
@@ -117,13 +152,14 @@ const AnalysisReader = React.memo(function AnalysisReader() {
                 );
               })}
             </div>
+            {attribution && <SourceChips attribution={attribution} />}
           </header>
 
-          {artifact.sections.map((section, i) => (
+          {resolvedSections.map((section, i) => (
             <MarkdownSection
               key={i}
               section={section}
-              onJumpToLine={handleJump}
+              onJump={handleJump}
             />
           ))}
         </div>

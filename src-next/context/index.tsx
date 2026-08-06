@@ -7,9 +7,11 @@ import { saveLiveCapture, loadProcessorYaml, uninstallProcessor,
   setFileAssociation, openDefaultAppsSettings,
   startMcpBridge, stopMcpBridge, setMcpOpenAllowlist, exportAllSessions,
   setFocusedSession,
+  publishAnalysis, updateAnalysis, deleteAnalysis, setWorkspaceAnalyses,
 } from '../bridge/commands';
 import { basename, dirname } from '../utils';
 import { ViewerProvider } from './ViewerContext';
+import { AnalysisProvider } from './AnalysisContext';
 
 export { ThemeProvider, useTheme } from './ThemeContext';
 export type { ThemeMode, ResolvedTheme } from './ThemeContext';
@@ -29,7 +31,7 @@ import { useWorkspaceAutoSave } from '../hooks/useWorkspaceAutoSave';
 import { useAppExitSave } from '../hooks/useAppExitSave';
 import { useStartupRestore } from '../hooks/useStartupRestore';
 import { createAutoRunScheduler, type AutoRunScheduler } from '../hooks/workspace/autoRunScheduler';
-import type { AppStateFile } from '../bridge/types';
+import type { AppStateFile, AnalysisSection } from '../bridge/types';
 import { collectEditorTabsForSave, buildAppStatePayload } from '../hooks/workspace/workspacePersistence';
 import { pushWorkspaceEnvelope, toEnvelopeOptions } from '../hooks/workspace/envelopeSync';
 import { STORAGE_KEY } from '../hooks/workspace/workspaceTypes';
@@ -340,6 +342,7 @@ function HookWiring({ children }: { children: ReactNode }) {
   useStartupRestore({
     loadFile: logViewer.loadFile,
     scheduleAutoRun,
+    setWorkspaceAnalyses,
     getPipelineChain,
     getDisabledChainIds,
   });
@@ -374,6 +377,17 @@ function HookWiring({ children }: { children: ReactNode }) {
     saveWorkspaceAs: workspace.saveWorkspaceAs,
     closeWorkspace: workspace.closeWorkspace,
     switchWorkspace: workspace.switchWorkspace,
+    publishAnalysis: async (title: string, sections: AnalysisSection[], sessionId?: string) => {
+      const art = await publishAnalysis(title, sections, sessionId);
+      // Local-publish signal, moved verbatim from SessionActionsContext — lets
+      // the publishing surface suppress its own "analysis published" toast
+      // (it already knows) while other surfaces still react to the artifact.
+      if (art) bus.emit('analysis:published-local', { artifactId: art.id });
+      return art;
+    },
+    updateAnalysis: async (artifactId: string, title?: string, sections?: AnalysisSection[]) =>
+      updateAnalysis(artifactId, title, sections),
+    deleteAnalysis: async (artifactId: string) => { await deleteAnalysis(artifactId); },
 
     // --- View actions (not tracked) ---
     runPipeline: async () => {
@@ -396,6 +410,9 @@ function HookWiring({ children }: { children: ReactNode }) {
     cancelStreamFilter: logViewer.cancelStreamFilter,
     setTimeFilter: logViewer.setTimeFilter,
     openTab: (type: string) => { bus.emit('layout:open-tab', { type }); },
+    openAnalysis: (artifactId: string) => {
+      bus.emit('layout:open-tab', { type: 'analysis', analysisArtifactId: artifactId });
+    },
     setActiveLogPane,
     setActivePane,
     saveFile,
@@ -442,15 +459,17 @@ export function AppProviders({ children }: { children: ReactNode }) {
     <WorkspaceProvider>
       <MarketplaceProvider>
         <SessionProvider>
-          <ViewerProvider>
-            <PipelineProvider>
-              <TrackerProvider>
-                <HookWiring>
-                  {children}
-                </HookWiring>
-              </TrackerProvider>
-            </PipelineProvider>
-          </ViewerProvider>
+          <AnalysisProvider>
+            <ViewerProvider>
+              <PipelineProvider>
+                <TrackerProvider>
+                  <HookWiring>
+                    {children}
+                  </HookWiring>
+                </TrackerProvider>
+              </PipelineProvider>
+            </ViewerProvider>
+          </AnalysisProvider>
         </SessionProvider>
       </MarketplaceProvider>
     </WorkspaceProvider>
@@ -498,6 +517,9 @@ export {
   usePendingUpdates,
   useMarketplaceSources,
   useWorkspaceActions,
+  useWorkspaceAnalyses,
+  useAnalysisActions,
+  useSessionLabels,
 } from './selectors';
 
 // Re-export workspace hooks
@@ -512,7 +534,7 @@ export { SessionProviders } from './SessionProviders';
 export { PaneSearchProvider, usePaneSearch, usePaneSearchQuery, usePaneSearchActions } from './PaneSearchContext';
 export { SessionDataProvider } from './SessionDataContext';
 export { SessionActionsProvider, useSessionActions,
-  useSessionBookmarkActions, useSessionAnalysisActions, useSessionWatchActions,
+  useSessionBookmarkActions, useSessionWatchActions,
 } from './SessionActionsContext';
 export {
   useSessionPipelineResults,

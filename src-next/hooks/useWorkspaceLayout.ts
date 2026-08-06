@@ -20,6 +20,7 @@ import {
 } from './workspace';
 import type { CenterTabType } from './workspace';
 import { resolveFocusedTab } from './workspace/sessionTreeOps';
+import { setPendingAnalysisSelection } from '../components/AnalysisReader';
 
 // ---------------------------------------------------------------------------
 // Re-exports — public API surface (call sites import from here or hooks/index)
@@ -149,7 +150,16 @@ export function useWorkspaceLayout() {
     };
 
     const onOpenTab = (e: AppEvents['layout:open-tab']) => {
-      openCenterTabRef.current(e.type as CenterTabType, e.label, e.filePath, e.editorState);
+      const paneId = openCenterTabRef.current(e.type as CenterTabType, e.label, e.filePath, e.editorState);
+      if (e.analysisArtifactId && paneId) {
+        // Seed the pending selection BEFORE emitting — covers the new-tab
+        // and reuse-inactive-tab paths, where AnalysisReader doesn't exist
+        // (or hasn't re-rendered as the active tab) yet to receive the bus
+        // event below; it consumes this on mount. The already-mounted
+        // (reuse-active) case is covered by the live bus event instead.
+        setPendingAnalysisSelection(paneId, e.analysisArtifactId);
+        bus.emit('analysis:open', { artifactId: e.analysisArtifactId, paneId });
+      }
     };
 
     const onWorkspaceReset = () => {

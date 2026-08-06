@@ -7,8 +7,14 @@
 //! ZIP layout:
 //! ```text
 //! manifest.json                        — workspace name, session list, timestamp
+//! analyses.json                        — workspace-level analyses (all sessions)
 //! sessions/{idx}/bookmarks.json        — per-session bookmarks
-//! sessions/{idx}/analyses.json         — per-session analyses
+//! sessions/{idx}/analyses.json         — legacy per-session analyses; current
+//!                                         writers always emit `[]` here (analyses
+//!                                         moved to the top-level `analyses.json`).
+//!                                         Kept so pre-migration readers relying on
+//!                                         a hard `?` on this path can still open
+//!                                         the workspace; read for migration only.
 //! sessions/{idx}/pipeline-meta.json    — per-session processor chain + disabled
 //! pipeline-chain.json                  — workspace-level pipeline chain order
 //! editor-tabs.json                     — editor tab content + modes (optional)
@@ -66,6 +72,17 @@ pub struct LtwManifestSession {
     /// before this field existed still load.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_type_override: Option<String>,
+    /// The session id this entry's file resolved to when the workspace was
+    /// saved (T8). Stamped from the live session at save time
+    /// (`collect_session_data`); on restore, the frontend re-derives the id
+    /// for the same file and compares it against this recorded value. A
+    /// mismatch means the file's content changed since the save — same path,
+    /// different bytes — so any analysis reference keyed to the old id is now
+    /// unresolved. Additive and optional like `source_type_override`: a
+    /// manifest written before this field existed parses as `None`, which the
+    /// frontend treats as "nothing to diagnose" rather than a mismatch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_session_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -108,6 +125,11 @@ pub type LtwLayout = serde_json::Value;
 #[derive(Debug, Clone)]
 pub struct LtwSessionData {
     pub bookmarks: Vec<Bookmark>,
+    /// Legacy per-session analyses — populated only when reading a
+    /// pre-migration `.ltw` whose analyses were stored per-session. Current
+    /// writers always emit `[]` for this slot (see module doc); analyses now
+    /// live in the workspace-level [`LtwData::analyses`]. Retained here so
+    /// callers can migrate old data forward on load.
     pub analyses: Vec<AnalysisArtifact>,
     pub session_meta: SessionMeta,
 }
@@ -120,6 +142,11 @@ pub struct LtwSessionData {
 pub struct LtwData {
     pub manifest: LtwManifest,
     pub sessions: Vec<LtwSessionData>,
+    /// Workspace-level analyses (top-level `analyses.json`). Empty when the
+    /// entry is absent from the archive — a pre-migration `.ltw` file has no
+    /// top-level `analyses.json`; its analyses live per-session instead, in
+    /// each [`LtwSessionData::analyses`].
+    pub analyses: Vec<AnalysisArtifact>,
     pub pipeline_chain: LtwPipelineChain,
     pub editor_tabs: Vec<LtwEditorTab>,
     pub layout: Option<LtwLayout>,
@@ -133,11 +160,13 @@ pub struct LtwData {
 /// manifest, so a caller (e.g. the Q4 background flush) can record the exact
 /// same value into `app-state.json` — Q3's trust check compares the two and
 /// tolerates only a small skew.
+#[allow(clippy::too_many_arguments)]
 pub fn write_ltw(
     dest: &Path,
     workspace_name: &str,
     workspace_id: Option<&str>,
-    session_entries: &[(LtwManifestSession, &[Bookmark], &[AnalysisArtifact], &SessionMeta)],
+    session_entries: &[(LtwManifestSession, &[Bookmark], &SessionMeta)],
+    workspace_analyses: &[AnalysisArtifact],
     pipeline_chain: &LtwPipelineChain,
     editor_tabs: &[LtwEditorTab],
     layout: Option<&LtwLayout>,
@@ -148,7 +177,7 @@ pub fn write_ltw(
         workspace_name: workspace_name.to_string(),
         workspace_id: workspace_id.map(str::to_string),
         saved_at,
-        sessions: session_entries.iter().map(|(m, _, _, _)| m.clone()).collect(),
+        sessions: session_entries.iter().map(|(m, _, _)| m.clone()).collect(),
     };
 
     // Written atomically: content lands in a sibling `.ltw.tmp` file first and
@@ -162,11 +191,19 @@ pub fn write_ltw(
         // Manifest
         zip_write_json(&mut writer, "manifest.json", opts, &manifest)?;
 
-        // Per-session data
-        for (idx, (_, bookmarks, analyses, meta)) in session_entries.iter().enumerate() {
+        // Workspace-level analyses
+        zip_write_json(&mut writer, "analyses.json", opts, workspace_analyses)?;
+
+        // Per-session data. `sessions/{idx}/analyses.json` is always written as
+        // an empty array — analyses moved to the top-level entry above, but
+        // older builds still read this path with a hard `?`; omitting it would
+        // make a downgraded reader fail to open the whole workspace (see
+        // module doc).
+        let empty_session_analyses: Vec<AnalysisArtifact> = Vec::new();
+        for (idx, (_, bookmarks, meta)) in session_entries.iter().enumerate() {
             let prefix = format!("sessions/{idx}");
             zip_write_json(&mut writer, &format!("{prefix}/bookmarks.json"), opts, bookmarks)?;
-            zip_write_json(&mut writer, &format!("{prefix}/analyses.json"), opts, analyses)?;
+            zip_write_json(&mut writer, &format!("{prefix}/analyses.json"), opts, &empty_session_analyses)?;
             zip_write_json(&mut writer, &format!("{prefix}/pipeline-meta.json"), opts, meta)?;
         }
 
@@ -205,19 +242,29 @@ pub fn read_ltw(path: &Path) -> Result<LtwData, String> {
         ));
     }
 
+    // Top-level workspace analyses. Tolerant like `layout.json` below: a
+    // pre-migration `.ltw` has no `analyses.json` entry at all, and must still
+    // load — with its analyses surfaced per-session instead (see below).
+    let analyses: Vec<AnalysisArtifact> =
+        zip_read_json(&mut archive, "analyses.json").unwrap_or_default();
+
     let session_count = manifest.sessions.len();
     let mut sessions = Vec::with_capacity(session_count);
     for idx in 0..session_count {
         let prefix = format!("sessions/{idx}");
         let bookmarks: Vec<Bookmark> =
             zip_read_json(&mut archive, &format!("{prefix}/bookmarks.json"))?;
-        let analyses: Vec<AnalysisArtifact> =
-            zip_read_json(&mut archive, &format!("{prefix}/analyses.json"))?;
+        // Legacy per-session analyses. Current writers always emit `[]` here
+        // (see module doc), but a pre-migration file may have real data and
+        // may even predate this entry existing at all — tolerant like the
+        // top-level read above.
+        let legacy_analyses: Vec<AnalysisArtifact> =
+            zip_read_json(&mut archive, &format!("{prefix}/analyses.json")).unwrap_or_default();
         let session_meta: SessionMeta =
             zip_read_json(&mut archive, &format!("{prefix}/pipeline-meta.json"))?;
         sessions.push(LtwSessionData {
             bookmarks,
-            analyses,
+            analyses: legacy_analyses,
             session_meta,
         });
     }
@@ -232,6 +279,7 @@ pub fn read_ltw(path: &Path) -> Result<LtwData, String> {
     Ok(LtwData {
         manifest,
         sessions,
+        analyses,
         pipeline_chain,
         editor_tabs,
         layout,
@@ -264,13 +312,13 @@ mod tests {
         }
     }
 
-    fn make_analysis(session_id: &str, title: &str) -> AnalysisArtifact {
+    fn make_analysis(title: &str) -> AnalysisArtifact {
         AnalysisArtifact {
             id: format!("art-{title}"),
-            session_id: session_id.to_string(),
             title: title.to_string(),
             created_at: 0,
             sections: vec![],
+            legacy_session_id: None,
         }
     }
 
@@ -284,6 +332,7 @@ mod tests {
             "Empty",
             None,
             &[],
+            &[],
             &LtwPipelineChain::default(),
             &[],
             None,
@@ -295,6 +344,7 @@ mod tests {
         assert_eq!(data.manifest.workspace_name, "Empty");
         assert!(data.manifest.workspace_id.is_none());
         assert!(data.sessions.is_empty());
+        assert!(data.analyses.is_empty());
         assert!(data.pipeline_chain.chain.is_empty());
         assert!(data.editor_tabs.is_empty());
         assert!(data.layout.is_none());
@@ -311,7 +361,6 @@ mod tests {
         let path = tmp.path();
 
         let no_bookmarks: Vec<Bookmark> = vec![];
-        let no_analyses: Vec<AnalysisArtifact> = vec![];
         let meta = SessionMeta::default();
         let entries = vec![
             (
@@ -320,9 +369,9 @@ mod tests {
                     source_name: "dumpstate_board.txt".into(),
                     source_type: "Kernel".into(),
                     source_type_override: Some("Kernel".into()),
+                    expected_session_id: None,
                 },
                 no_bookmarks.as_slice(),
-                no_analyses.as_slice(),
                 &meta,
             ),
             (
@@ -331,9 +380,9 @@ mod tests {
                     source_name: "device.log".into(),
                     source_type: "Logcat".into(),
                     source_type_override: None,
+                    expected_session_id: None,
                 },
                 no_bookmarks.as_slice(),
-                no_analyses.as_slice(),
                 &meta,
             ),
         ];
@@ -343,6 +392,7 @@ mod tests {
             "Overrides",
             None,
             &entries,
+            &[],
             &LtwPipelineChain::default(),
             &[],
             None,
@@ -374,6 +424,79 @@ mod tests {
         assert_eq!(parsed.source_type, "Logcat");
     }
 
+    /// The recorded id must survive a save/load cycle, and an entry with no
+    /// recorded id (the writer never stamps `None`, but a hand-built manifest
+    /// might) must round-trip as `None` rather than erroring or defaulting to
+    /// something else.
+    #[test]
+    fn round_trip_expected_session_id() {
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path();
+
+        let no_bookmarks: Vec<Bookmark> = vec![];
+        let meta = SessionMeta::default();
+        let entries = vec![
+            (
+                LtwManifestSession {
+                    file_path: "/logs/device.log".into(),
+                    source_name: "device.log".into(),
+                    source_type: "Logcat".into(),
+                    source_type_override: None,
+                    expected_session_id: Some("f-abc123".into()),
+                },
+                no_bookmarks.as_slice(),
+                &meta,
+            ),
+            (
+                LtwManifestSession {
+                    file_path: "/logs/kernel.log".into(),
+                    source_name: "kernel.log".into(),
+                    source_type: "Kernel".into(),
+                    source_type_override: None,
+                    expected_session_id: None,
+                },
+                no_bookmarks.as_slice(),
+                &meta,
+            ),
+        ];
+
+        write_ltw(
+            path,
+            "ExpectedIds",
+            None,
+            &entries,
+            &[],
+            &LtwPipelineChain::default(),
+            &[],
+            None,
+        )
+        .unwrap();
+
+        let data = read_ltw(path).unwrap();
+        assert_eq!(
+            data.manifest.sessions[0].expected_session_id.as_deref(),
+            Some("f-abc123"),
+            "a recorded id must survive the round trip"
+        );
+        assert_eq!(
+            data.manifest.sessions[1].expected_session_id, None,
+            "an absent id must round-trip as None"
+        );
+    }
+
+    /// A `.ltw` written before `expectedSessionId` existed must still parse.
+    #[test]
+    fn manifest_session_without_expected_session_id_still_deserializes() {
+        let json = r#"{
+            "filePath": "/logs/device.log",
+            "sourceName": "device.log",
+            "sourceType": "Logcat"
+        }"#;
+        let parsed: LtwManifestSession = serde_json::from_str(json).expect("legacy entry parses");
+        assert_eq!(parsed.expected_session_id, None);
+        assert_eq!(parsed.source_type, "Logcat");
+    }
+
     #[test]
     fn round_trip_multi_session_workspace() {
         let tmp = NamedTempFile::new().unwrap();
@@ -381,8 +504,7 @@ mod tests {
 
         let bk1 = vec![make_bookmark("s1", 10, "crash site")];
         let bk2 = vec![make_bookmark("s2", 50, "wifi disconnect")];
-        let art1 = vec![make_analysis("s1", "Crash Analysis")];
-        let no_analyses: Vec<AnalysisArtifact> = vec![];
+        let workspace_analyses = vec![make_analysis("Crash Analysis")];
         let meta1 = SessionMeta {
             active_processor_ids: vec!["wifi-state".into()],
             disabled_processor_ids: vec![],
@@ -396,9 +518,9 @@ mod tests {
                     source_name: "device-a.log".into(),
                     source_type: "Logcat".into(),
                     source_type_override: None,
+                    expected_session_id: None,
                 },
                 bk1.as_slice(),
-                art1.as_slice(),
                 &meta1,
             ),
             (
@@ -407,9 +529,9 @@ mod tests {
                     source_name: "bugreport.zip".into(),
                     source_type: "Bugreport".into(),
                     source_type_override: None,
+                    expected_session_id: None,
                 },
                 bk2.as_slice(),
-                no_analyses.as_slice(),
                 &meta2,
             ),
         ];
@@ -432,7 +554,17 @@ mod tests {
             "leftPaneWidth": 280
         });
 
-        write_ltw(path, "wifi-debug", Some("ws-wifi-debug"), &session_entries, &chain, &editors, Some(&layout)).unwrap();
+        write_ltw(
+            path,
+            "wifi-debug",
+            Some("ws-wifi-debug"),
+            &session_entries,
+            &workspace_analyses,
+            &chain,
+            &editors,
+            Some(&layout),
+        )
+        .unwrap();
 
         let data = read_ltw(path).unwrap();
 
@@ -445,11 +577,17 @@ mod tests {
         assert_eq!(data.manifest.sessions[1].file_path, "/logs/bugreport.zip");
         assert_eq!(data.manifest.sessions[1].source_type, "Bugreport");
 
+        // Workspace-level analyses (top-level, no longer per-session)
+        assert_eq!(data.analyses.len(), 1);
+        assert_eq!(data.analyses[0].title, "Crash Analysis");
+
         // Per-session data
         assert_eq!(data.sessions[0].bookmarks.len(), 1);
         assert_eq!(data.sessions[0].bookmarks[0].label, "crash site");
-        assert_eq!(data.sessions[0].analyses.len(), 1);
-        assert_eq!(data.sessions[0].analyses[0].title, "Crash Analysis");
+        assert!(
+            data.sessions[0].analyses.is_empty(),
+            "new files always write empty per-session analyses"
+        );
         assert_eq!(data.sessions[0].session_meta.active_processor_ids, vec!["wifi-state"]);
         assert_eq!(data.sessions[1].bookmarks.len(), 1);
         assert_eq!(data.sessions[1].bookmarks[0].label, "wifi disconnect");
@@ -476,7 +614,7 @@ mod tests {
         let path = tmp.path();
 
         // Write a v4 file then tamper with the version
-        write_ltw(path, "test", None, &[], &LtwPipelineChain::default(), &[], None).unwrap();
+        write_ltw(path, "test", None, &[], &[], &LtwPipelineChain::default(), &[], None).unwrap();
 
         // Read it back, modify manifest version, rewrite
         let file = File::open(path).unwrap();
@@ -503,7 +641,7 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         let path = tmp.path();
 
-        write_ltw(path, "no-layout", None, &[], &LtwPipelineChain::default(), &[], None).unwrap();
+        write_ltw(path, "no-layout", None, &[], &[], &LtwPipelineChain::default(), &[], None).unwrap();
 
         let data = read_ltw(path).unwrap();
         assert!(data.layout.is_none());
@@ -515,7 +653,7 @@ mod tests {
         let path = tmp.path();
         let before = now_ms();
 
-        write_ltw(path, "timing", None, &[], &LtwPipelineChain::default(), &[], None).unwrap();
+        write_ltw(path, "timing", None, &[], &[], &LtwPipelineChain::default(), &[], None).unwrap();
 
         let data = read_ltw(path).unwrap();
         assert!(data.manifest.saved_at >= before);
@@ -527,12 +665,12 @@ mod tests {
         // With an id (the modern writer path — both save commands and the
         // backend flusher pass their workspace id).
         let with_id = NamedTempFile::new().unwrap();
-        write_ltw(with_id.path(), "ws", Some("ws-42"), &[], &LtwPipelineChain::default(), &[], None).unwrap();
+        write_ltw(with_id.path(), "ws", Some("ws-42"), &[], &[], &LtwPipelineChain::default(), &[], None).unwrap();
         assert_eq!(read_ltw(with_id.path()).unwrap().manifest.workspace_id.as_deref(), Some("ws-42"));
 
         // Without an id (writer explicitly passes None) — round-trips to None.
         let no_id = NamedTempFile::new().unwrap();
-        write_ltw(no_id.path(), "ws", None, &[], &LtwPipelineChain::default(), &[], None).unwrap();
+        write_ltw(no_id.path(), "ws", None, &[], &[], &LtwPipelineChain::default(), &[], None).unwrap();
         assert!(read_ltw(no_id.path()).unwrap().manifest.workspace_id.is_none());
     }
 
@@ -563,5 +701,179 @@ mod tests {
         let data = read_ltw(path).unwrap();
         assert_eq!(data.manifest.workspace_name, "Untitled");
         assert!(data.manifest.workspace_id.is_none());
+    }
+
+    // --- Workspace-level analyses (T3) -------------------------------------
+
+    /// A single artifact can reference two different sessions — analyses are
+    /// workspace-owned, not keyed by session, so this must round-trip as one
+    /// entry in the top-level `analyses.json`, not duplicated per session.
+    #[test]
+    fn round_trip_workspace_analyses_spanning_two_sessions() {
+        use crate::core::analysis::{AnalysisSection, HighlightType, SourceReference};
+
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path();
+
+        let artifact = AnalysisArtifact {
+            id: "art-multi".into(),
+            title: "Cross-session correlation".into(),
+            created_at: 0,
+            sections: vec![AnalysisSection {
+                heading: "H".into(),
+                body: "B".into(),
+                references: vec![
+                    SourceReference {
+                        line_number: 1,
+                        end_line: None,
+                        label: "in s1".into(),
+                        highlight_type: HighlightType::default(),
+                        session_id: Some("s1".into()),
+                    },
+                    SourceReference {
+                        line_number: 2,
+                        end_line: None,
+                        label: "in s2".into(),
+                        highlight_type: HighlightType::default(),
+                        session_id: Some("s2".into()),
+                    },
+                ],
+                severity: None,
+            }],
+            legacy_session_id: None,
+        };
+        let workspace_analyses = vec![artifact];
+
+        write_ltw(path, "multi", None, &[], &workspace_analyses, &LtwPipelineChain::default(), &[], None)
+            .unwrap();
+
+        let data = read_ltw(path).unwrap();
+        assert_eq!(data.analyses.len(), 1);
+        assert_eq!(data.analyses[0].id, "art-multi");
+        let session_ids = crate::core::analysis::artifact_session_ids(&data.analyses[0]);
+        assert_eq!(session_ids, vec!["s1".to_string(), "s2".to_string()]);
+    }
+
+    /// A pre-migration `.ltw` with no top-level `analyses.json` but real data
+    /// in `sessions/{idx}/analyses.json` must surface that data in
+    /// `LtwSessionData::analyses` for migration, while the top-level
+    /// `LtwData::analyses` reads as empty (no expectation recorded there).
+    #[test]
+    fn legacy_ltw_with_per_session_analyses_reads_them_into_session_data() {
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path();
+
+        let manifest = LtwManifest {
+            format_version: LTW_V4_FORMAT_VERSION,
+            workspace_name: "legacy".into(),
+            workspace_id: None,
+            saved_at: 1_700_000_000_000,
+            sessions: vec![LtwManifestSession {
+                file_path: "/logs/a.log".into(),
+                source_name: "a.log".into(),
+                source_type: "Logcat".into(),
+                source_type_override: None,
+                expected_session_id: None,
+            }],
+        };
+
+        let legacy_artifact = make_analysis("Legacy Analysis");
+
+        let out = File::create(path).unwrap();
+        let mut writer = zip::ZipWriter::new(out);
+        let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        zip_write_json(&mut writer, "manifest.json", opts, &manifest).unwrap();
+        zip_write_json(&mut writer, "sessions/0/bookmarks.json", opts, &Vec::<Bookmark>::new()).unwrap();
+        zip_write_json(&mut writer, "sessions/0/analyses.json", opts, &vec![legacy_artifact]).unwrap();
+        zip_write_json(&mut writer, "sessions/0/pipeline-meta.json", opts, &SessionMeta::default()).unwrap();
+        zip_write_json(&mut writer, "pipeline-chain.json", opts, &LtwPipelineChain::default()).unwrap();
+        zip_write_json(&mut writer, "editor-tabs.json", opts, &Vec::<LtwEditorTab>::new()).unwrap();
+        // Deliberately no top-level "analyses.json" — this is the pre-migration shape.
+        writer.finish().unwrap();
+
+        let data = read_ltw(path).unwrap();
+        assert!(
+            data.analyses.is_empty(),
+            "no top-level analyses.json in this legacy file"
+        );
+        assert_eq!(data.sessions[0].analyses.len(), 1);
+        assert_eq!(data.sessions[0].analyses[0].title, "Legacy Analysis");
+    }
+
+    /// A `.ltw` with no top-level `analyses.json` entry at all (and no
+    /// per-session data either) must still open, with analyses reading as
+    /// empty rather than erroring.
+    #[test]
+    fn ltw_without_top_level_analyses_json_reads_as_empty() {
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path();
+
+        let manifest = LtwManifest {
+            format_version: LTW_V4_FORMAT_VERSION,
+            workspace_name: "no-analyses-entry".into(),
+            workspace_id: None,
+            saved_at: 1_700_000_000_000,
+            sessions: vec![],
+        };
+
+        let out = File::create(path).unwrap();
+        let mut writer = zip::ZipWriter::new(out);
+        let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        zip_write_json(&mut writer, "manifest.json", opts, &manifest).unwrap();
+        zip_write_json(&mut writer, "pipeline-chain.json", opts, &LtwPipelineChain::default()).unwrap();
+        zip_write_json(&mut writer, "editor-tabs.json", opts, &Vec::<LtwEditorTab>::new()).unwrap();
+        // Deliberately no "analyses.json" entry.
+        writer.finish().unwrap();
+
+        let data = read_ltw(path).unwrap();
+        assert!(data.analyses.is_empty());
+    }
+
+    /// The current writer must always emit `sessions/{idx}/analyses.json` as
+    /// an empty array, even when the workspace has real analyses — older
+    /// builds read that path with a hard `?`, so omitting it (or leaving it
+    /// non-empty and duplicated) would break a downgraded reader opening the
+    /// workspace.
+    #[test]
+    fn new_writer_emits_empty_per_session_analyses_for_downgrade_readers() {
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path();
+
+        let no_bookmarks: Vec<Bookmark> = vec![];
+        let meta = SessionMeta::default();
+        let entries = vec![(
+            LtwManifestSession {
+                file_path: "/logs/a.log".into(),
+                source_name: "a.log".into(),
+                source_type: "Logcat".into(),
+                source_type_override: None,
+                expected_session_id: None,
+            },
+            no_bookmarks.as_slice(),
+            &meta,
+        )];
+
+        let workspace_analyses = vec![make_analysis("Workspace-level")];
+
+        write_ltw(
+            path,
+            "downgrade-check",
+            None,
+            &entries,
+            &workspace_analyses,
+            &LtwPipelineChain::default(),
+            &[],
+            None,
+        )
+        .unwrap();
+
+        let file = File::open(path).unwrap();
+        let mut archive = zip::ZipArchive::new(file).unwrap();
+        let session_analyses: Vec<AnalysisArtifact> =
+            zip_read_json(&mut archive, "sessions/0/analyses.json").unwrap();
+        assert!(
+            session_analyses.is_empty(),
+            "new writer must always emit an empty per-session analyses.json for downgrade readers"
+        );
     }
 }

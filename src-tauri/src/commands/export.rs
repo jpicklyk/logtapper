@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::{lock_or_err, AppState};
+use crate::core::analysis::artifact_references_session;
 use crate::core::log_source::{FileLogSource, ZipLogSource, StreamLogSource};
 use crate::mcp_bridge::{anonymize_for_session, resolve_should_anonymize};
 use crate::workspace::lts::{LtsEditorTab, LtsSessionData, LtsSessionMeta};
@@ -123,6 +124,31 @@ fn anonymize_lines_to_bytes(state: &AppState, session_id: &str, lines: &[String]
     buf
 }
 
+/// Filter the workspace-owned analyses store down to the artifacts that
+/// reference `session_id` (via [`artifact_references_session`]), cloned for
+/// embedding in that session's exported `.lts` entry.
+///
+/// A multi-session artifact (one whose references span more than one open
+/// session) is intentionally embedded in EACH session's exported entry it
+/// references — this is what makes a later re-import of any one of those
+/// `.lts` files still carry the full artifact rather than a partial view.
+///
+/// Pulled out as a standalone helper over `&[AnalysisArtifact]` (no lock, no
+/// `AppState`) so it is directly unit-testable — mirroring
+/// `anonymize_lines_to_bytes` above. Used by `export_all_sessions`, which needs
+/// the owned artifacts; `get_export_all_sessions_info` only needs a count and so
+/// filters/counts directly rather than cloning through this helper.
+pub(crate) fn analyses_referencing_session(
+    analyses: &[crate::core::analysis::AnalysisArtifact],
+    session_id: &str,
+) -> Vec<crate::core::analysis::AnalysisArtifact> {
+    analyses
+        .iter()
+        .filter(|a| artifact_references_session(a, session_id))
+        .cloned()
+        .collect()
+}
+
 /// Derive a display name for a session: source name > file_path basename > session ID.
 fn session_display_name(session: &crate::core::session::AnalysisSession) -> String {
     if let Some(src) = session.primary_source() {
@@ -198,7 +224,13 @@ pub async fn get_export_all_sessions_info(
             .into_iter()
             .map(|(session_id, source_filename)| {
                 let bookmark_count = bookmarks.get(&session_id).map_or(0, Vec::len);
-                let analysis_count = analyses.get(&session_id).map_or(0, Vec::len);
+                // Count without cloning — `analyses_referencing_session` deep-clones
+                // every match (including all section markdown) and we only need the
+                // integer here.
+                let analysis_count = analyses
+                    .iter()
+                    .filter(|a| artifact_references_session(a, &session_id))
+                    .count();
                 ExportSessionEntry { session_id, source_filename, bookmark_count, analysis_count }
             })
             .collect()
@@ -324,9 +356,17 @@ pub async fn export_all_sessions(
     } else {
         vec![vec![]; session_snapshots.len()]
     };
+    // A multi-session analysis (one that references more than one open
+    // session) is embedded in each `.lts` export that references it —
+    // filtering by `artifact_references_session` rather than a map lookup
+    // means the same artifact can legitimately appear in more than one
+    // session's exported entry.
     let all_analyses = if options.include_analyses {
         let guard = lock_or_err(&state.analyses, "analyses")?;
-        session_snapshots.iter().map(|(id, _, _)| guard.get(id).cloned().unwrap_or_default()).collect::<Vec<_>>()
+        session_snapshots
+            .iter()
+            .map(|(id, _, _)| analyses_referencing_session(&guard, id))
+            .collect::<Vec<_>>()
     } else {
         vec![vec![]; session_snapshots.len()]
     };
@@ -818,5 +858,130 @@ mod tests {
             !text.contains("user@example.com"),
             "an unsignalled session must fail closed to anonymized, not raw: {text}"
         );
+    }
+
+    // ---------------------------------------------------------------------------
+    // analyses_referencing_session tests
+    // ---------------------------------------------------------------------------
+
+    fn artifact_with_ref(id: &str, session_id: Option<&str>) -> crate::core::analysis::AnalysisArtifact {
+        use crate::core::analysis::{AnalysisSection, HighlightType, SourceReference};
+        crate::core::analysis::AnalysisArtifact {
+            id: id.to_string(),
+            title: id.to_string(),
+            created_at: 0,
+            sections: vec![AnalysisSection {
+                heading: "H".to_string(),
+                body: "B".to_string(),
+                references: vec![SourceReference {
+                    line_number: 1,
+                    end_line: None,
+                    label: "ref".to_string(),
+                    highlight_type: HighlightType::default(),
+                    session_id: session_id.map(str::to_string),
+                }],
+                severity: None,
+            }],
+            legacy_session_id: None,
+        }
+    }
+
+    fn artifact_with_refs(id: &str, session_ids: &[&str]) -> crate::core::analysis::AnalysisArtifact {
+        use crate::core::analysis::{AnalysisSection, HighlightType, SourceReference};
+        crate::core::analysis::AnalysisArtifact {
+            id: id.to_string(),
+            title: id.to_string(),
+            created_at: 0,
+            sections: vec![AnalysisSection {
+                heading: "H".to_string(),
+                body: "B".to_string(),
+                references: session_ids
+                    .iter()
+                    .map(|sid| SourceReference {
+                        line_number: 1,
+                        end_line: None,
+                        label: "ref".to_string(),
+                        highlight_type: HighlightType::default(),
+                        session_id: Some((*sid).to_string()),
+                    })
+                    .collect(),
+                severity: None,
+            }],
+            legacy_session_id: None,
+        }
+    }
+
+    /// An `.lts` export for a given session must include only the analyses
+    /// that reference it — not analyses referencing other open sessions, and
+    /// not unattributed analyses.
+    #[test]
+    fn lts_export_includes_analyses_referencing_the_exported_session_only() {
+        let a = artifact_with_ref("art-a", Some("sess-a"));
+        let b = artifact_with_ref("art-b", Some("sess-b"));
+        let unattributed = artifact_with_ref("art-none", None);
+        let all = vec![a, b, unattributed];
+
+        let for_a = analyses_referencing_session(&all, "sess-a");
+        assert_eq!(for_a.len(), 1);
+        assert_eq!(for_a[0].id, "art-a");
+
+        let for_b = analyses_referencing_session(&all, "sess-b");
+        assert_eq!(for_b.len(), 1);
+        assert_eq!(for_b[0].id, "art-b");
+    }
+
+    /// A multi-session artifact must be embedded in EVERY session's export
+    /// entry that it references — a re-import of any one of those `.lts`
+    /// files must still carry the full artifact.
+    #[test]
+    fn lts_export_embeds_multi_session_analysis_in_each_referenced_session() {
+        let multi = artifact_with_refs("art-multi", &["sess-a", "sess-b"]);
+        let all = vec![multi];
+
+        let for_a = analyses_referencing_session(&all, "sess-a");
+        let for_b = analyses_referencing_session(&all, "sess-b");
+
+        assert_eq!(for_a.len(), 1, "must be embedded in session A's export");
+        assert_eq!(for_a[0].id, "art-multi");
+        assert_eq!(for_b.len(), 1, "must ALSO be embedded in session B's export");
+        assert_eq!(for_b[0].id, "art-multi");
+
+        let for_c = analyses_referencing_session(&all, "sess-c");
+        assert!(for_c.is_empty(), "a session it does not reference must get nothing");
+    }
+
+    /// A narrative-only analysis (no references anywhere — `references` is
+    /// optional on `AnalysisSection`) has no file anchor to disambiguate by,
+    /// so it must be embedded in EVERY session's `.lts` export, not silently
+    /// dropped for lacking a matching reference.
+    #[test]
+    fn zero_reference_artifact_included_in_lts_export() {
+        use crate::core::analysis::{AnalysisArtifact, AnalysisSection};
+
+        let narrative_only = AnalysisArtifact {
+            id: "art-narrative".to_string(),
+            title: "Summary".to_string(),
+            created_at: 0,
+            sections: vec![AnalysisSection {
+                heading: "Conclusion".to_string(),
+                body: "Everything is fine.".to_string(),
+                references: vec![],
+                severity: None,
+            }],
+            legacy_session_id: None,
+        };
+        let anchored = artifact_with_ref("art-anchored", Some("sess-a"));
+        let all = vec![narrative_only, anchored];
+
+        let for_a = analyses_referencing_session(&all, "sess-a");
+        assert_eq!(for_a.len(), 2, "both the anchored and the narrative-only analysis belong in sess-a's export");
+        assert!(for_a.iter().any(|a| a.id == "art-narrative"));
+
+        let for_unrelated = analyses_referencing_session(&all, "sess-unrelated");
+        assert_eq!(
+            for_unrelated.len(), 1,
+            "the narrative-only analysis must also be embedded in a session it never anchored to"
+        );
+        assert_eq!(for_unrelated[0].id, "art-narrative");
     }
 }

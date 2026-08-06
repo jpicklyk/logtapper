@@ -539,6 +539,7 @@ pub fn run() {
             commands::analysis::list_analyses,
             commands::analysis::get_analysis,
             commands::analysis::delete_analysis,
+            commands::analysis::set_workspace_analyses,
             // Phase 4 — Watch commands
             commands::watch::create_watch,
             commands::watch::cancel_watch,

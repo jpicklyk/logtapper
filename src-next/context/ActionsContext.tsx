@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { bus } from '../events';
-import type { ExportAllOptions, ProcessorSummary, SourceType } from '../bridge/types';
+import type { AnalysisArtifact, AnalysisSection, ExportAllOptions, ProcessorSummary, SourceType } from '../bridge/types';
 
 // ---------------------------------------------------------------------------
 // Action categories
@@ -54,6 +54,24 @@ export interface WorkspaceMutationActions {
   saveWorkspaceAs: () => Promise<void>;
   closeWorkspace: (targetId: string) => void;
   switchWorkspace: (targetId: string) => void;
+
+  // Analysis mutations. These are workspace-owned artifacts (not per-session),
+  // but their durability is split from the rest of WorkspaceMutationActions:
+  // the backend's `schedule_autosave` already writes the `.ltw` on every
+  // artifact mutation (bookmark or analysis, including MCP-bridge-originated
+  // ones), so the frontend must NOT duplicate that write. `trackMutations()`
+  // tags these with `ARTIFACT_MUTATION_ACTION_KEYS` instead of
+  // `MUTATION_ACTION_KEYS` — the emitted `workspace:mutated` carries
+  // `source: 'artifact'`, which tells `useWorkspaceAutoSave` to push a
+  // refreshed envelope to the backend's cache instead of running its own
+  // `.ltw` write. See context/CLAUDE.md's "Backend-originated mutations".
+  publishAnalysis: (
+    title: string, sections: AnalysisSection[], sessionId?: string,
+  ) => Promise<AnalysisArtifact | null>;
+  updateAnalysis: (
+    artifactId: string, title?: string, sections?: AnalysisSection[],
+  ) => Promise<AnalysisArtifact | null>;
+  deleteAnalysis: (artifactId: string) => Promise<void>;
 }
 
 /**
@@ -80,6 +98,10 @@ export interface ViewActions {
   cancelStreamFilter: () => void;
   setTimeFilter: (start: string, end: string) => Promise<void>;
   openTab: (type: string) => void;
+  /** Opens (or reuses) the workspace-wide analysis tab and targets it at
+   *  `artifactId` — routes through `layout:open-tab` so the tab's resolved
+   *  pane id can be paired with a targeted `analysis:open` event. */
+  openAnalysis: (artifactId: string) => void;
   setActiveLogPane: (paneId: string) => void;
   setActivePane: (paneId: string) => void;
   saveFile: () => Promise<void>;
@@ -123,6 +145,23 @@ export const MUTATION_ACTION_KEYS: ReadonlySet<keyof WorkspaceMutationActions> =
 ] as const);
 
 /**
+ * Names of the analysis actions — artifact mutations whose `.ltw` durability
+ * is already owned by the backend (`schedule_autosave` in
+ * `artifact_mutations.rs`). `trackMutations()` wraps these with
+ * `markDirty()` + `bus.emit('workspace:mutated', { source: 'artifact' })`
+ * instead of `source: 'workspace'`, so `useWorkspaceAutoSave` only pushes a
+ * refreshed envelope rather than duplicating the backend's `.ltw` write.
+ *
+ * MUST stay disjoint from `MUTATION_ACTION_KEYS` — a key in both would fire
+ * `workspace:mutated` twice (once per source) for a single action.
+ */
+export const ARTIFACT_MUTATION_ACTION_KEYS: ReadonlySet<keyof WorkspaceMutationActions> = new Set([
+  'publishAnalysis',
+  'updateAnalysis',
+  'deleteAnalysis',
+] as const);
+
+/**
  * Wraps a function so that `onMutate` is called after it completes.
  * For async functions, fires after the promise resolves.
  */
@@ -156,20 +195,35 @@ export function tracked<T extends (...args: never[]) => unknown>(
  *
  * Restore paths bracket their work in `workspace:restore-begin`/`-end`, which
  * suppresses auto-save so a restore does not immediately re-persist itself.
+ *
+ * `ARTIFACT_MUTATION_ACTION_KEYS` (analysis mutations) are wrapped the same
+ * way but emit `source: 'artifact'` — the backend already owns their `.ltw`
+ * write, so `useWorkspaceAutoSave` only refreshes the envelope for these
+ * instead of running its own `.ltw` write. See that registry's doc comment.
  */
 export function trackMutations(
   actions: Partial<ActionsContextValue>,
   markDirty: () => void,
 ): Partial<ActionsContextValue> {
-  const onMutate = () => {
+  const onMutateWorkspace = () => {
     markDirty();
     bus.emit('workspace:mutated', { source: 'workspace' });
+  };
+  const onMutateArtifact = () => {
+    markDirty();
+    bus.emit('workspace:mutated', { source: 'artifact' });
   };
   const result = { ...actions } as Record<string, unknown>;
   for (const key of MUTATION_ACTION_KEYS) {
     const fn = actions[key];
     if (typeof fn === 'function') {
-      result[key] = tracked(fn as (...args: never[]) => unknown, onMutate);
+      result[key] = tracked(fn as (...args: never[]) => unknown, onMutateWorkspace);
+    }
+  }
+  for (const key of ARTIFACT_MUTATION_ACTION_KEYS) {
+    const fn = actions[key];
+    if (typeof fn === 'function') {
+      result[key] = tracked(fn as (...args: never[]) => unknown, onMutateArtifact);
     }
   }
   return result as Partial<ActionsContextValue>;
@@ -201,6 +255,9 @@ const DEFAULT_ACTIONS: ActionsContextValue = {
   saveWorkspaceAs: () => noopAsync(),
   closeWorkspace: (_targetId: string) => noop(),
   switchWorkspace: (_targetId: string) => noop(),
+  publishAnalysis: (_title: string, _sections: AnalysisSection[], _sessionId?: string) => Promise.resolve(null),
+  updateAnalysis: (_artifactId: string, _title?: string, _sections?: AnalysisSection[]) => Promise.resolve(null),
+  deleteAnalysis: (_artifactId: string) => noopAsync(),
 
   // View actions
   openFileDialog: () => noopAsync(),
@@ -214,6 +271,7 @@ const DEFAULT_ACTIONS: ActionsContextValue = {
   cancelStreamFilter: noop,
   setTimeFilter: (_start: string, _end: string) => noopAsync(),
   openTab: (_type: string) => noop(),
+  openAnalysis: (_artifactId: string) => noop(),
   setActiveLogPane: (_paneId: string) => noop(),
   setActivePane: (_paneId: string) => noop(),
   saveFile: () => noopAsync(),

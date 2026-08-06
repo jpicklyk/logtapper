@@ -17,5 +17,5 @@ Each component has its own subdirectory with:
 
 4. **No business logic** — components handle rendering and user interaction. State management and IPC live in hooks.
 
-5. **Local state stays local** (principle #5) — `useBookmarks`, `useAnalysis`, `useWatchList` are colocated with their consumer components, not hoisted to context.
+5. **Local state stays local** (principle #5) — `useBookmarks` and `useWatchList` are colocated with their consumer components, not hoisted to context. (Analyses are the exception: they are workspace-owned artifacts, so they live in `AnalysisContext` and mutate through `useAnalysisActions()` — see `context/CLAUDE.md`.)
 

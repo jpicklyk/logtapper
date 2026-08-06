@@ -1,10 +1,11 @@
 import { useMemo } from 'react';
-import type { LoadResult, ProcessorSummary, PackSummary, Source, UpdateAvailable } from '../bridge/types';
+import type { LoadResult, ProcessorSummary, PackSummary, Source, UpdateAvailable, AnalysisArtifact } from '../bridge/types';
 import { useSessionCoreCtx, useSessionPaneCtx, useSessionProgressCtx, type IndexingProgress } from './SessionContext';
 import { useScrollCtx, useProcessorViewCtx } from './ViewerContext';
 import { usePipelineLibraryCtx, usePipelineChainCtx, type SessionChainState } from './PipelineContext';
 import { useActionsContext } from './ActionsContext';
 import { useMarketplaceContext } from './MarketplaceContext';
+import { useAnalysisContext } from './AnalysisContext';
 
 // ---------------------------------------------------------------------------
 // Session selectors
@@ -169,10 +170,10 @@ export function useFileActions() {
 
 export function usePaneActions() {
   const { setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter,
-          setTimeFilter, openTab } = useActionsContext();
+          setTimeFilter, openTab, openAnalysis } = useActionsContext();
   return useMemo(
-    () => ({ setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter, setTimeFilter, openTab }),
-    [setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter, setTimeFilter, openTab],
+    () => ({ setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter, setTimeFilter, openTab, openAnalysis }),
+    [setActiveLogPane, setActivePane, setStreamFilter, cancelStreamFilter, setTimeFilter, openTab, openAnalysis],
   );
 }
 
@@ -181,6 +182,18 @@ export function useSettingsActions() {
   return useMemo(
     () => ({ startMcpBridge, stopMcpBridge, setFileAssociation, openDefaultAppsSettings, setMcpOpenAllowlist }),
     [startMcpBridge, stopMcpBridge, setFileAssociation, openDefaultAppsSettings, setMcpOpenAllowlist],
+  );
+}
+
+/** Workspace-layer analysis mutation actions (publish/update/delete). These
+ *  are artifact-tracked (`ARTIFACT_MUTATION_ACTION_KEYS`) — the backend owns
+ *  their `.ltw` durability, so dirty tracking pushes an envelope refresh
+ *  rather than a full auto-save. See context/CLAUDE.md. */
+export function useAnalysisActions() {
+  const { publishAnalysis, updateAnalysis, deleteAnalysis } = useActionsContext();
+  return useMemo(
+    () => ({ publishAnalysis, updateAnalysis, deleteAnalysis }),
+    [publishAnalysis, updateAnalysis, deleteAnalysis],
   );
 }
 
@@ -272,4 +285,39 @@ export function useStreamFilter(paneId: string): {
 
 export function useTotalLines(): number {
   return useFocusedSession()?.totalLines ?? 0;
+}
+
+// ---------------------------------------------------------------------------
+// Analysis selectors
+// ---------------------------------------------------------------------------
+
+/** Workspace-owned analysis artifacts and their loading state. */
+export function useWorkspaceAnalyses(): { artifacts: AnalysisArtifact[]; analysisLoading: boolean } {
+  const { artifacts, loading } = useAnalysisContext();
+  return useMemo(() => ({ artifacts, analysisLoading: loading }), [artifacts, loading]);
+}
+
+/** sessionId → sourceName, for resolving analysis reference attribution.
+ *
+ *  Identity-stable across value-identical rebuilds. The `sessions` Map gets a
+ *  fresh identity on every `session:updated` dispatch — which during an ADB
+ *  stream is ~20x/sec — but `sourceName` almost never changes. Memoizing
+ *  directly on `sessions` therefore handed a new Map to every consumer on each
+ *  batch, defeating `React.memo` on the analysis components downstream
+ *  (`resolvedSections` in AnalysisReader would rebuild every section object and
+ *  force react-markdown to re-parse; `attributions` in AnalysisList would
+ *  re-run `attributeArtifact` over every artifact). Keying the Map's memo on a
+ *  derived content string keeps that work proportional to real label changes;
+ *  building the key stays O(sessions), which is a handful of entries. */
+export function useSessionLabels(): ReadonlyMap<string, string> {
+  const { sessions } = useSessionCoreCtx();
+  const entries = useMemo(
+    () => [...sessions].map(([sessionId, s]) => [sessionId, s.sourceName] as const)
+      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)),
+    [sessions],
+  );
+  const key = entries.map(([id, name]) => `${id} ${name}`).join('');
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- `key` encodes every
+  // (sessionId, sourceName) pair in `entries`, so equal keys mean equal content.
+  return useMemo(() => new Map(entries), [key]);
 }

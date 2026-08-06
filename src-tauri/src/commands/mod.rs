@@ -133,8 +133,13 @@ pub struct AppState {
     pub active_filters: Mutex<HashMap<String, Arc<FilterSession>>>,
     /// Bookmarks: sessionId -> Vec<Bookmark>.
     pub bookmarks: Mutex<HashMap<String, Vec<Bookmark>>>,
-    /// Analysis artifacts: sessionId -> Vec<AnalysisArtifact>.
-    pub analyses: Mutex<HashMap<String, Vec<AnalysisArtifact>>>,
+    /// Analysis artifacts, workspace-owned (insertion-ordered, not keyed by
+    /// session). Session attribution lives per-reference on
+    /// `SourceReference.session_id` inside each artifact's sections — a
+    /// single artifact can span multiple sessions, or none yet. Closing a
+    /// session does NOT remove artifacts that reference it (orphaned-visible
+    /// is the intended behavior); see `commands::files::close_session_inner`.
+    pub analyses: Mutex<Vec<AnalysisArtifact>>,
     /// Active watches: sessionId -> Vec<Arc<WatchSession>>.
     pub active_watches: Mutex<HashMap<String, Vec<Arc<WatchSession>>>>,
     /// Configured marketplace sources.
@@ -247,7 +252,7 @@ impl AppState {
             pipeline_run_locks: Mutex::new(HashMap::new()),
             active_filters: Mutex::new(HashMap::new()),
             bookmarks: Mutex::new(HashMap::new()),
-            analyses: Mutex::new(HashMap::new()),
+            analyses: Mutex::new(Vec::new()),
             active_watches: Mutex::new(HashMap::new()),
             sources: Mutex::new(Vec::new()),
             pending_updates: Mutex::new(Vec::new()),

@@ -15,10 +15,13 @@ pub fn snapshot_bookmarks(state: &AppState, session_id: &str) -> Vec<Bookmark> {
     guard.get(session_id).cloned().unwrap_or_default()
 }
 
-/// Snapshot analyses for a session under a brief lock.
-pub fn snapshot_analyses(state: &AppState, session_id: &str) -> Vec<AnalysisArtifact> {
+/// Snapshot the entire workspace-owned analyses store under a brief lock.
+/// Analyses are not keyed by session — this is the full, unfiltered list;
+/// callers that need a single session's subset should filter with
+/// [`crate::core::analysis::artifact_references_session`].
+pub fn snapshot_workspace_analyses(state: &AppState) -> Vec<AnalysisArtifact> {
     let Ok(guard) = state.analyses.lock() else { return vec![] };
-    guard.get(session_id).cloned().unwrap_or_default()
+    guard.clone()
 }
 
 /// Snapshot pipeline meta (chain + disabled IDs) for a session under a brief lock.
@@ -47,5 +50,21 @@ mod tests {
         let meta = snapshot_pipeline_meta(&state, "nonexistent-session");
         assert!(meta.active_processor_ids.is_empty());
         assert!(meta.disabled_processor_ids.is_empty());
+    }
+
+    #[test]
+    fn snapshot_workspace_analyses_returns_full_unfiltered_list() {
+        let state = make_state();
+        state.analyses.lock().unwrap().push(AnalysisArtifact {
+            id: "art-1".to_string(),
+            title: "T".to_string(),
+            created_at: 0,
+            sections: vec![],
+            legacy_session_id: None,
+        });
+
+        let snapshot = snapshot_workspace_analyses(&state);
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].id, "art-1");
     }
 }

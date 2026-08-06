@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { useWorkspaceContext } from '../context/WorkspaceContext';
-import { saveWorkspaceV4, loadWorkspaceV4, saveAppState, beginWorkspaceSwitch } from '../bridge/commands';
+import { saveWorkspaceV4, loadWorkspaceV4, saveAppState, beginWorkspaceSwitch, setWorkspaceAnalyses } from '../bridge/commands';
 import type { WorkspaceIdentity } from '../bridge/workspaceTypes';
 
 import { bus } from '../events';
@@ -158,6 +158,12 @@ export function useWorkspace(
     // only degrades to the pre-existing behaviour — never a stuck-off autosave.
     await beginWorkspaceSwitch().catch(e =>
       console.warn('[useWorkspace] Failed to arm switch-suppression window:', e));
+    // Single common teardown for every workspace transition (new/open/switch):
+    // clear the workspace analysis store before sessions are closed, while
+    // the switch-suppression window armed above is still covering a backend
+    // flush that might otherwise write an empty analyses.json mid-teardown.
+    await setWorkspaceAnalyses([]).catch(e =>
+      console.warn('[useWorkspace] Failed to clear workspace analyses:', e));
     await closeAllSessions();
     // Layout tree is reset via the workspace:reset event listener in useWorkspaceLayout
   }, [closeAllSessions]);
@@ -170,7 +176,7 @@ export function useWorkspace(
     // participate) and its view-state is always applied. The shared core owns the
     // restore-begin/end bracket, per-entry keyed pairing, artifact restore, the
     // targeted auto-run, view-state replay, and `workspace:opened`.
-    const io: RestoreIo = { loadFile, scheduleAutoRun };
+    const io: RestoreIo = { loadFile, scheduleAutoRun, setWorkspaceAnalyses };
     const plan = planExplicitOpen(result.sessions);
     const warnings = await restoreWorkspace(
       {
@@ -179,6 +185,7 @@ export function useWorkspace(
         sessionData: result.sessionData,
         editorTabs: result.editorTabs,
         layout: result.layout,
+        analyses: result.analyses,
       },
       plan,
       io,

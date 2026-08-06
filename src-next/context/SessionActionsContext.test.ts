@@ -4,9 +4,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockCreateBookmark = vi.fn();
 const mockUpdateBookmark = vi.fn();
 const mockDeleteBookmark = vi.fn();
-const mockPublishAnalysis = vi.fn();
-const mockUpdateAnalysis = vi.fn();
-const mockDeleteAnalysis = vi.fn();
 const mockCreateWatch = vi.fn();
 const mockCancelWatch = vi.fn();
 
@@ -14,9 +11,6 @@ vi.mock('../bridge/commands', () => ({
   createBookmark: (...args: unknown[]) => mockCreateBookmark(...args),
   updateBookmark: (...args: unknown[]) => mockUpdateBookmark(...args),
   deleteBookmark: (...args: unknown[]) => mockDeleteBookmark(...args),
-  publishAnalysis: (...args: unknown[]) => mockPublishAnalysis(...args),
-  updateAnalysis: (...args: unknown[]) => mockUpdateAnalysis(...args),
-  deleteAnalysis: (...args: unknown[]) => mockDeleteAnalysis(...args),
   createWatch: (...args: unknown[]) => mockCreateWatch(...args),
   cancelWatch: (...args: unknown[]) => mockCancelWatch(...args),
 }));
@@ -117,39 +111,6 @@ describe('session action patterns', () => {
     });
   });
 
-  describe('analysis actions', () => {
-    it('passes sessionId to publishAnalysis bridge command', async () => {
-      const ref = { current: 'sess-456' };
-      mockPublishAnalysis.mockResolvedValue({ id: 'art-1', title: 'Test' });
-
-      const publish = makeAction(mockPublishAnalysis, ref);
-      await publish('title', [{ heading: 'h', body: 'b', references: [], severity: null }]);
-
-      expect(mockPublishAnalysis).toHaveBeenCalledWith(
-        'sess-456', 'title',
-        [{ heading: 'h', body: 'b', references: [], severity: null }],
-      );
-    });
-
-    it('returns null when sessionId is null for analysis', async () => {
-      const ref = { current: null as string | null };
-      const publish = makeAction(mockPublishAnalysis, ref);
-
-      expect(await publish('title', [])).toBeNull();
-      expect(mockPublishAnalysis).not.toHaveBeenCalled();
-    });
-
-    it('emits workspace:mutated after publish', async () => {
-      const ref = { current: 'sess-1' };
-      mockPublishAnalysis.mockResolvedValue({ id: 'art-1' });
-
-      const publish = makeAction(mockPublishAnalysis, ref);
-      await publish('title', []);
-
-      expect(emitted.some(e => e.event === 'workspace:mutated')).toBe(true);
-    });
-  });
-
   describe('watch actions', () => {
     it('passes sessionId to createWatch', async () => {
       const ref = { current: 'sess-789' };
@@ -180,48 +141,6 @@ describe('session action patterns', () => {
       await removeWatch('w-1');
 
       expect(mockCancelWatch).toHaveBeenCalledWith('sess-1', 'w-1');
-    });
-  });
-
-  describe('analysis update and delete dirty tracking', () => {
-    it('emits workspace:mutated after analysis update', async () => {
-      const ref = { current: 'sess-1' };
-      mockUpdateAnalysis.mockResolvedValue({ id: 'art-1', title: 'Updated' });
-
-      const updateAction = makeAction(mockUpdateAnalysis, ref);
-      await updateAction('art-1', 'Updated', []);
-
-      expect(mockUpdateAnalysis).toHaveBeenCalledWith('sess-1', 'art-1', 'Updated', []);
-      expect(emitted.some(e => e.event === 'workspace:mutated')).toBe(true);
-    });
-
-    it('emits workspace:mutated after analysis delete', async () => {
-      const ref = { current: 'sess-1' };
-      mockDeleteAnalysis.mockResolvedValue(undefined);
-
-      const deleteAction = makeAction(mockDeleteAnalysis, ref);
-      await deleteAction('art-1');
-
-      expect(mockDeleteAnalysis).toHaveBeenCalledWith('sess-1', 'art-1');
-    });
-  });
-
-  describe('analysis:published-local bus event', () => {
-    it('emits analysis:published-local on successful publish for toast suppression', async () => {
-      const ref = { current: 'sess-1' };
-      const art = { id: 'art-new', title: 'New Analysis' };
-      mockPublishAnalysis.mockResolvedValue(art);
-
-      // Simulate the provider's publish logic (which emits both events)
-      const sid = ref.current;
-      const result = await mockPublishAnalysis(sid, 'title', []);
-      if (result) {
-        emitted.push({ event: 'analysis:published-local', payload: { artifactId: result.id } });
-        emitted.push({ event: 'workspace:mutated', payload: undefined });
-      }
-
-      expect(emitted.some(e => e.event === 'analysis:published-local')).toBe(true);
-      expect(emitted.find(e => e.event === 'analysis:published-local')?.payload).toEqual({ artifactId: 'art-new' });
     });
   });
 
@@ -339,12 +258,6 @@ describe('dirty tracking centralization', () => {
     emitted.push({ event: 'workspace:mutated', payload: undefined });
 
     // There should be exactly one emission (from the action surface)
-    expect(emitted.filter(e => e.event === 'workspace:mutated')).toHaveLength(1);
-  });
-
-  it('analysis mutations emit workspace:mutated (not the hook)', () => {
-    emitted.length = 0;
-    emitted.push({ event: 'workspace:mutated', payload: undefined });
     expect(emitted.filter(e => e.event === 'workspace:mutated')).toHaveLength(1);
   });
 

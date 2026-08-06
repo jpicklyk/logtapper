@@ -1,11 +1,10 @@
 import { createContext, useContext, useCallback, useMemo, useRef, type ReactNode } from 'react';
 import type {
-  Bookmark, CreatedBy, AnalysisArtifact, AnalysisSection,
+  Bookmark, CreatedBy,
   FilterCriteria, WatchInfo,
 } from '../bridge/types';
 import {
   createBookmark, updateBookmark, deleteBookmark,
-  publishAnalysis, updateAnalysis, deleteAnalysis,
   createWatch, cancelWatch,
 } from '../bridge/commands';
 import { bus } from '../events';
@@ -26,13 +25,6 @@ export interface SessionActionsContextValue {
     category?: string, tags?: string[],
   ) => Promise<Bookmark | null>;
   removeBookmark: (bookmarkId: string) => Promise<void>;
-
-  // Analysis mutations
-  publishSessionAnalysis: (title: string, sections: AnalysisSection[]) => Promise<AnalysisArtifact | null>;
-  updateSessionAnalysis: (
-    artifactId: string, title?: string, sections?: AnalysisSection[],
-  ) => Promise<AnalysisArtifact | null>;
-  deleteSessionAnalysis: (artifactId: string) => Promise<void>;
 
   // Watch mutations
   addWatch: (criteria: FilterCriteria) => Promise<WatchInfo | null>;
@@ -109,38 +101,6 @@ export function SessionActionsProvider({ sessionId, children }: SessionActionsPr
     markDirty();
   }, [markDirty]);
 
-  // --- Analysis actions ---
-
-  const publishSessionAnalysisAction = useCallback(async (
-    title: string, sections: AnalysisSection[],
-  ): Promise<AnalysisArtifact | null> => {
-    const sid = sessionIdRef.current;
-    if (!sid) return null;
-    const art = await publishAnalysis(sid, title, sections);
-    if (art) {
-      bus.emit('analysis:published-local', { artifactId: art.id });
-      markDirty();
-    }
-    return art;
-  }, [markDirty]);
-
-  const updateSessionAnalysisAction = useCallback(async (
-    artifactId: string, title?: string, sections?: AnalysisSection[],
-  ): Promise<AnalysisArtifact | null> => {
-    const sid = sessionIdRef.current;
-    if (!sid) return null;
-    const art = await updateAnalysis(sid, artifactId, title, sections);
-    if (art) markDirty();
-    return art;
-  }, [markDirty]);
-
-  const deleteSessionAnalysisAction = useCallback(async (artifactId: string): Promise<void> => {
-    const sid = sessionIdRef.current;
-    if (!sid) return;
-    await deleteAnalysis(sid, artifactId);
-    markDirty();
-  }, [markDirty]);
-
   // --- Watch actions ---
 
   const addWatchAction = useCallback(async (criteria: FilterCriteria): Promise<WatchInfo | null> => {
@@ -164,13 +124,9 @@ export function SessionActionsProvider({ sessionId, children }: SessionActionsPr
     addBookmark: addBookmarkAction,
     editBookmark: editBookmarkAction,
     removeBookmark: removeBookmarkAction,
-    publishSessionAnalysis: publishSessionAnalysisAction,
-    updateSessionAnalysis: updateSessionAnalysisAction,
-    deleteSessionAnalysis: deleteSessionAnalysisAction,
     addWatch: addWatchAction,
     removeWatch: removeWatchAction,
   }), [addBookmarkAction, editBookmarkAction, removeBookmarkAction,
-       publishSessionAnalysisAction, updateSessionAnalysisAction, deleteSessionAnalysisAction,
        addWatchAction, removeWatchAction]);
 
   return (
@@ -194,13 +150,6 @@ export function useSessionActions(): SessionActionsContextValue {
 export function useSessionBookmarkActions() {
   const { addBookmark, editBookmark, removeBookmark } = useSessionActions();
   return useMemo(() => ({ addBookmark, editBookmark, removeBookmark }), [addBookmark, editBookmark, removeBookmark]);
-}
-
-/** Analysis mutation actions for the enclosing session. */
-export function useSessionAnalysisActions() {
-  const { publishSessionAnalysis, updateSessionAnalysis, deleteSessionAnalysis } = useSessionActions();
-  return useMemo(() => ({ publishSessionAnalysis, updateSessionAnalysis, deleteSessionAnalysis }),
-    [publishSessionAnalysis, updateSessionAnalysis, deleteSessionAnalysis]);
 }
 
 /** Watch mutation actions for the enclosing session. */

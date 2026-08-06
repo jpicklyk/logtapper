@@ -249,22 +249,24 @@ pub(crate) fn open_file_inner(
         .unwrap_or("source")
         .to_string();
 
-    // Rescue the artifacts of any session we are about to replace, BEFORE closing
-    // it — `close_session_inner` deletes a session's bookmarks, analyses and
-    // pipeline meta along with the session itself.
+    // Rescue the bookmarks/pipeline-meta of any session we are about to
+    // replace, BEFORE closing it — `close_session_inner` deletes a session's
+    // bookmarks and pipeline meta along with the session itself (analyses are
+    // workspace-owned and survive the close; their per-reference session
+    // attribution is instead restamped onto `session_id` below).
     //
     // This matters because a source-type override changes the session id, so a
     // reopen is a close of one id and a create of another. Without the rescue the
-    // user's bookmarks and analyses are silently destroyed by the act of
-    // correcting a misdetected file.
+    // user's bookmarks are silently destroyed by the act of correcting a
+    // misdetected file.
     //
-    // GUARD: only rescue from a session whose id we can still reproduce from the
-    // file's CURRENT bytes. The id preimage is (path, length, content prefix,
-    // override), so reproducing it proves the file has not been replaced since
-    // that session was opened — and therefore that its line numbers still mean
-    // the same thing. If the file changed on disk, its artifacts refer to
+    // GUARD: only rescue/restamp from a session whose id we can still reproduce
+    // from the file's CURRENT bytes. The id preimage is (path, length, content
+    // prefix, override), so reproducing it proves the file has not been replaced
+    // since that session was opened — and therefore that its line numbers still
+    // mean the same thing. If the file changed on disk, its artifacts refer to
     // content that no longer exists and must be allowed to die with it.
-    let rescued = rescue_artifacts_for_replacement(state, path_obj, path)?;
+    let rescued = rescue_artifacts_for_replacement(state, path_obj, path, &session_id)?;
 
     // Close any existing sessions for the same file path (e.g. stale sessions from
     // frontend reloads). Collects ALL matching IDs then closes each one.
@@ -563,24 +565,30 @@ pub(crate) fn emit_workspace_restored(
 /// overwrite the prior session WITHOUT running `close_session_inner`'s cleanup
 /// (indexing-task cancel, watch/filter purge). Matching canonically keeps this
 /// scan consistent with the id invariant so the cleanup always runs.
-/// Artifacts lifted off sessions that are about to be replaced by a reopen of
-/// the same file, so they can be re-keyed onto the new session id.
+/// Bookmarks and pipeline meta lifted off sessions that are about to be
+/// replaced by a reopen of the same file, so they can be re-keyed onto the
+/// new session id.
+///
+/// Analyses are NOT carried here — they are workspace-owned and are never
+/// removed by `close_session_inner`, so there is nothing to rescue for them.
+/// Their per-reference session attribution is instead rewritten in place by
+/// [`restamp_analysis_references`], called from
+/// [`rescue_artifacts_for_replacement`] before this struct is even built.
 #[derive(Default)]
 pub(crate) struct RescuedArtifacts {
     bookmarks: Vec<crate::core::bookmark::Bookmark>,
-    analyses: Vec<crate::core::analysis::AnalysisArtifact>,
     pipeline_meta: Option<crate::workspace::SessionMeta>,
 }
 
 impl RescuedArtifacts {
     fn is_empty(&self) -> bool {
-        self.bookmarks.is_empty() && self.analyses.is_empty() && self.pipeline_meta.is_none()
+        self.bookmarks.is_empty() && self.pipeline_meta.is_none()
     }
 
     /// Attach the rescued artifacts to `session_id`.
     ///
     /// Delegates to [`restore_artifacts`], the same helper the `.lts` import
-    /// path uses, because each artifact also carries an embedded `session_id`
+    /// path uses, because each bookmark also carries an embedded `session_id`
     /// that has to be rewritten — storing under the new map key alone leaves the
     /// field pointing at a session that no longer exists, which then travels out
     /// over the MCP bridge and into workspace saves. Verified against the
@@ -590,7 +598,7 @@ impl RescuedArtifacts {
         if self.is_empty() {
             return Ok(());
         }
-        restore_artifacts(state, session_id, self.bookmarks, self.analyses);
+        restore_artifacts(state, session_id, self.bookmarks, vec![]);
         if let Some(meta) = self.pipeline_meta {
             let mut pm = lock_or_err(&state.session_pipeline_meta, "session_pipeline_meta")?;
             pm.insert(session_id.to_string(), meta);
@@ -599,8 +607,9 @@ impl RescuedArtifacts {
     }
 }
 
-/// Take the artifacts of every session bound to `path` whose id can still be
-/// reproduced from the file's current bytes.
+/// Take the bookmarks/pipeline-meta of every session bound to `path` whose id
+/// can still be reproduced from the file's current bytes, and restamp
+/// workspace analysis references from those old ids onto `new_session_id`.
 ///
 /// Reproducing the id is the safety check: it proves the file has not been
 /// replaced since that session was opened, so its bookmarks and analyses still
@@ -609,12 +618,16 @@ impl RescuedArtifacts {
 /// whose content changed derives a different id and is skipped, so its stale
 /// artifacts are not grafted onto content they never referred to.
 ///
-/// Artifacts are REMOVED here rather than copied: `close_session_inner` would
-/// delete them moments later anyway, and taking them keeps a single owner.
+/// Bookmarks/pipeline-meta are REMOVED here rather than copied:
+/// `close_session_inner` would delete them moments later anyway, and taking
+/// them keeps a single owner. Analyses are workspace-owned and are never
+/// removed by `close_session_inner`, so their references are restamped in
+/// place instead of being lifted and re-inserted.
 fn rescue_artifacts_for_replacement(
     state: &AppState,
     path_obj: &Path,
     path: &str,
+    new_session_id: &str,
 ) -> Result<RescuedArtifacts, String> {
     // (id, override) for sessions on this path. Lock taken and dropped before any
     // artifact lock, per the AppState ordering rules.
@@ -646,6 +659,12 @@ fn rescue_artifacts_for_replacement(
         .map(|(id, _)| id)
         .collect();
 
+    // Restamp analysis references onto the new id regardless of whether
+    // there is anything to rescue for bookmarks/pipeline meta below — the
+    // two are independent concerns now that analyses live in their own
+    // workspace store.
+    restamp_analysis_references(state, &migratable, new_session_id)?;
+
     if migratable.is_empty() {
         return Ok(RescuedArtifacts::default());
     }
@@ -656,14 +675,6 @@ fn rescue_artifacts_for_replacement(
         for id in &migratable {
             if let Some(v) = bm.remove(id) {
                 out.bookmarks.extend(v);
-            }
-        }
-    }
-    {
-        let mut an = lock_or_err(&state.analyses, "analyses")?;
-        for id in &migratable {
-            if let Some(v) = an.remove(id) {
-                out.analyses.extend(v);
             }
         }
     }
@@ -764,9 +775,12 @@ pub(crate) fn close_session_inner(state: &AppState, _app: Option<&tauri::AppHand
     lock_or_err(&state.mcp_anonymizers, "mcp_anonymizers")?.remove(session_id);
     lock_or_err(&state.mcp_anonymize, "mcp_anonymize")?.remove(session_id);
 
-    // 13. Clean up bookmarks, analyses, and pipeline meta.
+    // 13. Clean up bookmarks and pipeline meta. Analyses are workspace-owned
+    //     (see `AppState::analyses`) and are deliberately NOT removed here —
+    //     an analysis that references a closed session stays visible
+    //     (orphaned-but-visible is the intended behavior) rather than being
+    //     destroyed by the act of closing one of the sessions it cites.
     lock_or_err(&state.bookmarks, "bookmarks")?.remove(session_id);
-    lock_or_err(&state.analyses, "analyses")?.remove(session_id);
     lock_or_err(&state.session_pipeline_meta, "session_pipeline_meta")?.remove(session_id);
 
     // 14. Remove session-scoped processors imported from .lts files.
@@ -1776,7 +1790,22 @@ pub fn compute_search_highlights(raw: &str, query: &SearchQuery) -> Vec<Highligh
 // restore_artifacts — shared helper
 // ---------------------------------------------------------------------------
 
-/// Restore bookmarks and analyses into AppState with session ID rewritten.
+/// Restore bookmarks and analyses into AppState.
+///
+/// Bookmarks are session-keyed as before: stored under `session_id`'s map
+/// entry with their own `session_id` field rewritten to match.
+///
+/// Analyses are workspace-owned (not keyed by session): each restored
+/// artifact is stamped via [`crate::core::analysis::migrate_artifact`] with
+/// `session_id` as the fallback (so any reference that arrived with no
+/// attribution of its own resolves to this session; references that already
+/// carry their own `session_id` — a multi-session artifact restored from an
+/// archive that also touched another still-open session — are left alone),
+/// then UPSERTED into the workspace store by artifact id: an artifact whose
+/// id already exists in the store is replaced in place, otherwise it is
+/// appended. This makes restoring the same `.lts`/`.ltw` twice (or restoring
+/// several sessions that both reference the same multi-session artifact)
+/// idempotent rather than producing duplicate entries.
 pub(crate) fn restore_artifacts(
     state: &AppState,
     session_id: &str,
@@ -1795,15 +1824,52 @@ pub(crate) fn restore_artifacts(
         }
     }
     if !analyses.is_empty() {
-        let mut an = analyses;
-        for a in &mut an {
-            a.session_id = session_id.to_string();
-        }
-        if let Ok(mut map) = state.analyses.lock() {
-            map.insert(session_id.to_string(), an);
+        if let Ok(mut store) = state.analyses.lock() {
+            for mut artifact in analyses {
+                crate::core::analysis::migrate_artifact(&mut artifact, Some(session_id));
+                if let Some(existing) = store.iter_mut().find(|a| a.id == artifact.id) {
+                    *existing = artifact;
+                } else {
+                    store.push(artifact);
+                }
+            }
         }
     }
     (bm_count, an_count)
+}
+
+/// Rewrite every workspace analysis reference whose `session_id` matches one
+/// of `old_ids` to point at `new_id` instead.
+///
+/// Analyses are workspace-owned and are never removed by
+/// [`close_session_inner`] — so when a session's id changes across a
+/// close+reopen of the same underlying file (e.g. correcting a source-type
+/// override, which is part of the id preimage), per-reference attribution
+/// pointing at the old id would otherwise silently go stale, pointing at a
+/// session that no longer exists. A no-op when `old_ids` is empty.
+pub(crate) fn restamp_analysis_references(
+    state: &AppState,
+    old_ids: &[String],
+    new_id: &str,
+) -> Result<(), String> {
+    if old_ids.is_empty() {
+        return Ok(());
+    }
+    let mut analyses = lock_or_err(&state.analyses, "analyses")?;
+    for artifact in analyses.iter_mut() {
+        for section in &mut artifact.sections {
+            for reference in &mut section.references {
+                if reference
+                    .session_id
+                    .as_deref()
+                    .is_some_and(|sid| old_ids.iter().any(|old| old == sid))
+                {
+                    reference.session_id = Some(new_id.to_string());
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2140,8 +2206,8 @@ mod tests {
 
     /// Reopening a file with a different source type mints a NEW session id
     /// (the override is part of the id preimage), and closing the old session
-    /// deletes its bookmarks and analyses. Without a rescue, correcting a
-    /// misdetected file silently destroys the user's work.
+    /// deletes its bookmarks. Without a rescue, correcting a misdetected file
+    /// silently destroys the user's work.
     #[test]
     fn reopen_with_override_carries_artifacts_to_the_new_session() {
         use std::fs;
@@ -2162,7 +2228,13 @@ mod tests {
             vec![sample_bookmark("bm-1", &detected_id, 42)],
         );
 
-        let rescued = rescue_artifacts_for_replacement(&state, &file, &path)
+        // The id a Kernel-override reopen would produce — known upfront so
+        // the rescue can restamp analysis references onto it directly.
+        let override_id =
+            crate::core::session_identity::derive_file_session_id_from_disk(&file, Some("Kernel"));
+        assert_ne!(override_id, detected_id, "the override must change the id");
+
+        let rescued = rescue_artifacts_for_replacement(&state, &file, &path, &override_id)
             .expect("rescue must succeed");
 
         assert_eq!(rescued.bookmarks.len(), 1, "the bookmark must be rescued");
@@ -2172,10 +2244,6 @@ mod tests {
             "rescued artifacts are taken, not copied — the old id must be emptied"
         );
 
-        // Re-key onto the id a Kernel-override reopen would produce.
-        let override_id =
-            crate::core::session_identity::derive_file_session_id_from_disk(&file, Some("Kernel"));
-        assert_ne!(override_id, detected_id, "the override must change the id");
         rescued.restore_onto(&state, &override_id).expect("restore");
 
         let bm = state.bookmarks.lock().unwrap();
@@ -2214,7 +2282,8 @@ mod tests {
         fs::write(&file, "completely different content, many more lines
 ").expect("rewrite");
 
-        let rescued = rescue_artifacts_for_replacement(&state, &file, &path)
+        let new_id = crate::core::session_identity::derive_file_session_id_from_disk(&file, None);
+        let rescued = rescue_artifacts_for_replacement(&state, &file, &path, &new_id)
             .expect("rescue must succeed");
 
         assert!(
@@ -2227,6 +2296,89 @@ mod tests {
         );
     }
 
+    // -------------------------------------------------------------------------
+    // restamp_analysis_references
+    // -------------------------------------------------------------------------
+
+    /// A source-type-override reopen mints a new session id for the same
+    /// underlying file. Analyses are workspace-owned and are never removed
+    /// by `close_session_inner`, so a reference pointing at the old id must
+    /// be restamped onto the new one — otherwise it silently points at a
+    /// session that no longer exists.
+    #[test]
+    fn restamp_moves_references_from_old_session_id_to_new_on_type_change_reopen() {
+        use crate::core::analysis::{AnalysisArtifact, AnalysisSection, HighlightType, SourceReference};
+
+        let state = make_state();
+        let artifact = AnalysisArtifact {
+            id: "art-1".to_string(),
+            title: "Analysis".to_string(),
+            created_at: 1,
+            sections: vec![AnalysisSection {
+                heading: "H".to_string(),
+                body: "B".to_string(),
+                references: vec![SourceReference {
+                    line_number: 1,
+                    end_line: None,
+                    label: "ref".to_string(),
+                    highlight_type: HighlightType::default(),
+                    session_id: Some("old-sess".to_string()),
+                }],
+                severity: None,
+            }],
+            legacy_session_id: None,
+        };
+        state.analyses.lock().unwrap().push(artifact);
+
+        restamp_analysis_references(&state, &["old-sess".to_string()], "new-sess")
+            .expect("restamp must succeed");
+
+        let analyses = state.analyses.lock().unwrap();
+        assert_eq!(
+            analyses[0].sections[0].references[0].session_id.as_deref(),
+            Some("new-sess"),
+            "a reference pointing at an old id must be restamped onto the new id"
+        );
+    }
+
+    /// A reference attributed to a session that is not in `old_ids` must be
+    /// left completely untouched — restamp only rewrites the ids it was
+    /// explicitly told about.
+    #[test]
+    fn restamp_leaves_references_for_unrelated_sessions_alone() {
+        use crate::core::analysis::{AnalysisArtifact, AnalysisSection, HighlightType, SourceReference};
+
+        let state = make_state();
+        let artifact = AnalysisArtifact {
+            id: "art-1".to_string(),
+            title: "Analysis".to_string(),
+            created_at: 1,
+            sections: vec![AnalysisSection {
+                heading: "H".to_string(),
+                body: "B".to_string(),
+                references: vec![SourceReference {
+                    line_number: 1,
+                    end_line: None,
+                    label: "ref".to_string(),
+                    highlight_type: HighlightType::default(),
+                    session_id: Some("unrelated-sess".to_string()),
+                }],
+                severity: None,
+            }],
+            legacy_session_id: None,
+        };
+        state.analyses.lock().unwrap().push(artifact);
+
+        restamp_analysis_references(&state, &["old-sess".to_string()], "new-sess")
+            .expect("restamp must succeed");
+
+        let analyses = state.analyses.lock().unwrap();
+        assert_eq!(
+            analyses[0].sections[0].references[0].session_id.as_deref(),
+            Some("unrelated-sess"),
+            "a reference for a session not in old_ids must not be rewritten"
+        );
+    }
 
     /// The raw-string fallback: when the incoming path cannot be canonicalized
     /// (e.g. a virtual/nonexistent path), a stale entry with the same raw string
@@ -2249,13 +2401,13 @@ mod tests {
 
     #[test]
     fn restore_artifacts_rewrites_session_id() {
-        use crate::core::bookmark::{Bookmark, CreatedBy};
         use crate::core::analysis::AnalysisArtifact;
+        use crate::core::bookmark::{Bookmark, CreatedBy};
 
         let state = make_state();
         let new_session_id = "new-session-xyz";
 
-        // Bookmarks and analyses arrive with an old session_id from the .lts file.
+        // Bookmarks arrive with an old session_id from the .lts file.
         let bm = Bookmark {
             id: "bm-1".to_string(),
             session_id: "old-session-id".to_string(),
@@ -2271,10 +2423,10 @@ mod tests {
         };
         let artifact = AnalysisArtifact {
             id: "art-1".to_string(),
-            session_id: "old-session-id".to_string(),
             title: "Analysis".to_string(),
             created_at: 2000,
             sections: vec![],
+            legacy_session_id: None,
         };
 
         let (bm_count, an_count) =
@@ -2290,10 +2442,49 @@ mod tests {
         assert_eq!(stored_bms[0].line_number, 7);
         drop(bookmarks);
 
-        // Verify session_id was rewritten on stored analyses.
+        // Analyses are workspace-owned: verify the artifact landed in the
+        // flat store, not re-keyed under a map.
         let analyses = state.analyses.lock().unwrap();
-        let stored_ans = analyses.get(new_session_id).expect("analyses must be stored under new session id");
-        assert_eq!(stored_ans[0].session_id, new_session_id, "analysis session_id must be rewritten");
+        assert_eq!(analyses.len(), 1);
+        assert_eq!(analyses[0].id, "art-1");
+    }
+
+    /// An analysis restored with an unattributed reference (a fresh publish,
+    /// or an old archive whose reference predates per-reference attribution)
+    /// must have that reference stamped with the restore target session.
+    #[test]
+    fn restore_artifacts_stamps_unattributed_references_with_target_session() {
+        use crate::core::analysis::{AnalysisArtifact, AnalysisSection, HighlightType, SourceReference};
+
+        let state = make_state();
+        let new_session_id = "new-session-xyz";
+        let artifact = AnalysisArtifact {
+            id: "art-1".to_string(),
+            title: "Analysis".to_string(),
+            created_at: 2000,
+            sections: vec![AnalysisSection {
+                heading: "H".to_string(),
+                body: "B".to_string(),
+                references: vec![SourceReference {
+                    line_number: 5,
+                    end_line: None,
+                    label: "ref".to_string(),
+                    highlight_type: HighlightType::default(),
+                    session_id: None,
+                }],
+                severity: None,
+            }],
+            legacy_session_id: None,
+        };
+
+        restore_artifacts(&state, new_session_id, vec![], vec![artifact]);
+
+        let analyses = state.analyses.lock().unwrap();
+        assert_eq!(
+            analyses[0].sections[0].references[0].session_id.as_deref(),
+            Some(new_session_id),
+            "unattributed reference must be stamped with the restore target session"
+        );
     }
 
     #[test]
@@ -2311,9 +2502,78 @@ mod tests {
             "no bookmark entry must be created for empty input"
         );
         assert!(
-            !state.analyses.lock().unwrap().contains_key(session_id),
+            state.analyses.lock().unwrap().is_empty(),
             "no analysis entry must be created for empty input"
         );
+    }
+
+    /// A reference that already carries its own `session_id` (e.g. a
+    /// multi-session artifact whose OTHER reference points at a still-open
+    /// session) must be left alone by restore — only unattributed references
+    /// fall back to the restore target.
+    #[test]
+    fn restore_artifacts_leaves_already_attributed_references_alone() {
+        use crate::core::analysis::{AnalysisArtifact, AnalysisSection, HighlightType, SourceReference};
+
+        let state = make_state();
+        let artifact = AnalysisArtifact {
+            id: "art-multi".to_string(),
+            title: "Multi".to_string(),
+            created_at: 1,
+            sections: vec![AnalysisSection {
+                heading: "H".to_string(),
+                body: "B".to_string(),
+                references: vec![SourceReference {
+                    line_number: 1,
+                    end_line: None,
+                    label: "already-attributed".to_string(),
+                    highlight_type: HighlightType::default(),
+                    session_id: Some("other-open-session".to_string()),
+                }],
+                severity: None,
+            }],
+            legacy_session_id: None,
+        };
+
+        restore_artifacts(&state, "restore-target", vec![], vec![artifact]);
+
+        let analyses = state.analyses.lock().unwrap();
+        assert_eq!(
+            analyses[0].sections[0].references[0].session_id.as_deref(),
+            Some("other-open-session"),
+            "an already-attributed reference must not be overwritten by the restore target"
+        );
+    }
+
+    /// Restoring the same artifact id twice (e.g. re-opening the same `.lts`
+    /// archive, or two sessions from a multi-session archive that both cite
+    /// the same shared artifact) must upsert in place rather than duplicate.
+    #[test]
+    fn restore_artifacts_upserts_by_artifact_id_on_repeat_restore() {
+        use crate::core::analysis::AnalysisArtifact;
+
+        let state = make_state();
+        let v1 = AnalysisArtifact {
+            id: "art-dup".to_string(),
+            title: "Version 1".to_string(),
+            created_at: 1,
+            sections: vec![],
+            legacy_session_id: None,
+        };
+        let v2 = AnalysisArtifact {
+            id: "art-dup".to_string(),
+            title: "Version 2".to_string(),
+            created_at: 2,
+            sections: vec![],
+            legacy_session_id: None,
+        };
+
+        restore_artifacts(&state, "sess-a", vec![], vec![v1]);
+        restore_artifacts(&state, "sess-a", vec![], vec![v2]);
+
+        let analyses = state.analyses.lock().unwrap();
+        assert_eq!(analyses.len(), 1, "repeat restore of the same artifact id must not duplicate it");
+        assert_eq!(analyses[0].title, "Version 2", "the later restore must win in place");
     }
 
     #[test]
@@ -2331,7 +2591,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[test]
-    fn close_session_inner_removes_bookmarks_and_analyses() {
+    fn close_session_inner_removes_bookmarks_but_keeps_analyses() {
         use crate::core::bookmark::{Bookmark, CreatedBy};
         use crate::core::analysis::AnalysisArtifact;
 
@@ -2354,22 +2614,23 @@ mod tests {
         };
         state.bookmarks.lock().unwrap().insert("sess-bm".to_string(), vec![bm]);
 
-        // Populate analyses for the session.
+        // Populate the workspace-owned analyses store — not keyed by session.
         let artifact = AnalysisArtifact {
             id: "art-1".to_string(),
-            session_id: "sess-bm".to_string(),
             title: "Test".to_string(),
             created_at: 2000,
             sections: vec![],
+            legacy_session_id: None,
         };
-        state.analyses.lock().unwrap().insert("sess-bm".to_string(), vec![artifact]);
+        state.analyses.lock().unwrap().push(artifact);
 
         close_session_inner(&state, None, "sess-bm").unwrap();
 
         assert!(!state.bookmarks.lock().unwrap().contains_key("sess-bm"),
             "bookmarks must be removed on close");
-        assert!(!state.analyses.lock().unwrap().contains_key("sess-bm"),
-            "analyses must be removed on close");
+        assert_eq!(state.analyses.lock().unwrap().len(), 1,
+            "analyses are workspace-owned and must survive closing a session that references them \
+             — orphaned-but-visible is the intended behavior");
     }
 
     #[test]
@@ -2497,9 +2758,11 @@ mod tests {
     }
 
     #[test]
-    fn close_stale_sessions_cleans_up_analyses_for_all_duplicates() {
-        // The MCP publishes an analysis to a stale session. When the file is
-        // reloaded, close_stale_sessions must remove that analysis data too.
+    fn close_stale_sessions_leaves_workspace_analyses_intact() {
+        // The MCP publishes an analysis referencing a stale session. When the
+        // file is reloaded, close_stale_sessions removes the stale sessions
+        // but the workspace-owned analysis must survive — it is not deleted
+        // just because one of the sessions it references closed.
         use crate::core::analysis::AnalysisArtifact;
 
         let state = make_state();
@@ -2507,16 +2770,15 @@ mod tests {
         insert_session(&state, "sess-stale-a", Some(path));
         insert_session(&state, "sess-stale-b", Some(path));
 
-        // Simulate MCP publishing an analysis to the first stale session
+        // Simulate MCP publishing an analysis while sess-stale-a was open.
         let artifact = AnalysisArtifact {
             id: "art-mcp-1".to_string(),
-            session_id: "sess-stale-a".to_string(),
             title: "Memory Overview".to_string(),
             created_at: 1000,
             sections: vec![],
+            legacy_session_id: None,
         };
-        state.analyses.lock().unwrap()
-            .insert("sess-stale-a".to_string(), vec![artifact]);
+        state.analyses.lock().unwrap().push(artifact);
 
         close_stale_sessions(&state, None, path).unwrap();
 
@@ -2527,8 +2789,8 @@ mod tests {
             "stale session A must be removed");
         assert!(!sessions.contains_key("sess-stale-b"),
             "stale session B must be removed");
-        assert!(!analyses.contains_key("sess-stale-a"),
-            "analyses for stale session must be cleaned up");
+        assert_eq!(analyses.len(), 1,
+            "workspace-owned analyses must survive closing the stale sessions they reference");
     }
 
     #[test]
@@ -2622,10 +2884,10 @@ mod tests {
         };
         let artifact_b = AnalysisArtifact {
             id: "art-b".to_string(),
-            session_id: "old-sess-b".to_string(),
             title: "Analysis B".to_string(),
             created_at: 2000,
             sections: vec![],
+            legacy_session_id: None,
         };
 
         let sessions = vec![

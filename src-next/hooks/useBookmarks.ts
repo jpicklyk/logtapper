@@ -50,7 +50,7 @@ export function useBookmarks(sessionId: string | null) {
       if (cancelled) return;
 
       // Durability signal — before the focused-session guard, for the same
-      // reason as useAnalysis: a bookmark created over the MCP bridge is
+      // reason as AnalysisProvider's listener: a bookmark created over the MCP bridge is
       // written straight into AppState and may target a non-focused session,
       // so nothing else would schedule an auto-save for it.
       bus.emit('workspace:mutated', { source: 'artifact' });
