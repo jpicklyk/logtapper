@@ -16,7 +16,7 @@ import type { SharedLogViewerRefs } from './types';
  * sync. `jumpToLine` is the seam the pane provider scrolls through.
  */
 export interface SearchNavigationResult {
-  jumpToLine: (lineNum: number, paneId?: string) => void;
+  jumpToLine: (lineNum: number, paneId?: string, sessionId?: string) => void;
   jumpToEnd: () => void;
   fetchLines: (offset: number, count: number) => Promise<LineWindow>;
   setProcessorView: (processorId: string) => void;
@@ -29,6 +29,7 @@ export function useSearchNavigation(refs: SharedLogViewerRefs): SearchNavigation
     setScrollToLine,
     setJumpSeq,
     setJumpPaneId,
+    setJumpSessionId,
     setProcessorId,
   } = useViewerContext();
 
@@ -39,18 +40,21 @@ export function useSearchNavigation(refs: SharedLogViewerRefs): SearchNavigation
     processorIdRef.current = null;
   }, [setProcessorId]);
 
-  const jumpToLine = useCallback((lineNum: number, paneId?: string) => {
+  const jumpToLine = useCallback((lineNum: number, paneId?: string, sessionId?: string) => {
     setScrollToLine(lineNum);
     setJumpPaneId(paneId ?? null);
+    setJumpSessionId(sessionId ?? null);
     setJumpSeq((s) => s + 1);
-  }, [setScrollToLine, setJumpPaneId, setJumpSeq]);
+  }, [setScrollToLine, setJumpPaneId, setJumpSessionId, setJumpSeq]);
 
   const jumpToEnd = useCallback(() => {
     const total = refs.sessionRef.current?.totalLines ?? 0;
     if (total <= 0) return;
     setScrollToLine(total - 1);
+    setJumpPaneId(null);
+    setJumpSessionId(null);
     setJumpSeq((s) => s + 1);
-  }, [refs.sessionRef, setScrollToLine, setJumpSeq]);
+  }, [refs.sessionRef, setScrollToLine, setJumpPaneId, setJumpSessionId, setJumpSeq]);
 
   const fetchLines = useCallback((offset: number, count: number): Promise<LineWindow> => {
     const sess = refs.sessionRef.current;

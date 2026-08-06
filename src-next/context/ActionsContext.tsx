@@ -71,8 +71,11 @@ export interface ViewActions {
   stopPipeline: () => void;
   clearResults: () => void;
   /** Scroll a pane (or the focused pane when `paneId` is omitted) to a line.
-   *  Per-pane search navigation (`PaneSearchContext`) jumps through this. */
-  jumpToLine: (lineNum: number, paneId?: string) => void;
+   *  Per-pane search navigation (`PaneSearchContext`) jumps through this.
+   *  `sessionId` targets the viewer hosting that session and takes precedence
+   *  over `paneId` — session-scoped panels (dashboard, bookmarks, timeline,
+   *  correlations, analyses) pass it so only their session's viewer moves. */
+  jumpToLine: (lineNum: number, paneId?: string, sessionId?: string) => void;
   setStreamFilter: (expr: string) => Promise<void>;
   cancelStreamFilter: () => void;
   setTimeFilter: (start: string, end: string) => Promise<void>;
@@ -206,7 +209,7 @@ const DEFAULT_ACTIONS: ActionsContextValue = {
   runPipeline: () => noopAsync(),
   stopPipeline: noop,
   clearResults: noop,
-  jumpToLine: (_lineNum: number, _paneId?: string) => noop(),
+  jumpToLine: (_lineNum: number, _paneId?: string, _sessionId?: string) => noop(),
   setStreamFilter: (_expr: string) => noopAsync(),
   cancelStreamFilter: noop,
   setTimeFilter: (_start: string, _end: string) => noopAsync(),

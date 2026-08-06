@@ -144,6 +144,12 @@ const StateTimeline = React.memo(function StateTimeline() {
   // timeline data only changes when the pipeline re-runs (runCount bump).
   const sessionId = session?.sessionId ?? null;
 
+  // Target jumps at this timeline's session — with two sessions open in split
+  // panes, an untargeted jump would move both viewers.
+  const jumpToSessionLine = useCallback((lineNum: number) => {
+    jumpToLine(lineNum, undefined, sessionId ?? undefined);
+  }, [jumpToLine, sessionId]);
+
   useEffect(() => {
     if (!sessionId) {
       setTimelines([]);
@@ -340,7 +346,7 @@ const StateTimeline = React.memo(function StateTimeline() {
                 timeline={tl}
                 vp={vp}
                 totalLines={totalLines}
-                onJump={jumpToLine}
+                onJump={jumpToSessionLine}
                 showDate={spansMultipleDays}
               />
             ))}
@@ -351,7 +357,7 @@ const StateTimeline = React.memo(function StateTimeline() {
               series={series}
               vp={vp}
               totalLines={totalLines}
-              onJump={jumpToLine}
+              onJump={jumpToSessionLine}
               minTs={minTs}
               tsRange={tsRange}
               hasTimeData={hasTimeData}
@@ -375,7 +381,7 @@ const StateTimeline = React.memo(function StateTimeline() {
           maxLine={maxLine}
           vpS={vp[0]}
           vpSpan={Math.max(vp[1] - vp[0], 1e-9)}
-          jumpToLine={jumpToLine}
+          jumpToLine={jumpToSessionLine}
           categoryColorMap={timelineCategoryColors}
         />
       </div>

@@ -51,9 +51,13 @@ export function useFileInfo(paneId: string | null): FileInfoData {
   const session = useSessionForPane(paneId);
   const { jumpToLine } = useNavigationActions();
   const setSessionFilter = useSetSessionFilter();
-  const { lineNum: scrollToLine, paneId: jumpPaneId } = useScrollTarget();
-  // Only track scroll position as active section if the jump targeted this pane (or was global).
-  const effectiveScrollToLine = (jumpPaneId === null || jumpPaneId === paneId) ? scrollToLine : null;
+  const { lineNum: scrollToLine, paneId: jumpPaneId, sessionId: jumpSessionId } = useScrollTarget();
+  // Only track scroll position as active section if the jump targeted this pane's
+  // session (session targeting wins), this pane, or was global.
+  const jumpTargetsThisPane = jumpSessionId !== null
+    ? jumpSessionId === (session?.sessionId ?? null)
+    : jumpPaneId === null || jumpPaneId === paneId;
+  const effectiveScrollToLine = jumpTargetsThisPane ? scrollToLine : null;
 
   const sessionId = session?.sessionId ?? null;
 

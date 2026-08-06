@@ -48,8 +48,9 @@ const AnalysisReader = React.memo(function AnalysisReader() {
   const artifact: AnalysisArtifact | undefined = artifacts.find((a) => a.id === selectedId);
 
   const handleJump = useCallback((lineNum: number) => {
-    jumpToLine(lineNum);
-  }, [jumpToLine]);
+    // Target this reader's session so a second open session's viewer stays put.
+    jumpToLine(lineNum, undefined, sessionId ?? undefined);
+  }, [jumpToLine, sessionId]);
 
   const severityCounts = useMemo(() => {
     if (!artifact) return {} as Partial<Record<AnalysisSeverity, number>>;

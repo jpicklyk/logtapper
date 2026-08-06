@@ -99,9 +99,9 @@ export function useSessionError(): string | null {
 // Viewer selectors
 // ---------------------------------------------------------------------------
 
-export function useScrollTarget(): { lineNum: number | null; seq: number; paneId: string | null } {
-  const { scrollToLine, jumpSeq, jumpPaneId } = useScrollCtx();
-  return { lineNum: scrollToLine, seq: jumpSeq, paneId: jumpPaneId };
+export function useScrollTarget(): { lineNum: number | null; seq: number; paneId: string | null; sessionId: string | null } {
+  const { scrollToLine, jumpSeq, jumpPaneId, jumpSessionId } = useScrollCtx();
+  return { lineNum: scrollToLine, seq: jumpSeq, paneId: jumpPaneId, sessionId: jumpSessionId };
 }
 
 // ---------------------------------------------------------------------------

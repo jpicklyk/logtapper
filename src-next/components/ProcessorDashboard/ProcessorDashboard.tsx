@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { ChevronRight } from 'lucide-react';
 import type { PipelineRunSummary, ProcessorSummary } from '../../bridge/types';
 import { resolveChainProcessors, groupProcessorsByPack } from '../../bridge/types';
@@ -29,6 +29,12 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   const sessionId = session?.sessionId ?? null;
+
+  // Target the jump at this dashboard's session — with two sessions open in
+  // split panes, an untargeted jump would move both viewers.
+  const jumpToSessionLine = useCallback((lineNum: number) => {
+    jumpToLine(lineNum, undefined, sessionId ?? undefined);
+  }, [jumpToLine, sessionId]);
 
   const activeProcessors = useMemo(
     () => resolveChainProcessors(activeProcessorIds, processors),
@@ -199,7 +205,7 @@ const ProcessorDashboard = React.memo(function ProcessorDashboard() {
           selectedProc={selectedProc}
           summary={selected ? getSummary(selected) : undefined}
           runCount={runCount}
-          jumpToLine={jumpToLine}
+          jumpToLine={jumpToSessionLine}
           selectedId={selected}
         />
       )}

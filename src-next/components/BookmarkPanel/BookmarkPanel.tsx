@@ -119,8 +119,9 @@ const BookmarkPanel = React.memo(function BookmarkPanel() {
   }, [grouped, categories]);
 
   const handleJump = useCallback((lineNum: number) => {
-    jumpToLine(lineNum);
-  }, [jumpToLine]);
+    // Target this panel's session so a second open session's viewer stays put.
+    jumpToLine(lineNum, undefined, sessionId ?? undefined);
+  }, [jumpToLine, sessionId]);
 
   const handleEdit = useCallback((
     id: string,

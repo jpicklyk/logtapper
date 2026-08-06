@@ -20,7 +20,7 @@ export interface LogViewerActions {
   setTimeFilter: (start: string, end: string) => Promise<void>;
   /** Fetch lines from backend for file mode. Returns a LineWindow. */
   fetchLines: (offset: number, count: number) => Promise<LineWindow>;
-  jumpToLine: (lineNum: number, paneId?: string) => void;
+  jumpToLine: (lineNum: number, paneId?: string, sessionId?: string) => void;
   jumpToEnd: () => void;
   setProcessorView: (processorId: string) => void;
   clearProcessorView: () => void;

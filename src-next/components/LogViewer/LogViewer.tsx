@@ -50,9 +50,12 @@ const LogViewer = React.memo(function LogViewer({
     for (const c of settings.bookmarkCategories) map[c.id] = c.color;
     return map;
   }, [settings.bookmarkCategories]);
-  const { lineNum: scrollToLine, seq: jumpSeq, paneId: jumpPaneId } = useScrollTarget();
-  // Only honour the jump if it targets this specific pane or is unfocused/global (null).
-  const isJumpForThisPane = jumpPaneId === null || jumpPaneId === paneId;
+  const { lineNum: scrollToLine, seq: jumpSeq, paneId: jumpPaneId, sessionId: jumpSessionId } = useScrollTarget();
+  // Session-targeted jumps take precedence: only the viewer hosting that session
+  // reacts. Otherwise honour the jump if it targets this pane or is global (null).
+  const isJumpForThisPane = jumpSessionId !== null
+    ? jumpSessionId === sessionId
+    : jumpPaneId === null || jumpPaneId === paneId;
   // When a line filter is active, the virtualizer operates on filtered indices
   // (0..N-1), not absolute line numbers.  Map the absolute scrollToLine to its
   // position in the filtered array so ReadOnlyViewer scrolls to the right row.

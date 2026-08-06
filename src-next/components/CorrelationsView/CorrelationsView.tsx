@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import type { CorrelationEvent } from '../../bridge/types';
 import {
   useSession,
@@ -152,6 +152,13 @@ const CorrelationsView = React.memo(function CorrelationsView() {
   const { jumpToLine } = useNavigationActions();
 
   const sessionId = session?.sessionId ?? '';
+
+  // Target jumps at this view's session — with two sessions open in split
+  // panes, an untargeted jump would move both viewers.
+  const jumpToSessionLine = useCallback((lineNum: number) => {
+    jumpToLine(lineNum, undefined, sessionId || undefined);
+  }, [jumpToLine, sessionId]);
+
   const activeCorrelators = useMemo(() => {
     const idSet = new Set(activeProcessorIds);
     return processors.filter(p => p.processorType === 'correlator' && idSet.has(p.id));
@@ -184,7 +191,7 @@ const CorrelationsView = React.memo(function CorrelationsView() {
           sessionId={sessionId}
           correlatorId={proc.id}
           correlatorName={proc.name}
-          onJumpToLine={jumpToLine}
+          onJumpToLine={jumpToSessionLine}
           refreshKey={runCount}
         />
       ))}
