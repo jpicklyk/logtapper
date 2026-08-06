@@ -163,7 +163,13 @@ server.tool(
   "logtapper_list_sessions",
   "List all active log sessions with their source files, line counts, " +
     "source types (Logcat / Bugreport / Kernel), and the installed " +
-    "processors that have pipeline results. Use this to understand what " +
+    "processors that have pipeline results. Each session's source includes " +
+    "its absolute source file `path` (null for ADB streams) — use it to " +
+    "tell apart two open sessions that share the same display name (e.g. " +
+    "'dumpstate.txt' loaded from two different devices). Each session also " +
+    "reports `focused: true/false` — the session the user currently has " +
+    "the log viewer focused on; prefer publishing analyses to the focused " +
+    "session when the target is ambiguous. Use this to understand what " +
     "data is currently loaded before querying lines or events.",
   {},
   async () => {

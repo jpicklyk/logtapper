@@ -12,6 +12,9 @@ interface TabBarTab {
   type?: string;
   readOnly?: boolean;
   unsaved?: boolean;
+  /** Full hover text — full source path + line count when available (see
+   *  `layout/CenterArea/tabDisambiguation.ts`). Falls back to `label`. */
+  tooltip?: string;
 }
 
 const TAB_COLORS: Record<string, string> = {
@@ -65,6 +68,7 @@ export const TabBar = React.memo(function TabBar({
           onRename={RENAMABLE_TYPES.has(tab.type ?? '') ? onRename : undefined}
           readOnly={tab.readOnly}
           unsaved={tab.unsaved}
+          tooltip={tab.tooltip}
         />
       ))}
       {onAdd && (
@@ -87,6 +91,7 @@ interface SortableTabButtonProps {
   onRename?: (tabId: string, newLabel: string) => void;
   readOnly?: boolean;
   unsaved?: boolean;
+  tooltip?: string;
 }
 
 const SortableTabButton = React.memo(function SortableTabButton({
@@ -100,6 +105,7 @@ const SortableTabButton = React.memo(function SortableTabButton({
   onRename,
   readOnly,
   unsaved,
+  tooltip,
 }: SortableTabButtonProps) {
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
@@ -191,7 +197,7 @@ const SortableTabButton = React.memo(function SortableTabButton({
       ref={setNodeRef}
       style={style}
       className={clsx(styles.tab, active && styles.active, focused && styles.focused, isDragging && styles.dragging)}
-      title={tab.label}
+      title={tooltip ?? tab.label}
     >
       {/* Drag handle — only this zone initiates drag (pointer or keyboard) and shows grab cursor */}
       <span className={styles.dragHandle} {...listeners} {...attributes} />

@@ -521,6 +521,7 @@ pub fn run() {
             commands::session::get_mcp_status,
             commands::session::set_mcp_anonymize,
             commands::session::get_session_metadata,
+            commands::session::set_focused_session,
             // Phase 1 — Filter commands
             commands::filter::create_filter,
             commands::filter::get_filtered_lines,

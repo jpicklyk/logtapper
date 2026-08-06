@@ -23,6 +23,18 @@ export interface Tab {
   closable: boolean;
   readOnly?: boolean;
   unsaved?: boolean;
+  /** Absolute source-file path for a logviewer tab, captured at session load
+   *  time (null for ADB streams, undefined before the session finishes
+   *  loading). Used to disambiguate two open tabs that share the same
+   *  display `label` (e.g. "dumpstate.txt" loaded from two devices) — see
+   *  `layout/CenterArea/tabDisambiguation.ts`. */
+  sourcePath?: string | null;
+  /** Line count as of session load (or the last `session:indexing-complete`
+   *  after it). Snapshot, not a live counter — for an actively-streaming or
+   *  still-indexing session this can lag the true count. Shown in the tab
+   *  tooltip alongside `sourcePath`; good enough for a disambiguation hint,
+   *  not meant for live monitoring (use the Info panel for that). */
+  sourceTotalLines?: number;
 }
 
 export interface CenterPane {

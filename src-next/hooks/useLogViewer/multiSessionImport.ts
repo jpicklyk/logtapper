@@ -12,6 +12,7 @@ export interface ImportedSession {
   sourceName: string;
   sourceType: string;
   isIndexing?: boolean;
+  totalLines?: number;
 }
 
 /** An action the hook should execute after computing the import plan. */

@@ -115,6 +115,8 @@ export function useFileSession(
         readOnly: isBugreportLike(result.sourceType) ? true : undefined,
         isIndexing: result.isIndexing,
         loadRequestId,
+        sourcePath: path,
+        totalLines: result.totalLines,
       },
       { sessionId: result.sessionId, paneId: targetPaneId },
     );
@@ -288,6 +290,11 @@ export function useFileSession(
               readOnly: action.readOnly || undefined,
               isIndexing: action.session.isIndexing,
               loadRequestId,
+              // All sessions from one multi-session .lts import share the
+              // container path — still useful for disambiguation against an
+              // unrelated tab of the same name from a different file.
+              sourcePath: path,
+              totalLines: action.session.totalLines,
             });
             break;
           case 'persistTabPath': {

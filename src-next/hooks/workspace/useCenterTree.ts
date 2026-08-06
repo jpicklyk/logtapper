@@ -513,17 +513,41 @@ export function useCenterTree(
       }
     };
 
+    // Keep the tab tooltip's line count reasonably fresh once indexing
+    // finishes (see Tab.sourceTotalLines doc — this is a snapshot, not a
+    // live counter, so intermediate progress ticks are intentionally skipped).
+    const onIndexingComplete = (e: { sessionId: string; totalLines: number }) => {
+      const tabIds = tabIdsForSession(tabSessionMapRef.current, e.sessionId);
+      if (tabIds.length === 0) return;
+      const tabIdSet = new Set(tabIds);
+      const prev = treeRef.current;
+      let next = prev;
+      for (const pane of allPanes(prev)) {
+        if (!pane.tabs.some((t) => tabIdSet.has(t.id))) continue;
+        next = updateLeaf(next, pane.id, (p) => ({
+          ...p,
+          tabs: p.tabs.map((t) => (tabIdSet.has(t.id) ? { ...t, sourceTotalLines: e.totalLines } : t)),
+        }));
+      }
+      if (next !== prev) {
+        treeRef.current = next;
+        setCenterTree(() => next);
+      }
+    };
+
     bus.on('session:loading', onSessionLoading);
     bus.on('session:loaded', onSessionLoaded);
     bus.on('session:closed', onSessionClosed);
     bus.on('pipeline:completed', onPipelineCompleted);
     bus.on('stream:saved', onStreamSaved);
+    bus.on('session:indexing-complete', onIndexingComplete);
     return () => {
       bus.off('session:loading', onSessionLoading);
       bus.off('session:loaded', onSessionLoaded);
       bus.off('session:closed', onSessionClosed);
       bus.off('pipeline:completed', onPipelineCompleted);
       bus.off('stream:saved', onStreamSaved);
+      bus.off('session:indexing-complete', onIndexingComplete);
     };
   }, []);
 

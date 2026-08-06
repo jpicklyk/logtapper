@@ -6,6 +6,7 @@ import { saveLiveCapture, loadProcessorYaml, uninstallProcessor,
   loadProcessorFromFile as bridgeLoadProcessorFromFile,
   setFileAssociation, openDefaultAppsSettings,
   startMcpBridge, stopMcpBridge, setMcpOpenAllowlist, exportAllSessions,
+  setFocusedSession,
 } from '../bridge/commands';
 import { basename, dirname } from '../utils';
 import { ViewerProvider } from './ViewerContext';
@@ -131,6 +132,23 @@ function HookWiring({ children }: { children: ReactNode }) {
   sessionCoreRef.current = sessionCore;
   const sessionPaneRef = useRef(sessionPane);
   sessionPaneRef.current = sessionPane;
+
+  // Push focus changes to the backend (Part C — focused-session exposure over
+  // the MCP bridge). `AppState::focused_session` mirrors this so `GET
+  // /mcp/sessions` can mark the currently-focused session. Computed here (not
+  // in a separate hook) because it only needs a single derived value already
+  // available from sessionCore/sessionPane; the actual IPC push happens in a
+  // useEffect (never during render — see root CLAUDE.md's "side effects" rule),
+  // keyed on the resolved session id so it re-fires exactly when focus moves
+  // to a different session (not on every unrelated paneSessionMap change).
+  const focusedSessionId = sessionPane.activeLogPaneId
+    ? (paneSessionMap.get(sessionPane.activeLogPaneId) ?? null)
+    : null;
+  useEffect(() => {
+    setFocusedSession(focusedSessionId).catch((e) => {
+      console.warn('[HookWiring] setFocusedSession failed:', e);
+    });
+  }, [focusedSessionId]);
 
   const openWithFilters = useCallback(async (filters: { name: string; extensions: string[] }[]) => {
     const selected = await open({ multiple: false, filters });

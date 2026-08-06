@@ -299,6 +299,17 @@ export function setMcpAnonymize(sessionId: string, enabled: boolean): Promise<vo
   return invoke('set_mcp_anonymize', { sessionId, enabled });
 }
 
+/**
+ * Pushes the currently-focused pane session id to the backend (`null` when no
+ * pane is focused). Surfaced over the MCP bridge as `focused` on each entry
+ * of `GET /mcp/sessions` — lets an agent tell which of several open sessions
+ * the user is actually looking at. Fire-and-forget; callers should not block
+ * UI focus changes on this resolving.
+ */
+export function setFocusedSession(sessionId: string | null): Promise<void> {
+  return invoke('set_focused_session', { sessionId });
+}
+
 // ---------------------------------------------------------------------------
 // Filter commands (Phase 1)
 // ---------------------------------------------------------------------------

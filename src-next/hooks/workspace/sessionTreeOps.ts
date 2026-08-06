@@ -26,6 +26,11 @@ export interface SessionLoadedEvent {
   isNewTab?: boolean;
   previousSessionId?: string;
   readOnly?: boolean;
+  /** See `Tab.sourcePath` — stashed onto the created/updated tab for
+   *  same-name disambiguation. */
+  sourcePath?: string | null;
+  /** See `Tab.sourceTotalLines` — snapshot at load time. */
+  totalLines?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -135,11 +140,16 @@ export function applySessionLoaded(
       nextTree = updateLeaf(tree, e.paneId, (pane) => ({
         ...pane,
         tabs: pane.tabs.map((t) =>
-          t.id === e.tabId ? { ...t, label: e.sourceName, readOnly: e.readOnly } : t,
+          t.id === e.tabId
+            ? { ...t, label: e.sourceName, readOnly: e.readOnly, sourcePath: e.sourcePath, sourceTotalLines: e.totalLines }
+            : t,
         ),
       }));
     } else if (e.isNewTab && existingLogviewerTab && e.previousSessionId) {
-      const newTab: Tab = { id: e.tabId, type: 'logviewer', label: e.sourceName, closable: true, readOnly: e.readOnly };
+      const newTab: Tab = {
+        id: e.tabId, type: 'logviewer', label: e.sourceName, closable: true, readOnly: e.readOnly,
+        sourcePath: e.sourcePath, sourceTotalLines: e.totalLines,
+      };
       nextTree = updateLeaf(tree, e.paneId, (pane) => ({
         ...pane,
         tabs: [...pane.tabs, newTab],
@@ -149,12 +159,17 @@ export function applySessionLoaded(
       nextTree = updateLeaf(tree, e.paneId, (pane) => ({
         ...pane,
         tabs: pane.tabs.map((t) =>
-          t.id === existingLogviewerTab.id ? { ...t, id: e.tabId, label: e.sourceName, readOnly: e.readOnly } : t,
+          t.id === existingLogviewerTab.id
+            ? { ...t, id: e.tabId, label: e.sourceName, readOnly: e.readOnly, sourcePath: e.sourcePath, sourceTotalLines: e.totalLines }
+            : t,
         ),
         activeTabId: e.tabId,
       }));
     } else {
-      const tab: Tab = { id: e.tabId, type: 'logviewer', label: e.sourceName, closable: true, readOnly: e.readOnly };
+      const tab: Tab = {
+        id: e.tabId, type: 'logviewer', label: e.sourceName, closable: true, readOnly: e.readOnly,
+        sourcePath: e.sourcePath, sourceTotalLines: e.totalLines,
+      };
       nextTree = updateLeaf(tree, e.paneId, (pane) => ({
         ...pane,
         tabs: [...pane.tabs, tab],
@@ -174,7 +189,9 @@ export function applySessionLoaded(
       nextTree = updateLeaf(tree, existing.pane.id, (pane) => ({
         ...pane,
         tabs: pane.tabs.map((t) =>
-          t.id === existing.tab.id ? { ...t, id: e.tabId, label: e.sourceName, readOnly: e.readOnly } : t,
+          t.id === existing.tab.id
+            ? { ...t, id: e.tabId, label: e.sourceName, readOnly: e.readOnly, sourcePath: e.sourcePath, sourceTotalLines: e.totalLines }
+            : t,
         ),
         activeTabId: e.tabId,
       }));
@@ -184,7 +201,10 @@ export function applySessionLoaded(
         emitPaneRemap = { originalPaneId: e.paneId, actualPaneId: target.pane.id, sessionId: e.sessionId };
       }
 
-      const tab: Tab = { id: e.tabId, type: 'logviewer', label: e.sourceName, closable: true, readOnly: e.readOnly };
+      const tab: Tab = {
+        id: e.tabId, type: 'logviewer', label: e.sourceName, closable: true, readOnly: e.readOnly,
+        sourcePath: e.sourcePath, sourceTotalLines: e.totalLines,
+      };
       nextTree = updateLeaf(tree, target.pane.id, (pane) => ({
         ...pane,
         tabs: [...pane.tabs, tab],

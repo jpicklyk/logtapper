@@ -24,6 +24,7 @@ use tauri::{AppHandle, Emitter, Manager, Wry};
 
 use crate::anonymizer::LogAnonymizer;
 use crate::commands::AppState;
+use crate::core::session::AnalysisSession;
 use crate::processors::{AnyProcessor, ProcessorKind};
 use crate::processors::marketplace::{resolve_processor_id_checked, split_qualified_id};
 use crate::processors::reporter::engine::RunResult;
@@ -918,30 +919,47 @@ async fn h_close_session(
 // GET /mcp/sessions
 // ---------------------------------------------------------------------------
 
+/// Build one `GET /mcp/sessions` entry for `session`. Pure (no locking) so it
+/// is directly unit-testable — see the `h_sessions_session_json` tests below
+/// for the `path` / `focused` fields this adds (MCP work item acfbc673).
+fn session_to_json(session: &AnalysisSession, focused_session_id: Option<&str>) -> Value {
+    let sources: Vec<Value> = if let Some(src) = session.primary_source() {
+        vec![json!({
+            "id": src.id(),
+            "name": src.name(),
+            "sourceType": src.source_type().to_string(),
+            "totalLines": src.total_lines(),
+            // Absolute source-file path, when this is a file-backed session
+            // (null for ADB streams). Lets an agent tell apart two open
+            // sessions that share the same display name (e.g.
+            // "dumpstate.txt" loaded from two devices).
+            "path": session.file_path,
+        })]
+    } else {
+        vec![]
+    };
+    json!({
+        "id": session.id,
+        "sources": sources,
+        "focused": focused_session_id == Some(session.id.as_str()),
+    })
+}
+
 async fn h_sessions(State(handle): State<Handle>) -> Json<Value> {
     let state = handle.state::<AppState>();
+
+    // Snapshot the frontend's focused session id (see `AppState::focused_session`)
+    // before building the session list, so each entry can report whether it is
+    // the one the user currently has focused.
+    let focused_session_id: Option<String> =
+        state.focused_session.lock().map(|f| f.clone()).unwrap_or(None);
 
     // Collect session info without holding the lock into the JSON builder.
     let sessions_info: Vec<Value> = {
         let sessions = lock_or_json_err!(state.sessions, "sessions");
         sessions
             .values()
-            .map(|session| {
-                let sources: Vec<Value> = if let Some(src) = session.primary_source() {
-                    vec![json!({
-                        "id": src.id(),
-                        "name": src.name(),
-                        "sourceType": src.source_type().to_string(),
-                        "totalLines": src.total_lines(),
-                    })]
-                } else {
-                    vec![]
-                };
-                json!({
-                    "id": session.id,
-                    "sources": sources,
-                })
-            })
+            .map(|session| session_to_json(session, focused_session_id.as_deref()))
             .collect()
     };
 
@@ -4101,5 +4119,108 @@ mod tests {
             resolve_processor_id_checked(&procs, "wifi-state@official"),
             Ok(Some("wifi-state@official".to_string()))
         );
+    }
+
+    // ── h_sessions session_to_json — path + focused fields (MCP acfbc673) ───
+    // Session disambiguation: `GET /mcp/sessions` must surface each source's
+    // absolute file path and whether the session is the one the frontend has
+    // focused, so an agent can tell apart two open sessions that share the
+    // same display name (e.g. "dumpstate.txt" loaded from two devices).
+
+    /// Write a minimal logcat-shaped temp file and load it into a fresh
+    /// session as source "src-0", mirroring `core::session::tests`' own
+    /// helper (not reusable across modules — that one is private to
+    /// `session.rs`'s test mod).
+    fn session_with_source(id: &str, file_path: &str) -> AnalysisSession {
+        let mut path = std::env::temp_dir();
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        path.push(format!("logtapper_mcp_bridge_test_{id}_{unique}.log"));
+        std::fs::write(&path, "01-01 00:00:00.000  1000  1000 I Tag: hello\n").unwrap();
+
+        let mut session = AnalysisSession::new(id.to_string());
+        session
+            .add_source_partial(&path, "src-0".to_string(), 1_000_000)
+            .expect("add_source_partial should succeed for a real temp file");
+        session.file_path = Some(file_path.to_string());
+
+        let _ = std::fs::remove_file(&path); // source already mmap'd; file no longer needed on disk
+        session
+    }
+
+    #[test]
+    fn session_to_json_includes_source_path() {
+        let session = session_with_source("sess-a", "/logs/S23/dumpstate.txt");
+        let json = session_to_json(&session, None);
+        assert_eq!(json["sources"][0]["path"], "/logs/S23/dumpstate.txt");
+    }
+
+    #[test]
+    fn session_to_json_marks_focused_session_true() {
+        let session = session_with_source("sess-a", "/logs/S23/dumpstate.txt");
+        let json = session_to_json(&session, Some("sess-a"));
+        assert_eq!(json["focused"], true);
+    }
+
+    #[test]
+    fn session_to_json_marks_unfocused_session_false() {
+        let session = session_with_source("sess-a", "/logs/S23/dumpstate.txt");
+        let json = session_to_json(&session, Some("sess-b"));
+        assert_eq!(json["focused"], false);
+    }
+
+    #[test]
+    fn session_to_json_marks_false_when_nothing_focused() {
+        let session = session_with_source("sess-a", "/logs/S23/dumpstate.txt");
+        let json = session_to_json(&session, None);
+        assert_eq!(json["focused"], false);
+    }
+
+    #[test]
+    fn session_to_json_disambiguates_same_named_sessions_by_path() {
+        // The exact reported scenario: two sessions loaded from the same
+        // filename ("dumpstate.txt") on two different devices must carry
+        // distinguishable `path` values, and only the actually-focused one
+        // reports `focused: true`.
+        let s23 = session_with_source("sess-s23", "/logs/S23/dumpstate.txt");
+        let xcover6 = session_with_source("sess-xcover6", "/logs/XCover6/dumpstate.txt");
+
+        let s23_json = session_to_json(&s23, Some("sess-xcover6"));
+        let xcover6_json = session_to_json(&xcover6, Some("sess-xcover6"));
+
+        assert_ne!(s23_json["sources"][0]["path"], xcover6_json["sources"][0]["path"]);
+        assert_eq!(s23_json["focused"], false);
+        assert_eq!(xcover6_json["focused"], true);
+    }
+
+    #[test]
+    fn session_to_json_path_is_null_when_session_has_no_file_path() {
+        // A source without a set file_path (e.g. a stream-backed session)
+        // must serialize `path` as JSON null, not omit the key or panic.
+        let mut path = std::env::temp_dir();
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        path.push(format!("logtapper_mcp_bridge_test_nopath_{unique}.log"));
+        std::fs::write(&path, "01-01 00:00:00.000  1000  1000 I Tag: hello\n").unwrap();
+
+        let mut session = AnalysisSession::new("sess-nopath".to_string());
+        session.add_source_partial(&path, "src-0".to_string(), 1_000_000).unwrap();
+        let _ = std::fs::remove_file(&path);
+        // file_path deliberately left as None (the AnalysisSession::new default).
+
+        let json = session_to_json(&session, None);
+        assert!(json["sources"][0]["path"].is_null());
+    }
+
+    #[test]
+    fn session_to_json_sources_empty_when_no_source() {
+        let session = AnalysisSession::new("sess-empty".to_string());
+        let json = session_to_json(&session, None);
+        assert_eq!(json["sources"].as_array().unwrap().len(), 0);
+        assert_eq!(json["focused"], false);
     }
 }

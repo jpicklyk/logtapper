@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   DndContext,
   DragOverlay,
@@ -15,6 +15,7 @@ import { DragHandle } from '../DragHandle';
 import { TabBar } from '../TabBar';
 import { DropZoneOverlay } from './DropZoneOverlay';
 import { clamp } from '../../utils';
+import { computeTabDisplayInfo, type TabDisplayInfo } from './tabDisambiguation';
 import type { SplitNode, CenterPane, DropZone, Tab } from '../../hooks';
 import styles from './CenterArea.module.css';
 
@@ -98,6 +99,11 @@ export const CenterArea = React.memo(function CenterArea(props: CenterAreaProps)
 
   const handleDragCancel = useCallback(() => setDraggingTab(null), []);
 
+  // Same-name tab disambiguation (root CLAUDE.md scope A) — pure function over
+  // the tree only, no context access, computed once per tree change and
+  // threaded down as plain data (layout/CLAUDE.md: layout stays prop-driven).
+  const tabDisplay = useMemo(() => computeTabDisplayInfo(props.tree), [props.tree]);
+
   return (
     <DndContext
       sensors={sensors}
@@ -107,7 +113,7 @@ export const CenterArea = React.memo(function CenterArea(props: CenterAreaProps)
       onDragCancel={handleDragCancel}
     >
       <div className={styles.root}>
-        <SplitNodeRenderer {...props} node={props.tree} onContentRef={props.onContentRef} />
+        <SplitNodeRenderer {...props} node={props.tree} tabDisplay={tabDisplay} onContentRef={props.onContentRef} />
       </div>
       <DragOverlay dropAnimation={null}>
         {draggingTab ? <div className={styles.tabGhost}>{draggingTab.label}</div> : null}
@@ -119,6 +125,7 @@ export const CenterArea = React.memo(function CenterArea(props: CenterAreaProps)
 interface SplitNodeRendererProps {
   node: SplitNode;
   focusedLogviewerTabId?: string | null;
+  tabDisplay: Map<string, TabDisplayInfo>;
   onContentRef: (paneId: string, el: HTMLDivElement | null) => void;
   onTabActivate: (tabId: string, paneId: string) => void;
   onTabClose: (tabId: string, paneId: string) => void;
@@ -132,6 +139,7 @@ interface SplitNodeRendererProps {
 const SplitNodeRenderer = React.memo(function SplitNodeRenderer({
   node,
   focusedLogviewerTabId,
+  tabDisplay,
   onContentRef,
   onTabActivate,
   onTabClose,
@@ -146,6 +154,7 @@ const SplitNodeRenderer = React.memo(function SplitNodeRenderer({
       <LeafPane
         pane={node.pane}
         focusedLogviewerTabId={focusedLogviewerTabId}
+        tabDisplay={tabDisplay}
         onContentRef={onContentRef}
         onTabActivate={onTabActivate}
         onTabClose={onTabClose}
@@ -172,6 +181,7 @@ const SplitNodeRenderer = React.memo(function SplitNodeRenderer({
       first={children[0]}
       second={children[1]}
       focusedLogviewerTabId={focusedLogviewerTabId}
+      tabDisplay={tabDisplay}
       onContentRef={onContentRef}
       onTabActivate={onTabActivate}
       onTabClose={onTabClose}
@@ -193,6 +203,7 @@ interface SplitContainerProps {
   first: SplitNode;
   second: SplitNode;
   focusedLogviewerTabId?: string | null;
+  tabDisplay: Map<string, TabDisplayInfo>;
   onContentRef: (paneId: string, el: HTMLDivElement | null) => void;
   onTabActivate: (tabId: string, paneId: string) => void;
   onTabClose: (tabId: string, paneId: string) => void;
@@ -212,6 +223,7 @@ const SplitContainer = React.memo(function SplitContainer({
   first,
   second,
   focusedLogviewerTabId,
+  tabDisplay,
   onContentRef,
   onTabActivate,
   onTabClose,
@@ -253,6 +265,7 @@ const SplitContainer = React.memo(function SplitContainer({
         <SplitNodeRenderer
           node={first}
           focusedLogviewerTabId={focusedLogviewerTabId}
+          tabDisplay={tabDisplay}
           onContentRef={onContentRef}
           onTabActivate={onTabActivate}
           onTabClose={onTabClose}
@@ -268,6 +281,7 @@ const SplitContainer = React.memo(function SplitContainer({
         <SplitNodeRenderer
           node={second}
           focusedLogviewerTabId={focusedLogviewerTabId}
+          tabDisplay={tabDisplay}
           onContentRef={onContentRef}
           onTabActivate={onTabActivate}
           onTabClose={onTabClose}
@@ -285,6 +299,7 @@ const SplitContainer = React.memo(function SplitContainer({
 interface LeafPaneProps {
   pane: CenterPane;
   focusedLogviewerTabId?: string | null;
+  tabDisplay: Map<string, TabDisplayInfo>;
   /** Called with (paneId, element) on mount/unmount of the content area.
    *  The caller portals pane content into this element. */
   onContentRef: (paneId: string, el: HTMLDivElement | null) => void;
@@ -299,6 +314,7 @@ interface LeafPaneProps {
 const LeafPane = React.memo(function LeafPane({
   pane,
   focusedLogviewerTabId,
+  tabDisplay,
   onContentRef,
   onTabActivate,
   onTabClose,
@@ -330,6 +346,16 @@ const LeafPane = React.memo(function LeafPane({
     [pane.id, onContentRef],
   );
 
+  // Overlay the disambiguated label + full-path/line-count tooltip computed
+  // in CenterArea (scope A). TabBar stays a plain data-in/data-out component.
+  const displayTabs = useMemo(
+    () => pane.tabs.map((t) => {
+      const info = tabDisplay.get(t.id);
+      return info ? { ...t, label: info.label, tooltip: info.tooltip } : t;
+    }),
+    [pane.tabs, tabDisplay],
+  );
+
   return (
     <div className={styles.leaf}>
       <SortableContext
@@ -337,7 +363,7 @@ const LeafPane = React.memo(function LeafPane({
         strategy={horizontalListSortingStrategy}
       >
         <TabBar
-          tabs={pane.tabs}
+          tabs={displayTabs}
           activeTabId={pane.activeTabId}
           paneId={pane.id}
           focusedLogviewerTabId={focusedLogviewerTabId}

@@ -33,6 +33,13 @@ export type AppEvents = {
   'session:loaded':         { sessionId: string; paneId: string; sourceName: string; sourceType: SourceType;
                               tabId: string; isNewTab?: boolean; previousSessionId?: string; readOnly?: boolean;
                               isIndexing?: boolean;
+                              /** Absolute source-file path (null for ADB streams). Stashed onto the
+                               *  tab so same-named tabs can be disambiguated — see
+                               *  `layout/CenterArea/tabDisambiguation.ts`. */
+                              sourcePath?: string | null;
+                              /** Line count as of this load. Snapshot for the tab tooltip, not a
+                               *  live counter — see `Tab.sourceTotalLines`. */
+                              totalLines?: number;
                               /** Correlation id stamped by a workspace restore's own `loadFile` calls
                                *  (see `hooks/workspace/restoreCore.ts`). Lets the restore distinguish
                                *  sessions IT produced from a concurrent user-initiated open that happens

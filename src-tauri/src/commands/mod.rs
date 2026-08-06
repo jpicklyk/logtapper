@@ -190,6 +190,14 @@ pub struct AppState {
     /// lapses — so a transition that dies mid-way degrades to a bounded window of
     /// suppressed autosave, never a permanently disabled one.
     pub autosave_switch_suppressed_until: Mutex<Option<std::time::Instant>>,
+    /// Session id the frontend currently has focused (the active pane's
+    /// logviewer session), or `None` when no pane is focused. Pushed by the
+    /// frontend via the `set_focused_session` command whenever focus changes
+    /// (see `src-next/hooks/useLogViewer` / `HookWiring`). Exposed over the
+    /// MCP bridge (`GET /mcp/sessions`, `focused` field per session) so an
+    /// agent can tell which of several open — possibly same-named — sessions
+    /// the user is actually looking at, without guessing from tab order.
+    pub focused_session: Mutex<Option<String>>,
 }
 
 impl Default for AppState {
@@ -256,6 +264,7 @@ impl AppState {
             autosave_generation: AtomicU64::new(0),
             autosave_flushed_generation: AtomicU64::new(0),
             autosave_switch_suppressed_until: Mutex::new(None),
+            focused_session: Mutex::new(None),
         }
     }
 

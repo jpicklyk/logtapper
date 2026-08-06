@@ -27,6 +27,23 @@ pub fn set_mcp_anonymize(state: State<'_, AppState>, session_id: String, enabled
     }
 }
 
+/// Records which session is currently the focused pane session in the
+/// frontend UI (or `None` when no pane is focused). Pushed by the frontend
+/// whenever focus changes — see `src-next/bridge/commands.ts::setFocusedSession`
+/// and the focus-sync effect in `context/index.tsx` (`HookWiring`). Exposed
+/// over the MCP bridge via `GET /mcp/sessions` (`focused` field) so an agent
+/// can tell which of several open — possibly same-named — sessions the user
+/// is actually looking at.
+#[tauri::command]
+pub fn set_focused_session(
+    state: State<'_, AppState>,
+    session_id: Option<String>,
+) -> Result<(), String> {
+    let mut focused = lock_or_err(&state.focused_session, "focused_session")?;
+    *focused = session_id;
+    Ok(())
+}
+
 /// Returns the MCP bridge status (bound + last-activity age).
 #[tauri::command]
 pub fn get_mcp_status(state: State<'_, AppState>) -> McpStatus {
