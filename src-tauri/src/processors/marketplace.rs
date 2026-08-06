@@ -309,7 +309,7 @@ pub fn validate_processor_id(id: &str) -> Result<(), String> {
             "Processor ID '{id}' must not look like an absolute path"
         ));
     }
-    if id.chars().any(|c| c.is_control()) {
+    if id.chars().any(char::is_control) {
         return Err(format!(
             "Processor ID '{id}' must not contain control characters"
         ));
@@ -428,7 +428,7 @@ pub fn ensure_filename_safe(filename: &str) -> Result<(), String> {
         || filename.contains('/')
         || filename.contains('\\')
         || filename.contains("..")
-        || filename.chars().any(|c| c.is_control())
+        || filename.chars().any(char::is_control)
     {
         return Err(format!(
             "Refusing to write processor file with unsafe name derived from ID: '{filename}'"

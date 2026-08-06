@@ -413,10 +413,9 @@ pub fn eval_condition(
 ///   the same default as the pre-fix "no condition" case.
 pub fn eval_parsed_condition(parsed: Option<&ParsedCondition>, fields: &HashMap<String, Value>) -> bool {
     match parsed {
-        Some(ParsedCondition::Always) => true,
+        Some(ParsedCondition::Always) | None => true,
         Some(ParsedCondition::Never) => false,
         Some(ParsedCondition::Expr(expr)) => evaluate(expr, fields),
-        None => true,
     }
 }
 

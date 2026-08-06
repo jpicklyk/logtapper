@@ -312,6 +312,9 @@ impl<'a> ProcessorRun<'a> {
     // Aggregate (simple declarative pass)
     // ────────────────────────────────────────────────────────────────────────
 
+    // Internal dispatch point for the aggregate pass; params map 1:1 onto the
+    // YAML aggregate schema fields.
+    #[allow(clippy::too_many_arguments)]
     fn apply_aggregate(
         &mut self,
         agg_type: &AggType,

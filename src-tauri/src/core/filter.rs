@@ -245,6 +245,9 @@ pub fn line_matches_criteria(
 /// scan via [`FilterCriteria::precompute_needles`] instead of re-lowercasing
 /// `text_search`/`tags` on every call. Use this in scan loops that evaluate
 /// the same (immutable-for-the-scan) criteria against many lines.
+// Thin public wrapper — the parameter list mirrors `line_matches_criteria_impl`,
+// which carries the same allow.
+#[allow(clippy::too_many_arguments)]
 pub fn line_matches_criteria_with_needles(
     criteria: &FilterCriteria,
     needles: &PrecomputedNeedles,

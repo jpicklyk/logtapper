@@ -288,7 +288,7 @@ pub async fn export_all_sessions(
                     let name = src.name().to_string();
                     let sref = if should_anonymize {
                         let lines: Vec<String> = (0..src.total_lines())
-                            .filter_map(|i| src.raw_line(i).map(|c| c.into_owned()))
+                            .filter_map(|i| src.raw_line(i).map(std::borrow::Cow::into_owned))
                             .collect();
                         SourceRef::RawLines(lines)
                     } else if let Some(file_src) = src.as_any().downcast_ref::<FileLogSource>() {
