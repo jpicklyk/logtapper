@@ -12,7 +12,9 @@ import { useSessionTabManager } from './useSessionTabManager';
 import type { SharedLogViewerRefs } from './types';
 
 export interface LogViewerActions {
-  loadFile: (path: string, paneId?: string) => Promise<void>;
+  /** Resolves to the session id(s) this call produced, in order — see
+   *  `FileSessionResult.loadFile` (`useFileSession.ts`) for details. */
+  loadFile: (path: string, paneId?: string) => Promise<string[]>;
   startStream: (deviceId?: string, packageFilter?: string, activeProcessorIds?: string[], maxRawLines?: number) => Promise<void>;
   stopStream: () => Promise<void>;
   setStreamFilter: (expr: string) => Promise<void>;

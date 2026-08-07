@@ -267,9 +267,12 @@ function HookWiring({ children }: { children: ReactNode }) {
         on: (e, h) => bus.on(e, h),
         off: (e, h) => bus.off(e, h),
       },
-      (sessionId, chain, disabled) => {
-        void runRef.current?.(sessionId, false, { chain, disabled }).catch(() => {});
-      },
+      // Returns the run's promise (rather than firing-and-forgetting it) so
+      // `createAutoRunScheduler`'s concurrency gate (part 5 of the
+      // workspace-restore-performance design) can await it to know when the
+      // slot frees.
+      (sessionId, chain, disabled) =>
+        runRef.current?.(sessionId, false, { chain, disabled }).catch(() => {}) ?? Promise.resolve(),
     );
   }
   const scheduleAutoRun = useCallback(

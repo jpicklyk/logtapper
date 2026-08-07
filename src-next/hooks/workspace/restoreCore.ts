@@ -2,9 +2,11 @@
  * The single restore engine (design: `plans/workspace-restore-design.md` §Q2,
  * design 2A). Extracted verbatim-in-spirit from the body of `doLoadWorkspace`
  * so that both the explicit-open path and the startup orchestrator drive the
- * exact same sequence: begin/end auto-save bracket, sequential loads recording
- * per-entry produced session ids, keyed artifact pairing, per-session artifact
- * restore, targeted auto-run, optional `.ltw` view-state replay, `workspace:opened`.
+ * exact same sequence: begin/end auto-save bracket, bounded-concurrency loads
+ * paired with their own produced session ids by return value (not event
+ * order — see `RestoreIo.loadFile`), keyed artifact pairing, per-session
+ * artifact restore, targeted auto-run, optional `.ltw` view-state replay,
+ * `workspace:opened`.
  *
  * The only IO the caller must inject is `loadFile` and the auto-run scheduler
  * (both depend on live React state); everything else (`restore_workspace_session`,
@@ -14,10 +16,18 @@ import { bus } from '../../events';
 import { restoreWorkspaceSession } from '../../bridge/commands';
 import type { AnalysisArtifact, LoadWorkspaceSessionData, LtwEditorTab, SourceType } from '../../bridge/types';
 import { basename } from '../../utils';
+import { diagStart, diagEnd } from '../../utils/diagnostics';
 import { pairArtifactsWithSessions } from './artifactPairing';
 import { buildEditorTabEvents } from './workspacePersistence';
 import { buildRestoreOutcomes, isLts, type RestorePlan } from './restorePlan';
 import { rebuildTreeSkeleton, createPaneResolver, type PaneResolver } from './restoreTreeSkeleton';
+import { runBoundedByKey } from './loadConcurrency';
+
+/** How many `loadFile` calls a restore runs at once. Bounded (not
+ *  unlimited) so a huge workspace doesn't fire dozens of simultaneous
+ *  backend parses; small enough that per-pane serialization (see
+ *  `loadConcurrency.ts`) still has headroom to overlap distinct panes. */
+const LOAD_CONCURRENCY_LIMIT = 4;
 
 /** The `.ltw`-derived data the core consumes (subset of `LoadWorkspaceV4Result`).
  *  For the pure-localStorage fallback the caller passes empty `sessionData` /
@@ -47,7 +57,16 @@ export interface RestoreIo {
    *  their parameter *positions* match the real `useFileSession.loadFile`
    *  implementation exactly — restoreWorkspace always passes `undefined` for
    *  `replace` and its own correlation id for `loadRequestId`; if the position
-   *  were wrong, the id would land in the `replace` slot at runtime. */
+   *  were wrong, the id would land in the `replace` slot at runtime.
+   *
+   *  Resolves to the session id(s) this call produced, in order (empty when
+   *  the load was skipped, discarded as stale, or failed) — the core pairs
+   *  each manifest/tab entry with its OWN artifacts using this return value
+   *  directly, rather than inferring it from `session:loaded` event order.
+   *  That inference used to require slicing a shared event log around each
+   *  sequential `await`, which only stayed correct because the loads ran one
+   *  at a time; returning the ids lets loads run concurrently without losing
+   *  correct attribution (see the loads loop below). */
   loadFile: (
     path: string,
     paneId?: string,
@@ -55,7 +74,7 @@ export interface RestoreIo {
     sourceType?: SourceType,
     replace?: boolean,
     loadRequestId?: string,
-  ) => Promise<void>;
+  ) => Promise<string[]>;
   /** Triggers (or arms) the pipeline auto-run for a restored session, with that
    *  session's restored chain passed explicitly (see autoRunScheduler for why the
    *  chain is not read from the global ref). */
@@ -80,6 +99,12 @@ export async function restoreWorkspace(
   plan: RestorePlan,
   io: RestoreIo,
 ): Promise<string[]> {
+  // Brackets the whole restore span (through `workspace:opened`, alongside
+  // the existing per-file `loadFile:<label>` marks in `useFileSession.ts`) so
+  // `localStorage.logtapper_diag=1` can show before/after aggregate timing —
+  // see `utils/diagnostics.ts`. Closed in the outer `finally` below so the
+  // bracket is symmetric even on failure.
+  diagStart('restoreWorkspace:total');
   // loadFile is a tracked mutation; without this bracket the restore would
   // schedule an auto-save of itself and, on a partial failure, overwrite the good
   // `.ltw` with the partial set. Reference-counted gate; end MUST run in finally.
@@ -137,20 +162,26 @@ export async function restoreWorkspace(
 
   // Correlation id stamped on every loadFile call this restore makes. A user
   // can open a file (via the normal open path) while a restore load is
-  // in-flight — the awaited io.loadFile below yields the event loop, and an
-  // unrelated session:loaded for that unrelated open would otherwise land in
-  // this restore's loadedOrder slice and get attributed the wrong manifest
-  // entry's bookmarks/analyses. Filtering on this id in onSessionLoaded scopes
-  // attribution to sessions THIS restore produced.
+  // in-flight — an unrelated session:loaded for that unrelated open would
+  // otherwise be mistaken for one of this restore's own sessions. Filtering
+  // on this id in onSessionLoaded scopes attribution to sessions THIS
+  // restore produced.
   const loadRequestId = crypto.randomUUID();
   try {
-    // session:loaded fires synchronously inside loadFile (before its promise
-    // resolves), so slicing this list around each await yields exactly the
-    // sessions that load produced, in order — with their isIndexing flag.
-    const loadedOrder: Array<{ sessionId: string; isIndexing?: boolean }> = [];
+    // Produced-session-id ATTRIBUTION comes straight from each `io.loadFile`
+    // call's own return value now (below) — not from slicing a shared
+    // `session:loaded` event log around each load's `await`. That slicing
+    // only stayed correct as long as loads ran one at a time in a fixed
+    // order; it breaks the moment two loads are in flight together, because
+    // events from both interleave in the shared list with no way to tell
+    // which load produced which. This listener now exists ONLY to recover
+    // each produced session's `isIndexing` snapshot — keyed by sessionId
+    // (not array position), so it stays correct regardless of which load
+    // resolves first.
+    const isIndexingBySession = new Map<string, boolean | undefined>();
     const onSessionLoaded = (p: { sessionId: string; isIndexing?: boolean; loadRequestId?: string }) => {
       if (p.loadRequestId !== loadRequestId) return; // not from this restore
-      loadedOrder.push({ sessionId: p.sessionId, isIndexing: p.isIndexing });
+      isIndexingBySession.set(p.sessionId, p.isIndexing);
     };
     bus.on('session:loaded', onSessionLoaded);
 
@@ -161,39 +192,58 @@ export async function restoreWorkspace(
     // means we catch that completion instead of missing it — scheduleAutoRun
     // is told below to treat any such session as already-indexed instead of
     // arming a one-shot for an indexing-complete that already fired (which
-    // would otherwise wait forever, since the event never fires twice).
+    // would otherwise wait forever, since the event never fires twice). Keyed
+    // by sessionId — safe under concurrent loads for the same reason as above.
     const indexingCompletedIds = new Set<string>();
     const onIndexingComplete = (p: { sessionId: string }) => {
       indexingCompletedIds.add(p.sessionId);
     };
     bus.on('session:indexing-complete', onIndexingComplete);
 
-    const producedSessionIdsPerLoad: string[][] = [];
+    // Pane resolution MUST happen synchronously, in plan order, BEFORE any
+    // load is dispatched: `paneResolver.resolve` CONSUMES each matched
+    // placement (`createPaneResolver`'s internal `claimed` set), so whichever
+    // load claims a saved slot first wins. Precomputing the whole array here
+    // preserves that exact assignment — unchanged from the prior sequential
+    // loop — even though the loads themselves now run concurrently below.
+    const effectivePaneIds: Array<string | undefined> = plan.loads.map((load) =>
+      paneResolver
+        ? paneResolver.resolve({ sourcePath: load.path, oldPaneId: load.paneId }) ?? load.paneId
+        : load.paneId,
+    );
+
+    const producedSessionIdsPerLoad: string[][] = plan.loads.map(() => []);
     try {
-      for (const load of plan.loads) {
-        const before = loadedOrder.length;
-        // Prefer the pane this session occupied when the workspace was
-        // saved (matched by the content-stable `sourcePath`, since every
-        // pane id in the rebuilt skeleton is fresh), then a straight remap
-        // of the plan's own (possibly stale) paneId, then fall back to the
-        // plan's paneId as-is (no skeleton, or no match — e.g. a file
-        // opened after the last save) so `loadFile` applies its normal
-        // active/first-pane default.
-        const effectivePaneId = paneResolver
-          ? paneResolver.resolve({ sourcePath: load.path, oldPaneId: load.paneId }) ?? load.paneId
-          : load.paneId;
-        try {
-          await io.loadFile(load.path, effectivePaneId, load.existingTabId, load.sourceType as SourceType | undefined, undefined, loadRequestId);
-        } catch (e) {
-          console.warn(`[restoreWorkspace] Failed to load ${load.path}:`, e);
-        }
-        producedSessionIdsPerLoad.push(loadedOrder.slice(before).map((x) => x.sessionId));
-      }
+      // Bounded concurrency (part 2 of the perf design): loads that resolved
+      // to DIFFERENT panes run in parallel (up to LOAD_CONCURRENCY_LIMIT at
+      // once), so time-to-all-visible is roughly max(single-file time) +
+      // overhead instead of their sum. Loads that resolved to the SAME pane
+      // (including two unresolved loads, which both fall back to whatever
+      // pane `loadFile` infers as "active" at call time) are serialized —
+      // `useFileSession.loadFile` infers pane occupancy by reading
+      // `paneSessionMapRef` synchronously at call start and its generation
+      // guard is keyed by destination pane (`loadGeneration.ts`), so two
+      // concurrent calls at the same destination would race both of those.
+      // See `loadConcurrency.ts` for the scheduler itself.
+      await runBoundedByKey(
+        plan.loads,
+        (_load, i) => effectivePaneIds[i] ?? '__unresolved-pane__',
+        async (load, i) => {
+          try {
+            producedSessionIdsPerLoad[i] = await io.loadFile(
+              load.path, effectivePaneIds[i], load.existingTabId,
+              load.sourceType as SourceType | undefined, undefined, loadRequestId,
+            );
+          } catch (e) {
+            console.warn(`[restoreWorkspace] Failed to load ${load.path}:`, e);
+            producedSessionIdsPerLoad[i] = [];
+          }
+        },
+        LOAD_CONCURRENCY_LIMIT,
+      );
     } finally {
       bus.off('session:loaded', onSessionLoaded);
     }
-
-    const isIndexingBySession = new Map(loadedOrder.map((x) => [x.sessionId, x.isIndexing]));
 
     // T8: expected-session-id diagnostic. A manifest entry that recorded the
     // session id it resolved to at save time (`expectedSessionId`) lets restore
@@ -330,5 +380,6 @@ export async function restoreWorkspace(
     // Must run even on failure — a missed end suppresses auto-save for the rest
     // of the session.
     bus.emit('workspace:restore-end');
+    diagEnd('restoreWorkspace:total');
   }
 }

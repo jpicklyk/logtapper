@@ -834,12 +834,27 @@ async fn h_open_file(
                 },
             };
             let canonical_str = canonical.to_string_lossy().to_string();
-            match crate::commands::files::open_file_inner(
-                &state,
-                &handle,
-                &canonical_str,
-                source_type_override,
-            ) {
+            // `open_file_inner` does CPU-bound mmap + line-index (and, for a
+            // bugreport zip, decompression) work — run it on a blocking thread
+            // rather than the axum/tokio worker thread this handler is polled
+            // on, mirroring `run_pipeline` (commands/pipeline.rs:246-268) and
+            // the Tauri `load_log_file` command's own wrapping of this same
+            // fn. `state` (a `State<'_, AppState>` borrowed from `handle`)
+            // can't cross into the 'static closure, so it's re-resolved from a
+            // cloned `handle` inside instead.
+            let handle_for_task = handle.clone();
+            let open_result = tokio::task::spawn_blocking(move || {
+                let state = handle_for_task.state::<AppState>();
+                crate::commands::files::open_file_inner(
+                    &state,
+                    &handle_for_task,
+                    &canonical_str,
+                    source_type_override,
+                )
+            })
+            .await
+            .unwrap_or_else(|e| Err(format!("open file task panicked: {e}")));
+            match open_result {
                 Ok(results) => match results.first() {
                     Some(first) => {
                         // Notify the frontend so it creates a logviewer tab for this

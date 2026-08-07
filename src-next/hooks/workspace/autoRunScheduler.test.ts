@@ -199,3 +199,128 @@ describe('createAutoRunScheduler', () => {
     expect(run).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Auto-run burst cap (workspace-restore-performance design, part 5)
+// ---------------------------------------------------------------------------
+
+describe('createAutoRunScheduler — run-concurrency cap', () => {
+  /** An `AutoRunFn` whose promise stays pending until the test releases it,
+   *  keyed by sessionId. */
+  function createGatedRun() {
+    const releasers = new Map<string, () => void>();
+    const run = vi.fn((sessionId: string) => new Promise<void>((resolve) => {
+      releasers.set(sessionId, resolve);
+    }));
+    return { run, release: (sessionId: string) => releasers.get(sessionId)?.() };
+  }
+
+  it('caps concurrent run-now sessions at 2, queuing the rest', async () => {
+    const { bus } = createFakeBus();
+    const { run, release } = createGatedRun();
+    const scheduler = createAutoRunScheduler(bus, run);
+
+    scheduler.schedule('s1', false, CHAIN, DISABLED);
+    scheduler.schedule('s2', false, CHAIN, DISABLED);
+    scheduler.schedule('s3', false, CHAIN, DISABLED);
+
+    // Only the first two start immediately; the third is queued.
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run).toHaveBeenCalledWith('s1', CHAIN, DISABLED);
+    expect(run).toHaveBeenCalledWith('s2', CHAIN, DISABLED);
+    expect(run).not.toHaveBeenCalledWith('s3', CHAIN, DISABLED);
+
+    // Every session is still marked scheduled immediately — queuing only
+    // delays the RUN, not the bookkeeping (isScheduled/swallow guard).
+    expect(scheduler.isScheduled('s1')).toBe(true);
+    expect(scheduler.isScheduled('s2')).toBe(true);
+    expect(scheduler.isScheduled('s3')).toBe(true);
+
+    // Freeing one slot starts the third.
+    release('s1');
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+    expect(run).toHaveBeenCalledWith('s3', CHAIN, DISABLED);
+  });
+
+  it('does not queue when only one session is scheduled (no behavior change for single-file opens)', async () => {
+    const { bus } = createFakeBus();
+    const run = vi.fn(async () => {});
+    const scheduler = createAutoRunScheduler(bus, run);
+
+    scheduler.schedule('s1', false, CHAIN, DISABLED);
+
+    expect(run).toHaveBeenCalledExactlyOnceWith('s1', CHAIN, DISABLED);
+  });
+
+  it('an indexing-complete-triggered run also goes through the concurrency gate', async () => {
+    const { bus, emitComplete } = createFakeBus();
+    const { run, release } = createGatedRun();
+    const scheduler = createAutoRunScheduler(bus, run);
+
+    // Two run-now sessions fill both slots.
+    scheduler.schedule('s1', false, CHAIN, DISABLED);
+    scheduler.schedule('s2', false, CHAIN, DISABLED);
+    expect(run).toHaveBeenCalledTimes(2);
+
+    // A third session finishes indexing while both slots are full.
+    scheduler.schedule('s3', true, CHAIN, DISABLED);
+    emitComplete('s3');
+    expect(run).toHaveBeenCalledTimes(2); // still queued, not started
+
+    release('s1');
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+    expect(run).toHaveBeenCalledWith('s3', CHAIN, DISABLED);
+  });
+
+  it('a queued run still respects the strict one-shot swallow guard', () => {
+    const { bus } = createFakeBus();
+    const { run } = createGatedRun();
+    const scheduler = createAutoRunScheduler(bus, run);
+
+    scheduler.schedule('s1', false, ['a'], []);
+    scheduler.schedule('s2', false, ['a'], []);
+    scheduler.schedule('s3', false, ['a'], []); // queued
+    scheduler.schedule('s3', false, ['b'], []); // duplicate while queued — swallowed
+
+    expect(run).toHaveBeenCalledTimes(2); // s1, s2 only — s3 still queued
+  });
+
+  it('a run that rejects still frees its slot for the next queued run', async () => {
+    const { bus } = createFakeBus();
+    const releasers = new Map<string, (err?: unknown) => void>();
+    const run = vi.fn((sessionId: string) => new Promise<void>((_resolve, reject) => {
+      releasers.set(sessionId, (err) => reject(err ?? new Error('boom')));
+    }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const scheduler = createAutoRunScheduler(bus, run);
+
+    scheduler.schedule('s1', false, CHAIN, DISABLED);
+    scheduler.schedule('s2', false, CHAIN, DISABLED);
+    scheduler.schedule('s3', false, CHAIN, DISABLED);
+    expect(run).toHaveBeenCalledTimes(2);
+
+    releasers.get('s1')!();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+    warn.mockRestore();
+  });
+
+  it('dispose drops queued (not-yet-started) runs — freeing a slot afterward does not start them', async () => {
+    const { bus } = createFakeBus();
+    const { run, release } = createGatedRun();
+    const scheduler = createAutoRunScheduler(bus, run);
+
+    scheduler.schedule('s1', false, CHAIN, DISABLED);
+    scheduler.schedule('s2', false, CHAIN, DISABLED);
+    scheduler.schedule('s3', false, CHAIN, DISABLED); // queued
+    expect(run).toHaveBeenCalledTimes(2);
+
+    scheduler.dispose();
+
+    // Freeing s1's slot after dispose would (incorrectly) pull s3 off the
+    // queue if dispose hadn't cleared it — proves the queue is actually gone,
+    // not just that s1/s2 happened to stay pending.
+    release('s1');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(run).toHaveBeenCalledTimes(2); // s3 never started
+  });
+});

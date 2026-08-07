@@ -30,7 +30,9 @@ export interface WorkspaceMutationActions {
      *  resulting `session:loaded` event(s) can be told apart from an unrelated
      *  concurrent open (see `hooks/workspace/restoreCore.ts`). */
     loadRequestId?: string,
-  ) => Promise<void>;
+  /** Resolves to the session id(s) this call produced, in order — see
+   *  `FileSessionResult.loadFile` (`useFileSession.ts`) for details. */
+  ) => Promise<string[]>;
   startStream: (deviceId?: string) => Promise<void>;
   closeSession: (paneId?: string) => Promise<void>;
 
@@ -238,7 +240,7 @@ const noopAsync = () => Promise.resolve();
 
 const DEFAULT_ACTIONS: ActionsContextValue = {
   // Mutations
-  loadFile: (_path: string, _paneId?: string) => noopAsync(),
+  loadFile: (_path: string, _paneId?: string) => Promise.resolve([]),
   startStream: (_deviceId?: string) => noopAsync(),
   closeSession: (_paneId?: string) => noopAsync(),
   installProcessor: (_yaml: string) => noopAsync(),

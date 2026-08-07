@@ -27,7 +27,14 @@ interface FileSessionDeps {
 }
 
 export interface FileSessionResult {
-  loadFile: (path: string, paneId?: string) => Promise<void>;
+  /** Resolves to the session id(s) this call produced, in order (a `.lts`
+   *  multi-session import yields more than one) — empty when the load was
+   *  skipped (already-open `.lts`), discarded as stale (generation/epoch
+   *  guard), or failed. Surfaced so callers (workspace restore) can attribute
+   *  produced sessions to their originating call directly, instead of
+   *  inferring it from `session:loaded` event order — see
+   *  `hooks/workspace/restoreCore.ts`. */
+  loadFile: (path: string, paneId?: string) => Promise<string[]>;
   indexingProgress: { percent: number; indexedLines: number } | null;
   /** Exposed for closeSession in useSessionTabManager to clear progress on session close. */
   setIndexingProgressLocal: (v: { percent: number; indexedLines: number } | null) => void;
@@ -162,7 +169,7 @@ export function useFileSession(
     // unrelated concurrent open. See the `loadRequestId` doc on
     // AppEvents['session:loaded'].
     loadRequestId?: string,
-  ) => {
+  ): Promise<string[]> => {
     // Prevent duplicate imports: if this .lts file already has an active session, skip.
     // Check live session context (via ref) rather than localStorage which can be stale.
     if (!existingTabId && path.endsWith('.lts')) {
@@ -173,7 +180,7 @@ export function useFileSession(
           diag('file-load', 'skipping — .lts already open', { path });
           const label = basename(path);
           bus.emit('file:lts-already-open', { label });
-          return;
+          return [];
         }
       }
     }
@@ -284,7 +291,7 @@ export function useFileSession(
           try { await closeSessionCmd(r.sessionId); } catch { /* ignore */ }
           clearPreSeed(r.sessionId);
         }
-        return;
+        return [];
       }
 
       // Post-load half: register the session and create/activate its tab.
@@ -334,12 +341,18 @@ export function useFileSession(
           }
         }
       }
+
+      // Ordered session ids this call produced — primary first, then any
+      // extra sessions from a multi-session `.lts` import, matching `results`'
+      // own order.
+      return results.map((r) => r.sessionId);
     } catch (e) {
       diag('file-load', 'ERROR', { error: String(e) });
       if (loadGenRef.current.get(genKey) === gen) {
         const tabPathsErr = readTabPaths(); delete tabPathsErr[tabId]; saveTabPaths(tabPathsErr);
         setErrorPane(targetPaneId, String(e));
       }
+      return [];
     } finally {
       if (loadGenRef.current.get(genKey) === gen) {
         loadGenRef.current.delete(genKey);

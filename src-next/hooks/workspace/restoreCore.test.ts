@@ -52,7 +52,7 @@ function makeIo(overrides?: Partial<RestoreIo>): RestoreIo & {
   return {
     calls,
     setWorkspaceAnalysesArgs,
-    loadFile: vi.fn(async (path: string) => { calls.push(`loadFile:${path}`); }),
+    loadFile: vi.fn(async (path: string) => { calls.push(`loadFile:${path}`); return []; }),
     scheduleAutoRun: vi.fn(),
     setWorkspaceAnalyses: vi.fn(async (analyses: unknown[]) => {
       calls.push('setWorkspaceAnalyses');
@@ -173,27 +173,16 @@ describe('restoreWorkspace — workspace analyses replacement', () => {
 });
 
 describe('restoreWorkspace — expected-session-id diagnostic (T8)', () => {
-  /** An `io.loadFile` that simulates the `session:loaded` bus event a real
-   *  load fires synchronously before its promise resolves — the mechanism
-   *  `restoreWorkspace` uses to learn what session id a load produced. Looks
-   *  up the handler `restoreWorkspace` registered via the mocked `bus.on` and
-   *  invokes it with the given session id, tagged with the loadRequestId this
-   *  call actually received (position 6, matching the real `loadFile` shape). */
+  /** An `io.loadFile` that produces a fixed session id per path, by RETURN
+   *  VALUE — the mechanism `restoreWorkspace` now uses to learn what session
+   *  id a load produced (no `session:loaded` event involved — see the
+   *  "attribution by return value" describe block below for that guarantee
+   *  under concurrency). */
   function makeIoProducing(pathToSessionId: Record<string, string>): RestoreIo {
     return {
-      loadFile: vi.fn(async (
-        path: string,
-        _paneId?: string,
-        _existingTabId?: string,
-        _sourceType?: unknown,
-        _replace?: boolean,
-        loadRequestId?: string,
-      ) => {
+      loadFile: vi.fn(async (path: string) => {
         const sessionId = pathToSessionId[path];
-        if (!sessionId) return;
-        const call = mockBusOn.mock.calls.find((c: unknown[]) => c[0] === 'session:loaded');
-        const handler = call?.[1] as ((p: { sessionId: string; loadRequestId?: string }) => void) | undefined;
-        handler?.({ sessionId, loadRequestId });
+        return sessionId ? [sessionId] : [];
       }),
       scheduleAutoRun: vi.fn(),
       setWorkspaceAnalyses: vi.fn(async () => {}),
@@ -294,6 +283,173 @@ describe('restoreWorkspace — expected-session-id diagnostic (T8)', () => {
     const warnings = await restoreWorkspace(makeResult({ analyses }), plan, io);
 
     expect(warnings).toContain('a.log changed since the workspace was saved.');
+  });
+});
+
+describe('restoreWorkspace — bounded-concurrency loads (workspace-restore-performance)', () => {
+  /** `buildRestoreOutcomes` is mocked (module-level `vi.mock('./restorePlan', ...)`
+   *  above) — the most direct seam to inspect exactly what `producedSessionIdsPerLoad`
+   *  restoreCore built, positionally aligned to `plan.loads`. */
+  function capturedProducedSessionIds(): unknown {
+    return mockBuildRestoreOutcomes.mock.calls[0]?.[1];
+  }
+
+  it('attributes each load its OWN produced session id by return value, correctly positioned even when loads resolve out of order', async () => {
+    const resolvers: Record<string, (ids: string[]) => void> = {};
+    const io = makeIo({
+      loadFile: vi.fn((path: string) => new Promise<string[]>((resolve) => { resolvers[path] = resolve; })),
+    });
+    const plan = makePlan({
+      loads: [
+        { path: '/a.log', paneId: 'pane-a', dataIndex: null },
+        { path: '/b.log', paneId: 'pane-b', dataIndex: null },
+      ],
+    });
+
+    const restorePromise = restoreWorkspace(makeResult(), plan, io);
+
+    // Both loads target DIFFERENT panes, so both should be dispatched
+    // concurrently — wait for both to be in flight before resolving either.
+    await vi.waitFor(() => {
+      expect(resolvers['/a.log']).toBeDefined();
+      expect(resolvers['/b.log']).toBeDefined();
+    });
+
+    // Resolve OUT OF ORDER: the second load (`/b.log`) settles first.
+    resolvers['/b.log']!(['s-b']);
+    await Promise.resolve();
+    resolvers['/a.log']!(['s-a']);
+
+    await restorePromise;
+
+    // producedSessionIdsPerLoad must stay aligned to plan.loads' ORIGINAL
+    // order (index 0 -> /a.log's id, index 1 -> /b.log's id), regardless of
+    // which one's promise actually settled first.
+    expect(capturedProducedSessionIds()).toEqual([['s-a'], ['s-b']]);
+  });
+
+  it('a multi-session .lts load returns all its session ids in order', async () => {
+    const io = makeIo({
+      loadFile: vi.fn(async () => ['primary-id', 'extra-1', 'extra-2']),
+    });
+    const plan = makePlan({ loads: [{ path: '/bundle.lts', dataIndex: null }] });
+
+    await restoreWorkspace(makeResult(), plan, io);
+
+    expect(capturedProducedSessionIds()).toEqual([['primary-id', 'extra-1', 'extra-2']]);
+  });
+
+  it('runs loads targeting DIFFERENT panes concurrently', async () => {
+    const active = new Set<string>();
+    let maxActive = 0;
+    const io = makeIo({
+      loadFile: vi.fn(async (path: string) => {
+        active.add(path);
+        maxActive = Math.max(maxActive, active.size);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        active.delete(path);
+        return [`s-${path}`];
+      }),
+    });
+    const plan = makePlan({
+      loads: [
+        { path: '/a.log', paneId: 'pane-a', dataIndex: null },
+        { path: '/b.log', paneId: 'pane-b', dataIndex: null },
+        { path: '/c.log', paneId: 'pane-c', dataIndex: null },
+      ],
+    });
+
+    await restoreWorkspace(makeResult(), plan, io);
+
+    expect(maxActive).toBeGreaterThan(1);
+  });
+
+  it('serializes loads that target the SAME pane — the second is never dispatched before the first settles', async () => {
+    const callOrder: string[] = [];
+    let releaseFirst: (() => void) | null = null;
+    const io = makeIo({
+      loadFile: vi.fn(async (path: string) => {
+        callOrder.push(`start:${path}`);
+        if (path === '/a.log') {
+          await new Promise<void>((resolve) => { releaseFirst = resolve; });
+        }
+        callOrder.push(`end:${path}`);
+        return [path === '/a.log' ? 's-a' : 's-b'];
+      }),
+    });
+    const plan = makePlan({
+      loads: [
+        { path: '/a.log', paneId: 'same-pane', dataIndex: null },
+        { path: '/b.log', paneId: 'same-pane', dataIndex: null },
+      ],
+    });
+
+    const restorePromise = restoreWorkspace(makeResult(), plan, io);
+
+    await vi.waitFor(() => expect(callOrder).toContain('start:/a.log'));
+    // Give the scheduler every chance to (incorrectly) start the second load
+    // too while the first is still pending.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(callOrder).not.toContain('start:/b.log');
+
+    releaseFirst!();
+    await restorePromise;
+
+    expect(callOrder).toEqual(['start:/a.log', 'end:/a.log', 'start:/b.log', 'end:/b.log']);
+  });
+
+  it('two loads with no resolvable pane (both undefined) are also serialized, not raced', async () => {
+    const callOrder: string[] = [];
+    let releaseFirst: (() => void) | null = null;
+    const io = makeIo({
+      loadFile: vi.fn(async (path: string) => {
+        callOrder.push(`start:${path}`);
+        if (path === '/a.log') {
+          await new Promise<void>((resolve) => { releaseFirst = resolve; });
+        }
+        callOrder.push(`end:${path}`);
+        return [];
+      }),
+    });
+    // Neither load carries a paneId, and there is no paneResolver (no saved
+    // layout) — both fall back to `loadFile`'s own "active pane" default,
+    // exactly the ambiguous-destination case the scheduler must serialize.
+    const plan = makePlan({
+      loads: [
+        { path: '/a.log', dataIndex: null },
+        { path: '/b.log', dataIndex: null },
+      ],
+    });
+
+    const restorePromise = restoreWorkspace(makeResult(), plan, io);
+
+    await vi.waitFor(() => expect(callOrder).toContain('start:/a.log'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(callOrder).not.toContain('start:/b.log');
+
+    releaseFirst!();
+    await restorePromise;
+
+    expect(callOrder).toEqual(['start:/a.log', 'end:/a.log', 'start:/b.log', 'end:/b.log']);
+  });
+
+  it('a load that throws still lets the restore proceed, with an empty produced-id list at its position', async () => {
+    const io = makeIo({
+      loadFile: vi.fn(async (path: string) => {
+        if (path === '/bad.log') throw new Error('boom');
+        return ['s-good'];
+      }),
+    });
+    const plan = makePlan({
+      loads: [
+        { path: '/bad.log', paneId: 'pane-a', dataIndex: null },
+        { path: '/good.log', paneId: 'pane-b', dataIndex: null },
+      ],
+    });
+
+    await restoreWorkspace(makeResult(), plan, io);
+
+    expect(capturedProducedSessionIds()).toEqual([[], ['s-good']]);
   });
 });
 

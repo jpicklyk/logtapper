@@ -60,7 +60,7 @@ describe('tracked', () => {
 describe('trackMutations', () => {
   it('wraps mutation actions with the markDirty callback', () => {
     const markDirty = vi.fn();
-    const loadFile = vi.fn(async () => {});
+    const loadFile = vi.fn(async () => []);
     const actions = trackMutations({ loadFile }, markDirty);
 
     // loadFile is a mutation action — should be wrapped

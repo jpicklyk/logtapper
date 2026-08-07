@@ -27,7 +27,7 @@ describe('RestoreIo.loadFile adapters must forward every argument', () => {
     const io: RestoreIo = {
       loadFile: (...args) => {
         calls.push(args);
-        return Promise.resolve();
+        return Promise.resolve([]);
       },
       scheduleAutoRun: () => {},
       setWorkspaceAnalyses: () => Promise.resolve(),

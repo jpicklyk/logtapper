@@ -128,7 +128,6 @@ struct FileIndexComplete {
 
 #[tauri::command]
 pub async fn load_log_file(
-    state: State<'_, AppState>,
     app: AppHandle,
     path: String,
     source_type: Option<String>,
@@ -153,22 +152,41 @@ pub async fn load_log_file(
     // If the file is a .lts session export, use the dedicated multi-session import path.
     // `.lts` bundles are LogTapper's own export format and carry the source type
     // each embedded session was captured with, so an override does not apply.
-    if path_obj.extension().and_then(|e| e.to_str()) == Some("lts") {
-        if source_type_override.is_some() {
-            return Err(
-                "source_type override is not supported for .lts session bundles — \
-                 they carry the source type each session was captured with"
-                    .to_string(),
-            );
-        }
-        return load_lts_file_inner(&state, &app, &path);
+    let is_lts = path_obj.extension().and_then(|e| e.to_str()) == Some("lts");
+    if is_lts && source_type_override.is_some() {
+        return Err(
+            "source_type override is not supported for .lts session bundles — \
+             they carry the source type each session was captured with"
+                .to_string(),
+        );
     }
 
-    // Plain file (or bugreport .zip): delegate to the shared inner open path.
-    // Reused verbatim by the MCP `open_file` bridge endpoint so both openers
-    // produce identical sessions. `&state` / `&app` deref-coerce to the inner
-    // fn's `&AppState` / `&AppHandle` (same as the load_lts_file_inner call above).
-    open_file_inner(&state, &app, &path, source_type_override)
+    // The parse/index phase (mmap + line-index build for a plain file, or the
+    // zip read + per-embedded-session decode for a `.lts` bundle) is CPU-bound
+    // and previously ran directly on the async runtime thread, starving other
+    // IPC exactly like the pipeline run this mirrors — see `run_pipeline`
+    // (commands/pipeline.rs:246-268) for the same starvation rationale. Run it
+    // on a blocking thread instead.
+    //
+    // `State<'_, AppState>` cannot cross into the 'static `spawn_blocking`
+    // closure (it borrows this invocation's lifetime), so — same as
+    // `run_pipeline` — the closure re-resolves `AppState` from the moved
+    // `AppHandle` instead of taking a `state` parameter at all. Neither `app`
+    // nor `path` is used again after this point, so they move into the
+    // closure directly rather than being cloned first.
+    tokio::task::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        if is_lts {
+            load_lts_file_inner(&state, &app, &path)
+        } else {
+            // Reused verbatim by the MCP `open_file` bridge endpoint so both
+            // openers produce identical sessions (that caller wraps its own
+            // call the same way — see `h_open_file` in `mcp_bridge.rs`).
+            open_file_inner(&state, &app, &path, source_type_override)
+        }
+    })
+    .await
+    .map_err(|e| format!("File open task panicked: {e}"))?
 }
 
 /// Open a plain log file (or a bugreport `.zip`) and register it as a session.
@@ -182,11 +200,16 @@ pub async fn load_log_file(
 /// Shape differs from a `#[tauri::command]` only in that `path` arrives as `&str`
 /// and `app` as `&AppHandle`; behaviour is otherwise byte-for-byte the same.
 ///
-/// Sync (not `async`): the original branch had no `.await`. The only concurrency
-/// is the `tokio::spawn` of the background indexer, which resolves the runtime
-/// via the ambient tokio context of whichever async caller invoked it (the Tauri
-/// command, or the Axum bridge handler — both run under tokio), so a sync fn is
-/// correct and the spawn is reached identically.
+/// Sync (not `async`): the original branch had no `.await`. Both callers
+/// (`load_log_file` and the MCP bridge's `h_open_file`) now invoke this fn
+/// inside `tokio::task::spawn_blocking` — see the callers for the starvation
+/// rationale — so the background indexer's spawn uses
+/// `tauri::async_runtime::spawn` rather than bare `tokio::spawn`:
+/// `spawn_blocking` closures run on the blocking thread pool, not as a polled
+/// task, and `tauri::async_runtime::spawn` resolves the app's runtime from a
+/// process-global handle set at startup instead of relying on ambient
+/// thread-local tokio context, so the spawn is reached identically regardless
+/// of which kind of thread `open_file_inner` itself is running on.
 ///
 /// `source_type_override`, when present, replaces content detection for the
 /// session this opens — including the case where `path` is a zip, since the
@@ -205,18 +228,13 @@ pub(crate) fn open_file_inner(
     // If the file is a .zip, extract the dumpstate/bugreport .txt to a temp file
     // and load that instead. The temp file persists for the session lifetime.
     //
-    // KNOWN TRADE-OFF (deliberate deferral, not overlooked): this decompression
-    // — and the mmap + line-index build later in this function — runs
-    // synchronously on whichever async runtime called us (the Tauri command
-    // `load_log_file`, or the Axum handler `h_open_file` in `mcp_bridge.rs`),
-    // briefly blocking that worker thread on large zips. Moving just the
-    // decompression into `tokio::task::spawn_blocking` would require this fn
-    // to become `async` so it can `.await` the join handle — `open_file_inner`
-    // is deliberately `sync` (see the fn doc above) so `h_open_file` can call
-    // it directly, and that caller lives in `mcp_bridge.rs`, outside this
-    // fix's scope. Revisit together with that call site if this becomes a
-    // measured problem (large bugreport zips are the realistic worst case;
-    // typical file opens don't hit this path at all).
+    // This decompression — and the mmap + line-index build later in this
+    // function — used to run synchronously on whichever async runtime called
+    // us, briefly blocking that worker thread on large zips. Both callers
+    // (`load_log_file` and `h_open_file` in `mcp_bridge.rs`) now invoke this
+    // whole fn inside `tokio::task::spawn_blocking`, so that is no longer the
+    // case: `open_file_inner` stays deliberately `sync` (see the fn doc above)
+    // and each caller owns the blocking-thread hop around it.
     let (effective_path, _temp_file) = if path_obj.extension().and_then(|e| e.to_str()) == Some("zip") {
         let extracted = extract_bugreport_from_zip(path_obj)?;
         let p = extracted.path().to_string_lossy().to_string();
@@ -359,7 +377,15 @@ pub(crate) fn open_file_inner(
         let app_clone = app.clone();
         let sid = session_id;
         let initial_line_count = total_lines; // capture before session is moved into map
-        tokio::spawn(async move {
+        // `tauri::async_runtime::spawn`, not bare `tokio::spawn`: both callers of
+        // `open_file_inner` now run this whole fn inside
+        // `tokio::task::spawn_blocking`, i.e. on a blocking-pool thread rather
+        // than as a polled async task, so there is no ambient tokio context to
+        // resolve `tokio::spawn`'s target runtime from. `tauri::async_runtime`
+        // resolves the app's runtime from a process-global handle set at
+        // startup instead, so it works identically from either kind of thread
+        // — see the doc comment on `open_file_inner` above.
+        tauri::async_runtime::spawn(async move {
             run_background_indexer(
                 sid,
                 mmap_weak,
