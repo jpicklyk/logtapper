@@ -78,9 +78,9 @@ export function useFileSession(
     result: LoadResult,
     targetPaneId: string,
     tabId: string,
-    opts: { isNewTab: boolean; previousSessionId?: string; path: string; loadRequestId?: string; epoch?: number },
+    opts: { isNewTab: boolean; previousSessionId?: string; path: string; loadRequestId?: string; epoch?: number; replace?: boolean },
   ) => {
-    const { isNewTab, previousSessionId, path, loadRequestId, epoch } = opts;
+    const { isNewTab, previousSessionId, path, loadRequestId, epoch, replace } = opts;
 
     // Optimistic fetch: pre-populate cache while React propagates session state.
     // When useViewCache allocates the handle it will consume these pre-seeded lines,
@@ -101,8 +101,18 @@ export function useFileSession(
     registerSession(targetPaneId, result);
 
     if (!isNewTab) {
-      diag('session', 'activateSessionForPane', { paneId: targetPaneId, sessionId: result.sessionId });
-      activateSessionForPane(targetPaneId, result.sessionId);
+      // `replace` here is the caller's OWN explicit intent (loadFile's
+      // `replace` param, e.g. FileInfoPane's reopen-as flow) — NOT the
+      // inferred `isNewTab`. `isNewTab` false also covers the much more
+      // common "first load into an empty pane" case, where the pane was
+      // only empty at the PRE-AWAIT snapshot taken in loadFile — a sibling
+      // concurrent load can have legitimately claimed this same pane by the
+      // time this dispatch actually runs (see ef1b193e). Passing the raw
+      // `replace` flag through (default false/undefined) lets the reducer's
+      // overwrite guard refuse that race while still allowing an explicit
+      // reopen-as to overwrite on purpose.
+      diag('session', 'activateSessionForPane', { paneId: targetPaneId, sessionId: result.sessionId, replace });
+      activateSessionForPane(targetPaneId, result.sessionId, { replace });
     }
 
     if (result.isIndexing) {
@@ -295,7 +305,7 @@ export function useFileSession(
       }
 
       // Post-load half: register the session and create/activate its tab.
-      registerLoadedSession(result, targetPaneId, tabId, { isNewTab, previousSessionId, path, loadRequestId, epoch: epochAtStart });
+      registerLoadedSession(result, targetPaneId, tabId, { isNewTab, previousSessionId, path, loadRequestId, epoch: epochAtStart, replace });
 
       // Register additional sessions from multi-session .lts import.
       const extraActions = planExtraSessionImport(
@@ -313,7 +323,11 @@ export function useFileSession(
             registerSession(action.paneId, results.find(r => r.sessionId === action.session.sessionId)!);
             break;
           case 'activate':
-            activateSessionForPane(action.paneId, action.sessionId);
+            // Explicit replace intent: sequential, same-call activations
+            // within a single multi-session `.lts` import into the pane
+            // this same load already claimed — deterministic, not a
+            // concurrent race with a sibling load.
+            activateSessionForPane(action.paneId, action.sessionId, { replace: true });
             break;
           case 'loaded':
             bus.emit('session:loaded', {

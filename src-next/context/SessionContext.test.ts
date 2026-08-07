@@ -115,6 +115,73 @@ describe('filter:reset — clears the whole per-session filter entry', () => {
  * and a late event for a closed/unknown session recreated an orphan entry
  * nothing would ever clean up.
  */
+/**
+ * ef1b193e-0104-4c78-aee2-16225a55edf2 — concurrent restore loads race
+ * paneSessionMap. `pane:session-activated` used to be a bare `.set()`: last
+ * writer wins regardless of who currently occupies the pane. These tests pin
+ * the overwrite guard directly at the reducer level (see the cross-layer
+ * integration harness in `hooks/workspace/paneSessionRace.test.ts` for the
+ * full real-hook race reproduction).
+ */
+describe('pane:session-activated — overwrite guard', () => {
+  const PANE_A = 'pane-a';
+
+  it('claims an empty pane with no replace intent (the common, non-racing case)', () => {
+    const state = reduce(initialState, registerAction(A), {
+      type: 'pane:session-activated', paneId: PANE_A, sessionId: A,
+    });
+
+    expect(state.paneSessionMap.get(PANE_A)).toBe(A);
+  });
+
+  it('refuses to overwrite an occupied pane with a DIFFERENT session when no replace intent is given', () => {
+    const occupied = reduce(
+      initialState,
+      registerAction(A), registerAction(B),
+      { type: 'pane:session-activated', paneId: PANE_A, sessionId: A },
+    );
+
+    const afterLateWrite = reduce(occupied, {
+      type: 'pane:session-activated', paneId: PANE_A, sessionId: B,
+    });
+
+    expect(afterLateWrite.paneSessionMap.get(PANE_A)).toBe(A);
+    // No-op: same state reference, not just an equivalent value.
+    expect(afterLateWrite).toBe(occupied);
+  });
+
+  it('allows overwriting an occupied pane when the caller states explicit replace intent', () => {
+    const occupied = reduce(
+      initialState,
+      registerAction(A), registerAction(B),
+      { type: 'pane:session-activated', paneId: PANE_A, sessionId: A },
+    );
+
+    const afterReplace = reduce(occupied, {
+      type: 'pane:session-activated', paneId: PANE_A, sessionId: B, replace: true,
+    });
+
+    expect(afterReplace.paneSessionMap.get(PANE_A)).toBe(B);
+  });
+
+  it('is a no-op (same reference) when re-activating the pane\'s own current session, replace or not', () => {
+    const occupied = reduce(initialState, registerAction(A), {
+      type: 'pane:session-activated', paneId: PANE_A, sessionId: A,
+    });
+
+    const again = reduce(occupied, { type: 'pane:session-activated', paneId: PANE_A, sessionId: A });
+    expect(again).toBe(occupied);
+  });
+
+  it('ignores activation for a session not yet registered, occupied pane or not', () => {
+    const state = reduce(initialState, {
+      type: 'pane:session-activated', paneId: PANE_A, sessionId: 'unregistered-session',
+    });
+
+    expect(state.paneSessionMap.has(PANE_A)).toBe(false);
+  });
+});
+
 describe('indexing:progress — key lifecycle', () => {
   it('deletes the map entry when progress is cleared to null, rather than storing null', () => {
     const progress = { linesIndexed: 10, totalLines: 100, percent: 10, done: false };

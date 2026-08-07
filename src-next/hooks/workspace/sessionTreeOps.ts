@@ -7,7 +7,7 @@
  */
 import type { SplitNode, Tab } from './workspaceTypes';
 import type { AppEvents } from '../../events/events';
-import { findLeafByPaneId, findTabByType, firstLeaf, removeLeaf, updateLeaf } from './splitTreeHelpers';
+import { findLeafByPaneId, findLeafByPanePredicate, findTabByType, firstLeaf, removeLeaf, updateLeaf } from './splitTreeHelpers';
 
 // ---------------------------------------------------------------------------
 // Event types — aliased from AppEvents where possible
@@ -196,7 +196,18 @@ export function applySessionLoaded(
         activeTabId: e.tabId,
       }));
     } else {
-      const target = firstLeaf(tree);
+      // Prefer an UNOCCUPIED leaf anywhere in the tree — mirrors the
+      // occupancy check the existing-logviewer-tab branch above already
+      // applies (`!paneSessionMap.has(existing.pane.id)`). Before this fix,
+      // firstLeaf(tree) was taken unconditionally here, so a load whose
+      // paneId doesn't resolve to a live leaf (stale/non-leaf effective
+      // pane id — see restoreCore.ts's validation) could land on a pane
+      // ANOTHER load already legitimately claimed, pushing a second tab
+      // into it and driving an unguarded pane-remap that steals the
+      // occupant's paneSessionMap binding. Only fall back to firstLeaf's
+      // pane (even though occupied) when literally every leaf is occupied —
+      // there is nowhere else left to place it.
+      const target = findLeafByPanePredicate(tree, (p) => !paneSessionMap.has(p.id)) ?? firstLeaf(tree);
       if (target.pane.id !== e.paneId) {
         emitPaneRemap = { originalPaneId: e.paneId, actualPaneId: target.pane.id, sessionId: e.sessionId };
       }

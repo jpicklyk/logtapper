@@ -246,7 +246,10 @@ export function useStreamSession(
 
       activateStream(streamRefs, result.sessionId);
       registerSession(targetPaneId, result);
-      activateSessionForPane(targetPaneId, result.sessionId);
+      // Explicit replace intent: starting a stream is a deliberate,
+      // single user action targeting the currently focused pane — not a
+      // concurrent restore load racing a sibling's binding.
+      activateSessionForPane(targetPaneId, result.sessionId, { replace: true });
       setStreamingSession(result.sessionId, true);
       refs.streamingPaneIdRef.current = targetPaneId;
 

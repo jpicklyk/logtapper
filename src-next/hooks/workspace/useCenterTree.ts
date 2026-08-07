@@ -10,6 +10,7 @@ import {
   clamp,
   defaultTree,
   findLeafByPaneId,
+  findLeafByPanePredicate,
   updateLeaf,
   removeLeaf,
   replaceNode,
@@ -32,7 +33,7 @@ import { getWorkspaceEpoch } from './workspaceEpoch';
 export interface UseCenterTreeOptions {
   activeLogPaneIdRef: React.RefObject<string | null>;
   paneSessionMapRef: React.MutableRefObject<Map<string, string>>;
-  activateSessionForPane: (paneId: string, sessionId: string) => void;
+  activateSessionForPane: (paneId: string, sessionId: string, opts?: { replace?: boolean }) => void;
   openBottomPane: (tab: BottomTabType) => void;
 }
 
@@ -421,7 +422,11 @@ export function useCenterTree(
     // the remaining tab just inherits its pane without any reload machinery.
     if (newActiveFromTab?.type === 'logviewer') {
       const fromSessionId = tabSessionMapRef.current.get(newActiveFromTab.id) ?? '';
-      if (fromSessionId) activateSessionForPane(fromPaneId, fromSessionId);
+      // Explicit replace intent: the tree (source of truth) just lost its
+      // active tab to the drag and this pane's remaining tab must become
+      // its bound session — a deterministic, tree-driven rebind, not a
+      // guess that a concurrent load could race.
+      if (fromSessionId) activateSessionForPane(fromPaneId, fromSessionId, { replace: true });
     }
   }, [updateTree, activateSessionForPane]);
 
@@ -483,10 +488,10 @@ export function useCenterTree(
         } else {
           // Place the dashboard tab in the pane that owns the completed session,
           // falling back to the first leaf if the pane can't be found.
-          const sessionPane = allPanes(prev).find(
+          const target = findLeafByPanePredicate(
+            prev,
             (p) => paneSessionMapRef.current.get(p.id) === e.sessionId,
-          );
-          const target = (sessionPane && findLeafByPaneId(prev, sessionPane.id)) ?? firstLeaf(prev);
+          ) ?? firstLeaf(prev);
           const tab = makeTab('dashboard');
           next = updateLeaf(prev, target.pane.id, (pane) => ({
             ...pane,

@@ -600,6 +600,72 @@ describe('restoreWorkspace — center-tree skeleton rebuild (f5d0e527)', () => {
     expect(openTabCall?.[1]).toMatchObject({ paneId: undefined });
   });
 
+  it('ef1b193e: a stale manifest paneId with no sourcePath/oldPaneId match in the rebuilt skeleton is NOT passed through — falls back to undefined', async () => {
+    // The skeleton was rebuilt with entirely fresh pane/leaf ids (see
+    // rebuildTreeSkeleton). A load whose OWN `paneId` field is some stale
+    // value unrelated to this tree (not a sourcePath match, not a key in
+    // paneIdMap) used to fall through resolve()'s `?? load.paneId` straight
+    // into `io.loadFile` — a pane id that is not a genuine leaf of the tree
+    // that was just emitted via workspace:restore-tree-skeleton. Validating
+    // against that tree must catch it and pass `undefined` instead, so the
+    // load serializes into the '__unresolved-pane__' lane and binds via
+    // loadFile's own active-pane inference rather than risking a collision.
+    const savedTree = leaf('old-1', [logviewerTab('t1', '/known.log')]);
+    const io = makeIo();
+    const plan = makePlan({
+      applyLtwViewState: true,
+      loads: [{ path: '/unrelated-new-file.log', paneId: 'stale-pane-from-old-session', dataIndex: null }],
+    });
+
+    await restoreWorkspace(makeResult({ layout: { centerTree: savedTree } }), plan, io);
+
+    expect(io.loadFile).toHaveBeenCalledWith(
+      '/unrelated-new-file.log', undefined, undefined, undefined, undefined, expect.any(String),
+    );
+  });
+
+  it('ef1b193e: two loads that both resolve to an invalid stale paneId are serialized (both fall into the unresolved lane), not raced', async () => {
+    const callOrder: string[] = [];
+    let releaseFirst: (() => void) | null = null;
+    const savedTree = leaf('old-1', [logviewerTab('t1', '/known.log')]);
+    const io = makeIo({
+      loadFile: vi.fn(async (path: string) => {
+        callOrder.push(`start:${path}`);
+        if (path === '/a.log') {
+          await new Promise<void>((resolve) => { releaseFirst = resolve; });
+        }
+        callOrder.push(`end:${path}`);
+        return [];
+      }),
+    });
+    const plan = makePlan({
+      applyLtwViewState: true,
+      loads: [
+        { path: '/a.log', paneId: 'stale-pane-1', dataIndex: null },
+        { path: '/b.log', paneId: 'stale-pane-2', dataIndex: null },
+      ],
+    });
+
+    const restorePromise = restoreWorkspace(makeResult({ layout: { centerTree: savedTree } }), plan, io);
+
+    await vi.waitFor(() => expect(callOrder).toContain('start:/a.log'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Both stale ids resolve to undefined (invalid leaf) -> same
+    // '__unresolved-pane__' key -> must serialize, not run concurrently.
+    expect(callOrder).not.toContain('start:/b.log');
+
+    releaseFirst!();
+    await restorePromise;
+
+    expect(callOrder).toEqual(['start:/a.log', 'end:/a.log', 'start:/b.log', 'end:/b.log']);
+    expect(io.loadFile).toHaveBeenNthCalledWith(
+      1, '/a.log', undefined, undefined, undefined, undefined, expect.any(String),
+    );
+    expect(io.loadFile).toHaveBeenNthCalledWith(
+      2, '/b.log', undefined, undefined, undefined, undefined, expect.any(String),
+    );
+  });
+
   it('a throwing skeleton rebuild is caught, warns, falls back to flat placement, and still reaches workspace:restore-end (review fix #1)', async () => {
     // A tab whose `.type` getter throws — forces a genuine (non-mocked)
     // exception inside rebuildTreeSkeleton's tree walk, verifying the

@@ -114,7 +114,11 @@ export function useSessionTabManager(
       // tab to a new position, not switching sessions, so search/filter should
       // be preserved.
       if (reason !== 'drag') resetViewerState();
-      activateSessionForPane(paneId, sessionId);
+      // Explicit replace intent: the tab the user just activated (click or
+      // drag) already exists in the tree for this pane — the tree is the
+      // source of truth for what's showing, so this must bind regardless
+      // of whatever paneSessionMap previously held.
+      activateSessionForPane(paneId, sessionId, { replace: true });
       // Emit session:focused so the focus marker (blue underline) moves to
       // this tab. Without this, closing a tab that falls back to another
       // logviewer tab would leave the focus marker on the old (now closed) tab.
@@ -150,6 +154,12 @@ export function useSessionTabManager(
       originalPaneId: string; actualPaneId: string; sessionId: string;
     }) => {
       console.debug('[TabManager] handlePaneRemap', { originalPaneId, actualPaneId, sessionId });
+      // Deliberately NO replace intent here — sessionTreeOps.ts's fallback
+      // (firstLeaf/existing-tab search) is occupancy-aware and should only
+      // ever remap onto an UNOCCUPIED pane. If it somehow still resolves to
+      // an occupied one (every pane taken — the true last resort), the
+      // reducer's overwrite guard is the last line of defense against
+      // stealing a sibling pane's binding rather than silently doing so.
       activateSessionForPane(actualPaneId, sessionId);
       unregisterSession(originalPaneId);
       // Keep the streaming pane ref in sync so stream:stopped fires with the

@@ -67,7 +67,7 @@ export type SessionAction =
   | { type: 'session:terminated'; sessionId: string }
   | { type: 'pane:loading'; paneId: string; loading: boolean }
   | { type: 'pane:error'; paneId: string; error: string | null }
-  | { type: 'pane:session-activated'; paneId: string; sessionId: string }
+  | { type: 'pane:session-activated'; paneId: string; sessionId: string; replace?: boolean }
   | { type: 'indexing:progress'; sessionId: string; progress: IndexingProgress | null }
   | { type: 'streaming:changed'; sessionId: string; streaming: boolean }
   | { type: 'pane:focused'; paneId: string | null }
@@ -146,12 +146,26 @@ export function sessionReducer(state: SessionState, action: SessionAction): Sess
     }
 
     case 'pane:session-activated': {
-      if (state.paneSessionMap.get(action.paneId) === action.sessionId) return state;
+      const current = state.paneSessionMap.get(action.paneId);
+      if (current === action.sessionId) return state;
       if (!state.sessions.has(action.sessionId)) {
         diag('context', 'pane:session-activated SKIPPED — session not in map', { paneId: action.paneId, sessionId: action.sessionId, knownSessions: [...state.sessions.keys()] });
         return state;
       }
-      diag('context', 'pane:session-activated', { paneId: action.paneId, sessionId: action.sessionId });
+      // Refuse a silent overwrite of an OCCUPIED pane with a DIFFERENT
+      // session unless the caller states explicit replace intent (mirrors
+      // `loadFile`'s own `replace` param). Without this, a writer whose
+      // occupancy decision was made from a stale pre-await snapshot (or an
+      // unguarded tree-fallback remap) can stomp a sibling pane's binding
+      // that was legitimately claimed in the meantime — see
+      // ef1b193e-0104-4c78-aee2-16225a55edf2 (concurrent restore loads race
+      // paneSessionMap). An empty pane (current === undefined) is always
+      // fine to claim — there is no sibling binding to protect.
+      if (current !== undefined && !action.replace) {
+        diag('context', 'pane:session-activated REFUSED — pane occupied, no replace intent', { paneId: action.paneId, sessionId: action.sessionId, occupiedBy: current });
+        return state;
+      }
+      diag('context', 'pane:session-activated', { paneId: action.paneId, sessionId: action.sessionId, replace: action.replace });
       const paneSessionMap = new Map(state.paneSessionMap).set(action.paneId, action.sessionId);
       return { ...state, paneSessionMap };
     }
@@ -255,7 +269,12 @@ interface SessionCoreValue {
   terminateSession: (sessionId: string) => void;
   setLoadingPane: (paneId: string, loading: boolean) => void;
   setErrorPane: (paneId: string, error: string | null) => void;
-  activateSessionForPane: (paneId: string, sessionId: string) => void;
+  /** `opts.replace` states explicit caller intent to overwrite an occupied
+   *  pane's binding with a DIFFERENT session (mirrors `loadFile`'s `replace`
+   *  param) — see the `pane:session-activated` reducer case. Omitted/false
+   *  is the safe default: the reducer refuses the write when the pane
+   *  already holds a different session. */
+  activateSessionForPane: (paneId: string, sessionId: string, opts?: { replace?: boolean }) => void;
   setStreamingSession: (sessionId: string, streaming: boolean) => void;
 }
 
@@ -341,7 +360,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [],
   );
   const activateSessionForPane = useCallback(
-    (paneId: string, sessionId: string) => dispatch({ type: 'pane:session-activated', paneId, sessionId }),
+    (paneId: string, sessionId: string, opts?: { replace?: boolean }) =>
+      dispatch({ type: 'pane:session-activated', paneId, sessionId, replace: opts?.replace }),
     [],
   );
   const setSessionFilter = useCallback(

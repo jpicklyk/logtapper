@@ -22,6 +22,8 @@ import { buildEditorTabEvents } from './workspacePersistence';
 import { buildRestoreOutcomes, isLts, type RestorePlan } from './restorePlan';
 import { rebuildTreeSkeleton, createPaneResolver, type PaneResolver } from './restoreTreeSkeleton';
 import { runBoundedByKey } from './loadConcurrency';
+import { findLeafByPaneId } from './splitTreeHelpers';
+import type { SplitNode } from './workspaceTypes';
 
 /** How many `loadFile` calls a restore runs at once. Bounded (not
  *  unlimited) so a huge workspace doesn't fire dozens of simultaneous
@@ -144,12 +146,17 @@ export async function restoreWorkspace(
   // stuck suppressed for the rest of the session. Catch locally, warn, and
   // fall back to no resolver (flat/legacy behavior) instead.
   let paneResolver: PaneResolver | null = null;
+  // The rebuilt skeleton tree, kept around (beyond the `if` block below) so
+  // the pane-resolution step further down can validate each resolved pane id
+  // is a genuine leaf of THIS tree — see the `effectivePaneIds` comment.
+  let skeletonTree: SplitNode | null = null;
   if (plan.applyLtwViewState) {
     try {
       const layoutBlob = result.layout as { centerTree?: unknown } | null;
       const skeleton = layoutBlob ? rebuildTreeSkeleton(layoutBlob.centerTree) : null;
       if (skeleton) {
         paneResolver = createPaneResolver(skeleton);
+        skeletonTree = skeleton.tree;
         bus.emit('workspace:restore-tree-skeleton', { tree: skeleton.tree });
       }
     } catch (e) {
@@ -157,6 +164,7 @@ export async function restoreWorkspace(
       console.warn(`[restoreWorkspace] ${msg}`);
       warnings.push(msg);
       paneResolver = null;
+      skeletonTree = null;
     }
   }
 
@@ -206,11 +214,29 @@ export async function restoreWorkspace(
     // load claims a saved slot first wins. Precomputing the whole array here
     // preserves that exact assignment — unchanged from the prior sequential
     // loop — even though the loads themselves now run concurrently below.
-    const effectivePaneIds: Array<string | undefined> = plan.loads.map((load) =>
-      paneResolver
+    const effectivePaneIds: Array<string | undefined> = plan.loads.map((load) => {
+      const resolved = paneResolver
         ? paneResolver.resolve({ sourcePath: load.path, oldPaneId: load.paneId }) ?? load.paneId
-        : load.paneId,
-    );
+        : load.paneId;
+      // A resolved id must be a genuine LIVE leaf of the skeleton tree just
+      // emitted (`workspace:restore-tree-skeleton`, which useCenterTree
+      // adopts synchronously before this runs). The `?? load.paneId`
+      // fallback above can hand back a STALE manifest pane id that predates
+      // the freshly rebuilt tree — no sourcePath match AND no entry in the
+      // skeleton's paneIdMap. Routing a load at a pane id that isn't a real
+      // leaf falls through to applySessionLoaded's occupied-pane fallback
+      // (sessionTreeOps.ts), which — even with the occupancy fix there —
+      // has no way to know this load actually WANTED a specific (just
+      // nonexistent) pane, and could land it beside another load's session.
+      // Undefined here serializes the load into the '__unresolved-pane__'
+      // concurrency lane below and lets `loadFile` fall back to its own
+      // active-pane inference instead, exactly like an unresolved load with
+      // no saved placement at all.
+      if (resolved && skeletonTree && !findLeafByPaneId(skeletonTree, resolved)) {
+        return undefined;
+      }
+      return resolved;
+    });
 
     const producedSessionIdsPerLoad: string[][] = plan.loads.map(() => []);
     try {

@@ -97,6 +97,20 @@ export function firstLeaf(tree: SplitNode): SplitNode & { type: 'leaf' } {
   return firstLeaf(tree.children[0]);
 }
 
+/**
+ * Find the first leaf (depth-first, left-first) whose pane satisfies `pred`,
+ * in a single tree walk — the leaf-search equivalent of
+ * `allPanes(tree).find(pred)` followed by `findLeafByPaneId`, without the
+ * intermediate pane array or the second traversal to re-locate the leaf.
+ */
+export function findLeafByPanePredicate(
+  tree: SplitNode,
+  pred: (pane: CenterPane) => boolean,
+): (SplitNode & { type: 'leaf' }) | null {
+  if (tree.type === 'leaf') return pred(tree.pane) ? tree : null;
+  return findLeafByPanePredicate(tree.children[0], pred) ?? findLeafByPanePredicate(tree.children[1], pred);
+}
+
 /** Find a tab across all panes by tabId. */
 export function findTabAcrossTree(tree: SplitNode, tabId: string): { pane: CenterPane; tab: Tab } | null {
   for (const pane of allPanes(tree)) {

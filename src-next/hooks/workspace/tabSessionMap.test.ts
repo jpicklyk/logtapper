@@ -569,6 +569,123 @@ describe('focus marker (focusedLogviewerTabId)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// ef1b193e — firstLeaf fallback occupancy check
+//
+// applySessionLoaded's outer fallback (paneId not found as a live leaf) used
+// to take firstLeaf(tree) UNCONDITIONALLY when no existing unoccupied
+// logviewer tab was found — even when firstLeaf's own pane was already
+// occupied by another session. That silently pushed a second tab into the
+// occupied pane and drove a pane-remap that (pre the reducer guard fix)
+// stole its paneSessionMap binding. These tests exercise applySessionLoaded
+// directly — one source of truth — asserting the remap now lands on a
+// genuinely unoccupied pane whenever one exists.
+// ---------------------------------------------------------------------------
+
+describe('firstLeaf fallback respects occupancy (ef1b193e)', () => {
+  function twoPaneTree(paneA: string, paneB: string): SplitNode {
+    return {
+      type: 'split',
+      id: 'split-1',
+      direction: 'horizontal',
+      ratio: 0.5,
+      children: [
+        { type: 'leaf', id: 'leaf-a', pane: { id: paneA, tabs: [], activeTabId: '' } },
+        { type: 'leaf', id: 'leaf-b', pane: { id: paneB, tabs: [], activeTabId: '' } },
+      ],
+    };
+  }
+
+  it('does not steal an occupied pane when an unoccupied sibling leaf exists', () => {
+    const PANE_A = 'pane-a';
+    const PANE_B = 'pane-b';
+    // Pane A is the first leaf (depth-first) AND already occupied by session A.
+    // Pane B is empty. A second load whose own paneId resolves to neither leaf
+    // (e.g. a stale/unresolved restore pane id) must land on pane B, not steal A.
+    const tree = twoPaneTree(PANE_A, PANE_B);
+    const paneSessionMap = new Map([[PANE_A, 'session-A']]);
+
+    const result = applySessionLoaded(
+      tree,
+      {
+        sourceName: 'small.txt',
+        paneId: 'stale-unresolved-pane',
+        sourceType: 'Unknown',
+        sessionId: 'session-B',
+        tabId: 'tab-B',
+      },
+      paneSessionMap,
+    );
+
+    expect(result.emitPaneRemap).toEqual({
+      originalPaneId: 'stale-unresolved-pane',
+      actualPaneId: PANE_B,
+      sessionId: 'session-B',
+    });
+    // Pane A's tree entry is untouched — no second tab pushed into it.
+    const leafA = findLeafByPaneId(result.tree, PANE_A);
+    expect(leafA?.pane.tabs).toHaveLength(0);
+    const leafB = findLeafByPaneId(result.tree, PANE_B);
+    expect(leafB?.pane.tabs.map((t) => t.id)).toEqual(['tab-B']);
+  });
+
+  it('falls back to firstLeaf (even occupied) only when every leaf is occupied', () => {
+    const PANE_A = 'pane-a';
+    const PANE_B = 'pane-b';
+    const tree = twoPaneTree(PANE_A, PANE_B);
+    const paneSessionMap = new Map([[PANE_A, 'session-A'], [PANE_B, 'session-B']]);
+
+    const result = applySessionLoaded(
+      tree,
+      {
+        sourceName: 'third.txt',
+        paneId: 'stale-unresolved-pane',
+        sourceType: 'Unknown',
+        sessionId: 'session-C',
+        tabId: 'tab-C',
+      },
+      paneSessionMap,
+    );
+
+    // No unoccupied leaf anywhere — true last resort lands on firstLeaf (pane A).
+    expect(result.emitPaneRemap?.actualPaneId).toBe(PANE_A);
+  });
+
+  it('still prefers an existing unoccupied logviewer tab over the firstLeaf search (unchanged :181 branch)', () => {
+    const PANE_A = 'pane-a';
+    const PANE_B = 'pane-b';
+    const existingTab = makeLogviewerTab('tab-existing');
+    const tree: SplitNode = {
+      type: 'split',
+      id: 'split-1',
+      direction: 'horizontal',
+      ratio: 0.5,
+      children: [
+        { type: 'leaf', id: 'leaf-a', pane: { id: PANE_A, tabs: [existingTab], activeTabId: existingTab.id } },
+        { type: 'leaf', id: 'leaf-b', pane: { id: PANE_B, tabs: [], activeTabId: '' } },
+      ],
+    };
+    // Pane A has a logviewer tab but is unoccupied in paneSessionMap (e.g. its
+    // session closed already) — the existing-tab branch should still win over
+    // relocating to pane B.
+    const paneSessionMap = new Map<string, string>();
+
+    const result = applySessionLoaded(
+      tree,
+      {
+        sourceName: 'reused.txt',
+        paneId: 'stale-unresolved-pane',
+        sourceType: 'Unknown',
+        sessionId: 'session-X',
+        tabId: 'tab-X',
+      },
+      paneSessionMap,
+    );
+
+    expect(result.emitPaneRemap?.actualPaneId).toBe(PANE_A);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Workspace reset + remap detection tests
 // ---------------------------------------------------------------------------
 
