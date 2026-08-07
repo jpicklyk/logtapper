@@ -92,13 +92,22 @@ export function AnalysisProvider({ children }: { children: ReactNode }) {
     onAnalysisUpdate((payload) => {
       if (cancelled) return;
 
-      // Durability signal — deliberately unconditional and first, before any
-      // branch below. An analysis mutated over the MCP bridge is written
-      // straight into AppState by the bridge handler; nothing in the frontend
-      // action surface runs for it, so this is what schedules the envelope
-      // push that keeps the backend's autosave cache current. See
-      // context/CLAUDE.md's "Backend-originated mutations" section.
-      bus.emit('workspace:mutated', { source: 'artifact' });
+      // Durability signal — first, before any branch below. An analysis
+      // mutated over the MCP bridge is written straight into AppState by the
+      // bridge handler; nothing in the frontend action surface runs for it,
+      // so this is what schedules the envelope push that keeps the backend's
+      // autosave cache current. See context/CLAUDE.md's "Backend-originated
+      // mutations" section.
+      //
+      // 'restored' is excluded: it is emitted only by restore/teardown paths
+      // (set_workspace_analyses from doClearPanes/restoreWorkspace, and the
+      // legacy per-session merge) — never by the MCP bridge — and the data it
+      // announces came FROM the .ltw, so there is nothing new to persist.
+      // Emitting for it marked every freshly-restored workspace dirty, making
+      // the switch-time save prompt fire with zero user changes.
+      if (payload.action !== 'restored') {
+        bus.emit('workspace:mutated', { source: 'artifact' });
+      }
 
       if (payload.action === 'deleted') {
         dispatch({ type: 'analyses:deleted', artifactId: payload.artifactId });

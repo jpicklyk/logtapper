@@ -193,8 +193,8 @@ describe('analysis-update event handling', () => {
     expect(result.current.artifacts).toHaveLength(1);
   });
 
-  it.each(['deleted', 'restored', 'published', 'updated'] as const)(
-    'emits workspace:mutated with source "artifact" for %s, unconditionally',
+  it.each(['deleted', 'published', 'updated'] as const)(
+    'emits workspace:mutated with source "artifact" for %s',
     async (action) => {
       mockListAnalyses.mockResolvedValue([makeArtifact({ id: 'art-1' })]);
       mockGetAnalysis.mockResolvedValue(makeArtifact({ id: 'art-1' }));
@@ -212,6 +212,24 @@ describe('analysis-update event handling', () => {
       expect(mockBusEmit).toHaveBeenCalledWith('workspace:mutated', { source: 'artifact' });
     },
   );
+
+  it('does NOT emit workspace:mutated for "restored" — restore data came from the .ltw, and the emit would mark every freshly-restored workspace dirty', async () => {
+    mockListAnalyses.mockResolvedValue([makeArtifact({ id: 'art-1' })]);
+    const { result } = renderHook(() => useAnalysisContext(), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    mockBusEmit.mockClear();
+    const cb = activeCallback();
+    await act(async () => {
+      cb({ artifactId: '', action: 'restored', sessionIds: [], sessionId: null });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockBusEmit).not.toHaveBeenCalledWith('workspace:mutated', expect.anything());
+    // the re-list still happens
+    expect(mockListAnalyses).toHaveBeenCalledTimes(2);
+  });
 });
 
 // ---------------------------------------------------------------------------
