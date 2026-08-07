@@ -57,7 +57,7 @@ export { useStartupFile } from './useStartupFile';
 export { useStartupRestore } from './useStartupRestore';
 export { useEditorTabRestore } from './useEditorTabRestore';
 export { useWorkspace } from './useWorkspace';
-export type { WorkspaceActions, SavePromptChoice } from './useWorkspace';
+export type { WorkspaceActions } from './useWorkspace';
 export { useWorkspaceAutoSave } from './useWorkspaceAutoSave';
 export type { AutoSavePayload } from './useWorkspaceAutoSave';
 export { useAppExitSave } from './useAppExitSave';

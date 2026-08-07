@@ -64,87 +64,43 @@ describe('workspaceNameFromPath', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Save prompt state machine
+// Transition gate removal — new/open/switch execute immediately regardless
+// of the dirty flag. There is no blocking "save changes?" prompt; the
+// durability guarantee moved to doAutoSave() running before doClearPanes()
+// in the 'switch' case (covered in the next describe block).
 // ---------------------------------------------------------------------------
-describe('save prompt decision logic', () => {
-  type PendingAction =
-    | { type: 'new' }
-    | { type: 'open'; path: string }
-    | { type: 'close' }
-    | { type: 'switch'; targetId: string }
-    | null;
-  type PromptChoice = 'save' | 'discard' | 'cancel';
+describe('workspace transitions proceed immediately regardless of dirty state', () => {
+  // Models guardedAction's replacement: runTransition in useWorkspace.ts no
+  // longer branches on the dirty flag at all — every transition type runs
+  // unconditionally.
+  type Action = { type: 'new' } | { type: 'open'; path: string } | { type: 'switch'; targetId: string };
 
-  interface PromptState {
-    showPrompt: boolean;
-    pendingAction: PendingAction;
+  function runTransition(action: Action, _dirty: boolean): { executed: true; action: Action } {
+    // dirty is intentionally unused — the whole point of this change is that
+    // the transition no longer branches on it.
+    return { executed: true, action };
   }
 
-  function initState(): PromptState {
-    return { showPrompt: false, pendingAction: null };
-  }
-
-  function guardedAction(_state: PromptState, action: NonNullable<PendingAction>, dirty: boolean): PromptState {
-    if (dirty) {
-      return { showPrompt: true, pendingAction: action };
-    }
-    return { showPrompt: false, pendingAction: action }; // execute immediately
-  }
-
-  function resolvePrompt(_prev: PromptState, choice: PromptChoice): {
-    state: PromptState;
-    action: 'execute' | 'abort';
-    shouldSaveFirst: boolean;
-  } {
-    if (choice === 'cancel') {
-      return { state: initState(), action: 'abort', shouldSaveFirst: false };
-    }
-    return { state: initState(), action: 'execute', shouldSaveFirst: choice === 'save' };
-  }
-
-  it('new workspace on dirty → shows prompt', () => {
-    const state = guardedAction(initState(), { type: 'new' }, true);
-    expect(state.showPrompt).toBe(true);
-    expect(state.pendingAction?.type).toBe('new');
+  it('new workspace executes immediately when dirty', () => {
+    const result = runTransition({ type: 'new' }, true);
+    expect(result.executed).toBe(true);
   });
 
-  it('new workspace on clean → executes immediately', () => {
-    const state = guardedAction(initState(), { type: 'new' }, false);
-    expect(state.showPrompt).toBe(false);
-    expect(state.pendingAction?.type).toBe('new');
+  it('new workspace executes immediately when clean', () => {
+    const result = runTransition({ type: 'new' }, false);
+    expect(result.executed).toBe(true);
   });
 
-  it('close workspace on dirty → shows prompt', () => {
-    const state = guardedAction(initState(), { type: 'close' }, true);
-    expect(state.showPrompt).toBe(true);
-    expect(state.pendingAction?.type).toBe('close');
+  it('open workspace executes immediately when dirty', () => {
+    const result = runTransition({ type: 'open', path: '/x.ltw' }, true);
+    expect(result.executed).toBe(true);
+    expect(result.action).toEqual({ type: 'open', path: '/x.ltw' });
   });
 
-  it('switch workspace on dirty → shows prompt', () => {
-    const state = guardedAction(initState(), { type: 'switch', targetId: 'ws-2' }, true);
-    expect(state.showPrompt).toBe(true);
-    expect(state.pendingAction).toEqual({ type: 'switch', targetId: 'ws-2' });
-  });
-
-  it('cancel → aborts pending action', () => {
-    const state = guardedAction(initState(), { type: 'close' }, true);
-    const result = resolvePrompt(state, 'cancel');
-    expect(result.action).toBe('abort');
-    expect(result.state.pendingAction).toBeNull();
-  });
-
-  it('discard → executes without save', () => {
-    const state = guardedAction(initState(), { type: 'close' }, true);
-    const result = resolvePrompt(state, 'discard');
-    expect(result.action).toBe('execute');
-    expect(result.shouldSaveFirst).toBe(false);
-  });
-
-  it('save → saves then executes', () => {
-    const state = guardedAction(initState(), { type: 'open', path: '/x.ltw' }, true);
-    const result = resolvePrompt(state, 'save');
-    expect(result.action).toBe('execute');
-    expect(result.shouldSaveFirst).toBe(true);
+  it('switch workspace executes immediately when dirty', () => {
+    const result = runTransition({ type: 'switch', targetId: 'ws-2' }, true);
+    expect(result.executed).toBe(true);
+    expect(result.action).toEqual({ type: 'switch', targetId: 'ws-2' });
   });
 });
 
@@ -225,33 +181,36 @@ describe('autoSave path decision', () => {
 });
 
 // ---------------------------------------------------------------------------
-// U59 — executePendingAction's 'switch' case must honor the save-prompt
-// choice instead of unconditionally auto-saving.
+// Prompt removal — runTransition's 'switch' case always auto-saves before
+// tearing panes down, unconditionally, and in a fixed order.
 //
-// Mirrors the decision in useWorkspace.ts:executePendingAction's 'switch'
-// case: `if (promptChoice === undefined) { await doAutoSave(); }`.
-// `promptChoice` is undefined only when guardedAction executed directly
-// (workspace wasn't dirty, no prompt shown). When it runs after the save
-// prompt, 'save' already persisted the state via doSave — an unconditional
-// doAutoSave() would be a redundant duplicate write — and 'discard' means
-// the user explicitly opted out of persisting the dirty state, so running
-// doAutoSave() there would silently write it anyway and defeat the choice.
+// Mirrors useWorkspace.ts:runTransition's 'switch' case, which now reads
+// `await doAutoSave(); await doClearPanes();` with no branching — there is
+// no promptChoice to consult anymore, since there is no prompt. doAutoSave
+// running before doClearPanes is the durability guarantee that replaced the
+// save-changes prompt, so the ordering itself is the thing under test here.
 // ---------------------------------------------------------------------------
-describe('switch action: doAutoSave honors the save-prompt choice (U59)', () => {
-  function shouldAutoSaveOnSwitch(promptChoice: 'save' | 'discard' | undefined): boolean {
-    return promptChoice === undefined;
+describe('switch action: doAutoSave always runs before doClearPanes (prompt removed)', () => {
+  async function runSwitchTransition(calls: string[]): Promise<void> {
+    // Mirrors the exact call order in useWorkspace.ts's runTransition 'switch' case.
+    const doAutoSave = async () => { calls.push('doAutoSave'); };
+    const doClearPanes = async () => { calls.push('doClearPanes'); };
+    await doAutoSave();
+    await doClearPanes();
   }
 
-  it('direct execution (workspace was clean, no prompt shown) still auto-saves', () => {
-    expect(shouldAutoSaveOnSwitch(undefined)).toBe(true);
+  it('switching while dirty still calls doAutoSave then doClearPanes, in order', async () => {
+    const calls: string[] = [];
+    await runSwitchTransition(calls);
+    expect(calls).toEqual(['doAutoSave', 'doClearPanes']);
   });
 
-  it('choosing Discard must NOT auto-save (the whole point of discarding)', () => {
-    expect(shouldAutoSaveOnSwitch('discard')).toBe(false);
-  });
-
-  it('choosing Save must NOT auto-save again (doSave already wrote it)', () => {
-    expect(shouldAutoSaveOnSwitch('save')).toBe(false);
+  it('switching while clean also calls doAutoSave then doClearPanes (unconditional)', async () => {
+    // There is no dirty branch anymore — the transition executes identically
+    // regardless of the dirty flag, so this asserts the same ordering.
+    const calls: string[] = [];
+    await runSwitchTransition(calls);
+    expect(calls).toEqual(['doAutoSave', 'doClearPanes']);
   });
 });
 

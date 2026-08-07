@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { useWorkspaceContext } from '../context/WorkspaceContext';
 import { saveWorkspaceV4, loadWorkspaceV4, saveAppState, beginWorkspaceSwitch, setWorkspaceAnalyses } from '../bridge/commands';
@@ -31,8 +31,6 @@ function resolveDefaultDir(
   return getDefaultDir?.();
 }
 
-export type SavePromptChoice = 'save' | 'discard' | 'cancel';
-
 export interface WorkspaceActions {
   /** Create a new empty workspace and make it active. */
   newWorkspace: () => void;
@@ -42,21 +40,20 @@ export interface WorkspaceActions {
   saveWorkspace: () => Promise<void>;
   /** Save the active workspace to a new .ltw path. */
   saveWorkspaceAs: () => Promise<void>;
-  /** Close a workspace by ID. Prompts to save if the target is dirty. */
+  /** Close a workspace by ID. */
   closeWorkspace: (targetId: string) => void;
   /** Switch to a different workspace by ID. Auto-saves the current one. */
   switchWorkspace: (targetId: string) => void;
-  /** Whether the save prompt dialog should be shown. */
-  showSavePrompt: boolean;
-  /** The pending action waiting for the save prompt result. */
-  handleSavePromptResult: (choice: SavePromptChoice) => void;
 }
 
 /**
  * Workspace lifecycle orchestration for multiple workspaces.
  *
- * Manages workspace list operations (new, open, close, switch, save)
- * with dirty-check prompts. Wired into ActionsContext via HookWiring.
+ * Manages workspace list operations (new, open, close, switch, save).
+ * Transitions (new/open/switch) execute immediately regardless of the dirty
+ * flag — durability comes from `doAutoSave()` running before `doClearPanes()`
+ * in the 'switch' case, not from a blocking prompt. Wired into ActionsContext
+ * via HookWiring.
  */
 export function useWorkspace(
   closeAllSessions: () => Promise<void>,
@@ -73,10 +70,6 @@ export function useWorkspace(
   const wsCtx = useWorkspaceContext();
   const wsCtxRef = useRef(wsCtx);
   wsCtxRef.current = wsCtx;
-
-  // Save prompt state
-  const [showSavePrompt, setShowSavePrompt] = useState(false);
-  const pendingActionRef = useRef<{ type: 'new' } | { type: 'open'; path: string } | { type: 'switch'; targetId: string } | null>(null);
 
   // --- Internal helpers ---
 
@@ -242,24 +235,16 @@ export function useWorkspace(
       .catch(e => console.warn('[useWorkspace] Failed to persist app state:', e));
   }, []);
 
-  // --- Prompt flow ---
+  // --- Transitions (new / open / switch) ---
+  //
+  // These execute immediately regardless of the dirty flag — there is no
+  // blocking "save changes?" prompt. Durability is guaranteed instead by
+  // `doAutoSave()` running before `doClearPanes()` in the 'switch' case
+  // below; that ordering is load-bearing and must not change.
 
-  const getActiveDirty = useCallback((): boolean => {
-    return wsCtxRef.current.activeWorkspace?.dirty ?? false;
-  }, []);
-
-  // `promptChoice` is undefined when executePendingAction runs directly from
-  // guardedAction's non-dirty branch (no prompt was shown — nothing to save
-  // or discard). When it runs after the save prompt, it carries the user's
-  // actual choice so the 'switch' case below can honor it: 'discard' must not
-  // persist the dirty state anywhere, and 'save' has already persisted it via
-  // doSave, so an unconditional doAutoSave() here would either silently undo
-  // 'discard' or redundantly repeat 'save'.
-  const executePendingAction = useCallback(async (promptChoice?: 'save' | 'discard') => {
-    const action = pendingActionRef.current;
-    pendingActionRef.current = null;
-    if (!action) return;
-
+  const runTransition = useCallback(async (
+    action: { type: 'new' } | { type: 'open'; path: string } | { type: 'switch'; targetId: string },
+  ) => {
     const ctx = wsCtxRef.current;
 
     switch (action.type) {
@@ -285,15 +270,11 @@ export function useWorkspace(
         break;
       }
       case 'switch': {
-        // Auto-save current workspace state before switching — but only when
-        // this isn't resolving an explicit prompt choice. 'save' already wrote
-        // the current state via doSave (this would be a redundant duplicate
-        // write); 'discard' means the user explicitly does not want the dirty
-        // state persisted, so writing it via auto-save would silently undo
-        // that choice.
-        if (promptChoice === undefined) {
-          await doAutoSave();
-        }
+        // Auto-save current workspace state before switching — this is the
+        // durability guarantee that replaced the save-changes prompt. Must
+        // run BEFORE doClearPanes() tears the current workspace's sessions
+        // down; see doAutoSave's own comment for why the ordering matters.
+        await doAutoSave();
         await doClearPanes();
         bus.emit('workspace:reset', undefined);
         ctx.setActiveId(action.targetId);
@@ -312,53 +293,11 @@ export function useWorkspace(
     }
   }, [doClearPanes, doAutoSave, doLoadWorkspace, persistAppState, pushEnvelope]);
 
-  const handleSavePromptResult = useCallback(async (choice: SavePromptChoice) => {
-    setShowSavePrompt(false);
-    if (choice === 'cancel') {
-      pendingActionRef.current = null;
-      return;
-    }
-    if (choice === 'save') {
-      const ctx = wsCtxRef.current;
-      const active = ctx.activeWorkspace;
-      if (active?.filePath) {
-        await doSave(active.filePath);
-      } else {
-        const destPath = await save({
-          defaultPath: resolveDefaultDir(ctx, getDefaultDir),
-          filters: [{ name: 'LogTapper Workspace', extensions: ['ltw'] }],
-        });
-        if (typeof destPath !== 'string') {
-          pendingActionRef.current = null;
-          return;
-        }
-        await doSave(destPath);
-        if (active) ctx.renameWorkspace(active.id, workspaceNameFromPath(destPath));
-      }
-    }
-    // choice is 'save' or 'discard' here ('cancel' already returned above) —
-    // forward it so executePendingAction can decide whether doAutoSave should
-    // run in the 'switch' case.
-    await executePendingAction(choice as 'save' | 'discard');
-  }, [doSave, executePendingAction]);
-
-  // --- Guarded actions (check dirty before proceeding) ---
-
-  const guardedAction = useCallback((action: NonNullable<typeof pendingActionRef.current>) => {
-    if (getActiveDirty()) {
-      pendingActionRef.current = action;
-      setShowSavePrompt(true);
-      return;
-    }
-    pendingActionRef.current = action;
-    executePendingAction();
-  }, [getActiveDirty, executePendingAction]);
-
   // --- Public actions ---
 
   const newWorkspace = useCallback(() => {
-    guardedAction({ type: 'new' });
-  }, [guardedAction]);
+    void runTransition({ type: 'new' });
+  }, [runTransition]);
 
   const openWorkspace = useCallback(async (path?: string) => {
     let resolvedPath = path;
@@ -371,8 +310,8 @@ export function useWorkspace(
       if (typeof selected !== 'string') return;
       resolvedPath = selected;
     }
-    guardedAction({ type: 'open', path: resolvedPath });
-  }, [guardedAction]);
+    void runTransition({ type: 'open', path: resolvedPath });
+  }, [runTransition]);
 
   const saveWorkspace = useCallback(async () => {
     const ctx = wsCtxRef.current;
@@ -421,8 +360,8 @@ export function useWorkspace(
   const switchWorkspace = useCallback((targetId: string) => {
     const ctx = wsCtxRef.current;
     if (ctx.activeId === targetId) return;
-    guardedAction({ type: 'switch', targetId });
-  }, [guardedAction]);
+    void runTransition({ type: 'switch', targetId });
+  }, [runTransition]);
 
   return {
     newWorkspace,
@@ -431,7 +370,5 @@ export function useWorkspace(
     saveWorkspaceAs,
     closeWorkspace,
     switchWorkspace,
-    showSavePrompt,
-    handleSavePromptResult,
   };
 }

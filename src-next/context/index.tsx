@@ -19,8 +19,7 @@ import { PipelineProvider, usePipelineChainCtx } from './PipelineContext';
 import { TrackerProvider } from './TrackerContext';
 import { ActionsProvider, trackMutations, type ActionsContextValue } from './ActionsContext';
 import { MarketplaceProvider } from './MarketplaceContext';
-import { WorkspaceProvider, useWorkspaceIdentity, useWorkspaceContext } from './WorkspaceContext';
-import { SavePromptDialog } from '../ui/SavePromptDialog';
+import { WorkspaceProvider, useWorkspaceContext } from './WorkspaceContext';
 import { useCacheManager, useDataSourceRegistry } from '../cache';
 import { useLogViewer } from '../hooks/useLogViewer';
 import { usePipelineWiring } from '../hooks/usePipelineWiring';
@@ -457,16 +456,9 @@ function HookWiring({ children }: { children: ReactNode }) {
     [rawActions, markDirty],
   );
 
-  const workspaceIdentity = useWorkspaceIdentity();
-
   return (
     <ActionsProvider actions={actions}>
       {children}
-      <SavePromptDialog
-        open={workspace.showSavePrompt}
-        workspaceName={workspaceIdentity?.name ?? 'Untitled'}
-        onResult={workspace.handleSavePromptResult}
-      />
     </ActionsProvider>
   );
 }
