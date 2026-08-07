@@ -130,3 +130,33 @@ export function findTabByType(tree: SplitNode, type: CenterTabType): { pane: Cen
   }
   return null;
 }
+
+/**
+ * Collapse every leaf with zero tabs that has a sibling to collapse into
+ * (bottom-up, post-order — a nested chain of empty leaves collapses in one
+ * pass). The root leaf is exempt even when empty: with no sibling to
+ * collapse into, an empty single-pane tree is the valid default state (see
+ * `defaultTree`), not a dead pane. When both children of a split are empty,
+ * the left one is kept (arbitrary but deterministic).
+ *
+ * Used after a workspace restore (`workspace:restore-end` in
+ * `useCenterTree.ts`) to remove panes whose only planned tab(s) — sessions
+ * placed via `restoreTreeSkeleton.ts`'s pane resolver — all failed to load,
+ * rather than leaving a dead empty pane sitting in the split. Also a
+ * no-op-safe general cleanup: a tree with no empty siblings (the common
+ * case) returns the same reference.
+ */
+export function collapseEmptyLeaves(tree: SplitNode): SplitNode {
+  if (tree.type === 'leaf') return tree;
+  const left = collapseEmptyLeaves(tree.children[0]);
+  const right = collapseEmptyLeaves(tree.children[1]);
+  const leftEmpty = left.type === 'leaf' && left.pane.tabs.length === 0;
+  const rightEmpty = right.type === 'leaf' && right.pane.tabs.length === 0;
+  if (leftEmpty && !rightEmpty) return right;
+  if (rightEmpty && !leftEmpty) return left;
+  if (leftEmpty && rightEmpty) return left;
+  if (left !== tree.children[0] || right !== tree.children[1]) {
+    return { ...tree, children: [left, right] };
+  }
+  return tree;
+}

@@ -17,11 +17,13 @@ import {
   firstLeaf,
   findTabAcrossTree,
   findTabByType,
+  collapseEmptyLeaves,
 } from './splitTreeHelpers';
 import { LS_FILEPATH_PREFIX, LS_CONTENT_PREFIX, LS_MODE_PREFIX, LS_WRAP_PREFIX } from '../../components/EditorTab';
 import { storageSet } from '../../utils';
 import { applySessionLoading, applySessionLoaded, applyCloseTab } from './sessionTreeOps';
 import { readTabPaths, saveTabPaths } from './workspacePersistence';
+import { getWorkspaceEpoch } from './workspaceEpoch';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -48,8 +50,11 @@ export interface CenterTreeHandle {
   /** Returns the pane id the tab was activated in (existing reuse) or created
    *  in (new tab) — null only if there is no leaf to place it in. Callers
    *  (e.g. `layout:open-tab`'s handler) use this to target a follow-up event
-   *  at the pane that now owns the tab. */
-  openCenterTab: (type: CenterTabType, label?: string, filePath?: string, editorState?: EditorTabState) => string | null;
+   *  at the pane that now owns the tab.
+   *  `targetPaneId` explicitly steers a NEW tab at that pane (e.g. a workspace
+   *  restore placing a tab in the pane it occupied when saved); falls back to
+   *  the focused pane, then the first leaf, when omitted or not found. */
+  openCenterTab: (type: CenterTabType, label?: string, filePath?: string, editorState?: EditorTabState, targetPaneId?: string) => string | null;
   dropTabOnPane: (tabId: string, fromPaneId: string, toPaneId: string, zone: DropZone) => void;
   /** Reset the center tree to a single empty pane (for workspace clear/switch). */
   clearTree: () => void;
@@ -231,7 +236,7 @@ export function useCenterTree(
     if (isDirty) bus.emit('workspace:mutated', { source: 'workspace' });
   }, [updateTree]);
 
-  const openCenterTab = useCallback((type: CenterTabType, label?: string, filePath?: string, editorState?: EditorTabState) => {
+  const openCenterTab = useCallback((type: CenterTabType, label?: string, filePath?: string, editorState?: EditorTabState, targetPaneId?: string) => {
     // Decide using treeRef.current (synchronously current committed state) BEFORE
     // calling updateTree — mirrors the onSessionLoaded/onSessionLoading pattern.
     // StrictMode calls the updateTree updater twice with the same prev; if
@@ -255,14 +260,25 @@ export function useCenterTree(
       }
     }
 
-    // 2. Add to the focused pane (or first leaf as fallback)
+    // 2. Add to the explicitly targeted pane (e.g. a workspace restore steering
+    // this tab at the pane it occupied when saved — see restoreCore.ts's
+    // paneResolver), else the focused pane, else the first leaf as fallback.
     const focPaneId = activeLogPaneIdRef.current;
-    const target = (focPaneId ? findLeafByPaneId(tree, focPaneId) : null) ?? firstLeaf(tree);
+    const target = (targetPaneId ? findLeafByPaneId(tree, targetPaneId) : null)
+      ?? (focPaneId ? findLeafByPaneId(tree, focPaneId) : null)
+      ?? firstLeaf(tree);
     const tab = makeTab(type, label);
 
     // Pre-seed localStorage with the file path so EditorTab picks it up on mount.
     if (filePath) {
       storageSet(LS_FILEPATH_PREFIX + tab.id, filePath);
+      // Stash the path onto the tab itself too — the same content-stable key
+      // `Tab.sourcePath` uses for logviewer tabs, and (for `editor` tabs only)
+      // what a later workspace restore matches this tab's saved placement
+      // against (`restoreTreeSkeleton.ts`). `tabDisambiguation.ts` only reads
+      // this for `logviewer` tabs, so setting it here for any other type is
+      // inert as far as that feature is concerned.
+      tab.sourcePath = filePath;
     }
 
     // Pre-seed localStorage with editor state so EditorTab picks it up on mount.
@@ -415,7 +431,22 @@ export function useCenterTree(
 
   useEffect(() => {
     const onSessionLoaded = (e: { sourceName: string; paneId: string; sourceType: string; sessionId: string;
-                                   tabId: string; isNewTab?: boolean; previousSessionId?: string; readOnly?: boolean }) => {
+                                   tabId: string; isNewTab?: boolean; previousSessionId?: string; readOnly?: boolean;
+                                   epoch?: number }) => {
+      // Belt-and-braces: `useFileSession.loadFile`'s own epoch guard should
+      // already have discarded a stale load before ever emitting this event
+      // (it closes the backend session and returns without emitting). This
+      // catches the event landing anyway — e.g. a future emitter that forgets
+      // the guard, or a race inside the emit itself. `e.epoch` is stamped by
+      // the producer at emission time; comparing it to the CURRENT epoch here
+      // (read imperatively inside this bus handler, not during render) is the
+      // targeted, payload-carried check the fix calls for, rather than this
+      // handler reaching into loadFile's internals. Undefined `epoch` (e.g.
+      // the MCP-bridge session-opened path) is always accepted — that path's
+      // backend session already exists independent of any workspace-switch race.
+      if (e.epoch !== undefined && e.epoch !== getWorkspaceEpoch()) {
+        return;
+      }
       // Compute result using treeRef.current (synchronously current committed state)
       // outside the setState updater. This avoids the L10 pattern where result is
       // computed inside the updater and StrictMode calls it twice — the bus.emit would
@@ -540,12 +571,41 @@ export function useCenterTree(
       }
     };
 
+    // Replace the live tree wholesale with the skeleton `restoreCore.ts`'s
+    // `restoreWorkspace` rebuilt from the saved layout — fresh split/leaf/pane
+    // ids, `logviewer`/`editor` tabs dropped (they rebind via the session-load
+    // / editor-tab-restore paths, steered at the pane matching newPaneIds
+    // this event's producer already resolved). Fired BEFORE any session load
+    // in the restore, so every subsequent `session:loading`/`session:loaded`
+    // for that restore's `paneId` (remapped by the same producer) lands in
+    // the correct leaf via the normal `findLeafByPaneId` path above — no
+    // special-casing needed here.
+    const onRestoreTreeSkeleton = (e: { tree: SplitNode }) => {
+      treeRef.current = e.tree;
+      setCenterTree(() => e.tree);
+    };
+
+    // End-of-restore cleanup: collapse any pane left empty because every
+    // session planned for it (via the skeleton rebuild above) failed to
+    // load. Safe to run unconditionally — a tree with no empty siblings
+    // (the common case, and every non-skeleton restore) is a no-op.
+    const onWorkspaceRestoreEnd = () => {
+      const prev = treeRef.current;
+      const next = collapseEmptyLeaves(prev);
+      if (next !== prev) {
+        treeRef.current = next;
+        setCenterTree(() => next);
+      }
+    };
+
     bus.on('session:loading', onSessionLoading);
     bus.on('session:loaded', onSessionLoaded);
     bus.on('session:closed', onSessionClosed);
     bus.on('pipeline:completed', onPipelineCompleted);
     bus.on('stream:saved', onStreamSaved);
     bus.on('session:indexing-complete', onIndexingComplete);
+    bus.on('workspace:restore-tree-skeleton', onRestoreTreeSkeleton);
+    bus.on('workspace:restore-end', onWorkspaceRestoreEnd);
     return () => {
       bus.off('session:loading', onSessionLoading);
       bus.off('session:loaded', onSessionLoaded);
@@ -553,6 +613,8 @@ export function useCenterTree(
       bus.off('pipeline:completed', onPipelineCompleted);
       bus.off('stream:saved', onStreamSaved);
       bus.off('session:indexing-complete', onIndexingComplete);
+      bus.off('workspace:restore-tree-skeleton', onRestoreTreeSkeleton);
+      bus.off('workspace:restore-end', onWorkspaceRestoreEnd);
     };
   }, []);
 

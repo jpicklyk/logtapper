@@ -27,6 +27,7 @@ import {
   type SessionLoadedEvent,
 } from './sessionTreeOps';
 import { bus } from '../../events/bus';
+import { bumpWorkspaceEpoch, getWorkspaceEpoch } from './workspaceEpoch';
 
 // Mocks must be declared before the useCenterTree import so the module
 // resolver picks them up (vi.mock calls are hoisted, but keep the order
@@ -825,5 +826,298 @@ describe('U10: bridge-initiated multi-tab session close threads a local tree val
     const finalTree = result.current.treeRef.current;
     expect(findTabAcrossTree(finalTree, tabA.id)).toBeNull();
     expect(findTabAcrossTree(finalTree, tabB.id)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Workspace-epoch belt-and-braces guard on onSessionLoaded (item
+// 6b9d644c-eff7-486c-982f-9034b3e7f84f — in-flight file load survives
+// workspace switch and lands in the new workspace).
+//
+// `useFileSession.loadFile`'s own epoch guard should already have discarded
+// a stale load before it ever emits `session:loaded` — this is the second
+// layer: onSessionLoaded independently ignores an event whose stamped
+// `epoch` doesn't match the CURRENT workspace epoch, so even a load that
+// slipped past the first guard (or a future emitter that forgets it) can't
+// create a tab in a workspace it wasn't aimed at.
+// ---------------------------------------------------------------------------
+
+describe('workspace-epoch guard on onSessionLoaded', () => {
+  function renderCenterTree(initialTree: SplitNode) {
+    const activeLogPaneIdRef = { current: null as string | null };
+    const paneSessionMapRef = { current: new Map<string, string>() };
+    const activateSessionForPane = vi.fn();
+    const openBottomPane = vi.fn();
+
+    return renderHook(() =>
+      useCenterTree(
+        { activeLogPaneIdRef, paneSessionMapRef, activateSessionForPane, openBottomPane },
+        initialTree,
+      ),
+    );
+  }
+
+  it('ignores a session:loaded event stamped with a stale epoch — no tab is created', () => {
+    const paneId = 'pane-1';
+    const initialTree = makeTree(paneId, []);
+    const { result } = renderCenterTree(initialTree);
+
+    // Capture "the epoch this load was aimed at", then simulate a workspace
+    // teardown happening while it was in flight.
+    const staleEpoch = getWorkspaceEpoch();
+    bumpWorkspaceEpoch();
+    expect(getWorkspaceEpoch()).not.toBe(staleEpoch);
+
+    act(() => {
+      bus.emit('session:loaded', {
+        sourceName: 'orphaned.txt',
+        paneId,
+        sourceType: 'Logcat',
+        sessionId: 'session-stale',
+        tabId: 'tab-stale',
+        epoch: staleEpoch,
+      });
+    });
+
+    // No tab was created for the stale-epoch load.
+    const leaf = findLeafByPaneId(result.current.treeRef.current, paneId);
+    expect(leaf?.pane.tabs ?? []).toHaveLength(0);
+    expect(findTabAcrossTree(result.current.treeRef.current, 'tab-stale')).toBeNull();
+  });
+
+  it('accepts a session:loaded event stamped with the current epoch — tab is created normally', () => {
+    const paneId = 'pane-1';
+    const initialTree = makeTree(paneId, []);
+    const { result } = renderCenterTree(initialTree);
+
+    const currentEpoch = getWorkspaceEpoch();
+
+    act(() => {
+      bus.emit('session:loaded', {
+        sourceName: 'fresh.txt',
+        paneId,
+        sourceType: 'Logcat',
+        sessionId: 'session-fresh',
+        tabId: 'tab-fresh',
+        epoch: currentEpoch,
+      });
+    });
+
+    const found = findTabAcrossTree(result.current.treeRef.current, 'tab-fresh');
+    expect(found).not.toBeNull();
+    expect(found?.tab.label).toBe('fresh.txt');
+  });
+
+  it('accepts an event with no epoch stamped at all (e.g. bridge-opened sessions)', () => {
+    const paneId = 'pane-1';
+    const initialTree = makeTree(paneId, []);
+    const { result } = renderCenterTree(initialTree);
+
+    bumpWorkspaceEpoch(); // some unrelated teardown happened — irrelevant when epoch is unset
+
+    act(() => {
+      bus.emit('session:loaded', {
+        sourceName: 'bridge.txt',
+        paneId,
+        sourceType: 'Logcat',
+        sessionId: 'session-bridge',
+        tabId: 'tab-bridge',
+        // epoch intentionally omitted
+      });
+    });
+
+    expect(findTabAcrossTree(result.current.treeRef.current, 'tab-bridge')).not.toBeNull();
+  });
+
+  it('a restore burst\'s loads — stamped with the epoch captured AFTER the teardown bump — are not discarded', () => {
+    const paneId = 'pane-1';
+    const initialTree = makeTree(paneId, []);
+    const { result } = renderCenterTree(initialTree);
+
+    // Simulate doClearPanes: bump the epoch synchronously, before the
+    // restore's own loadFile calls start.
+    bumpWorkspaceEpoch();
+    const postBumpEpoch = getWorkspaceEpoch();
+
+    // The restore's burst of loadFile calls each capture the epoch AFTER
+    // the bump (they start once doClearPanes has already returned), so every
+    // one of them stamps postBumpEpoch — not the pre-bump value.
+    act(() => {
+      bus.emit('session:loaded', {
+        sourceName: 'restored-a.txt',
+        paneId,
+        sourceType: 'Logcat',
+        sessionId: 'session-restored-a',
+        tabId: 'tab-restored-a',
+        epoch: postBumpEpoch,
+      });
+      bus.emit('session:loaded', {
+        sourceName: 'restored-b.txt',
+        paneId,
+        sourceType: 'Logcat',
+        sessionId: 'session-restored-b',
+        tabId: 'tab-restored-b',
+        isNewTab: true,
+        // A genuine second-tab-in-one-pane load always carries the session it
+        // sits alongside — without it, applySessionLoaded takes its "replace"
+        // branch instead of "add alongside" and overwrites tab-restored-a.
+        previousSessionId: 'session-restored-a',
+        epoch: postBumpEpoch,
+      });
+    });
+
+    expect(findTabAcrossTree(result.current.treeRef.current, 'tab-restored-a')).not.toBeNull();
+    expect(findTabAcrossTree(result.current.treeRef.current, 'tab-restored-b')).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Workspace restore — center-tree skeleton rebuild (work item f5d0e527:
+// "workspace restore collapses pane grouping").
+//
+// `restoreCore.ts`'s `restoreWorkspace` emits `workspace:restore-tree-skeleton`
+// with a tree rebuilt (fresh pane ids) from the saved `.ltw` layout, BEFORE any
+// session load — `useCenterTree` is the sole consumer, replacing the live tree
+// wholesale so the loads that follow land in the pane the resolver steered
+// them at (see restoreTreeSkeleton.test.ts / restoreCore.test.ts for the
+// resolver logic itself). `workspace:restore-end` then collapses any pane a
+// failed load left empty.
+// ---------------------------------------------------------------------------
+
+describe('workspace restore — center-tree skeleton rebuild + empty-pane collapse', () => {
+  function renderCenterTree(initialTree: SplitNode) {
+    const activeLogPaneIdRef = { current: null as string | null };
+    const paneSessionMapRef = { current: new Map<string, string>() };
+    const activateSessionForPane = vi.fn();
+    const openBottomPane = vi.fn();
+
+    return renderHook(() =>
+      useCenterTree(
+        { activeLogPaneIdRef, paneSessionMapRef, activateSessionForPane, openBottomPane },
+        initialTree,
+      ),
+    );
+  }
+
+  it('workspace:restore-tree-skeleton replaces the live tree wholesale', () => {
+    const { result } = renderCenterTree(makeTree('single-pane', []));
+
+    const skeletonTree: SplitNode = {
+      type: 'split',
+      id: 'new-split',
+      direction: 'horizontal',
+      ratio: 0.5,
+      children: [makeTree('new-pane-1', []), makeTree('new-pane-2', [])],
+    };
+
+    act(() => {
+      bus.emit('workspace:restore-tree-skeleton', { tree: skeletonTree });
+    });
+
+    expect(result.current.treeRef.current).toBe(skeletonTree);
+    expect(result.current.centerTree).toBe(skeletonTree);
+    // The pre-restore single pane is gone — replaced, not merged.
+    expect(findLeafByPaneId(result.current.treeRef.current, 'single-pane')).toBeNull();
+  });
+
+  it('a session:loaded for the skeleton-remapped paneId lands in the correct rebuilt pane', () => {
+    const { result } = renderCenterTree(makeTree('single-pane', []));
+
+    const skeletonTree: SplitNode = {
+      type: 'split',
+      id: 'new-split',
+      direction: 'horizontal',
+      ratio: 0.5,
+      children: [makeTree('new-pane-1', []), makeTree('new-pane-2', [])],
+    };
+
+    act(() => {
+      bus.emit('workspace:restore-tree-skeleton', { tree: skeletonTree });
+      // Simulates restoreCore's paneResolver having steered this load at
+      // 'new-pane-2' — the pane the session occupied when saved.
+      bus.emit('session:loaded', {
+        sourceName: 'device-b.txt',
+        paneId: 'new-pane-2',
+        sourceType: 'Logcat',
+        sessionId: 'session-b',
+        tabId: 'tab-b',
+      });
+    });
+
+    const paneOne = findLeafByPaneId(result.current.treeRef.current, 'new-pane-1');
+    const paneTwo = findLeafByPaneId(result.current.treeRef.current, 'new-pane-2');
+    expect(paneOne?.pane.tabs ?? []).toHaveLength(0);
+    expect(paneTwo?.pane.tabs.some((t) => t.id === 'tab-b')).toBe(true);
+  });
+
+  it('workspace:restore-end collapses a pane whose planned session never loaded', () => {
+    const skeletonTree: SplitNode = {
+      type: 'split',
+      id: 'new-split',
+      direction: 'horizontal',
+      ratio: 0.5,
+      children: [makeTree('pane-empty', []), makeTree('pane-loaded', [makeLogviewerTab('tab-loaded')])],
+    };
+    const { result } = renderCenterTree(skeletonTree);
+
+    act(() => {
+      bus.emit('workspace:restore-end', undefined);
+    });
+
+    const finalTree = result.current.treeRef.current;
+    expect(finalTree.type).toBe('leaf');
+    if (finalTree.type === 'leaf') {
+      expect(finalTree.pane.id).toBe('pane-loaded');
+    }
+  });
+
+  it('workspace:restore-end is a no-op when no pane is empty', () => {
+    const tree = makeTree('single-pane', [makeLogviewerTab('tab-a')]);
+    const { result } = renderCenterTree(tree);
+
+    act(() => {
+      bus.emit('workspace:restore-end', undefined);
+    });
+
+    expect(result.current.treeRef.current).toBe(tree);
+  });
+
+  // review fix #2: an editor tab restored via `layout:open-tab` (which
+  // `useWorkspaceLayout.onOpenTab` forwards straight into `openCenterTab`,
+  // including its `paneId`) must land in the pane the workspace-restore
+  // resolver steered it at — not the focused pane / first leaf.
+  it('openCenterTab places a new tab in targetPaneId when given, over the focused/first-leaf default', () => {
+    const skeletonTree: SplitNode = {
+      type: 'split',
+      id: 'new-split',
+      direction: 'horizontal',
+      ratio: 0.5,
+      children: [makeTree('new-pane-1', []), makeTree('new-pane-2', [])],
+    };
+    const { result } = renderCenterTree(skeletonTree);
+
+    act(() => {
+      // activeLogPaneIdRef is null and 'new-pane-1' is the first leaf — both
+      // would normally win. targetPaneId must override both.
+      result.current.openCenterTab('editor', 'notes.md', '/notes/scratch.md', { content: 'hi', viewMode: 'editor', wordWrap: false }, 'new-pane-2');
+    });
+
+    const paneOne = findLeafByPaneId(result.current.treeRef.current, 'new-pane-1');
+    const paneTwo = findLeafByPaneId(result.current.treeRef.current, 'new-pane-2');
+    expect(paneOne?.pane.tabs ?? []).toHaveLength(0);
+    expect(paneTwo?.pane.tabs).toHaveLength(1);
+    expect(paneTwo?.pane.tabs[0]).toMatchObject({ type: 'editor', label: 'notes.md', sourcePath: '/notes/scratch.md' });
+  });
+
+  it('openCenterTab falls back to the first leaf when targetPaneId does not exist in the tree', () => {
+    const tree = makeTree('only-pane', []);
+    const { result } = renderCenterTree(tree);
+
+    act(() => {
+      result.current.openCenterTab('editor', 'notes.md', '/notes/scratch.md', undefined, 'pane-that-does-not-exist');
+    });
+
+    const pane = findLeafByPaneId(result.current.treeRef.current, 'only-pane');
+    expect(pane?.pane.tabs).toHaveLength(1);
   });
 });

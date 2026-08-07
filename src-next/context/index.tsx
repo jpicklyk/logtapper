@@ -35,6 +35,7 @@ import type { AppStateFile, AnalysisSection } from '../bridge/types';
 import { collectEditorTabsForSave, buildAppStatePayload } from '../hooks/workspace/workspacePersistence';
 import { pushWorkspaceEnvelope, toEnvelopeOptions } from '../hooks/workspace/envelopeSync';
 import { STORAGE_KEY } from '../hooks/workspace/workspaceTypes';
+import { collectSessionsToClose } from '../hooks/workspace/sessionEnumeration';
 import { storageGetJSON } from '../utils';
 import { bus } from '../events';
 
@@ -224,10 +225,23 @@ function HookWiring({ children }: { children: ReactNode }) {
     bus.emit('layout:export-session-requested', undefined);
   }, []);
 
-  // Close all open sessions (for workspace new/open transitions).
+  // Close all open sessions (for workspace new/open/switch transitions).
+  // `paneSessionMapRef` only covers each pane's ACTIVE tab — an inactive
+  // tab's session isn't reachable through it, so closing solely by pane id
+  // silently leaked those backend sessions across a workspace teardown.
+  // `collectSessionsToClose` enumerates the full `sessions` map (every
+  // registered session, active or not) to close the rest by id directly.
+  // Streaming sessions are handled exactly as before — `logViewer.closeSession`
+  // still owns the stop-stream-before-close branch, untouched here.
   const closeAllSessions = useCallback(async () => {
-    const paneIds = [...paneSessionMapRef.current.keys()];
-    await Promise.all(paneIds.map(paneId => logViewer.closeSession(paneId)));
+    const { paneIds, inactiveSessionIds } = collectSessionsToClose(
+      paneSessionMapRef.current,
+      sessionCoreRef.current.sessions,
+    );
+    await Promise.all([
+      ...paneIds.map(paneId => logViewer.closeSession(paneId)),
+      ...inactiveSessionIds.map(sessionId => logViewer.closeSession(undefined, undefined, sessionId)),
+    ]);
   }, [logViewer.closeSession]);
 
   // Default directory for file dialogs: directory of the focused session's source file.

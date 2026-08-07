@@ -1,5 +1,5 @@
 import type { AdbProcessorUpdate, AdbTrackerUpdate, SourceType } from '../bridge/types';
-import type { EditorTabState } from '../hooks/workspace/workspaceTypes';
+import type { EditorTabState, SplitNode } from '../hooks/workspace/workspaceTypes';
 
 /** Typed event map for the internal application event bus. */
 export type AppEvents = {
@@ -47,7 +47,17 @@ export type AppEvents = {
                                *  restore would misattribute the other open's session and apply its own
                                *  manifest entry's bookmarks/analyses to the wrong session. Optional and
                                *  unset for every other emitter/consumer. */
-                              loadRequestId?: string };
+                              loadRequestId?: string;
+                              /** Workspace epoch (`hooks/workspace/workspaceEpoch.ts`) captured by
+                               *  `useFileSession.loadFile` before its backend IPC call. Belt-and-braces
+                               *  check: `useCenterTree.onSessionLoaded` ignores an event whose `epoch`
+                               *  doesn't match the current epoch — the load's own staleness guard should
+                               *  already have discarded it before ever emitting, but this catches the
+                               *  event landing on a stale listener anyway. Unset (always accepted) for
+                               *  emitters not guarded by the epoch — e.g. the MCP-bridge session-opened
+                               *  path, whose backend session already exists independent of any frontend
+                               *  workspace-switch race. */
+                              epoch?: number };
   'session:closed':         { sessionId: string; paneId: string; sourceType: SourceType; tabId?: string };
   'session:focused':        { sessionId: string | null; paneId: string | null };
   'session:indexing-complete': { sessionId: string; totalLines: number };
@@ -84,8 +94,12 @@ export type AppEvents = {
   // ── Layout / navigation ───────────────────────────────────────────────────
   /** `analysisArtifactId` is set when opening (or reusing) an `'analysis'`
    *  tab for a specific artifact — the handler emits a targeted `analysis:open`
-   *  once it knows which pane the tab landed in. */
-  'layout:open-tab':        { type: string; label?: string; filePath?: string; editorState?: EditorTabState; analysisArtifactId?: string };
+   *  once it knows which pane the tab landed in. `paneId` explicitly steers a
+   *  NEW tab at that pane (e.g. a workspace restore's editor-tab replay
+   *  targeting the pane it occupied when saved, resolved via
+   *  `restoreTreeSkeleton.ts`'s `PaneResolver`) — omitted, it falls back to
+   *  `openCenterTab`'s normal focused-pane/first-leaf default. */
+  'layout:open-tab':        { type: string; label?: string; filePath?: string; editorState?: EditorTabState; analysisArtifactId?: string; paneId?: string };
   /** Fired when a logviewer tab is explicitly closed via the UI tab bar. */
   'layout:logviewer-tab-closed': { tabId: string; paneId: string; sessionId: string };
   /** Fired when the user switches to a logviewer tab that has its own session.
@@ -175,6 +189,17 @@ export type AppEvents = {
   /** Fired after an .ltw workspace is loaded — signals layout consumers to
    *  apply the saved layout blob (pane widths, visible panes, tabs, etc.). */
   'workspace:restore-layout': { layout: unknown };
+  /** Fired by `restoreCore.ts`'s `restoreWorkspace` BEFORE any session load,
+   *  when the saved `.ltw` layout carries a center-tree and localStorage
+   *  isn't already the fresher source (`plan.applyLtwViewState`). Carries a
+   *  tree rebuilt from the saved one with fresh split/leaf/pane ids (the
+   *  saved ids are stale by restore time) and every `logviewer`/`editor` tab
+   *  dropped — those rebind via the normal session-load / editor-tab-restore
+   *  paths, steered at the correct (remapped) pane by
+   *  `hooks/workspace/restoreTreeSkeleton.ts`'s placement resolver, rather
+   *  than falling through to `firstLeaf` and flattening every pane. `useCenterTree`
+   *  is the sole consumer — it replaces the live tree wholesale. */
+  'workspace:restore-tree-skeleton': { tree: SplitNode };
   /** Fired after an .lts workspace is fully restored. */
   'workspace:opened':        { name: string; filePath: string };
   /** Fired when a restore begins. Suppresses auto-save until the matching

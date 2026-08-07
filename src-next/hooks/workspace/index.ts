@@ -2,6 +2,7 @@ export * from './workspaceTypes';
 export * from './splitTreeHelpers';
 export * from './workspacePersistence';
 export * from './envelopeSync';
+export * from './restoreTreeSkeleton';
 export { useCenterTree } from './useCenterTree';
 export type { UseCenterTreeOptions, CenterTreeHandle } from './useCenterTree';
 export { useLayoutPreset } from './useLayoutPreset';

@@ -4,6 +4,7 @@ import { storageRemove } from '../utils';
 import { bus } from '../events';
 import type { AppEvents } from '../events/events';
 import { useSessionCoreCtx, useSessionPaneCtx } from '../context/SessionContext';
+import { createAutoSaveGate } from './workspace/autoSaveGate';
 import {
   useCenterTree,
   useLayoutPreset,
@@ -104,8 +105,21 @@ export function useWorkspaceLayout() {
   const presetRef = useRef(preset);
   presetRef.current = preset;
 
+  // Suppresses this effect's localStorage write while a workspace restore is
+  // in flight (`workspace:restore-begin`/`-end`, subscribed below) — a
+  // restore's tree-skeleton rebuild + sequential session loads produce a
+  // burst of intermediate `centerTree` states (including a fully-empty
+  // skeleton before any session has landed); persisting one of those and
+  // then losing power/crashing before restore finishes would leave
+  // localStorage with a correctly-shaped but session-less tree instead of
+  // the simple single-pane default. Reuses the same reference-counted gate
+  // shape as `useWorkspaceAutoSave`'s (a separate instance — this suppresses
+  // a different write, the fast localStorage mirror, not the `.ltw` file).
+  const persistGateRef = useRef(createAutoSaveGate()).current;
+
   useEffect(() => {
     if (presetRef.current === 'compact') return;
+    if (persistGateRef.isSuppressed()) return;
     savePersistedState({
       centerTree: centerTree.centerTree,
       leftPaneWidth: panels.leftPaneWidth,
@@ -150,7 +164,7 @@ export function useWorkspaceLayout() {
     };
 
     const onOpenTab = (e: AppEvents['layout:open-tab']) => {
-      const paneId = openCenterTabRef.current(e.type as CenterTabType, e.label, e.filePath, e.editorState);
+      const paneId = openCenterTabRef.current(e.type as CenterTabType, e.label, e.filePath, e.editorState, e.paneId);
       if (e.analysisArtifactId && paneId) {
         // Seed the pending selection BEFORE emitting — covers the new-tab
         // and reuse-inactive-tab paths, where AnalysisReader doesn't exist
@@ -181,23 +195,40 @@ export function useWorkspaceLayout() {
       if (restored.bottomPaneVisible !== undefined) panels.bottomPane.setVisible(restored.bottomPaneVisible);
       if (restored.bottomPaneHeight !== undefined) panels.setBottomPaneHeight(restored.bottomPaneHeight);
       if (restored.bottomPaneTab !== undefined) panels.bottomPane.setTab(restored.bottomPaneTab);
-      // Center tree is intentionally not restored here: it was already rebuilt
-      // by the session loading process and the saved IDs would be stale.
+      // Center tree is intentionally not restored here: `restoreCore.ts`'s
+      // `restoreWorkspace` already rebuilt it (with fresh pane ids, via the
+      // `workspace:restore-tree-skeleton` event `useCenterTree` consumes)
+      // BEFORE any session load ran, and every session was steered at its
+      // remapped pane by that rebuild's placement resolver. Replaying the
+      // raw saved tree here — whose pane ids are stale by now — would stomp
+      // that correctly-remapped live tree.
     };
+
+    // Restore-lifecycle bracket for the localStorage persistence effect's
+    // suppression gate (`persistGateRef`, declared above). Reference-counted
+    // like `useWorkspaceAutoSave`'s gate, so a `.lts` import nested inside a
+    // workspace restore can't let its own `-end` re-enable persistence while
+    // the outer restore is still running.
+    const onPersistRestoreBegin = () => persistGateRef.beginRestore();
+    const onPersistRestoreEnd = () => persistGateRef.endRestore();
 
     bus.on('session:focused', onSessionFocused);
     bus.on('session:loaded', onSessionLoaded);
     bus.on('layout:open-tab', onOpenTab);
     bus.on('workspace:reset', onWorkspaceReset);
     bus.on('workspace:restore-layout', onRestoreLayout);
+    bus.on('workspace:restore-begin', onPersistRestoreBegin);
+    bus.on('workspace:restore-end', onPersistRestoreEnd);
     return () => {
       bus.off('session:focused', onSessionFocused);
       bus.off('session:loaded', onSessionLoaded);
       bus.off('layout:open-tab', onOpenTab);
       bus.off('workspace:reset', onWorkspaceReset);
       bus.off('workspace:restore-layout', onRestoreLayout);
+      bus.off('workspace:restore-begin', onPersistRestoreBegin);
+      bus.off('workspace:restore-end', onPersistRestoreEnd);
     };
-  }, []);
+  }, [persistGateRef]);
 
   // ---------------------------------------------------------------------------
   // General

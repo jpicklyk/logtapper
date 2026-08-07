@@ -24,7 +24,10 @@ export interface LogViewerActions {
   jumpToEnd: () => void;
   setProcessorView: (processorId: string) => void;
   clearProcessorView: () => void;
-  closeSession: (paneId?: string) => Promise<void>;
+  // Widened to the underlying useSessionTabManager signature (not just
+  // paneId) — closeAllSessions (context/index.tsx) closes inactive tabs'
+  // sessions directly by id, with no owning pane to resolve them through.
+  closeSession: (paneId?: string, tabId?: string, sessionId?: string) => Promise<void>;
   /** Non-null while background file indexing is in progress (focused session). */
   indexingProgress: { percent: number; indexedLines: number } | null;
   filterScanning: boolean;

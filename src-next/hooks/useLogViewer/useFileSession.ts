@@ -16,6 +16,8 @@ import { planExtraSessionImport } from './multiSessionImport';
 import { genKeyFor } from './loadGeneration';
 import { planBridgeSessionOpen } from './bridgeSessionOpen';
 import { readTabPaths, saveTabPaths } from '../workspace/workspacePersistence';
+import { getWorkspaceEpoch } from '../workspace/workspaceEpoch';
+import { registerPendingLoad } from '../workspace/pendingLoads';
 
 const DEFAULT_PANE_ID = 'primary';
 
@@ -69,9 +71,9 @@ export function useFileSession(
     result: LoadResult,
     targetPaneId: string,
     tabId: string,
-    opts: { isNewTab: boolean; previousSessionId?: string; path: string; loadRequestId?: string },
+    opts: { isNewTab: boolean; previousSessionId?: string; path: string; loadRequestId?: string; epoch?: number },
   ) => {
-    const { isNewTab, previousSessionId, path, loadRequestId } = opts;
+    const { isNewTab, previousSessionId, path, loadRequestId, epoch } = opts;
 
     // Optimistic fetch: pre-populate cache while React propagates session state.
     // When useViewCache allocates the handle it will consume these pre-seeded lines,
@@ -117,6 +119,7 @@ export function useFileSession(
         loadRequestId,
         sourcePath: path,
         totalLines: result.totalLines,
+        epoch,
       },
       { sessionId: result.sessionId, paneId: targetPaneId },
     );
@@ -187,6 +190,13 @@ export function useFileSession(
     const gen = (loadGenRef.current.get(genKey) ?? 0) + 1;
     loadGenRef.current.set(genKey, gen);
 
+    // Workspace epoch, captured now — before the backend IPC call below. If a
+    // workspace teardown (new/open/switch) bumps the epoch while this load is
+    // in flight, the resolve-time check further down discards it instead of
+    // landing in whichever workspace happens to be active by then. See
+    // `hooks/workspace/workspaceEpoch.ts`.
+    const epochAtStart = getWorkspaceEpoch();
+
     const tabId = existingTabId ?? crypto.randomUUID();
 
     // `isNewTab` reads backwards: it is true when the pane ALREADY holds a
@@ -241,6 +251,15 @@ export function useFileSession(
     diag('file-load', 'starting', { path: label, paneId: targetPaneId, tabId, isNewTab });
     bus.emit('session:loading', { paneId: targetPaneId, tabId, label, isNewTab });
 
+    // Register this load in the pending-loads registry for the duration of
+    // the whole call (resolved in `finally`, covering success, error, and the
+    // stale-discard early-return alike) — lets a pre-switch workspace
+    // auto-save (`doAutoSave` → `waitForPendingLoads`) wait for this file to
+    // land in backend `state.sessions` before it snapshots the manifest,
+    // instead of silently saving without it. See `hooks/workspace/pendingLoads.ts`.
+    let resolvePending: () => void = () => {};
+    registerPendingLoad(`${genKey}:${gen}`, new Promise<void>((resolve) => { resolvePending = resolve; }));
+
     try {
       diag('file-load', 'calling loadLogFile IPC');
       const results = await loadLogFile(path, sourceType);
@@ -248,8 +267,19 @@ export function useFileSession(
       if (!result) throw new Error('No sessions returned from load_log_file');
       diag('file-load', 'IPC returned', { sessionId: result.sessionId, totalLines: result.totalLines, sourceType: result.sourceType, isIndexing: result.isIndexing, sessionCount: results.length });
 
-      if (loadGenRef.current.get(genKey) !== gen) {
-        diag('file-load', 'stale generation — discarding', { gen, current: loadGenRef.current.get(genKey), genKey });
+      // Discard if either guard tripped: a newer load superseded this one
+      // (per-pane/tab generation guard), or the workspace this load was aimed
+      // at has since been torn down (epoch guard — new/open/switch bumped it
+      // while this load awaited the IPC call above). Both take the same
+      // discard branch: close whatever backend session(s) this load produced
+      // and clear any pre-seed, without ever registering into React state.
+      const isStaleGeneration = loadGenRef.current.get(genKey) !== gen;
+      const isStaleEpoch = getWorkspaceEpoch() !== epochAtStart;
+      if (isStaleGeneration || isStaleEpoch) {
+        diag('file-load', 'stale — discarding', {
+          gen, current: loadGenRef.current.get(genKey), genKey,
+          isStaleGeneration, isStaleEpoch, epochAtStart, currentEpoch: getWorkspaceEpoch(),
+        });
         for (const r of results) {
           try { await closeSessionCmd(r.sessionId); } catch { /* ignore */ }
           clearPreSeed(r.sessionId);
@@ -258,7 +288,7 @@ export function useFileSession(
       }
 
       // Post-load half: register the session and create/activate its tab.
-      registerLoadedSession(result, targetPaneId, tabId, { isNewTab, previousSessionId, path, loadRequestId });
+      registerLoadedSession(result, targetPaneId, tabId, { isNewTab, previousSessionId, path, loadRequestId, epoch: epochAtStart });
 
       // Register additional sessions from multi-session .lts import.
       const extraActions = planExtraSessionImport(
@@ -295,6 +325,7 @@ export function useFileSession(
               // unrelated tab of the same name from a different file.
               sourcePath: path,
               totalLines: action.session.totalLines,
+              epoch: epochAtStart,
             });
             break;
           case 'persistTabPath': {
@@ -314,6 +345,10 @@ export function useFileSession(
         loadGenRef.current.delete(genKey);
         setLoadingPane(targetPaneId, false);
       }
+      // Signal pending-loads registry regardless of outcome (success, error,
+      // or stale-discard early-return) — a load that will never register is
+      // just as "settled" from the auto-save's point of view as one that did.
+      resolvePending();
       diagEnd(`loadFile:${label}`);
     }
   }, [

@@ -17,6 +17,7 @@ import { basename } from '../../utils';
 import { pairArtifactsWithSessions } from './artifactPairing';
 import { buildEditorTabEvents } from './workspacePersistence';
 import { buildRestoreOutcomes, isLts, type RestorePlan } from './restorePlan';
+import { rebuildTreeSkeleton, createPaneResolver, type PaneResolver } from './restoreTreeSkeleton';
 
 /** The `.ltw`-derived data the core consumes (subset of `LoadWorkspaceV4Result`).
  *  For the pure-localStorage fallback the caller passes empty `sessionData` /
@@ -96,6 +97,44 @@ export async function restoreWorkspace(
     console.warn(`[restoreWorkspace] ${msg}`);
     warnings.push(msg);
   }
+
+  // Rebuild the saved center-tree's split skeleton BEFORE any session load,
+  // with fresh pane ids (the saved ones are stale by restore time) — see
+  // `restoreTreeSkeleton.ts`. Gated on `plan.applyLtwViewState`, exactly
+  // like the editor-tab/layout-blob replay below: when localStorage is
+  // already the fresher source (a plain app restart, not a workspace
+  // switch/open), its own centerTree already has the right shape AND pane
+  // ids that line up with the plan's stored-tab paneIds — replaying the
+  // (possibly older) `.ltw` tree here would stomp it. `rebuildTreeSkeleton`
+  // itself returns null for a legacy `.ltw` with no saved tree, so that
+  // case falls through unchanged to the pre-fix flat behavior.
+  //
+  // try/catch is load-bearing, not defensive style: this block sits BETWEEN
+  // the setWorkspaceAnalyses try/catch above and the loads' own try/finally
+  // below — inside neither. `workspace:restore-begin` already fired
+  // (suppressing both `useWorkspaceAutoSave`'s gate and
+  // `useWorkspaceLayout`'s `persistGateRef`), so an uncaught throw here would
+  // propagate straight out of `restoreWorkspace` without ever reaching the
+  // loads' `finally` that emits `workspace:restore-end` — leaving both gates
+  // stuck suppressed for the rest of the session. Catch locally, warn, and
+  // fall back to no resolver (flat/legacy behavior) instead.
+  let paneResolver: PaneResolver | null = null;
+  if (plan.applyLtwViewState) {
+    try {
+      const layoutBlob = result.layout as { centerTree?: unknown } | null;
+      const skeleton = layoutBlob ? rebuildTreeSkeleton(layoutBlob.centerTree) : null;
+      if (skeleton) {
+        paneResolver = createPaneResolver(skeleton);
+        bus.emit('workspace:restore-tree-skeleton', { tree: skeleton.tree });
+      }
+    } catch (e) {
+      const msg = `Failed to rebuild the saved pane layout: ${e}`;
+      console.warn(`[restoreWorkspace] ${msg}`);
+      warnings.push(msg);
+      paneResolver = null;
+    }
+  }
+
   // Correlation id stamped on every loadFile call this restore makes. A user
   // can open a file (via the normal open path) while a restore load is
   // in-flight — the awaited io.loadFile below yields the event loop, and an
@@ -133,8 +172,18 @@ export async function restoreWorkspace(
     try {
       for (const load of plan.loads) {
         const before = loadedOrder.length;
+        // Prefer the pane this session occupied when the workspace was
+        // saved (matched by the content-stable `sourcePath`, since every
+        // pane id in the rebuilt skeleton is fresh), then a straight remap
+        // of the plan's own (possibly stale) paneId, then fall back to the
+        // plan's paneId as-is (no skeleton, or no match — e.g. a file
+        // opened after the last save) so `loadFile` applies its normal
+        // active/first-pane default.
+        const effectivePaneId = paneResolver
+          ? paneResolver.resolve({ sourcePath: load.path, oldPaneId: load.paneId }) ?? load.paneId
+          : load.paneId;
         try {
-          await io.loadFile(load.path, load.paneId, load.existingTabId, load.sourceType as SourceType | undefined, undefined, loadRequestId);
+          await io.loadFile(load.path, effectivePaneId, load.existingTabId, load.sourceType as SourceType | undefined, undefined, loadRequestId);
         } catch (e) {
           console.warn(`[restoreWorkspace] Failed to load ${load.path}:`, e);
         }
@@ -249,12 +298,26 @@ export async function restoreWorkspace(
       bus.off('session:indexing-complete', onIndexingComplete);
     }
 
-    // View-state: editor tabs + layout blob. Only when localStorage did not
-    // already restore them (else they self-restore from their own keys and this
-    // would duplicate). Center tree is intentionally rebuilt by session loads.
+    // View-state: editor tabs + layout blob (pane widths, visible panes,
+    // etc). Only when localStorage did not already restore them (else they
+    // self-restore from their own keys and this would duplicate). The
+    // center tree itself was already rebuilt above (before the loads loop)
+    // under the same `applyLtwViewState` gate — `workspace:restore-layout`'s
+    // handler (`useWorkspaceLayout.onRestoreLayout`) deliberately continues
+    // to skip the tree: replaying the raw saved tree here (stale pane ids)
+    // would stomp the correctly-remapped live one.
     if (plan.applyLtwViewState) {
       for (const event of buildEditorTabEvents(result.editorTabs)) {
-        bus.emit('layout:open-tab', event);
+        // Steer this tab at the pane it occupied when saved — matched by the
+        // same content-stable `sourcePath`/`filePath` key the logviewer loads
+        // above used, via the same resolver (an editor placement, if any,
+        // isn't claimed by that earlier loop — it only ever matches `type:
+        // 'logviewer'` placements). `undefined` (no resolver, or no match —
+        // e.g. an untitled tab, or a legacy `.ltw` with no saved tree) falls
+        // back to `openCenterTab`'s normal focused-pane/first-leaf default,
+        // same as before this fix.
+        const paneId = paneResolver?.resolve({ sourcePath: event.filePath, type: 'editor' }) ?? undefined;
+        bus.emit('layout:open-tab', { ...event, paneId });
       }
       if (result.layout) {
         bus.emit('workspace:restore-layout', { layout: result.layout });

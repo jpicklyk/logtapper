@@ -11,6 +11,8 @@ import { STORAGE_KEY } from './workspace/workspaceTypes';
 import { planExplicitOpen } from './workspace/restorePlan';
 import { restoreWorkspace, type RestoreIo } from './workspace/restoreCore';
 import { pushWorkspaceEnvelope } from './workspace/envelopeSync';
+import { bumpWorkspaceEpoch } from './workspace/workspaceEpoch';
+import { waitForPendingLoads } from './workspace/pendingLoads';
 
 /** Derive a workspace display name from a file path. */
 export function workspaceNameFromPath(path: string): string {
@@ -129,6 +131,19 @@ export function useWorkspace(
     const active = ctx.activeWorkspace;
     if (!active) return;
 
+    // SAVE HOLE fix: this save's payload is built from backend
+    // `state.sessions`, which a file whose `load_log_file` IPC hasn't
+    // resolved yet is absent from — waiting here gives any load that was
+    // already in flight when the switch was triggered a chance to land in
+    // `state.sessions` first, instead of the source workspace's manifest
+    // silently losing it. Bounded (see `pendingLoads.ts`) so a hung load
+    // can't block the switch indefinitely — this call happens BEFORE
+    // `doClearPanes` bumps the workspace epoch, so any load still in flight
+    // when the wait times out resolves normally afterward (not discarded by
+    // the epoch guard) and is simply absent from this particular save, same
+    // as today.
+    await waitForPendingLoads();
+
     const { workspaceName, editorTabs, layout, pipelineChain, disabledChainIds } =
       buildSavePayload(active.id, '', active.name);
     try {
@@ -147,6 +162,16 @@ export function useWorkspace(
 
   /** Clear the current panes (close all backend sessions + reset layout tree). */
   const doClearPanes = useCallback(async () => {
+    // Bump the workspace epoch FIRST — synchronously, before any `await` —
+    // so it happens strictly before this teardown's `closeAllSessions()`
+    // below and, critically, before whatever workspace-restore burst of
+    // `loadFile` calls follows this function's caller (`doLoadWorkspace` /
+    // `restoreWorkspace`, invoked only after `doClearPanes()` resolves). Any
+    // load already in flight at this point captured the OLD epoch and
+    // discards itself on resolve (see `useFileSession.loadFile`); the
+    // restore's own loads start after this line and capture the NEW epoch,
+    // so they are correctly NOT discarded.
+    bumpWorkspaceEpoch();
     bus.emit('workspace:before-reset', undefined);
     // Arm the backend autosave switch-suppression window before tearing sessions
     // down. This is the single common teardown for every workspace transition
