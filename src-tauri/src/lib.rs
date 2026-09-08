@@ -574,6 +574,7 @@ pub fn run() {
             commands::workspace_cmd::get_app_state,
             commands::workspace_cmd::save_app_state_cmd,
             // MCP bridge control
+            commands::mcp::get_mcp_sidecar_path,
             commands::mcp::start_mcp_bridge,
             commands::mcp::stop_mcp_bridge,
         ])

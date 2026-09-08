@@ -77,6 +77,55 @@ pub fn stop_mcp_bridge(state: tauri::State<'_, AppState>) -> Result<(), String> 
     stop_mcp_bridge_inner(&state)
 }
 
+/// Locate the bundled `logtapper-mcp` sidecar inside `dir`.
+///
+/// Tauri strips the target triple when installing an `externalBin`, so the
+/// expected name is plain `logtapper-mcp` (`.exe` on Windows).  A manually
+/// copied binary may still carry the triple suffix, so a prefix match is
+/// accepted as a fallback.  Returns `None` when no candidate exists — the
+/// normal case for dev builds, which have no sidecar.
+pub(crate) fn find_sidecar_in(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut fallback: Option<std::path::PathBuf> = None;
+
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy();
+
+        if !name.starts_with("logtapper-mcp") {
+            continue;
+        }
+        // Skip build artefacts that share the prefix (.pdb, .d, .dSYM, ...).
+        let looks_executable = if cfg!(windows) {
+            name.ends_with(".exe")
+        } else {
+            !name.contains('.')
+        };
+        if !looks_executable || !entry.path().is_file() {
+            continue;
+        }
+
+        if name == "logtapper-mcp" || name == "logtapper-mcp.exe" {
+            return Some(entry.path());
+        }
+        fallback.get_or_insert_with(|| entry.path());
+    }
+
+    fallback
+}
+
+/// Full path to the bundled MCP sidecar, for display in Settings.
+///
+/// Returns `None` in dev builds (no sidecar is produced by `tauri dev`) — the
+/// frontend then shows the `node --experimental-strip-types` launch form
+/// instead.  Used to let users copy a ready-to-paste client configuration
+/// rather than hunting for the install directory by hand.
+#[tauri::command]
+pub fn get_mcp_sidecar_path() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    find_sidecar_in(dir).map(|p| p.to_string_lossy().into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,5 +220,82 @@ mod tests {
         let result = stop_mcp_bridge_inner(&state);
 
         assert!(result.is_ok(), "stop must return Ok even when no sender exists");
+    }
+
+    // -------------------------------------------------------------------------
+    // find_sidecar_in
+    // -------------------------------------------------------------------------
+
+    fn sidecar_name(stem: &str) -> String {
+        if cfg!(windows) {
+            format!("{stem}.exe")
+        } else {
+            stem.to_string()
+        }
+    }
+
+    #[test]
+    fn test_find_sidecar_exact_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let expected = dir.path().join(sidecar_name("logtapper-mcp"));
+        std::fs::write(&expected, b"x").unwrap();
+
+        let found = find_sidecar_in(dir.path()).expect("sidecar must be found");
+
+        assert_eq!(found, expected);
+    }
+
+    #[test]
+    fn test_find_sidecar_none_when_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(sidecar_name("log-tapper")), b"x").unwrap();
+
+        assert!(
+            find_sidecar_in(dir.path()).is_none(),
+            "the main app binary must not be mistaken for the sidecar"
+        );
+    }
+
+    #[test]
+    fn test_find_sidecar_accepts_target_triple_suffix() {
+        let dir = tempfile::tempdir().unwrap();
+        let suffixed = dir.path().join(sidecar_name("logtapper-mcp-x86_64-unknown-linux-gnu"));
+        std::fs::write(&suffixed, b"x").unwrap();
+
+        let found = find_sidecar_in(dir.path()).expect("suffixed sidecar must be found");
+
+        assert_eq!(found, suffixed);
+    }
+
+    #[test]
+    fn test_find_sidecar_prefers_exact_over_suffixed() {
+        let dir = tempfile::tempdir().unwrap();
+        let exact = dir.path().join(sidecar_name("logtapper-mcp"));
+        std::fs::write(dir.path().join(sidecar_name("logtapper-mcp-aarch64-apple-darwin")), b"x").unwrap();
+        std::fs::write(&exact, b"x").unwrap();
+
+        let found = find_sidecar_in(dir.path()).expect("sidecar must be found");
+
+        assert_eq!(found, exact, "the unsuffixed binary is the installed one");
+    }
+
+    #[test]
+    fn test_find_sidecar_skips_build_artefacts() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("logtapper-mcp.pdb"), b"x").unwrap();
+        std::fs::write(dir.path().join("logtapper-mcp.d"), b"x").unwrap();
+
+        assert!(
+            find_sidecar_in(dir.path()).is_none(),
+            "debug artefacts sharing the prefix must be ignored"
+        );
+    }
+
+    #[test]
+    fn test_find_sidecar_missing_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let gone = dir.path().join("does-not-exist");
+
+        assert!(find_sidecar_in(&gone).is_none(), "unreadable dir must yield None, not panic");
     }
 }

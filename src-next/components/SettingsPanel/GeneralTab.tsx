@@ -14,6 +14,7 @@ import {
 import { useSettingsActions } from '../../context';
 import type { FileAssocEntry, McpOpenAllowlist } from '../../bridge/types';
 import { useMcpStatus } from '../../hooks';
+import McpAgentSetup from './McpAgentSetup';
 import { formatNumber } from '../../utils';
 import css from './SettingsPanel.module.css';
 
@@ -271,6 +272,7 @@ const McpIntegrationSection = memo(function McpIntegrationSection({ settings, on
           <span className={css.mcpStatusText}>{statusText}</span>
         </div>
       )}
+      <McpAgentSetup />
     </div>
   );
 });

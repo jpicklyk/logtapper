@@ -703,3 +703,12 @@ export function getMcpOpenAllowlist(): Promise<McpOpenAllowlist> {
 export function setMcpOpenAllowlist(dirs: string[], allowAll: boolean): Promise<void> {
   return invoke('set_mcp_open_allowlist', { dirs, allowAll });
 }
+
+/**
+ * Absolute path to the bundled `logtapper-mcp` sidecar, or `null` when there is
+ * none — the normal case in dev builds, where the TypeScript server is run
+ * directly instead.
+ */
+export function getMcpSidecarPath(): Promise<string | null> {
+  return invoke('get_mcp_sidecar_path');
+}
