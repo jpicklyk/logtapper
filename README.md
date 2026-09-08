@@ -89,59 +89,23 @@ cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 
 ## MCP Server
 
-LogTapper includes a bundled MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) server that gives AI agents direct tool access to live log sessions — no Node.js or separate install required.
+LogTapper ships a bundled MCP ([Model Context Protocol](https://modelcontextprotocol.io/))
+server that gives AI agents direct tool access to your live log sessions — 21 tools
+for searching lines, running analysis pipelines, reading state-tracker events, and
+managing bookmarks and watches. No Node.js or separate install required.
 
-### How it works
+Enable the bridge in **Settings > General > MCP Integration**, then connect your client:
 
-1. LogTapper ships a bundled MCP server binary alongside the app
-2. Enable the HTTP bridge in **Settings > General > MCP Integration**
-3. Configure your AI agent to spawn the bundled binary — it connects via stdio transport
+| Client | Setup |
+|---|---|
+| **[Claude Code](docs/mcp/claude-code.md)** | Two commands — the LogTapper plugin finds the binary and registers it for you |
+| **[Claude Desktop](docs/mcp/claude-desktop.md)** | Add one entry to `claude_desktop_config.json` |
+| **[Other MCP clients](docs/mcp/README.md#step-3--connect-your-client)** | Launch the bundled binary over stdio — no arguments, no environment variables |
 
-### Setup
+LogTapper must be running with the bridge enabled for tool calls to work.
 
-**Step 1 — Enable the MCP Bridge**
-
-Open LogTapper and go to **Settings > General > MCP Integration**, then toggle the MCP Bridge on. LogTapper starts listening on `127.0.0.1:40404`.
-
-**Step 2 — Configure your AI agent**
-
-Add LogTapper to your agent's MCP server config, pointing at the bundled binary:
-
-_Claude Code_ (`~/.claude/settings.json`):
-```json
-{
-  "mcpServers": {
-    "logtapper": {
-      "command": "<path-to-logtapper-mcp>"
-    }
-  }
-}
-```
-
-_Claude Desktop_ (`claude_desktop_config.json`): same format as above.
-
-**Step 3 — Find the binary path**
-
-| Platform | Location |
-|----------|----------|
-| Windows  | Installed alongside the app executable |
-| macOS    | Inside `LogTapper.app/Contents/MacOS/` |
-| Linux    | Alongside the AppImage/binary |
-
-Replace `<path-to-logtapper-mcp>` with the full path to the binary on your system.
-
-> **Note:** LogTapper must be running with the MCP Bridge enabled for tool calls to work.
-
-### Capabilities
-
-The server exposes 18 tools organized into these categories:
-
-- **Session discovery** — list active sessions, get metadata (source type, line count, time range, tag distribution), browse bugreport/dumpstate sections
-- **Log querying** — sample lines (uniform/recent/around strategies), regex search with context, get lines around a point of interest
-- **Pipeline & processors** — view processor definitions, trigger pipeline runs, get results (reporter emissions, state tracker transitions, correlator events), get rendered insight summaries
-- **State reconstruction** — get a tracker's state at any line number (e.g., "what was the WiFi state when this crash happened?")
-- **Annotations** — manage bookmarks and analysis artifacts with line references
-- **Live monitoring** — create watches with filter criteria for real-time ADB streaming
+See the **[MCP Setup Guide](docs/mcp/README.md)** for binary locations, the full
+tool list, and troubleshooting.
 
 ## Project Structure
 

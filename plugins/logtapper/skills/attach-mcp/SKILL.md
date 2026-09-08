@@ -84,8 +84,9 @@ that folder if it is not found automatically.
 
 ### (c) Ask the user
 If neither is found, ask for the full path to the `logtapper-mcp` binary (or the
-LogTapper install folder). Point them to LogTapper's README → *MCP Server → Find
-the binary path*.
+LogTapper install folder). Point them to the
+[MCP Setup Guide](https://github.com/jpicklyk/logtapper/blob/main/docs/mcp/README.md#step-2--find-the-bundled-binary),
+which lists the install location for every platform.
 
 ## Step 3 — Register at user scope
 
