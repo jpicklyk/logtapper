@@ -25,15 +25,27 @@ Two consequences worth knowing up front:
 ## Step 1 — Enable the MCP Bridge
 
 In LogTapper, go to **Settings → General → MCP Integration** and toggle the
-bridge on. A status dot appears showing `Connected · 127.0.0.1:40404`.
+bridge on. A status dot appears reading `Bridge: ready on port 40404`. It
+changes to `Bridge: connected` only after a client has actually called a tool,
+so `ready` is the expected state until you finish connecting one.
 
 The bridge stays off until you enable it, and the setting persists across
 restarts.
 
 ## Step 2 — Find the bundled binary
 
-Released builds install a compiled `logtapper-mcp` binary next to the main
-LogTapper executable. Your client needs its full path.
+Releases newer than 0.10.0 install a compiled `logtapper-mcp` binary next to
+the main LogTapper executable (earlier releases did not include it). Your
+client needs its full path.
+
+**The easy way:** the same **Settings → General → MCP Integration** section
+shows the resolved path under **Connect an AI agent**, with buttons that copy
+the path, a ready-made `claude mcp add` command, or a ready-made Claude Desktop
+config block. If that panel says no bundled binary was found, you are on a
+pre-sidecar release or a source checkout — see
+[Running from source](#running-from-source).
+
+If you'd rather locate it by hand:
 
 | Platform | Path |
 |---|---|
@@ -91,7 +103,7 @@ The server exposes 21 tools:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Tools are listed, but every call errors or says "connection refused" | Bridge off, or LogTapper not running | Enable **Settings → General → MCP Integration**, and keep LogTapper open |
+| Tools are listed, but Claude reports "LogTapper is not running, or the MCP bridge is unavailable" (or a "fetch failed" error) | Bridge off, or LogTapper not running | Enable **Settings → General → MCP Integration**, and keep LogTapper open |
 | No `logtapper` tools appear at all | Wrong binary path, or client not restarted | Verify the path from Step 2, then fully restart your client |
 | `logtapper_open_file` is denied | Directory not allowlisted | Add the folder under **Settings → General → MCP File Access** |
 | Worked before, broken after reinstall | App moved between per-user and all-users install | Re-check the path in Step 2 and re-register |

@@ -56,19 +56,28 @@ this is a LogTapper source checkout. Launch via Node with TypeScript stripping:
 Resolve the absolute path from the repo root before building the command.
 
 ### (b) Installed app — bundled binary
-Released builds ship a compiled sidecar named `logtapper-mcp`
-(`logtapper-mcp.exe` on Windows) **next to the main executable**. The most
-reliable way to find it is through the running app process, then its sibling.
+Releases **newer than 0.10.0** ship a compiled sidecar named `logtapper-mcp`
+(`logtapper-mcp.exe` on Windows) **next to the main executable**. Earlier
+releases did not include it — if the user is on 0.10.0 or older, they must
+upgrade or use a dev checkout.
+
+The app itself knows the path: **Settings → General → MCP Integration →
+Connect an AI agent** shows it, with a **Copy Claude Code command** button that
+produces the exact `claude mcp add` line from Step 3. If LogTapper is open,
+asking the user to read or copy it from there is the fastest route.
+
+Otherwise, find it through the running app process, then its sibling:
 
 **Windows (PowerShell):**
 ```powershell
 $p = Get-Process log-tapper, LogTapper -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($p) { Get-ChildItem (Split-Path $p.Path) -Filter 'logtapper-mcp*.exe' | Select-Object -First 1 -ExpandProperty FullName }
 ```
-If the app is not running, probe common install locations:
-- `$env:LOCALAPPDATA\LogTapper\logtapper-mcp.exe`
-- `$env:LOCALAPPDATA\Programs\LogTapper\logtapper-mcp.exe`
-- `$env:ProgramFiles\LogTapper\logtapper-mcp.exe`
+If the app is not running, probe the two install locations the installers use:
+- `$env:ProgramFiles\LogTapper\logtapper-mcp.exe` — `.msi`, or `.exe` installer
+  with "for all users"
+- `$env:LOCALAPPDATA\LogTapper\logtapper-mcp.exe` — `.exe` installer with
+  "just for me"
 
 **macOS:**
 ```bash
@@ -77,10 +86,11 @@ ls "/Applications/LogTapper.app/Contents/MacOS/logtapper-mcp" 2>/dev/null
 
 **Linux:**
 ```bash
-command -v logtapper-mcp 2>/dev/null || ls ~/.local/bin/logtapper-mcp 2>/dev/null
+command -v logtapper-mcp 2>/dev/null || ls /usr/bin/logtapper-mcp 2>/dev/null
 ```
-For an AppImage build, the binary sits alongside the AppImage — ask the user for
-that folder if it is not found automatically.
+The `.deb` and `.rpm` install it to `/usr/bin`. For an AppImage build, the
+binary sits alongside the AppImage — ask the user for that folder if it is not
+found automatically.
 
 ### (c) Ask the user
 If neither is found, ask for the full path to the `logtapper-mcp` binary (or the
@@ -97,9 +107,9 @@ project. Everything after `--` is the launch command, passed through untouched.
 ```
 claude mcp add logtapper --scope user -- "<path-to>/logtapper-mcp"
 ```
-Windows example:
+Windows example (MSI / all-users install):
 ```
-claude mcp add logtapper --scope user -- "C:\Users\<you>\AppData\Local\LogTapper\logtapper-mcp.exe"
+claude mcp add logtapper --scope user -- "C:\Program Files\LogTapper\logtapper-mcp.exe"
 ```
 
 **Dev checkout:**
@@ -131,8 +141,9 @@ tool verified.**
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Tools registered but every call errors / connection refused | Bridge off or app not running | Enable *Settings → General → MCP Integration*; keep LogTapper open |
-| `logtapper-mcp` binary not found | Path unknown | Ask the user for the path; in a dev checkout use the Node command instead |
+| Tools registered but calls return "LogTapper is not running, or the MCP bridge is unavailable" (or "fetch failed") | Bridge off or app not running | Enable *Settings → General → MCP Integration*; keep LogTapper open |
+| `logtapper-mcp` binary not found next to the app | Release 0.10.0 or older — the sidecar was not shipped | Upgrade LogTapper, or in a dev checkout use the Node command instead |
+| `logtapper-mcp` binary not found, install location unknown | Path unknown | Have the user read it from *Settings → General → MCP Integration*, or ask for the install folder |
 | `node: not found` in dev mode | Node not installed | Use the bundled binary, or install Node ≥ 22 |
 | Wrong/old path registered | App moved or reinstalled | `claude mcp remove logtapper`, then redo Step 3 |
 | Tools still missing after add | Session hasn't reconnected | Start a new session or run `/mcp` |
