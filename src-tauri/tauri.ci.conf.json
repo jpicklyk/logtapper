@@ -1,0 +1,5 @@
+{
+  "bundle": {
+    "externalBin": ["../mcp-server/dist/logtapper-mcp"]
+  }
+}
