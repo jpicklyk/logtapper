@@ -9,18 +9,25 @@ watches. No Node.js and no separate install required.
 
 LogTapper exposes its open sessions over a local HTTP bridge on
 `127.0.0.1:40404`. The MCP server is a small **stdio** process that your AI
-client launches and that relays tool calls to that bridge.
+client launches and that relays tool calls to that bridge. Any client that can
+start a local MCP server can use it.
 
 ```
-Claude  ──stdio──▶  logtapper-mcp  ──HTTP──▶  LogTapper (127.0.0.1:40404)
+AI client  ──stdio──▶  logtapper-mcp  ──HTTP──▶  LogTapper (127.0.0.1:40404)
 ```
 
-Two consequences worth knowing up front:
+Three consequences worth knowing up front:
 
 - **LogTapper must be running** with the bridge enabled for any tool call to
   succeed. Registering the server while the app is closed is fine — the calls
   just fail until you open it.
 - The bridge is bound to loopback only. Nothing is exposed to your network.
+- **The MCP server has to run on the same machine as LogTapper.** The bridge
+  address is compiled in and the bridge rejects requests that do not arrive as
+  `127.0.0.1:40404` or `localhost:40404`, which blocks DNS-rebinding attacks but
+  also means there is no way to point the server at a different host. An agent
+  running in a container, in WSL, or over a remote SSH session cannot reach a
+  LogTapper running on your desktop.
 
 ## Step 1 — Enable the MCP Bridge
 
@@ -82,9 +89,46 @@ Setup differs by client, because they consume the server differently:
 - **[Claude Code](claude-code.md)** — registers the `logtapper-mcp` binary by
   absolute path, via the LogTapper plugin or `claude mcp add`. Claude Code
   cannot install `.mcpb` bundles, so this path stays manual.
-- **Any other MCP client** — launch the binary over **stdio**. It takes no
-  arguments and reads no environment variables; the bridge address is fixed at
-  `127.0.0.1:40404`. Register it under the name `logtapper`.
+- **[Any other MCP client](#any-other-mcp-client)** — launch the binary over
+  stdio. See the contract below.
+
+### Any other MCP client
+
+Most MCP clients are not Claude Desktop and cannot install a `.mcpb`. They launch
+a local process and speak MCP over its stdin/stdout, which is exactly what the
+bundled binary does — so any of them can use LogTapper. Rather than describe each
+client's configuration format, here is the contract to map onto whatever your
+client asks for:
+
+| Property | Value |
+|---|---|
+| Transport | **stdio** (the client launches the process; there is no URL to connect to) |
+| Command | the full path to `logtapper-mcp` — see [Step 2](#step-2--find-the-bundled-binary) |
+| Arguments | none |
+| Environment | none |
+| Server name | `logtapper` — tools are namespaced from it, so a different name renames every tool |
+
+Most clients express this as a JSON object keyed by server name, with a
+`command` and optional `args`:
+
+```json
+{
+  "logtapper": {
+    "command": "/full/path/to/logtapper-mcp"
+  }
+}
+```
+
+Where that object goes, and what the surrounding key is called, differs by
+client — check your client's own MCP documentation for the file it reads and the
+schema it expects. Two details are worth carrying over regardless: on Windows a
+path in JSON needs its backslashes doubled or replaced with forward slashes, and
+most clients only start MCP servers at launch, so restart the client after
+adding one.
+
+Running from a source checkout instead of an installed release? Use `node` as the
+command and the server entry point as the argument — see
+[Running from source](#running-from-source).
 
 ## Capabilities
 
