@@ -1,7 +1,7 @@
 {
   "name": "logtapper-mcp",
   "version": "1.3.0",
-  "description": "MCP server for LogTapper — gives AI agents tool access to live log sessions",
+  "description": "MCP server for LogTapper \u2014 gives AI agents tool access to live log sessions",
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
@@ -9,7 +9,8 @@
     "dev": "node --watch --experimental-strip-types src/index.ts",
     "build": "tsc --outDir dist",
     "start:compiled": "node dist/index.js",
-    "build:binary": "bun build --compile --outfile dist/logtapper-mcp src/index.ts"
+    "build:binary": "bun build --compile --outfile dist/logtapper-mcp src/index.ts",
+    "build:mcpb": "node scripts/build-mcpb.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",

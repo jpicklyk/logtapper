@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeDevCommand": "npm run build:mcpb && npm run dev",
+    "beforeBuildCommand": "npm run build && npm run build:mcpb"
   },
   "app": {
     "windows": [
@@ -29,22 +29,27 @@
     "active": true,
     "targets": "all",
     "resources": {
-      "../marketplace/marketplace.json": "marketplace/marketplace.json"
+      "../marketplace/marketplace.json": "marketplace/marketplace.json",
+      "../mcp-server/dist/logtapper.mcpb": "mcp/logtapper.mcpb"
     },
-"windows": {
+    "windows": {
       "nsis": {
         "installMode": "both"
       }
     },
     "fileAssociations": [
       {
-        "ext": ["lts"],
+        "ext": [
+          "lts"
+        ],
         "name": "LogTapper Session",
         "description": "LogTapper session file",
         "role": "Editor"
       },
       {
-        "ext": ["ltw"],
+        "ext": [
+          "ltw"
+        ],
         "name": "LogTapper Workspace",
         "description": "LogTapper workspace file",
         "role": "Editor"

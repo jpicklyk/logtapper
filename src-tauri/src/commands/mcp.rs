@@ -126,6 +126,79 @@ pub fn get_mcp_sidecar_path() -> Option<String> {
     find_sidecar_in(dir).map(|p| p.to_string_lossy().into_owned())
 }
 
+// ── MCP Bundle (.mcpb) — one-click install for Claude Desktop ──────────────
+//
+// The bundle is a self-contained copy of the MCP server that Claude Desktop
+// unpacks into its own extensions directory, so — unlike the `logtapper-mcp`
+// sidecar, which Claude Code launches by absolute path — nothing downstream
+// depends on where LogTapper itself was installed.
+
+/// Path to the bundled `.mcpb`, shipped as a Tauri resource.
+///
+/// `None` in dev builds, where resources are not staged.
+fn bundle_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    use tauri::Manager;
+    let path = app.path().resource_dir().ok()?.join("mcp/logtapper.mcpb");
+    path.is_file().then_some(path)
+}
+
+/// Open a path with the OS default handler.
+///
+/// Claude Desktop registers the `.mcpb` association when it installs, so this
+/// surfaces its install dialog directly. When Claude Desktop is absent there is
+/// no handler and the call is a no-op from the user's perspective — the caller
+/// is expected to offer "save a copy" alongside it.
+fn open_with_os(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("explorer.exe");
+        c.arg(path);
+        c
+    };
+    #[cfg(target_os = "macos")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("open");
+        c.arg(path);
+        c
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut cmd = {
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(path);
+        c
+    };
+
+    // explorer.exe returns a non-zero exit code even on success, so only a
+    // spawn failure is treated as an error.
+    cmd.spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Failed to open MCP bundle: {e}"))
+}
+
+/// Whether a bundled `.mcpb` is available to install or save.
+#[tauri::command]
+pub fn get_mcp_bundle_path(app: tauri::AppHandle) -> Option<String> {
+    bundle_path(&app).map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Hand the bundled `.mcpb` to the OS, triggering Claude Desktop's installer.
+#[tauri::command]
+pub fn open_mcp_bundle(app: tauri::AppHandle) -> Result<(), String> {
+    let path = bundle_path(&app).ok_or("No MCP bundle is shipped with this build")?;
+    open_with_os(&path)
+}
+
+/// Copy the bundled `.mcpb` to a user-chosen location.
+///
+/// The fallback when Claude Desktop is not installed, so the OS has no handler
+/// for the file and `open_mcp_bundle` would appear to do nothing.
+#[tauri::command]
+pub fn save_mcp_bundle(app: tauri::AppHandle, dest: String) -> Result<(), String> {
+    let src = bundle_path(&app).ok_or("No MCP bundle is shipped with this build")?;
+    std::fs::copy(&src, &dest).map_err(|e| format!("Failed to save MCP bundle: {e}"))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

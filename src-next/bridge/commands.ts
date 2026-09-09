@@ -712,3 +712,21 @@ export function setMcpOpenAllowlist(dirs: string[], allowAll: boolean): Promise<
 export function getMcpSidecarPath(): Promise<string | null> {
   return invoke('get_mcp_sidecar_path');
 }
+
+/**
+ * Absolute path to the bundled `.mcpb` MCP Bundle, or `null` when this build
+ * ships none (dev builds stage no resources).
+ */
+export function getMcpBundlePath(): Promise<string | null> {
+  return invoke('get_mcp_bundle_path');
+}
+
+/** Hand the bundled `.mcpb` to the OS, triggering Claude Desktop's installer. */
+export function openMcpBundle(): Promise<void> {
+  return invoke('open_mcp_bundle');
+}
+
+/** Copy the bundled `.mcpb` to `dest` — the fallback when Claude Desktop is absent. */
+export function saveMcpBundle(dest: string): Promise<void> {
+  return invoke('save_mcp_bundle', { dest });
+}
