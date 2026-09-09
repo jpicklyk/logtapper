@@ -76,10 +76,9 @@ on your clipboard.
 
 Setup differs by client, because they consume the server differently:
 
-- **[Claude Desktop](claude-desktop.md)** — one click. LogTapper ships an MCP
-  Bundle (`.mcpb`) and installs it for you from **Settings → General → MCP
-  Integration**. The bundle carries its own copy of the server, so no path is
-  involved and Step 2 does not apply.
+- **[Claude Desktop](claude-desktop.md)** — install a bundled `.mcpb` extension
+  saved from **Settings → General → MCP Integration**. The bundle carries its own
+  copy of the server, so no path is involved and Step 2 does not apply.
 - **[Claude Code](claude-code.md)** — registers the `logtapper-mcp` binary by
   absolute path, via the LogTapper plugin or `claude mcp add`. Claude Code
   cannot install `.mcpb` bundles, so this path stays manual.
@@ -114,7 +113,7 @@ The server exposes 21 tools:
 | No `logtapper` tools appear at all | Wrong binary path, or client not restarted | Verify the path from Step 2, then fully restart your client |
 | `logtapper_open_file` is denied | Directory not allowlisted | Add the folder under **Settings → General → MCP File Access** |
 | Worked before, broken after reinstall | App moved between per-user and all-users install | Re-check the path in Step 2 and re-register |
-| **Install extension** does nothing (Claude Desktop) | Claude Desktop not installed, so nothing owns `.mcpb` files | Use **Save bundle…**, then double-click the saved file once Desktop is installed |
+| Saved `.mcpb` won't open, or only **Save bundle...** is offered | Nothing on the system is registered for `.mcpb` — the Microsoft Store build of Claude Desktop does not claim it | Save the bundle, then install it from inside Claude Desktop's extension settings |
 
 ## Running from source
 

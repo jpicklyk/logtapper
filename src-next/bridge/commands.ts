@@ -42,6 +42,7 @@ import type {
   ExportAllOptions,
   FileAssocEntry,
   McpOpenAllowlist,
+  McpBundleInfo,
   SaveWorkspaceV4Options,
   SyncWorkspaceEnvelopeOptions,
   LoadWorkspaceV4Result,
@@ -714,10 +715,16 @@ export function getMcpSidecarPath(): Promise<string | null> {
 }
 
 /**
- * Absolute path to the bundled `.mcpb` MCP Bundle, or `null` when this build
- * ships none (dev builds stage no resources).
+ * The bundled `.mcpb`, or `null` when this build ships none (dev builds stage
+ * no resources).
+ *
+ * `installable` is false when no application is registered to open `.mcpb`
+ * files — notably the Microsoft Store build of Claude Desktop, which does not
+ * claim the extension. Handing the file to the shell there raises Windows'
+ * "How do you want to open this file?" chooser, so callers must offer saving a
+ * copy instead.
  */
-export function getMcpBundlePath(): Promise<string | null> {
+export function getMcpBundlePath(): Promise<McpBundleInfo | null> {
   return invoke('get_mcp_bundle_path');
 }
 

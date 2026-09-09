@@ -1,8 +1,8 @@
 # Connect LogTapper to Claude Desktop
 
-LogTapper ships an **MCP Bundle** (`.mcpb`) — a self-contained extension that
-Claude Desktop installs in one click. There are no file paths to look up and no
-config file to edit.
+LogTapper ships an **MCP Bundle** (`.mcpb`) — a self-contained extension for
+Claude Desktop. Installing it is a two-step process: save the bundle from
+LogTapper, then open it with Claude Desktop.
 
 > **This page is for Claude Desktop.** If you use Claude Code (the CLI or IDE
 > extension), follow [claude-code.md](claude-code.md) instead — it cannot install
@@ -17,23 +17,38 @@ here. See [the setup guide](README.md#step-1--enable-the-mcp-bridge).
 ## Install
 
 In LogTapper, go to **Settings → General → MCP Integration**. Below the bridge
-toggle, under **Connect an AI agent**, find the *Claude Desktop* row and click
-**Install extension**.
+toggle, under **Connect an AI agent**, find the *Claude Desktop* row.
 
-Claude Desktop opens its install dialog. Confirm it, and you're done — the
-LogTapper tools are available in your next conversation.
+**1. Click "Save bundle…"** and save `logtapper.mcpb` somewhere you can find it,
+such as your Downloads folder.
 
-That's the whole process. You can skip the rest of this page unless something
-goes wrong.
+**2. Open that file with Claude Desktop.** Claude Desktop shows an install
+dialog for `.mcpb` files; confirm it, and the LogTapper tools are available in
+your next conversation.
 
-### If nothing happens when you click Install
+If LogTapper also shows an **"Install extension"** button, your system already
+knows how to open `.mcpb` files and you can click that instead — it hands the
+bundle straight to Claude Desktop and skips the save step. The button is hidden
+when nothing on your system is registered for the file type, because clicking it
+would raise Windows' "How do you want to open this file?" chooser rather than an
+install dialog.
 
-The button hands the bundle to your operating system, which passes it to
-whichever app owns `.mcpb` files. If Claude Desktop isn't installed, nothing
-owns that extension and the click appears to do nothing.
+### If double-clicking the saved file does nothing
 
-Click **Save bundle…** instead, put the file somewhere you can find it, and
-double-click it once Claude Desktop is installed.
+Not every Claude Desktop build claims the `.mcpb` file type. The **Microsoft
+Store build on Windows registers file associations for documents and images but
+not for `.mcpb`**, so Windows doesn't know what to do with it.
+
+Install it from within Claude Desktop instead, through its own extension
+settings. Opening the file from inside the app avoids the file-association
+problem entirely.
+
+### Managed organizations
+
+Claude Desktop checks extensions against an organization allowlist and blocklist
+before installing. If your organization enables the allowlist and LogTapper
+isn't on it, the install may be refused — that's an administrator setting, not a
+problem with the bundle.
 
 ## What gets installed
 
@@ -58,8 +73,8 @@ You should get back your session with its source type and line count.
 
 ## Manual setup (fallback)
 
-You only need this if you can't use the bundle — an older LogTapper build that
-doesn't ship one, or a policy that blocks installing extensions.
+You only need this if you can't use the bundle at all — an older LogTapper build
+that doesn't ship one, or a policy that blocks extensions.
 
 <details>
 <summary>Configure <code>claude_desktop_config.json</code> by hand</summary>
@@ -117,14 +132,15 @@ the tray icon and choose **Quit**. On macOS use **Cmd+Q**.
 
 | Symptom | Fix |
 |---|---|
-| **Install extension** does nothing | Claude Desktop isn't installed, or doesn't own `.mcpb` files — use **Save bundle…** and double-click the saved file |
-| No *Claude Desktop* row in Settings | This LogTapper build ships no bundle — use the manual fallback above |
+| Double-clicking the saved `.mcpb` does nothing, or Windows asks how to open it | Your Claude Desktop build doesn't claim the file type — install the bundle from inside Claude Desktop's extension settings |
+| No **Install extension** button, only **Save bundle…** | Expected — nothing on your system is registered for `.mcpb`. Save it and open it from within Claude Desktop |
+| No *Claude Desktop* row in Settings at all | This LogTapper build ships no bundle — use the manual fallback above |
+| The install is refused | Your organization's extension allowlist may not include LogTapper — ask your administrator |
 | Extension installed but tools never appear | Check Claude Desktop's extension list; a failed extension reports its error there. Then check `%APPDATA%\Claude\logs\mcp.log` (macOS: `~/Library/Logs/Claude/mcp.log`) — this log is the definitive check |
 | Claude replies "LogTapper is not running, or the MCP bridge is unavailable" | LogTapper is closed, or the bridge is off — check **Settings → General → MCP Integration**. Some tools report the same condition as a "fetch failed" error instead |
 | `logtapper` doesn't appear under Manage connectors (manual setup) | Almost always the path or the JSON. Open `mcp.log` at the path above — a spawn error naming the path means the file isn't there; a parse error means the JSON is broken |
 | Nothing changed after saving the config (manual setup) | The app wasn't fully quit. Use tray → **Quit** on Windows, **Cmd+Q** on macOS |
 | Other servers vanished after you edited the file | An entry had an unsupported key or a syntax error and Claude Desktop rewrote the file. Restore it, keep only `command` under `logtapper`, and validate the JSON before saving |
-| The config file won't save | It may be open in another editor, or you edited the wrong copy — reopen via **Developer → Edit Config** |
 | `logtapper_open_file` is denied | The folder isn't allowlisted — add it under **Settings → General → MCP File Access** |
 
 More detail in the [main troubleshooting table](README.md#troubleshooting).

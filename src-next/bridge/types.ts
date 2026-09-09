@@ -1066,3 +1066,9 @@ export interface FileAssocEntry {
   registered: boolean;
   isDefault: boolean;
 }
+
+/** The bundled `.mcpb` MCP Bundle and whether the OS can open it. */
+export interface McpBundleInfo {
+  path: string;
+  installable: boolean;
+}

@@ -175,16 +175,78 @@ fn open_with_os(path: &std::path::Path) -> Result<(), String> {
         .map_err(|e| format!("Failed to open MCP bundle: {e}"))
 }
 
-/// Whether a bundled `.mcpb` is available to install or save.
+/// Whether the OS has an application registered to open `.mcpb` files.
+///
+/// Claude Desktop does not always claim the extension — the Microsoft Store
+/// (MSIX) build ships file associations for documents and images but not for
+/// `.mcpb`. Handing the file to the shell there raises Windows' "How do you
+/// want to open this file?" chooser instead of an install dialog, which is
+/// worse than not offering the action at all. Callers gate the one-click
+/// install on this and fall back to saving a copy.
+#[cfg(target_os = "windows")]
+fn has_mcpb_handler() -> bool {
+    use winreg::enums::{HKEY_CLASSES_ROOT, HKEY_CURRENT_USER, KEY_READ};
+    use winreg::RegKey;
+
+    // A UserChoice set by the user wins over any machine-wide registration.
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    if hkcu
+        .open_subkey_with_flags(
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.mcpb\UserChoice",
+            KEY_READ,
+        )
+        .and_then(|k| k.get_value::<String, _>("ProgId"))
+        .is_ok_and(|p| !p.is_empty())
+    {
+        return true;
+    }
+
+    // Otherwise the extension must resolve to a non-empty ProgId.
+    RegKey::predef(HKEY_CLASSES_ROOT)
+        .open_subkey_with_flags(".mcpb", KEY_READ)
+        .and_then(|k| k.get_value::<String, _>(""))
+        .is_ok_and(|p| !p.is_empty())
+}
+
+/// macOS and Linux register handlers through Launch Services / xdg-mime rather
+/// than a readable key. Probing either reliably costs more than it is worth
+/// here, so assume a handler and let the caller's fallback cover the miss.
+#[cfg(not(target_os = "windows"))]
+fn has_mcpb_handler() -> bool {
+    true
+}
+
+/// The bundled `.mcpb`, if this build ships one.
+///
+/// `installable` reports whether the OS can actually open it — when false the
+/// caller should offer "save a copy" only, since a one-click install would
+/// raise an unrelated chooser dialog.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpBundleInfo {
+    pub path: String,
+    pub installable: bool,
+}
+
+/// Whether a bundled `.mcpb` is available, and whether it can be installed.
 #[tauri::command]
-pub fn get_mcp_bundle_path(app: tauri::AppHandle) -> Option<String> {
-    bundle_path(&app).map(|p| p.to_string_lossy().into_owned())
+pub fn get_mcp_bundle_path(app: tauri::AppHandle) -> Option<McpBundleInfo> {
+    bundle_path(&app).map(|p| McpBundleInfo {
+        path: p.to_string_lossy().into_owned(),
+        installable: has_mcpb_handler(),
+    })
 }
 
 /// Hand the bundled `.mcpb` to the OS, triggering Claude Desktop's installer.
 #[tauri::command]
 pub fn open_mcp_bundle(app: tauri::AppHandle) -> Result<(), String> {
     let path = bundle_path(&app).ok_or("No MCP bundle is shipped with this build")?;
+    if !has_mcpb_handler() {
+        return Err(
+            "No application is registered to open .mcpb files. Save the bundle and              install it from Claude Desktop instead."
+                .to_string(),
+        );
+    }
     open_with_os(&path)
 }
 

@@ -7,6 +7,7 @@ import {
   openMcpBundle,
   saveMcpBundle,
 } from '../../bridge/commands';
+import type { McpBundleInfo } from '../../bridge/types';
 import { writeClipboard } from '../../viewport';
 import css from './SettingsPanel.module.css';
 
@@ -33,7 +34,7 @@ type CopyKey = 'path' | 'code' | 'desktop';
 
 const McpAgentSetup = memo(function McpAgentSetup() {
   const [sidecarPath, setSidecarPath] = useState<string | null>(null);
-  const [hasBundle, setHasBundle] = useState(false);
+  const [bundle, setBundle] = useState<McpBundleInfo | null>(null);
   const [resolved, setResolved] = useState(false);
   const [copied, setCopied] = useState<CopyKey | null>(null);
   const [bundleNote, setBundleNote] = useState<string | null>(null);
@@ -42,10 +43,10 @@ const McpAgentSetup = memo(function McpAgentSetup() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.allSettled([getMcpSidecarPath(), getMcpBundlePath()]).then(([sidecar, bundle]) => {
+    Promise.allSettled([getMcpSidecarPath(), getMcpBundlePath()]).then(([sidecar, b]) => {
       if (cancelled) return;
       if (sidecar.status === 'fulfilled') setSidecarPath(sidecar.value);
-      if (bundle.status === 'fulfilled') setHasBundle(bundle.value != null);
+      if (b.status === 'fulfilled') setBundle(b.value);
       setResolved(true);
     });
     return () => {
@@ -84,7 +85,9 @@ const McpAgentSetup = memo(function McpAgentSetup() {
     })
       .then((dest) => {
         if (!dest) return;
-        return saveMcpBundle(dest).then(() => note(`Saved to ${dest}`));
+        return saveMcpBundle(dest).then(() =>
+          note(`Saved to ${dest} — open this file with Claude Desktop to install it.`),
+        );
       })
       .catch((e) => note(String(e)));
   }, [note]);
@@ -95,17 +98,26 @@ const McpAgentSetup = memo(function McpAgentSetup() {
     <div className={css.mcpAgentSetup}>
       <div className={css.mcpAgentSetupTitle}>Connect an AI agent</div>
 
-      {hasBundle && (
+      {bundle && (
         <div className={css.mcpAgentClient}>
           <div className={css.mcpAgentClientName}>Claude Desktop</div>
           <div className={css.labelHint}>
-            Installs a self-contained extension — no file paths to configure.
+            {bundle.installable
+              ? 'Installs a self-contained extension — no file paths to configure.'
+              : 'Save the extension bundle, then add it from Claude Desktop. Nothing on this system opens .mcpb files directly.'}
           </div>
           <div className={css.mcpAgentActions}>
-            <Button variant="secondary" size="sm" type="button" onClick={handleInstall}>
-              Install extension
-            </Button>
-            <Button variant="ghost" size="sm" type="button" onClick={handleSave}>
+            {bundle.installable && (
+              <Button variant="secondary" size="sm" type="button" onClick={handleInstall}>
+                Install extension
+              </Button>
+            )}
+            <Button
+              variant={bundle.installable ? 'ghost' : 'secondary'}
+              size="sm"
+              type="button"
+              onClick={handleSave}
+            >
               Save bundle…
             </Button>
           </div>
