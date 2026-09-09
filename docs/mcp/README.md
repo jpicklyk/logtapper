@@ -113,7 +113,7 @@ The server exposes 21 tools:
 | No `logtapper` tools appear at all | Wrong binary path, or client not restarted | Verify the path from Step 2, then fully restart your client |
 | `logtapper_open_file` is denied | Directory not allowlisted | Add the folder under **Settings → General → MCP File Access** |
 | Worked before, broken after reinstall | App moved between per-user and all-users install | Re-check the path in Step 2 and re-register |
-| Saved `.mcpb` won't open, or only **Save bundle...** is offered | Nothing on the system is registered for `.mcpb` — the Microsoft Store build of Claude Desktop does not claim it | Save the bundle, then install it from inside Claude Desktop's extension settings |
+| Saved `.mcpb` won't open, or only **Save bundle...** is offered | Nothing on the system is registered for `.mcpb` — the Microsoft Store build of Claude Desktop does not claim it | Install it in Claude Desktop with **Developer -> Extensions -> Install Extension...** |
 
 ## Running from source
 

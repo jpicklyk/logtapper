@@ -86,7 +86,9 @@ const McpAgentSetup = memo(function McpAgentSetup() {
       .then((dest) => {
         if (!dest) return;
         return saveMcpBundle(dest).then(() =>
-          note(`Saved to ${dest} — open this file with Claude Desktop to install it.`),
+          note(
+            `Saved to ${dest} — in Claude Desktop, install it with Developer → Extensions → Install Extension…`,
+          ),
         );
       })
       .catch((e) => note(String(e)));
@@ -104,7 +106,7 @@ const McpAgentSetup = memo(function McpAgentSetup() {
           <div className={css.labelHint}>
             {bundle.installable
               ? 'Installs a self-contained extension — no file paths to configure.'
-              : 'Save the extension bundle, then add it from Claude Desktop. Nothing on this system opens .mcpb files directly.'}
+              : 'Save the extension bundle, then install it in Claude Desktop: Developer → Extensions → Install Extension…'}
           </div>
           <div className={css.mcpAgentActions}>
             {bundle.installable && (
