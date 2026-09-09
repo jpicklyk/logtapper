@@ -6,7 +6,19 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig({
   plugins: [react()],
   test: {
-    exclude: ['eslint-local-rules/**', '**/node_modules/**'],
+    // Patterns must be depth-agnostic: `.claude/worktrees/*` holds full repo
+    // checkouts, so a root-relative pattern like 'eslint-local-rules/**' matches
+    // only this copy and lets every worktree's tests into the run. Excluding
+    // '.claude/**' keeps collection to the working tree — without it, vitest
+    // also executes each worktree's src-next suite against whatever commit that
+    // worktree is parked on.
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/eslint-local-rules/**',
+      '.claude/**',
+      'src-tauri/**',
+    ],
   },
   clearScreen: false,
   server: {
