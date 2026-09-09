@@ -98,8 +98,8 @@ Enable the bridge in **Settings > General > MCP Integration**, then connect your
 
 | Client | Setup |
 |---|---|
+| **[Claude Desktop](docs/mcp/claude-desktop.md)** | One click — install the bundled `.mcpb` extension straight from Settings |
 | **[Claude Code](docs/mcp/claude-code.md)** | Two commands — the LogTapper plugin finds the binary and registers it for you |
-| **[Claude Desktop](docs/mcp/claude-desktop.md)** | Add one entry to `claude_desktop_config.json` |
 | **[Other MCP clients](docs/mcp/README.md#step-3--connect-your-client)** | Launch the bundled binary over stdio — no arguments, no environment variables |
 
 LogTapper must be running with the bridge enabled for tool calls to work.

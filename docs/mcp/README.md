@@ -34,6 +34,10 @@ restarts.
 
 ## Step 2 — Find the bundled binary
 
+> **Claude Desktop users can skip this step.** LogTapper ships an MCP Bundle
+> and installs it for you — see [claude-desktop.md](claude-desktop.md). The path
+> below only matters for Claude Code, which launches the server by absolute path.
+
 Releases newer than 0.10.0 install a compiled `logtapper-mcp` binary next to
 the main LogTapper executable (earlier releases did not include it). Your
 client needs its full path.
@@ -70,12 +74,15 @@ on your clipboard.
 
 ## Step 3 — Connect your client
 
-Setup differs by client. Pick yours:
+Setup differs by client, because they consume the server differently:
 
-- **[Claude Code](claude-code.md)** — two commands via the LogTapper plugin,
-  which finds the binary and registers it for you.
-- **[Claude Desktop](claude-desktop.md)** — add one entry to
-  `claude_desktop_config.json`.
+- **[Claude Desktop](claude-desktop.md)** — one click. LogTapper ships an MCP
+  Bundle (`.mcpb`) and installs it for you from **Settings → General → MCP
+  Integration**. The bundle carries its own copy of the server, so no path is
+  involved and Step 2 does not apply.
+- **[Claude Code](claude-code.md)** — registers the `logtapper-mcp` binary by
+  absolute path, via the LogTapper plugin or `claude mcp add`. Claude Code
+  cannot install `.mcpb` bundles, so this path stays manual.
 - **Any other MCP client** — launch the binary over **stdio**. It takes no
   arguments and reads no environment variables; the bridge address is fixed at
   `127.0.0.1:40404`. Register it under the name `logtapper`.
@@ -107,6 +114,7 @@ The server exposes 21 tools:
 | No `logtapper` tools appear at all | Wrong binary path, or client not restarted | Verify the path from Step 2, then fully restart your client |
 | `logtapper_open_file` is denied | Directory not allowlisted | Add the folder under **Settings → General → MCP File Access** |
 | Worked before, broken after reinstall | App moved between per-user and all-users install | Re-check the path in Step 2 and re-register |
+| **Install extension** does nothing (Claude Desktop) | Claude Desktop not installed, so nothing owns `.mcpb` files | Use **Save bundle…**, then double-click the saved file once Desktop is installed |
 
 ## Running from source
 
