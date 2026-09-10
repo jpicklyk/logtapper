@@ -489,7 +489,10 @@ pub(crate) async fn h_run_pipeline(
 
     // Pipeline is CPU-heavy (rayon); run on a blocking thread to avoid starving
     // the Axum async runtime.
-    let handle_clone = ctx.app.clone();
+    let handle_clone = match ctx.app() {
+        Ok(a) => a.clone(),
+        Err(e) => return Json(json!({ "error": e, "sessionId": session_id })),
+    };
     let state_for_task = Arc::clone(&ctx.state);
     let sid = session_id.clone();
     let pids = processor_ids.clone();

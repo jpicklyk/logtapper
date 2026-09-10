@@ -47,6 +47,26 @@ pub mod policy;
 pub mod snapshot;
 pub mod wire;
 
+// Domain services — one file per package (stubs until the owning package lands).
+pub mod analyses;
+pub mod bookmarks;
+pub mod correlator;
+pub mod export;
+pub mod filters;
+pub mod insights;
+pub mod lines;
+pub mod marketplace;
+pub mod pipeline;
+pub mod processors;
+pub mod search;
+pub mod sections;
+pub mod settings;
+pub mod stream;
+pub mod timeline;
+pub mod tracker;
+pub mod watches;
+pub mod workspace;
+
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 

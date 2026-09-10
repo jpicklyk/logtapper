@@ -136,7 +136,10 @@ pub(crate) async fn h_open_file(
             // the Tauri `load_log_file` command's own wrapping of this same
             // fn. The borrowed `&AppState` can't cross into the 'static
             // closure, so the `Arc` is cloned in instead.
-            let handle_for_task = ctx.app.clone();
+            let handle_for_task = match ctx.app() {
+                Ok(a) => a.clone(),
+                Err(e) => return err(StatusCode::SERVICE_UNAVAILABLE, e, "TRANSPORT_UNAVAILABLE"),
+            };
             let state_for_task = Arc::clone(&ctx.state);
             let open_result = tokio::task::spawn_blocking(move || {
                 let state = state_for_task;
@@ -221,7 +224,7 @@ pub(crate) async fn h_close_session(
     }
 
     if let Err(e) =
-        crate::commands::files::close_session_inner(state, Some(&ctx.app), &session_id)
+        crate::commands::files::close_session_inner(state, ctx.app.as_ref(), &session_id)
     {
         return err(StatusCode::INTERNAL_SERVER_ERROR, e, "CLOSE_FAILED");
     }

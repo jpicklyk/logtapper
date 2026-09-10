@@ -67,7 +67,11 @@ pub struct BridgeCtx {
     pub events: Arc<dyn EventSink>,
     pub paths: Arc<dyn AppPaths>,
     pub spawner: Arc<dyn Spawner>,
-    pub app: Handle,
+    /// Transitional Tauri handle for the handlers not yet on `ServiceCtx`
+    /// (artifact mutations, execute_pipeline, open/close session). `None` when
+    /// the router is built without Tauri (tests); those handlers then return
+    /// `TRANSPORT_UNAVAILABLE`. Removed once WP-4/5/6 land.
+    pub app: Option<Handle>,
 }
 
 impl BridgeCtx {
@@ -79,8 +83,27 @@ impl BridgeCtx {
             events: Arc::new(crate::commands::adapters::TauriSink::new(app.clone())),
             paths: Arc::new(crate::commands::adapters::TauriPaths::new(app.clone())),
             spawner: Arc::new(crate::commands::adapters::TauriSpawner),
-            app,
+            app: Some(app),
         }
+    }
+
+    /// Assemble a bridge context from already-built parts, with no Tauri
+    /// handle. Used by in-process router tests (`tests/bridge_http.rs`).
+    pub fn from_parts(
+        state: Arc<AppState>,
+        events: Arc<dyn EventSink>,
+        paths: Arc<dyn AppPaths>,
+        spawner: Arc<dyn Spawner>,
+    ) -> Self {
+        Self { state, events, paths, spawner, app: None }
+    }
+
+    /// The transitional handle, or the error string handlers surface when the
+    /// router was built without one.
+    pub(crate) fn app(&self) -> Result<&Handle, String> {
+        self.app
+            .as_ref()
+            .ok_or_else(|| "bridge transport handle unavailable (TRANSPORT_UNAVAILABLE)".to_string())
     }
 
     /// A [`ServiceCtx`] for an agent caller.

@@ -93,8 +93,12 @@ pub(crate) async fn h_create_bookmark(
 ) -> Json<Value> {
     use crate::core::bookmark::CreatedBy;
 
+    let app = match ctx.app() {
+        Ok(a) => a,
+        Err(e) => return Json(json!({ "error": e })),
+    };
     match crate::commands::artifact_mutations::add_bookmark(
-        &ctx.app,
+        app,
         session_id,
         body.line_number,
         body.label,
@@ -114,7 +118,11 @@ pub(crate) async fn h_delete_bookmark(
     State(ctx): State<BridgeCtx>,
     Path((session_id, bookmark_id)): Path<(String, String)>,
 ) -> Json<Value> {
-    match crate::commands::artifact_mutations::remove_bookmark(&ctx.app, session_id, bookmark_id) {
+    let app = match ctx.app() {
+        Ok(a) => a,
+        Err(e) => return Json(json!({ "error": e })),
+    };
+    match crate::commands::artifact_mutations::remove_bookmark(app, session_id, bookmark_id) {
         Ok(_) => Json(json!({ "ok": true })),
         Err(e) => Json(json!({ "error": e })),
     }
@@ -134,8 +142,12 @@ pub(crate) async fn h_update_bookmark(
     Path((session_id, bookmark_id)): Path<(String, String)>,
     Json(body): Json<UpdateBookmarkBody>,
 ) -> Json<Value> {
+    let app = match ctx.app() {
+        Ok(a) => a,
+        Err(e) => return Json(json!({ "error": e })),
+    };
     match crate::commands::artifact_mutations::update_bookmark(
-        &ctx.app,
+        app,
         session_id,
         bookmark_id,
         body.label,
@@ -190,8 +202,12 @@ pub(crate) async fn h_publish_workspace_analysis(
     State(ctx): State<BridgeCtx>,
     Json(body): Json<PublishAnalysisBody>,
 ) -> Json<Value> {
+    let app = match ctx.app() {
+        Ok(a) => a,
+        Err(e) => return Json(json!({ "error": e })),
+    };
     match crate::commands::artifact_mutations::publish_analysis(
-        &ctx.app,
+        app,
         None,
         body.title,
         body.sections,
@@ -209,8 +225,12 @@ pub(crate) async fn h_publish_analysis(
     Path(session_id): Path<String>,
     Json(body): Json<PublishAnalysisBody>,
 ) -> Json<Value> {
+    let app = match ctx.app() {
+        Ok(a) => a,
+        Err(e) => return Json(json!({ "error": e })),
+    };
     match crate::commands::artifact_mutations::publish_analysis(
-        &ctx.app,
+        app,
         Some(session_id),
         body.title,
         body.sections,
@@ -260,8 +280,12 @@ fn do_update_analysis(
     body: UpdateAnalysisBody,
     fallback_session: Option<String>,
 ) -> Json<Value> {
+    let app = match ctx.app() {
+        Ok(a) => a,
+        Err(e) => return Json(json!({ "error": e })),
+    };
     match crate::commands::artifact_mutations::update_analysis(
-        &ctx.app,
+        app,
         artifact_id,
         body.title,
         body.sections,
@@ -299,7 +323,11 @@ pub(crate) async fn h_update_analysis_scoped(
 }
 
 fn do_delete_analysis(ctx: &BridgeCtx, artifact_id: String) -> Json<Value> {
-    match crate::commands::artifact_mutations::remove_analysis(&ctx.app, artifact_id) {
+    let app = match ctx.app() {
+        Ok(a) => a,
+        Err(e) => return Json(json!({ "error": e })),
+    };
+    match crate::commands::artifact_mutations::remove_analysis(app, artifact_id) {
         Ok(()) => Json(json!({ "ok": true })),
         Err(e) => Json(json!({ "error": e })),
     }
