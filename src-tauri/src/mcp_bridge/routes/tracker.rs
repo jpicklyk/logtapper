@@ -1,21 +1,50 @@
-//! State-tracker and correlator endpoints: events, correlations, state_at,
-//! sections, section_at.
-
-use std::collections::HashMap;
+//! State-tracker, correlator, and section endpoints: events, correlations,
+//! state_at, sections, section_at.
+//!
+//! Every handler here is a thin adapter: resolve any bridge-only convenience
+//! (bare→qualified processor id resolution), build a `ServiceCtx` via
+//! `ctx.svc(client)`, call the shared `services::{tracker,correlator,sections}`
+//! function, then render the JSON shape this route has always returned.
+//! `services::insights` is the only other WP-3 service — its route lives in
+//! `routes/insights.rs`.
+//!
+//! **Deliberate wire-text changes** (documented here rather than silently
+//! introduced): errors surfaced by the shared services use `ServiceError`'s
+//! message text, which in a few cases differs from what this file used to
+//! spell out ad hoc — e.g. a missing tracker's error was `"no tracker results
+//! for session {s} / tracker {t}"` (lowercase) here vs.
+//! `"No state tracker results for session {s} / tracker {t}"` (capitalized,
+//! matching the desktop command) via `services::tracker::state_at`. Missing
+//! session/no-source errors on `h_sections`/`h_section_at` similarly now read
+//! `"Session '{id}' not found"` instead of `"Session not found: {id}"`. Both
+//! transports now say the same thing, which is the point of this package —
+//! see `services::tracker`/`services::sections` for the authoritative text.
 
 use axum::{
     Json,
     extract::{Path, Query, State},
+    http::HeaderMap,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::processors::marketplace::resolve_processor_id_checked;
-use crate::processors::state_tracker::engine::build_defaults;
-use crate::processors::state_tracker::types::StateTransition;
 
 use crate::mcp_bridge::BridgeCtx;
-use crate::mcp_bridge::respond::{get_session_and_source, lock_or_json_err, section_json};
+use crate::mcp_bridge::respond::section_json;
+use crate::services::{correlator, sections, tracker};
+
+/// Self-reported MCP client name from the `X-LogTapper-Client` header,
+/// defaulting to `"mcp"` — passed to `BridgeCtx::svc` so the activity feed
+/// (once these routes start mutating anything) can tell agents apart.
+/// `pub(super)` so `routes::insights` shares it rather than duplicating the
+/// lookup.
+pub(super) fn client_name(headers: &HeaderMap) -> &str {
+    headers
+        .get("x-logtapper-client")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("mcp")
+}
 
 // ---------------------------------------------------------------------------
 // GET /mcp/sessions/{session_id}/events
@@ -29,56 +58,35 @@ pub(crate) struct EventParams {
 
 pub(crate) async fn h_events(
     State(ctx): State<BridgeCtx>,
+    headers: HeaderMap,
     Path(session_id): Path<String>,
     Query(params): Query<EventParams>,
 ) -> Json<Value> {
-    let state = &*ctx.state;
     let limit = params.limit.unwrap_or(50).min(200);
+    let svc = ctx.svc(client_name(&headers));
 
-    let events: Vec<Value> = {
-        let pipeline_res = lock_or_json_err!(state.state_tracker_results, "state_tracker_results");
-        let stream_res   = lock_or_json_err!(state.stream_tracker_state, "stream_tracker_state");
-
-        // Collect transitions from pipeline results first, then streaming state.
-        // Both may coexist; streaming transitions use tracker_id as the key.
-        let mut all: Vec<Value> = Vec::new();
-
-        if let Some(session_map) = pipeline_res.get(&session_id) {
-            for r in session_map.values() {
-                for t in &r.transitions {
-                    all.push(json!({
-                        "trackerId": r.tracker_id,
-                        "transitionName": t.transition_name,
-                        "lineNum": t.line_num,
-                        "timestamp": t.timestamp,
-                        "changes": t.changes,
-                    }));
-                }
-            }
-        }
-
-        if let Some(session_map) = stream_res.get(&session_id) {
-            for (tracker_id, cont) in session_map {
-                for t in &cont.transitions {
-                    all.push(json!({
-                        "trackerId": tracker_id,
-                        "transitionName": t.transition_name,
-                        "lineNum": t.line_num,
-                        "timestamp": t.timestamp,
-                        "changes": t.changes,
-                    }));
-                }
-            }
-        }
-
-        all.sort_by(|a, b| b["lineNum"].as_u64().cmp(&a["lineNum"].as_u64()));
-        all.into_iter().take(limit).collect()
+    let events = match tracker::recent_events(&svc, &session_id, limit) {
+        Ok(events) => events,
+        Err(e) => return Json(json!({ "error": e.message() })),
     };
 
-    let count = events.len();
+    let events_json: Vec<Value> = events
+        .iter()
+        .map(|e| {
+            json!({
+                "trackerId": e.tracker_id,
+                "transitionName": e.transition.transition_name,
+                "lineNum": e.transition.line_num,
+                "timestamp": e.transition.timestamp,
+                "changes": e.transition.changes,
+            })
+        })
+        .collect();
+
+    let count = events_json.len();
     Json(json!({
         "sessionId": session_id,
-        "events": events,
+        "events": events_json,
         "count": count,
     }))
 }
@@ -99,48 +107,47 @@ pub(crate) struct CorrelationParams {
 
 pub(crate) async fn h_correlations(
     State(ctx): State<BridgeCtx>,
+    headers: HeaderMap,
     Path(session_id): Path<String>,
     Query(params): Query<CorrelationParams>,
 ) -> Json<Value> {
-    let state = &*ctx.state;
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);
+    let svc = ctx.svc(client_name(&headers));
 
-    let correlators: Vec<Value> = {
-        let cr = lock_or_json_err!(state.correlator_results, "correlator_results");
-        match cr.get(&session_id) {
-            None => vec![],
-            Some(session_map) => session_map
+    let groups = match correlator::events(&svc, &session_id, params.correlator_id.as_deref(), offset, limit) {
+        Ok(g) => g,
+        Err(e) => return Json(json!({ "error": e.message() })),
+    };
+
+    let correlators: Vec<Value> = groups
+        .iter()
+        .map(|g| {
+            let events: Vec<Value> = g
+                .page
+                .items
                 .iter()
-                .filter(|(cid, _)| {
-                    params.correlator_id.as_ref().map_or(true, |fid| fid == *cid)
-                })
-                .map(|(corr_id, result)| {
-                    let events: Vec<Value> = result.events.iter()
-                        .skip(offset)
-                        .take(limit)
-                        .map(|evt| {
-                            json!({
-                                "triggerLineNum": evt.trigger_line_num,
-                                "triggerTimestamp": evt.trigger_timestamp,
-                                "triggerSourceId": evt.trigger_source_id,
-                                "triggerFields": evt.trigger_fields,
-                                "message": evt.message,
-                                "matchedSourceIds": evt.matched_sources.keys().collect::<Vec<_>>(),
-                            })
-                        }).collect();
+                .map(|evt| {
                     json!({
-                        "correlatorId": corr_id,
-                        "totalEvents": result.events.len(),
-                        "eventCount": events.len(),
-                        "events": events,
-                        "offset": offset,
-                        "limit": limit,
+                        "triggerLineNum": evt.trigger_line_num,
+                        "triggerTimestamp": evt.trigger_timestamp,
+                        "triggerSourceId": evt.trigger_source_id,
+                        "triggerFields": evt.trigger_fields,
+                        "message": evt.message,
+                        "matchedSourceIds": evt.matched_sources.keys().collect::<Vec<_>>(),
                     })
                 })
-                .collect(),
-        }
-    };
+                .collect();
+            json!({
+                "correlatorId": g.correlator_id,
+                "totalEvents": g.page.total,
+                "eventCount": events.len(),
+                "events": events,
+                "offset": offset,
+                "limit": limit,
+            })
+        })
+        .collect();
 
     Json(json!({
         "sessionId": session_id,
@@ -160,83 +167,37 @@ pub(crate) struct StateAtParams {
 
 pub(crate) async fn h_state_at_line(
     State(ctx): State<BridgeCtx>,
+    headers: HeaderMap,
     Path((session_id, tracker_id)): Path<(String, String)>,
     Query(params): Query<StateAtParams>,
 ) -> Json<Value> {
-    let state = &*ctx.state;
     let line_num = params.line;
 
-    // Resolve bare ID → qualified ID (e.g. "wifi-state" → "wifi-state@official")
+    // Resolve bare ID → qualified ID (e.g. "wifi-state" → "wifi-state@official").
+    // Bridge-only convenience — the desktop UI always passes an already-qualified
+    // id, so this stays here rather than in `services::tracker::state_at`.
     let resolved_id = {
-        let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let procs = ctx.state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         match resolve_processor_id_checked(&procs, &tracker_id) {
             Ok(r) => r.unwrap_or_else(|| tracker_id.clone()),
             Err(e) => return Json(json!({ "error": e, "sessionId": session_id, "trackerId": tracker_id })),
         }
     };
 
-    // Resolve transitions from pipeline or stream state. Deliberately two
-    // plain blocks rather than `.or_else(|| { .. })` — `lock_or_json_err!`
-    // expands to an early `return` on poison, which must return from this
-    // handler, not from a closure.
-    let from_pipeline: Option<Vec<StateTransition>> = {
-        let pipeline_res = lock_or_json_err!(state.state_tracker_results, "state_tracker_results");
-        pipeline_res.get(&session_id)
-            .and_then(|session_map| session_map.get(&resolved_id))
-            .map(|r| r.transitions.clone())
-    };
-    let transitions: Option<Vec<StateTransition>> = if from_pipeline.is_some() {
-        from_pipeline
-    } else {
-        let stream_res = lock_or_json_err!(state.stream_tracker_state, "stream_tracker_state");
-        stream_res.get(&session_id)
-            .and_then(|m| m.get(&resolved_id))
-            .map(|cont| cont.transitions.clone())
-    };
+    let svc = ctx.svc(client_name(&headers));
 
-    let Some(transitions) = transitions else {
-        return Json(json!({
-            "error": format!("no tracker results for session {session_id} / tracker {resolved_id}"),
-        }));
-    };
-
-    // Replay transitions up to line_num against declared defaults
-    let defaults: HashMap<String, serde_json::Value> = {
-        let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        match procs.get(&resolved_id).and_then(|p| p.as_state_tracker()) {
-            Some(def) => build_defaults(def),
-            None => HashMap::new(),
-        }
-    };
-
-    let pos = transitions.partition_point(|t| t.line_num <= line_num);
-    let mut fields = defaults;
-    let mut initialized: Vec<String> = Vec::new();
-
-    for t in &transitions[..pos] {
-        for (field, change) in &t.changes {
-            fields.insert(field.clone(), change.to.clone());
-            if !initialized.contains(field) {
-                initialized.push(field.clone());
-            }
-        }
+    match tracker::state_at(&svc, &session_id, &resolved_id, line_num) {
+        Ok(snap) => Json(json!({
+            "trackerId": resolved_id,
+            "sessionId": session_id,
+            "lineNum": snap.line_num,
+            "timestamp": snap.timestamp,
+            "fields": snap.fields,
+            "initializedFields": snap.initialized_fields,
+            "sourceSections": snap.source_sections,
+        })),
+        Err(e) => Json(json!({ "error": e.message() })),
     }
-
-    let (snap_line, snap_ts) = if pos > 0 {
-        let t = &transitions[pos - 1];
-        (t.line_num, t.timestamp)
-    } else {
-        (0, 0)
-    };
-
-    Json(json!({
-        "trackerId": resolved_id,
-        "sessionId": session_id,
-        "lineNum": snap_line,
-        "timestamp": snap_ts,
-        "fields": fields,
-        "initializedFields": initialized,
-    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -272,55 +233,29 @@ pub(crate) struct SectionAtParams {
 /// line ranges by hand.
 pub(crate) async fn h_section_at(
     State(ctx): State<BridgeCtx>,
+    headers: HeaderMap,
     Path(session_id): Path<String>,
     Query(params): Query<SectionAtParams>,
 ) -> Json<Value> {
-    let state = &*ctx.state;
+    let svc = ctx.svc(client_name(&headers));
 
-    get_session_and_source!(state, session_id => sessions, session, source);
-
-    let sections = source.sections();
-    let total_lines = source.total_lines();
-    let line = params.line;
-
-    let describe = |i: usize| section_json(&sections[i]);
-
-    // Every section whose line range covers this line, outermost first. This is
-    // the honest "where am I" answer.
-    let containing: Vec<Value> = sections
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| line >= s.start_line && line <= s.end_line)
-        .map(|(i, _)| describe(i))
-        .collect();
-
-    // What `filter.section` would actually match — which is NOT simply the
-    // innermost containing section. Resolution takes the last section *starting*
-    // at or before the line and gives up if the line is past that section's end,
-    // rather than walking outward. So a line sitting inside a parent but after a
-    // subsection ended matches nothing at all.
-    let matched = crate::core::line::section_index_for_line(sections, line);
-
-    let note = if sections.is_empty() {
-        Some("This source has no parsed sections — not a bugreport/dumpstate, or detected as the wrong source type.")
-    } else if matched.is_none() && !containing.is_empty() {
-        Some("This line lies inside a section by range, but `filter.section` resolves it to nothing: resolution stops at the last section starting before the line and does not walk outward to an enclosing parent. A processor rule naming any of `containingSections` will NOT match this line.")
-    } else if matched.is_none() {
-        Some("Line falls outside every section — before the first, or in a gap between them.")
-    } else {
-        None
+    let result = match sections::at(&svc, &session_id, params.line) {
+        Ok(r) => r,
+        Err(e) => return Json(json!({ "error": e.message() })),
     };
+
+    let containing: Vec<Value> = result.containing.iter().map(section_json).collect();
 
     let mut out = json!({
         "sessionId": session_id,
-        "line": line,
+        "line": params.line,
         // The name a processor's `filter.section` must use to match this line.
         // Null means no rule can target it by section.
-        "matchesFilterSection": matched.map_or(Value::Null, |i| json!(sections[i].name)),
+        "matchesFilterSection": result.matches_filter_section.map_or(Value::Null, |s| json!(s)),
         "containingSections": containing,
-        "totalLinesInSession": total_lines,
+        "totalLinesInSession": result.total_lines_in_session,
     });
-    if let Some(n) = note {
+    if let Some(n) = result.note {
         out["note"] = json!(n);
     }
     Json(out)
@@ -328,40 +263,67 @@ pub(crate) async fn h_section_at(
 
 pub(crate) async fn h_sections(
     State(ctx): State<BridgeCtx>,
+    headers: HeaderMap,
     Path(session_id): Path<String>,
     Query(params): Query<SectionsParams>,
 ) -> Json<Value> {
-    let state = &*ctx.state;
-
-    get_session_and_source!(state, session_id => sessions, session, source);
-
-    let all_sections = source.sections();
-    let query_lower = params.query.as_deref().map(str::to_lowercase);
-
-    // Apply name filter
-    let filtered: Vec<&crate::core::session::SectionInfo> = all_sections.iter()
-        .filter(|s| match &query_lower {
-            Some(q) => s.name.to_lowercase().contains(q),
-            None => true,
-        })
-        .collect();
-
-    let total = filtered.len();
-    let offset = params.offset.unwrap_or(0);
     let limit = params.limit.unwrap_or(50).min(200);
+    let offset = params.offset.unwrap_or(0);
+    let svc = ctx.svc(client_name(&headers));
 
-    let page: Vec<Value> = filtered.iter()
-        .skip(offset)
-        .take(limit)
-        .map(|&s| section_json(s))
-        .collect();
+    let page = match sections::list(&svc, &session_id, params.query.as_deref(), offset, limit) {
+        Ok(p) => p,
+        Err(e) => return Json(json!({ "error": e.message() })),
+    };
+
+    let sections_json: Vec<Value> = page.items.iter().map(section_json).collect();
 
     Json(json!({
         "sessionId": session_id,
-        "total": total,
-        "returned": page.len(),
-        "offset": offset,
-        "limit": limit,
-        "sections": page,
+        "total": page.total,
+        "returned": sections_json.len(),
+        "offset": page.offset,
+        "limit": page.limit,
+        "sections": sections_json,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn headers_from(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        for (k, v) in pairs {
+            headers.insert(
+                axum::http::HeaderName::from_bytes(k.as_bytes()).unwrap(),
+                axum::http::HeaderValue::from_str(v).unwrap(),
+            );
+        }
+        headers
+    }
+
+    #[test]
+    fn client_name_defaults_to_mcp_when_header_absent() {
+        assert_eq!(client_name(&headers_from(&[])), "mcp");
+    }
+
+    #[test]
+    fn client_name_reads_the_header_when_present() {
+        let headers = headers_from(&[("x-logtapper-client", "claude-code")]);
+        assert_eq!(client_name(&headers), "claude-code");
+    }
+
+    #[test]
+    fn client_name_ignores_case_of_the_header_name() {
+        // HTTP header names are case-insensitive; axum's HeaderMap normalizes
+        // this, but pin it here since a header-name typo would silently fall
+        // back to "mcp" instead of failing loudly.
+        let headers = headers_from(&[("X-LogTapper-Client", "claude-desktop")]);
+        assert_eq!(client_name(&headers), "claude-desktop");
+    }
 }
