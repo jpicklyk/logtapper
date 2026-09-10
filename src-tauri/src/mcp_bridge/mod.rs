@@ -1,0 +1,329 @@
+//! HTTP bridge for the LogTapper MCP server.
+//!
+//! A TypeScript MCP server process (stdio transport) talks to Claude Code/Desktop.
+//! That process queries THIS local HTTP server on `127.0.0.1:40404` to read live
+//! AppState data — sessions, sampled log lines, and state-tracker events.
+//!
+//! Lock discipline: acquire a Mutex, copy/clone the data needed, drop the lock,
+//! THEN build the JSON response. Never hold a lock across an `.await`.
+//!
+//! The route table itself is split by domain under `routes/` — see
+//! [`router`] for the wiring and the append-only contract.
+
+mod middleware;
+mod respond;
+mod routes;
+
+use std::sync::Arc;
+
+use axum::{
+    Router,
+    middleware as axum_middleware,
+    routing::{delete, get, post},
+};
+use tauri::{AppHandle, Manager, Wry};
+
+use crate::commands::AppState;
+use crate::services::{AppPaths, Caller, EventSink, ServiceCtx, Spawner};
+
+use routes::activity::h_activity;
+use routes::artifacts::{
+    h_create_bookmark, h_delete_analysis, h_delete_analysis_scoped, h_delete_bookmark,
+    h_get_analysis, h_get_analysis_scoped, h_list_all_analyses, h_list_analyses,
+    h_list_bookmarks, h_publish_analysis, h_publish_workspace_analysis, h_update_analysis,
+    h_update_analysis_scoped, h_update_bookmark,
+};
+use routes::insights::h_insights;
+use routes::lines::{h_lines_around, h_query, h_tag_stats};
+use routes::pipeline::{h_pipeline, h_processor_detail, h_run_pipeline};
+use routes::processors::{h_processor_defs_list, h_processor_defs_single};
+use routes::search::{h_search, h_search_with_context};
+use routes::sessions::{h_close_session, h_metadata, h_open_file, h_sessions, h_status};
+use routes::tracker::{h_correlations, h_events, h_section_at, h_sections, h_state_at_line};
+use routes::watches::{h_cancel_watch, h_create_watch, h_list_watches};
+
+pub const PORT: u16 = 40404;
+
+/// Concrete handle type — Wry is the only desktop runtime Tauri ships.
+type Handle = AppHandle<Wry>;
+
+/// Router state for every bridge handler.
+///
+/// Replaces the bare `AppHandle` the router used to carry. Handlers now reach
+/// state through `ctx.state` and notify the frontend through `ctx.events`
+/// instead of resolving them out of a Tauri handle, which is what lets
+/// [`router`] be built (and driven with `tower::ServiceExt::oneshot`) without a
+/// live webview.
+///
+/// `app` is a **transitional** field. Four call sites still take an
+/// `AppHandle` directly — `files::open_file_inner`, `files::close_session_inner`,
+/// `artifact_mutations::*`, and `pipeline::execute_pipeline` — and this work
+/// package deliberately moves no handler logic, so the handle rides along until
+/// WP-4 / WP-5 / WP-6 convert those four to `ServiceCtx`. Nothing new may use
+/// it: reach for `state`, `events`, `paths` or `spawner` instead.
+#[derive(Clone)]
+pub struct BridgeCtx {
+    pub state: Arc<AppState>,
+    pub events: Arc<dyn EventSink>,
+    pub paths: Arc<dyn AppPaths>,
+    pub spawner: Arc<dyn Spawner>,
+    pub app: Handle,
+}
+
+impl BridgeCtx {
+    /// Assemble a bridge context from a live `AppHandle`. Called once, by
+    /// `commands::mcp::start_mcp_bridge`.
+    pub fn new(app: Handle) -> Self {
+        Self {
+            state: Arc::clone(&*app.state::<Arc<AppState>>()),
+            events: Arc::new(crate::commands::adapters::TauriSink::new(app.clone())),
+            paths: Arc::new(crate::commands::adapters::TauriPaths::new(app.clone())),
+            spawner: Arc::new(crate::commands::adapters::TauriSpawner),
+            app,
+        }
+    }
+
+    /// A [`ServiceCtx`] for an agent caller.
+    ///
+    /// This is one of exactly two places a [`Caller`] is constructed (the other
+    /// is `commands::adapters::ui_ctx`). `client` is the self-reported
+    /// `X-LogTapper-Client` header value, defaulting to `"mcp"` — it labels the
+    /// activity feed and is never trusted for authorization.
+    pub fn svc(&self, client: &str) -> ServiceCtx {
+        ServiceCtx::new(
+            Arc::clone(&self.state),
+            Arc::clone(&self.events),
+            Arc::clone(&self.paths),
+            Arc::clone(&self.spawner),
+            Caller::agent(client),
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Route table
+// ---------------------------------------------------------------------------
+//
+// Single source of truth for the *expected* route list (method + path), in
+// the SAME order `router()` registers them. `router()` cannot be built
+// generically from this list — axum's `.route(path, get(handler))` needs each
+// handler's concrete (distinct) type at the call site — so the two are kept
+// in sync by hand; the `route_table_matches_expected` test below (the only
+// consumer, hence `#[cfg(test)]`) guards against a silent drift by pinning
+// the rendered list against router()'s actual `.route(...)` calls. A later
+// package can additionally assert this against a live `router(ctx)` via
+// `tower::ServiceExt::oneshot` once `BridgeCtx::app` is retired (see the WP-0
+// handoff notes).
+//
+// APPEND-ONLY from Wave 1 on: adding a route is fine, changing or removing one
+// breaks a shipped MCP client. Add one line per (method, path) pair here AND
+// the matching `.route(...)` call in `router()` below.
+#[cfg(test)]
+const ROUTES: &[(&str, &str)] = &[
+    ("GET", "/mcp/status"),
+    ("POST", "/mcp/open_file"),
+    ("GET", "/mcp/sessions"),
+    ("POST", "/mcp/sessions/{session_id}/close"),
+    ("GET", "/mcp/sessions/{session_id}/query"),
+    ("GET", "/mcp/sessions/{session_id}/pipeline"),
+    ("GET", "/mcp/sessions/{session_id}/events"),
+    ("GET", "/mcp/sessions/{session_id}/correlations"),
+    ("GET", "/mcp/sessions/{session_id}/processor/{processor_id}"),
+    ("GET", "/mcp/sessions/{session_id}/tracker/{tracker_id}/state_at"),
+    ("GET", "/mcp/sessions/{session_id}/search"),
+    ("GET", "/mcp/sessions/{session_id}/metadata"),
+    ("GET", "/mcp/sessions/{session_id}/sections"),
+    ("GET", "/mcp/sessions/{session_id}/section_at"),
+    ("GET", "/mcp/sessions/{session_id}/tag-stats"),
+    ("GET", "/mcp/sessions/{session_id}/lines_around"),
+    ("GET", "/mcp/sessions/{session_id}/search_with_context"),
+    ("GET", "/mcp/processors"),
+    ("GET", "/mcp/processors/{processor_id}"),
+    // Phase 2 — Bookmarks
+    ("GET", "/mcp/sessions/{session_id}/bookmarks"),
+    ("POST", "/mcp/sessions/{session_id}/bookmarks"),
+    ("DELETE", "/mcp/sessions/{session_id}/bookmarks/{bookmark_id}"),
+    ("PUT", "/mcp/sessions/{session_id}/bookmarks/{bookmark_id}"),
+    // Phase 2 — Analysis artifacts (workspace-owned; see routes/artifacts.rs)
+    ("GET", "/mcp/analyses"),
+    ("POST", "/mcp/analyses"),
+    ("GET", "/mcp/analyses/{artifact_id}"),
+    ("PUT", "/mcp/analyses/{artifact_id}"),
+    ("DELETE", "/mcp/analyses/{artifact_id}"),
+    ("GET", "/mcp/sessions/{session_id}/analyses"),
+    ("POST", "/mcp/sessions/{session_id}/analyses"),
+    ("GET", "/mcp/sessions/{session_id}/analyses/{artifact_id}"),
+    ("PUT", "/mcp/sessions/{session_id}/analyses/{artifact_id}"),
+    ("DELETE", "/mcp/sessions/{session_id}/analyses/{artifact_id}"),
+    // Phase 3 — Insights
+    ("GET", "/mcp/sessions/{session_id}/insights"),
+    // Pipeline run trigger (MCP)
+    ("POST", "/mcp/sessions/{session_id}/run_pipeline"),
+    // Phase 4 — Watches
+    ("GET", "/mcp/sessions/{session_id}/watches"),
+    ("POST", "/mcp/sessions/{session_id}/watches"),
+    ("DELETE", "/mcp/sessions/{session_id}/watches/{watch_id}"),
+    // Activity feed (both callers' actions; see `services::activity`).
+    ("GET", "/mcp/activity"),
+];
+
+/// Build the bridge's `Router` without binding a socket.
+///
+/// Split out of [`start`] so the whole route table — middleware included — can
+/// be driven in-process by a test with `tower::ServiceExt::oneshot`, instead of
+/// only over a real TCP listener. The route list is the transport contract with
+/// the MCP server and is **append-only**: adding a route is fine, changing or
+/// removing one breaks a shipped client. See [`ROUTES`] above — keep both in sync.
+pub fn router(ctx: BridgeCtx) -> Router {
+    Router::new()
+        .route("/mcp/status", get(h_status))
+        .route("/mcp/open_file", post(h_open_file))
+        .route("/mcp/sessions", get(h_sessions))
+        .route("/mcp/sessions/{session_id}/close", post(h_close_session))
+        .route("/mcp/sessions/{session_id}/query", get(h_query))
+        .route("/mcp/sessions/{session_id}/pipeline", get(h_pipeline))
+        .route("/mcp/sessions/{session_id}/events", get(h_events))
+        .route("/mcp/sessions/{session_id}/correlations", get(h_correlations))
+        .route("/mcp/sessions/{session_id}/processor/{processor_id}", get(h_processor_detail))
+        .route("/mcp/sessions/{session_id}/tracker/{tracker_id}/state_at", get(h_state_at_line))
+        .route("/mcp/sessions/{session_id}/search", get(h_search))
+        .route("/mcp/sessions/{session_id}/metadata", get(h_metadata))
+        .route("/mcp/sessions/{session_id}/sections", get(h_sections))
+        .route("/mcp/sessions/{session_id}/section_at", get(h_section_at))
+        .route("/mcp/sessions/{session_id}/tag-stats", get(h_tag_stats))
+        .route("/mcp/sessions/{session_id}/lines_around", get(h_lines_around))
+        .route("/mcp/sessions/{session_id}/search_with_context", get(h_search_with_context))
+        .route("/mcp/processors", get(h_processor_defs_list))
+        .route("/mcp/processors/{processor_id}", get(h_processor_defs_single))
+        // Phase 2 — Bookmarks
+        .route("/mcp/sessions/{session_id}/bookmarks", get(h_list_bookmarks).post(h_create_bookmark))
+        .route("/mcp/sessions/{session_id}/bookmarks/{bookmark_id}", delete(h_delete_bookmark).put(h_update_bookmark))
+        // Phase 2 — Analysis artifacts (workspace-owned; see "Analysis endpoints" below)
+        .route("/mcp/analyses", get(h_list_all_analyses).post(h_publish_workspace_analysis))
+        .route("/mcp/analyses/{artifact_id}", get(h_get_analysis).put(h_update_analysis).delete(h_delete_analysis))
+        .route("/mcp/sessions/{session_id}/analyses", get(h_list_analyses).post(h_publish_analysis))
+        .route("/mcp/sessions/{session_id}/analyses/{artifact_id}", get(h_get_analysis_scoped).put(h_update_analysis_scoped).delete(h_delete_analysis_scoped))
+        // Phase 3 — Insights
+        .route("/mcp/sessions/{session_id}/insights", get(h_insights))
+        // Pipeline run trigger (MCP)
+        .route("/mcp/sessions/{session_id}/run_pipeline", post(h_run_pipeline))
+        // Phase 4 — Watches
+        .route("/mcp/sessions/{session_id}/watches", get(h_list_watches).post(h_create_watch))
+        .route("/mcp/sessions/{session_id}/watches/{watch_id}", delete(h_cancel_watch))
+        // Activity feed (both callers' actions; see `services::activity`).
+        .route("/mcp/activity", get(h_activity))
+        .layer(axum_middleware::from_fn_with_state(ctx.clone(), middleware::record_activity))
+        // `require_local` is added AFTER `record_activity`, which in axum/tower
+        // layering means it becomes the OUTERMOST layer and therefore runs
+        // FIRST on every inbound request (layers wrap inside-out in the order
+        // they're added; the last `.layer()` call is the outermost wrapper).
+        // That ordering is required here: a rejected (non-local) request must
+        // be turned away by `require_local` before `record_activity` ever
+        // sees it, so untrusted traffic cannot stamp `mcp_last_activity`.
+        .layer(axum_middleware::from_fn_with_state(ctx.clone(), middleware::require_local))
+        .with_state(ctx)
+}
+
+/// Bind `127.0.0.1:PORT` and serve [`router`] until `shutdown_rx` fires.
+///
+/// Bind + serve + port-flag bookkeeping only — every routing decision lives in
+/// [`router`].
+pub async fn start(ctx: BridgeCtx, shutdown_rx: tokio::sync::oneshot::Receiver<()>) {
+    let state = Arc::clone(&ctx.state);
+    let router = router(ctx);
+
+    match tokio::net::TcpListener::bind(("127.0.0.1", PORT)).await {
+        Ok(listener) => {
+            // Record that the bridge is running so the frontend can show status.
+            if let Ok(mut p) = state.mcp_bridge_port.lock() {
+                *p = Some(PORT);
+            }
+            log::info!("MCP bridge listening on 127.0.0.1:{PORT}");
+            let graceful = axum::serve(listener, router)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                });
+            if let Err(e) = graceful.await {
+                log::error!("MCP bridge error: {e}");
+            }
+            // Clear the port flag so the frontend knows the bridge is no longer running.
+            if let Ok(mut p) = state.mcp_bridge_port.lock() {
+                *p = None;
+            }
+            // Clear the shutdown sender so start_mcp_bridge can restart cleanly.
+            if let Ok(mut s) = state.mcp_bridge_shutdown.lock() {
+                s.take();
+            }
+            log::info!("MCP bridge stopped");
+        }
+        Err(e) => {
+            log::error!(
+                "MCP bridge: cannot bind to 127.0.0.1:{PORT} — {e}. \
+                 Is another instance running?"
+            );
+            // Clear the shutdown sender on bind failure too, so the bridge can be restarted.
+            if let Ok(mut s) = state.mcp_bridge_shutdown.lock() {
+                s.take();
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Guards the transport contract in [`ROUTES`] against silent drift: the
+    /// rendered "METHOD /path" list must exactly match this pinned snapshot,
+    /// in the same order. `router()` is built from the same list by hand (see
+    /// the comment on [`ROUTES`]) — changing one without the other is exactly
+    /// the mistake this test exists to catch.
+    #[test]
+    fn route_table_matches_expected() {
+        let rendered: Vec<String> = ROUTES.iter().map(|(m, p)| format!("{m} {p}")).collect();
+
+        let expected: Vec<&str> = vec![
+            "GET /mcp/status",
+            "POST /mcp/open_file",
+            "GET /mcp/sessions",
+            "POST /mcp/sessions/{session_id}/close",
+            "GET /mcp/sessions/{session_id}/query",
+            "GET /mcp/sessions/{session_id}/pipeline",
+            "GET /mcp/sessions/{session_id}/events",
+            "GET /mcp/sessions/{session_id}/correlations",
+            "GET /mcp/sessions/{session_id}/processor/{processor_id}",
+            "GET /mcp/sessions/{session_id}/tracker/{tracker_id}/state_at",
+            "GET /mcp/sessions/{session_id}/search",
+            "GET /mcp/sessions/{session_id}/metadata",
+            "GET /mcp/sessions/{session_id}/sections",
+            "GET /mcp/sessions/{session_id}/section_at",
+            "GET /mcp/sessions/{session_id}/tag-stats",
+            "GET /mcp/sessions/{session_id}/lines_around",
+            "GET /mcp/sessions/{session_id}/search_with_context",
+            "GET /mcp/processors",
+            "GET /mcp/processors/{processor_id}",
+            "GET /mcp/sessions/{session_id}/bookmarks",
+            "POST /mcp/sessions/{session_id}/bookmarks",
+            "DELETE /mcp/sessions/{session_id}/bookmarks/{bookmark_id}",
+            "PUT /mcp/sessions/{session_id}/bookmarks/{bookmark_id}",
+            "GET /mcp/analyses",
+            "POST /mcp/analyses",
+            "GET /mcp/analyses/{artifact_id}",
+            "PUT /mcp/analyses/{artifact_id}",
+            "DELETE /mcp/analyses/{artifact_id}",
+            "GET /mcp/sessions/{session_id}/analyses",
+            "POST /mcp/sessions/{session_id}/analyses",
+            "GET /mcp/sessions/{session_id}/analyses/{artifact_id}",
+            "PUT /mcp/sessions/{session_id}/analyses/{artifact_id}",
+            "DELETE /mcp/sessions/{session_id}/analyses/{artifact_id}",
+            "GET /mcp/sessions/{session_id}/insights",
+            "POST /mcp/sessions/{session_id}/run_pipeline",
+            "GET /mcp/sessions/{session_id}/watches",
+            "POST /mcp/sessions/{session_id}/watches",
+            "DELETE /mcp/sessions/{session_id}/watches/{watch_id}",
+            "GET /mcp/activity",
+        ];
+
+        assert_eq!(rendered, expected, "ROUTES drifted from the pinned route table — update both this test and router() together");
+    }
+}
