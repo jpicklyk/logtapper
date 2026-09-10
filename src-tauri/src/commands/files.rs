@@ -11,10 +11,14 @@ use tempfile::NamedTempFile;
 
 use crate::commands::{lock_or_err, AppState};
 use crate::core::line::{
-    HighlightKind, HighlightSpan, LineRequest, LineWindow, LogLevel, SearchQuery,
-    SearchSummary, ViewLine, ViewMode,
+    HighlightKind, HighlightSpan, LineRequest, LineWindow, SearchQuery, SearchSummary,
 };
 use crate::core::session::{AnalysisSession, SectionInfo, parser_for};
+use crate::commands::adapters::ui_ctx;
+use crate::services::lines::{
+    self, LineFilters, LineMetadataSource, LineSelection, LinesRequest,
+};
+use crate::services::{ServiceCtx, ServiceError};
 use ts_rs::TS;
 
 // ---------------------------------------------------------------------------
@@ -1078,263 +1082,53 @@ async fn run_background_indexer(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub async fn get_lines(
-    state: State<'_, std::sync::Arc<AppState>>,
-    request: LineRequest,
-) -> Result<LineWindow, String> {
-    let sessions = lock_or_err(&state.sessions, "sessions")?;
+pub async fn get_lines(app: AppHandle, request: LineRequest) -> Result<LineWindow, String> {
+    Ok(line_window(&ui_ctx(&app), request)?)
+}
 
-    let session = sessions
-        .get(&request.session_id)
-        .ok_or_else(|| format!("Session '{}' not found", request.session_id))?;
-
-    let source = session
-        .primary_source()
-        .ok_or("No sources in session")?;
-
-    let total_lines = source.total_lines();
-    let parser = parser_for(source.source_type());
-
-    match request.mode {
-        ViewMode::Full => {
-            let start = request.offset.min(total_lines);
-            let end = (request.offset + request.count).min(total_lines);
-
-            let mut lines = Vec::with_capacity(end - start);
-
-            for i in start..end {
-                let raw = source.raw_line(i).as_deref().unwrap_or("").to_string();
-                // meta_at() adjusts for stream eviction offset; avoids OOB panic.
-                let meta = source.meta_at(i);
-
-                let highlights = request
-                    .search
-                    .as_ref()
-                    .map(|q| compute_search_highlights(&raw, q))
-                    .unwrap_or_default();
-
-                let view_line = if let Some(ctx) = parser.parse_line(&raw, source.id(), i) {
-                    ViewLine {
-                        line_num: i,
-                        virtual_index: i,
-                        raw: ctx.raw.to_string(),
-                        level: ctx.level,
-                        tag: ctx.tag.to_string(),
-                        message: ctx.message.to_string(),
-                        timestamp: ctx.timestamp,
-                        pid: ctx.pid,
-                        tid: ctx.tid,
-                        source_id: ctx.source_id.to_string(),
-                        highlights,
-                        matched_by: vec![],
-                        is_context: false,
-                    }
-                } else {
-                    // Section header or unparseable — fall back to stored meta.
-                    // If meta is None (line was evicted from stream buffer), use defaults.
-                    ViewLine {
-                        line_num: i,
-                        virtual_index: i,
-                        raw: raw.clone(),
-                        level: meta.map_or(LogLevel::Info, |m| m.level),
-                        tag: meta.map_or_else(String::new, |m| session.resolve_tag(m.tag_id).to_string()),
-                        message: raw,
-                        timestamp: meta.map_or(0, |m| m.timestamp),
-                        pid: 0,
-                        tid: 0,
-                        source_id: source.id().to_string(),
-                        highlights,
-                        matched_by: vec![],
-                        is_context: false,
-                    }
-                };
-
-                lines.push(view_line);
-            }
-
-            Ok(LineWindow { total_lines, lines })
-        }
-
-        ViewMode::Processor => {
-            let proc_id = request.processor_id.as_deref().ok_or("processor_id required for Processor mode")?;
-
-            // Get the matched line numbers from the last pipeline run.
-            let matched: Vec<usize> = {
-                let pr = lock_or_err(&state.pipeline_results, "pipeline_results")?;
-                pr.get(&request.session_id)
-                    .and_then(|s| s.get(proc_id))
-                    .map(|r| r.matched_line_nums.clone())
-                    .unwrap_or_default()
-            };
-
-            if matched.is_empty() {
-                return Ok(LineWindow { total_lines, lines: vec![] });
-            }
-
-            let ctx_lines = request.context;
-
-            // Build the set of lines to include (matches + context).
-            // Use a sorted deduplicated list so we emit in order.
-            let mut to_show: Vec<usize> = Vec::new();
-            for &m in &matched {
-                let start = m.saturating_sub(ctx_lines);
-                let end = (m + ctx_lines + 1).min(total_lines);
-                for ln in start..end {
-                    if to_show.last() != Some(&ln) {
-                        to_show.push(ln);
-                    }
-                }
-            }
-            to_show.sort_unstable();
-            to_show.dedup();
-
-            // Apply offset/count pagination over the collapsed view.
-            let total_collapsed = to_show.len();
-            let page_start = request.offset.min(total_collapsed);
-            let page_end = (page_start + request.count).min(total_collapsed);
-            let page = &to_show[page_start..page_end];
-
-            let matched_set: std::collections::HashSet<usize> =
-                matched.iter().copied().collect();
-
-            let mut lines = Vec::with_capacity(page.len());
-            for (pos, &ln) in page.iter().enumerate() {
-                let vi = page_start + pos;
-                let raw = source.raw_line(ln).as_deref().unwrap_or("").to_string();
-                let Some(meta) = source.meta_at(ln) else { continue };
-                let highlights = request
-                    .search
-                    .as_ref()
-                    .map(|q| compute_search_highlights(&raw, q))
-                    .unwrap_or_default();
-
-                let view_line = if let Some(ctx) = parser.parse_line(&raw, source.id(), ln) {
-                    ViewLine {
-                        line_num: ln,
-                        virtual_index: vi,
-                        raw: ctx.raw.to_string(),
-                        level: ctx.level,
-                        tag: ctx.tag.to_string(),
-                        message: ctx.message.to_string(),
-                        timestamp: ctx.timestamp,
-                        pid: ctx.pid,
-                        tid: ctx.tid,
-                        source_id: ctx.source_id.to_string(),
-                        highlights,
-                        matched_by: if matched_set.contains(&ln) {
-                            vec![proc_id.to_string()]
-                        } else {
-                            vec![]
-                        },
-                        is_context: !matched_set.contains(&ln),
-                    }
-                } else {
-                    ViewLine {
-                        line_num: ln,
-                        virtual_index: vi,
-                        raw: raw.clone(),
-                        level: meta.level,
-                        tag: session.resolve_tag(meta.tag_id).to_string(),
-                        message: raw,
-                        timestamp: meta.timestamp,
-                        pid: 0,
-                        tid: 0,
-                        source_id: source.id().to_string(),
-                        highlights,
-                        matched_by: if matched_set.contains(&ln) {
-                            vec![proc_id.to_string()]
-                        } else {
-                            vec![]
-                        },
-                        is_context: !matched_set.contains(&ln),
-                    }
-                };
-                lines.push(view_line);
-            }
-
-            Ok(LineWindow {
-                total_lines: total_collapsed,
-                lines,
-            })
-        }
-
-        ViewMode::Focus(center) => {
-            // Return `context` lines before and after center
-            let half = request.context.max(25);
-            let start = center.saturating_sub(half);
-            let end = (center + half + 1).min(total_lines);
-
-            // Build the sub-window inline. This is NOT a recursive call into the
-            // `ViewMode::Full` arm above — it can't be, since that arm always
-            // reports `is_context: false` while this one marks every line but
-            // `center` as context. Re-acquire the session lock after dropping
-            // it below (`get_lines` itself is not re-entered).
-            drop(sessions); // release lock before re-acquiring below
-            let state_ref: &AppState = &state;
-            let inner_sessions = lock_or_err(&state_ref.sessions, "sessions")?;
-            let inner_session = inner_sessions
-                .get(&request.session_id)
-                .ok_or("Session not found")?;
-            let inner_source = inner_session.primary_source().ok_or("No source")?;
-
-            let mut lines = Vec::new();
-            for i in start..end {
-                let raw = inner_source.raw_line(i).as_deref().unwrap_or("").to_string();
-                let meta = inner_source.meta_at(i);
-                let highlights = request
-                    .search
-                    .as_ref()
-                    .map(|q| compute_search_highlights(&raw, q))
-                    .unwrap_or_default();
-                let ctx = parser.parse_line(&raw, inner_source.id(), i);
-                let view_line = match ctx {
-                    Some(c) => ViewLine {
-                        line_num: i,
-                        virtual_index: i,
-                        raw: c.raw.to_string(),
-                        level: c.level,
-                        tag: c.tag.to_string(),
-                        message: c.message.to_string(),
-                        timestamp: c.timestamp,
-                        pid: c.pid,
-                        tid: c.tid,
-                        source_id: c.source_id.to_string(),
-                        highlights,
-                        matched_by: vec![],
-                        is_context: i != center,
-                    },
-                    None => {
-                        let m = meta.unwrap_or(&crate::core::line::LineMeta {
-                            level: LogLevel::Info,
-                            tag_id: 0,
-                            timestamp: 0,
-                            byte_offset: 0,
-                            byte_len: 0,
-                            is_section_boundary: false,
-                        });
-                        ViewLine {
-                            line_num: i,
-                            virtual_index: i,
-                            raw: raw.clone(),
-                            level: m.level,
-                            tag: inner_session.resolve_tag(m.tag_id).to_string(),
-                            message: raw,
-                            timestamp: m.timestamp,
-                            pid: 0,
-                            tid: 0,
-                            source_id: inner_source.id().to_string(),
-                            highlights,
-                            matched_by: vec![],
-                            is_context: i != center,
-                        }
-                    },
-                };
-                lines.push(view_line);
-            }
-
-            Ok(LineWindow { total_lines, lines })
-        }
+/// The viewer's `LineRequest` in the service layer's vocabulary.
+///
+/// The whole request is one contiguous window (`offset`/`count`) — `Processor`
+/// mode paginates the collapsed match list with the same two numbers, and
+/// `Focus` overrides the selection entirely with a window around its centre,
+/// both inside the service. The viewer sets no filters, no per-line character
+/// cap and no anonymization, which is what keeps its bytes unchanged.
+fn lines_request(request: LineRequest) -> LinesRequest {
+    LinesRequest {
+        session_id: request.session_id,
+        selection: LineSelection::Range {
+            offset: request.offset,
+            limit: request.count,
+        },
+        filters: LineFilters::default(),
+        view_mode: request.mode,
+        processor_id: request.processor_id,
+        context: request.context,
+        search: request.search,
+        max_line_chars: None,
+        with_stats: false,
+        skip_unreadable: false,
+        metadata: LineMetadataSource::Parsed,
     }
+}
+
+/// Call the lines service and narrow its [`LinePage`](crate::services::wire::LinePage)
+/// to the shape the viewer reads today.
+///
+/// **Transitional.** `LinePage` is a strict superset of `LineWindow` —
+/// `total_lines` and `lines` carry across unchanged and the sampling metadata
+/// (`strategy`, `strategyNote`, `scannedLines`, `stats`, plus `offset`/`count`)
+/// is dropped on the floor because the viewer has never seen those fields.
+/// WP-16 ships `LinePage` straight through and deletes this function.
+pub(crate) fn line_window(
+    ctx: &ServiceCtx,
+    request: LineRequest,
+) -> Result<LineWindow, ServiceError> {
+    let page = lines::get_lines(ctx, lines_request(request))?;
+    Ok(LineWindow {
+        total_lines: page.total_lines,
+        lines: page.lines,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -3246,5 +3040,488 @@ mod tests {
         assert_eq!(meta.sdk_version.as_deref(), Some("34"));
         assert_eq!(meta.device_model.as_deref(), Some("Pixel Test"));
         assert_eq!(meta.manufacturer.as_deref(), Some("Google"));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// get_lines — golden parity with the pre-service handler
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod get_lines_golden {
+    use super::*;
+    // `get_lines` itself no longer parses or builds a `ViewLine` — the frozen
+    // reference below does, so these live here rather than at module scope.
+    use crate::core::line::{LineMeta, LogLevel, ViewLine, ViewMode};
+    use crate::core::session::AnalysisSession;
+    use crate::services::testing::{fixture_session_from, test_ctx};
+    use serde_json::{Value, json};
+
+    /// Frozen copy of the pre-service `commands::files::get_lines` body,
+    /// taken verbatim from commit 6d1e19b with only the Tauri `State`
+    /// extractor replaced by a plain `&AppState`.
+    ///
+    /// The viewer's wire shape is the one thing this refactor is least allowed
+    /// to move, so the parity table below diffs the serialized `LineWindow` —
+    /// every field of every line — against this copy rather than spot-checking
+    /// a few. If a case fails, the new code is wrong; this copy is never
+    /// "fixed".
+    fn ref_get_lines(state: &AppState, request: LineRequest) -> Result<LineWindow, String> {
+        let sessions = lock_or_err(&state.sessions, "sessions")?;
+        let session = sessions
+            .get(&request.session_id)
+            .ok_or_else(|| format!("Session '{}' not found", request.session_id))?;
+        let source = session.primary_source().ok_or("No sources in session")?;
+        let total_lines = source.total_lines();
+        let parser = parser_for(source.source_type());
+
+        match request.mode {
+            ViewMode::Full => {
+                let start = request.offset.min(total_lines);
+                let end = (request.offset + request.count).min(total_lines);
+                let mut lines = Vec::with_capacity(end - start);
+                for i in start..end {
+                    let raw = source.raw_line(i).as_deref().unwrap_or("").to_string();
+                    let meta = source.meta_at(i);
+                    let highlights = request
+                        .search
+                        .as_ref()
+                        .map(|q| compute_search_highlights(&raw, q))
+                        .unwrap_or_default();
+                    let view_line = if let Some(ctx) = parser.parse_line(&raw, source.id(), i) {
+                        ViewLine {
+                            line_num: i,
+                            virtual_index: i,
+                            raw: ctx.raw.to_string(),
+                            level: ctx.level,
+                            tag: ctx.tag.to_string(),
+                            message: ctx.message.to_string(),
+                            timestamp: ctx.timestamp,
+                            pid: ctx.pid,
+                            tid: ctx.tid,
+                            source_id: ctx.source_id.to_string(),
+                            highlights,
+                            matched_by: vec![],
+                            is_context: false,
+                        }
+                    } else {
+                        ViewLine {
+                            line_num: i,
+                            virtual_index: i,
+                            raw: raw.clone(),
+                            level: meta.map_or(LogLevel::Info, |m| m.level),
+                            tag: meta
+                                .map_or_else(String::new, |m| session.resolve_tag(m.tag_id).to_string()),
+                            message: raw,
+                            timestamp: meta.map_or(0, |m| m.timestamp),
+                            pid: 0,
+                            tid: 0,
+                            source_id: source.id().to_string(),
+                            highlights,
+                            matched_by: vec![],
+                            is_context: false,
+                        }
+                    };
+                    lines.push(view_line);
+                }
+                Ok(LineWindow { total_lines, lines })
+            }
+
+            ViewMode::Processor => {
+                let proc_id = request
+                    .processor_id
+                    .as_deref()
+                    .ok_or("processor_id required for Processor mode")?;
+                let matched: Vec<usize> = {
+                    let pr = lock_or_err(&state.pipeline_results, "pipeline_results")?;
+                    pr.get(&request.session_id)
+                        .and_then(|s| s.get(proc_id))
+                        .map(|r| r.matched_line_nums.clone())
+                        .unwrap_or_default()
+                };
+                if matched.is_empty() {
+                    return Ok(LineWindow {
+                        total_lines,
+                        lines: vec![],
+                    });
+                }
+                let ctx_lines = request.context;
+                let mut to_show: Vec<usize> = Vec::new();
+                for &m in &matched {
+                    let start = m.saturating_sub(ctx_lines);
+                    let end = (m + ctx_lines + 1).min(total_lines);
+                    for ln in start..end {
+                        if to_show.last() != Some(&ln) {
+                            to_show.push(ln);
+                        }
+                    }
+                }
+                to_show.sort_unstable();
+                to_show.dedup();
+                let total_collapsed = to_show.len();
+                let page_start = request.offset.min(total_collapsed);
+                let page_end = (page_start + request.count).min(total_collapsed);
+                let page = &to_show[page_start..page_end];
+                let matched_set: std::collections::HashSet<usize> =
+                    matched.iter().copied().collect();
+
+                let mut lines = Vec::with_capacity(page.len());
+                for (pos, &ln) in page.iter().enumerate() {
+                    let vi = page_start + pos;
+                    let raw = source.raw_line(ln).as_deref().unwrap_or("").to_string();
+                    let Some(meta) = source.meta_at(ln) else { continue };
+                    let highlights = request
+                        .search
+                        .as_ref()
+                        .map(|q| compute_search_highlights(&raw, q))
+                        .unwrap_or_default();
+                    let view_line = if let Some(ctx) = parser.parse_line(&raw, source.id(), ln) {
+                        ViewLine {
+                            line_num: ln,
+                            virtual_index: vi,
+                            raw: ctx.raw.to_string(),
+                            level: ctx.level,
+                            tag: ctx.tag.to_string(),
+                            message: ctx.message.to_string(),
+                            timestamp: ctx.timestamp,
+                            pid: ctx.pid,
+                            tid: ctx.tid,
+                            source_id: ctx.source_id.to_string(),
+                            highlights,
+                            matched_by: if matched_set.contains(&ln) {
+                                vec![proc_id.to_string()]
+                            } else {
+                                vec![]
+                            },
+                            is_context: !matched_set.contains(&ln),
+                        }
+                    } else {
+                        ViewLine {
+                            line_num: ln,
+                            virtual_index: vi,
+                            raw: raw.clone(),
+                            level: meta.level,
+                            tag: session.resolve_tag(meta.tag_id).to_string(),
+                            message: raw,
+                            timestamp: meta.timestamp,
+                            pid: 0,
+                            tid: 0,
+                            source_id: source.id().to_string(),
+                            highlights,
+                            matched_by: if matched_set.contains(&ln) {
+                                vec![proc_id.to_string()]
+                            } else {
+                                vec![]
+                            },
+                            is_context: !matched_set.contains(&ln),
+                        }
+                    };
+                    lines.push(view_line);
+                }
+                Ok(LineWindow {
+                    total_lines: total_collapsed,
+                    lines,
+                })
+            }
+
+            ViewMode::Focus(center) => {
+                let half = request.context.max(25);
+                let start = center.saturating_sub(half);
+                let end = (center + half + 1).min(total_lines);
+                drop(sessions);
+                let inner_sessions = lock_or_err(&state.sessions, "sessions")?;
+                let inner_session = inner_sessions
+                    .get(&request.session_id)
+                    .ok_or("Session not found")?;
+                let inner_source = inner_session.primary_source().ok_or("No source")?;
+
+                let mut lines = Vec::new();
+                for i in start..end {
+                    let raw = inner_source.raw_line(i).as_deref().unwrap_or("").to_string();
+                    let meta = inner_source.meta_at(i);
+                    let highlights = request
+                        .search
+                        .as_ref()
+                        .map(|q| compute_search_highlights(&raw, q))
+                        .unwrap_or_default();
+                    let ctx = parser.parse_line(&raw, inner_source.id(), i);
+                    let view_line = match ctx {
+                        Some(c) => ViewLine {
+                            line_num: i,
+                            virtual_index: i,
+                            raw: c.raw.to_string(),
+                            level: c.level,
+                            tag: c.tag.to_string(),
+                            message: c.message.to_string(),
+                            timestamp: c.timestamp,
+                            pid: c.pid,
+                            tid: c.tid,
+                            source_id: c.source_id.to_string(),
+                            highlights,
+                            matched_by: vec![],
+                            is_context: i != center,
+                        },
+                        None => {
+                            let m = meta.unwrap_or(&LineMeta {
+                                level: LogLevel::Info,
+                                tag_id: 0,
+                                timestamp: 0,
+                                byte_offset: 0,
+                                byte_len: 0,
+                                is_section_boundary: false,
+                            });
+                            ViewLine {
+                                line_num: i,
+                                virtual_index: i,
+                                raw: raw.clone(),
+                                level: m.level,
+                                tag: inner_session.resolve_tag(m.tag_id).to_string(),
+                                message: raw,
+                                timestamp: m.timestamp,
+                                pid: 0,
+                                tid: 0,
+                                source_id: inner_source.id().to_string(),
+                                highlights,
+                                matched_by: vec![],
+                                is_context: i != center,
+                            }
+                        }
+                    };
+                    lines.push(view_line);
+                }
+                Ok(LineWindow { total_lines, lines })
+            }
+        }
+    }
+
+    // ── Fixtures ────────────────────────────────────────────────────────────
+
+    /// A logcat-shaped log, so the parser path (pid/tid/tag/level/timestamp)
+    /// is actually exercised rather than everything falling to the raw
+    /// fallback — that fallback is where the two implementations most obviously
+    /// agree, so the interesting cases are the ones where the parser fires.
+    fn logcat_lines(n: usize) -> Vec<String> {
+        (0..n)
+            .map(|i| {
+                let level = ["V", "D", "I", "W", "E"][i % 5];
+                format!(
+                    "01-15 10:30:{:02}.{:03}  1234  {} {} Tag{}: message {i}",
+                    i % 60,
+                    i % 1000,
+                    5678 + (i % 3),
+                    level,
+                    i % 4
+                )
+            })
+            .collect()
+    }
+
+    fn fixtures() -> Vec<AnalysisSession> {
+        vec![
+            fixture_session_from("s1", logcat_lines(200)),
+            // A section header (`-----`) makes the parser return None, taking
+            // the stored-meta fallback branch — the one place Full and Focus
+            // historically disagreed.
+            fixture_session_from(
+                "mixed",
+                vec![
+                    "----- BEGIN -----".to_string(),
+                    "01-15 10:30:00.000  1  2 I Tag: one".to_string(),
+                    "not a log line at all".to_string(),
+                    "----- END -----".to_string(),
+                ],
+            ),
+            fixture_session_from("empty", vec![]),
+        ]
+    }
+
+    fn arena() -> (ServiceCtx, ServiceCtx, Vec<tempfile::TempDir>) {
+        let seed = |mut b: crate::services::testing::TestCtxBuilder| {
+            for session in fixtures() {
+                b = b.with_session_object(session);
+            }
+            b.build()
+        };
+        let (a, t1) = seed(test_ctx());
+        let (b, t2) = seed(test_ctx());
+        for ctx in [&a, &b] {
+            let mut per = HashMap::new();
+            per.insert(
+                "proc@x".to_string(),
+                crate::processors::reporter::engine::RunResult {
+                    matched_line_nums: vec![3, 4, 10, 50],
+                    ..Default::default()
+                },
+            );
+            ctx.state()
+                .pipeline_results
+                .lock()
+                .unwrap()
+                .insert("s1".to_string(), per);
+        }
+        (a, b, vec![t1, t2])
+    }
+
+    fn req(session_id: &str, mode: ViewMode, offset: usize, count: usize) -> LineRequest {
+        LineRequest {
+            session_id: session_id.to_string(),
+            mode,
+            offset,
+            count,
+            context: 0,
+            processor_id: None,
+            search: None,
+        }
+    }
+
+    fn render(result: Result<LineWindow, String>) -> Value {
+        match result {
+            Ok(window) => serde_json::to_value(&window).unwrap(),
+            Err(e) => json!({ "error": e }),
+        }
+    }
+
+    #[test]
+    fn line_window_matches_the_frozen_handler_in_every_view_mode() {
+        let (ref_ctx, new_ctx, _tmp) = arena();
+
+        let search = SearchQuery {
+            text: "message".to_string(),
+            is_regex: false,
+            case_sensitive: true,
+            within_processor: None,
+            min_level: None,
+            tags: None,
+            start_time: None,
+            end_time: None,
+        };
+
+        let cases: Vec<(&str, LineRequest)> = vec![
+            ("Full — first window", req("s1", ViewMode::Full, 0, 5)),
+            ("Full — mid window", req("s1", ViewMode::Full, 40, 10)),
+            (
+                "Full — window running past the end",
+                req("s1", ViewMode::Full, 195, 20),
+            ),
+            (
+                "Full — offset past the end",
+                req("s1", ViewMode::Full, 500, 10),
+            ),
+            ("Full — zero count", req("s1", ViewMode::Full, 0, 0)),
+            (
+                "Full — with search highlights",
+                LineRequest {
+                    search: Some(search.clone()),
+                    ..req("s1", ViewMode::Full, 0, 6)
+                },
+            ),
+            (
+                "Full — unparseable and section-header lines",
+                req("mixed", ViewMode::Full, 0, 4),
+            ),
+            ("Full — empty session", req("empty", ViewMode::Full, 0, 5)),
+            ("Full — unknown session", req("nope", ViewMode::Full, 0, 5)),
+            ("Focus — mid log", req("s1", ViewMode::Focus(100), 0, 0)),
+            (
+                "Focus — line 0 clamps at the start",
+                req("s1", ViewMode::Focus(0), 0, 0),
+            ),
+            (
+                "Focus — past EOF",
+                req("s1", ViewMode::Focus(500), 0, 0),
+            ),
+            (
+                "Focus — context below the 25-line floor",
+                LineRequest {
+                    context: 3,
+                    ..req("s1", ViewMode::Focus(100), 0, 0)
+                },
+            ),
+            (
+                "Focus — context above the floor",
+                LineRequest {
+                    context: 40,
+                    ..req("s1", ViewMode::Focus(100), 0, 0)
+                },
+            ),
+            (
+                "Focus — over the fallback branch",
+                req("mixed", ViewMode::Focus(0), 0, 0),
+            ),
+            (
+                "Focus — empty session",
+                req("empty", ViewMode::Focus(0), 0, 0),
+            ),
+            (
+                "Processor — whole collapsed view",
+                LineRequest {
+                    context: 1,
+                    processor_id: Some("proc@x".to_string()),
+                    ..req("s1", ViewMode::Processor, 0, 100)
+                },
+            ),
+            (
+                "Processor — no context",
+                LineRequest {
+                    processor_id: Some("proc@x".to_string()),
+                    ..req("s1", ViewMode::Processor, 0, 100)
+                },
+            ),
+            (
+                "Processor — paged",
+                LineRequest {
+                    context: 1,
+                    processor_id: Some("proc@x".to_string()),
+                    ..req("s1", ViewMode::Processor, 2, 3)
+                },
+            ),
+            (
+                "Processor — page past the end",
+                LineRequest {
+                    context: 1,
+                    processor_id: Some("proc@x".to_string()),
+                    ..req("s1", ViewMode::Processor, 500, 3)
+                },
+            ),
+            (
+                "Processor — processor never ran",
+                LineRequest {
+                    processor_id: Some("other@x".to_string()),
+                    ..req("s1", ViewMode::Processor, 0, 10)
+                },
+            ),
+            (
+                "Processor — no processor_id",
+                req("s1", ViewMode::Processor, 0, 10),
+            ),
+            (
+                "Processor — with search highlights",
+                LineRequest {
+                    context: 1,
+                    processor_id: Some("proc@x".to_string()),
+                    search: Some(search),
+                    ..req("s1", ViewMode::Processor, 0, 100)
+                },
+            ),
+        ];
+
+        for (name, request) in cases {
+            let expected = render(ref_get_lines(ref_ctx.state(), request.clone()));
+            let actual = render(line_window(&new_ctx, request).map_err(|e| e.to_string()));
+            assert_eq!(actual, expected, "LineWindow changed for case: {name}");
+        }
+    }
+
+    #[test]
+    fn the_viewer_is_never_redacted_or_truncated() {
+        // The one fact the parity table cannot state, because the frozen
+        // reference predates redaction existing at all: a `Caller::Ui` request
+        // must come back byte-for-byte raw even for a session full of PII.
+        let long = format!("head {} tail user@example.com", "x".repeat(2_000));
+        let (ctx, _tmp) = test_ctx()
+            .with_session_object(fixture_session_from("p1", vec![long.clone()]))
+            .build();
+        let window = line_window(&ctx, req("p1", ViewMode::Full, 0, 1)).unwrap();
+        assert_eq!(window.lines[0].raw, long);
     }
 }

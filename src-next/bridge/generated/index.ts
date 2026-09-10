@@ -47,6 +47,7 @@ export type { InsightSignal } from './InsightSignal';
 export type { Insights } from './Insights';
 export type { LinePage } from './LinePage';
 export type { LineRequest } from './LineRequest';
+export type { LineStats } from './LineStats';
 export type { LineStrategy } from './LineStrategy';
 export type { LineWindow } from './LineWindow';
 export type { LoadResult } from './LoadResult';

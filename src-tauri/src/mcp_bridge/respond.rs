@@ -143,49 +143,14 @@ pub(super) use verify_session_exists;
 // and report `scannedLines` in the JSON response (both purely additive: every
 // existing field is unchanged) so callers know results may be incomplete.
 
-/// Lines scanned per lock acquisition. Matches `commands::files::search_logs`'s
-/// `SEARCH_CHUNK_SIZE` so both raw-line scan paths behave consistently.
-pub(super) const MCP_SCAN_CHUNK_SIZE: usize = 10_000;
-
-/// Hard cap on total lines scanned across all chunks for a single request.
-/// Without this, a rarely-matching regex/filter over a 20M-line bugreport
-/// would scan the entire file on every call — chunking alone stops it from
-/// starving other lock holders, but the request could still run for a very
-/// long time. Callers that need to see past the cap can page with
-/// `start_line`/`end_line`.
-pub(super) const MCP_SCAN_LINE_CAP: usize = 500_000;
-
-/// True if `[range_start, range_end)` is wider than `scan_cap` — i.e. the
-/// scan window had to be capped down. Pure so the truncation math is unit
-/// testable without a live session/lock.
-pub(super) fn scan_window_capped(range_start: usize, range_end: usize, scan_cap: usize) -> bool {
-    range_end.saturating_sub(range_start) > scan_cap
-}
-
-/// The effective (possibly capped) end of a scan window starting at
-/// `range_start`, given the caller-requested `range_end` and `scan_cap`.
-/// Equal to `range_end` when the window already fits under the cap.
-pub(super) fn capped_range_end(range_start: usize, range_end: usize, scan_cap: usize) -> usize {
-    range_start.saturating_add(scan_cap).min(range_end)
-}
-
-/// Split `[start, end)` into consecutive `[chunk_start, chunk_end)` windows
-/// of at most `chunk_size` lines each, in ascending order. Pure — used to
-/// scan under short-lived `sessions` lock acquisitions (one per window)
-/// instead of holding the lock for a single large scan.
-pub(super) fn scan_chunk_bounds(start: usize, end: usize, chunk_size: usize) -> Vec<(usize, usize)> {
-    if start >= end || chunk_size == 0 {
-        return Vec::new();
-    }
-    let mut bounds = Vec::new();
-    let mut cur = start;
-    while cur < end {
-        let next = (cur + chunk_size).min(end);
-        bounds.push((cur, next));
-        cur = next;
-    }
-    bounds
-}
+// The scan budget and the pure window math moved to `services::lines` — the
+// service layer owns the shared limit now that both raw-line reads go through
+// it. These re-exports exist only so `routes/search.rs` keeps compiling
+// unchanged; WP-2 repoints it and they go away.
+pub(super) use crate::services::lines::{
+    MCP_SCAN_CHUNK_SIZE, MCP_SCAN_LINE_CAP, capped_range_end, scan_chunk_bounds,
+    scan_window_capped,
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -268,39 +233,9 @@ pub(super) fn parse_iso_to_unix_nanos(s: &str) -> Option<i64> {
     )
 }
 
-/// Case-insensitive substring test that avoids allocating a lowercased copy
-/// of `haystack` for the common case where the haystack is pure ASCII (log
-/// lines almost always are). `needle_lower` must already be lowercased via
-/// `str::to_lowercase()`.
-///
-/// ASCII lowering is a 1:1 byte mapping and agrees with Unicode
-/// `to_lowercase()` for ASCII input, so a byte-wise sliding-window scan is
-/// safe and exact for that case — no allocation, no per-line String copy.
-/// For a haystack containing any non-ASCII byte we fall back to the
-/// original `haystack.to_lowercase().contains(needle_lower)` so Unicode
-/// case-folding edge cases (e.g. Turkish İ -> "i̇", two chars) still match
-/// exactly as before.
-///
-/// Used by `h_query`'s message filter, which previously called
-/// `raw.to_lowercase()` on every scanned line (up to `MCP_SCAN_LINE_CAP`
-/// lines per request) just to run a substring test.
-pub(super) fn contains_ignore_case(haystack: &str, needle_lower: &str) -> bool {
-    if needle_lower.is_empty() {
-        return true;
-    }
-    if haystack.is_ascii() {
-        let hay_bytes = haystack.as_bytes();
-        let needle_bytes = needle_lower.as_bytes();
-        if needle_bytes.len() > hay_bytes.len() {
-            return false;
-        }
-        hay_bytes
-            .windows(needle_bytes.len())
-            .any(|w| w.iter().zip(needle_bytes).all(|(a, b)| a.to_ascii_lowercase() == *b))
-    } else {
-        haystack.to_lowercase().contains(needle_lower)
-    }
-}
+// `contains_ignore_case` moved to `services::lines` with the filtered-scan
+// path that was its only caller. Its tests moved with it — nothing in this
+// module references it any more, so there is no re-export to keep.
 
 /// Truncate large map vars: for any Value::Object with >20 keys where values
 /// are numeric, sort by value desc, keep top 20, add _truncated and _totalKeys.
@@ -501,57 +436,6 @@ mod tests {
         let raw = "contact user@example.com for access";
         let out = crate::services::policy::anonymize_for_session(&state, "sess-a", raw);
         assert_eq!(out, raw, "flag=false must still serve raw text after recovery");
-    }
-
-    // ── contains_ignore_case ────────────────────────────────────────────────
-    // h_query's message filter used to lowercase the whole raw line on every
-    // scanned line; contains_ignore_case must match the exact same lines
-    // without that per-line allocation.
-
-    #[test]
-    fn contains_ignore_case_matches_mixed_case_ascii() {
-        let needle = "error".to_lowercase();
-        assert!(contains_ignore_case("System ERROR: boot failed", &needle));
-        assert!(contains_ignore_case("system error: boot failed", &needle));
-        assert!(contains_ignore_case("SyStEm ErRoR: boot failed", &needle));
-        assert!(!contains_ignore_case("System is fine", &needle));
-    }
-
-    #[test]
-    fn contains_ignore_case_matches_original_to_lowercase_semantics() {
-        // Cross-check against the original `haystack.to_lowercase().contains(needle)`
-        // behavior for a battery of mixed-case ASCII lines.
-        let cases: &[(&str, &str, bool)] = &[
-            ("ActivityManager: Process died", "process", true),
-            ("ActivityManager: Process died", "PROCESS", true),
-            ("no match here", "xyz", false),
-            ("", "a", false),
-            ("anything", "", true),
-            ("EdgeCaseAtEnd", "atend", true),
-            ("EdgeCaseAtEnd", "ATEND", true),
-        ];
-        for &(haystack, needle, expected) in cases {
-            let needle_lower = needle.to_lowercase();
-            assert_eq!(
-                contains_ignore_case(haystack, &needle_lower),
-                expected,
-                "haystack={haystack:?} needle={needle:?}"
-            );
-            assert_eq!(
-                contains_ignore_case(haystack, &needle_lower),
-                haystack.to_lowercase().contains(&needle_lower),
-                "mismatch vs to_lowercase().contains() for haystack={haystack:?} needle={needle:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn contains_ignore_case_falls_back_for_non_ascii_haystack() {
-        // Non-ASCII haystack takes the allocating fallback path — verify it
-        // still matches Unicode-aware `to_lowercase()` semantics exactly.
-        let needle = "CAFÉ".to_lowercase();
-        assert!(contains_ignore_case("visit the café today", &needle));
-        assert!(!contains_ignore_case("visit the cafe today", &needle));
     }
 
     // ── max_line_chars ──────────────────────────────────────────────────────
