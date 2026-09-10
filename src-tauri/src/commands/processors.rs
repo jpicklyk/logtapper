@@ -159,18 +159,18 @@ pub async fn load_processor_from_file(
     validate_and_install(&app, &state, &yaml, processor)
 }
 
+/// Accumulated variables for one reporter. Thin adapter over
+/// [`crate::services::pipeline::processor_vars`] — the same aggregate the MCP
+/// bridge reads, so the two transports cannot drift.
 #[tauri::command]
 pub async fn get_processor_vars(
-    state: State<'_, std::sync::Arc<AppState>>,
+    app: AppHandle,
     session_id: String,
     processor_id: String,
 ) -> Result<HashMap<String, serde_json::Value>, String> {
-    let pr = lock_or_err(&state.pipeline_results, "pipeline_results")?;
-    let session_results = pr.get(&session_id)
-        .ok_or_else(|| format!("No pipeline results for session '{session_id}'" ))?;
-    let result = session_results.get(&processor_id)
-        .ok_or_else(|| format!("No result for processor '{processor_id}'" ))?;
-    Ok(result.vars.clone())
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    crate::services::pipeline::processor_vars(&ctx, &session_id, &processor_id)
+        .map_err(|e| e.message())
 }
 
 #[derive(Debug, Serialize, TS)]
@@ -180,52 +180,19 @@ pub struct MatchedLineInfo {
     pub raw: String,
 }
 
+/// Every line one processor touched, with its text. Thin adapter over
+/// [`crate::services::pipeline::matched_lines`], which owns the
+/// reporter → state-tracker → correlator fallback and the caller's redaction
+/// gate (a no-op for the UI caller).
 #[tauri::command]
 pub async fn get_matched_lines(
-    state: State<'_, std::sync::Arc<AppState>>,
+    app: AppHandle,
     session_id: String,
     processor_id: String,
 ) -> Result<Vec<MatchedLineInfo>, String> {
-    // 1. Reporter pipeline results
-    let line_nums: Vec<usize> = {
-        let pr = lock_or_err(&state.pipeline_results, "pipeline_results")?;
-        if let Some(nums) = pr.get(&session_id)
-            .and_then(|s| s.get(&processor_id))
-            .map(|r| r.matched_line_nums.clone())
-        {
-            nums
-        } else {
-            drop(pr);
-            // 2. State tracker transition lines
-            let str_lock = lock_or_err(&state.state_tracker_results, "state_tracker_results")?;
-            if let Some(nums) = str_lock.get(&session_id)
-                .and_then(|s| s.get(&processor_id))
-                .map(|r| r.transitions.iter().map(|t| t.line_num).collect::<Vec<_>>())
-            {
-                nums
-            } else {
-                drop(str_lock);
-                // 3. Correlator event trigger lines
-                let cr_lock = lock_or_err(&state.correlator_results, "correlator_results")?;
-                cr_lock.get(&session_id)
-                    .and_then(|s| s.get(&processor_id))
-                    .map(|r| r.events.iter().map(|e| e.trigger_line_num).collect::<Vec<_>>())
-                    .unwrap_or_default()
-            }
-        }
-    };
-    let mut line_nums = line_nums;
-    line_nums.sort_unstable();
-
-    let sessions = lock_or_err(&state.sessions, "sessions")?;
-    let session = sessions.get(&session_id)
-        .ok_or_else(|| format!("Session '{session_id}' not found"))?;
-    let src = session.primary_source().ok_or("No sources in session")?;
-    let result = line_nums.iter().map(|&n| MatchedLineInfo {
-        line_num: n,
-        raw: src.raw_line(n).as_deref().unwrap_or("").trim_end_matches(['\r', '\n']).to_string(),
-    }).collect();
-    Ok(result)
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    crate::services::pipeline::matched_lines(&ctx, &session_id, &processor_id)
+        .map_err(|e| e.message())
 }
 
 #[tauri::command]
