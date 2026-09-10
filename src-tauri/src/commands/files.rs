@@ -1742,17 +1742,18 @@ pub fn get_startup_file(state: State<'_, std::sync::Arc<AppState>>) -> Result<Op
 // get_sections
 // ---------------------------------------------------------------------------
 
+/// Thin adapter over `services::sections::list` — see that function for the
+/// shared listing logic `mcp_bridge::routes::tracker::h_sections` also uses
+/// (paged and name-filtered there; here the UI always wants the full,
+/// unfiltered list).
 #[tauri::command]
 pub async fn get_sections(
-    state: State<'_, std::sync::Arc<AppState>>,
+    app: AppHandle,
     session_id: String,
 ) -> Result<Vec<SectionInfo>, String> {
-    let sessions = lock_or_err(&state.sessions, "sessions")?;
-    let session = sessions
-        .get(&session_id)
-        .ok_or_else(|| format!("Session '{session_id}' not found"))?;
-    let src = session.primary_source().ok_or("No sources in session")?;
-    Ok(src.sections().to_vec())
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    let page = crate::services::sections::list(&ctx, &session_id, None, 0, usize::MAX)?;
+    Ok(page.items)
 }
 
 // ---------------------------------------------------------------------------

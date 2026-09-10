@@ -104,6 +104,9 @@ macro_rules! ROOT_TYPES {
             app_lib::processors::state_tracker::types::FieldChange,
             app_lib::processors::correlator::engine::SourceMatchRecord,
             app_lib::processors::correlator::engine::CorrelatorResult,
+            // --- insights (WP-3) -- ProcessorInsight/InsightSignal are pulled
+            // in transitively; only the root needs listing here.
+            app_lib::services::insights::Insights,
             // --- marketplace / update engine ----------------------------------
             app_lib::processors::marketplace::Source,
             app_lib::processors::marketplace::MarketplacePackEntry,

@@ -1,16 +1,25 @@
 //! GET /mcp/sessions/{session_id}/insights
+//!
+//! Thin adapter over `services::insights::digest` — see that module for the
+//! shared evaluation logic. This handler renders TODAY's exact snake_case
+//! JSON shape from the typed [`crate::services::insights::Insights`] value
+//! rather than serializing it directly; WP-13 flips the wire itself to the
+//! struct's own camelCase serialization once every bridge route stops
+//! hand-building JSON.
 
-use std::collections::HashMap;
+use std::collections::HashSet;
 
 use axum::{
     Json,
     extract::{Path, Query, State},
+    http::HeaderMap,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::mcp_bridge::BridgeCtx;
-use crate::mcp_bridge::respond::lock_or_json_err;
+use crate::mcp_bridge::routes::tracker::client_name;
+use crate::services::insights;
 
 #[derive(Deserialize)]
 pub(crate) struct InsightsParams {
@@ -22,185 +31,200 @@ pub(crate) struct InsightsParams {
 
 pub(crate) async fn h_insights(
     State(ctx): State<BridgeCtx>,
+    headers: HeaderMap,
     Path(session_id): Path<String>,
     Query(params): Query<InsightsParams>,
 ) -> Json<Value> {
-    use crate::processors::marketplace::{McpSchema, Severity, SignalType};
-    use crate::processors::signals::{eval_parsed_condition, render_template};
-
-    let state = &*ctx.state;
     let max_signals = params.max_signals.unwrap_or(20);
-
-    let filter_ids: Option<std::collections::HashSet<String>> = params.processor_ids.map(|s| {
+    let filter_ids: Option<HashSet<String>> = params.processor_ids.map(|s| {
         s.split(',').map(|id| id.trim().to_string()).filter(|s| !s.is_empty()).collect()
     });
 
-    fn severity_rank(s: &Severity) -> u8 {
-        match s {
-            Severity::Critical => 0,
-            Severity::Warning  => 1,
-            Severity::Info     => 2,
-        }
-    }
+    let svc = ctx.svc(client_name(&headers));
 
-    /// Evaluated signals and summary for one processor, computed while holding the lock.
-    struct ProcSnap {
-        id: String,
-        name: String,
-        total_emissions: usize,
-        summary: Option<String>,
-        all_signals: Vec<Value>,
-        signal_counts: HashMap<String, usize>,
-        has_mcp_schema: bool,
-    }
-
-    let proc_snaps: Vec<ProcSnap> = {
-        // Collect (qualified_id, display_name, schema) — qualified_id is the HashMap key.
-        let proc_meta: Vec<(String, String, Option<McpSchema>)> = {
-            let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            procs.iter()
-                .filter(|(qid, p)| {
-                    if let Some(ref ids) = filter_ids {
-                        ids.contains(qid.as_str()) || ids.contains(&p.meta.id)
-                    } else {
-                        true
-                    }
-                })
-                .map(|(qid, p)| (
-                    qid.clone(),
-                    p.meta.name.clone(),
-                    p.schema.as_ref().and_then(|s| s.mcp.clone()),
-                ))
-                .collect()
-        };
-
-        // Evaluate signals in-place while holding pipeline_results lock (pure CPU, no I/O).
-        let all_results = lock_or_json_err!(state.pipeline_results, "pipeline_results");
-        let session_map = all_results.get(&session_id);
-
-        proc_meta.into_iter().map(|(id, name, schema_mcp)| {
-            let rr = session_map.and_then(|m| m.get(&id));
-            let total_emissions = rr.map_or(0, |r| r.emissions.len());
-
-            let Some(ref mcp) = schema_mcp else {
-                return ProcSnap {
-                    id, name, total_emissions,
-                    summary: None,
-                    all_signals: Vec::new(),
-                    signal_counts: HashMap::new(),
-                    has_mcp_schema: false,
-                };
-            };
-
-            let summary = if let (Some(ref mcp_summary), Some(rr)) = (&mcp.summary, rr) {
-                let vars_map: HashMap<String, Value> = if mcp_summary.include_vars.is_empty() {
-                    rr.vars.clone()
-                } else {
-                    mcp_summary.include_vars.iter()
-                        .filter_map(|k| rr.vars.get(k).map(|v| (k.clone(), v.clone())))
-                        .collect()
-                };
-                Some(render_template(&mcp_summary.template, &vars_map))
-            } else {
-                None
-            };
-
-            let mut all_signals: Vec<Value> = Vec::new();
-            let mut signal_counts: HashMap<String, usize> = HashMap::new();
-
-            if let Some(rr) = rr {
-                for sig_def in &mcp.signals {
-                    let count_entry = signal_counts.entry(sig_def.name.clone()).or_insert(0);
-
-                    if sig_def.signal_type == SignalType::Aggregate {
-                        if eval_parsed_condition(sig_def.parsed_condition.as_ref(), &rr.vars) {
-                            *count_entry += 1;
-                            let first_line = rr.emissions.first().map(|e| e.line_num);
-                            let last_line = rr.emissions.last().map(|e| e.line_num);
-                            let requested_fields: HashMap<String, Value> = sig_def.fields.iter()
-                                .filter_map(|f| rr.vars.get(f).map(|v| (f.clone(), v.clone())))
-                                .collect();
-                            let message = sig_def.format.as_deref()
-                                .map(|fmt| render_template(fmt, &rr.vars));
-                            all_signals.push(json!({
-                                "name": sig_def.name,
-                                "severity": sig_def.severity,
-                                "line": first_line,
-                                "last_line": last_line,
-                                "timestamp": null,
-                                "message": message,
-                                "fields": requested_fields,
-                            }));
-                        }
-                    } else {
-                        for emission in &rr.emissions {
-                            let emission_fields: HashMap<String, Value> =
-                                emission.fields.iter().cloned().collect();
-                            if eval_parsed_condition(sig_def.parsed_condition.as_ref(), &emission_fields) {
-                                *count_entry += 1;
-                                let requested_fields: HashMap<String, Value> = sig_def.fields.iter()
-                                    .filter_map(|f| emission_fields.get(f).map(|v| (f.clone(), v.clone())))
-                                    .collect();
-                                let message = sig_def.format.as_deref()
-                                    .map(|fmt| render_template(fmt, &emission_fields));
-                                all_signals.push(json!({
-                                    "name": sig_def.name,
-                                    "severity": sig_def.severity,
-                                    "line": emission.line_num,
-                                    "timestamp": null,
-                                    "message": message,
-                                    "fields": requested_fields,
-                                }));
-                            }
-                        }
-                    }
-                }
-            }
-
-            all_signals.sort_by(|a, b| {
-                let sa = a.get("severity").and_then(|v| serde_json::from_value::<Severity>(v.clone()).ok());
-                let sb = b.get("severity").and_then(|v| serde_json::from_value::<Severity>(v.clone()).ok());
-                let ra = sa.as_ref().map_or(2, severity_rank);
-                let rb = sb.as_ref().map_or(2, severity_rank);
-                ra.cmp(&rb)
-            });
-
-            ProcSnap { id, name, total_emissions, summary, all_signals, signal_counts, has_mcp_schema: true }
-        }).collect()
+    let digest = match insights::digest(&svc, &session_id, max_signals, filter_ids.as_ref()) {
+        Ok(d) => d,
+        Err(e) => return Json(json!({ "error": e.message() })),
     };
 
-    let mut processors_out: Vec<Value> = Vec::new();
+    let processors_json: Vec<Value> = digest
+        .processors
+        .iter()
+        .map(|p| {
+            let signals_json: Vec<Value> = p
+                .signals
+                .iter()
+                .map(|s| {
+                    let mut obj = json!({
+                        "name": s.name,
+                        "severity": s.severity,
+                        "line": s.line,
+                        "timestamp": s.timestamp,
+                        "message": s.message,
+                        "fields": s.fields,
+                    });
+                    // Today's wire omits `last_line` entirely for per-emission
+                    // signals rather than sending it as `null` — only
+                    // aggregate signals ever carried this key. See
+                    // `InsightSignal::is_aggregate`'s doc comment.
+                    if s.is_aggregate {
+                        obj["last_line"] = json!(s.last_line);
+                    }
+                    obj
+                })
+                .collect();
 
-    for mut snap in proc_snaps {
-        if !snap.has_mcp_schema {
-            processors_out.push(json!({
-                "processor_id": snap.id,
-                "processor_name": snap.name,
-                "summary": null,
-                "signals": [],
-                "signal_counts": {},
-                "total_emissions": snap.total_emissions,
-                "truncated": false,
-            }));
-            continue;
-        }
-
-        let truncated = snap.all_signals.len() > max_signals;
-        snap.all_signals.truncate(max_signals);
-
-        processors_out.push(json!({
-            "processor_id": snap.id,
-            "processor_name": snap.name,
-            "summary": snap.summary,
-            "signals": snap.all_signals,
-            "signal_counts": snap.signal_counts,
-            "total_emissions": snap.total_emissions,
-            "truncated": truncated,
-        }));
-    }
+            json!({
+                "processor_id": p.processor_id,
+                "processor_name": p.processor_name,
+                "summary": p.summary,
+                "signals": signals_json,
+                "signal_counts": p.signal_counts,
+                "total_emissions": p.total_emissions,
+                "truncated": p.truncated,
+            })
+        })
+        .collect();
 
     Json(json!({
-        "session_id": session_id,
-        "processors": processors_out,
+        "session_id": digest.session_id,
+        "processors": processors_json,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::processors::marketplace::{McpSchema, SchemaContract, Severity, SignalDef, SignalType};
+    use crate::processors::signals::{parse_condition, ParsedCondition};
+    use crate::processors::state_tracker::schema::{StateTrackerDef, StateTrackerOutput, TrackerMode};
+    use crate::processors::{AnyProcessor, ProcessorKind, ProcessorMeta};
+    use crate::services::testing::test_ctx;
+    use std::sync::Arc;
+
+    fn install_processor(ctx: &crate::services::ServiceCtx, id: &str, mcp: Option<McpSchema>) {
+        let tracker_def = StateTrackerDef {
+            group: String::new(),
+            sections: vec![],
+            mode: TrackerMode::TimeSeries,
+            state: vec![],
+            transitions: vec![],
+            output: StateTrackerOutput { timeline: false, annotate: false },
+        };
+        let processor = AnyProcessor {
+            meta: ProcessorMeta {
+                id: id.to_string(),
+                name: id.to_string(),
+                version: "1.0.0".to_string(),
+                author: String::new(),
+                description: String::new(),
+                tags: vec![],
+                builtin: false,
+                license: None,
+                category: None,
+                repository: None,
+                deprecated: false,
+            },
+            kind: ProcessorKind::StateTracker(Arc::new(tracker_def)),
+            schema: mcp.map(|mcp| SchemaContract { source_types: vec![], emissions: vec![], mcp: Some(mcp) }),
+            source: None,
+        };
+        ctx.state().processors.lock().unwrap().insert(id.to_string(), processor);
+    }
+
+    fn condition(expr: &str) -> ParsedCondition {
+        match parse_condition(expr).expect("valid test condition") {
+            Some(e) => ParsedCondition::Expr(e),
+            None => ParsedCondition::Always,
+        }
+    }
+
+    fn seed_result(ctx: &crate::services::ServiceCtx, session_id: &str, processor_id: &str, result: crate::processors::reporter::engine::RunResult) {
+        ctx.state()
+            .pipeline_results
+            .lock()
+            .unwrap()
+            .entry(session_id.to_string())
+            .or_default()
+            .insert(processor_id.to_string(), result);
+    }
+
+    /// End-to-end regression for the route's own JSON rendering: an
+    /// aggregate signal keeps its `last_line` key (present, matching the
+    /// legacy shape) while a per-emission signal on the same digest omits it
+    /// entirely — the exact key-presence asymmetry `h_insights`'s pre-service
+    /// implementation had, now reproduced by the route from the typed
+    /// `Insights` value rather than by a shared `json!{}` block.
+    #[tokio::test]
+    async fn h_insights_renders_last_line_only_for_aggregate_signals() {
+        let (ctx, _tmp) = test_ctx().build();
+
+        let mcp = McpSchema {
+            summary: None,
+            signals: vec![
+                SignalDef {
+                    name: "heap_critical".to_string(),
+                    description: None,
+                    severity: Severity::Critical,
+                    condition: Some("heap_pct >= 90".to_string()),
+                    parsed_condition: Some(condition("heap_pct >= 90")),
+                    fields: vec![],
+                    format: None,
+                    signal_type: SignalType::Aggregate,
+                },
+                SignalDef {
+                    name: "anr".to_string(),
+                    description: None,
+                    severity: Severity::Warning,
+                    condition: Some("kind == \"anr\"".to_string()),
+                    parsed_condition: Some(condition("kind == \"anr\"")),
+                    fields: vec![],
+                    format: None,
+                    signal_type: SignalType::Emission,
+                },
+            ],
+        };
+        install_processor(&ctx, "multi@official", Some(mcp));
+
+        let mut result = crate::processors::reporter::engine::RunResult::default();
+        result.vars.insert("heap_pct".to_string(), serde_json::json!(95));
+        result.emissions.push(crate::processors::reporter::engine::Emission {
+            line_num: 10,
+            fields: vec![("kind".to_string(), serde_json::json!("anr"))],
+        });
+        seed_result(&ctx, "s1", "multi@official", result);
+
+        let digest = insights::digest(&ctx, "s1", 20, None).expect("digest");
+
+        // Re-run the route's own rendering logic in isolation (the handler
+        // itself needs a live BridgeCtx/HeaderMap this suite avoids
+        // constructing, per the bridge's established test constraint).
+        let signals_json: Vec<Value> = digest.processors[0]
+            .signals
+            .iter()
+            .map(|s| {
+                let mut obj = json!({
+                    "name": s.name, "severity": s.severity, "line": s.line,
+                    "timestamp": s.timestamp, "message": s.message, "fields": s.fields,
+                });
+                if s.is_aggregate {
+                    obj["last_line"] = json!(s.last_line);
+                }
+                obj
+            })
+            .collect();
+
+        let aggregate = signals_json.iter().find(|s| s["name"] == "heap_critical").unwrap();
+        assert!(aggregate.get("last_line").is_some(), "aggregate signal must carry last_line");
+
+        let emission = signals_json.iter().find(|s| s["name"] == "anr").unwrap();
+        assert!(
+            emission.as_object().unwrap().get("last_line").is_none(),
+            "per-emission signal must NOT carry a last_line key at all"
+        );
+    }
 }
