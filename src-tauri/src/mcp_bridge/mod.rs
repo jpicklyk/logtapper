@@ -55,12 +55,15 @@ type Handle = AppHandle<Wry>;
 /// [`router`] be built (and driven with `tower::ServiceExt::oneshot`) without a
 /// live webview.
 ///
-/// `app` is a **transitional** field. Four call sites still take an
-/// `AppHandle` directly — `files::open_file_inner`, `files::close_session_inner`,
-/// `artifact_mutations::*`, and `pipeline::execute_pipeline` — and this work
-/// package deliberately moves no handler logic, so the handle rides along until
-/// WP-4 / WP-5 / WP-6 convert those four to `ServiceCtx`. Nothing new may use
-/// it: reach for `state`, `events`, `paths` or `spawner` instead.
+/// `app` is a **transitional** field. It originally covered four call sites
+/// that took an `AppHandle` directly: `files::open_file_inner`,
+/// `files::close_session_inner`, the bookmark/analysis mutation handlers (the
+/// former `artifact_mutations::*`), and `pipeline::execute_pipeline`. WP-5
+/// converted the bookmark/analysis handlers to `ServiceCtx` via
+/// `services::{bookmarks,analyses}`, so only the `files.rs` (WP-6) and
+/// `pipeline.rs` (WP-4) call sites remain. The handle rides along until those
+/// convert too. Nothing new may use it: reach for `state`, `events`, `paths`
+/// or `spawner` instead.
 #[derive(Clone)]
 pub struct BridgeCtx {
     pub state: Arc<AppState>,

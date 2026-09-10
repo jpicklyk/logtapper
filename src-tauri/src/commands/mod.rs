@@ -21,7 +21,6 @@ pub mod adapters;
 pub mod adb;
 pub mod analysis;
 pub mod anonymizer;
-pub mod artifact_mutations;
 pub mod bookmark;
 pub mod bridge_access;
 pub mod charts;

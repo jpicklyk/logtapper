@@ -1,8 +1,11 @@
-use tauri::State;
+//! Thin Tauri adapters over `services::bookmarks`. Each command builds a
+//! [`crate::commands::adapters::ui_ctx`], calls one service function, and
+//! marshals the `Result<T, ServiceError>` into the `Result<T, String>` the
+//! frontend expects.
 
-use crate::commands::artifact_mutations;
-use crate::commands::{lock_or_err, AppState};
+use crate::commands::adapters::ui_ctx;
 use crate::core::bookmark::{Bookmark, CreatedBy};
+use crate::services::bookmarks;
 
 /// Create a new bookmark on a specific line.
 #[tauri::command]
@@ -19,8 +22,9 @@ pub fn create_bookmark(
     category: Option<String>,
     tags: Option<Vec<String>>,
 ) -> Result<Bookmark, String> {
-    artifact_mutations::add_bookmark(
-        &app,
+    let ctx = ui_ctx(&app);
+    Ok(bookmarks::create(
+        &ctx,
         session_id,
         line_number,
         label,
@@ -30,17 +34,16 @@ pub fn create_bookmark(
         snippet,
         category,
         tags,
-    )
+    )?)
 }
 
-/// List all bookmarks for a session.
+/// List all bookmarks for a session (unfiltered — see
+/// `services::bookmarks::list` for the category/tag filter the MCP bridge
+/// uses).
 #[tauri::command]
-pub fn list_bookmarks(
-    state: State<'_, std::sync::Arc<AppState>>,
-    session_id: String,
-) -> Result<Vec<Bookmark>, String> {
-    let bookmarks = lock_or_err(&state.bookmarks, "bookmarks")?;
-    Ok(bookmarks.get(&session_id).cloned().unwrap_or_default())
+pub fn list_bookmarks(app: tauri::AppHandle, session_id: String) -> Result<Vec<Bookmark>, String> {
+    let ctx = ui_ctx(&app);
+    Ok(bookmarks::list(&ctx, &session_id, None, None)?)
 }
 
 /// Update an existing bookmark's label, note, category, and tags.
@@ -54,7 +57,16 @@ pub fn update_bookmark(
     category: Option<String>,
     tags: Option<Vec<String>>,
 ) -> Result<Bookmark, String> {
-    artifact_mutations::update_bookmark(&app, session_id, bookmark_id, label, note, category, tags)
+    let ctx = ui_ctx(&app);
+    Ok(bookmarks::update(
+        &ctx,
+        session_id,
+        bookmark_id,
+        label,
+        note,
+        category,
+        tags,
+    )?)
 }
 
 /// Delete a bookmark by ID.
@@ -64,5 +76,7 @@ pub fn delete_bookmark(
     session_id: String,
     bookmark_id: String,
 ) -> Result<(), String> {
-    artifact_mutations::remove_bookmark(&app, session_id, bookmark_id).map(|_| ())
+    let ctx = ui_ctx(&app);
+    bookmarks::remove(&ctx, session_id, bookmark_id)?;
+    Ok(())
 }
