@@ -64,7 +64,7 @@ describe('U13: jumpToMatch does not double-fire jumpToLine under StrictMode', ()
     const { result } = renderStrict();
 
     await act(async () => {
-      result.current.actions.setSearch({ text: 'x', isRegex: false, caseSensitive: false });
+      result.current.actions.setSearch({ text: 'x', isRegex: false, caseSensitive: false, withinProcessor: null, minLevel: null, tags: null, startTime: null, endTime: null });
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -86,7 +86,7 @@ describe('U13: jumpToMatch does not double-fire jumpToLine under StrictMode', ()
     const { result } = renderStrict();
 
     await act(async () => {
-      result.current.actions.setSearch({ text: 'x', isRegex: false, caseSensitive: false });
+      result.current.actions.setSearch({ text: 'x', isRegex: false, caseSensitive: false, withinProcessor: null, minLevel: null, tags: null, startTime: null, endTime: null });
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -186,7 +186,7 @@ describe('U62: effectiveLineNumsRef is not clobbered by a same-commit session sw
     );
 
     await act(async () => {
-      capture.actions!.setSearch({ text: 'x', isRegex: false, caseSensitive: false });
+      capture.actions!.setSearch({ text: 'x', isRegex: false, caseSensitive: false, withinProcessor: null, minLevel: null, tags: null, startTime: null, endTime: null });
       await Promise.resolve();
       await Promise.resolve();
     });

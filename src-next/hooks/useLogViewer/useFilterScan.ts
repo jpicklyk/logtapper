@@ -61,6 +61,19 @@ interface BackendFilter {
   needsJsPass: boolean;
 }
 
+/** Every `FilterCriteria` field is required (nullable) on the wire — this is the
+ *  "nothing set" base that partial-criteria literals below spread onto. */
+const EMPTY_CRITERIA: FilterCriteria = {
+  textSearch: null,
+  regex: null,
+  logLevels: null,
+  tags: null,
+  timeStart: null,
+  timeEnd: null,
+  pids: null,
+  combine: 'and',
+};
+
 function buildBackendFilter(node: FilterNode): BackendFilter | null {
   // Returns a single-field criteria or null.
   function fromLeaf(field: string, value: string): BackendFilter | null {
@@ -68,21 +81,21 @@ function buildBackendFilter(node: FilterNode): BackendFilter | null {
       case 'level': {
         const level = BACKEND_LEVEL_MAP[value.toUpperCase()];
         if (!level) return null;
-        return { criteria: { logLevels: [level] }, needsJsPass: false };
+        return { criteria: { ...EMPTY_CRITERIA, logLevels: [level] }, needsJsPass: false };
       }
       case 'pid': {
         const n = parseInt(value, 10);
         if (isNaN(n)) return null;
-        return { criteria: { pids: [n] }, needsJsPass: false };
+        return { criteria: { ...EMPTY_CRITERIA, pids: [n] }, needsJsPass: false };
       }
       case 'tag':
         // Backend now does case-insensitive substring — same semantics as frontend.
-        return { criteria: { tags: [value] }, needsJsPass: false };
+        return { criteria: { ...EMPTY_CRITERIA, tags: [value] }, needsJsPass: false };
       case 'message':
       case 'raw':
         // Backend textSearch checks the raw line (which contains message as a
         // suffix). Use it as a pre-filter superset; JS confirms the exact field.
-        return { criteria: { textSearch: value }, needsJsPass: true };
+        return { criteria: { ...EMPTY_CRITERIA, textSearch: value }, needsJsPass: true };
       // tid: has no FilterCriteria equivalent.
       default:
         return null;
@@ -114,7 +127,7 @@ function buildBackendFilter(node: FilterNode): BackendFilter | null {
       // Backend textSearch is raw-line only; frontend also checks tag and
       // message. For standard log formats message is a suffix of raw, so
       // they're equivalent — but mark needsJsPass to be safe.
-      return { criteria: { textSearch: n.value }, needsJsPass: true };
+      return { criteria: { ...EMPTY_CRITERIA, textSearch: n.value }, needsJsPass: true };
     }
 
     if (n.kind === 'or') {
@@ -123,7 +136,7 @@ function buildBackendFilter(node: FilterNode): BackendFilter | null {
       // (false negatives). Partial OR extraction is not safe.
       const childResults = n.children.map(fromNode);
       if (childResults.some(r => r === null)) return null;
-      const merged: FilterCriteria = { combine: 'or' };
+      const merged: FilterCriteria = { ...EMPTY_CRITERIA, combine: 'or' };
       let needsJs = false;
       for (const r of childResults as BackendFilter[]) {
         merge(merged, r.criteria);
@@ -137,7 +150,7 @@ function buildBackendFilter(node: FilterNode): BackendFilter | null {
       // be expressed in FilterCriteria we simply omit them and let the JS
       // pass handle them. The result is a superset (backend may return some
       // false positives for the uncovered children).
-      const merged: FilterCriteria = {};
+      const merged: FilterCriteria = { ...EMPTY_CRITERIA };
       let anyExtracted = false;
       let needsJs = false;
       for (const child of n.children) {
@@ -420,6 +433,8 @@ export function useFilterScan(cacheManager: CacheController, refs: SharedLogView
             offset,
             count: BATCH,
             context: 0,
+            processorId: null,
+            search: null,
           });
           total = window.totalLines;
           const matchedLines: typeof window.lines = [];
@@ -468,8 +483,11 @@ export function useFilterScan(cacheManager: CacheController, refs: SharedLogView
         text: '',
         isRegex: false,
         caseSensitive: false,
-        startTime: start.trim() || undefined,
-        endTime: end.trim() || undefined,
+        withinProcessor: null,
+        minLevel: null,
+        tags: null,
+        startTime: start.trim() || null,
+        endTime: end.trim() || null,
       });
       setSessionFilter(sess.sessionId, { timeFilterLineNums: summary.matchLineNums });
     } catch (e) {

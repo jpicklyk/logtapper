@@ -36,8 +36,8 @@ export function useLogViewerActions(paneId: string) {
         offset,
         count,
         context: 3,
-        processorId: pid ?? undefined,
-        search: searchRef.current ?? undefined,
+        processorId: pid ?? null,
+        search: searchRef.current ?? null,
       });
     },
     [paneId],

@@ -17,3 +17,6 @@
 *.png   binary
 *.ico   binary
 *.icns  binary
+
+# ts-rs generated bindings — machine-produced by `npm run gen:types`; never hand-edit.
+src-next/bridge/generated/*.ts linguist-generated=true

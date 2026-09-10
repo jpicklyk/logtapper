@@ -390,11 +390,13 @@ export const BrowseTab = React.memo(function BrowseTab({ marketplace }: Props) {
             processorType: (entry.processorType ?? 'reporter') as 'reporter' | 'state_tracker' | 'correlator' | 'transformer',
             group: null,
             varsMeta: [],
-            license: entry.license,
-            category: entry.category,
+            license: entry.license ?? undefined,
+            category: entry.category ?? undefined,
             deprecated: entry.deprecated,
             hasSchema: false,
             source: selectedSource ?? undefined,
+            trackerSections: [],
+            sourceTypes: entry.sourceTypes,
           };
           return (
             <React.Fragment key={entry.id}>

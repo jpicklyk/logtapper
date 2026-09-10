@@ -130,7 +130,7 @@ export function useSessionTabManager(
         console.debug('[TabManager] handleTabActivated', { paneId, sessionId, reason, totalLines: sess.totalLines, hasCachedLines });
         if (!hasCachedLines) {
           console.debug('[TabManager] warm-up fetch triggered', { sessionId });
-          getLines({ sessionId, mode: { mode: 'Full' }, offset: 0, count: 100, context: 3 })
+          getLines({ sessionId, mode: { mode: 'Full' }, offset: 0, count: 100, context: 3, processorId: null, search: null })
             .then((win) => {
               console.debug('[TabManager] warm-up fetch result', { sessionId, lineCount: win.lines.length });
               if (win.lines.length > 0) cacheManager.broadcastToSession(sessionId, win.lines);

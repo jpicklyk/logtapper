@@ -603,11 +603,11 @@ export function installPackFromMarketplace(
     id: string;
     name: string;
     version: string;
-    description?: string;
+    description: string | null;
     path: string;
     tags: string[];
     sha256: string;
-    category?: string;
+    category: string | null;
     processor_ids: string[];
   },
 ): Promise<PackSummary> {

@@ -7,9 +7,11 @@ function makePackEntry(id: string): MarketplacePackEntry {
     id,
     name: `Pack ${id}`,
     version: '2.0.0',
+    description: null,
     path: `packs/${id}.pack.yaml`,
     tags: [],
     sha256: '',
+    category: null,
     processorIds: ['proc-a'],
   };
 }

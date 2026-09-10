@@ -71,7 +71,8 @@ export function useSearchNavigation(refs: SharedLogViewerRefs): SearchNavigation
       offset,
       count,
       context: 3,
-      processorId: pid ?? undefined,
+      processorId: pid ?? null,
+      search: null,
     });
   }, [refs.sessionRef]);
 

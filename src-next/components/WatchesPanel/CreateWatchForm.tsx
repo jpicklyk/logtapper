@@ -46,24 +46,37 @@ export const CreateWatchForm = React.memo(function CreateWatchForm({
   }, []);
 
   const buildCriteria = useCallback((): FilterCriteria | null => {
-    const criteria: FilterCriteria = {};
-    if (textSearch.trim()) criteria.textSearch = textSearch.trim();
-    if (regex.trim()) criteria.regex = regex.trim();
-    if (selectedLevels.size > 0) criteria.logLevels = Array.from(selectedLevels);
+    // Every FilterCriteria field is required (nullable) on the wire — start from
+    // an all-null base and track whether the user actually set anything, since
+    // an all-null criteria is meaningless to send.
+    const criteria: FilterCriteria = {
+      textSearch: null,
+      regex: null,
+      logLevels: null,
+      tags: null,
+      timeStart: null,
+      timeEnd: null,
+      pids: null,
+      combine: 'and',
+    };
+    let anySet = false;
+    if (textSearch.trim()) { criteria.textSearch = textSearch.trim(); anySet = true; }
+    if (regex.trim()) { criteria.regex = regex.trim(); anySet = true; }
+    if (selectedLevels.size > 0) { criteria.logLevels = Array.from(selectedLevels); anySet = true; }
     if (tags.trim()) {
       criteria.tags = tags.split(',').map((t) => t.trim()).filter(Boolean);
+      anySet = true;
     }
     if (pids.trim()) {
       const parsed = pids
         .split(',')
         .map((p) => parseInt(p.trim(), 10))
         .filter((n) => !isNaN(n));
-      if (parsed.length > 0) criteria.pids = parsed;
+      if (parsed.length > 0) { criteria.pids = parsed; anySet = true; }
     }
-    if (combine !== 'and') criteria.combine = combine;
+    if (combine !== 'and') { criteria.combine = combine; anySet = true; }
 
-    if (Object.keys(criteria).length === 0) return null;
-    return criteria;
+    return anySet ? criteria : null;
   }, [textSearch, regex, selectedLevels, tags, pids, combine]);
 
   const handleSubmit = useCallback(async () => {

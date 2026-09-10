@@ -6,9 +6,19 @@ All Tauri communication goes through this directory. Components and hooks **neve
 
 - `commands.ts` — thin `invoke()` wrappers; one function per Rust `#[tauri::command]`
 - `events.ts` — typed `listen()` wrappers for all Tauri events
-- `types.ts` — TypeScript mirrors of all Rust IPC structs
+- `types.ts` — the import surface for IPC types; re-exports from `generated/` plus a
+  small set of hand-written types that have no Rust struct or that ts-rs cannot
+  narrow (each carries a one-line comment explaining why)
+- `generated/` — ts-rs bindings produced by `npm run gen:types`; never hand-edit
+  (see its own note in `.gitattributes` and `types.ts`'s header comment)
 
-When adding a new Rust IPC struct, add its TypeScript mirror to `types.ts` before using it in a command wrapper.
+When adding a new Rust IPC struct: derive `TS` on it (see `src-tauri/tests/export_bindings.rs`'s
+`ROOT_TYPES!` list), run `npm run gen:types` to regenerate `generated/`, then re-export it from
+`types.ts` before using it in a command wrapper. Only add a hand-written type in `types.ts` when
+there is no Rust struct to derive from, or ts-rs cannot express the shape (e.g. a `String` field
+that is really a fixed set of literals) — and always with a comment saying why. `npm run
+check:types` (part of `lint:all`) fails the build if `generated/` drifts from a fresh `gen:types`
+run or if `tsc` doesn't pass.
 
 ## Serialization conventions (Rust → TypeScript)
 

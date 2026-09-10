@@ -37,7 +37,10 @@ function mergeProcessorResult(
   emissionCount: number,
 ): SessionPipelineState {
   const idx = s.results.findIndex((r) => r.processorId === processorId);
-  const updated = { processorId, matchedLines, emissionCount };
+  // scriptErrors/scannedFrom are required on the wire type but this streaming
+  // update (AdbProcessorUpdate) doesn't carry them — 0 is the "not applicable /
+  // not yet known" default the backend itself sends for file-mode runs.
+  const updated: PipelineRunSummary = { processorId, matchedLines, emissionCount, scriptErrors: 0, scannedFrom: 0 };
   const results = idx >= 0
     ? s.results.map((r, i) => i === idx ? updated : r)
     : [...s.results, updated];

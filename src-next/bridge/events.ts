@@ -116,7 +116,8 @@ export function onOpenFile(
 // Session closed by the MCP bridge (agent-initiated close)
 // ---------------------------------------------------------------------------
 
-/** Payload for the `session-closed` Tauri event. */
+/** Payload for the `session-closed` Tauri event. HAND-WRITTEN: no Rust struct backs
+ *  this — the bridge emits `{ "sessionId": sessionId }` ad hoc. */
 export interface SessionClosedPayload {
   sessionId: string;
 }
@@ -162,7 +163,8 @@ export function onBridgeSessionOpened(
 
 /** Payload emitted by the backend auto-save flusher after it writes the `.ltw`.
  *  Shape matches the frontend `workspace:auto-saved` bus event so it can be
- *  forwarded directly. */
+ *  forwarded directly. HAND-WRITTEN: no Rust struct backs this — the flusher
+ *  emits an ad hoc `serde_json::json!{}`. */
 export interface WorkspaceAutoSavedPayload {
   workspaceId: string;
   path: string;
