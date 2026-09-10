@@ -4,6 +4,7 @@ use tauri::State;
 use crate::charts::builder::{build_charts, ChartData};
 use crate::commands::{lock_or_err, AppState};
 use crate::processors::schema::PipelineStage;
+use ts_rs::TS;
 
 // ---------------------------------------------------------------------------
 // get_chart_data
@@ -48,14 +49,14 @@ pub async fn get_chart_data(
 // get_timeline_data — extract (line_num, value) pairs for sparkline rendering
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct TimelinePoint {
     pub line_num: usize,
     pub value: f64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct TimelineSeriesData {
     pub processor_id: String,

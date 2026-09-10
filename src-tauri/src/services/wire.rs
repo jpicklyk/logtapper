@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::line::ViewLine;
 
 use crate::commands::pipeline::PipelineRunSummary;
+use ts_rs::TS;
 
 // ---------------------------------------------------------------------------
 // Envelopes
@@ -26,7 +27,7 @@ use crate::commands::pipeline::PipelineRunSummary;
 /// without a second request. `truncated` is `true` when the service stopped
 /// early for a reason other than reaching `total` — a scan cap, a mid-scan
 /// session removal — which is a different fact from `items.len() < total`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Page<T> {
     pub items: Vec<T>,
@@ -69,7 +70,7 @@ impl<T> Page<T> {
 
 /// How a service picked which lines to return when it could not return them
 /// all. Requested by the caller; echoed back on [`Sampled`].
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum LineStrategy {
     /// Evenly spaced across the whole scanned range.
@@ -87,13 +88,14 @@ pub enum LineStrategy {
 ///
 /// Distinct from [`Page`]: a page is a contiguous window a caller can advance,
 /// a sample is a lossy selection described by its [`LineStrategy`].
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Sampled<T> {
     pub items: Vec<T>,
     pub strategy: LineStrategy,
     /// Human-readable note explaining what the sample represents, for agents.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub strategy_note: Option<String>,
     /// How many items the sample contains (== `items.len()`, carried
     /// explicitly because MCP clients read it without materializing `items`).
@@ -131,7 +133,7 @@ impl<T> Sampled<T> {
 /// Used where a consumer must be able to tell "this is the whole thing" from
 /// "this is the head of something bigger" — raw line text past the character
 /// cap, oversized var maps, and so on.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Truncated<T> {
     pub value: T,
@@ -139,6 +141,7 @@ pub struct Truncated<T> {
     /// The full size before truncation, in whatever unit the value counts in
     /// (characters for text, entries for a map).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub original_len: Option<usize>,
 }
 
@@ -168,7 +171,7 @@ impl<T> Truncated<T> {
 /// `LineWindow { totalLines, lines }` and the bridge's bespoke
 /// `{ lineNum, level, tag, raw }` array. [`ViewLine`] is the single element
 /// type on both paths.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct LinePage {
     pub session_id: String,
@@ -186,7 +189,7 @@ pub struct LinePage {
 /// caller that passed `None` learns what it got rather than having to
 /// re-derive it (which is what `mcp_bridge::h_run_pipeline` does today, and
 /// what `usePipelineCommands.ts` duplicates on the frontend).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PipelineRunResult {
     pub session_id: String,

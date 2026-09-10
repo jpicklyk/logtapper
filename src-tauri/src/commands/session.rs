@@ -5,8 +5,9 @@ use tauri::State;
 
 use crate::commands::{lock_or_err, AppState};
 use crate::mcp_bridge::PORT as MCP_PORT;
+use ts_rs::TS;
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct McpStatus {
     pub running: bool,
@@ -65,27 +66,31 @@ pub fn get_mcp_status(state: State<'_, std::sync::Arc<AppState>>) -> McpStatus {
 // Session metadata — rich overview for agents and MCP
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMetadata {
     pub session_id: String,
     pub source_name: String,
     pub source_type: String,
     pub total_lines: usize,
+    #[ts(type = "number")]
     pub file_size: u64,
     pub is_live: bool,
     pub is_indexing: bool,
     /// First non-zero timestamp in the log (ns since 2000-01-01 UTC), or null.
+    #[ts(type = "number | null")]
     pub first_timestamp: Option<i64>,
     /// Last non-zero timestamp in the log (ns since 2000-01-01 UTC), or null.
+    #[ts(type = "number | null")]
     pub last_timestamp: Option<i64>,
     /// Distribution of log levels: { "Info": 12345, "Error": 42, ... }
+    #[ts(type = "Record<string, number>")]
     pub log_level_distribution: HashMap<String, usize>,
     /// Top tags by frequency (up to 50).
     pub top_tags: Vec<TagCount>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct TagCount {
     pub tag: String,

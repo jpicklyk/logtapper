@@ -4,6 +4,7 @@
 /// `start_mcp_bridge` when `mcpBridgeEnabled` is true and `stop_mcp_bridge`
 /// when the user disables it in Settings.
 use crate::commands::{lock_or_err, AppState};
+use ts_rs::TS;
 
 /// Inner logic for starting the MCP bridge.
 ///
@@ -225,7 +226,7 @@ fn has_mcpb_handler() -> bool {
 /// `installable` reports whether the OS can actually open it — when false the
 /// caller should offer "save a copy" only, since a one-click install would
 /// raise an unrelated chooser dialog.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct McpBundleInfo {
     pub path: String,

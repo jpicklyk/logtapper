@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 /// How a source reference should be displayed in the gutter.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, TS)]
 pub enum HighlightType {
     /// A background annotation (subtle highlight).
     #[default]
@@ -11,7 +12,7 @@ pub enum HighlightType {
 }
 
 /// Severity level for an analysis section.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 pub enum Severity {
     Info,
     Warning,
@@ -20,7 +21,7 @@ pub enum Severity {
 }
 
 /// A reference to a specific location in the log source.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceReference {
     pub line_number: u32,
@@ -38,7 +39,7 @@ pub struct SourceReference {
 }
 
 /// One section of a structured analysis artifact.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalysisSection {
     pub heading: String,
@@ -52,11 +53,12 @@ pub struct AnalysisSection {
 }
 
 /// A structured narrative with citations, published by an agent or user.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalysisArtifact {
     pub id: String,
     pub title: String,
+    #[ts(type = "number")]
     pub created_at: i64,
     pub sections: Vec<AnalysisSection>,
     /// Read-compat only for old artifact-level `{"sessionId": "..."}` payloads
@@ -68,11 +70,12 @@ pub struct AnalysisArtifact {
     /// attribution should read this once via [`migrate_artifact`], which
     /// clears it after stamping.
     #[serde(default, rename = "sessionId", skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub legacy_session_id: Option<String>,
 }
 
 /// Payload emitted as `analysis-update` Tauri event.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalysisUpdateEvent {
     pub artifact_id: String,

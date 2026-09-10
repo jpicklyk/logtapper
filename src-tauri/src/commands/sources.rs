@@ -7,6 +7,7 @@ use crate::processors::marketplace::{self, MarketplaceEntry, Source};
 use crate::processors::pack::{parse_pack_yaml, validate_pack};
 use crate::processors::registry;
 use crate::processors::{AnyProcessor, PackMeta, PackSummary, ProcessorSummary};
+use ts_rs::TS;
 
 // ---------------------------------------------------------------------------
 // Source persistence helpers
@@ -40,7 +41,7 @@ fn save_sources(app: &AppHandle, sources: &[Source]) -> Result<(), String> {
 // DTO for frontend (camelCase serialization)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MarketplaceEntryDto {
     pub id: String,
@@ -76,7 +77,7 @@ impl From<MarketplaceEntry> for MarketplaceEntryDto {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MarketplacePackEntryDto {
     pub id: String,
@@ -106,7 +107,7 @@ impl From<marketplace::MarketplacePackEntry> for MarketplacePackEntryDto {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MarketplaceFetchResult {
     pub processors: Vec<MarketplaceEntryDto>,
@@ -207,7 +208,7 @@ pub async fn fetch_marketplace_for_source(
 // ---------------------------------------------------------------------------
 
 /// A processor that has a newer version available in the marketplace.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateAvailable {
     /// Qualified processor ID (id@source).
@@ -221,7 +222,7 @@ pub struct UpdateAvailable {
 }
 
 /// A pack that has a newer version available (new processors or version bump).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PackUpdateAvailable {
     pub pack_id: String,
@@ -236,7 +237,7 @@ pub struct PackUpdateAvailable {
 }
 
 /// Result of a check_updates call.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateCheckResult {
     pub updates: Vec<UpdateAvailable>,
@@ -245,7 +246,7 @@ pub struct UpdateCheckResult {
     pub errors: Vec<SourceError>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceError {
     pub source_name: String,
@@ -253,7 +254,7 @@ pub struct SourceError {
 }
 
 /// Result of applying a single update.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateResult {
     pub processor_id: String,

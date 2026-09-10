@@ -7,9 +7,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
+use ts_rs::TS;
 
 /// A workspace entry in the application state.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceEntry {
     /// Unique identifier for this workspace.
@@ -29,11 +30,12 @@ pub struct WorkspaceEntry {
     /// Epoch-millis timestamp of the last completed auto-save, or null. Paired
     /// with `auto_save_path` — both are written together when a flush completes.
     #[serde(default)]
+    #[ts(type = "number | null")]
     pub last_auto_save_at: Option<i64>,
 }
 
 /// The full application state persisted to disk.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AppStateFile {
     /// List of open workspaces.

@@ -4,12 +4,13 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::anonymizer::{config::AnonymizerConfig, LogAnonymizer};
 use crate::commands::{lock_or_err, AppState};
+use ts_rs::TS;
 
 // ---------------------------------------------------------------------------
 // Test result types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PiiReplacement {
     pub token: String,
@@ -19,7 +20,7 @@ pub struct PiiReplacement {
     pub end: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AnonymizerTestResult {
     pub anonymized: String,

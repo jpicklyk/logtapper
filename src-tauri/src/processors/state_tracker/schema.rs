@@ -2,9 +2,10 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::processors::reporter::schema::FilterRule;
+use ts_rs::TS;
 
 /// Controls how a state tracker's snapshot is resolved relative to the selected line.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum TrackerMode {
     /// State is reconstructed by replaying transitions up to the selected line.

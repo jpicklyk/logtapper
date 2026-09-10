@@ -11,12 +11,13 @@ use crate::core::filter::{
 use crate::core::line::{LogLevel, ViewLine};
 use crate::core::parser::LogParser;
 use crate::core::session::parser_for;
+use ts_rs::TS;
 
 // ---------------------------------------------------------------------------
 // IPC payloads
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct FilterCreateResult {
     pub filter_id: String,
@@ -25,7 +26,7 @@ pub struct FilterCreateResult {
     pub total_lines: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct FilterProgress {
     pub filter_id: String,
@@ -35,7 +36,7 @@ pub struct FilterProgress {
     pub done: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct FilteredLinesResult {
     pub filter_id: String,
@@ -44,7 +45,7 @@ pub struct FilteredLinesResult {
     pub status: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct FilterInfo {
     pub filter_id: String,

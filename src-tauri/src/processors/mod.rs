@@ -1,3 +1,4 @@
+use ts_rs::TS;
 pub mod correlator;
 pub mod filter;
 pub mod marketplace;
@@ -326,7 +327,7 @@ impl AnyProcessor {
 }
 
 /// Display metadata for a single var declaration — sent with ProcessorSummary.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct VarMeta {
     pub name: String,
@@ -339,7 +340,7 @@ pub struct VarMeta {
 }
 
 /// IPC-serializable summary (returned by list_processors command).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ProcessorSummary {
     pub id: String,
@@ -353,28 +354,35 @@ pub struct ProcessorSummary {
     /// Var declarations from the YAML (reporters only; empty for other types).
     pub vars_meta: Vec<VarMeta>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub license: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub category: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub repository: Option<String>,
     pub deprecated: bool,
     /// Whether this processor has a schema contract defined.
     pub has_schema: bool,
     /// Marketplace source name (e.g. "official", "my-team"), if installed from a source.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub source: Option<String>,
     /// Pack ID this processor belongs to, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub pack_id: Option<String>,
     /// State tracker mode. Only set for state_tracker type.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub tracker_mode: Option<crate::processors::state_tracker::schema::TrackerMode>,
     /// Section names this state tracker targets (bugreport/dumpstate only).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tracker_sections: Vec<String>,
     /// Whether this state tracker outputs to the timeline. Only set for state_tracker type.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub tracker_timeline: Option<bool>,
     /// Log source types this processor supports (from schema.source_types).
     #[serde(skip_serializing_if = "Vec::is_empty")]

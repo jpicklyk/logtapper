@@ -13,6 +13,7 @@
     "lint": "eslint src-next/",
     "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",
     "lint:all": "npm run lint && npm run lint:rust",
+    "gen:types": "cargo test --manifest-path src-tauri/Cargo.toml --test export_bindings",
     "test": "vitest run",
     "test:watch": "vitest",
     "build:mcpb": "npm --prefix mcp-server run build:mcpb"

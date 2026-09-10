@@ -4,6 +4,7 @@ use serde_json::Value as JsonValue;
 
 use crate::processors::interpreter::Emission;
 use crate::processors::schema::{ChartSpec, PipelineStage, ProcessorDef};
+use ts_rs::TS;
 use super::aggregation::{
     count_by_field, count_by_time, count_by_time_grouped, json_as_f64,
 };
@@ -12,7 +13,7 @@ use super::aggregation::{
 // Chart data model (IPC-crossing)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct DataPoint {
     pub x: f64,
@@ -21,7 +22,7 @@ pub struct DataPoint {
     pub timeline_pos: Option<usize>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct DataSeries {
     pub label: String,
@@ -29,14 +30,14 @@ pub struct DataSeries {
     pub points: Vec<DataPoint>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AxisConfig {
     pub label: String,
     pub field: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ChartData {
     pub id: String,

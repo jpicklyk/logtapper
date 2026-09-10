@@ -9,6 +9,7 @@ use crate::core::analysis::artifact_references_session;
 use crate::core::log_source::{FileLogSource, ZipLogSource, StreamLogSource};
 use crate::services::policy::{anonymize_for_session, resolve_should_anonymize};
 use crate::workspace::lts::{LtsEditorTab, LtsSessionData, LtsSessionMeta};
+use ts_rs::TS;
 
 // ---------------------------------------------------------------------------
 // T4 — Processor YAML reader helper
@@ -166,7 +167,7 @@ fn session_display_name(session: &crate::core::session::AnalysisSession) -> Stri
 // Multi-session export types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportAllSessionsInfo {
     pub sessions: Vec<ExportSessionEntry>,
@@ -174,7 +175,7 @@ pub struct ExportAllSessionsInfo {
     pub total_pipeline_processor_count: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportSessionEntry {
     pub session_id: String,
@@ -183,7 +184,7 @@ pub struct ExportSessionEntry {
     pub analysis_count: usize,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportAllOptions {
     pub dest_path: String,

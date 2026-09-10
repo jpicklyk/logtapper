@@ -13,6 +13,7 @@ use crate::core::line::{LineMeta, LogLevel, ParsedLineMeta};
 use crate::core::log_source::{detect_crlf, detect_encoding, decode_line_bytes, decode_utf16_bytes, is_utf16_lf, is_utf16_cr, Encoding, FileLogSource, LogSource, StreamLogSource, ZipLogSource};
 use crate::core::logcat_parser::LogcatParser;
 use crate::core::parser::LogParser;
+use ts_rs::TS;
 
 // ---------------------------------------------------------------------------
 // TagInterner — maps tag strings to compact u16 IDs
@@ -173,7 +174,7 @@ impl std::fmt::Display for SourceType {
 // SectionInfo — one named section in a dumpstate/bugreport file
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SectionInfo {
     pub name: String,
@@ -183,6 +184,7 @@ pub struct SectionInfo {
     pub end_line: usize,
     /// Index into the sections vec of the parent section (None for top-level sections).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub parent_index: Option<usize>,
 }
 

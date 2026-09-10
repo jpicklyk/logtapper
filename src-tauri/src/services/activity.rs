@@ -18,6 +18,7 @@ use std::sync::Mutex;
 use serde::Serialize;
 
 use super::Caller;
+use ts_rs::TS;
 
 /// How many entries the journal retains. Older entries are dropped from the
 /// front. This is a live feed, not an audit log — a consumer that wants
@@ -25,13 +26,15 @@ use super::Caller;
 pub const ACTIVITY_CAP: usize = 500;
 
 /// One journaled action.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityEntry {
     /// Monotonic id, unique for the life of the process. Consumers poll with
     /// `since_id` and receive everything strictly newer.
+    #[ts(type = "number")]
     pub id: u64,
     /// Unix epoch milliseconds.
+    #[ts(type = "number")]
     pub ts: u64,
     /// Who did it.
     pub caller: Caller,

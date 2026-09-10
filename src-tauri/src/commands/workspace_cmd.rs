@@ -16,6 +16,7 @@ use crate::workspace::ltw_v4::{
 use crate::workspace::{now_ms, SessionMeta};
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 // ---------------------------------------------------------------------------
 // Shared helper: collect session data from AppState
@@ -170,7 +171,7 @@ fn write_workspace_snapshot(
 // Save workspace (.ltw v4)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveWorkspaceOptions {
     /// Stable workspace identifier — cached into the backend envelope so a
@@ -179,6 +180,7 @@ pub struct SaveWorkspaceOptions {
     pub dest_path: String,
     pub workspace_name: String,
     pub editor_tabs: Vec<LtwEditorTab>,
+    #[ts(type = "unknown")]
     pub layout: Option<LtwLayout>,
     pub pipeline_chain: Vec<String>,
     pub disabled_chain_ids: Vec<String>,
@@ -213,7 +215,7 @@ pub async fn save_workspace_v4(
 // Auto-save workspace to app_data_dir (for workspace switching)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AutoSaveWorkspaceOptions {
     /// Stable workspace identifier — keys the auto-save filename so two
@@ -222,6 +224,7 @@ pub struct AutoSaveWorkspaceOptions {
     pub workspace_id: String,
     pub workspace_name: String,
     pub editor_tabs: Vec<LtwEditorTab>,
+    #[ts(type = "unknown")]
     pub layout: Option<LtwLayout>,
     pub pipeline_chain: Vec<String>,
     pub disabled_chain_ids: Vec<String>,
@@ -273,7 +276,7 @@ pub async fn auto_save_workspace(
 /// Options for `sync_workspace_envelope`. Mirrors the save options but carries
 /// the workspace's explicit `.ltw` path (if any) rather than a dest, and never
 /// writes a file.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncWorkspaceEnvelopeOptions {
     pub workspace_id: String,
@@ -282,6 +285,7 @@ pub struct SyncWorkspaceEnvelopeOptions {
     /// the id-keyed `workspaces/{id}.ltw`.
     pub ltw_path: Option<String>,
     pub editor_tabs: Vec<LtwEditorTab>,
+    #[ts(type = "unknown")]
     pub layout: Option<LtwLayout>,
     pub pipeline_chain: Vec<String>,
     pub disabled_chain_ids: Vec<String>,
@@ -348,7 +352,7 @@ pub async fn begin_workspace_switch(state: State<'_, std::sync::Arc<AppState>>) 
 
 /// Per-session artifact data returned as part of `LoadWorkspaceResult`.
 /// Ordered to match `LoadWorkspaceResult::sessions` by index.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct LoadWorkspaceSessionData {
     pub bookmarks: Vec<crate::core::bookmark::Bookmark>,
@@ -362,7 +366,7 @@ pub struct LoadWorkspaceSessionData {
 }
 
 /// Result returned to the frontend after reading a `.ltw` v4 file.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct LoadWorkspaceResult {
     pub workspace_name: String,
@@ -372,10 +376,12 @@ pub struct LoadWorkspaceResult {
     pub workspace_id: Option<String>,
     /// Manifest `savedAt` (epoch-ms). Q3 compares it against the recorded
     /// `lastAutoSaveAt` when the candidate is the auto-save.
+    #[ts(type = "number")]
     pub saved_at: i64,
     pub sessions: Vec<LtwManifestSession>,
     pub pipeline_chain: LtwPipelineChain,
     pub editor_tabs: Vec<LtwEditorTab>,
+    #[ts(type = "unknown")]
     pub layout: Option<LtwLayout>,
     /// Workspace-level analyses (top-level `analyses.json`). Empty for a
     /// pre-migration file — see [`LoadWorkspaceSessionData::analyses`] for
@@ -415,7 +421,7 @@ pub async fn load_workspace_v4(path: String) -> Result<LoadWorkspaceResult, Stri
 // ---------------------------------------------------------------------------
 
 /// Options for restoring per-session artifacts into AppState.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RestoreSessionOptions {
     pub session_id: String,

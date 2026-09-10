@@ -22,6 +22,7 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use serde_json::{json, Value};
+use ts_rs::TS;
 
 // ---------------------------------------------------------------------------
 // EventSink — broadcast app events
@@ -50,7 +51,7 @@ impl EventSink for NullSink {
 
 /// Payload of the `pipeline-progress` event. Field-for-field identical to
 /// `commands::pipeline::PipelineProgress`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PipelineProgressEvent {
     pub session_id: String,
@@ -62,7 +63,7 @@ pub struct PipelineProgressEvent {
 
 /// Payload of the `search-progress` event. Field-for-field identical to
 /// `commands::files::SearchProgress`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchProgressEvent {
     pub session_id: String,
@@ -75,7 +76,7 @@ pub struct SearchProgressEvent {
 
 /// Payload of the `filter-progress` event. Field-for-field identical to
 /// `commands::filter::FilterProgress`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct FilterProgressEvent {
     pub filter_id: String,
@@ -87,7 +88,7 @@ pub struct FilterProgressEvent {
 
 /// Payload of the `file-index-progress` event. Field-for-field identical to
 /// `commands::files::FileIndexProgress`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct IndexProgressEvent {
     pub session_id: String,
@@ -101,7 +102,7 @@ pub struct IndexProgressEvent {
 /// [`ProgressEvent::event_name`] is the single source of truth for the wire
 /// name each variant carries; `TauriProgressSink` emits under exactly that
 /// name so the existing frontend listeners keep working unchanged.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, TS)]
 pub enum ProgressEvent {
     Pipeline(PipelineProgressEvent),
     Search(SearchProgressEvent),

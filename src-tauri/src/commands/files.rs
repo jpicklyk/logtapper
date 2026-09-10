@@ -15,6 +15,7 @@ use crate::core::line::{
     SearchSummary, ViewLine, ViewMode,
 };
 use crate::core::session::{AnalysisSession, SectionInfo, parser_for};
+use ts_rs::TS;
 
 // ---------------------------------------------------------------------------
 // Zip extraction for bugreport .zip files
@@ -63,7 +64,7 @@ fn extract_bugreport_from_zip(zip_path: &Path) -> Result<NamedTempFile, String> 
 // DumpstateMetadata
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct DumpstateMetadata {
     pub build_string: Option<String>,
@@ -83,7 +84,7 @@ pub struct DumpstateMetadata {
 // load_log_file
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct LoadResult {
     pub session_id: String,
@@ -92,8 +93,11 @@ pub struct LoadResult {
     /// Full filesystem path for file-backed sessions; None for ADB streams.
     pub file_path: Option<String>,
     pub total_lines: usize,
+    #[ts(type = "number")]
     pub file_size: u64,
+    #[ts(type = "number | null")]
     pub first_timestamp: Option<i64>,
+    #[ts(type = "number | null")]
     pub last_timestamp: Option<i64>,
     pub source_type: String,
     /// True for live ADB streaming sessions; false for static file sessions.
@@ -110,18 +114,18 @@ pub struct LoadResult {
 // Progressive indexing event payloads
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct FileIndexProgress {
+pub struct FileIndexProgress {
     session_id: String,
     indexed_lines: usize,
     bytes_scanned: usize,
     total_bytes: usize,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct FileIndexComplete {
+pub struct FileIndexComplete {
     session_id: String,
     total_lines: usize,
 }
@@ -1337,9 +1341,9 @@ pub async fn get_lines(
 // search_logs (streaming chunked results via events)
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct SearchProgress {
+pub struct SearchProgress {
     session_id: String,
     matched_so_far: usize,
     lines_scanned: usize,

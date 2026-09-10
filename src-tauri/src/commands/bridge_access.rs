@@ -21,6 +21,7 @@ use tauri::{AppHandle, State};
 
 use crate::commands::{lock_or_err, AppState};
 use crate::services::paths::AppPaths;
+use ts_rs::TS;
 
 // ---------------------------------------------------------------------------
 // Config
@@ -40,7 +41,7 @@ use crate::services::paths::AppPaths;
 /// allowlist-containment step (step 6) entirely and permits any path that
 /// passes the unconditional path-hygiene checks (steps 1-3). It never
 /// weakens those hygiene checks — see `validate_open_path`'s doc comment.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct McpOpenAllowlist {
     pub allowed_dirs: Vec<String>,

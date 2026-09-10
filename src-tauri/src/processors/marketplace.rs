@@ -5,6 +5,7 @@
 //! and hold that contract at install time.
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 // ---------------------------------------------------------------------------
 // Source configuration types
@@ -14,7 +15,7 @@ fn default_git_ref() -> String {
     "main".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct Source {
     pub name: String,
     #[serde(rename = "type")]
@@ -23,11 +24,16 @@ pub struct Source {
     #[serde(default)]
     pub auto_update: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub last_checked: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "lowercase")]
+// Renamed for the TS surface only: `src-next/bridge/types.ts` already exports a
+// `SourceType` — the *log* source union mirroring `core::session::SourceType`.
+// Two unrelated types cannot share a name in the generated barrel.
+#[ts(rename = "MarketplaceSourceType")]
 pub enum SourceType {
     Github {
         repo: String,
@@ -56,7 +62,7 @@ pub struct MarketplaceIndex {
 }
 
 /// Marketplace index entry for a processor pack.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct MarketplacePackEntry {
     pub id: String,
     pub name: String,

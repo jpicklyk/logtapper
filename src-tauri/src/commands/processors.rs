@@ -6,6 +6,7 @@ use crate::commands::{lock_or_err, AppState};
 use crate::processors::marketplace;
 use crate::processors::pack::{parse_pack_yaml, validate_pack};
 use crate::processors::{AnyProcessor, PackMeta, PackSummary, ProcessorSummary};
+use ts_rs::TS;
 
 pub(crate) fn persist_processor(app: &AppHandle, id: &str, yaml: &str) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -172,7 +173,7 @@ pub async fn get_processor_vars(
     Ok(result.vars.clone())
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MatchedLineInfo {
     pub line_num: usize,

@@ -37,6 +37,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use serde::{Deserialize, Serialize};
 
 use crate::commands::AppState;
+use ts_rs::TS;
 
 pub mod activity;
 pub mod error;
@@ -63,7 +64,7 @@ pub use wire::{LinePage, LineStrategy, Page, PipelineRunResult, Sampled, Truncat
 ///
 /// Not a permission level — a *identity*. [`policy`] maps it to permissions, so
 /// there is exactly one place to read when asking "what may an agent do?".
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum Caller {
     /// The desktop UI, driven by the human at the keyboard.

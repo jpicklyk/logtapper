@@ -21,12 +21,13 @@ use crate::core::session::AnalysisSession;
 use crate::processors::interpreter::{ContinuousRunState, ProcessorRun};
 use crate::processors::reporter::schema::ReporterDef;
 use crate::processors::state_tracker::engine::build_defaults;
+use ts_rs::TS;
 
 // ---------------------------------------------------------------------------
 // Payload types for Tauri events
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AdbDevice {
     pub serial: String,
@@ -34,17 +35,20 @@ pub struct AdbDevice {
     pub state: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AdbBatch {
     pub session_id: String,
     pub lines: Vec<ViewLine>,
     pub total_lines: usize,
     /// Cumulative bytes received from ADB (for Size display in file info panel).
+    #[ts(type = "number")]
     pub byte_count: u64,
     /// First non-zero timestamp in the stream (nanoseconds since 2000-01-01 UTC).
+    #[ts(type = "number | null")]
     pub first_timestamp: Option<i64>,
     /// Most recent non-zero timestamp (nanoseconds since 2000-01-01 UTC).
+    #[ts(type = "number | null")]
     pub last_timestamp: Option<i64>,
     /// Cumulative count of evicted lines that could NOT be spilled to disk and
     /// are therefore permanently lost (spill-file create/write failure). 0 in
@@ -52,7 +56,7 @@ pub struct AdbBatch {
     pub lost_line_count: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AdbProcessorUpdate {
     pub session_id: String,
@@ -61,14 +65,14 @@ pub struct AdbProcessorUpdate {
     pub emission_count: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AdbStreamStopped {
     pub session_id: String,
     pub reason: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AdbTrackerUpdate {
     pub session_id: String,
@@ -78,7 +82,7 @@ pub struct AdbTrackerUpdate {
 
 /// Typed channel event for ADB streaming — replaces high-frequency `app.emit()` calls.
 /// Serializes as a tagged union: `{ "event": "batch", "data": {...} }`.
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase", tag = "event", content = "data")]
 pub enum AdbStreamEvent {
     Batch(AdbBatch),

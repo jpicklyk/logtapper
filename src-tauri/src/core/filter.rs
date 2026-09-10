@@ -4,12 +4,13 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::core::line::LogLevel;
+use ts_rs::TS;
 
 // ---------------------------------------------------------------------------
 // Filter criteria — what lines to match
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum CombineMode {
     #[default]
@@ -17,7 +18,7 @@ pub enum CombineMode {
     Or,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct FilterCriteria {
     /// Substring search (case-insensitive).
@@ -34,9 +35,11 @@ pub struct FilterCriteria {
     pub tags: Option<Vec<String>>,
     /// Minimum timestamp (ns since 2000-01-01 UTC, inclusive).
     #[serde(default)]
+    #[ts(type = "number | null")]
     pub time_start: Option<i64>,
     /// Maximum timestamp (ns since 2000-01-01 UTC, inclusive).
     #[serde(default)]
+    #[ts(type = "number | null")]
     pub time_end: Option<i64>,
     /// PID filter.
     #[serde(default)]

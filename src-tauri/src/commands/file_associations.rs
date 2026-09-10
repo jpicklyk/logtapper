@@ -1,4 +1,5 @@
 use serde::Serialize;
+use ts_rs::TS;
 
 /// Extensions that support dynamic (runtime) association toggling.
 const DYNAMIC_EXTENSIONS: &[(&str, &str)] = &[
@@ -11,7 +12,7 @@ fn prog_id(ext: &str) -> String {
     format!("LogTapper.{ext}")
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct FileAssocEntry {
     pub ext: String,

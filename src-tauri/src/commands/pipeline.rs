@@ -16,12 +16,13 @@ use crate::processors::ProcessorKind;
 use crate::processors::correlator::engine::CorrelatorResult;
 use crate::processors::marketplace::resolve_processor_id_checked;
 use crate::processors::state_tracker::types::StateTrackerResult;
+use ts_rs::TS;
 
 // ---------------------------------------------------------------------------
 // Progress event payload
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PipelineProgress {
     pub session_id: String,
@@ -35,7 +36,7 @@ pub struct PipelineProgress {
 // Result summary returned from run_pipeline
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PipelineRunSummary {
     pub processor_id: String,
@@ -46,6 +47,7 @@ pub struct PipelineRunSummary {
     pub script_errors: u32,
     /// First script error message for diagnostics (reporters only).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub first_script_error: Option<String>,
     /// Absolute line number of the first line scanned in this run (see
     /// `SourceSnapshot::scanned_from`). Zero for files and streams that
@@ -60,11 +62,12 @@ pub struct PipelineRunSummary {
     /// from running and matching nothing — the same distinction `scanned_from`
     /// draws one level down. Consumers render this; they do not re-derive it.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub skipped: Option<SkipReason>,
 }
 
 /// Why a processor was excluded from a run before it executed.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SkipReason {
     /// Stable machine-readable discriminant: `"source_type_mismatch"` for the
