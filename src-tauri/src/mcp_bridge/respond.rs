@@ -348,6 +348,13 @@ pub(super) fn truncate_var_maps(vars: &HashMap<String, Value>) -> serde_json::Ma
 /// flag; serving its output directly is the Tier-2 raw-line-leak bug this
 /// pair of functions fixes (see `anonymize_for_session`'s doc comment for
 /// why the gate exists).
+///
+/// WP-4 moved the last in-tree caller (`routes::pipeline`) onto
+/// `services::pipeline`, whose `redacted_line_texts` performs the same
+/// two-phase resolve-then-redact. Kept — and allowed to be unused — because
+/// the remaining raw-line routes are mid-migration and still reach for it; the
+/// package that moves the last of them deletes this.
+#[allow(dead_code)]
 pub(super) fn resolve_line_texts(
     sessions: &HashMap<String, crate::core::session::AnalysisSession>,
     session_id: &str,
