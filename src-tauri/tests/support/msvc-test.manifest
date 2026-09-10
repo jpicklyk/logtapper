@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  WP-T2: embedded into this crate's [[test]] binaries only, via
+  `cargo:rustc-link-arg-tests` in build.rs — see the comment there for why.
+  Declares the version-6 Common Controls dependency Wry needs; without it,
+  any test that links `tauri::AppHandle<Wry>` (even as an unused `None`, e.g.
+  through `mcp_bridge::BridgeCtx`) crashes at OS load with
+  STATUS_ENTRYPOINT_NOT_FOUND before any test code runs.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*" />
+    </dependentAssembly>
+  </dependency>
+</assembly>
