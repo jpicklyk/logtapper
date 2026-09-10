@@ -1,38 +1,32 @@
 //! Watch endpoints: list, create, cancel.
+//!
+//! Every mutation goes through `services::watches` via `ctx.svc(client)` —
+//! the same functions `commands::watch` calls for the UI — so a watch created
+//! here emits the identical `watch-update` event the Watches panel listens
+//! for, instead of the silent, UI-invisible creation this route used to do.
 
 use axum::{
     Json,
     extract::{Path, State},
+    http::HeaderMap,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::mcp_bridge::BridgeCtx;
-use crate::mcp_bridge::respond::verify_session_exists;
+use crate::mcp_bridge::routes::artifacts::client_name;
+use crate::services::watches;
 
 pub(crate) async fn h_list_watches(
     State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
+    headers: HeaderMap,
 ) -> Json<Value> {
-    let state = &*ctx.state;
-    let watches = state.active_watches.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let list = watches.get(&session_id);
-    let infos: Vec<Value> = list
-        .map(|ws| {
-            ws.iter()
-                .map(|w| {
-                    json!({
-                        "watchId": w.watch_id,
-                        "sessionId": w.session_id,
-                        "totalMatches": w.total_matches(),
-                        "active": w.is_active(),
-                        "criteria": serde_json::to_value(&w.criteria).unwrap_or(json!(null)),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    Json(json!(infos))
+    let svc = ctx.svc(&client_name(&headers));
+    match watches::list(&svc, &session_id) {
+        Ok(list) => Json(json!(list)),
+        Err(e) => Json(json!({ "error": e.message() })),
+    }
 }
 
 #[derive(Deserialize)]
@@ -45,51 +39,24 @@ pub(crate) struct CreateWatchBody {
 pub(crate) async fn h_create_watch(
     State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
+    headers: HeaderMap,
     Json(body): Json<CreateWatchBody>,
 ) -> Json<Value> {
-    use std::sync::Arc;
-    use crate::core::watch::{WatchSession, WatchInfo};
-
-    let state = &*ctx.state;
-
-    verify_session_exists!(state, session_id);
-
-    let watch_id = uuid::Uuid::new_v4().to_string();
-    let watch = match WatchSession::new(watch_id, session_id.clone(), body.criteria.clone()) {
-        Ok(w) => Arc::new(w),
-        Err(e) => return Json(json!({ "error": e })),
-    };
-
-    let info = WatchInfo {
-        watch_id: watch.watch_id.clone(),
-        session_id: watch.session_id.clone(),
-        total_matches: 0,
-        active: true,
-        criteria: body.criteria,
-    };
-
-    {
-        let mut watches = state.active_watches.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        watches
-            .entry(session_id)
-            .or_default()
-            .push(watch);
+    let svc = ctx.svc(&client_name(&headers));
+    match watches::create(&svc, session_id, body.criteria) {
+        Ok(info) => Json(json!(info)),
+        Err(e) => Json(json!({ "error": e.message() })),
     }
-
-    Json(json!(info))
 }
 
 pub(crate) async fn h_cancel_watch(
     State(ctx): State<BridgeCtx>,
     Path((session_id, watch_id)): Path<(String, String)>,
+    headers: HeaderMap,
 ) -> Json<Value> {
-    let state = &*ctx.state;
-    let watches = state.active_watches.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(list) = watches.get(&session_id) {
-        if let Some(w) = list.iter().find(|w| w.watch_id == watch_id) {
-            w.cancel();
-            return Json(json!({"ok": true}));
-        }
+    let svc = ctx.svc(&client_name(&headers));
+    match watches::cancel(&svc, session_id, watch_id) {
+        Ok(()) => Json(json!({"ok": true})),
+        Err(e) => Json(json!({ "error": e.message() })),
     }
-    Json(json!({"error": format!("Watch not found: {watch_id}")}))
 }

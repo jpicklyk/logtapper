@@ -106,4 +106,5 @@ export type { ViewLine } from './ViewLine';
 export type { ViewMode } from './ViewMode';
 export type { WatchInfo } from './WatchInfo';
 export type { WatchMatchEvent } from './WatchMatchEvent';
+export type { WatchUpdateEvent } from './WatchUpdateEvent';
 export type { WorkspaceEntry } from './WorkspaceEntry';

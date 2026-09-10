@@ -68,6 +68,7 @@ macro_rules! ROOT_TYPES {
             app_lib::core::filter::FilterCriteria,
             app_lib::core::watch::WatchInfo,
             app_lib::core::watch::WatchMatchEvent,
+            app_lib::services::watches::WatchUpdateEvent,
             app_lib::commands::filter::FilterCreateResult,
             app_lib::commands::filter::FilteredLinesResult,
             app_lib::commands::filter::FilterInfo,

@@ -1,95 +1,42 @@
-use std::sync::Arc;
+//! Thin Tauri adapters over `services::watches`, plus `evaluate_watches` /
+//! `WatchLineRef` — evaluating a batch of new lines against already-registered
+//! watches during ADB streaming, called directly by `commands::adb`. That
+//! evaluation path is unrelated to the create/list/cancel mutation surface
+//! (it never mutates the watch registry, only its match counters) and stays
+//! here rather than in `services::watches`.
 
-use tauri::State;
-use uuid::Uuid;
-
-use crate::commands::{lock_or_err, AppState};
+use crate::commands::adapters::ui_ctx;
+use crate::commands::AppState;
 use crate::core::filter::FilterCriteria;
-use crate::core::watch::{WatchInfo, WatchSession};
+use crate::core::watch::WatchInfo;
+use crate::services::watches;
 
 /// Create a new watch on a session. The watch evaluates new lines against
 /// the given criteria during each flush_batch and emits `watch-match` events
 /// when matches are found.
 #[tauri::command]
 pub fn create_watch(
-    state: State<'_, std::sync::Arc<AppState>>,
+    app: tauri::AppHandle,
     session_id: String,
     criteria: FilterCriteria,
 ) -> Result<WatchInfo, String> {
-    // Verify session exists
-    {
-        let sessions = lock_or_err(&state.sessions, "sessions")?;
-        if !sessions.contains_key(&session_id) {
-            return Err(format!("Session not found: {session_id}"));
-        }
-    }
-
-    let watch_id = Uuid::new_v4().to_string();
-    // Rejects an invalid regex before the watch is registered — otherwise it
-    // would sit active against every batch and never match.
-    let watch = Arc::new(WatchSession::new(
-        watch_id,
-        session_id.clone(),
-        criteria.clone(),
-    )?);
-
-    let info = WatchInfo {
-        watch_id: watch.watch_id.clone(),
-        session_id: watch.session_id.clone(),
-        total_matches: 0,
-        active: true,
-        criteria,
-    };
-
-    {
-        let mut watches = lock_or_err(&state.active_watches, "active_watches")?;
-        watches
-            .entry(session_id)
-            .or_default()
-            .push(watch);
-    }
-
-    Ok(info)
+    let ctx = ui_ctx(&app);
+    Ok(watches::create(&ctx, session_id, criteria)?)
 }
 
 /// Cancel a specific watch by ID.
 #[tauri::command]
-pub fn cancel_watch(
-    state: State<'_, std::sync::Arc<AppState>>,
-    session_id: String,
-    watch_id: String,
-) -> Result<(), String> {
-    let watches = lock_or_err(&state.active_watches, "active_watches")?;
-    if let Some(list) = watches.get(&session_id) {
-        if let Some(w) = list.iter().find(|w| w.watch_id == watch_id) {
-            w.cancel();
-            return Ok(());
-        }
-    }
-    Err(format!("Watch not found: {watch_id}"))
+pub fn cancel_watch(app: tauri::AppHandle, session_id: String, watch_id: String) -> Result<(), String> {
+    let ctx = ui_ctx(&app);
+    watches::cancel(&ctx, session_id, watch_id)?;
+    Ok(())
 }
 
 /// List all watches for a session (active and cancelled).
 #[tauri::command]
-pub fn list_watches(
-    state: State<'_, std::sync::Arc<AppState>>,
-    session_id: String,
-) -> Result<Vec<WatchInfo>, String> {
-    let watches = lock_or_err(&state.active_watches, "active_watches")?;
-    let list = watches.get(&session_id);
-    Ok(list
-        .map(|ws| {
-            ws.iter()
-                .map(|w| WatchInfo {
-                    watch_id: w.watch_id.clone(),
-                    session_id: w.session_id.clone(),
-                    total_matches: w.total_matches(),
-                    active: w.is_active(),
-                    criteria: w.criteria.clone(),
-                })
-                .collect()
-        })
-        .unwrap_or_default())
+pub fn list_watches(app: tauri::AppHandle, session_id: String) -> Result<Vec<WatchInfo>, String> {
+    let ctx = ui_ctx(&app);
+    Ok(watches::list(&ctx, &session_id)?)
 }
 
 /// Evaluate all active watches for a session against a batch of new lines.
@@ -155,6 +102,7 @@ mod tests {
     use super::*;
     use crate::core::filter::FilterCriteria;
     use crate::core::line::LogLevel;
+    use crate::core::watch::WatchSession;
     use std::sync::Arc;
 
     // ── evaluate_watches / needle precomputation ────────────────────────────
