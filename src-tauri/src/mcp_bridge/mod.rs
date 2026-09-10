@@ -144,8 +144,15 @@ impl BridgeCtx {
 // APPEND-ONLY from Wave 1 on: adding a route is fine, changing or removing one
 // breaks a shipped MCP client. Add one line per (method, path) pair here AND
 // the matching `.route(...)` call in `router()` below.
-#[cfg(test)]
-const ROUTES: &[(&str, &str)] = &[
+//
+// `pub` (not `#[cfg(test)]`): WP-T2's `tests/bridge_http.rs` drives the live
+// `router(ctx)` in-process with `tower::ServiceExt::oneshot` against every
+// entry here (substituting placeholder path params) and asserts none comes
+// back as axum's routing 404/405 — the real regression guard the
+// `route_table_matches_expected` test below cannot provide alone (it only
+// compares this list against a second hardcoded literal, never against
+// `router()`'s actual `.route(...)` registrations).
+pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/mcp/status"),
     ("POST", "/mcp/open_file"),
     ("GET", "/mcp/sessions"),
