@@ -12,7 +12,7 @@ use crate::core::watch::{WatchInfo, WatchSession};
 /// when matches are found.
 #[tauri::command]
 pub fn create_watch(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: String,
     criteria: FilterCriteria,
 ) -> Result<WatchInfo, String> {
@@ -55,7 +55,7 @@ pub fn create_watch(
 /// Cancel a specific watch by ID.
 #[tauri::command]
 pub fn cancel_watch(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: String,
     watch_id: String,
 ) -> Result<(), String> {
@@ -72,7 +72,7 @@ pub fn cancel_watch(
 /// List all watches for a session (active and cancelled).
 #[tauri::command]
 pub fn list_watches(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: String,
 ) -> Result<Vec<WatchInfo>, String> {
     let watches = lock_or_err(&state.active_watches, "active_watches")?;

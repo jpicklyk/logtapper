@@ -43,7 +43,7 @@ pub fn add_bookmark(
     category: Option<String>,
     tags: Option<Vec<String>>,
 ) -> Result<Bookmark, String> {
-    let state = app.state::<AppState>();
+    let state = app.state::<std::sync::Arc<AppState>>();
 
     // Verify session exists.
     {
@@ -100,7 +100,7 @@ pub fn update_bookmark(
     category: Option<String>,
     tags: Option<Vec<String>>,
 ) -> Result<Bookmark, String> {
-    let state = app.state::<AppState>();
+    let state = app.state::<std::sync::Arc<AppState>>();
 
     let mut bookmarks = lock_or_err(&state.bookmarks, "bookmarks")?;
     let list = bookmarks
@@ -149,7 +149,7 @@ pub fn remove_bookmark(
     session_id: String,
     bookmark_id: String,
 ) -> Result<Bookmark, String> {
-    let state = app.state::<AppState>();
+    let state = app.state::<std::sync::Arc<AppState>>();
 
     let mut bookmarks = lock_or_err(&state.bookmarks, "bookmarks")?;
     let list = bookmarks
@@ -196,7 +196,7 @@ pub fn publish_analysis(
     title: String,
     sections: Vec<AnalysisSection>,
 ) -> Result<AnalysisArtifact, String> {
-    let state = app.state::<AppState>();
+    let state = app.state::<std::sync::Arc<AppState>>();
 
     if let Some(sid) = &session_id {
         let sessions = lock_or_err(&state.sessions, "sessions")?;
@@ -277,7 +277,7 @@ pub fn update_analysis(
     sections: Option<Vec<AnalysisSection>>,
     fallback_session: Option<String>,
 ) -> Result<AnalysisArtifact, String> {
-    let state = app.state::<AppState>();
+    let state = app.state::<std::sync::Arc<AppState>>();
 
     let updated = {
         let mut analyses = lock_or_err(&state.analyses, "analyses")?;
@@ -331,7 +331,7 @@ pub(crate) fn remove_analysis_by_id(
 /// (`deleted`) carrying the removed artifact's session ids, and schedule a
 /// flush.
 pub fn remove_analysis(app: &AppHandle, artifact_id: String) -> Result<(), String> {
-    let state = app.state::<AppState>();
+    let state = app.state::<std::sync::Arc<AppState>>();
 
     let removed = {
         let mut analyses = lock_or_err(&state.analyses, "analyses")?;
@@ -376,7 +376,7 @@ pub(crate) fn replace_workspace_analyses(
 /// autosave flush — restoring a workspace must not immediately re-persist
 /// itself as a "mutation".
 pub fn set_workspace_analyses(app: &AppHandle, analyses: Vec<AnalysisArtifact>) -> Result<(), String> {
-    let state = app.state::<AppState>();
+    let state = app.state::<std::sync::Arc<AppState>>();
 
     replace_workspace_analyses(&state, analyses)?;
 

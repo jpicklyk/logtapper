@@ -161,7 +161,7 @@ fn parse_adb_devices(output: &str) -> Result<Vec<AdbDevice>, String> {
 /// the `on_event` channel.
 #[tauri::command]
 pub async fn start_adb_stream(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app: AppHandle,
     device_id: Option<String>,
     package_filter: Option<String>,
@@ -306,7 +306,7 @@ pub async fn start_adb_stream(
 /// Stop an active ADB stream. The session remains in AppState as a static log.
 #[tauri::command]
 pub async fn stop_adb_stream(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app: AppHandle,
     session_id: String,
 ) -> Result<(), String> {
@@ -368,7 +368,7 @@ pub async fn stop_adb_stream(
 /// consistent (e.g. `user@corp.com` always maps to `<EMAIL-1>`).
 #[tauri::command]
 pub async fn set_stream_anonymize(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: String,
     enabled: bool,
 ) -> Result<(), String> {
@@ -407,7 +407,7 @@ pub async fn set_stream_anonymize(
 /// Removed processors have their state dropped.
 #[tauri::command]
 pub async fn update_stream_processors(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: String,
     processor_ids: Vec<String>,
 ) -> Result<(), String> {
@@ -461,7 +461,7 @@ pub async fn update_stream_processors(
 /// New trackers start fresh; removed trackers have their state dropped.
 #[tauri::command]
 pub async fn update_stream_trackers(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: String,
     tracker_ids: Vec<String>,
 ) -> Result<(), String> {
@@ -510,7 +510,7 @@ pub async fn update_stream_trackers(
 /// Update the set of active Transformer processors for a running ADB stream.
 #[tauri::command]
 pub async fn update_stream_transformers(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: String,
     transformer_ids: Vec<String>,
 ) -> Result<(), String> {
@@ -622,7 +622,7 @@ struct StreamTaskGuard {
 
 impl Drop for StreamTaskGuard {
     fn drop(&mut self) {
-        remove_stream_task(&self.app.state::<AppState>(), &self.session_id);
+        remove_stream_task(&self.app.state::<std::sync::Arc<AppState>>(), &self.session_id);
     }
 }
 
@@ -889,7 +889,7 @@ fn flush_batch(
         return;
     }
 
-    let state_guard = app.state::<AppState>();
+    let state_guard = app.state::<std::sync::Arc<AppState>>();
     let state: &AppState = &state_guard;
     let parser = LogcatParser;
 
@@ -1509,7 +1509,7 @@ fn send_batch(
 /// Returns the number of lines written.
 #[tauri::command]
 pub fn save_live_capture(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: String,
     output_path: String,
 ) -> Result<u32, String> {

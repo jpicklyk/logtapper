@@ -16,6 +16,8 @@ use crate::core::filter::FilterSession;
 use crate::core::watch::WatchSession;
 use crate::processors::correlator::engine::CorrelatorResult;
 
+pub mod activity;
+pub mod adapters;
 pub mod adb;
 pub mod analysis;
 pub mod anonymizer;
@@ -195,6 +197,13 @@ pub struct AppState {
     /// lapses — so a transition that dies mid-way degrades to a bounded window of
     /// suppressed autosave, never a permanently disabled one.
     pub autosave_switch_suppressed_until: Mutex<Option<std::time::Instant>>,
+    /// Cross-transport activity journal: every state-changing action, whether
+    /// the user performed it in the UI or an agent performed it over the MCP
+    /// bridge. Bounded ring (500 entries). Written only through
+    /// `services::ServiceCtx::journal`, which also emits the `activity` event,
+    /// so a mutation cannot land in one transport's feed and not the other's.
+    /// Read by the `get_activity` command and `GET /mcp/activity`.
+    pub activity: crate::services::ActivityJournal,
     /// Session id the frontend currently has focused (the active pane's
     /// logviewer session), or `None` when no pane is focused. Pushed by the
     /// frontend via the `set_focused_session` command whenever focus changes
@@ -270,6 +279,7 @@ impl AppState {
             autosave_flushed_generation: AtomicU64::new(0),
             autosave_switch_suppressed_until: Mutex::new(None),
             focused_session: Mutex::new(None),
+            activity: crate::services::ActivityJournal::new(),
         }
     }
 

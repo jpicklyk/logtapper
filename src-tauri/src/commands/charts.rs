@@ -11,7 +11,7 @@ use crate::processors::schema::PipelineStage;
 
 #[tauri::command]
 pub async fn get_chart_data(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: String,
     processor_id: String,
 ) -> Result<Vec<ChartData>, String> {
@@ -128,7 +128,7 @@ fn lttb_downsample(points: &[(usize, f64)], threshold: usize) -> Vec<(usize, f64
 
 #[tauri::command]
 pub async fn get_timeline_data(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: String,
     processor_ids: Vec<String>,
 ) -> Result<Vec<TimelineSeriesData>, String> {

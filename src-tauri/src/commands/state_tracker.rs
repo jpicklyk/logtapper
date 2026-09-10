@@ -55,7 +55,7 @@ fn resolve_tracker(
 /// Get the state snapshot at a specific line number for a given tracker.
 #[tauri::command]
 pub async fn get_state_at_line(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: String,
     tracker_id: String,
     line_num: usize,
@@ -107,7 +107,7 @@ pub async fn get_state_at_line(
 /// Get all transitions for a tracker in a session.
 #[tauri::command]
 pub async fn get_state_transitions(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: String,
     tracker_id: String,
 ) -> Result<Vec<StateTransition>, String> {
@@ -120,7 +120,7 @@ pub async fn get_state_transitions(
 /// Only includes trackers where `output.timeline` is true.
 #[tauri::command]
 pub async fn get_all_transition_lines(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: String,
 ) -> Result<HashMap<String, Vec<usize>>, String> {
     // Build a set of tracker IDs that have timeline enabled.

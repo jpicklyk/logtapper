@@ -109,7 +109,7 @@ fn delete_processor_file(app: &AppHandle, id: &str) {
 
 #[tauri::command]
 pub async fn list_processors(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
 ) -> Result<Vec<ProcessorSummary>, String> {
     let procs = lock_or_err(&state.processors, "processors")?;
     let mut out: Vec<ProcessorSummary> = procs.iter().map(|(key, p)| {
@@ -139,7 +139,7 @@ pub async fn list_processors(
 
 #[tauri::command]
 pub async fn load_processor_yaml(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app: AppHandle,
     yaml: String,
 ) -> Result<ProcessorSummary, String> {
@@ -149,7 +149,7 @@ pub async fn load_processor_yaml(
 
 #[tauri::command]
 pub async fn load_processor_from_file(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app: AppHandle,
     path: String,
 ) -> Result<ProcessorSummary, String> {
@@ -160,7 +160,7 @@ pub async fn load_processor_from_file(
 
 #[tauri::command]
 pub async fn get_processor_vars(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: String,
     processor_id: String,
 ) -> Result<HashMap<String, serde_json::Value>, String> {
@@ -181,7 +181,7 @@ pub struct MatchedLineInfo {
 
 #[tauri::command]
 pub async fn get_matched_lines(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: String,
     processor_id: String,
 ) -> Result<Vec<MatchedLineInfo>, String> {
@@ -229,7 +229,7 @@ pub async fn get_matched_lines(
 
 #[tauri::command]
 pub async fn uninstall_processor(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app: AppHandle,
     processor_id: String,
 ) -> Result<(), String> {
@@ -278,14 +278,14 @@ pub(crate) fn delete_processor_file_by_id(app: &AppHandle, id: &str) {
 }
 
 #[tauri::command]
-pub async fn list_packs(state: State<'_, AppState>) -> Result<Vec<PackSummary>, String> {
+pub async fn list_packs(state: State<'_, std::sync::Arc<AppState>>) -> Result<Vec<PackSummary>, String> {
     let packs = lock_or_err(&state.packs, "packs")?;
     Ok(packs.iter().map(PackSummary::from).collect())
 }
 
 #[tauri::command]
 pub async fn install_pack_from_yaml(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app: AppHandle,
     pack_id: String,
     yaml: String,
@@ -310,7 +310,7 @@ pub async fn install_pack_from_yaml(
 
 #[tauri::command]
 pub async fn uninstall_pack(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app: AppHandle,
     pack_id: String,
 ) -> Result<(), String> {
@@ -327,7 +327,7 @@ pub async fn uninstall_pack(
 
 #[tauri::command]
 pub async fn load_pack_from_file(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app: AppHandle,
     path: String,
 ) -> Result<PackSummary, String> {

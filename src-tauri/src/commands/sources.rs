@@ -118,7 +118,7 @@ pub struct MarketplaceFetchResult {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub async fn list_sources(state: State<'_, AppState>) -> Result<Vec<Source>, String> {
+pub async fn list_sources(state: State<'_, std::sync::Arc<AppState>>) -> Result<Vec<Source>, String> {
     let sources = lock_or_err(&state.sources, "sources")?;
     Ok(sources.clone())
 }
@@ -150,7 +150,7 @@ fn try_remove_source(current: &[Source], source_name: &str) -> Result<Vec<Source
 
 #[tauri::command]
 pub async fn add_source(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app: AppHandle,
     source: Source,
 ) -> Result<(), String> {
@@ -167,7 +167,7 @@ pub async fn add_source(
 
 #[tauri::command]
 pub async fn remove_source(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app: AppHandle,
     source_name: String,
 ) -> Result<(), String> {
@@ -183,7 +183,7 @@ pub async fn remove_source(
 
 #[tauri::command]
 pub async fn fetch_marketplace_for_source(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     source_name: String,
 ) -> Result<MarketplaceFetchResult, String> {
     let source = {
@@ -319,7 +319,7 @@ pub(crate) fn detect_pack_updates(
 /// Compares installed processor versions against marketplace entries.
 #[tauri::command]
 pub async fn check_updates(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
 ) -> Result<UpdateCheckResult, String> {
     // Snapshot sources and installed processors (release locks before network I/O).
     let sources: Vec<Source> = {
@@ -397,7 +397,7 @@ pub async fn check_updates(
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn update_processor(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app: AppHandle,
     processor_id: String,
     entry_name: String,
@@ -456,7 +456,7 @@ pub async fn update_processor(
 /// Update all processors from a given source that have newer versions.
 #[tauri::command]
 pub async fn update_all_from_source(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app: AppHandle,
     source_name: String,
 ) -> Result<Vec<UpdateResult>, String> {
@@ -536,7 +536,7 @@ pub async fn update_all_from_source(
 /// Save sources to disk (called after modifying last_checked, etc.).
 #[tauri::command]
 pub async fn save_sources_to_disk(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app: AppHandle,
 ) -> Result<(), String> {
     let sources = lock_or_err(&state.sources, "sources")?;
@@ -547,7 +547,7 @@ pub async fn save_sources_to_disk(
 /// Returns and clears the pending list (UI consumes once, then uses check_updates for refresh).
 #[tauri::command]
 pub async fn get_pending_updates(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
 ) -> Result<Vec<UpdateAvailable>, String> {
     let mut pending = lock_or_err(&state.pending_updates, "pending_updates")?;
     Ok(std::mem::take(&mut *pending))
@@ -557,7 +557,7 @@ pub async fn get_pending_updates(
 /// Returns and clears the pending list (UI consumes once, then uses check_updates for refresh).
 #[tauri::command]
 pub async fn get_pending_pack_updates(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
 ) -> Result<Vec<PackUpdateAvailable>, String> {
     let mut pending = lock_or_err(&state.pending_pack_updates, "pending_pack_updates")?;
     Ok(std::mem::take(&mut *pending))
@@ -609,7 +609,7 @@ async fn download_and_install_processor(
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn install_from_marketplace(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app: AppHandle,
     source_name: String,
     entry_id: String,
@@ -697,7 +697,7 @@ async fn download_text_from_source(
 /// Finally, the pack manifest YAML is fetched and stored.
 #[tauri::command]
 pub async fn install_pack_from_marketplace(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app: AppHandle,
     source_name: String,
     pack_entry: marketplace::MarketplacePackEntry,
@@ -786,7 +786,7 @@ pub async fn install_pack_from_marketplace(
 /// other installed pack. The pack manifest is removed unconditionally.
 #[tauri::command]
 pub async fn uninstall_pack_from_marketplace(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app: AppHandle,
     source_name: String,
     pack_id: String,

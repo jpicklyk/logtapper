@@ -31,7 +31,7 @@ pub fn update_analysis(
 }
 
 /// Pure filtering step for [`list_analyses`], taking `&AppState` directly so
-/// it is unit-testable without a Tauri-managed `State<'_, AppState>`.
+/// it is unit-testable without a Tauri-managed `State<'_, std::sync::Arc<AppState>>`.
 /// `session_id: None` returns the full workspace list; `Some(sid)` filters to
 /// artifacts with at least one reference attributed to `sid`.
 pub(crate) fn list_analyses_impl(
@@ -54,7 +54,7 @@ pub(crate) fn list_analyses_impl(
 /// attributed to `sid`.
 #[tauri::command]
 pub fn list_analyses(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: Option<String>,
 ) -> Result<Vec<AnalysisArtifact>, String> {
     list_analyses_impl(&state, session_id)
@@ -63,7 +63,7 @@ pub fn list_analyses(
 /// Get a single analysis artifact by ID.
 #[tauri::command]
 pub fn get_analysis(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     artifact_id: String,
 ) -> Result<AnalysisArtifact, String> {
     let analyses = lock_or_err(&state.analyses, "analyses")?;

@@ -187,7 +187,7 @@ pub struct SaveWorkspaceOptions {
 /// Collect all open sessions and their artifacts, then write a `.ltw` v4 file.
 #[tauri::command]
 pub async fn save_workspace_v4(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     options: SaveWorkspaceOptions,
 ) -> Result<(), String> {
     let chain = LtwPipelineChain {
@@ -236,7 +236,7 @@ pub struct AutoSaveWorkspaceOptions {
 /// touched here.
 #[tauri::command]
 pub async fn auto_save_workspace(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app: tauri::AppHandle,
     options: AutoSaveWorkspaceOptions,
 ) -> Result<String, String> {
@@ -293,7 +293,7 @@ pub struct SyncWorkspaceEnvelopeOptions {
 /// active workspace's identity changes (rename / path update).
 #[tauri::command]
 pub async fn sync_workspace_envelope(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     options: SyncWorkspaceEnvelopeOptions,
 ) -> Result<(), String> {
     autosave::cache_envelope(
@@ -337,7 +337,7 @@ pub async fn sync_workspace_envelope(
 /// deadline lapses (bounding a dead-mid-way transition to a short, self-healing
 /// suppression rather than a permanently disabled autosave).
 #[tauri::command]
-pub async fn begin_workspace_switch(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn begin_workspace_switch(state: State<'_, std::sync::Arc<AppState>>) -> Result<(), String> {
     autosave::begin_switch_suppression(&state);
     Ok(())
 }
@@ -447,7 +447,7 @@ pub struct RestoreSessionOptions {
 /// persistence side effect.
 #[tauri::command]
 pub async fn restore_workspace_session(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app: tauri::AppHandle,
     options: RestoreSessionOptions,
 ) -> Result<(), String> {
@@ -501,7 +501,7 @@ pub async fn get_app_state(app: tauri::AppHandle) -> Result<AppStateFile, String
 #[tauri::command]
 pub async fn save_app_state_cmd(
     app: tauri::AppHandle,
-    app_state: State<'_, AppState>,
+    app_state: State<'_, std::sync::Arc<AppState>>,
     state: AppStateFile,
 ) -> Result<(), String> {
     let path = app_state::app_state_path(&app)?;

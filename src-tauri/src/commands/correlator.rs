@@ -6,7 +6,7 @@ use crate::processors::correlator::engine::CorrelatorResult;
 /// Return correlation events and guidance for a specific correlator in a session.
 #[tauri::command]
 pub async fn get_correlator_events(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: String,
     correlator_id: String,
 ) -> Result<CorrelatorResult, String> {

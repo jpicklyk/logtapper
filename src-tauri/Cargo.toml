@@ -9,6 +9,13 @@ rust-version = "1.77.2"
 name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# Compiles `services::testing` (RecordingSink, `test_ctx()`, session fixtures)
+# into the rlib so integration tests under `src-tauri/tests/` can build a
+# Tauri-free `ServiceCtx` the same way the inline unit tests do. Off by default:
+# it pulls test doubles into a normal build for no benefit.
+test-support = []
+
 [build-dependencies]
 tauri-build = { version = "2.5.4", features = [] }
 

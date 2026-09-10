@@ -9,6 +9,7 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use axum::{
     Json, Router,
@@ -20,9 +21,8 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tauri::{AppHandle, Emitter, Manager, Wry};
+use tauri::{AppHandle, Manager, Wry};
 
-use crate::anonymizer::LogAnonymizer;
 use crate::commands::AppState;
 use crate::core::session::AnalysisSession;
 use crate::processors::{AnyProcessor, ProcessorKind};
@@ -30,6 +30,8 @@ use crate::processors::marketplace::{resolve_processor_id_checked, split_qualifi
 use crate::processors::reporter::engine::RunResult;
 use crate::processors::state_tracker::engine::build_defaults;
 use crate::processors::state_tracker::types::StateTransition;
+use crate::services::policy::{anonymize_for_session, anonymize_line_texts, anonymize_scan_line};
+use crate::services::{ActivityEntry, AppPaths, Caller, EventSink, ServiceCtx, Spawner};
 
 pub const PORT: u16 = 40404;
 
@@ -168,63 +170,12 @@ fn processor_id_matches(candidate: &str, filter: Option<&String>) -> bool {
 // (h_query, h_search, h_lines_around, h_search_with_context).
 // ---------------------------------------------------------------------------
 
-/// Resolve whether MCP bridge responses for `session_id` should be
-/// anonymized, given the current per-session flag map (`AppState::mcp_anonymize`).
-///
-/// **Fails closed**: a session with no explicit entry — one the frontend has
-/// never signalled a pipeline-chain state for (e.g. just opened, or the
-/// signal hasn't landed yet) — defaults to `true`. Serving raw PII for an
-/// unrecognized session is the wrong default; over-anonymizing a session
-/// that didn't need it is not.
-///
-/// Pulled out as a pure function (no locking, no `AppState`) so the decision
-/// itself is unit-testable without spinning up Axum or Tauri state.
-///
-/// Also reused by `commands::export::export_all_sessions` — export must gate
-/// on the same per-session state as the bridge rather than inventing a
-/// second anonymization decision, or the two could disagree about whether a
-/// given session's raw text is safe to hand out.
-pub(crate) fn resolve_should_anonymize(flags: &HashMap<String, bool>, session_id: &str) -> bool {
-    flags.get(session_id).copied().unwrap_or(true)
-}
-
-/// Anonymize `raw` for `session_id` per its resolved per-session flag (see
-/// [`resolve_should_anonymize`]). Reuses this session's persistent
-/// `LogAnonymizer` — cached in `mcp_anonymizers` — so token numbering stays
-/// stable across multiple bridge calls, creating one from the current
-/// default `anonymizer_config` on first use. Returns `raw` unchanged when
-/// anonymization is disabled (or unset — never happens, since unset fails
-/// closed to anonymize) for this session.
-///
-/// Locks `mcp_anonymize`, then (only when anonymizing) `anonymizer_config`
-/// and `mcp_anonymizers`, each acquired and released in turn. Never held
-/// across an `.await`; never nested with `sessions` or `pipeline_results`.
-/// Enforced at every call site: `h_query`, `h_search`, `h_search_with_context`,
-/// and `h_lines_around` all collect RAW text under the `sessions` lock first,
-/// drop it, and only then call this function (directly or via
-/// [`anonymize_scan_line`] / [`anonymize_line_texts`]) — `sessions` is never
-/// held while this function's own locks are acquired.
-///
-/// Also called from `commands::export::export_all_sessions` (after its
-/// `sessions` lock has been dropped, mirroring the `resolve_line_texts` /
-/// `anonymize_line_texts` split below) so exported `.lts` archives honor the
-/// same per-session anonymization flag as MCP bridge reads, instead of
-/// writing raw Tier-1 bytes unconditionally.
-pub(crate) fn anonymize_for_session(state: &AppState, session_id: &str, raw: &str) -> String {
-    let should_anonymize = {
-        let flags = state.mcp_anonymize.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        resolve_should_anonymize(&flags, session_id)
-    };
-    if !should_anonymize {
-        return raw.to_string();
-    }
-    let config = state.anonymizer_config.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
-    let mut anon_map = state.mcp_anonymizers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let anon = anon_map
-        .entry(session_id.to_string())
-        .or_insert_with(|| LogAnonymizer::from_config(&config));
-    anon.anonymize(raw).0
-}
+// These moved to `services::policy` (imported at the top of this file) so the
+// service layer owns the fail-closed anonymization gate and both transports
+// share one implementation: `resolve_should_anonymize`, `anonymize_for_session`,
+// `anonymize_line_texts`, `anonymize_scan_line`, `truncate_str`. Their tests
+// moved with them. The `resolve_line_texts` / `anonymize_line_texts` split
+// described below is unchanged — only the second half now lives elsewhere.
 
 // ---------------------------------------------------------------------------
 // Chunked scan helpers — shared by h_query / h_search / h_search_with_context
@@ -293,18 +244,70 @@ fn scan_chunk_bounds(start: usize, end: usize, chunk_size: usize) -> Vec<(usize,
 /// Concrete handle type — Wry is the only desktop runtime Tauri ships.
 type Handle = AppHandle<Wry>;
 
+/// Router state for every bridge handler.
+///
+/// Replaces the bare `AppHandle` the router used to carry. Handlers now reach
+/// state through `ctx.state` and notify the frontend through `ctx.events`
+/// instead of resolving them out of a Tauri handle, which is what lets
+/// [`router`] be built (and driven with `tower::ServiceExt::oneshot`) without a
+/// live webview.
+///
+/// `app` is a **transitional** field. Four call sites still take an
+/// `AppHandle` directly — `files::open_file_inner`, `files::close_session_inner`,
+/// `artifact_mutations::*`, and `pipeline::execute_pipeline` — and this work
+/// package deliberately moves no handler logic, so the handle rides along until
+/// WP-4 / WP-5 / WP-6 convert those four to `ServiceCtx`. Nothing new may use
+/// it: reach for `state`, `events`, `paths` or `spawner` instead.
+#[derive(Clone)]
+pub struct BridgeCtx {
+    pub state: Arc<AppState>,
+    pub events: Arc<dyn EventSink>,
+    pub paths: Arc<dyn AppPaths>,
+    pub spawner: Arc<dyn Spawner>,
+    pub app: Handle,
+}
+
+impl BridgeCtx {
+    /// Assemble a bridge context from a live `AppHandle`. Called once, by
+    /// `commands::mcp::start_mcp_bridge`.
+    pub fn new(app: Handle) -> Self {
+        Self {
+            state: Arc::clone(&*app.state::<Arc<AppState>>()),
+            events: Arc::new(crate::commands::adapters::TauriSink::new(app.clone())),
+            paths: Arc::new(crate::commands::adapters::TauriPaths::new(app.clone())),
+            spawner: Arc::new(crate::commands::adapters::TauriSpawner),
+            app,
+        }
+    }
+
+    /// A [`ServiceCtx`] for an agent caller.
+    ///
+    /// This is one of exactly two places a [`Caller`] is constructed (the other
+    /// is `commands::adapters::ui_ctx`). `client` is the self-reported
+    /// `X-LogTapper-Client` header value, defaulting to `"mcp"` — it labels the
+    /// activity feed and is never trusted for authorization.
+    pub fn svc(&self, client: &str) -> ServiceCtx {
+        ServiceCtx::new(
+            Arc::clone(&self.state),
+            Arc::clone(&self.events),
+            Arc::clone(&self.paths),
+            Arc::clone(&self.spawner),
+            Caller::agent(client),
+        )
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Entry point (spawned as a tokio task from lib.rs setup)
 // ---------------------------------------------------------------------------
 
 /// Middleware: stamp `mcp_last_activity` on every inbound request.
 async fn record_activity(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     req: axum::extract::Request,
     next: middleware::Next,
 ) -> axum::response::Response {
-    let state = handle.state::<AppState>();
-    if let Ok(mut ts) = state.mcp_last_activity.lock() {
+    if let Ok(mut ts) = ctx.state.mcp_last_activity.lock() {
         *ts = Some(std::time::Instant::now());
     }
     next.run(req).await
@@ -375,7 +378,7 @@ fn is_trusted_request(headers: &axum::http::HeaderMap) -> bool {
 /// decision logic. Runs BEFORE [`record_activity`] in the layer stack (see
 /// `start()`) so rejected requests never stamp `mcp_last_activity`.
 async fn require_local(
-    State(_handle): State<Handle>,
+    State(_ctx): State<BridgeCtx>,
     req: axum::extract::Request,
     next: middleware::Next,
 ) -> axum::response::Response {
@@ -385,9 +388,15 @@ async fn require_local(
     next.run(req).await
 }
 
-pub async fn start(handle: Handle, shutdown_rx: tokio::sync::oneshot::Receiver<()>) {
-    // Clone handle for the router state; keep original for the port flag.
-    let router = Router::new()
+/// Build the bridge's `Router` without binding a socket.
+///
+/// Split out of [`start`] so the whole route table — middleware included — can
+/// be driven in-process by a test with `tower::ServiceExt::oneshot`, instead of
+/// only over a real TCP listener. The route list is the transport contract with
+/// the MCP server and is **append-only**: adding a route is fine, changing or
+/// removing one breaks a shipped client.
+pub fn router(ctx: BridgeCtx) -> Router {
+    Router::new()
         .route("/mcp/status", get(h_status))
         .route("/mcp/open_file", post(h_open_file))
         .route("/mcp/sessions", get(h_sessions))
@@ -422,7 +431,9 @@ pub async fn start(handle: Handle, shutdown_rx: tokio::sync::oneshot::Receiver<(
         // Phase 4 — Watches
         .route("/mcp/sessions/{session_id}/watches", get(h_list_watches).post(h_create_watch))
         .route("/mcp/sessions/{session_id}/watches/{watch_id}", delete(h_cancel_watch))
-        .layer(middleware::from_fn_with_state(handle.clone(), record_activity))
+        // Activity feed (both callers' actions; see `services::activity`).
+        .route("/mcp/activity", get(h_activity))
+        .layer(middleware::from_fn_with_state(ctx.clone(), record_activity))
         // `require_local` is added AFTER `record_activity`, which in axum/tower
         // layering means it becomes the OUTERMOST layer and therefore runs
         // FIRST on every inbound request (layers wrap inside-out in the order
@@ -430,18 +441,24 @@ pub async fn start(handle: Handle, shutdown_rx: tokio::sync::oneshot::Receiver<(
         // That ordering is required here: a rejected (non-local) request must
         // be turned away by `require_local` before `record_activity` ever
         // sees it, so untrusted traffic cannot stamp `mcp_last_activity`.
-        .layer(middleware::from_fn_with_state(handle.clone(), require_local))
-        .with_state(handle.clone());
+        .layer(middleware::from_fn_with_state(ctx.clone(), require_local))
+        .with_state(ctx)
+}
+
+/// Bind `127.0.0.1:PORT` and serve [`router`] until `shutdown_rx` fires.
+///
+/// Bind + serve + port-flag bookkeeping only — every routing decision lives in
+/// [`router`].
+pub async fn start(ctx: BridgeCtx, shutdown_rx: tokio::sync::oneshot::Receiver<()>) {
+    let state = Arc::clone(&ctx.state);
+    let router = router(ctx);
 
     match tokio::net::TcpListener::bind(("127.0.0.1", PORT)).await {
         Ok(listener) => {
             // Record that the bridge is running so the frontend can show status.
-            let state = handle.state::<AppState>();
             if let Ok(mut p) = state.mcp_bridge_port.lock() {
                 *p = Some(PORT);
             }
-            #[allow(clippy::drop_non_drop)]
-            drop(state);
             log::info!("MCP bridge listening on 127.0.0.1:{PORT}");
             let graceful = axum::serve(listener, router)
                 .with_graceful_shutdown(async {
@@ -451,7 +468,6 @@ pub async fn start(handle: Handle, shutdown_rx: tokio::sync::oneshot::Receiver<(
                 log::error!("MCP bridge error: {e}");
             }
             // Clear the port flag so the frontend knows the bridge is no longer running.
-            let state = handle.state::<AppState>();
             if let Ok(mut p) = state.mcp_bridge_port.lock() {
                 *p = None;
             }
@@ -467,9 +483,9 @@ pub async fn start(handle: Handle, shutdown_rx: tokio::sync::oneshot::Receiver<(
                  Is another instance running?"
             );
             // Clear the shutdown sender on bind failure too, so the bridge can be restarted.
-            if let Ok(mut s) = handle.state::<AppState>().mcp_bridge_shutdown.lock() {
+            if let Ok(mut s) = state.mcp_bridge_shutdown.lock() {
                 s.take();
-            };
+            }
         }
     }
 }
@@ -589,21 +605,6 @@ fn contains_ignore_case(haystack: &str, needle_lower: &str) -> bool {
     }
 }
 
-/// Truncate a string to at most `max_chars` characters, appending "..." if cut.
-/// Uses char boundaries to avoid splitting multi-byte UTF-8 sequences.
-fn truncate_str(s: &str, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
-        s.to_string()
-    } else {
-        let end = s.char_indices()
-            .nth(max_chars)
-            .map_or(s.len(), |(i, _)| i);
-        let mut t = s[..end].to_string();
-        t.push_str("...");
-        t
-    }
-}
-
 /// Truncate large map vars: for any Value::Object with >20 keys where values
 /// are numeric, sort by value desc, keep top 20, add _truncated and _totalKeys.
 fn truncate_var_maps(vars: &HashMap<String, Value>) -> serde_json::Map<String, Value> {
@@ -668,56 +669,12 @@ fn resolve_line_texts(
     map
 }
 
-/// Anonymize and truncate a map of line_num -> raw text produced by
-/// [`resolve_line_texts`], honoring the session's per-session `mcp_anonymize`
-/// flag via [`anonymize_for_session`].
-///
-/// Must be called AFTER the `sessions` lock used by `resolve_line_texts` has
-/// been dropped: `anonymize_for_session` acquires `mcp_anonymize` /
-/// `anonymizer_config` / `mcp_anonymizers`, and nesting those under
-/// `sessions` violates this file's lock-ordering rule (see the module header
-/// docs and the "Lock-poisoning helpers" section above).
-///
-/// Truncation (500 chars, matching `resolve_line_texts`'s historical
-/// behavior) is applied AFTER anonymization so a redaction token is never
-/// cut mid-token by the length cap.
-fn anonymize_line_texts(
-    state: &AppState,
-    session_id: &str,
-    raw: HashMap<usize, String>,
-) -> HashMap<usize, String> {
-    raw.into_iter()
-        .map(|(ln, text)| {
-            let anonymized = anonymize_for_session(state, session_id, &text);
-            (ln, truncate_str(&anonymized, 500))
-        })
-        .collect()
-}
-
-/// Anonymize + truncate a single raw line's text for MCP scan-result output,
-/// honoring the session's per-session `mcp_anonymize` flag via
-/// [`anonymize_for_session`]. Truncation is applied AFTER anonymization (same
-/// ordering rationale as [`anonymize_line_texts`]) so a redaction token is
-/// never cut mid-token by the length cap.
-///
-/// Shared by `h_search` (matched line + context_before/context_after),
-/// `h_search_with_context` (context lines), and `h_lines_around` (each
-/// returned line) — all three call this AFTER the `sessions` lock used to
-/// collect the raw text has been dropped, mirroring the `resolve_line_texts`
-/// / `anonymize_line_texts` split above. Factored out as a pure function (no
-/// locking beyond what `anonymize_for_session` itself does) so the
-/// transformation is unit-testable without a live Tauri `AppHandle`.
-fn anonymize_scan_line(state: &AppState, session_id: &str, raw: &str, max_chars: usize) -> String {
-    let clean = anonymize_for_session(state, session_id, raw);
-    truncate_str(&clean, max_chars)
-}
-
 // ---------------------------------------------------------------------------
 // GET /mcp/status
 // ---------------------------------------------------------------------------
 
-async fn h_status(State(handle): State<Handle>) -> Json<Value> {
-    let state = handle.state::<AppState>();
+async fn h_status(State(ctx): State<BridgeCtx>) -> Json<Value> {
+    let state = &*ctx.state;
 
     let session_ids: Vec<String> = {
         let sessions = lock_or_json_err!(state.sessions, "sessions");
@@ -736,6 +693,32 @@ async fn h_status(State(handle): State<Handle>) -> Json<Value> {
         "sessionIds": session_ids,
         "installedProcessors": processor_ids.len(),
     }))
+}
+
+// ---------------------------------------------------------------------------
+// GET /mcp/activity?since=&limit=
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Default, Deserialize)]
+struct ActivityParams {
+    /// Return only entries with `id > since`. Omit for everything retained.
+    since: Option<u64>,
+    /// Cap the result at the newest `limit` entries.
+    limit: Option<usize>,
+}
+
+/// The shared activity feed: every state-changing action, whether the user
+/// performed it in the UI or an agent performed it here.
+///
+/// The agent-facing half of the `get_activity` command — same journal, same
+/// `ActivityEntry` shape, so an agent and the UI genuinely see one feed rather
+/// than two views that can disagree. Reads are never journaled, so polling this
+/// route does not pollute it.
+async fn h_activity(
+    State(ctx): State<BridgeCtx>,
+    Query(params): Query<ActivityParams>,
+) -> Json<Vec<ActivityEntry>> {
+    Json(ctx.state.activity.list(params.limit, params.since))
 }
 
 /// Build a JSON error response with a stable machine-readable `code` for MCP
@@ -780,12 +763,12 @@ struct OpenFileBody {
 ///   malformed input (relative / UNC / verbatim / device / ADS paths), rejected
 ///   before any filesystem access.
 async fn h_open_file(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Json(body): Json<OpenFileBody>,
 ) -> Response {
     use crate::commands::bridge_access::{OpenAccessError, canonical_compare_form, validate_open_path};
 
-    let state = handle.state::<AppState>();
+    let state = &*ctx.state;
 
     // Allowlist: lock, clone both fields, drop.
     let (allowed, allow_all): (Vec<String>, bool) = {
@@ -839,12 +822,12 @@ async fn h_open_file(
             // rather than the axum/tokio worker thread this handler is polled
             // on, mirroring `run_pipeline` (commands/pipeline.rs:246-268) and
             // the Tauri `load_log_file` command's own wrapping of this same
-            // fn. `state` (a `State<'_, AppState>` borrowed from `handle`)
-            // can't cross into the 'static closure, so it's re-resolved from a
-            // cloned `handle` inside instead.
-            let handle_for_task = handle.clone();
+            // fn. The borrowed `&AppState` can't cross into the 'static
+            // closure, so the `Arc` is cloned in instead.
+            let handle_for_task = ctx.app.clone();
+            let state_for_task = Arc::clone(&ctx.state);
             let open_result = tokio::task::spawn_blocking(move || {
-                let state = handle_for_task.state::<AppState>();
+                let state = state_for_task;
                 crate::commands::files::open_file_inner(
                     &state,
                     &handle_for_task,
@@ -867,7 +850,10 @@ async fn h_open_file(
                         // post-load tab logic against an already-loaded session. Reopening the
                         // same file re-fires this with the SAME (deterministic) sessionId — the
                         // frontend listener is idempotent and will not spawn a duplicate tab.
-                        let _ = handle.emit("session-opened", first);
+                        ctx.events.emit_json(
+                            "session-opened",
+                            serde_json::to_value(first).unwrap_or(Value::Null),
+                        );
                         Json(json!({
                             "sessionId": first.session_id,
                             "sourceType": first.source_type,
@@ -909,10 +895,10 @@ async fn h_open_file(
 ///   The existence check runs under a short-lived `sessions` lock that is dropped
 ///   before `close_session_inner` re-acquires it (no lock held across the close).
 async fn h_close_session(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
 ) -> Response {
-    let state = handle.state::<AppState>();
+    let state = &*ctx.state;
 
     // Existence check under a short-lived lock; drop it before closing.
     {
@@ -922,12 +908,15 @@ async fn h_close_session(
         }
     }
 
-    if let Err(e) = crate::commands::files::close_session_inner(&state, Some(&handle), &session_id) {
+    if let Err(e) =
+        crate::commands::files::close_session_inner(state, Some(&ctx.app), &session_id)
+    {
         return err(StatusCode::INTERNAL_SERVER_ERROR, e, "CLOSE_FAILED");
     }
 
     // Notify the frontend so it closes any pane/tab bound to this session.
-    let _ = handle.emit("session-closed", json!({ "sessionId": session_id }));
+    ctx.events
+        .emit_json("session-closed", json!({ "sessionId": session_id }));
 
     Json(json!({ "closed": true, "sessionId": session_id })).into_response()
 }
@@ -962,8 +951,8 @@ fn session_to_json(session: &AnalysisSession, focused_session_id: Option<&str>) 
     })
 }
 
-async fn h_sessions(State(handle): State<Handle>) -> Json<Value> {
-    let state = handle.state::<AppState>();
+async fn h_sessions(State(ctx): State<BridgeCtx>) -> Json<Value> {
+    let state = &*ctx.state;
 
     // Snapshot the frontend's focused session id (see `AppState::focused_session`)
     // before building the session list, so each entry can report whether it is
@@ -1041,11 +1030,11 @@ struct QueryParams {
 }
 
 async fn h_query(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     Query(params): Query<QueryParams>,
 ) -> Json<Value> {
-    let state = handle.state::<AppState>();
+    let state = &*ctx.state;
     let n = params.n.unwrap_or(50).min(200);
     let strategy = params.strategy.as_deref().unwrap_or("recent");
 
@@ -1231,7 +1220,7 @@ async fn h_query(
         .map(|snap| {
             *tag_counts.entry(snap.tag.clone()).or_insert(0) += 1;
             *level_counts.entry(snap.level).or_insert(0) += 1;
-            let raw = anonymize_for_session(&state, &session_id, &snap.raw);
+            let raw = anonymize_for_session(state, &session_id, &snap.raw);
             json!({
                 "lineNum": snap.line_num,
                 "level": snap.level,
@@ -1278,11 +1267,11 @@ struct PipelineParams {
 }
 
 async fn h_pipeline(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     Query(params): Query<PipelineParams>,
 ) -> Json<Value> {
-    let state = handle.state::<AppState>();
+    let state = &*ctx.state;
 
     // --- Phase 1: Clone pipeline results and processor metadata ---
     struct ReporterSnap {
@@ -1414,7 +1403,7 @@ async fn h_pipeline(
             let sessions = lock_or_json_err!(state.sessions, "sessions");
             resolve_line_texts(&sessions, &session_id, &needed)
         };
-        anonymize_line_texts(&state, &session_id, raw)
+        anonymize_line_texts(state, &session_id, raw)
     };
 
     // --- Phase 3: Build JSON ---
@@ -1490,11 +1479,11 @@ struct ProcessorDetailParams {
 }
 
 async fn h_processor_detail(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path((session_id, processor_id)): Path<(String, String)>,
     Query(params): Query<ProcessorDetailParams>,
 ) -> Json<Value> {
-    let state = handle.state::<AppState>();
+    let state = &*ctx.state;
     let include_emissions = params.include_emissions.unwrap_or(false);
     let emission_limit = params.emission_limit.unwrap_or(50).min(200);
     let emission_offset = params.emission_offset.unwrap_or(0);
@@ -1556,7 +1545,7 @@ async fn h_processor_detail(
                     let sessions = lock_or_json_err!(state.sessions, "sessions");
                     resolve_line_texts(&sessions, &session_id, &needed_lines)
                 };
-                anonymize_line_texts(&state, &session_id, raw)
+                anonymize_line_texts(state, &session_id, raw)
             } else {
                 HashMap::new()
             };
@@ -1648,7 +1637,7 @@ async fn h_processor_detail(
                     let sessions = lock_or_json_err!(state.sessions, "sessions");
                     resolve_line_texts(&sessions, &session_id, &needed)
                 };
-                anonymize_line_texts(&state, &session_id, raw)
+                anonymize_line_texts(state, &session_id, raw)
             } else {
                 HashMap::new()
             };
@@ -1698,11 +1687,11 @@ struct EventParams {
 }
 
 async fn h_events(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     Query(params): Query<EventParams>,
 ) -> Json<Value> {
-    let state = handle.state::<AppState>();
+    let state = &*ctx.state;
     let limit = params.limit.unwrap_or(50).min(200);
 
     let events: Vec<Value> = {
@@ -1768,11 +1757,11 @@ struct CorrelationParams {
 }
 
 async fn h_correlations(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     Query(params): Query<CorrelationParams>,
 ) -> Json<Value> {
-    let state = handle.state::<AppState>();
+    let state = &*ctx.state;
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);
 
@@ -1829,11 +1818,11 @@ struct StateAtParams {
 }
 
 async fn h_state_at_line(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path((session_id, tracker_id)): Path<(String, String)>,
     Query(params): Query<StateAtParams>,
 ) -> Json<Value> {
-    let state = handle.state::<AppState>();
+    let state = &*ctx.state;
     let line_num = params.line;
 
     // Resolve bare ID → qualified ID (e.g. "wifi-state" → "wifi-state@official")
@@ -1931,11 +1920,11 @@ struct SearchParams {
 }
 
 async fn h_search(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     Query(params): Query<SearchParams>,
 ) -> Json<Value> {
-    let state = handle.state::<AppState>();
+    let state = &*ctx.state;
     let limit = params.limit.unwrap_or(50).min(200);
     let context = params.context.unwrap_or(0).min(5);
     let case_insensitive = params.case_insensitive.unwrap_or(false);
@@ -2059,7 +2048,7 @@ async fn h_search(
     // the chunked scan loop above) has been dropped — see `anonymize_scan_line`.
     let total_matches = results.len();
     let results_json: Vec<Value> = results.into_iter().map(|m| {
-        let clean_raw = anonymize_scan_line(&state, &session_id, &m.raw, 500);
+        let clean_raw = anonymize_scan_line(state, &session_id, &m.raw, 500);
         let mut entry = json!({
             "lineNum": m.line_num,
             "raw": clean_raw,
@@ -2069,13 +2058,13 @@ async fn h_search(
         }
         if !m.context_before.is_empty() {
             let before: Vec<Value> = m.context_before.into_iter()
-                .map(|(ln, text)| json!({ "lineNum": ln, "raw": anonymize_scan_line(&state, &session_id, &text, 500) }))
+                .map(|(ln, text)| json!({ "lineNum": ln, "raw": anonymize_scan_line(state, &session_id, &text, 500) }))
                 .collect();
             entry.as_object_mut().map(|o| o.insert("contextBefore".to_string(), json!(before)));
         }
         if !m.context_after.is_empty() {
             let after: Vec<Value> = m.context_after.into_iter()
-                .map(|(ln, text)| json!({ "lineNum": ln, "raw": anonymize_scan_line(&state, &session_id, &text, 500) }))
+                .map(|(ln, text)| json!({ "lineNum": ln, "raw": anonymize_scan_line(state, &session_id, &text, 500) }))
                 .collect();
             entry.as_object_mut().map(|o| o.insert("contextAfter".to_string(), json!(after)));
         }
@@ -2098,8 +2087,8 @@ async fn h_search(
 // GET /mcp/processors — list all processor definitions
 // ---------------------------------------------------------------------------
 
-async fn h_processor_defs_list(State(handle): State<Handle>) -> Json<Value> {
-    let state = handle.state::<AppState>();
+async fn h_processor_defs_list(State(ctx): State<BridgeCtx>) -> Json<Value> {
+    let state = &*ctx.state;
 
     let processors: Vec<Value> = {
         let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -2129,10 +2118,10 @@ async fn h_processor_defs_list(State(handle): State<Handle>) -> Json<Value> {
 // ---------------------------------------------------------------------------
 
 async fn h_processor_defs_single(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(processor_id): Path<String>,
 ) -> Json<Value> {
-    let state = handle.state::<AppState>();
+    let state = &*ctx.state;
 
     let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let resolved = match resolve_processor_id_checked(&procs, &processor_id) {
@@ -2268,10 +2257,10 @@ async fn h_processor_defs_single(
 // ---------------------------------------------------------------------------
 
 async fn h_metadata(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
 ) -> Json<Value> {
-    let state = handle.state::<AppState>();
+    let state = &*ctx.state;
 
     get_session_and_source!(state, session_id => sessions, session, source);
 
@@ -2350,11 +2339,11 @@ fn section_json(s: &crate::core::session::SectionInfo) -> Value {
 /// was to page through `sections` and cross-reference `parentIndex` against
 /// line ranges by hand.
 async fn h_section_at(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     Query(params): Query<SectionAtParams>,
 ) -> Json<Value> {
-    let state = handle.state::<AppState>();
+    let state = &*ctx.state;
 
     get_session_and_source!(state, session_id => sessions, session, source);
 
@@ -2406,11 +2395,11 @@ async fn h_section_at(
 }
 
 async fn h_sections(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     Query(params): Query<SectionsParams>,
 ) -> Json<Value> {
-    let state = handle.state::<AppState>();
+    let state = &*ctx.state;
 
     get_session_and_source!(state, session_id => sessions, session, source);
 
@@ -2456,11 +2445,11 @@ struct TagStatsParams {
 }
 
 async fn h_tag_stats(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     Query(params): Query<TagStatsParams>,
 ) -> Json<Value> {
-    let state = handle.state::<AppState>();
+    let state = &*ctx.state;
     let top_n = params.top_n.unwrap_or(50);
 
     // Aggregate inside the lock (fast iteration, no allocations), then drop.
@@ -2519,11 +2508,11 @@ struct LinesAroundParams {
 }
 
 async fn h_lines_around(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     Query(params): Query<LinesAroundParams>,
 ) -> Json<Value> {
-    let state = handle.state::<AppState>();
+    let state = &*ctx.state;
     let before = params.before.unwrap_or(20).min(100);
     let after = params.after.unwrap_or(20).min(100);
     let center = params.line;
@@ -2571,7 +2560,7 @@ async fn h_lines_around(
                 "lineNum": s.line_num,
                 "level": s.level,
                 "tag": s.tag,
-                "raw": anonymize_scan_line(&state, &session_id, &s.raw, 500),
+                "raw": anonymize_scan_line(state, &session_id, &s.raw, 500),
                 "isCenter": s.is_center,
             })
         })
@@ -2614,11 +2603,11 @@ struct SearchWithContextParams {
 }
 
 async fn h_search_with_context(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     Query(params): Query<SearchWithContextParams>,
 ) -> Json<Value> {
-    let state = handle.state::<AppState>();
+    let state = &*ctx.state;
     let max_results = params.max_results.unwrap_or(10).min(50);
     let context_lines = params.context_lines.unwrap_or(3).min(10);
     let case_insensitive = params.case_insensitive.unwrap_or(false);
@@ -2753,7 +2742,7 @@ async fn h_search_with_context(
                 "lineNum": c.line_num,
                 "level": c.level,
                 "tag": c.tag,
-                "raw": anonymize_scan_line(&state, &session_id, &c.raw, max_line_chars),
+                "raw": anonymize_scan_line(state, &session_id, &c.raw, max_line_chars),
                 "isMatch": c.is_match,
             })
         }).collect();
@@ -2793,11 +2782,11 @@ struct BookmarkListQuery {
 }
 
 async fn h_list_bookmarks(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     axum::extract::Query(query): axum::extract::Query<BookmarkListQuery>,
 ) -> Json<Value> {
-    let state = handle.state::<AppState>();
+    let state = &*ctx.state;
     let bookmarks = state.bookmarks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let list: Vec<_> = bookmarks
         .get(&session_id)
@@ -2840,14 +2829,14 @@ struct CreateBookmarkBody {
 }
 
 async fn h_create_bookmark(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     Json(body): Json<CreateBookmarkBody>,
 ) -> Json<Value> {
     use crate::core::bookmark::CreatedBy;
 
     match crate::commands::artifact_mutations::add_bookmark(
-        &handle,
+        &ctx.app,
         session_id,
         body.line_number,
         body.label,
@@ -2864,10 +2853,10 @@ async fn h_create_bookmark(
 }
 
 async fn h_delete_bookmark(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path((session_id, bookmark_id)): Path<(String, String)>,
 ) -> Json<Value> {
-    match crate::commands::artifact_mutations::remove_bookmark(&handle, session_id, bookmark_id) {
+    match crate::commands::artifact_mutations::remove_bookmark(&ctx.app, session_id, bookmark_id) {
         Ok(_) => Json(json!({ "ok": true })),
         Err(e) => Json(json!({ "error": e })),
     }
@@ -2883,12 +2872,12 @@ struct UpdateBookmarkBody {
 }
 
 async fn h_update_bookmark(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path((session_id, bookmark_id)): Path<(String, String)>,
     Json(body): Json<UpdateBookmarkBody>,
 ) -> Json<Value> {
     match crate::commands::artifact_mutations::update_bookmark(
-        &handle,
+        &ctx.app,
         session_id,
         bookmark_id,
         body.label,
@@ -2926,8 +2915,8 @@ async fn h_update_bookmark(
 //   be surprising, not safer.
 
 /// `GET /mcp/analyses` — every workspace analysis artifact, unfiltered.
-async fn h_list_all_analyses(State(handle): State<Handle>) -> Json<Value> {
-    let state = handle.state::<AppState>();
+async fn h_list_all_analyses(State(ctx): State<BridgeCtx>) -> Json<Value> {
+    let state = &*ctx.state;
     let analyses = state.analyses.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     Json(json!(analyses.clone()))
 }
@@ -2936,10 +2925,10 @@ async fn h_list_all_analyses(State(handle): State<Handle>) -> Json<Value> {
 /// reference attributed to `session_id`. Leniency: an artifact matching here
 /// may also reference other sessions; this list is not exhaustive for those.
 async fn h_list_analyses(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
 ) -> Json<Value> {
-    let state = handle.state::<AppState>();
+    let state = &*ctx.state;
     let analyses = state.analyses.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let list: Vec<_> = analyses
         .iter()
@@ -2960,11 +2949,11 @@ struct PublishAnalysisBody {
 /// verification. References keep whatever `sessionId` (or none) they were
 /// given; nothing is stamped.
 async fn h_publish_workspace_analysis(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Json(body): Json<PublishAnalysisBody>,
 ) -> Json<Value> {
     match crate::commands::artifact_mutations::publish_analysis(
-        &handle,
+        &ctx.app,
         None,
         body.title,
         body.sections,
@@ -2978,12 +2967,12 @@ async fn h_publish_workspace_analysis(
 /// attributed to `session_id`. Verifies the session exists and stamps any
 /// reference lacking its own `sessionId` with `session_id`.
 async fn h_publish_analysis(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     Json(body): Json<PublishAnalysisBody>,
 ) -> Json<Value> {
     match crate::commands::artifact_mutations::publish_analysis(
-        &handle,
+        &ctx.app,
         Some(session_id),
         body.title,
         body.sections,
@@ -2993,8 +2982,8 @@ async fn h_publish_analysis(
     }
 }
 
-fn lookup_analysis(handle: &Handle, artifact_id: &str) -> Json<Value> {
-    let state = handle.state::<AppState>();
+fn lookup_analysis(ctx: &BridgeCtx, artifact_id: &str) -> Json<Value> {
+    let state = &*ctx.state;
     let analyses = state.analyses.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(art) = analyses.iter().find(|a| a.id == artifact_id) {
         return Json(json!(art));
@@ -3004,20 +2993,20 @@ fn lookup_analysis(handle: &Handle, artifact_id: &str) -> Json<Value> {
 
 /// `GET /mcp/analyses/{artifact_id}` — look up by artifact id (workspace-unique).
 async fn h_get_analysis(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(artifact_id): Path<String>,
 ) -> Json<Value> {
-    lookup_analysis(&handle, &artifact_id)
+    lookup_analysis(&ctx, &artifact_id)
 }
 
 /// `GET /mcp/sessions/{session_id}/analyses/{artifact_id}` — same lookup as
 /// [`h_get_analysis`]; `session_id` is retained caller context only, not a
 /// filter (see module doc above).
 async fn h_get_analysis_scoped(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path((_session_id, artifact_id)): Path<(String, String)>,
 ) -> Json<Value> {
-    lookup_analysis(&handle, &artifact_id)
+    lookup_analysis(&ctx, &artifact_id)
 }
 
 #[derive(Deserialize)]
@@ -3028,13 +3017,13 @@ struct UpdateAnalysisBody {
 }
 
 fn do_update_analysis(
-    handle: &Handle,
+    ctx: &BridgeCtx,
     artifact_id: String,
     body: UpdateAnalysisBody,
     fallback_session: Option<String>,
 ) -> Json<Value> {
     match crate::commands::artifact_mutations::update_analysis(
-        handle,
+        &ctx.app,
         artifact_id,
         body.title,
         body.sections,
@@ -3050,11 +3039,11 @@ fn do_update_analysis(
 /// stays unattributed, matching the workspace route's "no session context"
 /// semantics.
 async fn h_update_analysis(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(artifact_id): Path<String>,
     Json(body): Json<UpdateAnalysisBody>,
 ) -> Json<Value> {
-    do_update_analysis(&handle, artifact_id, body, None)
+    do_update_analysis(&ctx, artifact_id, body, None)
 }
 
 /// `PUT /mcp/sessions/{session_id}/analyses/{artifact_id}` — same update as
@@ -3064,15 +3053,15 @@ async fn h_update_analysis(
 /// route silently de-attribute the artifact from every session. `session_id`
 /// is NOT used as a lookup filter — see module doc above.
 async fn h_update_analysis_scoped(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path((session_id, artifact_id)): Path<(String, String)>,
     Json(body): Json<UpdateAnalysisBody>,
 ) -> Json<Value> {
-    do_update_analysis(&handle, artifact_id, body, Some(session_id))
+    do_update_analysis(&ctx, artifact_id, body, Some(session_id))
 }
 
-fn do_delete_analysis(handle: &Handle, artifact_id: String) -> Json<Value> {
-    match crate::commands::artifact_mutations::remove_analysis(handle, artifact_id) {
+fn do_delete_analysis(ctx: &BridgeCtx, artifact_id: String) -> Json<Value> {
+    match crate::commands::artifact_mutations::remove_analysis(&ctx.app, artifact_id) {
         Ok(()) => Json(json!({ "ok": true })),
         Err(e) => Json(json!({ "error": e })),
     }
@@ -3080,20 +3069,20 @@ fn do_delete_analysis(handle: &Handle, artifact_id: String) -> Json<Value> {
 
 /// `DELETE /mcp/analyses/{artifact_id}` — delete by artifact id (workspace-unique).
 async fn h_delete_analysis(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(artifact_id): Path<String>,
 ) -> Json<Value> {
-    do_delete_analysis(&handle, artifact_id)
+    do_delete_analysis(&ctx, artifact_id)
 }
 
 /// `DELETE /mcp/sessions/{session_id}/analyses/{artifact_id}` — same delete
 /// as [`h_delete_analysis`]; `session_id` is retained caller context only,
 /// not a filter (see module doc above).
 async fn h_delete_analysis_scoped(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path((_session_id, artifact_id)): Path<(String, String)>,
 ) -> Json<Value> {
-    do_delete_analysis(&handle, artifact_id)
+    do_delete_analysis(&ctx, artifact_id)
 }
 
 // ---------------------------------------------------------------------------
@@ -3101,10 +3090,10 @@ async fn h_delete_analysis_scoped(
 // ---------------------------------------------------------------------------
 
 async fn h_list_watches(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
 ) -> Json<Value> {
-    let state = handle.state::<AppState>();
+    let state = &*ctx.state;
     let watches = state.active_watches.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let list = watches.get(&session_id);
     let infos: Vec<Value> = list
@@ -3133,14 +3122,14 @@ struct CreateWatchBody {
 }
 
 async fn h_create_watch(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     Json(body): Json<CreateWatchBody>,
 ) -> Json<Value> {
     use std::sync::Arc;
     use crate::core::watch::{WatchSession, WatchInfo};
 
-    let state = handle.state::<AppState>();
+    let state = &*ctx.state;
 
     verify_session_exists!(state, session_id);
 
@@ -3170,10 +3159,10 @@ async fn h_create_watch(
 }
 
 async fn h_cancel_watch(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path((session_id, watch_id)): Path<(String, String)>,
 ) -> Json<Value> {
-    let state = handle.state::<AppState>();
+    let state = &*ctx.state;
     let watches = state.active_watches.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(list) = watches.get(&session_id) {
         if let Some(w) = list.iter().find(|w| w.watch_id == watch_id) {
@@ -3196,13 +3185,13 @@ struct RunPipelineBody {
 }
 
 async fn h_run_pipeline(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     Json(body): Json<RunPipelineBody>,
 ) -> Json<Value> {
     use crate::commands::pipeline::execute_pipeline;
 
-    let state = handle.state::<AppState>();
+    let state = &*ctx.state;
 
     verify_session_exists!(state, session_id);
 
@@ -3227,13 +3216,13 @@ async fn h_run_pipeline(
 
     // Pipeline is CPU-heavy (rayon); run on a blocking thread to avoid starving
     // the Axum async runtime.
-    let handle_clone = handle.clone();
+    let handle_clone = ctx.app.clone();
+    let state_for_task = Arc::clone(&ctx.state);
     let sid = session_id.clone();
     let pids = processor_ids.clone();
 
     let result = tokio::task::spawn_blocking(move || {
-        let state_ref = handle_clone.state::<AppState>();
-        execute_pipeline(&state_ref, &handle_clone, &sid, &pids)
+        execute_pipeline(&state_for_task, &handle_clone, &sid, &pids)
     }).await;
 
     match result {
@@ -3260,14 +3249,14 @@ struct InsightsParams {
 }
 
 async fn h_insights(
-    State(handle): State<Handle>,
+    State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     Query(params): Query<InsightsParams>,
 ) -> Json<Value> {
     use crate::processors::marketplace::{McpSchema, Severity, SignalType};
     use crate::processors::signals::{eval_parsed_condition, render_template};
 
-    let state = handle.state::<AppState>();
+    let state = &*ctx.state;
     let max_signals = params.max_signals.unwrap_or(20);
 
     let filter_ids: Option<std::collections::HashSet<String>> = params.processor_ids.map(|s| {
@@ -3500,242 +3489,10 @@ fn level_at_least(line_level: &str, filter: &str) -> bool {
 mod tests {
     use super::*;
 
-    // ── resolve_should_anonymize / anonymize_for_session ────────────────────
-    // Per-session MCP anonymization flag: must fail closed on an unknown
-    // session, and must not leak one session's raw-vs-anonymized state into
-    // another's (the bug this module fixes — see AppState::mcp_anonymize).
-
-    #[test]
-    fn resolve_should_anonymize_defaults_true_for_unknown_session() {
-        // No entry at all — e.g. a session the frontend has never signalled
-        // a pipeline-chain state for. Must fail closed to anonymize.
-        let flags: HashMap<String, bool> = HashMap::new();
-        assert!(resolve_should_anonymize(&flags, "unknown-session"));
-    }
-
-    #[test]
-    fn resolve_should_anonymize_true_when_flag_set_true() {
-        let mut flags: HashMap<String, bool> = HashMap::new();
-        flags.insert("sess-a".to_string(), true);
-        assert!(resolve_should_anonymize(&flags, "sess-a"));
-    }
-
-    #[test]
-    fn resolve_should_anonymize_false_when_flag_set_false() {
-        let mut flags: HashMap<String, bool> = HashMap::new();
-        flags.insert("sess-a".to_string(), false);
-        assert!(!resolve_should_anonymize(&flags, "sess-a"));
-    }
-
-    #[test]
-    fn resolve_should_anonymize_is_per_session_not_global() {
-        // The exact scenario from the bug report: two sessions, only one of
-        // which has __pii_anonymizer active. A global bool could not
-        // represent this; the per-session map must.
-        let mut flags: HashMap<String, bool> = HashMap::new();
-        flags.insert("sess-anonymized".to_string(), true);
-        flags.insert("sess-raw".to_string(), false);
-        assert!(resolve_should_anonymize(&flags, "sess-anonymized"));
-        assert!(!resolve_should_anonymize(&flags, "sess-raw"));
-    }
-
-    #[test]
-    fn anonymize_for_session_serves_raw_when_flag_false() {
-        let state = AppState::new();
-        state.mcp_anonymize.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert("sess-a".to_string(), false);
-        let raw = "contact user@example.com for access";
-        let out = anonymize_for_session(&state, "sess-a", raw);
-        assert_eq!(out, raw);
-    }
-
-    #[test]
-    fn anonymize_for_session_redacts_when_flag_true() {
-        let state = AppState::new();
-        state.mcp_anonymize.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert("sess-a".to_string(), true);
-        let raw = "contact user@example.com for access";
-        let out = anonymize_for_session(&state, "sess-a", raw);
-        assert_ne!(out, raw);
-        assert!(!out.contains("user@example.com"));
-    }
-
-    #[test]
-    fn anonymize_for_session_fails_closed_for_unknown_session() {
-        // No `set_mcp_anonymize` call has ever landed for this session —
-        // must anonymize by default, not serve raw PII.
-        let state = AppState::new();
-        let raw = "contact user@example.com for access";
-        let out = anonymize_for_session(&state, "never-seen-session", raw);
-        assert_ne!(out, raw);
-        assert!(!out.contains("user@example.com"));
-    }
-
-    // ── anonymize_line_texts (Tier-2 raw-line-leak fix) ──────────────────────
-    // `h_pipeline` (reporter sampleMatchedLines / tracker recentTransitions)
-    // and `h_processor_detail` (include_line_text=true) both resolve raw text
-    // via `resolve_line_texts` and previously injected it straight into the
-    // JSON response as `rawLine`, never checking the session's
-    // `mcp_anonymize` flag — unlike h_query/h_search/h_lines_around/
-    // h_search_with_context, which all route through `anonymize_for_session`.
-    // These tests exercise the two-phase fix directly: `resolve_line_texts`
-    // stays a pure "fetch under lock" helper, and `anonymize_line_texts` is
-    // the new gate callers must pipe its output through afterward.
-
-    #[test]
-    fn anonymize_line_texts_redacts_pii_when_flag_true() {
-        let state = AppState::new();
-        state.mcp_anonymize.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert("sess-a".to_string(), true);
-
-        let mut raw = HashMap::new();
-        raw.insert(10usize, "contact user@example.com for access".to_string());
-        raw.insert(20usize, "no pii on this line".to_string());
-
-        let out = anonymize_line_texts(&state, "sess-a", raw);
-
-        // The PII-bearing line must no longer contain the raw email — this
-        // is exactly the field `h_pipeline` / `h_processor_detail` inject
-        // into `rawLine` in the JSON response.
-        assert!(!out[&10].contains("user@example.com"), "raw PII leaked through rawLine: {}", out[&10]);
-        assert_eq!(out[&20], "no pii on this line");
-    }
-
-    #[test]
-    fn anonymize_line_texts_serves_raw_when_flag_false() {
-        // Anonymization is opt-in per session — a session that explicitly
-        // disabled it must still get its raw text back unchanged.
-        let state = AppState::new();
-        state.mcp_anonymize.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert("sess-raw".to_string(), false);
-
-        let mut raw = HashMap::new();
-        raw.insert(5usize, "contact user@example.com for access".to_string());
-
-        let out = anonymize_line_texts(&state, "sess-raw", raw);
-        assert_eq!(out[&5], "contact user@example.com for access");
-    }
-
-    #[test]
-    fn anonymize_line_texts_fails_closed_for_unknown_session() {
-        // No `set_mcp_anonymize` signal has landed for this session yet —
-        // must anonymize by default (same fail-closed contract as
-        // `anonymize_for_session`), not serve raw PII through rawLine.
-        let state = AppState::new();
-        let mut raw = HashMap::new();
-        raw.insert(1usize, "contact user@example.com for access".to_string());
-
-        let out = anonymize_line_texts(&state, "never-seen-session", raw);
-        assert!(!out[&1].contains("user@example.com"));
-    }
-
-    #[test]
-    fn anonymize_line_texts_anonymizes_before_truncating() {
-        // Order matters: anonymize the FULL raw text first, then truncate.
-        // If it were truncated first, an email straddling the 500-char cut
-        // point would be sliced mid-token (e.g. "user@example." with no
-        // TLD) — the anonymizer's email pattern would no longer match the
-        // mangled fragment, and the "user@" prefix would leak into rawLine
-        // unredacted. Doing it in the right order redacts the whole email
-        // before the cut ever happens.
-        let state = AppState::new();
-        state.mcp_anonymize.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert("sess-a".to_string(), true);
-
-        // Email spans char 490..506 — straddles the 500-char truncation point.
-        // The prefix ends in a space so the email sits on a word boundary
-        // (EMAIL_RE is `\b`-anchored with a bounded local part; without a
-        // boundary a 490-char word prefix would prevent any match at all,
-        // which is unrelated to the ordering this test checks).
-        let long_line = format!("{} user@example.com", "p".repeat(489));
-        let mut raw = HashMap::new();
-        raw.insert(1usize, long_line);
-
-        let out = anonymize_line_texts(&state, "sess-a", raw);
-        assert!(!out[&1].contains("user@"), "partial/full email leaked through rawLine: {}", out[&1]);
-    }
-
-    // ── anonymize_scan_line (h_search / h_search_with_context / h_lines_around) ─
-    // These three handlers used to call `anonymize_for_session` (which locks
-    // `mcp_anonymize` / `anonymizer_config` / `mcp_anonymizers`) WHILE still
-    // holding the `sessions` lock from their chunked scan loop — a lock-order
-    // violation of this file's own header rule ("copy/clone the data needed,
-    // drop the `sessions` lock, THEN build the JSON response"). The fix moves
-    // anonymization to run after `sessions` is dropped, funneled through this
-    // shared helper. A live Axum/Tauri `Handle<Wry>` is impractical to
-    // construct in this test suite (see `poisoned_sessions_probe`'s doc
-    // comment for the same constraint), so — exactly like
-    // `anonymize_line_texts` above — these tests exercise the extracted
-    // post-lock transformation directly to prove anonymization is still
-    // applied (and still ordered before truncation) with the lock dropped.
-
-    #[test]
-    fn anonymize_scan_line_redacts_pii_when_flag_true() {
-        let state = AppState::new();
-        state.mcp_anonymize.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert("sess-a".to_string(), true);
-
-        let raw = "contact user@example.com for access";
-        let out = anonymize_scan_line(&state, "sess-a", raw, 500);
-        assert_ne!(out, raw);
-        assert!(!out.contains("user@example.com"), "raw PII leaked: {out}");
-    }
-
-    #[test]
-    fn anonymize_scan_line_serves_raw_when_flag_false() {
-        // Anonymization is opt-in per session — matches h_search's contract
-        // of honoring the session's mcp_anonymize flag, not a global switch.
-        let state = AppState::new();
-        state.mcp_anonymize.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert("sess-raw".to_string(), false);
-
-        let raw = "contact user@example.com for access";
-        let out = anonymize_scan_line(&state, "sess-raw", raw, 500);
-        assert_eq!(out, raw);
-    }
-
-    #[test]
-    fn anonymize_scan_line_fails_closed_for_unknown_session() {
-        // No `set_mcp_anonymize` signal has landed for this session — must
-        // anonymize by default (same fail-closed contract as
-        // `anonymize_for_session` / `anonymize_line_texts`), matching what
-        // h_search / h_search_with_context / h_lines_around must do for a
-        // session the frontend hasn't signalled a state for yet.
-        let state = AppState::new();
-        let raw = "contact user@example.com for access";
-        let out = anonymize_scan_line(&state, "never-seen-session", raw, 500);
-        assert!(!out.contains("user@example.com"), "raw PII leaked for unrecognized session: {out}");
-    }
-
-    #[test]
-    fn anonymize_scan_line_anonymizes_before_truncating() {
-        // Same ordering requirement as `anonymize_line_texts`: h_search's
-        // matched line, its contextBefore/contextAfter lines, and
-        // h_search_with_context's/h_lines_around's context lines are all
-        // truncated at up to 500/max_line_chars characters — if truncation
-        // ran first, an email straddling the cut point would be sliced
-        // mid-token and leak its unredacted prefix.
-        let state = AppState::new();
-        state.mcp_anonymize.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert("sess-a".to_string(), true);
-
-        let long_line = format!("{} user@example.com", "p".repeat(489));
-        let out = anonymize_scan_line(&state, "sess-a", &long_line, 500);
-        assert!(!out.contains("user@"), "partial/full email leaked: {out}");
-    }
-
-    #[test]
-    fn anonymize_scan_line_truncates_after_anonymizing_respects_custom_cap() {
-        // h_search_with_context accepts a caller-supplied `max_line_chars`
-        // (up to 8000) instead of the fixed 500 h_search/h_lines_around use —
-        // verify the cap is still honored post-anonymization.
-        let state = AppState::new();
-        state.mcp_anonymize.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert("sess-a".to_string(), false); // flag off: raw passes through unchanged
-
-        let long = "x".repeat(600);
-        let out = anonymize_scan_line(&state, "sess-a", &long, 500);
-        assert!(out.ends_with("..."));
-        assert_eq!(out.chars().count(), 503);
-    }
+    // NOTE: the `resolve_should_anonymize` / `anonymize_for_session` /
+    // `anonymize_line_texts` / `anonymize_scan_line` tests moved to
+    // `services::policy` along with the functions themselves. The gate is
+    // still exercised — just from the module that now owns it.
 
     // ── Lock poisoning: `lock_or_json_err!` vs. `into_inner` recovery ───────
     // See the "Lock-poisoning helpers" module docs near the top of this file
@@ -3855,46 +3612,10 @@ mod tests {
         assert!(!contains_ignore_case("visit the cafe today", &needle));
     }
 
-    // ── truncate_str / max_line_chars ────────────────────────────────────────
+    // ── max_line_chars ──────────────────────────────────────────────────────
     // Wide dumpsys status lines exceed the 500-char default and lose their
-    // trailing fields. Callers can now widen the cap per request.
-
-    #[test]
-    fn truncate_str_leaves_short_lines_untouched() {
-        assert_eq!(truncate_str("short", 500), "short");
-        // Exactly at the cap must not gain an ellipsis.
-        let exact = "x".repeat(500);
-        assert_eq!(truncate_str(&exact, 500), exact);
-    }
-
-    #[test]
-    fn truncate_str_cuts_and_marks_long_lines() {
-        let long = "x".repeat(600);
-        let out = truncate_str(&long, 500);
-        assert!(out.ends_with("..."));
-        assert_eq!(out.chars().count(), 503);
-    }
-
-    #[test]
-    fn truncate_str_respects_a_wider_cap() {
-        // A realistic UsbPortStatus line: the fields that decide a diagnosis
-        // (canChangeDataRole, lastConnectDurationMillis) sit past char 500.
-        let line = format!("{}canChangeDataRole=false, lastConnectDurationMillis=0", "p".repeat(520));
-        assert!(!truncate_str(&line, 500).contains("canChangeDataRole"));
-        let wide = truncate_str(&line, 8000);
-        assert!(wide.contains("canChangeDataRole=false"));
-        assert!(wide.contains("lastConnectDurationMillis=0"));
-        assert!(!wide.ends_with("..."));
-    }
-
-    #[test]
-    fn truncate_str_does_not_split_multibyte_chars() {
-        // Each 'é' is two bytes; cutting by byte index would panic or corrupt.
-        let s = "é".repeat(10);
-        let out = truncate_str(&s, 4);
-        assert_eq!(out, "éééé...");
-        assert_eq!(out.chars().count(), 7);
-    }
+    // trailing fields. Callers can widen the cap per request; `truncate_str`
+    // itself (and its wider-cap test) live in `services::policy`.
 
     #[test]
     fn max_line_chars_clamp_matches_handler_bounds() {
@@ -4191,9 +3912,12 @@ mod tests {
     // `Err` into this file's `Json({"error": ...})` response shape instead of
     // resolving unpredictably.
     //
-    // The handlers themselves take `State<Handle>` (a live Axum/Tauri
-    // `AppHandle<Wry>`), which — per this suite's established constraint (see
-    // `poisoned_sessions_probe` above) — is impractical to construct here.
+    // The handlers themselves take `State<BridgeCtx>`, which still carries a
+    // live `AppHandle<Wry>` (the `app` field) for the four call sites that have
+    // not moved to `ServiceCtx` yet — impractical to construct here, per this
+    // suite's established constraint (see `poisoned_sessions_probe` above).
+    // `router()` is split out so a later package can drive the whole table with
+    // `tower::ServiceExt::oneshot` once that field is gone.
     // `resolve_processor_id_checked`'s own ambiguous/unambiguous contract is
     // already covered by unit tests in processors/marketplace.rs. What these
     // tests cover is the seam actually reachable from this file: that calling

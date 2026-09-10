@@ -57,11 +57,15 @@ pub(crate) fn stop_mcp_bridge_inner(state: &AppState) -> Result<(), String> {
 #[tauri::command]
 pub async fn start_mcp_bridge(
     app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, std::sync::Arc<AppState>>,
 ) -> Result<(), String> {
     if let Some(rx) = start_mcp_bridge_inner(&state)? {
         // Spawn the bridge — it will clear the shutdown sender when it exits.
-        tauri::async_runtime::spawn(crate::mcp_bridge::start(app, rx));
+        // Build the bridge's own context (state + the Tauri-backed sinks)
+        // once, here — the bridge itself never resolves anything out of an
+        // `AppHandle` any more.
+        let ctx = crate::mcp_bridge::BridgeCtx::new(app);
+        tauri::async_runtime::spawn(crate::mcp_bridge::start(ctx, rx));
     }
     Ok(())
 }
@@ -73,7 +77,7 @@ pub async fn start_mcp_bridge(
 /// `AppState::mcp_bridge_port`.  Returns `Ok(())` even if the bridge was not
 /// running.
 #[tauri::command]
-pub fn stop_mcp_bridge(state: tauri::State<'_, AppState>) -> Result<(), String> {
+pub fn stop_mcp_bridge(state: tauri::State<'_, std::sync::Arc<AppState>>) -> Result<(), String> {
     stop_mcp_bridge_inner(&state)
 }
 

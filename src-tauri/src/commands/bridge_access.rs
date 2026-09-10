@@ -17,9 +17,10 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 
 use crate::commands::{lock_or_err, AppState};
+use crate::services::paths::AppPaths;
 
 // ---------------------------------------------------------------------------
 // Config
@@ -47,8 +48,18 @@ pub struct McpOpenAllowlist {
     pub allow_all: bool,
 }
 
-fn persist_mcp_open_allowlist(app: &AppHandle, allowlist: &McpOpenAllowlist) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+/// Write the allowlist to `{app_data_dir}/mcp_open_allowlist.json`.
+///
+/// Takes `&dyn AppPaths` rather than an `AppHandle` so the persistence step is
+/// exercisable without a live Tauri app — pass `TauriPaths` from the command
+/// wrapper, a `FixedPaths` pointed at a temp dir from a test. This is the gate
+/// an agent may not widen (see `services::policy::deny_agent_gate_mutation`),
+/// so being able to test what actually lands on disk matters.
+fn persist_mcp_open_allowlist(
+    paths: &dyn AppPaths,
+    allowlist: &McpOpenAllowlist,
+) -> Result<(), String> {
+    let data_dir = paths.app_data_dir().map_err(String::from)?;
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(allowlist).map_err(|e| e.to_string())?;
     std::fs::write(data_dir.join("mcp_open_allowlist.json"), json)
@@ -60,7 +71,7 @@ fn persist_mcp_open_allowlist(app: &AppHandle, allowlist: &McpOpenAllowlist) -> 
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn get_mcp_open_allowlist(state: State<'_, AppState>) -> McpOpenAllowlist {
+pub fn get_mcp_open_allowlist(state: State<'_, std::sync::Arc<AppState>>) -> McpOpenAllowlist {
     match lock_or_err(&state.mcp_open_allowlist, "mcp_open_allowlist") {
         Ok(cfg) => cfg.clone(),
         Err(_) => McpOpenAllowlist::default(),
@@ -73,7 +84,7 @@ pub fn get_mcp_open_allowlist(state: State<'_, AppState>) -> McpOpenAllowlist {
 
 #[tauri::command]
 pub async fn set_mcp_open_allowlist(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app: AppHandle,
     dirs: Vec<String>,
     allow_all: bool,
@@ -82,7 +93,7 @@ pub async fn set_mcp_open_allowlist(
         allowed_dirs: dirs,
         allow_all,
     };
-    persist_mcp_open_allowlist(&app, &allowlist)?;
+    persist_mcp_open_allowlist(&crate::commands::adapters::TauriPaths::new(app), &allowlist)?;
     let mut stored = lock_or_err(&state.mcp_open_allowlist, "mcp_open_allowlist")?;
     *stored = allowlist;
     Ok(())

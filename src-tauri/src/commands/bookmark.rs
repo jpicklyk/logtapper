@@ -36,7 +36,7 @@ pub fn create_bookmark(
 /// List all bookmarks for a session.
 #[tauri::command]
 pub fn list_bookmarks(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: String,
 ) -> Result<Vec<Bookmark>, String> {
     let bookmarks = lock_or_err(&state.bookmarks, "bookmarks")?;

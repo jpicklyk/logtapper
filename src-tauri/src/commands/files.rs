@@ -168,14 +168,14 @@ pub async fn load_log_file(
     // (commands/pipeline.rs:246-268) for the same starvation rationale. Run it
     // on a blocking thread instead.
     //
-    // `State<'_, AppState>` cannot cross into the 'static `spawn_blocking`
+    // `State<'_, std::sync::Arc<AppState>>` cannot cross into the 'static `spawn_blocking`
     // closure (it borrows this invocation's lifetime), so — same as
     // `run_pipeline` — the closure re-resolves `AppState` from the moved
     // `AppHandle` instead of taking a `state` parameter at all. Neither `app`
     // nor `path` is used again after this point, so they move into the
     // closure directly rather than being cloned first.
     tokio::task::spawn_blocking(move || {
-        let state = app.state::<AppState>();
+        let state = app.state::<std::sync::Arc<AppState>>();
         if is_lts {
             load_lts_file_inner(&state, &app, &path)
         } else {
@@ -856,7 +856,7 @@ pub(crate) fn close_session_inner(state: &AppState, _app: Option<&tauri::AppHand
 
 #[tauri::command]
 pub async fn close_session(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app: tauri::AppHandle,
     session_id: String,
 ) -> Result<(), String> {
@@ -896,7 +896,7 @@ async fn run_background_indexer(
     // build_partial_line_index stops at the next newline past this limit.
     const CHUNK_BYTES: usize = 8_000_000;
 
-    let state = app.state::<AppState>();
+    let state = app.state::<std::sync::Arc<AppState>>();
     let parser = parser_for(&source_type);
 
     // BugreportParser is stateful: it must see the `== dumpstate:` header to
@@ -1075,7 +1075,7 @@ async fn run_background_indexer(
 
 #[tauri::command]
 pub async fn get_lines(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     request: LineRequest,
 ) -> Result<LineWindow, String> {
     let sessions = lock_or_err(&state.sessions, "sessions")?;
@@ -1369,7 +1369,7 @@ const SEARCH_CHUNK_SIZE: usize = 10_000;
 
 #[tauri::command]
 pub async fn search_logs(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app_handle: AppHandle,
     session_id: String,
     query: SearchQuery,
@@ -1531,14 +1531,14 @@ pub async fn search_logs(
 
 #[tauri::command]
 pub async fn get_dumpstate_metadata(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: String,
 ) -> Result<DumpstateMetadata, String> {
     get_dumpstate_metadata_inner(&state, &session_id).await
 }
 
 /// Inner implementation taking `&AppState` directly (rather than Tauri's
-/// `State<'_, AppState>` wrapper) so it can be exercised in unit tests
+/// `State<'_, std::sync::Arc<AppState>>` wrapper) so it can be exercised in unit tests
 /// without a running Tauri app — mirrors `close_session_inner` /
 /// `stop_mcp_bridge_inner` elsewhere in `commands/`.
 pub(crate) async fn get_dumpstate_metadata_inner(
@@ -1729,7 +1729,7 @@ pub fn write_text_file(path: String, content: String) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn get_startup_file(state: State<'_, AppState>) -> Result<Option<String>, String> {
+pub fn get_startup_file(state: State<'_, std::sync::Arc<AppState>>) -> Result<Option<String>, String> {
     let mut sp = lock_or_err(&state.startup_file_path, "startup_file_path")?;
     Ok(sp.take())
 }
@@ -1740,7 +1740,7 @@ pub fn get_startup_file(state: State<'_, AppState>) -> Result<Option<String>, St
 
 #[tauri::command]
 pub async fn get_sections(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: String,
 ) -> Result<Vec<SectionInfo>, String> {
     let sessions = lock_or_err(&state.sessions, "sessions")?;

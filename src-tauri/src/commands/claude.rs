@@ -16,7 +16,7 @@ use crate::scripting::sandbox::validate_for_install;
 
 #[tauri::command]
 pub async fn set_claude_api_key(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     api_key: String,
 ) -> Result<(), String> {
     let mut key = lock_or_err(&state.api_key, "api_key")?;
@@ -36,7 +36,7 @@ pub async fn set_claude_api_key(
 /// `claude-stream` Tauri events.  Returns when streaming is complete.
 #[tauri::command]
 pub async fn claude_analyze(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app: AppHandle,
     session_id: String,
     processor_id: Option<String>,
@@ -91,7 +91,7 @@ pub async fn claude_analyze(
 /// Returns the validated YAML string.
 #[tauri::command]
 pub async fn claude_generate_processor(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     description: String,
     sample_lines: Vec<String>,
 ) -> Result<String, String> {

@@ -7,7 +7,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::commands::{lock_or_err, AppState};
 use crate::core::analysis::artifact_references_session;
 use crate::core::log_source::{FileLogSource, ZipLogSource, StreamLogSource};
-use crate::mcp_bridge::{anonymize_for_session, resolve_should_anonymize};
+use crate::services::policy::{anonymize_for_session, resolve_should_anonymize};
 use crate::workspace::lts::{LtsEditorTab, LtsSessionData, LtsSessionMeta};
 
 // ---------------------------------------------------------------------------
@@ -111,7 +111,7 @@ pub(crate) fn snapshot_stream_bytes(source: &StreamLogSource) -> Vec<u8> {
 /// the `sessions` lock has been dropped — see that function's step 1b/2).
 ///
 /// Pulled out as a standalone helper (taking `&AppState` rather than the
-/// Tauri `State<'_, AppState>` extractor, and no `AppHandle`) so it is
+/// Tauri `State<'_, std::sync::Arc<AppState>>` extractor, and no `AppHandle`) so it is
 /// directly unit-testable without spinning up a Tauri app — mirroring how
 /// `mcp_bridge::resolve_should_anonymize` is tested as a pure function.
 fn anonymize_lines_to_bytes(state: &AppState, session_id: &str, lines: &[String]) -> Vec<u8> {
@@ -199,7 +199,7 @@ pub struct ExportAllOptions {
 
 #[tauri::command]
 pub async fn get_export_all_sessions_info(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
 ) -> Result<ExportAllSessionsInfo, String> {
     // Collect session IDs and source filenames under brief lock.
     let session_entries: Vec<(String, String)> = {
@@ -248,7 +248,7 @@ pub async fn get_export_all_sessions_info(
 
 #[tauri::command]
 pub async fn export_all_sessions(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app: AppHandle,
     options: ExportAllOptions,
 ) -> Result<(), String> {

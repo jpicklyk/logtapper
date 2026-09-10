@@ -21,7 +21,7 @@ pub struct McpStatus {
 /// removed from that session's pipeline chain. Per-session — see
 /// `AppState::mcp_anonymize` for why a global flag is unsafe here.
 #[tauri::command]
-pub fn set_mcp_anonymize(state: State<'_, AppState>, session_id: String, enabled: bool) {
+pub fn set_mcp_anonymize(state: State<'_, std::sync::Arc<AppState>>, session_id: String, enabled: bool) {
     if let Ok(mut flags) = state.mcp_anonymize.lock() {
         flags.insert(session_id, enabled);
     }
@@ -36,7 +36,7 @@ pub fn set_mcp_anonymize(state: State<'_, AppState>, session_id: String, enabled
 /// is actually looking at.
 #[tauri::command]
 pub fn set_focused_session(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: Option<String>,
 ) -> Result<(), String> {
     let mut focused = lock_or_err(&state.focused_session, "focused_session")?;
@@ -46,7 +46,7 @@ pub fn set_focused_session(
 
 /// Returns the MCP bridge status (bound + last-activity age).
 #[tauri::command]
-pub fn get_mcp_status(state: State<'_, AppState>) -> McpStatus {
+pub fn get_mcp_status(state: State<'_, std::sync::Arc<AppState>>) -> McpStatus {
     let port = state.mcp_bridge_port.lock().map(|p| *p).unwrap_or(None);
     let idle_secs = state
         .mcp_last_activity
@@ -94,7 +94,7 @@ pub struct TagCount {
 
 #[tauri::command]
 pub fn get_session_metadata(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: String,
 ) -> Result<SessionMetadata, String> {
     let sessions = lock_or_err(&state.sessions, "sessions")?;

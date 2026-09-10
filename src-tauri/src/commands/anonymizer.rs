@@ -32,7 +32,7 @@ pub struct AnonymizerTestResult {
 
 #[tauri::command]
 pub async fn get_anonymizer_config(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
 ) -> Result<AnonymizerConfig, String> {
     let config = lock_or_err(&state.anonymizer_config, "anonymizer_config")?;
     Ok(config.clone())
@@ -52,7 +52,7 @@ fn persist_anonymizer_config(app: &AppHandle, config: &AnonymizerConfig) -> Resu
 
 #[tauri::command]
 pub async fn set_anonymizer_config(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     app: AppHandle,
     config: AnonymizerConfig,
 ) -> Result<(), String> {
@@ -68,7 +68,7 @@ pub async fn set_anonymizer_config(
 
 #[tauri::command]
 pub async fn test_anonymizer(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     text: String,
 ) -> Result<AnonymizerTestResult, String> {
     let config = {
@@ -108,7 +108,7 @@ pub async fn test_anonymizer(
 
 #[tauri::command]
 pub async fn get_pii_mappings(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: String,
 ) -> Result<HashMap<String, String>, String> {
     let mappings = lock_or_err(&state.pii_mappings, "pii_mappings")?;

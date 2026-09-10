@@ -62,7 +62,7 @@ pub struct FilterInfo {
 #[tauri::command]
 pub async fn create_filter(
     app: AppHandle,
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: String,
     criteria: FilterCriteria,
 ) -> Result<FilterCreateResult, String> {
@@ -131,7 +131,7 @@ async fn scan_filter_background(
     filter: Arc<FilterSession>,
     compiled_regex: Option<regex::Regex>,
 ) {
-    let state = app.state::<AppState>();
+    let state = app.state::<std::sync::Arc<AppState>>();
     const BATCH_SIZE: usize = 10_000;
     const PROGRESS_INTERVAL: usize = 50_000;
 
@@ -259,7 +259,7 @@ async fn scan_filter_background(
 
 #[tauri::command]
 pub async fn get_filtered_lines(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     filter_id: String,
     offset: usize,
     count: usize,
@@ -353,7 +353,7 @@ pub async fn get_filtered_lines(
 
 #[tauri::command]
 pub fn cancel_filter(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     filter_id: String,
 ) -> Result<(), String> {
     let filters = lock_or_err(&state.active_filters, "active_filters")?;
@@ -371,7 +371,7 @@ pub fn cancel_filter(
 
 #[tauri::command]
 pub fn get_filter_info(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     filter_id: String,
 ) -> Result<FilterInfo, String> {
     let filters = lock_or_err(&state.active_filters, "active_filters")?;
@@ -401,7 +401,7 @@ pub fn get_filter_info(
 
 #[tauri::command]
 pub fn close_filter(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     filter_id: String,
 ) -> Result<(), String> {
     let mut filters = lock_or_err(&state.active_filters, "active_filters")?;

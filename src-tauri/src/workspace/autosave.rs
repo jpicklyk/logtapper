@@ -270,7 +270,7 @@ pub fn flush_dest(envelope: &WorkspaceEnvelope, ws_dir: &Path) -> PathBuf {
 }
 
 async fn flush(app: &AppHandle) {
-    let state = app.state::<AppState>();
+    let state = app.state::<std::sync::Arc<AppState>>();
 
     // Captured before any of the snapshot work below, so that a mutation
     // racing this flush (landing after the snapshot but before completion)
@@ -431,7 +431,7 @@ async fn flush(app: &AppHandle) {
 /// first; this function does not re-check it, so it always attempts a flush
 /// when called.
 pub fn flush_now_blocking(app: &AppHandle) {
-    let state = app.state::<AppState>();
+    let state = app.state::<std::sync::Arc<AppState>>();
     let generation_at_start = state.autosave_generation.load(Ordering::Relaxed);
 
     // Exit racing an in-flight workspace switch: the switch-start auto-save

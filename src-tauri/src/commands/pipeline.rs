@@ -260,7 +260,7 @@ pub async fn run_pipeline(
     // the blocking closure.
     let app_for_task = app.clone();
     tokio::task::spawn_blocking(move || {
-        let state = app_for_task.state::<AppState>();
+        let state = app_for_task.state::<std::sync::Arc<AppState>>();
         execute_pipeline(&state, &app_for_task, &session_id, &processor_ids)
     })
     .await
@@ -722,7 +722,7 @@ fn store_tracker_and_correlator_results(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub async fn stop_pipeline(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn stop_pipeline(state: State<'_, std::sync::Arc<AppState>>) -> Result<(), String> {
     // No run/session parameter (the UI stop button carries none): signal every
     // currently-registered run. Starting a run never clears another's token, so
     // this only affects runs actually in flight when stop is pressed.
@@ -736,7 +736,7 @@ pub async fn stop_pipeline(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 pub fn set_session_pipeline_meta(
-    state: State<'_, AppState>,
+    state: State<'_, std::sync::Arc<AppState>>,
     session_id: String,
     active_processor_ids: Vec<String>,
     disabled_processor_ids: Vec<String>,
