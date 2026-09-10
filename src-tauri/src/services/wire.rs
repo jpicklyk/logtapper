@@ -10,6 +10,8 @@
 //! the export test and the `.cargo/config.toml` wiring. Everything in this
 //! file is shaped so that adding the derive is a one-line change per type.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::core::line::ViewLine;
@@ -167,10 +169,28 @@ impl<T> Truncated<T> {
 // Concrete responses
 // ---------------------------------------------------------------------------
 
-/// A contiguous window of log lines — the unified replacement for the UI's
-/// `LineWindow { totalLines, lines }` and the bridge's bespoke
+/// Tag and level histograms over a set of returned lines. Cheap orientation
+/// for an agent deciding what to look at next, which is why it rides along
+/// with a sampled page rather than needing a second request.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct LineStats {
+    #[ts(type = "Record<string, number>")]
+    pub tag_counts: HashMap<String, usize>,
+    #[ts(type = "Record<string, number>")]
+    pub level_counts: HashMap<String, usize>,
+}
+
+/// A set of log lines and how they were chosen — the unified replacement for
+/// the UI's `LineWindow { totalLines, lines }` and the bridge's bespoke
 /// `{ lineNum, level, tag, raw }` array. [`ViewLine`] is the single element
 /// type on both paths.
+///
+/// Covers both kinds of read. A contiguous window (the viewer's normal scroll)
+/// leaves the sampling metadata absent; a sample the service had to *choose* —
+/// evenly spaced, most recent, centred on a line, or the survivors of a bounded
+/// scan — fills in [`strategy`](Self::strategy) and its companions so the
+/// caller can tell what it is looking at.
 #[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct LinePage {
@@ -180,6 +200,29 @@ pub struct LinePage {
     pub count: usize,
     pub truncated: bool,
     pub lines: Vec<ViewLine>,
+    // ── sampling metadata ──────────────────────────────────────────────────
+    // Absent when the page is a plain contiguous window (the viewer's normal
+    // read), present when the service had to choose which lines to return.
+    // Together with `count` (== `sampledCount`) and `truncated` these are the
+    // [`Sampled`] fields; they live inline rather than as a nested `Sampled`
+    // so one type describes both kinds of read.
+    /// How the lines were chosen, when they were chosen rather than paged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub strategy: Option<LineStrategy>,
+    /// Human-readable explanation of the sample, for agents.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub strategy_note: Option<String>,
+    /// How many source lines were examined. Only set when the service had to
+    /// scan (a content filter was active); a plain sample examines nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub scanned_lines: Option<usize>,
+    /// Tag/level histograms over `lines`, when the caller asked for them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub stats: Option<LineStats>,
 }
 
 /// The result of one pipeline run.
@@ -286,11 +329,19 @@ mod tests {
             count: 0,
             truncated: false,
             lines: vec![],
+            strategy: None,
+            strategy_note: None,
+            scanned_lines: None,
+            stats: None,
         };
         let v = serde_json::to_value(&p).unwrap();
         assert_eq!(v["sessionId"], "s1");
         assert_eq!(v["totalLines"], 100);
         assert!(v["lines"].is_array());
+        // The sampling metadata is absent, not null, on a plain window read.
+        for absent in ["strategy", "strategyNote", "scannedLines", "stats"] {
+            assert!(v.get(absent).is_none(), "{absent} should be omitted");
+        }
     }
 
     #[test]
