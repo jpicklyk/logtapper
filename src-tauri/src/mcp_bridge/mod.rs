@@ -33,6 +33,7 @@ use routes::artifacts::{
     h_list_bookmarks, h_publish_analysis, h_publish_workspace_analysis, h_update_analysis,
     h_update_analysis_scoped, h_update_bookmark,
 };
+use routes::export::{h_export_info, h_export_run};
 use routes::insights::h_insights;
 use routes::lines::{h_lines_around, h_query, h_tag_stats};
 use routes::pipeline::{h_pipeline, h_processor_detail, h_run_pipeline};
@@ -40,6 +41,7 @@ use routes::processors::{h_processor_defs_list, h_processor_defs_single};
 use routes::search::{h_search, h_search_with_context};
 use routes::sessions::{h_close_session, h_metadata, h_open_file, h_sessions, h_status};
 use routes::settings::{h_get_anonymizer_config, h_get_open_allowlist, h_test_anonymizer};
+use routes::timeline::{h_chart, h_timeline};
 use routes::tracker::{h_correlations, h_events, h_section_at, h_sections, h_state_at_line};
 use routes::watches::{h_cancel_watch, h_create_watch, h_list_watches};
 
@@ -204,6 +206,11 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/mcp/settings/anonymizer"),
     ("GET", "/mcp/settings/open_allowlist"),
     ("POST", "/mcp/settings/anonymizer/test"),
+    // WP-10 timeline/export
+    ("GET", "/mcp/sessions/{session_id}/chart"),
+    ("GET", "/mcp/sessions/{session_id}/timeline"),
+    ("GET", "/mcp/export/info"),
+    ("POST", "/mcp/export"),
 ];
 
 /// Build the bridge's `Router` without binding a socket.
@@ -255,6 +262,11 @@ pub fn router(ctx: BridgeCtx) -> Router {
         .route("/mcp/settings/anonymizer", get(h_get_anonymizer_config))
         .route("/mcp/settings/open_allowlist", get(h_get_open_allowlist))
         .route("/mcp/settings/anonymizer/test", post(h_test_anonymizer))
+        // WP-10 timeline/export
+        .route("/mcp/sessions/{session_id}/chart", get(h_chart))
+        .route("/mcp/sessions/{session_id}/timeline", get(h_timeline))
+        .route("/mcp/export/info", get(h_export_info))
+        .route("/mcp/export", post(h_export_run))
         .layer(axum_middleware::from_fn_with_state(ctx.clone(), middleware::record_activity))
         // `require_local` is added AFTER `record_activity`, which in axum/tower
         // layering means it becomes the OUTERMOST layer and therefore runs
@@ -368,6 +380,10 @@ mod tests {
             "GET /mcp/settings/anonymizer",
             "GET /mcp/settings/open_allowlist",
             "POST /mcp/settings/anonymizer/test",
+            "GET /mcp/sessions/{session_id}/chart",
+            "GET /mcp/sessions/{session_id}/timeline",
+            "GET /mcp/export/info",
+            "POST /mcp/export",
         ];
 
         assert_eq!(rendered, expected, "ROUTES drifted from the pinned route table — update both this test and router() together");
