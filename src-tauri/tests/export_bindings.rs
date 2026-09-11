@@ -128,11 +128,15 @@ macro_rules! ROOT_TYPES {
             // --- anonymizer / settings (WP-12) ---------------------------------
             app_lib::anonymizer::config::AnonymizerConfig,
             app_lib::services::settings::AnonymizerTestResult,
-            // --- charts / timeline / export -----------------------------------
+            // --- charts / timeline / export (WP-10) ---------------------------
+            // TimelineSeriesData / ExportAllSessionsInfo / ExportAllOptions moved
+            // from `commands::{charts,export}` to `services::{timeline,export}`;
+            // ts-rs names files after the Rust type name, not its module path, so
+            // this is a path-only change — generated output is unaffected.
             app_lib::charts::builder::ChartData,
-            app_lib::commands::charts::TimelineSeriesData,
-            app_lib::commands::export::ExportAllSessionsInfo,
-            app_lib::commands::export::ExportAllOptions,
+            app_lib::services::timeline::TimelineSeriesData,
+            app_lib::services::export::ExportAllSessionsInfo,
+            app_lib::services::export::ExportAllOptions,
             // --- workspace (.ltw / .lts) --------------------------------------
             app_lib::commands::workspace_cmd::SaveWorkspaceOptions,
             app_lib::commands::workspace_cmd::AutoSaveWorkspaceOptions,

@@ -257,7 +257,7 @@ async fn route_table_probe_every_route_resolves_through_the_live_router() {
     let routes = mcp_bridge::ROUTES;
 
     // Pinned alongside `mcp_bridge::route_table_matches_expected` (39 at the
-    // time WP-T2 landed, 47 after WP-12 (+3 settings) and WP-7 (+5 filters) appended) — a
+    // time WP-T2 landed, 51 after WP-12 (+3 settings), WP-7 (+5 filters) and WP-10 (+4 timeline/export) appended) — a
     // drift here means BOTH tests need updating, which is the point: it
     // forces a route addition/removal to touch this file. Other Wave-2
     // packages append their own routes concurrently in sibling worktrees, so
@@ -266,7 +266,7 @@ async fn route_table_probe_every_route_resolves_through_the_live_router() {
     // not by picking one side.
     assert_eq!(
         routes.len(),
-        47,
+        51,
         "mcp_bridge::ROUTES count drifted — update this assertion alongside the route table"
     );
 
@@ -939,5 +939,153 @@ mod wp7_filters {
             lines.iter().any(|l| l["raw"].as_str().unwrap().contains('@')),
             "mcp_anonymize=false must serve raw text"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 7. WP-10 timeline / chart / export
+// ---------------------------------------------------------------------------
+//
+// `route_table_probe_every_route_resolves_through_the_live_router`'s pinned
+// count (§2 above) was bumped 42 -> 46 to include the four routes this
+// package appended (`GET /mcp/sessions/{session_id}/chart`, `GET
+// /mcp/sessions/{session_id}/timeline`, `GET /mcp/export/info`,
+// `POST /mcp/export`).
+mod wp10_timeline_export {
+    use super::*;
+    use app_lib::processors::{AnyProcessor, Emission, RunResult};
+
+    const TIMELINE_REPORTER_YAML: &str = r##"
+meta:
+  id: rep-1
+  name: R
+pipeline:
+  - stage: output
+    charts:
+      - id: bar-1
+        type: bar
+        title: Bar
+        source: emissions
+        x:
+          field: category
+        timeline:
+          field: value
+          label: My Value
+"##;
+
+    fn seed_reporter_with_emissions(state: &Arc<AppState>, session_id: &str, emissions: Vec<Emission>) {
+        let proc = AnyProcessor::from_yaml(TIMELINE_REPORTER_YAML).expect("fixture yaml parses");
+        state.processors.lock().unwrap().insert("rep-1".to_string(), proc);
+        state
+            .pipeline_results
+            .lock()
+            .unwrap()
+            .entry(session_id.to_string())
+            .or_default()
+            .insert("rep-1".to_string(), RunResult { emissions, ..Default::default() });
+    }
+
+    // ── chart / timeline ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn chart_route_returns_typed_chart_data() {
+        let (router, state, _sink, _tmp) = app();
+        seed_reporter_with_emissions(
+            &state,
+            "s1",
+            vec![Emission { line_num: 0, fields: vec![("category".to_string(), json!("a"))] }],
+        );
+
+        let (status, body) = get(&router, "/mcp/sessions/s1/chart?processor_id=rep-1", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK, "body: {body}");
+        assert_eq!(body[0]["id"], "bar-1");
+    }
+
+    #[tokio::test]
+    async fn timeline_route_returns_a_downsampled_series_seeded_like_wp3s_tracker_fixtures() {
+        // Seeded via the same "install a processor, then write directly into
+        // AppState's result maps" pattern WP-3's tracker tests use — here it's
+        // `pipeline_results` (reporter emissions) rather than
+        // `state_tracker_results`, since chart/timeline data is Reporter-only.
+        let (router, state, _sink, _tmp) = app();
+        let emissions = (0..5)
+            .map(|i| Emission { line_num: i, fields: vec![("value".to_string(), json!(i as f64))] })
+            .collect();
+        seed_reporter_with_emissions(&state, "s1", emissions);
+
+        let (status, body) = get(&router, "/mcp/sessions/s1/timeline?processor_ids=rep-1", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK, "body: {body}");
+        assert_eq!(body[0]["field"], "value");
+        assert_eq!(body[0]["label"], "My Value");
+    }
+
+    // ── export ────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn export_info_route_returns_typed_json() {
+        let (router, state, _sink, _tmp) = app();
+        state.sessions.lock().unwrap().insert("s1".to_string(), fixture_session_with_pii("s1", 3));
+
+        let (status, body) = get(&router, "/mcp/export/info", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["sessions"][0]["sessionId"], "s1");
+    }
+
+    #[tokio::test]
+    async fn export_route_inside_the_allowlist_succeeds_and_redacts_for_an_agent() {
+        let (router, state, _sink, tmp) = app();
+        // `mcp_anonymize` is never signalled for "s1" — fails closed to
+        // anonymized, so an Agent export must redact its PII regardless.
+        state.sessions.lock().unwrap().insert("s1".to_string(), fixture_session_with_pii("s1", 3));
+
+        let out_dir = tmp.path().join("allowed-out");
+        std::fs::create_dir_all(&out_dir).unwrap();
+        state.mcp_open_allowlist.lock().unwrap().allowed_dirs.push(out_dir.to_string_lossy().to_string());
+        let dest = out_dir.join("agent-export.lts");
+
+        let body = json!({
+            "destPath": dest.to_string_lossy(),
+            "includeBookmarks": false,
+            "includeAnalyses": false,
+            "includeProcessors": false,
+            "editorTabs": [],
+        });
+        let (status, resp) = send_json(&router, Method::POST, "/mcp/export", &trusted_headers(), &body).await;
+        assert_eq!(status, StatusCode::OK, "body: {resp}");
+        assert_eq!(resp["ok"], true);
+        assert!(dest.exists(), "the .lts file must be written");
+
+        let bytes = std::fs::read(&dest).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut found_source = false;
+        for i in 0..zip.len() {
+            let mut file = zip.by_index(i).unwrap();
+            if file.name().contains("source/") {
+                found_source = true;
+                let mut buf = Vec::new();
+                std::io::Read::read_to_end(&mut file, &mut buf).unwrap();
+                let text = String::from_utf8_lossy(&buf);
+                assert!(!text.contains("@example.com"), "raw PII leaked into an agent's export: {text}");
+            }
+        }
+        assert!(found_source, "the archive must contain a source entry");
+    }
+
+    #[tokio::test]
+    async fn export_route_outside_the_allowlist_is_forbidden() {
+        let (router, _state, _sink, tmp) = app();
+        let dest = tmp.path().join("nope.lts");
+
+        let body = json!({
+            "destPath": dest.to_string_lossy(),
+            "includeBookmarks": false,
+            "includeAnalyses": false,
+            "includeProcessors": false,
+            "editorTabs": [],
+        });
+        let (status, resp) = send_json(&router, Method::POST, "/mcp/export", &trusted_headers(), &body).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "body: {resp}");
+        assert_eq!(resp["code"], "NOT_ALLOWED");
+        assert!(!dest.exists(), "no file must be written on a denied destination");
     }
 }
