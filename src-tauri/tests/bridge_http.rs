@@ -257,11 +257,16 @@ async fn route_table_probe_every_route_resolves_through_the_live_router() {
     let routes = mcp_bridge::ROUTES;
 
     // Pinned alongside `mcp_bridge::route_table_matches_expected` (39 at the
-    // time WP-T2 landed) — a drift here means BOTH tests need updating, which
-    // is the point: it forces a route addition/removal to touch this file.
+    // time WP-T2 landed, 42 after WP-12 appended its 3 settings routes) — a
+    // drift here means BOTH tests need updating, which is the point: it
+    // forces a route addition/removal to touch this file. Other Wave-2
+    // packages append their own routes concurrently in sibling worktrees, so
+    // this exact number is expected to hit a merge conflict when those
+    // branches combine — resolve it by summing every package's additions,
+    // not by picking one side.
     assert_eq!(
         routes.len(),
-        39,
+        42,
         "mcp_bridge::ROUTES count drifted — update this assertion alongside the route table"
     );
 
@@ -584,4 +589,116 @@ async fn search_with_context_route_honors_the_anonymization_gate() {
 #[tokio::test]
 async fn lines_around_route_honors_the_anonymization_gate() {
     assert_agent_redaction_gating(|id| format!("/mcp/sessions/{id}/lines_around?line=0")).await;
+}
+
+// ---------------------------------------------------------------------------
+// 6. WP-12 settings
+// ---------------------------------------------------------------------------
+//
+// `route_table_probe_every_route_resolves_through_the_live_router`'s pinned
+// count (§2 above) was bumped 39 -> 42 to include the three routes WP-12
+// appended (`GET /mcp/settings/anonymizer`, `GET /mcp/settings/
+// open_allowlist`, `POST /mcp/settings/anonymizer/test`) — see the comment
+// there: other Wave-2 packages bump the same number concurrently in sibling
+// worktrees, so expect (and resolve) a merge conflict by summing every
+// package's additions rather than picking one side.
+mod wp12_settings {
+    use super::*;
+    use app_lib::anonymizer::config::AnonymizerConfig;
+    use app_lib::commands::bridge_access::McpOpenAllowlist;
+    use app_lib::services::settings;
+    use app_lib::services::testing::test_ctx;
+
+    // ── HTTP routes: typed JSON over the live router ────────────────────────
+
+    #[tokio::test]
+    async fn get_anonymizer_config_route_returns_typed_json() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, body) = get(&router, "/mcp/settings/anonymizer", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["detectors"].is_array(), "body: {body}");
+    }
+
+    #[tokio::test]
+    async fn get_open_allowlist_route_returns_the_configured_allowlist() {
+        let (router, state, _sink, _tmp) = app();
+        state
+            .mcp_open_allowlist
+            .lock()
+            .unwrap()
+            .allowed_dirs
+            .push("C:\\logs".to_string());
+
+        let (status, body) = get(&router, "/mcp/settings/open_allowlist", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["allowedDirs"], json!(["C:\\logs"]));
+    }
+
+    #[tokio::test]
+    async fn test_anonymizer_route_redacts_and_returns_typed_json() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, body) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/settings/anonymizer/test",
+            &trusted_headers(),
+            &json!({ "text": "contact user@example.com now" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(!body["anonymized"].as_str().unwrap().contains("user@example.com"));
+        assert_eq!(body["replacements"].as_array().unwrap().len(), 1);
+    }
+
+    // ── No write routes exist by design — the gate is unit-tested directly
+    //    against `services::settings` through a `ServiceCtx` per caller. ────
+
+    #[test]
+    fn agent_cannot_set_anonymizer_config() {
+        let (ctx, _tmp) = test_ctx().agent("claude-code").build();
+        let err = settings::set_anonymizer_config(&ctx, AnonymizerConfig::with_defaults())
+            .expect_err("agents must not be able to widen their own redaction rules");
+        assert_eq!(err.code(), "NOT_ALLOWED");
+    }
+
+    #[test]
+    fn ui_can_set_anonymizer_config() {
+        let (ctx, _tmp) = test_ctx().build();
+        assert!(settings::set_anonymizer_config(&ctx, AnonymizerConfig::with_defaults()).is_ok());
+    }
+
+    #[test]
+    fn agent_cannot_set_the_open_allowlist() {
+        let (ctx, _tmp) = test_ctx().agent("claude-code").build();
+        let err = settings::set_open_allowlist(
+            &ctx,
+            McpOpenAllowlist { allowed_dirs: vec!["C:\\".to_string()], allow_all: true },
+        )
+        .expect_err("agents must not be able to widen their own open-file gate");
+        assert_eq!(err.code(), "NOT_ALLOWED");
+    }
+
+    #[test]
+    fn ui_can_set_the_open_allowlist() {
+        let (ctx, _tmp) = test_ctx().build();
+        assert!(settings::set_open_allowlist(
+            &ctx,
+            McpOpenAllowlist { allowed_dirs: vec!["C:\\logs".to_string()], allow_all: false },
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn agent_cannot_read_pii_mappings() {
+        let (ctx, _tmp) = test_ctx().agent("claude-code").build();
+        let err = settings::pii_mappings(&ctx, "s1")
+            .expect_err("agents must never receive the token -> original map");
+        assert_eq!(err.code(), "NOT_ALLOWED");
+    }
+
+    #[test]
+    fn ui_can_read_pii_mappings() {
+        let (ctx, _tmp) = test_ctx().build();
+        assert!(settings::pii_mappings(&ctx, "s1").is_ok());
+    }
 }

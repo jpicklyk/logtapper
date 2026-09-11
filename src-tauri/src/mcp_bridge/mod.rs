@@ -39,6 +39,7 @@ use routes::pipeline::{h_pipeline, h_processor_detail, h_run_pipeline};
 use routes::processors::{h_processor_defs_list, h_processor_defs_single};
 use routes::search::{h_search, h_search_with_context};
 use routes::sessions::{h_close_session, h_metadata, h_open_file, h_sessions, h_status};
+use routes::settings::{h_get_anonymizer_config, h_get_open_allowlist, h_test_anonymizer};
 use routes::tracker::{h_correlations, h_events, h_section_at, h_sections, h_state_at_line};
 use routes::watches::{h_cancel_watch, h_create_watch, h_list_watches};
 
@@ -198,6 +199,11 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("DELETE", "/mcp/sessions/{session_id}/watches/{watch_id}"),
     // Activity feed (both callers' actions; see `services::activity`).
     ("GET", "/mcp/activity"),
+    // WP-12 settings — read + preview only, deliberately no write routes
+    // (see `routes/settings.rs`'s doc comment for why).
+    ("GET", "/mcp/settings/anonymizer"),
+    ("GET", "/mcp/settings/open_allowlist"),
+    ("POST", "/mcp/settings/anonymizer/test"),
 ];
 
 /// Build the bridge's `Router` without binding a socket.
@@ -245,6 +251,10 @@ pub fn router(ctx: BridgeCtx) -> Router {
         .route("/mcp/sessions/{session_id}/watches/{watch_id}", delete(h_cancel_watch))
         // Activity feed (both callers' actions; see `services::activity`).
         .route("/mcp/activity", get(h_activity))
+        // WP-12 settings — read + preview only, deliberately no write routes.
+        .route("/mcp/settings/anonymizer", get(h_get_anonymizer_config))
+        .route("/mcp/settings/open_allowlist", get(h_get_open_allowlist))
+        .route("/mcp/settings/anonymizer/test", post(h_test_anonymizer))
         .layer(axum_middleware::from_fn_with_state(ctx.clone(), middleware::record_activity))
         // `require_local` is added AFTER `record_activity`, which in axum/tower
         // layering means it becomes the OUTERMOST layer and therefore runs
@@ -355,6 +365,9 @@ mod tests {
             "POST /mcp/sessions/{session_id}/watches",
             "DELETE /mcp/sessions/{session_id}/watches/{watch_id}",
             "GET /mcp/activity",
+            "GET /mcp/settings/anonymizer",
+            "GET /mcp/settings/open_allowlist",
+            "POST /mcp/settings/anonymizer/test",
         ];
 
         assert_eq!(rendered, expected, "ROUTES drifted from the pinned route table — update both this test and router() together");

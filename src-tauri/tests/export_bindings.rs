@@ -125,9 +125,9 @@ macro_rules! ROOT_TYPES {
             app_lib::core::analysis::AnalysisArtifact,
             app_lib::core::analysis::AnalysisSection,
             app_lib::core::analysis::AnalysisUpdateEvent,
-            // --- anonymizer ---------------------------------------------------
+            // --- anonymizer / settings (WP-12) ---------------------------------
             app_lib::anonymizer::config::AnonymizerConfig,
-            app_lib::commands::anonymizer::AnonymizerTestResult,
+            app_lib::services::settings::AnonymizerTestResult,
             // --- charts / timeline / export -----------------------------------
             app_lib::charts::builder::ChartData,
             app_lib::commands::charts::TimelineSeriesData,
