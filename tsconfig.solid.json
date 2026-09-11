@@ -6,7 +6,12 @@
     // /** @jsxImportSource solid-js */ pragma instead.
     "jsx": "preserve",
     "baseUrl": ".",
+    // Mirrors `solid.aliases.ts`, which vite.solid.config.ts and
+    // vitest.solid.config.ts share. `src-solid/aliases.test.ts` asserts the two
+    // stay in sync. Bare entries exist only for barrels imported without a
+    // subpath; Vite resolves those through the same directory alias.
     "paths": {
+      "@bench": ["src-next/bench/index.ts"],
       "@bridge/*": ["src-next/bridge/*"],
       "@viewport/*": ["src-next/viewport/*"],
       "@cache/*": ["src-next/cache/*"],

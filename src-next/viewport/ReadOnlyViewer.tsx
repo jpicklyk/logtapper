@@ -11,6 +11,7 @@ import { useScrollControls } from './useScrollControls';
 import { useFetchScheduler } from './useFetchScheduler';
 import TextLine, { TextLineSkeleton } from './TextLine';
 import { clamp } from '../utils';
+import { installBench } from '../bench';
 import styles from './ReadOnlyViewer.module.css';
 
 const LINE_HEIGHT = 22;
@@ -149,6 +150,23 @@ export default function ReadOnlyViewer({
   const { schedulerRef } = useFetchScheduler(
     dataSource, virtualBase, items, liveTotalLines, bumpCacheVersion,
   );
+
+  // ── Benchmark harness (dev + ?bench=1 only) ──────────────────────────────
+  // The only bench hook in src-next. installBench()/markLinePage() are both
+  // idempotent, so this may run on every render. See src-next/bench/harness.ts.
+  useEffect(() => {
+    if (!import.meta.env.DEV || !location.search.includes('bench=1')) return;
+    const bench = installBench({
+      label: 'react',
+      getScrollEl: () => parentRef.current,
+      getTotalLines: () => liveTotalLines,
+      rowHeight: () => LINE_HEIGHT,
+      // A real TextLine row (skeletons render no message span). Mirrors Solid's
+      // `[data-line]:not([data-skeleton])` without touching TextLine's markup.
+      isReady: () => parentRef.current?.querySelector('[class*="msg"]') != null,
+    });
+    if (dataSource.getLine(virtualBase) != null) bench.markLinePage();
+  });
 
   // ── Selection manager ────────────────────────────────────────────────────
   const {

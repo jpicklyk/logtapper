@@ -1,8 +1,6 @@
 import { defineConfig } from "vitest/config";
 import solid from "vite-plugin-solid";
-import { fileURLToPath } from "node:url";
-
-const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
+import { solidAliases } from "./solid.aliases";
 
 export default defineConfig({
   // `hot: false` — solid-refresh injects a /@solid-refresh import that Vitest's
@@ -11,14 +9,8 @@ export default defineConfig({
   resolve: {
     conditions: ["development", "browser"],
     dedupe: ["solid-js"],
-    alias: {
-      "@bridge": r("./src-next/bridge"),
-      "@viewport": r("./src-next/viewport"),
-      "@cache": r("./src-next/cache"),
-      "@events": r("./src-next/events"),
-      "@filter": r("./src-next/filter"),
-      "@bench": r("./src-next/bench"),
-    },
+    // Single source of truth, shared with vite.solid.config.ts.
+    alias: solidAliases,
   },
   test: {
     environment: "jsdom",

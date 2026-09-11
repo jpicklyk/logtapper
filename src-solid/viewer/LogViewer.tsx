@@ -7,6 +7,7 @@ import { createCacheBinding, OVERSCAN } from './cacheBinding';
 import { createVirtualBase, DEFAULT_ROW_HEIGHT } from './virtualBase';
 import { ScrollControls } from './scrollControls';
 import { SelectionManager } from './selection';
+import { installBench } from '@bench';
 import { Row } from './Row';
 import styles from './LogViewer.module.css';
 
@@ -136,6 +137,22 @@ export function LogViewer(props: LogViewerProps) {
       window.addEventListener('resize', measure);
       onCleanup(() => window.removeEventListener('resize', measure));
     }
+  });
+
+  // ── Benchmark harness (?bench=1) ─────────────────────────────────────────
+  // Same module the React viewer installs. Mirrors the React gate exactly:
+  // mark when the line at the virtual base has actually resolved (cacheVersion
+  // alone bumps at mount), and "ready" means a non-skeleton row is in the DOM.
+  createEffect(() => {
+    if (!location.search.includes('bench=1')) return;
+    const bench = installBench({
+      label: 'solid',
+      getScrollEl: () => container ?? null,
+      getTotalLines: () => scrollCtl.liveTotalLines(),
+      rowHeight: () => rowHeight(),
+      isReady: () => container?.querySelector('[data-line]:not([data-skeleton])') != null,
+    });
+    if (binding.cacheVersion() > 0 && dataSource().getLine(vb.virtualBase()) != null) bench.markLinePage();
   });
 
   // ── Clear selection + cursor when the data source changes ────────────────
