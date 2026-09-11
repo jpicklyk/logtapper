@@ -1,13 +1,42 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    // `module`/`moduleResolution` govern type-checking only here — this
+    // package never emits via `tsc` (`noEmit` below; the shipped artifact is
+    // `build:binary` via bun, which strips types and bundles independently).
+    // "bundler" resolution is required so the ts-rs-generated files under
+    // `bridge-types` (which use extensionless relative imports, written for
+    // the frontend's Vite/bundler resolution) type-check here without every
+    // generated file needing a `.js` suffix added for Node's stricter ESM
+    // rules. Runtime module resolution for our OWN code is unaffected: Node
+    // (`--experimental-strip-types`) and bun both resolve imports themselves,
+    // ignoring this file's `module`/`moduleResolution` entirely.
+    "module": "ESNext",
+    "moduleResolution": "bundler",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "outDir": "dist",
-    "rootDir": "src"
+    "noEmit": true,
+    // `index.ts` imports `./server.ts` with the real extension — required by
+    // Node's `--experimental-strip-types`, which (unlike tsc's own NodeNext
+    // resolution) does not remap a `.js` specifier to a sibling `.ts` file.
+    // Safe only because `noEmit` is set (no emitted `.js` file could ever
+    // collide with the `.ts` one being imported).
+    "allowImportingTsExtensions": true,
+    "baseUrl": ".",
+    // The generated wire types live outside this package (`src-next/` is the
+    // frontend's tree). `rootDirs` tells the module resolver to treat `src`
+    // and the generated directory as one virtual root; `paths` gives it a
+    // short, stable specifier (`bridge-types`) instead of a
+    // `../../src-next/bridge/generated` that would break the moment either
+    // package moves. Every import through this alias is `import type` —
+    // erased entirely by both `tsc` and Node's `--experimental-strip-types`
+    // (and by bun's bundler), so it carries no runtime resolution cost.
+    "rootDirs": ["src", "../src-next/bridge/generated"],
+    "paths": {
+      "bridge-types": ["../src-next/bridge/generated/index.ts"],
+      "bridge-types/*": ["../src-next/bridge/generated/*"]
+    }
   },
   "include": ["src/**/*"]
 }

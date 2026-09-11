@@ -7,8 +7,7 @@
   "scripts": {
     "start": "node --experimental-strip-types src/index.ts",
     "dev": "node --watch --experimental-strip-types src/index.ts",
-    "build": "tsc --outDir dist",
-    "start:compiled": "node dist/index.js",
+    "build": "tsc --noEmit",
     "build:binary": "bun build --compile --outfile dist/logtapper-mcp src/index.ts",
     "build:mcpb": "node scripts/build-mcpb.mjs"
   },
