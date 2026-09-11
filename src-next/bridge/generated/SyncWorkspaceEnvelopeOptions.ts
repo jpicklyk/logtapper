@@ -2,8 +2,8 @@
 import type { LtwEditorTab } from "./LtwEditorTab";
 
 /**
- * Options for `sync_workspace_envelope`. Mirrors the save options but carries
- * the workspace's explicit `.ltw` path (if any) rather than a dest, and never
+ * Options for [`sync_envelope`]. Mirrors the save options but carries the
+ * workspace's explicit `.ltw` path (if any) rather than a dest, and never
  * writes a file.
  */
 export type SyncWorkspaceEnvelopeOptions = { workspaceId: string, workspaceName: string, 

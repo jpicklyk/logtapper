@@ -3,7 +3,7 @@ import type { AnalysisArtifact } from "./AnalysisArtifact";
 import type { Bookmark } from "./Bookmark";
 
 /**
- * Per-session artifact data returned as part of `LoadWorkspaceResult`.
+ * Per-session artifact data returned as part of [`LoadWorkspaceResult`].
  * Ordered to match `LoadWorkspaceResult::sessions` by index.
  */
 export type LoadWorkspaceSessionData = { bookmarks: Array<Bookmark>, 

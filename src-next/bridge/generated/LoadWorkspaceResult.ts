@@ -6,7 +6,7 @@ import type { LtwManifestSession } from "./LtwManifestSession";
 import type { LtwPipelineChain } from "./LtwPipelineChain";
 
 /**
- * Result returned to the frontend after reading a `.ltw` v4 file.
+ * Result of reading a `.ltw` v4 file.
  */
 export type LoadWorkspaceResult = { workspaceName: string, 
 /**

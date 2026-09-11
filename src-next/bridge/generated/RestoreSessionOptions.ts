@@ -3,6 +3,6 @@ import type { AnalysisArtifact } from "./AnalysisArtifact";
 import type { Bookmark } from "./Bookmark";
 
 /**
- * Options for restoring per-session artifacts into AppState.
+ * Options for restoring per-session artifacts into `AppState`.
  */
 export type RestoreSessionOptions = { sessionId: string, bookmarks: Array<Bookmark>, analyses: Array<AnalysisArtifact>, activeProcessorIds: Array<string>, disabledProcessorIds: Array<string>, };
