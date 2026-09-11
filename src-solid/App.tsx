@@ -79,7 +79,26 @@ export function App() {
     setDataSource(ds);
   };
 
-  const openPath = async (path: string) => {
+  const probeTotal = async (id: string) => {
+    const head = await getLines({
+      sessionId: id,
+      mode: { mode: 'Full' },
+      offset: 0,
+      count: 1,
+      context: 0,
+      processorId: null,
+      search: null,
+    });
+    return head.totalLines;
+  };
+
+  /**
+   * Open a file session. `waitForIndex` (bench only) polls the line total until
+   * it has been stable for two consecutive probes, so a benchmark sweeps the
+   * whole file rather than whatever the indexer had reached at open time.
+   * The UI path does not wait: subscribing to indexing events is a 2b item.
+   */
+  const openPath = async (path: string, waitForIndex = false) => {
     setError('');
     setLoading(true);
     try {
@@ -88,16 +107,17 @@ export function App() {
 
       // Probe for the authoritative total before building the source, so the
       // viewer's spacer is correct on its very first paint.
-      const head = await getLines({
-        sessionId: id,
-        mode: { mode: 'Full' },
-        offset: 0,
-        count: 1,
-        context: 0,
-        processorId: null,
-        search: null,
-      });
-      attachSession(id, result.sourceName, head.totalLines, false);
+      let total = await probeTotal(id);
+      if (waitForIndex) {
+        const deadline = Date.now() + 120_000;
+        let previous = -1;
+        while (Date.now() < deadline && !(total > 0 && total === previous)) {
+          previous = total;
+          await new Promise((r) => setTimeout(r, 750));
+          total = await probeTotal(id);
+        }
+      }
+      attachSession(id, result.sourceName, total, false);
     } catch (e) {
       setError(String(e));
       throw e;
@@ -124,7 +144,7 @@ export function App() {
   if (location.search.includes('bench=1')) {
     const stream = createStreamSession({ cacheManager, registry });
     const benchApp: BenchApp = {
-      open: openPath,
+      open: (path) => openPath(path, true),
       startStream: async (deviceId) => {
         await stream.start(deviceId);
         const st = stream.status();
