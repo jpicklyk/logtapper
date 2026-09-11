@@ -52,3 +52,4 @@ src-tauri/target-it/
 
 # Bench fixtures (generated; can be gigabytes) — scripts/gen-logcat.mjs writes here
 /bench/
+scripts/fake-adb/adb.exe
