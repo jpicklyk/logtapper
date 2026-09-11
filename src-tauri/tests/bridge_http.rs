@@ -136,14 +136,15 @@ async fn route_table_probe_every_route_resolves_through_the_live_router() {
     // time WP-T2 landed, 70 once every Wave-2 package had appended its routes,
     // 69 after WP-13 deleted the orphaned `tag-stats` route, 70 with
     // `GET /mcp/settings/agent_access`, 74 with B1's `GET|PUT|DELETE
-    // /mcp/focus` + `POST /mcp/navigate`) — a drift here means BOTH tests need
-    // updating, which is the point: it forces a route addition or removal to
-    // touch this file. Other packages may bump this same number concurrently
-    // in sibling worktrees — resolve a merge conflict by summing every
-    // package's additions rather than picking one side.
+    // /mcp/focus` + `POST /mcp/navigate`, 78 with B2's `GET /mcp/themes` +
+    // `GET|PUT|DELETE /mcp/themes/{slug}`) — a drift here means BOTH tests
+    // need updating, which is the point: it forces a route addition or
+    // removal to touch this file. Other packages may bump this same number
+    // concurrently in sibling worktrees — resolve a merge conflict by summing
+    // every package's additions rather than picking one side.
     assert_eq!(
         routes.len(),
-        74,
+        78,
         "mcp_bridge::ROUTES count drifted — update this assertion alongside the route table"
     );
 
@@ -2880,5 +2881,118 @@ mod b1_focus_navigation {
         assert_eq!(entries[0]["action"], "nav.request");
         assert_eq!(entries[0]["sessionId"], "s1");
         assert!(entries[0]["summary"].as_str().unwrap().contains("look here"));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// B2 — BridgeStatusInfo.agentRawAccess
+// ---------------------------------------------------------------------------
+
+mod b2_status_agent_raw_access {
+    use super::*;
+
+    #[tokio::test]
+    async fn status_reports_agent_raw_access_false_by_default() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, body) = get(&router, "/mcp/status", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["agentRawAccess"], false);
+    }
+
+    #[tokio::test]
+    async fn status_flips_once_the_setting_is_toggled_via_the_ui_path() {
+        let (router, state, _sink, _tmp) = app();
+
+        let (status, body) = get(&router, "/mcp/status", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["agentRawAccess"], false);
+
+        // Simulate the Ui-only `set_agent_raw_access` mutation persisting the
+        // opt-out — the same `AppState::agent_raw_access` field it writes.
+        *state.agent_raw_access.lock().unwrap() = true;
+
+        let (status, body) = get(&router, "/mcp/status", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["agentRawAccess"], true);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// B2 — user theme storage (services::themes)
+// ---------------------------------------------------------------------------
+
+mod b2_themes {
+    use super::*;
+
+    fn theme_body(name: &str) -> Value {
+        json!({ "name": name, "base": "dark", "tokens": { "--level-error": "#ff0000" } })
+    }
+
+    #[tokio::test]
+    async fn list_is_empty_with_no_themes() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, body) = get(&router, "/mcp/themes", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn get_unknown_theme_yields_404() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, body) = get(&router, "/mcp/themes/nosuch", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(body["error"]["code"], "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn get_invalid_slug_yields_400() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, body) = get(&router, "/mcp/themes/Has%20Space", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["code"], "INVALID_ARGUMENT");
+    }
+
+    #[tokio::test]
+    async fn put_theme_is_forbidden_for_an_agent() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, body) = send_json(
+            &router,
+            Method::PUT,
+            "/mcp/themes/midnight",
+            &trusted_headers(),
+            &theme_body("Midnight"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["error"]["code"], "NOT_ALLOWED");
+
+        // Nothing was persisted — a subsequent GET still 404s.
+        let (status, _) = get(&router, "/mcp/themes/midnight", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn delete_theme_is_forbidden_for_an_agent() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, body) = send_json(
+            &router,
+            Method::DELETE,
+            "/mcp/themes/midnight",
+            &trusted_headers(),
+            &json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["error"]["code"], "NOT_ALLOWED");
+    }
+
+    #[tokio::test]
+    async fn agent_can_list_and_read_but_never_write() {
+        // Every bridge caller is an Agent, so this doubles as the coverage
+        // for "an agent can still read what it cannot write".
+        let (router, _state, _sink, _tmp) = app();
+        let (status, body) = get(&router, "/mcp/themes", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.as_array().unwrap().len(), 0);
     }
 }

@@ -214,9 +214,22 @@ const ROUTE_TABLE: Row[] = [
   { route: "PUT /mcp/focus", tool: "logtapper_focus", args: { action: "set", session_id: S }, method: "PUT", expectPath: "/mcp/focus" },
   { route: "DELETE /mcp/focus", tool: "logtapper_focus", args: { action: "clear" }, method: "DELETE", expectPath: "/mcp/focus" },
   { route: "POST /mcp/navigate", tool: "logtapper_navigate", args: { session_id: S, reason: "look here" }, method: "POST", expectPath: "/mcp/navigate" },
+  { route: "GET /mcp/themes", tool: "logtapper_themes", args: { action: "list" }, method: "GET", expectPath: "/mcp/themes" },
+  { route: "GET /mcp/themes/{slug}", tool: "logtapper_themes", args: { action: "read", slug: "midnight" }, method: "GET", expectPath: "/mcp/themes/midnight" },
 ];
 
 const covered = new Set<string>();
+
+/**
+ * Routes deliberately covered by NO mcp-server tool: `services::themes`'
+ * write/delete are Ui-only and always answer 403 `NOT_ALLOWED` for every
+ * caller of this server (an MCP client is always an agent) — see
+ * `mcp_bridge/routes/themes.rs`. A passthrough tool that can never succeed
+ * would be dead code, the same reasoning `logtapper_settings`/
+ * `logtapper_themes` already apply by exposing only reads for other
+ * Ui-only-gated config (anonymizer config, open-file allowlist).
+ */
+const ROUTES_WITH_NO_TOOL = new Set(["PUT /mcp/themes/{slug}", "DELETE /mcp/themes/{slug}"]);
 
 describe("mcp-server tool → route coverage", () => {
   it.each(ROUTE_TABLE)("$tool ($route) calls $method $route", async (row) => {
@@ -240,14 +253,20 @@ describe("mcp-server tool → route coverage", () => {
 
   it("ROUTE_TABLE covers every entry in mcp_bridge::ROUTES", () => {
     const bridgeRoutes = parseBridgeRoutes();
-    expect(bridgeRoutes.length).toBe(74);
+    expect(bridgeRoutes.length).toBe(78);
 
-    const missing = bridgeRoutes.filter((r) => !covered.has(r));
+    const missing = bridgeRoutes.filter((r) => !covered.has(r) && !ROUTES_WITH_NO_TOOL.has(r));
     expect(missing, `ROUTE_TABLE is missing rows for: ${missing.join(", ")}`).toEqual([]);
+
+    // Every intentionally-uncovered route must actually exist in ROUTES too —
+    // catches a stale entry in ROUTES_WITH_NO_TOOL after a route is renamed
+    // or removed.
+    const bridgeRouteSet = new Set(bridgeRoutes);
+    const staleExemptions = [...ROUTES_WITH_NO_TOOL].filter((r) => !bridgeRouteSet.has(r));
+    expect(staleExemptions, `ROUTES_WITH_NO_TOOL has stale entries: ${staleExemptions.join(", ")}`).toEqual([]);
 
     // Every row also corresponds to a route that actually exists — catches a
     // typo'd `route` field in ROUTE_TABLE itself.
-    const bridgeRouteSet = new Set(bridgeRoutes);
     const unknown = ROUTE_TABLE.map((r) => r.route).filter((r) => !bridgeRouteSet.has(r));
     expect(unknown, `ROUTE_TABLE has rows for routes not in mcp_bridge::ROUTES: ${unknown.join(", ")}`).toEqual([]);
   });

@@ -173,6 +173,31 @@ export function onNavigateRequest(
 }
 
 // ---------------------------------------------------------------------------
+// User theme storage (B2)
+// ---------------------------------------------------------------------------
+
+/**
+ * `theme-changed` payload. Hand-written — the backend builds it with
+ * `serde_json::json!({ "slug": slug })` (`services::themes::write`/`delete`),
+ * not a `#[derive(TS)]` struct, since it carries nothing beyond the slug.
+ */
+export interface ThemeChangedEvent {
+  slug: string;
+}
+
+/**
+ * Emitted whenever a stored user theme is created, replaced, or deleted
+ * (`writeTheme`/`deleteTheme`, Ui-only). The payload is just the slug — a
+ * consumer that needs the theme's contents should re-fetch it via
+ * `readTheme`/`listThemes` rather than trust a stale cached copy.
+ */
+export function onThemeChanged(
+  cb: (payload: ThemeChangedEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<ThemeChangedEvent>('theme-changed', (e) => cb(e.payload));
+}
+
+// ---------------------------------------------------------------------------
 // File open events (file association / single-instance)
 // ---------------------------------------------------------------------------
 

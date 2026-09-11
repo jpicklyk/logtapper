@@ -96,6 +96,9 @@ import type {
   LineRange,
   NavRequest,
   NavRequestInput,
+  UserTheme,
+  ThemeBase,
+  ThemeSummary,
 } from './generated';
 
 export type {
@@ -179,6 +182,9 @@ export type {
   LineRange,
   NavRequest,
   NavRequestInput,
+  UserTheme,
+  ThemeBase,
+  ThemeSummary,
 };
 
 // ---------------------------------------------------------------------------

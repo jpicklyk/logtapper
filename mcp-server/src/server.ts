@@ -78,10 +78,12 @@ import type {
   StreamSaved,
   StreamStarted,
   StreamStatus,
+  ThemeSummary,
   TimelineSeriesData,
   TrackerEventEntry,
   UpdateCheckResult,
   UpdateResult,
+  UserTheme,
   WatchInfo,
   WireError,
   WorkspaceList,
@@ -2187,6 +2189,36 @@ server.tool(
           reason,
         })
       );
+    } catch (err) {
+      return handleBridgeError(err);
+    }
+  }
+);
+
+// ── 35. logtapper_themes ─────────────────────────────────────────────────────
+
+server.tool(
+  "logtapper_themes",
+  "Read LogTapper's stored user themes (custom colour/token overrides on top " +
+    "of one of the four built-in themes: dark, light, dark-hc, light-hc). " +
+    "Use 'list' to see every stored theme's slug/name/base, and 'read' to get " +
+    "one theme's full token map. READ-ONLY BY DESIGN: there is no write or " +
+    "delete action here — creating, replacing, or deleting a theme is a " +
+    "human-only decision made in LogTapper's Settings UI, the same reasoning " +
+    "as logtapper_settings for the anonymizer config and open-file allowlist.",
+  {
+    action: z.enum(["list", "read"]).describe("Action to perform"),
+    slug: z.string().optional().describe("Theme slug to read (required for 'read')"),
+  },
+  async ({ action, slug }) => {
+    try {
+      switch (action) {
+        case "list":
+          return ok(await bridgeGet<ThemeSummary[]>("/mcp/themes"));
+        case "read":
+          if (!slug) return argError("slug is required for 'read'");
+          return ok(await bridgeGet<UserTheme>(`/mcp/themes/${encodeURIComponent(slug)}`));
+      }
     } catch (err) {
       return handleBridgeError(err);
     }

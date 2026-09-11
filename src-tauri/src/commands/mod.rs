@@ -42,6 +42,7 @@ pub mod workspace_cmd;
 pub mod workspace_sync;
 pub mod focus;
 pub mod navigation;
+pub mod themes;
 
 /// Global application state managed by Tauri.
 pub struct AppState {

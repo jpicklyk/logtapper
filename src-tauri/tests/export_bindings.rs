@@ -211,6 +211,10 @@ macro_rules! ROOT_TYPES {
             app_lib::services::focus::FocusContextInput,
             app_lib::services::navigation::NavRequest,
             app_lib::services::navigation::NavRequestInput,
+            // --- B2: user theme storage ------------------------------------------
+            app_lib::services::themes::UserTheme,
+            app_lib::services::themes::ThemeBase,
+            app_lib::services::themes::ThemeSummary,
         ]
     };
 }

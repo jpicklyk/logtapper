@@ -605,6 +605,11 @@ pub fn run() {
             commands::focus::set_focus,
             commands::focus::get_focus,
             commands::navigation::request_navigation,
+            // User theme storage (B2)
+            commands::themes::list_themes,
+            commands::themes::read_theme,
+            commands::themes::write_theme,
+            commands::themes::delete_theme,
         ])
         .build(tauri::generate_context!())
         .expect("error building tauri application")

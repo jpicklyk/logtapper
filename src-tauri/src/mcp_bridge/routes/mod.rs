@@ -26,3 +26,6 @@ pub(super) mod workspace;
 // B1 — shared focus context + agent navigation requests.
 pub(super) mod focus;
 pub(super) mod navigation;
+
+// B2 — user theme storage.
+pub(super) mod themes;

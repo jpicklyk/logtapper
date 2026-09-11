@@ -12,4 +12,13 @@ running: boolean, port: number, sessionCount: number, sessionIds: Array<string>,
  * How many processors are installed. (Pre-WP-13 this key held the count
  * under the name `installedProcessors`; it is now spelled for what it is.)
  */
-installedProcessorCount: number, };
+installedProcessorCount: number, 
+/**
+ * Whether an agent caller currently receives raw (un-anonymized) log
+ * text — `services::settings::agent_raw_access`, the same flag
+ * `GET /mcp/settings/agent_access` and the desktop UI's `McpStatus`
+ * already expose. Folded into `GET /mcp/status` too (B2) so an agent's
+ * very first orientation call already answers "am I seeing redacted
+ * text?" without a second round trip.
+ */
+agentRawAccess: boolean, };

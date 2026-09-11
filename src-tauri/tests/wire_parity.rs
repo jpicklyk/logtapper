@@ -79,7 +79,7 @@ use app_lib::services::pipeline::{self, DetailPage, ProcessorDetail as SvcProces
 use app_lib::services::testing::{fixture_session, fixture_session_with_pii};
 use app_lib::services::{
     analyses, bookmarks, correlator, filters, focus, insights, navigation, search, sections,
-    settings, stream, tracker, watches, workspace,
+    settings, stream, themes, tracker, watches, workspace,
 };
 use app_lib::services::lines::{self, LineSelection, LinesRequest};
 use app_lib::services::search::SearchHitsRequest;
@@ -1285,4 +1285,63 @@ async fn nav_request_shape_matches_between_the_service_call_and_the_http_route()
     http_keys.sort();
     assert_eq!(expected_keys, http_keys, "NavRequest must expose the same field set over both paths");
     assert_ts_binding_covers_json_keys("NavRequest", &http_value);
+}
+
+// ---------------------------------------------------------------------------
+// 17. B2 — UserTheme / ThemeSummary
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn user_theme_is_byte_identical_between_the_service_call_and_the_http_read() {
+    let (bridge_ctx, ..) = support::ctx_only();
+    let svc = bridge_ctx.svc("wire-parity");
+    let router = mcp_bridge::router(bridge_ctx);
+
+    // Writing a theme is Ui-only (see `services::themes::write`); `svc` here
+    // is an `Agent` (every `BridgeCtx::svc` call is), so write under an
+    // explicit `Caller::Ui` the same way the anonymize-gated cases above do.
+    let ui_svc = svc.with_caller(app_lib::services::Caller::Ui);
+    let mut tokens = std::collections::BTreeMap::new();
+    tokens.insert("--level-error".to_string(), "#ff0000".to_string());
+    let theme = themes::UserTheme {
+        name: "Midnight".to_string(),
+        base: themes::ThemeBase::Dark,
+        tokens,
+    };
+    themes::write(&ui_svc, "midnight", theme).expect("service write");
+
+    let expected = themes::read(&svc, "midnight").expect("service read");
+    let expected_value = serde_json::to_value(&expected).unwrap();
+
+    let (status, http_value) = get(&router, "/mcp/themes/midnight", &trusted_headers()).await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{http_value}");
+    assert_eq!(expected_value, http_value, "UserTheme must be byte-identical between the service call and the HTTP read");
+    assert_ts_binding_covers_json_keys("UserTheme", &http_value);
+}
+
+#[tokio::test]
+async fn theme_summary_list_matches_between_the_service_call_and_the_http_route() {
+    let (bridge_ctx, ..) = support::ctx_only();
+    let svc = bridge_ctx.svc("wire-parity");
+    let router = mcp_bridge::router(bridge_ctx);
+
+    let ui_svc = svc.with_caller(app_lib::services::Caller::Ui);
+    themes::write(
+        &ui_svc,
+        "midnight",
+        themes::UserTheme {
+            name: "Midnight".to_string(),
+            base: themes::ThemeBase::Dark,
+            tokens: Default::default(),
+        },
+    )
+    .expect("service write");
+
+    let expected = themes::list(&svc).expect("service list");
+    let expected_value = serde_json::to_value(&expected).unwrap();
+
+    let (status, http_value) = get(&router, "/mcp/themes", &trusted_headers()).await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{http_value}");
+    assert_eq!(expected_value, http_value, "ThemeSummary list must be byte-identical between the service call and the HTTP route");
+    assert_ts_binding_covers_json_keys("ThemeSummary", &http_value[0]);
 }
