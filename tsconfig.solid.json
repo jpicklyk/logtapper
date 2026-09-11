@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // No global jsxImportSource: the shared src-next modules reach React types
+    // through barrels. Every src-solid/**/*.tsx carries its own
+    // /** @jsxImportSource solid-js */ pragma instead.
+    "jsx": "preserve",
+    "baseUrl": ".",
+    "paths": {
+      "@bridge/*": ["src-next/bridge/*"],
+      "@viewport/*": ["src-next/viewport/*"],
+      "@cache/*": ["src-next/cache/*"],
+      "@events/*": ["src-next/events/*"],
+      "@filter/*": ["src-next/filter/*"],
+      "@bench/*": ["src-next/bench/*"]
+    }
+  },
+  "include": ["src-solid"],
+  "references": []
+}

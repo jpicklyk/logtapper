@@ -18,6 +18,7 @@ export default defineConfig({
       '**/eslint-local-rules/**',
       '.claude/**',
       'src-tauri/**',
+      'src-solid/**',
     ],
   },
   clearScreen: false,

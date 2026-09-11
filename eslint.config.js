@@ -3,6 +3,7 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
+import solid from 'eslint-plugin-solid/configs/typescript';
 
 const require = createRequire(import.meta.url);
 const localRules = require('./eslint-local-rules/index.cjs');
@@ -245,6 +246,59 @@ export default tseslint.config(
     files: ['src-next/bridge/events.ts'],
     rules: {
       'no-restricted-imports': 'off',
+    },
+  },
+
+  // ── Block 4: src-solid/ — parallel Solid frontend ──────────────────
+  // Disjoint from every React block above. The Solid app may only reach into
+  // src-next/ through the framework-free modules the aliases expose.
+  {
+    files: ['src-solid/**/*.{ts,tsx}'],
+    extends: [
+      js.configs.recommended,
+      ...tseslint.configs.recommended,
+      solid,
+    ],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+    },
+    rules: {
+      // Warn for the spike — tightened to error once the viewer lands.
+      'solid/reactivity': 'warn',
+      '@typescript-eslint/no-unused-vars': 'off',
+      'no-restricted-imports': ['error', {
+        paths: [
+          {
+            name: '@viewport',
+            message: 'The viewport barrel re-exports React .tsx — import the framework-free module directly (e.g. @viewport/FetchScheduler).',
+          },
+          {
+            name: '@cache',
+            message: 'The cache barrel re-exports React .tsx — import @cache/CacheManager directly.',
+          },
+        ],
+        patterns: [
+          {
+            group: ['**/src-next/**/*.tsx', '@*/**/*.tsx'],
+            message: 'React components are not importable from src-solid/.',
+          },
+          {
+            group: ['**/src-next/context/**', '**/src-next/hooks/**', '**/src-next/components/**'],
+            message: 'src-next/ context, hooks and components are React-only — not shared with src-solid/.',
+          },
+          {
+            group: ['@tauri-apps/api/core'],
+            importNames: ['invoke', 'Channel'],
+            message: 'Use @bridge/commands wrappers instead of direct invoke()/Channel.',
+          },
+          {
+            group: ['@tauri-apps/api/event'],
+            importNames: ['listen'],
+            message: 'Use @bridge/events wrappers instead of direct listen().',
+          },
+        ],
+      }],
     },
   },
 

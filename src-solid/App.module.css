@@ -1,0 +1,19 @@
+.page {
+  font-family: system-ui, sans-serif;
+  padding: 24px;
+}
+
+.lines {
+  margin: 12px 0 0;
+  padding: 12px;
+  overflow-x: auto;
+  white-space: pre;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 18px;
+  border: 1px solid currentColor;
+}
+
+.error {
+  color: #d33;
+}
