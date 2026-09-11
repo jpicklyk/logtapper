@@ -23,62 +23,42 @@
 //! signalled — independently of the in-chain `__pii_anonymizer` an agent's
 //! stream also carries.
 //!
-//! These are new routes (no legacy JSON shape to preserve), so success
-//! responses serialize typed structs directly. Errors keep today's
-//! `{ "error", "code" }`-over-200 envelope pending WP-13.
+//! Success bodies are the typed `services::wire` stream envelopes; failures
+//! carry a real status (an unknown session is `404 NOT_FOUND`, a save
+//! destination outside the allowlist `403 NOT_ALLOWED`).
 
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::HeaderMap,
-    Json,
 };
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde::Deserialize;
 
-use crate::mcp_bridge::routes::artifacts::client_name;
 use crate::mcp_bridge::BridgeCtx;
-use crate::services::stream::{self, AdbStreamEvent, StartStreamRequest, StreamStatus};
+use crate::mcp_bridge::respond::client_name;
 use crate::services::ServiceError;
-
-/// Today's bridge error envelope — real HTTP status codes are WP-13's job.
-fn err_json(e: &ServiceError) -> Json<Value> {
-    Json(json!({ "error": e.message(), "code": e.code() }))
-}
+use crate::services::stream::{self, AdbStreamEvent, StartStreamRequest, StreamStatus};
+use crate::services::wire::{
+    Ack, AdbDeviceList, StreamEventEntry, StreamEventsPage, StreamSaved, StreamStarted,
+};
 
 // ---------------------------------------------------------------------------
 // GET /mcp/adb/devices
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DevicesResponse {
-    devices: Vec<stream::AdbDevice>,
-}
-
 /// List attached devices. `adb` missing from PATH is a typed error body, never
-/// a panic or a 500.
+/// a panic or a 500 with no explanation.
 pub(crate) async fn h_adb_devices(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
-) -> Json<Value> {
-    let svc = ctx.svc(&client_name(&headers));
-    match stream::devices(&svc).await {
-        Ok(devices) => Json(json!(DevicesResponse { devices })),
-        Err(e) => err_json(&e),
-    }
+) -> Result<Json<AdbDeviceList>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(AdbDeviceList { devices: stream::devices(&svc).await? }))
 }
 
 // ---------------------------------------------------------------------------
 // POST /mcp/adb/stream
 // ---------------------------------------------------------------------------
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct StartStreamResponse {
-    session_id: String,
-    source_name: String,
-    status: StreamStatus,
-}
 
 /// Start a live capture for an agent.
 ///
@@ -89,8 +69,8 @@ pub(crate) async fn h_start_stream(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
     Json(req): Json<StartStreamRequest>,
-) -> Json<Value> {
-    let svc = ctx.svc(&client_name(&headers));
+) -> Result<Json<StreamStarted>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
 
     // A ring for a session id we do not have yet: create it, hand it in as the
     // sink, then register it under the id `start` assigns. The window between
@@ -99,24 +79,17 @@ pub(crate) async fn h_start_stream(
     let sink: std::sync::Arc<dyn crate::services::events::Sink<AdbStreamEvent>> =
         std::sync::Arc::clone(&ring) as _;
 
-    let load = match stream::start(svc.clone(), req, sink).await {
-        Ok(load) => load,
-        Err(e) => return err_json(&e),
-    };
+    let load = stream::start(svc.clone(), req, sink).await?;
 
     // Registering also prunes rings whose session is gone.
-    if let Err(e) = stream::register_ring(&svc, &load.session_id, ring) {
-        return err_json(&e);
-    }
+    stream::register_ring(&svc, &load.session_id, ring)?;
 
-    match stream::status(&svc, &load.session_id) {
-        Ok(status) => Json(json!(StartStreamResponse {
-            session_id: load.session_id,
-            source_name: load.source_name,
-            status,
-        })),
-        Err(e) => err_json(&e),
-    }
+    let status = stream::status(&svc, &load.session_id)?;
+    Ok(Json(StreamStarted {
+        session_id: load.session_id,
+        source_name: load.source_name,
+        status,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -127,12 +100,9 @@ pub(crate) async fn h_stream_status(
     State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     headers: HeaderMap,
-) -> Json<Value> {
-    let svc = ctx.svc(&client_name(&headers));
-    match stream::status(&svc, &session_id) {
-        Ok(status) => Json(json!(status)),
-        Err(e) => err_json(&e),
-    }
+) -> Result<Json<StreamStatus>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(stream::status(&svc, &session_id)?))
 }
 
 // ---------------------------------------------------------------------------
@@ -148,45 +118,31 @@ pub(crate) struct StreamEventsParams {
     limit: Option<usize>,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct StreamEventsResponse {
-    session_id: String,
-    /// Highest sequence the ring has issued, whether or not it is in `events`.
-    latest_seq: u64,
-    /// Cursor to send as `since` on the next poll.
-    next_since: u64,
-    /// True when events between the caller's cursor and the oldest retained
-    /// item were evicted — they are gone for good.
-    gap: bool,
-    /// `{ "seq": N, "item": { "event": "batch", "data": { … } } }` per entry —
-    /// the same `SeqItem` shape every `RingSink` consumer sees.
-    events: Vec<crate::services::events::SeqItem<AdbStreamEvent>>,
-}
-
 pub(crate) async fn h_stream_events(
     State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     Query(params): Query<StreamEventsParams>,
     headers: HeaderMap,
-) -> Json<Value> {
-    let svc = ctx.svc(&client_name(&headers));
+) -> Result<Json<StreamEventsPage>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
     let since = params.since.unwrap_or(0);
     let limit = params
         .limit
         .unwrap_or(200)
         .clamp(1, stream::AGENT_RING_CAPACITY);
 
-    match stream::events(&svc, &session_id, since, limit) {
-        Ok(page) => Json(json!(StreamEventsResponse {
-            session_id: page.session_id,
-            latest_seq: page.latest_seq,
-            next_since: page.next_since,
-            gap: page.gap,
-            events: page.events,
-        })),
-        Err(e) => err_json(&e),
-    }
+    let page = stream::events(&svc, &session_id, since, limit)?;
+    Ok(Json(StreamEventsPage {
+        session_id: page.session_id,
+        latest_seq: page.latest_seq,
+        next_since: page.next_since,
+        gap: page.gap,
+        events: page
+            .events
+            .into_iter()
+            .map(|e| StreamEventEntry { seq: e.seq, item: e.item })
+            .collect(),
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -197,12 +153,10 @@ pub(crate) async fn h_stop_stream(
     State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     headers: HeaderMap,
-) -> Json<Value> {
-    let svc = ctx.svc(&client_name(&headers));
-    match stream::stop(&svc, &session_id) {
-        Ok(()) => Json(json!({ "ok": true, "sessionId": session_id })),
-        Err(e) => err_json(&e),
-    }
+) -> Result<Json<Ack>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    stream::stop(&svc, &session_id)?;
+    Ok(Json(Ack::ok()))
 }
 
 // ---------------------------------------------------------------------------
@@ -217,25 +171,13 @@ pub(crate) struct SaveStreamBody {
     dest_path: String,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SaveStreamResponse {
-    session_id: String,
-    lines_written: u32,
-}
-
 pub(crate) async fn h_save_stream(
     State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     headers: HeaderMap,
     Json(body): Json<SaveStreamBody>,
-) -> Json<Value> {
-    let svc = ctx.svc(&client_name(&headers));
-    match stream::save_live_capture(&svc, &session_id, &body.dest_path) {
-        Ok(lines_written) => Json(json!(SaveStreamResponse {
-            session_id,
-            lines_written,
-        })),
-        Err(e) => err_json(&e),
-    }
+) -> Result<Json<StreamSaved>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    let lines_written = stream::save_live_capture(&svc, &session_id, &body.dest_path)?;
+    Ok(Json(StreamSaved { session_id, lines_written }))
 }

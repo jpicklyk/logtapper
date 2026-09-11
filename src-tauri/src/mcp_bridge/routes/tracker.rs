@@ -1,24 +1,32 @@
 //! State-tracker, correlator, and section endpoints: events, correlations,
 //! state_at, sections, section_at.
 //!
-//! Every handler here is a thin adapter: resolve any bridge-only convenience
+//! Every handler is a thin adapter: resolve any bridge-only convenience
 //! (bare→qualified processor id resolution), build a `ServiceCtx` via
 //! `ctx.svc(client)`, call the shared `services::{tracker,correlator,sections}`
-//! function, then render the JSON shape this route has always returned.
+//! function, map its result into the typed `services::wire` shape.
 //! `services::insights` is the only other WP-3 service — its route lives in
 //! `routes/insights.rs`.
 //!
-//! **Deliberate wire-text changes** (documented here rather than silently
-//! introduced): errors surfaced by the shared services use `ServiceError`'s
-//! message text, which in a few cases differs from what this file used to
-//! spell out ad hoc — e.g. a missing tracker's error was `"no tracker results
-//! for session {s} / tracker {t}"` (lowercase) here vs.
-//! `"No state tracker results for session {s} / tracker {t}"` (capitalized,
-//! matching the desktop command) via `services::tracker::state_at`. Missing
-//! session/no-source errors on `h_sections`/`h_section_at` similarly now read
-//! `"Session '{id}' not found"` instead of `"Session not found: {id}"`. Both
-//! transports now say the same thing, which is the point of this package —
-//! see `services::tracker`/`services::sections` for the authoritative text.
+//! **Wire changes (WP-13).** These five routes used to hand-render bespoke
+//! JSON; they now answer with typed envelopes:
+//!
+//! - `events` → `Page<TrackerEventEntry>` (`events`/`count` → `items`/`total`).
+//! - `correlations` → [`SessionCorrelations`], each correlator's events as a
+//!   `Page<CorrelationSummary>` (`events` → `items`, `totalEvents` → `total`,
+//!   `eventCount` dropped — it was `items.len()`).
+//! - `state_at` → [`StateSnapshot`] itself, the same type the desktop command
+//!   returns. `trackerId`/`sessionId` are gone from the body: both are in the
+//!   request path, and duplicating them made this the only tracker response
+//!   that was not simply the domain type.
+//! - `sections` → `Page<SectionInfo>` (`sections` → `items`, `returned`
+//!   dropped).
+//! - `section_at` → [`SectionLocation`].
+//!
+//! Error messages come from `ServiceError` and are therefore identical to the
+//! desktop command's for the same failure (e.g. `No state tracker results for
+//! session {s} / tracker {t}`, `Session '{id}' not found`) — see
+//! `services::tracker` / `services::sections` for the authoritative text.
 
 use axum::{
     Json,
@@ -26,25 +34,18 @@ use axum::{
     http::HeaderMap,
 };
 use serde::Deserialize;
-use serde_json::{Value, json};
 
+use crate::core::session::SectionInfo;
 use crate::processors::marketplace::resolve_processor_id_checked;
+use crate::processors::state_tracker::types::StateSnapshot;
 
 use crate::mcp_bridge::BridgeCtx;
-use crate::mcp_bridge::respond::section_json;
-use crate::services::{correlator, sections, tracker};
-
-/// Self-reported MCP client name from the `X-LogTapper-Client` header,
-/// defaulting to `"mcp"` — passed to `BridgeCtx::svc` so the activity feed
-/// (once these routes start mutating anything) can tell agents apart.
-/// `pub(super)` so `routes::insights` shares it rather than duplicating the
-/// lookup.
-pub(super) fn client_name(headers: &HeaderMap) -> &str {
-    headers
-        .get("x-logtapper-client")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("mcp")
-}
+use crate::mcp_bridge::respond::client_name;
+use crate::services::wire::{
+    CorrelationSummary, CorrelatorEvents, Page, SectionLocation, SessionCorrelations,
+    TrackerEventEntry,
+};
+use crate::services::{ServiceError, correlator, lock_svc, sections, tracker};
 
 // ---------------------------------------------------------------------------
 // GET /mcp/sessions/{session_id}/events
@@ -61,34 +62,27 @@ pub(crate) async fn h_events(
     headers: HeaderMap,
     Path(session_id): Path<String>,
     Query(params): Query<EventParams>,
-) -> Json<Value> {
+) -> Result<Json<Page<TrackerEventEntry>>, ServiceError> {
     let limit = params.limit.unwrap_or(50).min(200);
     let svc = ctx.svc(client_name(&headers));
 
-    let events = match tracker::recent_events(&svc, &session_id, limit) {
-        Ok(events) => events,
-        Err(e) => return Json(json!({ "error": e.message() })),
-    };
-
-    let events_json: Vec<Value> = events
-        .iter()
-        .map(|e| {
-            json!({
-                "trackerId": e.tracker_id,
-                "transitionName": e.transition.transition_name,
-                "lineNum": e.transition.line_num,
-                "timestamp": e.transition.timestamp,
-                "changes": e.transition.changes,
-            })
+    let items: Vec<TrackerEventEntry> = tracker::recent_events(&svc, &session_id, limit)?
+        .into_iter()
+        .map(|e| TrackerEventEntry {
+            tracker_id: e.tracker_id,
+            transition_name: e.transition.transition_name,
+            line_num: e.transition.line_num,
+            timestamp: e.transition.timestamp,
+            changes: e.transition.changes,
         })
         .collect();
 
-    let count = events_json.len();
-    Json(json!({
-        "sessionId": session_id,
-        "events": events_json,
-        "count": count,
-    }))
+    // `recent_events` caps at `limit` and does not report how many it walked
+    // past, so `total` is the page's own length — it is not a pagination
+    // cursor, and there is no `offset` to advance. A caller that wants more
+    // raises `limit`.
+    let total = items.len();
+    Ok(Json(Page::window(items, 0, limit, total)))
 }
 
 // ---------------------------------------------------------------------------
@@ -110,49 +104,49 @@ pub(crate) async fn h_correlations(
     headers: HeaderMap,
     Path(session_id): Path<String>,
     Query(params): Query<CorrelationParams>,
-) -> Json<Value> {
+) -> Result<Json<SessionCorrelations>, ServiceError> {
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);
     let svc = ctx.svc(client_name(&headers));
 
-    let groups = match correlator::events(&svc, &session_id, params.correlator_id.as_deref(), offset, limit) {
-        Ok(g) => g,
-        Err(e) => return Json(json!({ "error": e.message() })),
-    };
+    let groups = correlator::events(
+        &svc,
+        &session_id,
+        params.correlator_id.as_deref(),
+        offset,
+        limit,
+    )?;
 
-    let correlators: Vec<Value> = groups
-        .iter()
+    let correlators: Vec<CorrelatorEvents> = groups
+        .into_iter()
         .map(|g| {
-            let events: Vec<Value> = g
+            let total = g.page.total;
+            let items: Vec<CorrelationSummary> = g
                 .page
                 .items
-                .iter()
-                .map(|evt| {
-                    json!({
-                        "triggerLineNum": evt.trigger_line_num,
-                        "triggerTimestamp": evt.trigger_timestamp,
-                        "triggerSourceId": evt.trigger_source_id,
-                        "triggerFields": evt.trigger_fields,
-                        "message": evt.message,
-                        "matchedSourceIds": evt.matched_sources.keys().collect::<Vec<_>>(),
-                    })
+                .into_iter()
+                .map(|evt| CorrelationSummary {
+                    trigger_line_num: evt.trigger_line_num,
+                    trigger_timestamp: evt.trigger_timestamp,
+                    trigger_source_id: evt.trigger_source_id,
+                    trigger_fields: evt.trigger_fields,
+                    message: evt.message,
+                    // Ids only — the per-source match records carry raw line
+                    // text, which this endpoint has never exposed and which
+                    // `services::correlator` does not redact. See
+                    // `CorrelationSummary`'s docs.
+                    matched_source_ids: evt.matched_sources.into_keys().collect(),
                 })
                 .collect();
-            json!({
-                "correlatorId": g.correlator_id,
-                "totalEvents": g.page.total,
-                "eventCount": events.len(),
-                "events": events,
-                "offset": offset,
-                "limit": limit,
-            })
+            CorrelatorEvents {
+                correlator_id: g.correlator_id,
+                guidance: g.guidance,
+                events: Page::window(items, offset, limit, total),
+            }
         })
         .collect();
 
-    Json(json!({
-        "sessionId": session_id,
-        "correlators": correlators,
-    }))
+    Ok(Json(SessionCorrelations { session_id, correlators }))
 }
 
 // ---------------------------------------------------------------------------
@@ -170,34 +164,21 @@ pub(crate) async fn h_state_at_line(
     headers: HeaderMap,
     Path((session_id, tracker_id)): Path<(String, String)>,
     Query(params): Query<StateAtParams>,
-) -> Json<Value> {
+) -> Result<Json<StateSnapshot>, ServiceError> {
     let line_num = params.line;
 
     // Resolve bare ID → qualified ID (e.g. "wifi-state" → "wifi-state@official").
     // Bridge-only convenience — the desktop UI always passes an already-qualified
     // id, so this stays here rather than in `services::tracker::state_at`.
     let resolved_id = {
-        let procs = ctx.state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        match resolve_processor_id_checked(&procs, &tracker_id) {
-            Ok(r) => r.unwrap_or_else(|| tracker_id.clone()),
-            Err(e) => return Json(json!({ "error": e, "sessionId": session_id, "trackerId": tracker_id })),
-        }
+        let procs = lock_svc(&ctx.state.processors, "processors")?;
+        resolve_processor_id_checked(&procs, &tracker_id)
+            .map_err(ServiceError::invalid_arg)?
+            .unwrap_or_else(|| tracker_id.clone())
     };
 
     let svc = ctx.svc(client_name(&headers));
-
-    match tracker::state_at(&svc, &session_id, &resolved_id, line_num) {
-        Ok(snap) => Json(json!({
-            "trackerId": resolved_id,
-            "sessionId": session_id,
-            "lineNum": snap.line_num,
-            "timestamp": snap.timestamp,
-            "fields": snap.fields,
-            "initializedFields": snap.initialized_fields,
-            "sourceSections": snap.source_sections,
-        })),
-        Err(e) => Json(json!({ "error": e.message() })),
-    }
+    Ok(Json(tracker::state_at(&svc, &session_id, &resolved_id, line_num)?))
 }
 
 // ---------------------------------------------------------------------------
@@ -236,29 +217,18 @@ pub(crate) async fn h_section_at(
     headers: HeaderMap,
     Path(session_id): Path<String>,
     Query(params): Query<SectionAtParams>,
-) -> Json<Value> {
+) -> Result<Json<SectionLocation>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
+    let result = sections::at(&svc, &session_id, params.line)?;
 
-    let result = match sections::at(&svc, &session_id, params.line) {
-        Ok(r) => r,
-        Err(e) => return Json(json!({ "error": e.message() })),
-    };
-
-    let containing: Vec<Value> = result.containing.iter().map(section_json).collect();
-
-    let mut out = json!({
-        "sessionId": session_id,
-        "line": params.line,
-        // The name a processor's `filter.section` must use to match this line.
-        // Null means no rule can target it by section.
-        "matchesFilterSection": result.matches_filter_section.map_or(Value::Null, |s| json!(s)),
-        "containingSections": containing,
-        "totalLinesInSession": result.total_lines_in_session,
-    });
-    if let Some(n) = result.note {
-        out["note"] = json!(n);
-    }
-    Json(out)
+    Ok(Json(SectionLocation {
+        session_id,
+        line: params.line,
+        matches_filter_section: result.matches_filter_section,
+        containing_sections: result.containing,
+        total_lines_in_session: result.total_lines_in_session,
+        note: result.note.map(str::to_string),
+    }))
 }
 
 pub(crate) async fn h_sections(
@@ -266,64 +236,16 @@ pub(crate) async fn h_sections(
     headers: HeaderMap,
     Path(session_id): Path<String>,
     Query(params): Query<SectionsParams>,
-) -> Json<Value> {
+) -> Result<Json<Page<SectionInfo>>, ServiceError> {
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);
     let svc = ctx.svc(client_name(&headers));
 
-    let page = match sections::list(&svc, &session_id, params.query.as_deref(), offset, limit) {
-        Ok(p) => p,
-        Err(e) => return Json(json!({ "error": e.message() })),
-    };
-
-    let sections_json: Vec<Value> = page.items.iter().map(section_json).collect();
-
-    Json(json!({
-        "sessionId": session_id,
-        "total": page.total,
-        "returned": sections_json.len(),
-        "offset": page.offset,
-        "limit": page.limit,
-        "sections": sections_json,
-    }))
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn headers_from(pairs: &[(&str, &str)]) -> HeaderMap {
-        let mut headers = HeaderMap::new();
-        for (k, v) in pairs {
-            headers.insert(
-                axum::http::HeaderName::from_bytes(k.as_bytes()).unwrap(),
-                axum::http::HeaderValue::from_str(v).unwrap(),
-            );
-        }
-        headers
-    }
-
-    #[test]
-    fn client_name_defaults_to_mcp_when_header_absent() {
-        assert_eq!(client_name(&headers_from(&[])), "mcp");
-    }
-
-    #[test]
-    fn client_name_reads_the_header_when_present() {
-        let headers = headers_from(&[("x-logtapper-client", "claude-code")]);
-        assert_eq!(client_name(&headers), "claude-code");
-    }
-
-    #[test]
-    fn client_name_ignores_case_of_the_header_name() {
-        // HTTP header names are case-insensitive; axum's HeaderMap normalizes
-        // this, but pin it here since a header-name typo would silently fall
-        // back to "mcp" instead of failing loudly.
-        let headers = headers_from(&[("X-LogTapper-Client", "claude-desktop")]);
-        assert_eq!(client_name(&headers), "claude-desktop");
-    }
+    Ok(Json(sections::list(
+        &svc,
+        &session_id,
+        params.query.as_deref(),
+        offset,
+        limit,
+    )?))
 }

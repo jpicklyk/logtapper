@@ -36,7 +36,7 @@ use routes::artifacts::{
 use routes::filters::{h_cancel_filter, h_close_filter, h_create_filter, h_filter_info, h_filter_lines};
 use routes::export::{h_export_info, h_export_run};
 use routes::insights::h_insights;
-use routes::lines::{h_lines_around, h_query, h_tag_stats};
+use routes::lines::{h_lines_around, h_query};
 use routes::pipeline::{h_pipeline, h_processor_detail, h_run_pipeline};
 use routes::processors::{
     h_install_processor, h_marketplace_fetch, h_marketplace_install, h_marketplace_sources,
@@ -141,6 +141,14 @@ impl BridgeCtx {
 // breaks a shipped MCP client. Add one line per (method, path) pair here AND
 // the matching `.route(...)` call in `router()` below.
 //
+// One route has been removed since that rule was written, deliberately and
+// once: `GET /mcp/sessions/{session_id}/tag-stats` (WP-13). It was an orphan —
+// no `services::*` function, no Tauri command, and no tool in `mcp-server/`
+// ever called it, so no shipped client could break. It was also the bridge's
+// last direct `AppState` read. `GET .../metadata` reports `totalLines` and
+// `GET .../query?n=…` reports the level/tag histograms over a sample, so
+// nothing it did is unreachable.
+//
 // `pub` (not `#[cfg(test)]`): WP-T2's `tests/bridge_http.rs` drives the live
 // `router(ctx)` in-process with `tower::ServiceExt::oneshot` against every
 // entry here (substituting placeholder path params) and asserts none comes
@@ -163,7 +171,6 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/mcp/sessions/{session_id}/metadata"),
     ("GET", "/mcp/sessions/{session_id}/sections"),
     ("GET", "/mcp/sessions/{session_id}/section_at"),
-    ("GET", "/mcp/sessions/{session_id}/tag-stats"),
     ("GET", "/mcp/sessions/{session_id}/lines_around"),
     ("GET", "/mcp/sessions/{session_id}/search_with_context"),
     ("GET", "/mcp/processors"),
@@ -258,7 +265,6 @@ pub fn router(ctx: BridgeCtx) -> Router {
         .route("/mcp/sessions/{session_id}/metadata", get(h_metadata))
         .route("/mcp/sessions/{session_id}/sections", get(h_sections))
         .route("/mcp/sessions/{session_id}/section_at", get(h_section_at))
-        .route("/mcp/sessions/{session_id}/tag-stats", get(h_tag_stats))
         .route("/mcp/sessions/{session_id}/lines_around", get(h_lines_around))
         .route("/mcp/sessions/{session_id}/search_with_context", get(h_search_with_context))
         .route("/mcp/processors", get(h_processor_defs_list))
@@ -400,7 +406,6 @@ mod tests {
             "GET /mcp/sessions/{session_id}/metadata",
             "GET /mcp/sessions/{session_id}/sections",
             "GET /mcp/sessions/{session_id}/section_at",
-            "GET /mcp/sessions/{session_id}/tag-stats",
             "GET /mcp/sessions/{session_id}/lines_around",
             "GET /mcp/sessions/{session_id}/search_with_context",
             "GET /mcp/processors",

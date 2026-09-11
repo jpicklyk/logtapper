@@ -26,10 +26,9 @@
 //! matched-line bookkeeping — neither touches the session's history or any
 //! other filter's results. See `services::filters` for the full contract.
 //!
-//! These are new routes (no legacy JSON shape to preserve), so success
-//! responses serialize the typed `services::filters` structs directly.
-//! Errors keep today's `{ "error", "code" }`-over-200 envelope pending the
-//! real-status-code migration in WP-13.
+//! Success bodies are the typed `services::filters` structs; `cancel`/`close`
+//! answer [`Ack`]. Failures carry a real status (an unknown filter id is a
+//! `404 NOT_FOUND`, an uncompilable regex a `400 INVALID_ARGUMENT`).
 
 use std::sync::Arc;
 
@@ -39,20 +38,15 @@ use axum::{
     http::HeaderMap,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
 
 use crate::core::filter::FilterCriteria;
-use crate::mcp_bridge::routes::artifacts::client_name;
 use crate::mcp_bridge::BridgeCtx;
+use crate::mcp_bridge::respond::client_name;
+use crate::services::ServiceError;
 use crate::services::events::ProgressSink;
+use crate::services::filters::{self, FilterCreateResult, FilterInfo, FilteredLinesResult};
 use crate::services::pipeline::EventSinkProgress;
-use crate::services::{filters, ServiceError};
-
-/// Today's bridge error envelope: real HTTP status codes are WP-13's job —
-/// until then every response is `200` with `{ "error", "code" }` on failure.
-fn err_json(e: &ServiceError) -> Json<Value> {
-    Json(json!({ "error": e.message(), "code": e.code() }))
-}
+use crate::services::wire::Ack;
 
 // ---------------------------------------------------------------------------
 // POST /mcp/sessions/{session_id}/filters
@@ -63,17 +57,14 @@ pub(crate) async fn h_create_filter(
     Path(session_id): Path<String>,
     headers: HeaderMap,
     Json(criteria): Json<FilterCriteria>,
-) -> Json<Value> {
-    let svc = ctx.svc(&client_name(&headers));
+) -> Result<Json<FilterCreateResult>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
     // Same "an agent action still lights up the desktop" pattern as
     // `h_run_pipeline`: `ctx.events` is the real `TauriSink`, so `on_progress`
     // emits `filter-progress` exactly where the UI already listens.
     let progress: Arc<dyn ProgressSink> =
         Arc::new(EventSinkProgress::new(Arc::clone(&ctx.events)));
-    match filters::create(&svc, session_id, criteria, progress) {
-        Ok(result) => Json(json!(result)),
-        Err(e) => err_json(&e),
-    }
+    Ok(Json(filters::create(&svc, session_id, criteria, progress)?))
 }
 
 // ---------------------------------------------------------------------------
@@ -84,12 +75,9 @@ pub(crate) async fn h_filter_info(
     State(ctx): State<BridgeCtx>,
     Path(filter_id): Path<String>,
     headers: HeaderMap,
-) -> Json<Value> {
-    let svc = ctx.svc(&client_name(&headers));
-    match filters::info(&svc, &filter_id) {
-        Ok(info) => Json(json!(info)),
-        Err(e) => err_json(&e),
-    }
+) -> Result<Json<FilterInfo>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(filters::info(&svc, &filter_id)?))
 }
 
 // ---------------------------------------------------------------------------
@@ -110,14 +98,11 @@ pub(crate) async fn h_filter_lines(
     Path(filter_id): Path<String>,
     Query(params): Query<FilterLinesParams>,
     headers: HeaderMap,
-) -> Json<Value> {
-    let svc = ctx.svc(&client_name(&headers));
+) -> Result<Json<FilteredLinesResult>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
     let offset = params.offset.unwrap_or(0);
     let limit = params.limit.unwrap_or(200);
-    match filters::lines(&svc, &filter_id, offset, limit) {
-        Ok(page) => Json(json!(page)),
-        Err(e) => err_json(&e),
-    }
+    Ok(Json(filters::lines(&svc, &filter_id, offset, limit)?))
 }
 
 // ---------------------------------------------------------------------------
@@ -128,12 +113,10 @@ pub(crate) async fn h_cancel_filter(
     State(ctx): State<BridgeCtx>,
     Path(filter_id): Path<String>,
     headers: HeaderMap,
-) -> Json<Value> {
-    let svc = ctx.svc(&client_name(&headers));
-    match filters::cancel(&svc, &filter_id) {
-        Ok(()) => Json(json!({ "ok": true })),
-        Err(e) => err_json(&e),
-    }
+) -> Result<Json<Ack>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    filters::cancel(&svc, &filter_id)?;
+    Ok(Json(Ack::ok()))
 }
 
 // ---------------------------------------------------------------------------
@@ -144,10 +127,8 @@ pub(crate) async fn h_close_filter(
     State(ctx): State<BridgeCtx>,
     Path(filter_id): Path<String>,
     headers: HeaderMap,
-) -> Json<Value> {
-    let svc = ctx.svc(&client_name(&headers));
-    match filters::close(&svc, &filter_id) {
-        Ok(()) => Json(json!({ "ok": true })),
-        Err(e) => err_json(&e),
-    }
+) -> Result<Json<Ack>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    filters::close(&svc, &filter_id)?;
+    Ok(Json(Ack::ok()))
 }

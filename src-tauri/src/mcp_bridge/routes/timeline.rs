@@ -18,16 +18,17 @@
 //! comment for the full trace).
 
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::HeaderMap,
-    Json,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
 
-use crate::mcp_bridge::routes::tracker::client_name;
+use crate::charts::builder::ChartData;
 use crate::mcp_bridge::BridgeCtx;
-use crate::services::timeline;
+use crate::mcp_bridge::respond::client_name;
+use crate::services::ServiceError;
+use crate::services::timeline::{self, TimelineSeriesData};
 
 // ---------------------------------------------------------------------------
 // GET /mcp/sessions/{session_id}/chart
@@ -44,12 +45,9 @@ pub(crate) async fn h_chart(
     headers: HeaderMap,
     Path(session_id): Path<String>,
     Query(params): Query<ChartParams>,
-) -> Json<Value> {
+) -> Result<Json<Vec<ChartData>>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
-    match timeline::chart_data(&svc, &session_id, &params.processor_id) {
-        Ok(charts) => Json(json!(charts)),
-        Err(e) => Json(json!({ "error": e.message() })),
-    }
+    Ok(Json(timeline::chart_data(&svc, &session_id, &params.processor_id)?))
 }
 
 // ---------------------------------------------------------------------------
@@ -68,7 +66,7 @@ pub(crate) async fn h_timeline(
     headers: HeaderMap,
     Path(session_id): Path<String>,
     Query(params): Query<TimelineParams>,
-) -> Json<Value> {
+) -> Result<Json<Vec<TimelineSeriesData>>, ServiceError> {
     let processor_ids: Vec<String> = params
         .processor_ids
         .split(',')
@@ -77,8 +75,5 @@ pub(crate) async fn h_timeline(
         .collect();
 
     let svc = ctx.svc(client_name(&headers));
-    match timeline::timeline_data(&svc, &session_id, &processor_ids) {
-        Ok(series) => Json(json!(series)),
-        Err(e) => Json(json!({ "error": e.message() })),
-    }
+    Ok(Json(timeline::timeline_data(&svc, &session_id, &processor_ids)?))
 }

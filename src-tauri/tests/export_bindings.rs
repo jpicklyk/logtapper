@@ -48,6 +48,46 @@ macro_rules! ROOT_TYPES {
             app_lib::services::wire::SearchHit,
             app_lib::services::wire::SearchHits,
             app_lib::services::wire::PipelineRunResult,
+            // WP-13: the MCP bridge's own response envelopes. Every `/mcp/...`
+            // route answers with one of these (or a domain type already listed
+            // below), so `mcp-server/`'s TypeScript client can be typed from
+            // the generated bindings instead of `any`.
+            app_lib::services::wire::WireError,
+            app_lib::services::wire::WireErrorDetail,
+            app_lib::services::wire::Ack,
+            app_lib::services::wire::BridgeStatusInfo,
+            app_lib::services::wire::BridgeSessionList,
+            app_lib::services::wire::BridgeSessionEntry,
+            app_lib::services::wire::BridgeSessionSource,
+            app_lib::services::wire::BridgeInstalledProcessor,
+            app_lib::services::wire::OpenedSession,
+            app_lib::services::wire::BridgeSessionMetadata,
+            app_lib::services::wire::TrackerEventEntry,
+            app_lib::services::wire::CorrelationSummary,
+            app_lib::services::wire::CorrelatorEvents,
+            app_lib::services::wire::SessionCorrelations,
+            app_lib::services::wire::SectionLocation,
+            app_lib::services::wire::MatchedLineEntry,
+            app_lib::services::wire::EmissionEntry,
+            app_lib::services::wire::TransitionEntry,
+            app_lib::services::wire::ReporterSummary,
+            app_lib::services::wire::TrackerSummary,
+            app_lib::services::wire::SessionPipelineResults,
+            app_lib::services::wire::ReporterDetail,
+            app_lib::services::wire::TrackerDetail,
+            app_lib::services::wire::ProcessorDetail,
+            app_lib::services::wire::AdbDeviceList,
+            app_lib::services::wire::StreamStarted,
+            app_lib::services::wire::StreamEventEntry,
+            app_lib::services::wire::StreamEventsPage,
+            app_lib::services::wire::StreamSaved,
+            app_lib::services::wire::WorkspaceList,
+            app_lib::services::wire::WorkspaceSaved,
+            // `Page<T>` instantiations the bridge ships directly. ts-rs exports
+            // the generic once (see the note above), so these are here for the
+            // element types' sake — `Page<SectionInfo>` is what
+            // `GET /mcp/sessions/{id}/sections` returns.
+            app_lib::services::wire::Page<app_lib::core::session::SectionInfo>,
             // --- services — caller model, activity journal, progress events ---
             app_lib::services::Caller,
             app_lib::services::activity::ActivityEntry,

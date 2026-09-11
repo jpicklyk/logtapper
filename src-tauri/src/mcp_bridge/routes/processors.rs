@@ -1,72 +1,65 @@
-//! Processor + marketplace endpoints: definitions (legacy JSON, unchanged),
-//! and the WP-9 install/uninstall/packs/sources/updates surface.
+//! Processor + marketplace endpoints: definitions, and the WP-9
+//! install/uninstall/packs/sources/updates surface.
 //!
 //! `h_processor_defs_list` / `h_processor_defs_single` call
-//! [`crate::services::processors::{definitions, definition}`] — the exact
-//! ad hoc JSON they used to build inline, now owned by the service so the
-//! Tauri-side `list_processors` command and the bridge cannot drift on
-//! *how* a processor is described (WP-13 is what eventually types this).
+//! [`crate::services::processors::{definitions, definition}`], which own the
+//! processor-description JSON so the Tauri-side `list_processors` command and
+//! the bridge cannot drift on *how* a processor is described. Those two are the
+//! only bridge responses still typed as `serde_json::Value`: the shape is
+//! assembled inside the service from a processor's YAML-derived schema, which
+//! is genuinely heterogeneous (reporter pipelines, tracker state machines,
+//! correlator windows). Typing it belongs with whoever next owns
+//! `services/processors.rs` — it is not something this package can do from the
+//! route side. Every other route in this file answers with a `Serialize`
+//! struct.
 //!
-//! Everything below `// WP-9` is new surface: it returns typed structs
-//! directly and renders `ServiceError` through the bridge's existing
-//! `{ error, code }` envelope (the same shape `h_open_file` already uses),
-//! rather than the legacy `{ error }`-only, always-200 shape older routes
-//! still use.
+//! Errors are [`ServiceError`] throughout: `404 NOT_FOUND` for an unknown
+//! processor, `403 NOT_ALLOWED` for a gated path, `400` for a malformed body.
 
 use axum::{
     Json,
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
+    http::HeaderMap,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
+use crate::commands::sources::{MarketplaceFetchResult, UpdateCheckResult, UpdateResult};
 use crate::mcp_bridge::BridgeCtx;
-use crate::mcp_bridge::respond::err;
-use crate::mcp_bridge::routes::artifacts::client_name;
-use crate::processors::marketplace::MarketplacePackEntry;
+use crate::mcp_bridge::respond::client_name;
+use crate::processors::marketplace::{MarketplacePackEntry, Source};
 use crate::processors::{PackSummary, ProcessorSummary};
 use crate::services::error::ServiceError;
+use crate::services::wire::Ack;
 use crate::services::{marketplace, processors};
 
-/// Render a [`ServiceError`] through the `{ error, code }` envelope with its
-/// real HTTP status — the contract every WP-9 route below uses.
-fn service_err(e: ServiceError) -> Response {
-    let status = StatusCode::from_u16(e.http_status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    err(status, e.message(), e.code())
+// ---------------------------------------------------------------------------
+// GET /mcp/processors — list all processor definitions
+// ---------------------------------------------------------------------------
+
+pub(crate) async fn h_processor_defs_list(
+    State(ctx): State<BridgeCtx>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(processors::definitions(&svc)?))
 }
 
 // ---------------------------------------------------------------------------
-// GET /mcp/processors — list all processor definitions (legacy shape)
-// ---------------------------------------------------------------------------
-
-pub(crate) async fn h_processor_defs_list(State(ctx): State<BridgeCtx>, headers: HeaderMap) -> Json<Value> {
-    let svc = ctx.svc(&client_name(&headers));
-    match processors::definitions(&svc) {
-        Ok(body) => Json(body),
-        Err(e) => Json(json!({ "error": e.message() })),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// GET /mcp/processors/{processor_id} — single processor definition (legacy shape)
+// GET /mcp/processors/{processor_id} — single processor definition
 // ---------------------------------------------------------------------------
 
 pub(crate) async fn h_processor_defs_single(
     State(ctx): State<BridgeCtx>,
     Path(processor_id): Path<String>,
     headers: HeaderMap,
-) -> Json<Value> {
-    let svc = ctx.svc(&client_name(&headers));
-    match processors::definition(&svc, &processor_id) {
-        Ok(body) => Json(body),
-        Err(e) => Json(json!({ "error": e.message(), "processorId": processor_id })),
-    }
+) -> Result<Json<Value>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(processors::definition(&svc, &processor_id)?))
 }
 
 // ---------------------------------------------------------------------------
-// WP-9 processors/marketplace — new surface
+// WP-9 processors/marketplace
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
@@ -79,12 +72,9 @@ pub(crate) async fn h_install_processor(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
     Json(body): Json<InstallProcessorBody>,
-) -> Response {
-    let svc = ctx.svc(&client_name(&headers));
-    match processors::install_yaml(&svc, &body.yaml) {
-        Ok(summary) => Json(summary).into_response(),
-        Err(e) => service_err(e),
-    }
+) -> Result<Json<ProcessorSummary>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(processors::install_yaml(&svc, &body.yaml)?))
 }
 
 /// `DELETE /mcp/processors/{id}` — uninstall an installed processor.
@@ -92,21 +82,19 @@ pub(crate) async fn h_uninstall_processor(
     State(ctx): State<BridgeCtx>,
     Path(processor_id): Path<String>,
     headers: HeaderMap,
-) -> Response {
-    let svc = ctx.svc(&client_name(&headers));
-    match processors::uninstall(&svc, &processor_id) {
-        Ok(()) => Json(json!({ "ok": true })).into_response(),
-        Err(e) => service_err(e),
-    }
+) -> Result<Json<Ack>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    processors::uninstall(&svc, &processor_id)?;
+    Ok(Json(Ack::ok()))
 }
 
 /// `GET /mcp/packs` — every installed processor pack.
-pub(crate) async fn h_packs(State(ctx): State<BridgeCtx>, headers: HeaderMap) -> Response {
-    let svc = ctx.svc(&client_name(&headers));
-    match processors::packs(&svc) {
-        Ok(list) => Json(list).into_response(),
-        Err(e) => service_err(e),
-    }
+pub(crate) async fn h_packs(
+    State(ctx): State<BridgeCtx>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<PackSummary>>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(processors::packs(&svc)?))
 }
 
 /// `GET /mcp/marketplace/sources` — configured marketplace sources.
@@ -117,12 +105,12 @@ pub(crate) async fn h_packs(State(ctx): State<BridgeCtx>, headers: HeaderMap) ->
 /// `services::marketplace::{add_source, remove_source}` refuse an agent
 /// caller (`Forbidden`/`NOT_ALLOWED`) — see that module's doc comment. Since
 /// an agent could never succeed at either mutation, no route exposes them.
-pub(crate) async fn h_marketplace_sources(State(ctx): State<BridgeCtx>, headers: HeaderMap) -> Response {
-    let svc = ctx.svc(&client_name(&headers));
-    match marketplace::sources(&svc) {
-        Ok(list) => Json(list).into_response(),
-        Err(e) => service_err(e),
-    }
+pub(crate) async fn h_marketplace_sources(
+    State(ctx): State<BridgeCtx>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<Source>>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(marketplace::sources(&svc)?))
 }
 
 /// `GET /mcp/marketplace/sources/{id}/fetch` — fetch one source's marketplace index.
@@ -130,21 +118,18 @@ pub(crate) async fn h_marketplace_fetch(
     State(ctx): State<BridgeCtx>,
     Path(source_id): Path<String>,
     headers: HeaderMap,
-) -> Response {
-    let svc = ctx.svc(&client_name(&headers));
-    match marketplace::fetch(&svc, &source_id).await {
-        Ok(result) => Json(result).into_response(),
-        Err(e) => service_err(e),
-    }
+) -> Result<Json<MarketplaceFetchResult>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(marketplace::fetch(&svc, &source_id).await?))
 }
 
 /// `GET /mcp/marketplace/updates` — check every enabled source for updates.
-pub(crate) async fn h_marketplace_updates(State(ctx): State<BridgeCtx>, headers: HeaderMap) -> Response {
-    let svc = ctx.svc(&client_name(&headers));
-    match marketplace::check_updates(&svc).await {
-        Ok(result) => Json(result).into_response(),
-        Err(e) => service_err(e),
-    }
+pub(crate) async fn h_marketplace_updates(
+    State(ctx): State<BridgeCtx>,
+    headers: HeaderMap,
+) -> Result<Json<UpdateCheckResult>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(marketplace::check_updates(&svc).await?))
 }
 
 /// Either a single marketplace entry or a pack entry — a
@@ -185,11 +170,11 @@ pub(crate) async fn h_marketplace_install(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
     Json(body): Json<MarketplaceInstallBody>,
-) -> Response {
-    let svc = ctx.svc(&client_name(&headers));
+) -> Result<Json<MarketplaceInstallResult>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
     match (body.entry, body.pack) {
         (Some(entry), None) => {
-            match marketplace::install_from_marketplace(
+            let summary = marketplace::install_from_marketplace(
                 &svc,
                 &body.source_name,
                 &entry.id,
@@ -198,20 +183,20 @@ pub(crate) async fn h_marketplace_install(
                 &entry.version,
                 &entry.sha256,
             )
-            .await
-            {
-                Ok(summary) => Json(MarketplaceInstallResult::Processor(summary)).into_response(),
-                Err(e) => service_err(e),
-            }
+            .await?;
+            Ok(Json(MarketplaceInstallResult::Processor(summary)))
         }
-        (None, Some(pack)) => match marketplace::install_pack_from_marketplace(&svc, &body.source_name, pack).await {
-            Ok(summary) => Json(MarketplaceInstallResult::Pack(summary)).into_response(),
-            Err(e) => service_err(e),
-        },
-        (None, None) => service_err(ServiceError::invalid_arg("body must include either 'entry' or 'pack'")),
-        (Some(_), Some(_)) => {
-            service_err(ServiceError::invalid_arg("body must include only one of 'entry' or 'pack', not both"))
+        (None, Some(pack)) => {
+            let summary =
+                marketplace::install_pack_from_marketplace(&svc, &body.source_name, pack).await?;
+            Ok(Json(MarketplaceInstallResult::Pack(summary)))
         }
+        (None, None) => Err(ServiceError::invalid_arg(
+            "body must include either 'entry' or 'pack'",
+        )),
+        (Some(_), Some(_)) => Err(ServiceError::invalid_arg(
+            "body must include only one of 'entry' or 'pack', not both",
+        )),
     }
 }
 
@@ -221,10 +206,7 @@ pub(crate) async fn h_marketplace_update_all(
     State(ctx): State<BridgeCtx>,
     Path(source_id): Path<String>,
     headers: HeaderMap,
-) -> Response {
-    let svc = ctx.svc(&client_name(&headers));
-    match marketplace::update_all_from_source(&svc, &source_id).await {
-        Ok(results) => Json(results).into_response(),
-        Err(e) => service_err(e),
-    }
+) -> Result<Json<Vec<UpdateResult>>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(marketplace::update_all_from_source(&svc, &source_id).await?))
 }

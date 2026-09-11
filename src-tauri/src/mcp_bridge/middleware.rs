@@ -1,8 +1,9 @@
 //! Bridge-wide Axum middleware: trusted-origin gating and activity stamping.
 
-use axum::{extract::State, http::StatusCode, middleware, response::IntoResponse};
+use axum::{extract::State, middleware, response::IntoResponse};
 
 use super::BridgeCtx;
+use crate::services::ServiceError;
 
 /// Middleware: stamp `mcp_last_activity` on every inbound request.
 pub(super) async fn record_activity(
@@ -80,13 +81,22 @@ fn is_trusted_request(headers: &axum::http::HeaderMap) -> bool {
 /// trusted local MCP server process. See [`is_trusted_request`] for the
 /// decision logic. Runs BEFORE [`record_activity`] in the layer stack (see
 /// `super::start()`) so rejected requests never stamp `mcp_last_activity`.
+///
+/// The refusal is still a `403`, but it now carries the same
+/// `{ "error": { "code": "NOT_ALLOWED", "message": … } }` envelope every other
+/// bridge failure does (it used to be a bare, empty-bodied 403). The message is
+/// deliberately generic: telling a browser-origin caller *which* of the three
+/// checks it tripped is a hint it has no business having.
 pub(super) async fn require_local(
     State(_ctx): State<BridgeCtx>,
     req: axum::extract::Request,
     next: middleware::Next,
 ) -> axum::response::Response {
     if !is_trusted_request(req.headers()) {
-        return StatusCode::FORBIDDEN.into_response();
+        return ServiceError::not_allowed(
+            "request did not come from a trusted local MCP client",
+        )
+        .into_response();
     }
     next.run(req).await
 }

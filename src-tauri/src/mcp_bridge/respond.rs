@@ -1,137 +1,101 @@
-//! Shared response-shaping helpers for the MCP bridge's route handlers.
+//! Shared response-shaping for the MCP bridge's route handlers.
+//!
+//! There are exactly two response shapes in this bridge:
+//!
+//! - **Success** — a typed `Serialize` value, rendered by `axum::Json`. Every
+//!   handler returns `Result<Json<T>, ServiceError>` (or `Result<Response, _>`
+//!   where the success body varies by branch). Nothing here builds a body with
+//!   `serde_json::json!`.
+//! - **Failure** — [`ServiceError`] itself, via the [`IntoResponse`] impl
+//!   below: the status comes from [`ServiceError::http_status`] and the body is
+//!   [`WireError`] (`{ "error": { "code", "message" } }`). Because both halves
+//!   are derived from the same value, a 200 can never carry an error body and a
+//!   4xx can never carry a success one.
 //!
 //! Lock discipline: acquire a Mutex, copy/clone the data needed, drop the lock,
-//! THEN build the JSON response. Never hold a lock across an `.await`.
+//! THEN build the response. Never hold a lock across an `.await`.
+//!
+//! **Lock poisoning is uniform.** Every `AppState` mutex the bridge reaches is
+//! now reached through `services::*`, which acquires via `services::lock_svc`
+//! and fails closed with [`ServiceError::LockPoisoned`] → HTTP 500 +
+//! `{ "error": { "code": "LOCK_POISONED", "message": "{name} lock poisoned" } }`.
+//! The pre-WP-13 split — some locks failing the request, others silently
+//! recovering a possibly-torn map through the standard library's
+//! poison-recovery escape hatch — is gone from this module tree, along with the
+//! `lock_or_json_err!` / `lock_or_err_response!` / `get_session_and_source!`
+//! macros that implemented it. No code under `mcp_bridge/` recovers from a
+//! poisoned lock any more; if one is poisoned the request fails and the next
+//! one tries again.
 
 use std::collections::HashMap;
 
 use axum::{
     Json,
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use serde_json::{Value, json};
+use serde_json::Value;
+
+use crate::services::ServiceError;
+use crate::services::wire::WireError;
 
 // ---------------------------------------------------------------------------
-// Lock-poisoning helpers
+// The one error rendering
 // ---------------------------------------------------------------------------
-//
-// Every AppState Mutex touched in the bridge falls into one of two families:
-//
-// - Request-scoped reads of data a panicking writer could leave genuinely
-//   torn (`sessions`, `pipeline_results`, `state_tracker_results`,
-//   `correlator_results`, `stream_tracker_state`) go through
-//   `lock_or_json_err!` / `lock_or_err_response!` below: on poison, fail
-//   *this* request with the bridge's existing `{"error": ...}` contract
-//   instead of silently serving a possibly-inconsistent snapshot. The next
-//   request gets a fresh lock attempt — nothing is bricked. `sessions` is
-//   the chokepoint (`get_session_and_source!` / `verify_session_exists!`,
-//   below) since it backs every raw-line read in the bridge;
-//   `pipeline_results` / `state_tracker_results` / `correlator_results` are
-//   the "three-map write sequence" `execute_pipeline` (`commands/pipeline.rs`)
-//   writes together as one logical unit per run — a poison mid-sequence
-//   means those three are momentarily mutually inconsistent for this
-//   session; `stream_tracker_state` is mutated in place by the ADB
-//   extract-process-reinsert pattern (see `AppState::stream_epochs` docs) and
-//   carries the same risk.
-// - Pure gate/registry locks with no cross-field invariants (`processors`,
-//   `mcp_open_allowlist`, `mcp_anonymize`, `anonymizer_config`,
-//   `mcp_anonymizers`, `bookmarks`, `analyses`, `active_watches`) recover via
-//   `PoisonError::into_inner` directly at their call sites — each guards a
-//   flat, independently-keyed map or a single wholesale-replaced config
-//   value, so a panicking writer cannot leave a torn invariant behind and
-//   serving the recovered data is safe. This mirrors the `run_lock`
-//   precedent in `commands/pipeline.rs::execute_pipeline`.
 
-/// Acquire `$mutex`, returning a bridge-contract `{"error": ...}` JSON body
-/// early on poison instead of unwinding the whole request/thread. Only valid
-/// inside a handler whose return type is exactly `Json<Value>` — see
-/// [`lock_or_err_response!`] for the two `Response`-returning handlers
-/// (`h_open_file`, `h_close_session`).
-macro_rules! lock_or_json_err {
-    ($mutex:expr, $name:expr) => {
-        match $mutex.lock() {
-            Ok(guard) => guard,
-            Err(_) => return Json(json!({ "error": format!("{} lock poisoned", $name) })),
-        }
-    };
+/// Render a [`ServiceError`] as its real HTTP status plus the [`WireError`]
+/// envelope.
+///
+/// This is the single choke point for every failure the bridge can produce, so
+/// a handler declares `Result<Json<T>, ServiceError>` and then just uses `?`.
+/// Notable mappings (all from [`ServiceError::http_status`], nothing
+/// bridge-specific):
+///
+/// | variant | status | code |
+/// |---|---|---|
+/// | `NotFound` | 404 | `NOT_FOUND` |
+/// | `InvalidArg` | 400 | `INVALID_ARGUMENT` / `INVALID_PATH` / … |
+/// | `Forbidden` | 403 | `NOT_ALLOWED` |
+/// | `Conflict` | 409 | `CONFLICT` |
+/// | `Cancelled` | 499 | `CANCELLED` |
+/// | `LockPoisoned` | 500 | `LOCK_POISONED` |
+/// | `Internal` | 500 | `INTERNAL` |
+///
+/// The open-file gate's anti-probing contract rides on this being a pure
+/// function of the error: a denied path and a nonexistent one both produce
+/// `ServiceError::not_allowed("path is not allowed")`, so their responses are
+/// byte-identical here without the handler having to arrange it.
+impl IntoResponse for ServiceError {
+    fn into_response(self) -> Response {
+        let status =
+            StatusCode::from_u16(self.http_status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        (status, Json(WireError::new(self.code(), self.message()))).into_response()
+    }
 }
-pub(super) use lock_or_json_err;
 
-/// Same as [`lock_or_json_err!`], but for handlers returning `Response`,
-/// using the bridge's structured `{ error, code }` shape via [`err`].
-macro_rules! lock_or_err_response {
-    ($mutex:expr, $name:expr) => {
-        match $mutex.lock() {
-            Ok(guard) => guard,
-            Err(_) => return crate::mcp_bridge::respond::err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("{} lock poisoned", $name),
-                "LOCK_POISONED",
-            ),
-        }
-    };
+// ---------------------------------------------------------------------------
+// Client identity
+// ---------------------------------------------------------------------------
+
+/// The self-reported MCP client name from `X-LogTapper-Client`, defaulting to
+/// `"mcp"`.
+///
+/// Passed to [`BridgeCtx::svc`](crate::mcp_bridge::BridgeCtx::svc) so the
+/// activity feed can tell agents apart. **Never trusted for authorization** —
+/// it is a label, and a caller can put anything in it. An empty header value is
+/// treated as absent so a misconfigured client does not produce blank-named
+/// journal entries.
+///
+/// One copy for the whole bridge: `routes/{lines,search,tracker,artifacts,
+/// pipeline,sessions}.rs` each grew their own during Waves 1–2 (four of them
+/// returning `&str`, one `String`, two of them without the empty-value guard).
+pub(super) fn client_name(headers: &HeaderMap) -> &str {
+    headers
+        .get("x-logtapper-client")
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| !v.is_empty())
+        .unwrap_or("mcp")
 }
-pub(super) use lock_or_err_response;
-
-// ---------------------------------------------------------------------------
-// Session lookup macros
-// ---------------------------------------------------------------------------
-
-/// Acquire the sessions lock, look up `$session_id`, bind `$sessions` (the lock
-/// guard), `$session` (the `&AnalysisSession`), and `$source` (the `&dyn LogSource`).
-/// Returns a JSON error response on lookup failure OR on a poisoned lock (see
-/// `lock_or_json_err!` above) — this is the chokepoint for every raw-line
-/// read in the bridge, so a torn `sessions` map must never be served silently.
-macro_rules! get_session_and_source {
-    ($state:expr, $session_id:expr => $sessions:ident, $session:ident, $source:ident) => {
-        let $sessions = crate::mcp_bridge::respond::lock_or_json_err!($state.sessions, "sessions");
-        let Some($session) = $sessions.get(&$session_id) else {
-            return Json(json!({ "error": format!("Session not found: {}", $session_id) }));
-        };
-        let Some($source) = $session.primary_source() else {
-            return Json(json!({ "error": format!("Session has no sources: {}", $session_id) }));
-        };
-    };
-}
-pub(super) use get_session_and_source;
-
-// ---------------------------------------------------------------------------
-// PII anonymization helpers — used by every raw-line handler
-// (h_query, h_search, h_lines_around, h_search_with_context).
-// ---------------------------------------------------------------------------
-
-// These moved to `services::policy` so the service layer owns the
-// fail-closed anonymization gate and both transports share one
-// implementation: `resolve_should_anonymize`, `anonymize_for_session`,
-// `anonymize_line_texts`, `anonymize_scan_line`, `truncate_str`. Their tests
-// moved with them. The `resolve_line_texts` / `anonymize_line_texts` split
-// described below is unchanged — only the second half now lives elsewhere.
-
-// ---------------------------------------------------------------------------
-// Chunked scan helpers — shared by h_query / h_search / h_search_with_context
-// ---------------------------------------------------------------------------
-//
-// These three raw-line scan handlers used to acquire `sessions` once and
-// hold it for the entire scan — unbounded for h_search / h_search_with_context,
-// and up to 100k lines for h_query. A rarely-matching filter/regex over a
-// multi-million-line bugreport ties up the global `sessions` lock for the
-// whole request, freezing `get_lines`, `flush_batch`, filter creation, and
-// the UI for as long as the scan runs.
-//
-// The fix mirrors `commands::files::search_logs` (`SEARCH_CHUNK_SIZE`): scan
-// in bounded windows, dropping and re-acquiring `sessions` between each one
-// so other lock holders always get a turn. A hard cap on total lines scanned
-// per request (`MCP_SCAN_LINE_CAP`) additionally bounds worst-case request
-// latency. When the cap — or a mid-scan session removal — stops the scan
-// before the full requested range was covered, handlers set `truncated: true`
-// and report `scannedLines` in the JSON response (both purely additive: every
-// existing field is unchanged) so callers know results may be incomplete.
-
-// The scan budget and the pure window math live in `services::lines` — the
-// service layer owns the shared limit now that every raw-line read goes
-// through it. Nothing in this module re-exports them any more: `routes/lines.rs`
-// and `routes/search.rs` both import from `services::lines` directly.
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -214,10 +178,6 @@ pub(super) fn parse_iso_to_unix_nanos(s: &str) -> Option<i64> {
     )
 }
 
-// `contains_ignore_case` moved to `services::lines` with the filtered-scan
-// path that was its only caller. Its tests moved with it — nothing in this
-// module references it any more, so there is no re-export to keep.
-
 /// Truncate large map vars: for any Value::Object with >20 keys where values
 /// are numeric, sort by value desc, keep top 20, add _truncated and _totalKeys.
 pub(super) fn truncate_var_maps(vars: &HashMap<String, Value>) -> serde_json::Map<String, Value> {
@@ -254,37 +214,6 @@ pub(super) fn truncate_var_maps(vars: &HashMap<String, Value>) -> serde_json::Ma
         .collect()
 }
 
-// `resolve_line_texts` lived here: a resolve-under-the-lock half that callers
-// had to pair with `policy::anonymize_line_texts` after dropping `sessions`.
-// WP-4 moved its last caller (`routes::pipeline`) onto
-// `services::pipeline::redacted_line_texts`, and WP-2 moved the last raw-line
-// routes (`search`, `search_with_context`) onto `services::search`, which
-// redacts through `policy::redact_line`. With no callers left it is deleted
-// rather than kept behind `#[allow(dead_code)]` — a two-phase helper that
-// nothing pairs correctly is a footgun, not an asset.
-
-/// Build a JSON error response with a stable machine-readable `code` for MCP
-/// clients. Shared by the write-style handlers (`h_open_file`,
-/// `h_close_session`) so every error body has the same `{ error, code }` shape.
-pub(super) fn err(status: StatusCode, message: impl Into<String>, code: &str) -> Response {
-    (status, Json(json!({ "error": message.into(), "code": code }))).into_response()
-}
-
-/// Serialize a section into the `{name, startLine, endLine, parentIndex?}`
-/// object shared by `h_sections` and `h_section_at`. `parentIndex` is omitted
-/// for top-level sections. Kept in one place so both endpoints stay byte-identical.
-pub(super) fn section_json(s: &crate::core::session::SectionInfo) -> Value {
-    let mut obj = json!({
-        "name": s.name,
-        "startLine": s.start_line,
-        "endLine": s.end_line,
-    });
-    if let Some(pi) = s.parent_index {
-        obj["parentIndex"] = json!(pi);
-    }
-    obj
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -292,7 +221,6 @@ pub(super) fn section_json(s: &crate::core::session::SectionInfo) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::AppState;
     use crate::processors::marketplace::resolve_processor_id_checked;
     // The scan-window math these tests exercise lives in `services::lines`;
     // this module no longer re-exports it (WP-2).
@@ -300,36 +228,52 @@ mod tests {
         MCP_SCAN_CHUNK_SIZE, MCP_SCAN_LINE_CAP, capped_range_end, scan_chunk_bounds,
         scan_window_capped,
     };
+    use axum::body::to_bytes;
 
     // NOTE: the `resolve_should_anonymize` / `anonymize_for_session` /
     // `anonymize_line_texts` / `anonymize_scan_line` tests moved to
     // `services::policy` along with the functions themselves. The gate is
     // still exercised — just from the module that now owns it.
 
-    // ── Lock poisoning: `lock_or_json_err!` vs. `into_inner` recovery ───────
-    // See the "Lock-poisoning helpers" module docs near the top of this file
-    // for the two-family policy. These tests poison a real AppState mutex
-    // from another thread (mirroring "some unrelated handler panicked while
-    // holding this lock") and assert the two recovery strategies behave as
-    // documented instead of propagating the poison as a panic.
+    // ── IntoResponse for ServiceError ───────────────────────────────────────
 
-    /// Exercises the exact `lock_or_json_err!` expansion a real handler uses
-    /// for `sessions` — a standalone `Json<Value>`-returning fn so the
-    /// macro's early `return` has a matching function to return from
-    /// (handlers themselves need a live Axum/Tauri `AppHandle` this test
-    /// suite otherwise avoids constructing).
-    fn poisoned_sessions_probe(state: &AppState) -> Json<Value> {
-        let sessions = lock_or_json_err!(state.sessions, "sessions");
-        Json(json!({ "sessionCount": sessions.len() }))
+    async fn rendered(e: ServiceError) -> (StatusCode, Value) {
+        let res = e.into_response();
+        let status = res.status();
+        let bytes = to_bytes(res.into_body(), usize::MAX).await.expect("collect body");
+        (status, serde_json::from_slice(&bytes).expect("JSON body"))
     }
 
-    #[test]
-    fn lock_or_json_err_returns_error_body_on_poison_instead_of_panicking() {
-        let state = std::sync::Arc::new(AppState::new());
+    #[tokio::test]
+    async fn every_variant_renders_its_real_status_and_the_nested_envelope() {
+        let cases = [
+            (ServiceError::session_not_found("s1"), 404, "NOT_FOUND"),
+            (ServiceError::invalid_arg("bad"), 400, "INVALID_ARGUMENT"),
+            (ServiceError::not_allowed("path is not allowed"), 403, "NOT_ALLOWED"),
+            (ServiceError::Conflict("busy".into()), 409, "CONFLICT"),
+            (ServiceError::Cancelled, 499, "CANCELLED"),
+            (ServiceError::LockPoisoned("sessions"), 500, "LOCK_POISONED"),
+            (ServiceError::Internal("boom".into()), 500, "INTERNAL"),
+        ];
+        for (err, status, code) in cases {
+            let message = err.message();
+            let (got_status, body) = rendered(err).await;
+            assert_eq!(got_status.as_u16(), status, "{code}");
+            assert_eq!(body["error"]["code"], code);
+            assert_eq!(body["error"]["message"], message);
+            // The pre-WP-13 shape — a bare top-level `error` string at HTTP
+            // 200 — must be gone, or a client that only checks `body.error`
+            // would read an object where it expected text.
+            assert!(body["error"].is_object(), "{code}: error must be an object");
+        }
+    }
 
-        // Poison `sessions` from another thread — a panic anywhere while
-        // holding the lock (e.g. a bug in a session mutation) must not brick
-        // every later bridge request.
+    #[tokio::test]
+    async fn a_poisoned_lock_is_a_500_lock_poisoned_not_a_panic() {
+        // The release-note behaviour change: pre-WP-13 the bridge split its
+        // locks into "fail the request" and "recover via into_inner" families.
+        // Now every one of them is `services::lock_svc`, which fails closed.
+        let state = std::sync::Arc::new(crate::commands::AppState::new());
         let poisoner = std::sync::Arc::clone(&state);
         let joined = std::thread::spawn(move || {
             let _guard = poisoner.sessions.lock().expect("lock not yet poisoned");
@@ -339,38 +283,69 @@ mod tests {
         assert!(joined.is_err(), "poisoning thread should have panicked");
         assert!(state.sessions.is_poisoned());
 
-        // Must return the bridge's `{"error": ...}` contract, not panic.
-        let Json(body) = poisoned_sessions_probe(&state);
+        // `AnalysisSession` is not `Debug`, so the guard cannot go through
+        // `expect_err` — match the error out by hand instead.
+        let err = match crate::services::lock_svc(&state.sessions, "sessions") {
+            Ok(_) => panic!("a poisoned lock must fail closed"),
+            Err(e) => e,
+        };
+        let (status, body) = rendered(err).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body["error"]["code"], "LOCK_POISONED");
+        assert_eq!(body["error"]["message"], "sessions lock poisoned");
+    }
+
+    #[tokio::test]
+    async fn denied_and_nonexistent_open_paths_render_byte_identically() {
+        // `policy::authorize_open` collapses both into the same error value, so
+        // the rendering cannot leak the difference. Pinned here because the
+        // anti-probing contract now depends on `IntoResponse` being a pure
+        // function of the error rather than on each handler arranging it.
+        let denied = ServiceError::not_allowed("path is not allowed");
+        let missing = ServiceError::not_allowed("path is not allowed");
+        assert_eq!(rendered(denied).await, rendered(missing).await);
+    }
+
+    // ── client_name ─────────────────────────────────────────────────────────
+
+    fn headers_from(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        for (k, v) in pairs {
+            headers.insert(
+                axum::http::HeaderName::from_bytes(k.as_bytes()).unwrap(),
+                axum::http::HeaderValue::from_str(v).unwrap(),
+            );
+        }
+        headers
+    }
+
+    #[test]
+    fn client_name_defaults_to_mcp_when_header_absent() {
+        assert_eq!(client_name(&HeaderMap::new()), "mcp");
+    }
+
+    #[test]
+    fn client_name_reads_the_header_when_present() {
         assert_eq!(
-            body.get("error").and_then(Value::as_str),
-            Some("sessions lock poisoned"),
+            client_name(&headers_from(&[("x-logtapper-client", "claude-code")])),
+            "claude-code"
         );
     }
 
     #[test]
-    fn mcp_anonymize_recovers_via_into_inner_after_poison_instead_of_panicking() {
-        let state = std::sync::Arc::new(AppState::new());
-        // Seed a flag before poisoning so the recovered guard reflects the
-        // same value a caller would see if the poisoning writer's insert had
-        // completed — `into_inner` recovery must not lose or corrupt it.
-        state.mcp_anonymize.lock().expect("lock not yet poisoned").insert("sess-a".to_string(), false);
+    fn client_name_ignores_case_of_the_header_name() {
+        // HTTP header names are case-insensitive; axum's HeaderMap normalizes
+        // this, but pin it here since a header-name typo would silently fall
+        // back to "mcp" instead of failing loudly.
+        assert_eq!(
+            client_name(&headers_from(&[("X-LogTapper-Client", "claude-desktop")])),
+            "claude-desktop"
+        );
+    }
 
-        let poisoner = std::sync::Arc::clone(&state);
-        let joined = std::thread::spawn(move || {
-            let _guard = poisoner.mcp_anonymize.lock().expect("lock not yet poisoned");
-            panic!("simulated writer panic while holding mcp_anonymize");
-        })
-        .join();
-        assert!(joined.is_err(), "poisoning thread should have panicked");
-        assert!(state.mcp_anonymize.is_poisoned());
-
-        // `anonymize_for_session` locks `mcp_anonymize` via `into_inner`
-        // recovery (a pure per-session flag map, no cross-field invariant) —
-        // it must recover and see the flag set before the panic, not panic
-        // itself.
-        let raw = "contact user@example.com for access";
-        let out = crate::services::policy::anonymize_for_session(&state, "sess-a", raw);
-        assert_eq!(out, raw, "flag=false must still serve raw text after recovery");
+    #[test]
+    fn client_name_treats_an_empty_header_value_as_absent() {
+        assert_eq!(client_name(&headers_from(&[("x-logtapper-client", "")])), "mcp");
     }
 
     // ── max_line_chars ──────────────────────────────────────────────────────
@@ -563,15 +538,9 @@ mod tests {
     // ambiguity `run_pipeline` was already fixed to reject via
     // `resolve_processor_id_checked` (see processors/marketplace.rs). These
     // four call sites now route through the checked variant too and turn an
-    // `Err` into this file's `Json({"error": ...})` response shape instead of
-    // resolving unpredictably.
+    // `Err` into a `ServiceError::InvalidArg` (HTTP 400) instead of resolving
+    // unpredictably.
     //
-    // The handlers themselves take `State<BridgeCtx>`, which still carries a
-    // live `AppHandle<Wry>` (the `app` field) for the four call sites that have
-    // not moved to `ServiceCtx` yet — impractical to construct here, per this
-    // suite's established constraint (see `poisoned_sessions_probe` above).
-    // `router()` is split out so a later package can drive the whole table with
-    // `tower::ServiceExt::oneshot` once that field is gone.
     // `resolve_processor_id_checked`'s own ambiguous/unambiguous contract is
     // already covered by unit tests in processors/marketplace.rs. What these
     // tests cover is the seam actually reachable from this file: that calling
@@ -591,7 +560,7 @@ mod tests {
         let result = resolve_processor_id_checked(&procs, "wifi-state");
         assert!(
             result.is_err(),
-            "ambiguous bare id must surface as Err for the bridge handlers to map into a JSON error, not resolve silently"
+            "ambiguous bare id must surface as Err for the bridge handlers to map into a ServiceError, not resolve silently"
         );
         let msg = result.unwrap_err();
         assert!(
@@ -625,5 +594,4 @@ mod tests {
             Ok(Some("wifi-state@official".to_string()))
         );
     }
-
 }
