@@ -54,6 +54,8 @@ import type {
   FocusContextInput,
   NavRequest,
   NavRequestInput,
+  ThemeSummary,
+  UserTheme,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -825,4 +827,32 @@ export function getFocus(): Promise<FocusContext | null> {
  */
 export function requestNavigation(input: NavRequestInput): Promise<NavRequest> {
   return invoke('request_navigation', { input });
+}
+
+// ---------------------------------------------------------------------------
+// User theme storage (B2)
+// ---------------------------------------------------------------------------
+
+/** List every stored user theme (slug/name/base only — call `readTheme` for the full token map). */
+export function listThemes(): Promise<ThemeSummary[]> {
+  return invoke('list_themes');
+}
+
+/** Read one stored theme by slug. Rejects with a `NOT_FOUND`-style message for an unknown slug. */
+export function readTheme(slug: string): Promise<UserTheme> {
+  return invoke('read_theme', { slug });
+}
+
+/**
+ * Create or replace a stored theme. Ui-only on the backend — there is no
+ * corresponding write route over the MCP bridge; an agent's write is always
+ * refused.
+ */
+export function writeTheme(slug: string, theme: UserTheme): Promise<void> {
+  return invoke('write_theme', { slug, theme });
+}
+
+/** Delete a stored theme by slug. Ui-only on the backend, same as `writeTheme`. */
+export function deleteTheme(slug: string): Promise<void> {
+  return invoke('delete_theme', { slug });
 }

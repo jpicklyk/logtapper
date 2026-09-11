@@ -376,6 +376,13 @@ pub struct BridgeStatusInfo {
     /// How many processors are installed. (Pre-WP-13 this key held the count
     /// under the name `installedProcessors`; it is now spelled for what it is.)
     pub installed_processor_count: usize,
+    /// Whether an agent caller currently receives raw (un-anonymized) log
+    /// text — `services::settings::agent_raw_access`, the same flag
+    /// `GET /mcp/settings/agent_access` and the desktop UI's `McpStatus`
+    /// already expose. Folded into `GET /mcp/status` too (B2) so an agent's
+    /// very first orientation call already answers "am I seeing redacted
+    /// text?" without a second round trip.
+    pub agent_raw_access: bool,
 }
 
 /// One source inside a `GET /mcp/sessions` entry.
@@ -885,6 +892,22 @@ mod tests {
         assert_eq!(v["rawLine"], "raw");
         assert_eq!(v["fields"]["kind"], "anr");
         assert!(v.get("line_num").is_none(), "the snake_case quirk is gone");
+    }
+
+    // ── B2 — BridgeStatusInfo.agentRawAccess ────────────────────────────────
+
+    #[test]
+    fn bridge_status_info_carries_agent_raw_access_camel_case() {
+        let s = BridgeStatusInfo {
+            running: true,
+            port: 40404,
+            session_count: 0,
+            session_ids: vec![],
+            installed_processor_count: 0,
+            agent_raw_access: true,
+        };
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(v["agentRawAccess"], true);
     }
 
     #[test]

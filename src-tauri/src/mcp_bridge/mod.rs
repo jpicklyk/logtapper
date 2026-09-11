@@ -60,6 +60,7 @@ use routes::workspace::{
 };
 use routes::focus::{h_clear_focus, h_get_focus, h_set_focus};
 use routes::navigation::h_request_navigation;
+use routes::themes::{h_delete_theme, h_list_themes, h_read_theme, h_write_theme};
 
 pub const PORT: u16 = 40404;
 
@@ -253,6 +254,12 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("PUT", "/mcp/focus"),
     ("DELETE", "/mcp/focus"),
     ("POST", "/mcp/navigate"),
+    // B2 — user theme storage (services::themes). PUT/DELETE are Ui-only,
+    // always 403 NOT_ALLOWED for an agent.
+    ("GET", "/mcp/themes"),
+    ("GET", "/mcp/themes/{slug}"),
+    ("PUT", "/mcp/themes/{slug}"),
+    ("DELETE", "/mcp/themes/{slug}"),
 ];
 
 /// Build the bridge's `Router` without binding a socket.
@@ -339,6 +346,9 @@ pub fn router(ctx: BridgeCtx) -> Router {
         // B1 — shared focus context + agent navigation requests.
         .route("/mcp/focus", get(h_get_focus).put(h_set_focus).delete(h_clear_focus))
         .route("/mcp/navigate", post(h_request_navigation))
+        // B2 — user theme storage. PUT/DELETE are Ui-only (403 for an agent).
+        .route("/mcp/themes", get(h_list_themes))
+        .route("/mcp/themes/{slug}", get(h_read_theme).put(h_write_theme).delete(h_delete_theme))
         .layer(axum_middleware::from_fn_with_state(ctx.clone(), middleware::record_activity))
         // `require_local` is added AFTER `record_activity`, which in axum/tower
         // layering means it becomes the OUTERMOST layer and therefore runs
@@ -484,6 +494,10 @@ mod tests {
             "PUT /mcp/focus",
             "DELETE /mcp/focus",
             "POST /mcp/navigate",
+            "GET /mcp/themes",
+            "GET /mcp/themes/{slug}",
+            "PUT /mcp/themes/{slug}",
+            "DELETE /mcp/themes/{slug}",
         ];
 
         assert_eq!(rendered, expected, "ROUTES drifted from the pinned route table — update both this test and router() together");

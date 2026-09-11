@@ -44,12 +44,17 @@ pub(crate) async fn h_status(
 ) -> Result<Json<BridgeStatusInfo>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
     let status = sessions::bridge_status(&svc)?;
+    // B2: fold `agent_raw_access` into `GET /mcp/status` too, alongside the
+    // dedicated `GET /mcp/settings/agent_access` read — same flag
+    // (`services::settings::agent_raw_access`), no new decision.
+    let agent_raw_access = crate::services::settings::agent_raw_access(&svc)?;
     Ok(Json(BridgeStatusInfo {
         running: true,
         port: crate::mcp_bridge::PORT,
         session_count: status.session_ids.len(),
         session_ids: status.session_ids,
         installed_processor_count: status.installed_processor_count,
+        agent_raw_access,
     }))
 }
 
@@ -270,6 +275,16 @@ mod tests {
         assert_eq!(body.session_count, 1);
         assert_eq!(body.session_ids, vec!["s1".to_string()]);
         assert_eq!(body.installed_processor_count, 0);
+        assert!(!body.agent_raw_access, "agents must be anonymized by default");
+    }
+
+    #[tokio::test]
+    async fn h_status_reflects_agent_raw_access_once_the_setting_is_flipped() {
+        let (ctx, state, ..) = test_bridge_ctx();
+        *state.agent_raw_access.lock().unwrap() = true;
+
+        let Json(body) = h_status(State(ctx), no_headers()).await.expect("status");
+        assert!(body.agent_raw_access);
     }
 
     #[tokio::test]

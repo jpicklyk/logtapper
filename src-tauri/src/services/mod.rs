@@ -69,6 +69,7 @@ pub mod watches;
 pub mod workspace;
 pub mod focus;
 pub mod navigation;
+pub mod themes;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
