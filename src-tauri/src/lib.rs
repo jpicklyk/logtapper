@@ -601,6 +601,10 @@ pub fn run() {
             commands::mcp::save_mcp_bundle,
             commands::mcp::start_mcp_bridge,
             commands::mcp::stop_mcp_bridge,
+            // Shared focus context + agent navigation requests (B1)
+            commands::focus::set_focus,
+            commands::focus::get_focus,
+            commands::navigation::request_navigation,
         ])
         .build(tauri::generate_context!())
         .expect("error building tauri application")

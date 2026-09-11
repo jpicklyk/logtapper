@@ -91,6 +91,11 @@ import type {
   WatchMatchEvent,
   WorkspaceAutoSavedEvent,
   WorkspaceEntry,
+  FocusContext,
+  FocusContextInput,
+  LineRange,
+  NavRequest,
+  NavRequestInput,
 } from './generated';
 
 export type {
@@ -169,6 +174,11 @@ export type {
   WatchMatchEvent,
   WorkspaceAutoSavedEvent,
   WorkspaceEntry,
+  FocusContext,
+  FocusContextInput,
+  LineRange,
+  NavRequest,
+  NavRequestInput,
 };
 
 // ---------------------------------------------------------------------------

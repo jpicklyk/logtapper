@@ -135,12 +135,15 @@ async fn route_table_probe_every_route_resolves_through_the_live_router() {
     // Pinned alongside `mcp_bridge::route_table_matches_expected` (39 at the
     // time WP-T2 landed, 70 once every Wave-2 package had appended its routes,
     // 69 after WP-13 deleted the orphaned `tag-stats` route, 70 with
-    // `GET /mcp/settings/agent_access`) — a drift here
-    // means BOTH tests need updating, which is the point: it forces a route
-    // addition or removal to touch this file.
+    // `GET /mcp/settings/agent_access`, 74 with B1's `GET|PUT|DELETE
+    // /mcp/focus` + `POST /mcp/navigate`) — a drift here means BOTH tests need
+    // updating, which is the point: it forces a route addition or removal to
+    // touch this file. Other packages may bump this same number concurrently
+    // in sibling worktrees — resolve a merge conflict by summing every
+    // package's additions rather than picking one side.
     assert_eq!(
         routes.len(),
-        70,
+        74,
         "mcp_bridge::ROUTES count drifted — update this assertion alongside the route table"
     );
 
@@ -2683,5 +2686,199 @@ mod json_rejections {
 
         assert_eq!(status, StatusCode::BAD_REQUEST, "{resp}");
         assert_eq!(resp["error"]["code"], "INVALID_ARGUMENT");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// B1 — shared focus context + agent navigation requests
+// ---------------------------------------------------------------------------
+
+mod b1_focus_navigation {
+    use super::*;
+
+    fn with_session(state: &Arc<AppState>, id: &str) {
+        state
+            .sessions
+            .lock()
+            .unwrap()
+            .insert(id.to_string(), app_lib::services::testing::fixture_session(id, 5));
+    }
+
+    #[tokio::test]
+    async fn get_focus_starts_null() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, body) = get(&router, "/mcp/focus", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, Value::Null);
+    }
+
+    #[tokio::test]
+    async fn put_focus_sets_and_get_reads_it_back() {
+        let (router, state, _sink, _tmp) = app();
+        with_session(&state, "s1");
+
+        let (status, body) = send_json(
+            &router,
+            Method::PUT,
+            "/mcp/focus",
+            &trusted_headers(),
+            &json!({ "sessionId": "s1", "line": 42, "section": "boot", "selection": null, "note": "check this" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["sessionId"], "s1");
+        assert_eq!(body["line"], 42);
+        assert_eq!(body["note"], "check this");
+        assert_eq!(body["setBy"]["kind"], "agent");
+        assert!(body["ts"].as_u64().unwrap() > 0);
+
+        let (status, got) = get(&router, "/mcp/focus", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(got, body, "GET must read back exactly what PUT stored");
+    }
+
+    #[tokio::test]
+    async fn put_focus_unknown_session_yields_404() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, body) = send_json(
+            &router,
+            Method::PUT,
+            "/mcp/focus",
+            &trusted_headers(),
+            &json!({ "sessionId": "nosuch", "line": null, "section": null, "selection": null, "note": null }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(body["error"]["code"], "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn put_focus_missing_session_id_yields_400_envelope() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, body) =
+            send_json(&router, Method::PUT, "/mcp/focus", &trusted_headers(), &json!({})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["code"], "INVALID_ARGUMENT");
+    }
+
+    #[tokio::test]
+    async fn delete_focus_clears_it() {
+        let (router, state, _sink, _tmp) = app();
+        with_session(&state, "s1");
+
+        send_json(
+            &router,
+            Method::PUT,
+            "/mcp/focus",
+            &trusted_headers(),
+            &json!({ "sessionId": "s1", "line": null, "section": null, "selection": null, "note": null }),
+        )
+        .await;
+
+        let (status, body) =
+            send_json(&router, Method::DELETE, "/mcp/focus", &trusted_headers(), &json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["ok"], true);
+
+        let (status, got) = get(&router, "/mcp/focus", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(got, Value::Null);
+    }
+
+    #[tokio::test]
+    async fn put_focus_shows_up_in_the_activity_feed() {
+        let (router, state, _sink, _tmp) = app();
+        with_session(&state, "s1");
+        send_json(
+            &router,
+            Method::PUT,
+            "/mcp/focus",
+            &trusted_headers(),
+            &json!({ "sessionId": "s1", "line": 7, "section": null, "selection": null, "note": null }),
+        )
+        .await;
+
+        let (status, activity) = get(&router, "/mcp/activity", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        let entries = activity.as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["action"], "focus.set");
+        assert_eq!(entries[0]["sessionId"], "s1");
+        assert_eq!(entries[0]["caller"]["kind"], "agent");
+    }
+
+    #[tokio::test]
+    async fn post_navigate_creates_a_request() {
+        let (router, state, _sink, _tmp) = app();
+        with_session(&state, "s1");
+
+        let (status, body) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/navigate",
+            &trusted_headers(),
+            &json!({ "sessionId": "s1", "line": 101, "analysisId": null, "reason": "found the root cause" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["sessionId"], "s1");
+        assert_eq!(body["line"], 101);
+        assert_eq!(body["reason"], "found the root cause");
+        assert_eq!(body["requestedBy"]["kind"], "agent");
+        assert!(body["id"].as_u64().unwrap() >= 1);
+        assert!(body["ts"].as_u64().unwrap() > 0);
+    }
+
+    #[tokio::test]
+    async fn post_navigate_unknown_session_yields_404() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, body) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/navigate",
+            &trusted_headers(),
+            &json!({ "sessionId": "nosuch", "line": null, "analysisId": null, "reason": "x" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(body["error"]["code"], "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn post_navigate_missing_reason_yields_400_envelope() {
+        let (router, state, _sink, _tmp) = app();
+        with_session(&state, "s1");
+        let (status, body) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/navigate",
+            &trusted_headers(),
+            &json!({ "sessionId": "s1", "line": null, "analysisId": null }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["code"], "INVALID_ARGUMENT");
+    }
+
+    #[tokio::test]
+    async fn post_navigate_shows_up_in_the_activity_feed() {
+        let (router, state, _sink, _tmp) = app();
+        with_session(&state, "s1");
+        send_json(
+            &router,
+            Method::POST,
+            "/mcp/navigate",
+            &trusted_headers(),
+            &json!({ "sessionId": "s1", "line": 5, "analysisId": null, "reason": "look here" }),
+        )
+        .await;
+
+        let (status, activity) = get(&router, "/mcp/activity", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        let entries = activity.as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["action"], "nav.request");
+        assert_eq!(entries[0]["sessionId"], "s1");
+        assert!(entries[0]["summary"].as_str().unwrap().contains("look here"));
     }
 }

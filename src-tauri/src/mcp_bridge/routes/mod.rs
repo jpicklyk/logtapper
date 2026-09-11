@@ -22,3 +22,7 @@ pub(super) mod settings;
 pub(super) mod stream;
 pub(super) mod timeline;
 pub(super) mod workspace;
+
+// B1 — shared focus context + agent navigation requests.
+pub(super) mod focus;
+pub(super) mod navigation;

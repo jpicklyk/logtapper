@@ -50,6 +50,10 @@ import type {
   AppStateFile,
   RestoreSessionOptions,
   ActivityEntry,
+  FocusContext,
+  FocusContextInput,
+  NavRequest,
+  NavRequestInput,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -791,4 +795,34 @@ export function openMcpBundle(): Promise<void> {
 /** Copy the bundled `.mcpb` to `dest` — the fallback when Claude Desktop is absent. */
 export function saveMcpBundle(dest: string): Promise<void> {
   return invoke('save_mcp_bundle', { dest });
+}
+
+// ---------------------------------------------------------------------------
+// Shared focus context + agent navigation requests (B1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Set (non-`null` input) or clear (`null`) the shared focus context — an
+ * explicit "ask about this" handoff between the UI and an agent, distinct
+ * from `setFocusedSession` (which pane's session the UI has open). Returns
+ * the stamped context that was stored, or `null` when clearing. `setBy`/`ts`
+ * are always stamped by the backend, never taken from `input`.
+ */
+export function setFocus(input: FocusContextInput | null): Promise<FocusContext | null> {
+  return invoke('set_focus', { input });
+}
+
+/** Read the current focus context, or `null` when nothing is focused. */
+export function getFocus(): Promise<FocusContext | null> {
+  return invoke('get_focus');
+}
+
+/**
+ * Exercise the identical path an agent's `POST /mcp/navigate` uses: validates
+ * the session, journals `nav.request`, and emits `navigate-request`. Never
+ * applies the jump itself — the UI decides whether to apply it immediately or
+ * hold it for confirmation.
+ */
+export function requestNavigation(input: NavRequestInput): Promise<NavRequest> {
+  return invoke('request_navigation', { input });
 }
