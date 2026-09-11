@@ -7,6 +7,7 @@ import { createCacheBinding, OVERSCAN } from './cacheBinding';
 import { createVirtualBase, DEFAULT_ROW_HEIGHT } from './virtualBase';
 import { ScrollControls } from './scrollControls';
 import { SelectionManager } from './selection';
+import { installBench } from '@bench';
 import { Row } from './Row';
 import styles from './LogViewer.module.css';
 
@@ -136,6 +137,21 @@ export function LogViewer(props: LogViewerProps) {
       window.addEventListener('resize', measure);
       onCleanup(() => window.removeEventListener('resize', measure));
     }
+  });
+
+  // ── Benchmark harness (?bench=1) ─────────────────────────────────────────
+  // Same module the React viewer installs. Tracks `cacheVersion`, which bumps
+  // when the first LinePage resolves. See src-next/bench/harness.ts.
+  createEffect(() => {
+    if (!location.search.includes('bench=1')) return;
+    const bench = installBench({
+      label: 'solid',
+      getScrollEl: () => container ?? null,
+      getTotalLines: () => scrollCtl.liveTotalLines(),
+      rowHeight: () => rowHeight(),
+      isReady: () => container?.querySelector('[data-line]') != null,
+    });
+    if (binding.cacheVersion() > 0) bench.markLinePage();
   });
 
   // ── Clear selection + cursor when the data source changes ────────────────

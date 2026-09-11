@@ -51,4 +51,4 @@ mcp-server/dist/logtapper.mcpb
 src-tauri/target-it/
 
 # Bench fixtures (generated; can be gigabytes) — scripts/gen-logcat.mjs writes here
-bench/
+/bench/

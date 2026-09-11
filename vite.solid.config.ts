@@ -1,9 +1,8 @@
 import { defineConfig } from "vite";
 import solid from "vite-plugin-solid";
-import { fileURLToPath } from "node:url";
+import { solidAliases } from "./solid.aliases";
 
 const host = process.env.TAURI_DEV_HOST;
-const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
 // Parallel Solid frontend. Disjoint root from vite.config.ts so
 // @vitejs/plugin-react and vite-plugin-solid never see the same .tsx.
@@ -13,14 +12,8 @@ export default defineConfig({
   resolve: {
     // Two entry points (app + tests) must share one solid-js instance.
     dedupe: ["solid-js"],
-    alias: {
-      "@bridge": r("./src-next/bridge"),
-      "@viewport": r("./src-next/viewport"),
-      "@cache": r("./src-next/cache"),
-      "@events": r("./src-next/events"),
-      "@filter": r("./src-next/filter"),
-      "@bench": r("./src-next/bench"),
-    },
+    // Single source of truth, shared with vitest.solid.config.ts.
+    alias: solidAliases,
   },
   // Not inherited from the root config — a custom `root` gets its own.
   clearScreen: false,
