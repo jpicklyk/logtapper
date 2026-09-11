@@ -143,6 +143,9 @@ macro_rules! ROOT_TYPES {
             app_lib::workspace::lts::LtsEditorTab,
             // --- sessions (WP-6) -----------------------------------------------
             app_lib::services::sessions::SessionClosedEvent,
+            // --- ADB stream service (WP-11) -------------------------------------
+            app_lib::services::stream::StartStreamRequest,
+            app_lib::services::stream::StreamStatus,
         ]
     };
 }

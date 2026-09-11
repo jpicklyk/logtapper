@@ -257,7 +257,8 @@ async fn route_table_probe_every_route_resolves_through_the_live_router() {
     let routes = mcp_bridge::ROUTES;
 
     // Pinned alongside `mcp_bridge::route_table_matches_expected` (39 at the
-    // time WP-T2 landed, 47 after WP-12 (+3 settings) and WP-7 (+5 filters) appended) — a
+    // time WP-T2 landed, 47 after WP-12 (+3 settings) and WP-7 (+5 filters),
+    // 53 after WP-11 (+6 stream) appended) — a
     // drift here means BOTH tests need updating, which is the point: it
     // forces a route addition/removal to touch this file. Other Wave-2
     // packages append their own routes concurrently in sibling worktrees, so
@@ -266,7 +267,7 @@ async fn route_table_probe_every_route_resolves_through_the_live_router() {
     // not by picking one side.
     assert_eq!(
         routes.len(),
-        47,
+        53,
         "mcp_bridge::ROUTES count drifted — update this assertion alongside the route table"
     );
 
@@ -937,6 +938,206 @@ mod wp7_filters {
         let lines = body["lines"].as_array().unwrap();
         assert!(
             lines.iter().any(|l| l["raw"].as_str().unwrap().contains('@')),
+            "mcp_anonymize=false must serve raw text"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 7. WP-11 — ADB stream endpoints
+// ---------------------------------------------------------------------------
+//
+// `harness::app()` wires a `NullSpawner`, so `POST /mcp/adb/stream` would
+// never actually run a capture task here even if a device were attached — and
+// `adb` itself may or may not be on PATH on the machine running these. These
+// tests therefore cover what the HTTP surface owes regardless of the
+// environment: the device route answers with a typed body rather than
+// panicking, unknown sessions produce the `{error, code}` envelope, and the
+// event feed applies the fail-closed redaction gate. The capture loop, the
+// epoch guard and the ring semantics are covered directly by
+// `services::stream`'s own unit tests.
+mod wp11_stream {
+    use super::*;
+
+    use app_lib::services::events::{RingSink, Sink};
+    use app_lib::services::stream::{AdbBatch, AdbStreamEvent};
+
+    fn pii_batch(session_id: &str) -> AdbStreamEvent {
+        AdbStreamEvent::Batch(AdbBatch {
+            session_id: session_id.to_string(),
+            lines: vec![app_lib::core::line::ViewLine {
+                line_num: 0,
+                virtual_index: 0,
+                raw: "I/Test: contact user0@example.com for access".to_string(),
+                level: app_lib::core::line::LogLevel::Info,
+                tag: "Test".to_string(),
+                message: "contact user0@example.com for access".to_string(),
+                timestamp: 0,
+                pid: 0,
+                tid: 0,
+                source_id: "src".to_string(),
+                highlights: vec![],
+                matched_by: vec![],
+                is_context: false,
+            }],
+            total_lines: 1,
+            byte_count: 0,
+            first_timestamp: None,
+            last_timestamp: None,
+            lost_line_count: 0,
+        })
+    }
+
+    /// The device route must answer with a typed body either way: a `devices`
+    /// array when `adb` is present, or the `{error, code}` envelope when it is
+    /// not. What it must never do is panic or surface a 500.
+    #[tokio::test]
+    async fn devices_route_answers_with_a_typed_body_whether_or_not_adb_exists() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, body) = get(&router, "/mcp/adb/devices", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        if body.get("devices").is_some() {
+            assert!(body["devices"].is_array(), "devices must be an array: {body}");
+        } else {
+            assert!(body["error"].is_string(), "expected a typed error body: {body}");
+            assert!(body["code"].is_string(), "a typed error must carry a code: {body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn status_for_an_unknown_session_is_a_typed_error_body() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, body) =
+            get(&router, "/mcp/sessions/nosuch/stream/status", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["code"], "NOT_FOUND");
+        assert_eq!(body["error"], "Session 'nosuch' not found");
+    }
+
+    #[tokio::test]
+    async fn events_for_a_session_with_no_ring_is_a_typed_error_body() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, body) =
+            get(&router, "/mcp/sessions/nosuch/stream/events", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["code"], "NOT_FOUND");
+        assert!(
+            body["error"].as_str().unwrap().contains("No event stream registered"),
+            "{body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn stopping_a_stream_that_was_never_started_still_answers() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, body) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/sessions/nosuch/stream/stop",
+            &trusted_headers(),
+            &json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        // No task, no state — the clear is a no-op, so this is a success.
+        assert_eq!(body["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn save_to_a_destination_outside_the_allowlist_is_refused() {
+        let (router, state, _sink, _tmp) = app();
+        state
+            .sessions
+            .lock()
+            .unwrap()
+            .insert("s1".to_string(), fixture_session_with_pii("s1", 2));
+        let dest = std::env::temp_dir().join("wp11-should-not-be-written.log");
+        let (status, body) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/sessions/s1/stream/save",
+            &trusted_headers(),
+            &json!({ "destPath": dest.to_string_lossy() }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["code"], "NOT_ALLOWED", "{body}");
+        assert!(!dest.exists(), "a refused save must not create the file");
+    }
+
+    /// Fail-closed: the session has no `mcp_anonymize` entry, so an agent
+    /// draining the ring must not see the PII the ring actually holds.
+    #[tokio::test]
+    async fn events_are_redacted_when_mcp_anonymize_is_absent_for_the_session() {
+        let (router, state, _sink, _tmp) = app();
+        state
+            .sessions
+            .lock()
+            .unwrap()
+            .insert("s1".to_string(), fixture_session_with_pii("s1", 1));
+        // Deliberately NOT setting `mcp_anonymize` for "s1".
+
+        let ring: Arc<RingSink<AdbStreamEvent>> = Arc::new(RingSink::new(2000));
+        ring.send(pii_batch("s1"));
+        state
+            .stream_rings
+            .lock()
+            .unwrap()
+            .insert("s1".to_string(), Arc::clone(&ring));
+
+        let (status, body) =
+            get(&router, "/mcp/sessions/s1/stream/events", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["sessionId"], "s1");
+        assert_eq!(body["latestSeq"], 1);
+        assert_eq!(body["nextSince"], 1);
+        assert_eq!(body["gap"], false);
+
+        let events = body["events"].as_array().expect("events must be an array");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["seq"], 1);
+        assert_eq!(events[0]["item"]["event"], "batch");
+        let raw = events[0]["item"]["data"]["lines"][0]["raw"].as_str().unwrap();
+        assert!(
+            !raw.contains("user0@example.com") && !raw.contains('@'),
+            "an agent must not see raw PII when mcp_anonymize is unset: {raw}"
+        );
+
+        // A cursor at the head returns nothing new.
+        let (_status, body) = get(
+            &router,
+            "/mcp/sessions/s1/stream/events?since=1",
+            &trusted_headers(),
+        )
+        .await;
+        assert!(body["events"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn events_stay_raw_when_mcp_anonymize_is_explicitly_false() {
+        let (router, state, _sink, _tmp) = app();
+        state
+            .sessions
+            .lock()
+            .unwrap()
+            .insert("s1".to_string(), fixture_session_with_pii("s1", 1));
+        state.mcp_anonymize.lock().unwrap().insert("s1".to_string(), false);
+
+        let ring: Arc<RingSink<AdbStreamEvent>> = Arc::new(RingSink::new(2000));
+        ring.send(pii_batch("s1"));
+        state
+            .stream_rings
+            .lock()
+            .unwrap()
+            .insert("s1".to_string(), Arc::clone(&ring));
+
+        let (_status, body) =
+            get(&router, "/mcp/sessions/s1/stream/events", &trusted_headers()).await;
+        let raw = body["events"][0]["item"]["data"]["lines"][0]["raw"]
+            .as_str()
+            .unwrap();
+        assert!(
+            raw.contains("user0@example.com"),
             "mcp_anonymize=false must serve raw text"
         );
     }

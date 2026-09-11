@@ -112,6 +112,17 @@ pub struct AppState {
     /// without holding any lock across batch processing. Lock order is always
     /// `stream_epochs` (outer) → the specific stream-state map (inner).
     pub stream_epochs: Mutex<HashMap<String, u64>>,
+    /// Per-session agent-facing ring buffer of ADB stream events.
+    ///
+    /// An agent has no persistent socket, so a stream it starts over the MCP
+    /// bridge buffers into one of these (cap
+    /// `services::stream::AGENT_RING_CAPACITY`) and is drained with a `?since=`
+    /// cursor by `GET /mcp/sessions/{id}/stream/events`. A UI-started stream
+    /// has no entry here at all — it delivers straight down a Tauri IPC
+    /// `Channel`. Registered by `services::stream::register_ring`, which also
+    /// prunes entries whose session is gone.
+    pub stream_rings:
+        Mutex<HashMap<String, Arc<crate::services::events::RingSink<crate::services::stream::AdbStreamEvent>>>>,
     /// Per-run pipeline cancellation tokens, keyed by a monotonic run id drawn
     /// from `pipeline_run_seq`. Each `execute_pipeline` invocation registers its
     /// own token (via `register_pipeline_run`) and removes it on completion, so
@@ -254,6 +265,7 @@ impl AppState {
             stream_tracker_state: Mutex::new(HashMap::new()),
             stream_transformer_state: Mutex::new(HashMap::new()),
             stream_epochs: Mutex::new(HashMap::new()),
+            stream_rings: Mutex::new(HashMap::new()),
             correlator_results: Mutex::new(HashMap::new()),
             pipeline_cancels: Mutex::new(HashMap::new()),
             pipeline_run_seq: AtomicU64::new(0),
