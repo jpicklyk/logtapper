@@ -318,7 +318,7 @@ const AgentRawAccessRow = memo(function AgentRawAccessRow() {
         <div className={css.label}>
           <span className={css.labelText}>Show agents the real values behind anonymized PII tokens</span>
           <span className={css.labelHint}>
-            Off by default: agents always receive full log lines, with detected PII replaced by stable tokens such as <EMAIL-1>.
+            Off by default: agents always receive full log lines, with detected PII replaced by stable tokens such as {'<EMAIL-1>'}.
           </span>
         </div>
         <div className={css.control}>
