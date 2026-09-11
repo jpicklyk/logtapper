@@ -2533,3 +2533,155 @@ mod wp14_status_code_matrix {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// 15. JSON/query rejection envelope
+// ---------------------------------------------------------------------------
+//
+// `axum::Json<T>`/`axum::extract::Query<T>` answer a bad request with their
+// OWN rejection body — plain text, no relation to `ServiceError`/`WireError`
+// — before the handler ever runs. `POST /mcp/export` with a missing
+// `destPath` used to surface axum's raw `422 text/plain "Failed to
+// deserialize the JSON body into the target type: missing field
+// `destPath`…"` instead of the bridge's `{ "error": { "code", "message" } }`
+// envelope every other failure renders. `mcp_bridge::respond::{JsonBody,
+// Qs}` (drop-in replacements for `Json`/`Query` as *parameter* extractors,
+// used by every route in this file) fix that by converting the rejection
+// into `ServiceError::invalid_arg`, which flows through the bridge's normal
+// `IntoResponse for ServiceError`. See that module for the full contract,
+// including why a wrong-content-type rejection (axum's own 415) is
+// deliberately normalized to 400 here rather than preserved as 415.
+mod json_rejections {
+    use super::*;
+    use axum::Router;
+
+    /// Send a request with an explicit (or absent) `content-type` and raw
+    /// body bytes, bypassing `send_json`'s always-valid-JSON serialization —
+    /// needed here to construct a syntactically invalid body and a
+    /// mismatched content-type, neither of which `send_json` can produce.
+    async fn send_raw(
+        router: &Router,
+        method: Method,
+        path: &str,
+        headers: &[(&str, &str)],
+        content_type: Option<&str>,
+        body: &[u8],
+    ) -> (StatusCode, Value) {
+        let mut builder = Request::builder().method(method).uri(path);
+        if let Some(ct) = content_type {
+            builder = builder.header("content-type", ct);
+        }
+        for (k, v) in headers {
+            builder = builder.header(*k, *v);
+        }
+        let req = builder.body(Body::from(body.to_vec())).expect("build request");
+        let res = router.clone().oneshot(req).await.expect("router must not error");
+        let status = res.status();
+        let bytes = res
+            .into_body()
+            .collect()
+            .await
+            .expect("collect response body")
+            .to_bytes()
+            .to_vec();
+        let value = if bytes.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null)
+        };
+        (status, value)
+    }
+
+    /// A body missing a required field renders the bridge's envelope at
+    /// `400 INVALID_ARGUMENT`, with the missing field's name inside
+    /// `message` — not axum's bare `422 text/plain "Failed to deserialize
+    /// the JSON body into the target type: missing field ..."`.
+    #[tokio::test]
+    async fn missing_required_field_yields_400_invalid_argument_envelope() {
+        let (router, _state, _sink, _tmp) = app();
+        let body = json!({
+            // `destPath` deliberately omitted — the field under test.
+            "includeBookmarks": false,
+            "includeAnalyses": false,
+            "includeProcessors": false,
+            "editorTabs": [],
+        });
+        let (status, resp) =
+            send_json(&router, Method::POST, "/mcp/export", &trusted_headers(), &body).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{resp}");
+        assert_eq!(resp["error"]["code"], "INVALID_ARGUMENT");
+        let message = resp["error"]["message"].as_str().expect("message is a string");
+        assert!(
+            message.contains("destPath"),
+            "message should name the missing field so an MCP client can fix its call: {message}"
+        );
+    }
+
+    /// Syntactically invalid JSON (not merely a schema mismatch) renders the
+    /// same envelope at 400.
+    #[tokio::test]
+    async fn malformed_json_syntax_yields_400_invalid_argument_envelope() {
+        let (router, _state, _sink, _tmp) = app();
+
+        let (status, resp) = send_raw(
+            &router,
+            Method::POST,
+            "/mcp/export",
+            &trusted_headers(),
+            Some("application/json"),
+            b"{ this is not valid json",
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{resp}");
+        assert_eq!(resp["error"]["code"], "INVALID_ARGUMENT");
+    }
+
+    /// A request whose `content-type` is not `application/json` is rejected
+    /// through the same envelope at 400. Documented deliberately: axum's own
+    /// default for this specific rejection (`MissingJsonContentType`) is
+    /// `415 Unsupported Media Type`, but `ServiceError` has no 415 variant
+    /// and every other "the caller sent something bad" bridge failure is
+    /// 400 `INVALID_ARGUMENT` — `JsonBody<T>` normalizes to 400 rather than
+    /// add a one-off status just for this case. See `mcp_bridge/respond.rs`.
+    #[tokio::test]
+    async fn wrong_content_type_yields_400_invalid_argument_envelope() {
+        let (router, _state, _sink, _tmp) = app();
+        let body = serde_json::to_vec(&json!({
+            "destPath": "C:\\nope\\out.lts",
+            "includeBookmarks": false,
+            "includeAnalyses": false,
+            "includeProcessors": false,
+            "editorTabs": [],
+        }))
+        .unwrap();
+
+        let (status, resp) = send_raw(
+            &router,
+            Method::POST,
+            "/mcp/export",
+            &trusted_headers(),
+            Some("text/plain"),
+            &body,
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{resp}");
+        assert_eq!(resp["error"]["code"], "INVALID_ARGUMENT");
+    }
+
+    /// A bad query-parameter type (`limit=abc` against a `usize` field) on a
+    /// GET route renders the envelope too — proves `Qs<T>` covers
+    /// `Query<T>` rejections the same way `JsonBody<T>` covers `Json<T>`
+    /// ones, not just on the body side.
+    #[tokio::test]
+    async fn bad_query_param_type_yields_400_invalid_argument_envelope() {
+        let (router, _state, _sink, _tmp) = app();
+
+        let (status, resp) = get(&router, "/mcp/activity?limit=abc", &trusted_headers()).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{resp}");
+        assert_eq!(resp["error"]["code"], "INVALID_ARGUMENT");
+    }
+}

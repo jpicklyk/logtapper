@@ -31,7 +31,7 @@
 
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::HeaderMap,
 };
 use serde::Deserialize;
@@ -39,7 +39,7 @@ use serde::Deserialize;
 use crate::core::analysis::AnalysisArtifact;
 use crate::core::bookmark::Bookmark;
 use crate::mcp_bridge::BridgeCtx;
-use crate::mcp_bridge::respond::client_name;
+use crate::mcp_bridge::respond::{JsonBody, Qs, client_name};
 use crate::services::ServiceError;
 use crate::services::{analyses, bookmarks};
 use crate::services::wire::Ack;
@@ -57,7 +57,7 @@ pub(crate) struct BookmarkListQuery {
 pub(crate) async fn h_list_bookmarks(
     State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
-    Query(query): Query<BookmarkListQuery>,
+    Qs(query): Qs<BookmarkListQuery>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<Bookmark>>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
@@ -87,7 +87,7 @@ pub(crate) async fn h_create_bookmark(
     State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     headers: HeaderMap,
-    Json(body): Json<CreateBookmarkBody>,
+    JsonBody(body): JsonBody<CreateBookmarkBody>,
 ) -> Result<Json<Bookmark>, ServiceError> {
     use crate::core::bookmark::CreatedBy;
 
@@ -129,7 +129,7 @@ pub(crate) async fn h_update_bookmark(
     State(ctx): State<BridgeCtx>,
     Path((session_id, bookmark_id)): Path<(String, String)>,
     headers: HeaderMap,
-    Json(body): Json<UpdateBookmarkBody>,
+    JsonBody(body): JsonBody<UpdateBookmarkBody>,
 ) -> Result<Json<Bookmark>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
     Ok(Json(bookmarks::update(
@@ -181,7 +181,7 @@ pub(crate) struct PublishAnalysisBody {
 pub(crate) async fn h_publish_workspace_analysis(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
-    Json(body): Json<PublishAnalysisBody>,
+    JsonBody(body): JsonBody<PublishAnalysisBody>,
 ) -> Result<Json<AnalysisArtifact>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
     Ok(Json(analyses::publish(&svc, None, body.title, body.sections)?))
@@ -194,7 +194,7 @@ pub(crate) async fn h_publish_analysis(
     State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     headers: HeaderMap,
-    Json(body): Json<PublishAnalysisBody>,
+    JsonBody(body): JsonBody<PublishAnalysisBody>,
 ) -> Result<Json<AnalysisArtifact>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
     Ok(Json(analyses::publish(
@@ -266,7 +266,7 @@ pub(crate) async fn h_update_analysis(
     State(ctx): State<BridgeCtx>,
     Path(artifact_id): Path<String>,
     headers: HeaderMap,
-    Json(body): Json<UpdateAnalysisBody>,
+    JsonBody(body): JsonBody<UpdateAnalysisBody>,
 ) -> Result<Json<AnalysisArtifact>, ServiceError> {
     do_update_analysis(&ctx, client_name(&headers), artifact_id, body, None)
 }
@@ -281,7 +281,7 @@ pub(crate) async fn h_update_analysis_scoped(
     State(ctx): State<BridgeCtx>,
     Path((session_id, artifact_id)): Path<(String, String)>,
     headers: HeaderMap,
-    Json(body): Json<UpdateAnalysisBody>,
+    JsonBody(body): JsonBody<UpdateAnalysisBody>,
 ) -> Result<Json<AnalysisArtifact>, ServiceError> {
     do_update_analysis(&ctx, client_name(&headers), artifact_id, body, Some(session_id))
 }

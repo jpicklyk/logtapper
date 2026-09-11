@@ -26,7 +26,7 @@ use axum::{
 use serde::Deserialize;
 
 use crate::mcp_bridge::BridgeCtx;
-use crate::mcp_bridge::respond::client_name;
+use crate::mcp_bridge::respond::{JsonBody, client_name};
 use crate::services::ServiceError;
 use crate::services::sessions;
 use crate::services::wire::{
@@ -85,7 +85,7 @@ pub(crate) struct OpenFileBody {
 pub(crate) async fn h_open_file(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
-    Json(body): Json<OpenFileBody>,
+    JsonBody(body): JsonBody<OpenFileBody>,
 ) -> Result<Json<OpenedSession>, ServiceError> {
     // Validate the override before opening. An unknown label is a client
     // error, not something to silently ignore — falling back to detection
@@ -354,7 +354,7 @@ mod tests {
         let err = h_open_file(
             State(ctx),
             no_headers(),
-            Json(OpenFileBody { path: f.to_string_lossy().to_string(), source_type: None }),
+            JsonBody(OpenFileBody { path: f.to_string_lossy().to_string(), source_type: None }),
         )
         .await
         .expect_err("outside the allowlist must be refused");
@@ -379,7 +379,7 @@ mod tests {
         let Json(opened) = h_open_file(
             State(ctx),
             no_headers(),
-            Json(OpenFileBody { path: f.to_string_lossy().to_string(), source_type: None }),
+            JsonBody(OpenFileBody { path: f.to_string_lossy().to_string(), source_type: None }),
         )
         .await
         .expect("an allowed, existing file opens");
@@ -394,7 +394,7 @@ mod tests {
         let err = h_open_file(
             State(ctx),
             no_headers(),
-            Json(OpenFileBody {
+            JsonBody(OpenFileBody {
                 path: "C:\\x.log".to_string(),
                 source_type: Some("not-a-real-type".to_string()),
             }),

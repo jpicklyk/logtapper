@@ -29,13 +29,13 @@
 
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::HeaderMap,
 };
 use serde::Deserialize;
 
 use crate::mcp_bridge::BridgeCtx;
-use crate::mcp_bridge::respond::client_name;
+use crate::mcp_bridge::respond::{JsonBody, Qs, client_name};
 use crate::services::ServiceError;
 use crate::services::stream::{self, AdbStreamEvent, StartStreamRequest, StreamStatus};
 use crate::services::wire::{
@@ -68,7 +68,7 @@ pub(crate) async fn h_adb_devices(
 pub(crate) async fn h_start_stream(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
-    Json(req): Json<StartStreamRequest>,
+    JsonBody(req): JsonBody<StartStreamRequest>,
 ) -> Result<Json<StreamStarted>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
 
@@ -121,7 +121,7 @@ pub(crate) struct StreamEventsParams {
 pub(crate) async fn h_stream_events(
     State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
-    Query(params): Query<StreamEventsParams>,
+    Qs(params): Qs<StreamEventsParams>,
     headers: HeaderMap,
 ) -> Result<Json<StreamEventsPage>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
@@ -175,7 +175,7 @@ pub(crate) async fn h_save_stream(
     State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     headers: HeaderMap,
-    Json(body): Json<SaveStreamBody>,
+    JsonBody(body): JsonBody<SaveStreamBody>,
 ) -> Result<Json<StreamSaved>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
     let lines_written = stream::save_live_capture(&svc, &session_id, &body.dest_path)?;

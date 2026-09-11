@@ -27,7 +27,7 @@ use serde::Deserialize;
 use crate::anonymizer::config::AnonymizerConfig;
 use crate::commands::bridge_access::McpOpenAllowlist;
 use crate::mcp_bridge::BridgeCtx;
-use crate::mcp_bridge::respond::client_name;
+use crate::mcp_bridge::respond::{JsonBody, client_name};
 use crate::services::ServiceError;
 use crate::services::settings::{self, AnonymizerTestResult, McpAgentAccess};
 
@@ -71,7 +71,7 @@ pub(crate) struct TestAnonymizerBody {
 pub(crate) async fn h_test_anonymizer(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
-    Json(body): Json<TestAnonymizerBody>,
+    JsonBody(body): JsonBody<TestAnonymizerBody>,
 ) -> Result<Json<AnonymizerTestResult>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
     Ok(Json(settings::test_anonymizer(&svc, body.text)?))

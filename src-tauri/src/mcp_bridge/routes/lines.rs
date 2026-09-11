@@ -32,13 +32,13 @@
 
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::HeaderMap,
 };
 use serde::Deserialize;
 
 use crate::mcp_bridge::BridgeCtx;
-use crate::mcp_bridge::respond::{client_name, parse_iso_to_unix_nanos};
+use crate::mcp_bridge::respond::{Qs, client_name, parse_iso_to_unix_nanos};
 use crate::services::lines::{self, LineFilters, LineSelection, LinesRequest};
 use crate::services::wire::LinePage;
 use crate::services::{ServiceCtx, ServiceError};
@@ -74,7 +74,7 @@ pub(crate) struct QueryParams {
 pub(crate) async fn h_query(
     State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
-    Query(params): Query<QueryParams>,
+    Qs(params): Qs<QueryParams>,
     headers: HeaderMap,
 ) -> Result<Json<LinePage>, ServiceError> {
     let sctx = ctx.svc(client_name(&headers));
@@ -160,7 +160,7 @@ pub(crate) struct LinesAroundParams {
 pub(crate) async fn h_lines_around(
     State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
-    Query(params): Query<LinesAroundParams>,
+    Qs(params): Qs<LinesAroundParams>,
     headers: HeaderMap,
 ) -> Result<Json<LinePage>, ServiceError> {
     let sctx = ctx.svc(client_name(&headers));

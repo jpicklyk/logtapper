@@ -31,9 +31,11 @@ use std::collections::HashMap;
 
 use axum::{
     Json,
-    http::{HeaderMap, StatusCode},
+    extract::{FromRequest, FromRequestParts, Query, Request},
+    http::{HeaderMap, StatusCode, request::Parts},
     response::{IntoResponse, Response},
 };
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::services::ServiceError;
@@ -70,6 +72,78 @@ impl IntoResponse for ServiceError {
         let status =
             StatusCode::from_u16(self.http_status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         (status, Json(WireError::new(self.code(), self.message()))).into_response()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rejection-aware extractors
+// ---------------------------------------------------------------------------
+//
+// `axum::Json<T>` and `axum::extract::Query<T>` answer a *rejection* on bad
+// input — a plain-text body, axum's own format, nothing to do with
+// `ServiceError`/`WireError` — before the handler ever runs. That bypassed
+// the bridge's one error contract: a client missing a required field on
+// `POST /mcp/export` got axum's raw `422 text/plain "Failed to deserialize
+// the JSON body into the target type: missing field `destPath`..."` instead
+// of the `{ "error": { "code", "message" } }` envelope every other failure
+// renders. `JsonBody<T>` and `Qs<T>` are drop-in replacements for `Json<T>`/
+// `Query<T>` as *parameter* extractors (never as the response type — success
+// bodies still use plain `axum::Json`) that convert the rejection into a
+// `ServiceError::invalid_arg`, which flows through the existing
+// `IntoResponse for ServiceError` above.
+//
+// Both rejection types (`JsonRejection`, `QueryRejection`) are always
+// converted into `ServiceError::InvalidArg` → HTTP 400 `INVALID_ARGUMENT`,
+// regardless of axum's own status for that rejection (`JsonRejection`'s
+// `MissingJsonContentType` variant answers `415` from axum directly). This
+// is a deliberate normalization, not an oversight: `ServiceError` has no
+// 415 variant, every other bridge 4xx for "the caller sent something bad"
+// is 400 `INVALID_ARGUMENT`, and an MCP client only needs one code path to
+// tell a malformed request apart from every other failure. See
+// `json_rejections` in `tests/bridge_http.rs` for the pinned contract
+// (including the wrong-content-type case, which is 400 here, not axum's 415).
+
+/// Body extractor — use in place of `axum::Json<T>` for every route parameter
+/// that deserializes a request body. A deserialization failure (missing
+/// field, malformed JSON, wrong content-type) renders through the bridge's
+/// `{ "error": { "code", "message" } }` envelope instead of axum's bare
+/// plain-text rejection body.
+pub(super) struct JsonBody<T>(pub(super) T);
+
+impl<S, T> FromRequest<S> for JsonBody<T>
+where
+    T: DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = ServiceError;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        match Json::<T>::from_request(req, state).await {
+            Ok(Json(value)) => Ok(JsonBody(value)),
+            Err(rejection) => Err(ServiceError::invalid_arg(rejection.body_text())),
+        }
+    }
+}
+
+/// Query-string extractor — use in place of `axum::extract::Query<T>` for
+/// every route parameter that deserializes `?a=b&c=d`. A malformed value
+/// (e.g. `limit=abc` against a `usize` field) renders through the envelope
+/// the same way [`JsonBody`] does, instead of axum's bare plain-text
+/// rejection body.
+pub(super) struct Qs<T>(pub(super) T);
+
+impl<S, T> FromRequestParts<S> for Qs<T>
+where
+    T: DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = ServiceError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        match Query::<T>::from_request_parts(parts, state).await {
+            Ok(Query(value)) => Ok(Qs(value)),
+            Err(rejection) => Err(ServiceError::invalid_arg(rejection.body_text())),
+        }
     }
 }
 

@@ -35,13 +35,13 @@
 
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::HeaderMap,
 };
 use serde::Deserialize;
 
 use crate::mcp_bridge::BridgeCtx;
-use crate::mcp_bridge::respond::client_name;
+use crate::mcp_bridge::respond::{Qs, client_name};
 use crate::services::search::{self, SearchHitsRequest};
 use crate::services::wire::SearchHits;
 use crate::services::{ServiceCtx, ServiceError};
@@ -70,7 +70,7 @@ pub(crate) struct SearchParams {
 pub(crate) async fn h_search(
     State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
-    Query(params): Query<SearchParams>,
+    Qs(params): Qs<SearchParams>,
     headers: HeaderMap,
 ) -> Result<Json<SearchHits>, ServiceError> {
     let sctx = ctx.svc(client_name(&headers));
@@ -148,7 +148,7 @@ pub(crate) struct SearchWithContextParams {
 pub(crate) async fn h_search_with_context(
     State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
-    Query(params): Query<SearchWithContextParams>,
+    Qs(params): Qs<SearchWithContextParams>,
     headers: HeaderMap,
 ) -> Result<Json<SearchHits>, ServiceError> {
     let sctx = ctx.svc(client_name(&headers));

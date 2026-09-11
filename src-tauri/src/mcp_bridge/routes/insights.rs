@@ -16,13 +16,13 @@ use std::collections::HashSet;
 
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::HeaderMap,
 };
 use serde::Deserialize;
 
 use crate::mcp_bridge::BridgeCtx;
-use crate::mcp_bridge::respond::client_name;
+use crate::mcp_bridge::respond::{Qs, client_name};
 use crate::services::ServiceError;
 use crate::services::insights::{self, Insights};
 
@@ -38,7 +38,7 @@ pub(crate) async fn h_insights(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
     Path(session_id): Path<String>,
-    Query(params): Query<InsightsParams>,
+    Qs(params): Qs<InsightsParams>,
 ) -> Result<Json<Insights>, ServiceError> {
     let max_signals = params.max_signals.unwrap_or(20);
     let filter_ids: Option<HashSet<String>> = params.processor_ids.map(|s| {
