@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { createCacheDataSource } from './CacheDataSource';
 import { DataSourceRegistry } from './DataSourceRegistry';
 import { ViewCacheHandle } from '../cache/CacheManager';
-import type { ViewLine, LineWindow } from '../bridge/types';
+import type { ViewLine, LinePage } from '../bridge/types';
 
 /** Create a minimal ViewLine for testing. */
 function makeLine(lineNum: number): ViewLine {
@@ -27,8 +27,15 @@ function makeLines(start: number, count: number): ViewLine[] {
   return Array.from({ length: count }, (_, i) => makeLine(start + i));
 }
 
-function makeWindow(offset: number, count: number, total: number): LineWindow {
-  return { totalLines: total, lines: makeLines(offset, count) };
+function makeWindow(offset: number, count: number, total: number): LinePage {
+  return {
+    sessionId: 'test',
+    totalLines: total,
+    offset,
+    count,
+    truncated: false,
+    lines: makeLines(offset, count),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -216,8 +223,8 @@ describe('CacheDataSource', () => {
 
   it('invalidate() discards in-flight fetch results', async () => {
     const cache = new ViewCacheHandle(5000);
-    let resolvePromise: (w: LineWindow) => void;
-    const pending = new Promise<LineWindow>((r) => { resolvePromise = r; });
+    let resolvePromise: (w: LinePage) => void;
+    const pending = new Promise<LinePage>((r) => { resolvePromise = r; });
     const fetchLines = vi.fn().mockReturnValue(pending);
 
     const ds = createCacheDataSource({
@@ -241,8 +248,8 @@ describe('CacheDataSource', () => {
 
   it('dispose() discards in-flight fetch results', async () => {
     const cache = new ViewCacheHandle(5000);
-    let resolvePromise: (w: LineWindow) => void;
-    const pending = new Promise<LineWindow>((r) => { resolvePromise = r; });
+    let resolvePromise: (w: LinePage) => void;
+    const pending = new Promise<LinePage>((r) => { resolvePromise = r; });
     const fetchLines = vi.fn().mockReturnValue(pending);
 
     const ds = createCacheDataSource({
@@ -315,9 +322,9 @@ describe('CacheDataSource', () => {
 
   it('invalidate between concurrent fetches discards both', async () => {
     const cache = new ViewCacheHandle(5000);
-    const deferred: Array<(w: LineWindow) => void> = [];
+    const deferred: Array<(w: LinePage) => void> = [];
     const fetchLines = vi.fn().mockImplementation(() => {
-      return new Promise<LineWindow>((r) => { deferred.push(r); });
+      return new Promise<LinePage>((r) => { deferred.push(r); });
     });
 
     const ds = createCacheDataSource({

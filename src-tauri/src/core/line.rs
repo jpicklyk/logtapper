@@ -288,13 +288,6 @@ pub struct ViewLine {
 
 #[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct LineWindow {
-    pub total_lines: usize,
-    pub lines: Vec<ViewLine>,
-}
-
-#[derive(Debug, Clone, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
 pub struct SearchSummary {
     pub total_matches: usize,
     pub match_line_nums: Vec<usize>,

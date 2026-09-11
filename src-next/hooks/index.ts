@@ -37,6 +37,8 @@ export { useBookmarks, useBookmarkLines, useBookmarkLookup } from './useBookmark
 export type { BookmarkState } from './useBookmarks';
 export { useWatchList } from './useWatchList';
 export type { UseWatchListReturn } from './useWatchList';
+export { useActivityFeed } from './useActivityFeed';
+export type { UseActivityFeedReturn } from './useActivityFeed';
 export { useMarketplace } from './useMarketplace';
 export type { MarketplaceState } from './useMarketplace';
 export { useToast, nextToastId } from './useToast';

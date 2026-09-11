@@ -1,4 +1,4 @@
-import type { ViewLine, LineWindow } from '../bridge/types';
+import type { ViewLine, LinePage } from '../bridge/types';
 import type { DataSource } from './DataSource';
 import type { WritableViewCache } from '../cache';
 import type { DataSourceRegistrar } from './DataSourceRegistry';
@@ -6,7 +6,7 @@ import type { DataSourceRegistrar } from './DataSourceRegistry';
 interface CacheDataSourceOptions {
   sessionId: string;
   viewCache: WritableViewCache;
-  fetchLines: (offset: number, count: number) => Promise<LineWindow>;
+  fetchLines: (offset: number, count: number) => Promise<LinePage>;
   /** For processor/filter view -- returns current line number mapping (called on every access).
    *  Using a getter instead of a static array lets LogViewer update the mapping via a ref
    *  without recreating the data source on every filter change. */
@@ -99,7 +99,7 @@ export function createCacheDataSource(options: CacheDataSourceOptions): CacheDat
       const fetchCount = Math.max(rawFetchCount, MIN_FETCH);
       console.debug('[CacheDataSource] getLines: partial miss → fetching', { sessionId, offset, count, fetchOffset, fetchCount, rawFetchCount, cacheSize: viewCache.size, allocation: viewCache.allocation, disposed: _disposed });
       const gen = _fetchGen;
-      return fetchLines(fetchOffset, fetchCount).then((window: LineWindow) => {
+      return fetchLines(fetchOffset, fetchCount).then((window: LinePage) => {
         if (gen !== _fetchGen || _disposed) {
           console.debug('[CacheDataSource] getLines: fetch stale/disposed, discarding', { sessionId, fetchOffset, gen, currentGen: _fetchGen, disposed: _disposed });
           return [];

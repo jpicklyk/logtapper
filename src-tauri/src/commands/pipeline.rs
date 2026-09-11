@@ -14,6 +14,7 @@ use tauri::{AppHandle, State};
 
 use crate::commands::{lock_or_err, AppState};
 use crate::services::pipeline;
+use crate::services::wire::PipelineRunResult;
 use ts_rs::TS;
 
 // ---------------------------------------------------------------------------
@@ -151,24 +152,23 @@ fn is_zero_usize(v: &usize) -> bool {
 /// arguments a command does not declare, so a frontend still passing it keeps
 /// working unchanged.
 ///
-/// Returns `Vec<PipelineRunSummary>` — the shape `usePipelineCommands.ts` reads
-/// today. WP-16 flips this to the full `PipelineRunResult`, which additionally
-/// carries `effectiveProcessorIds` (already computed and returned by the
-/// service; discarded here only to keep this package's wire contract unchanged).
+/// Returns the full [`PipelineRunResult`], whose `effectiveProcessorIds` is the
+/// chain the backend actually ran. That is what lets `usePipelineCommands.ts`
+/// pass `null` and stop re-deriving `active − disabled` on the frontend: the
+/// resolved chain comes back in the response instead of being computed twice.
 #[tauri::command]
 pub async fn run_pipeline(
     app: AppHandle,
     session_id: String,
     processor_ids: Option<Vec<String>>,
-) -> Result<Vec<PipelineRunSummary>, String> {
+) -> Result<PipelineRunResult, String> {
     // `pipeline::run` owns its own spawn_blocking; the CPU-heavy work never
     // runs on an async runtime thread and no lock guard crosses this await.
     let ctx = crate::commands::adapters::ui_ctx(&app);
     let progress = Arc::new(crate::commands::adapters::TauriProgressSink::new(app.clone()));
-    let result = pipeline::run(ctx, session_id, processor_ids, progress)
+    pipeline::run(ctx, session_id, processor_ids, progress)
         .await
-        .map_err(|e| e.message())?;
-    Ok(result.summaries)
+        .map_err(|e| e.message())
 }
 
 // ---------------------------------------------------------------------------

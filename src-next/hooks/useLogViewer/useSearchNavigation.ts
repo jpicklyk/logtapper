@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react';
-import type { LineWindow } from '../../bridge/types';
+import { emptyPage, type LinePage } from '../../bridge/types';
 import { getLines } from '../../bridge/commands';
 import { useViewerContext } from '../../context/ViewerContext';
 import type { SharedLogViewerRefs } from './types';
@@ -18,7 +18,7 @@ import type { SharedLogViewerRefs } from './types';
 export interface SearchNavigationResult {
   jumpToLine: (lineNum: number, paneId?: string, sessionId?: string) => void;
   jumpToEnd: () => void;
-  fetchLines: (offset: number, count: number) => Promise<LineWindow>;
+  fetchLines: (offset: number, count: number) => Promise<LinePage>;
   setProcessorView: (processorId: string) => void;
   clearProcessorView: () => void;
   reset: () => void;
@@ -56,9 +56,9 @@ export function useSearchNavigation(refs: SharedLogViewerRefs): SearchNavigation
     setJumpSeq((s) => s + 1);
   }, [refs.sessionRef, setScrollToLine, setJumpPaneId, setJumpSessionId, setJumpSeq]);
 
-  const fetchLines = useCallback((offset: number, count: number): Promise<LineWindow> => {
+  const fetchLines = useCallback((offset: number, count: number): Promise<LinePage> => {
     const sess = refs.sessionRef.current;
-    if (!sess) return Promise.resolve({ totalLines: 0, lines: [] });
+    if (!sess) return Promise.resolve(emptyPage(offset));
 
     const pid = processorIdRef.current;
     const mode = pid

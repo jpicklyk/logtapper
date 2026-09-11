@@ -44,9 +44,13 @@ import type {
   FilterCreateResult,
   FilterCriteria,
   FilterProgress,
+  ActivityEntry,
+  Caller,
   HighlightSpan,
+  LinePage,
   LineRequest,
-  LineWindow,
+  LineStats,
+  LineStrategy,
   LoadWorkspaceSessionData,
   LtwEditorTab,
   LtwManifestSession,
@@ -60,12 +64,14 @@ import type {
   PatternEntry,
   PiiReplacement,
   PipelineProgress,
+  PipelineRunResult,
   PipelineRunSummary,
   RestoreSessionOptions,
   SearchProgress,
   SearchQuery,
   SearchSummary,
   SectionInfo,
+  SessionClosedEvent,
   SessionMetadata,
   SkipReason,
   SourceError,
@@ -82,6 +88,7 @@ import type {
   ViewLine,
   WatchInfo,
   WatchMatchEvent,
+  WorkspaceAutoSavedEvent,
   WorkspaceEntry,
 } from './generated';
 
@@ -114,9 +121,13 @@ export type {
   FilterCreateResult,
   FilterCriteria,
   FilterProgress,
+  ActivityEntry,
+  Caller,
   HighlightSpan,
+  LinePage,
   LineRequest,
-  LineWindow,
+  LineStats,
+  LineStrategy,
   LoadWorkspaceSessionData,
   LtwEditorTab,
   LtwManifestSession,
@@ -130,12 +141,14 @@ export type {
   PatternEntry,
   PiiReplacement,
   PipelineProgress,
+  PipelineRunResult,
   PipelineRunSummary,
   RestoreSessionOptions,
   SearchProgress,
   SearchQuery,
   SearchSummary,
   SectionInfo,
+  SessionClosedEvent,
   SessionMetadata,
   SkipReason,
   SourceError,
@@ -152,6 +165,7 @@ export type {
   ViewLine,
   WatchInfo,
   WatchMatchEvent,
+  WorkspaceAutoSavedEvent,
   WorkspaceEntry,
 };
 
@@ -237,6 +251,17 @@ export type ProcessorSummary = Omit<Generated.ProcessorSummary, 'processorType'>
   processorType: 'transformer' | 'reporter' | 'state_tracker' | 'correlator';
 };
 
+/** Rust `action` field is a `String`; only these two values are ever emitted. */
+export type WatchUpdateEvent = Omit<Generated.WatchUpdateEvent, 'action'> & {
+  action: 'created' | 'cancelled';
+};
+
+/** Rust `source` field is a `String`; only these two values are ever emitted —
+ *  `"lts"` for a `.lts` bundle import, `"workspace"` for a `.ltw` restore. */
+export type WorkspaceRestoredEvent = Omit<Generated.WorkspaceRestoredEvent, 'source'> & {
+  source: 'lts' | 'workspace';
+};
+
 /** Rust `tier` field is a `String`; only these three values are ever emitted. */
 export type DetectorEntry = Omit<Generated.DetectorEntry, 'tier'> & {
   tier: 'tier1' | 'tier2' | 'tier3';
@@ -308,6 +333,16 @@ export function isBugreportLike(t: SourceType | string): boolean {
 }
 
 /**
+ * The `LinePage` to hand a caller when there is nothing to fetch — no session
+ * bound to the pane yet, or one that closed mid-scroll. Shaped like a real
+ * empty answer at `offset` rather than a sentinel, so consumers need no
+ * null branch. `sessionId` is empty because there is no session to name.
+ */
+export function emptyPage(offset = 0): LinePage {
+  return { sessionId: '', totalLines: 0, offset, count: 0, truncated: false, lines: [] };
+}
+
+/**
  * HAND-WRITTEN, deliberately NOT switched to `Generated.Source` yet — tracked bug
  * `ee4ddb0b`. The Rust `processors::marketplace::Source` has no
  * `#[serde(rename_all = "camelCase")]`, so its real wire shape is snake_case
@@ -327,27 +362,6 @@ export interface Source {
   enabled: boolean;
   autoUpdate: boolean;
   lastChecked?: string;
-}
-
-/**
- * Emitted after a workspace or `.lts` file finishes restoring. No Rust struct
- * backs this — `emit_workspace_restored` in `commands/files.rs` builds it from
- * an ad-hoc `serde_json::json!{}`. Consumed by `useWorkspaceRestore` (pipeline
- * chain restore + auto-run scheduling) and `useWorkspaceRestoreToast`
- * (bookmark/analysis/pipeline restore summary toast) — both subscribe
- * independently to the same event.
- */
-export interface WorkspaceRestoredPayload {
-  sessionId: string;
-  bookmarkCount: number;
-  analysisCount: number;
-  activeProcessorIds?: string[];
-  disabledProcessorIds?: string[];
-  /** Which backend emitted this: `"lts"` (recreated from a `.lts` archive mid
-   *  `load_log_file` — `useWorkspaceRestore` owns its auto-run) or `"workspace"`
-   *  (from `restore_workspace_session` on the `.ltw` path — the restore core owns
-   *  it). Optional so payloads from older backends still parse. */
-  source?: 'lts' | 'workspace';
 }
 
 // ---------------------------------------------------------------------------

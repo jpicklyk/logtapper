@@ -9,10 +9,10 @@
 //!
 //! [`get_lines`] is now the only one. Callers describe *which* lines they want
 //! with a [`LineSelection`] plus optional [`LineFilters`], and get back a
-//! [`LinePage`] of [`ViewLine`]s. The transports adapt: `commands/files.rs`
-//! converts to today's `LineWindow`, `mcp_bridge/routes/lines.rs` renders
-//! today's JSON. Both of those conversions are transitional — WP-13 and WP-16
-//! delete them and ship `LinePage` straight through.
+//! [`LinePage`] of [`ViewLine`]s. Both transports now ship that page straight
+//! through: `commands/files.rs::get_lines` returns it to the viewer and
+//! `mcp_bridge/routes/lines.rs` serializes it to the agent. The transitional
+//! `LineWindow` narrowing and the bespoke bridge JSON are both gone.
 //!
 //! ## Redaction
 //!

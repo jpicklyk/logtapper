@@ -70,7 +70,6 @@ function HookWiring({ children }: { children: ReactNode }) {
 
   const getPipelineChain = useCallback((sessionId: string | null = null) => chainFor(sessionId).chain, [chainFor]);
   const getDisabledChainIds = useCallback((sessionId: string | null = null) => chainFor(sessionId).disabled, [chainFor]);
-  const getActiveProcessorIds = useCallback((sessionId: string | null = null) => chainFor(sessionId).active, [chainFor]);
 
   // Pipeline chain mutations â thin wrappers around dispatch, stable via useCallback.
   // Each takes the session whose chain it edits; null targets the shared default.
@@ -271,7 +270,7 @@ function HookWiring({ children }: { children: ReactNode }) {
       // workspace-restore-performance design) can await it to know when the
       // slot frees.
       (sessionId, chain, disabled) =>
-        runRef.current?.(sessionId, false, { chain, disabled }).catch(() => {}) ?? Promise.resolve(),
+        runRef.current?.(sessionId, { chain, disabled }).catch(() => {}) ?? Promise.resolve(),
     );
   }
   const scheduleAutoRun = useCallback(
@@ -374,9 +373,11 @@ function HookWiring({ children }: { children: ReactNode }) {
     // --- Workspace mutations (auto-tracked via trackMutations) ---
     loadFile: logViewer.loadFile,
     // A stream creates its session, so no sessionId exists yet — the new session
-    // inherits the default chain, which is what getActiveProcessorIds() returns.
+    // inherits the default chain. Filtered to installed processors because
+    // `start_adb_stream` now REJECTS an unknown id outright (InvalidArg) instead
+    // of skipping it, and a chain can still hold one after a pack uninstall.
     startStream: (deviceId?: string) => logViewer.startStream(
-      deviceId, undefined, getActiveProcessorIds(), settingsRef.current.streamBackendLineMax,
+      deviceId, undefined, pipeline.activeInstalledFor(null), settingsRef.current.streamBackendLineMax,
     ),
     closeSession: logViewer.closeSession,
     installProcessor,
@@ -445,7 +446,7 @@ function HookWiring({ children }: { children: ReactNode }) {
        logViewer.jumpToLine,
        logViewer.setStreamFilter, logViewer.cancelStreamFilter, logViewer.setTimeFilter,
        addToChain, addPackToChain, removeFromChain, reorderChain, toggleChainEnabled,
-       pipeline.run, pipeline.stop, pipeline.clearResults,
+       pipeline.run, pipeline.stop, pipeline.clearResults, pipeline.activeInstalledFor,
        openFileDialog, openInEditorDialog, saveFile, saveFileAs, exportSession,
        workspace.newWorkspace, workspace.openWorkspace, workspace.saveWorkspace, workspace.saveWorkspaceAs,
        workspace.closeWorkspace, workspace.switchWorkspace]);

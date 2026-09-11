@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { AdbStreamStopped, AdbTrackerUpdate, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress, PipelineProgress, BookmarkUpdateEvent, AnalysisUpdateEvent, WatchMatchEvent, LoadResult, WorkspaceRestoredPayload, LtsEditorTabPayload } from './types';
+import type { ActivityEntry, AdbStreamStopped, AdbTrackerUpdate, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress, PipelineProgress, BookmarkUpdateEvent, AnalysisUpdateEvent, WatchMatchEvent, WatchUpdateEvent, LoadResult, SessionClosedEvent, WorkspaceAutoSavedEvent, WorkspaceRestoredEvent, LtsEditorTabPayload } from './types';
 
 // ---------------------------------------------------------------------------
 // ADB streaming events
@@ -103,6 +103,45 @@ export function onWatchMatch(
 }
 
 // ---------------------------------------------------------------------------
+// Watch lifecycle events (create / cancel, from EITHER caller)
+// ---------------------------------------------------------------------------
+
+/**
+ * Emitted on every watch mutation, by the UI's own create/cancel path AND by an
+ * agent's (`POST|DELETE /mcp/sessions/{id}/watches`). Until the services layer
+ * landed, an agent-created watch was invisible to the Watches panel because
+ * nothing emitted for it.
+ *
+ * The payload carries `sessionId`, so the consumer must match on it rather than
+ * treating this as a broadcast — a watch created for a background session must
+ * not appear in the focused pane's panel. Because the UI emits too, a consumer
+ * that already applied its own optimistic update will see its own mutation come
+ * back: dedupe by `watch.id`.
+ */
+export function onWatchUpdate(
+  cb: (payload: WatchUpdateEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<WatchUpdateEvent>('watch-update', (e) => cb(e.payload));
+}
+
+// ---------------------------------------------------------------------------
+// Activity feed (shared UI + agent journal)
+// ---------------------------------------------------------------------------
+
+/**
+ * One journaled action, live. Emitted by `ServiceCtx::journal` for every
+ * mutation from either caller — the same entries `getActivity()` returns, so
+ * the normal pattern is one `getActivity()` on mount followed by this listener
+ * appending. Reads are never journaled, so this stays quiet while the user is
+ * only looking around.
+ */
+export function onActivity(
+  cb: (entry: ActivityEntry) => void,
+): Promise<UnlistenFn> {
+  return listen<ActivityEntry>('activity', (e) => cb(e.payload));
+}
+
+// ---------------------------------------------------------------------------
 // File open events (file association / single-instance)
 // ---------------------------------------------------------------------------
 
@@ -116,22 +155,16 @@ export function onOpenFile(
 // Session closed by the MCP bridge (agent-initiated close)
 // ---------------------------------------------------------------------------
 
-/** Payload for the `session-closed` Tauri event. HAND-WRITTEN: no Rust struct backs
- *  this — the bridge emits `{ "sessionId": sessionId }` ad hoc. */
-export interface SessionClosedPayload {
-  sessionId: string;
-}
-
 /**
- * Emitted by the MCP bridge AFTER it closes a session on behalf of an agent
- * (POST /mcp/sessions/{id}/close). The UI close path does NOT emit this — only
- * bridge-initiated closes, which are otherwise invisible to the frontend. The
- * consumer closes any pane/tab bound to `sessionId` (targeted — never all panes).
+ * Emitted after a session is closed — by an agent (POST /mcp/sessions/{id}/close)
+ * or by the UI's own close path, which now emits it too. The consumer closes any
+ * pane/tab bound to `sessionId` (targeted — never all panes) and is idempotent,
+ * which is what keeps the UI-initiated close from doing anything twice.
  */
 export function onBridgeSessionClosed(
-  cb: (payload: SessionClosedPayload) => void,
+  cb: (payload: SessionClosedEvent) => void,
 ): Promise<UnlistenFn> {
-  return listen<SessionClosedPayload>('session-closed', (e) => cb(e.payload));
+  return listen<SessionClosedEvent>('session-closed', (e) => cb(e.payload));
 }
 
 // ---------------------------------------------------------------------------
@@ -161,20 +194,15 @@ export function onBridgeSessionOpened(
 // Workspace auto-saved (Q4 — backend flush)
 // ---------------------------------------------------------------------------
 
-/** Payload emitted by the backend auto-save flusher after it writes the `.ltw`.
- *  Shape matches the frontend `workspace:auto-saved` bus event so it can be
- *  forwarded directly. HAND-WRITTEN: no Rust struct backs this — the flusher
- *  emits an ad hoc `serde_json::json!{}`. */
-export interface WorkspaceAutoSavedPayload {
-  workspaceId: string;
-  path: string;
-  savedAt: number;
-}
-
+/**
+ * Emitted by the backend auto-save flusher after it writes the `.ltw`. The
+ * shape matches the frontend `workspace:auto-saved` bus event, so it can be
+ * forwarded directly.
+ */
 export function onWorkspaceAutoSaved(
-  cb: (payload: WorkspaceAutoSavedPayload) => void,
+  cb: (payload: WorkspaceAutoSavedEvent) => void,
 ): Promise<UnlistenFn> {
-  return listen<WorkspaceAutoSavedPayload>('workspace-auto-saved', (e) => cb(e.payload));
+  return listen<WorkspaceAutoSavedEvent>('workspace-auto-saved', (e) => cb(e.payload));
 }
 
 // ---------------------------------------------------------------------------
@@ -188,9 +216,9 @@ export function onWorkspaceAutoSaved(
  * toast) — both subscribe independently to the same event.
  */
 export function onWorkspaceRestored(
-  cb: (payload: WorkspaceRestoredPayload) => void,
+  cb: (payload: WorkspaceRestoredEvent) => void,
 ): Promise<UnlistenFn> {
-  return listen<WorkspaceRestoredPayload>('workspace-restored', (e) => cb(e.payload));
+  return listen<WorkspaceRestoredEvent>('workspace-restored', (e) => cb(e.payload));
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
-import type { ViewLine } from '../../bridge/types';
+import type { LinePage } from '../../bridge/types';
 import type { GutterColumnDef, LineDecoratorDef, CacheDataSource, Selection } from '../../viewport';
 import { ReadOnlyViewer, createCacheDataSource, sessionScrollPositions } from '../../viewport';
 import { useViewCache, useCacheFocus, useDataSourceRegistry, useCacheManager } from '../../cache';
@@ -20,7 +20,7 @@ import styles from './LogViewer.module.css';
 
 interface Props {
   paneId: string;
-  fetchLines: (offset: number, count: number) => Promise<{ totalLines: number; lines: ViewLine[] }>;
+  fetchLines: (offset: number, count: number) => Promise<LinePage>;
   lineNumbers?: number[];
 }
 

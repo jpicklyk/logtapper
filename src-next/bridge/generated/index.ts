@@ -60,7 +60,6 @@ export type { LinePage } from './LinePage';
 export type { LineRequest } from './LineRequest';
 export type { LineStats } from './LineStats';
 export type { LineStrategy } from './LineStrategy';
-export type { LineWindow } from './LineWindow';
 export type { LoadResult } from './LoadResult';
 export type { LoadWorkspaceResult } from './LoadWorkspaceResult';
 export type { LoadWorkspaceSessionData } from './LoadWorkspaceSessionData';

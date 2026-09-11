@@ -98,7 +98,6 @@ macro_rules! ROOT_TYPES {
             app_lib::services::events::IndexProgressEvent,
             // --- core/line.rs — the viewer wire shapes ------------------------
             app_lib::core::line::LineRequest,
-            app_lib::core::line::LineWindow,
             app_lib::core::line::SearchQuery,
             app_lib::core::line::SearchSummary,
             app_lib::core::line::ViewLine,

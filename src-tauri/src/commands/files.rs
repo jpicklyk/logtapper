@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, State};
 
 use crate::commands::{lock_or_err, AppState};
-use crate::core::line::{LineRequest, LineWindow, SearchQuery, SearchSummary};
+use crate::core::line::{LineRequest, SearchQuery, SearchSummary};
 use crate::core::session::SectionInfo;
 use crate::commands::adapters::{TauriProgressSink, ui_ctx};
 use crate::services::events::ProgressSink;
@@ -15,7 +15,9 @@ use crate::services::search;
 // reaches it through `services::lines::build_view_line`.
 #[cfg(test)]
 use crate::services::lines::compute_search_highlights;
-use crate::services::{ServiceCtx, ServiceError};
+#[cfg(test)]
+use crate::services::ServiceCtx;
+use crate::services::wire::LinePage;
 use ts_rs::TS;
 
 // ---------------------------------------------------------------------------
@@ -140,9 +142,15 @@ pub async fn close_session(
 // get_lines
 // ---------------------------------------------------------------------------
 
+/// Read a window of lines for the viewer.
+///
+/// Returns the service's [`LinePage`] unchanged — the viewer now reads
+/// `offset`/`count`/`truncated` alongside `totalLines`/`lines` instead of the
+/// narrowed `LineWindow` this command used to synthesize. `strategy` is
+/// `Some(Range{..})` on a normal scroll and `Some(Around{..})` in Focus mode.
 #[tauri::command]
-pub async fn get_lines(app: AppHandle, request: LineRequest) -> Result<LineWindow, String> {
-    Ok(line_window(&ui_ctx(&app), request)?)
+pub async fn get_lines(app: AppHandle, request: LineRequest) -> Result<LinePage, String> {
+    Ok(lines::get_lines(&ui_ctx(&app), lines_request(request))?)
 }
 
 /// The viewer's `LineRequest` in the service layer's vocabulary.
@@ -169,25 +177,6 @@ fn lines_request(request: LineRequest) -> LinesRequest {
         skip_unreadable: false,
         metadata: LineMetadataSource::Parsed,
     }
-}
-
-/// Call the lines service and narrow its [`LinePage`](crate::services::wire::LinePage)
-/// to the shape the viewer reads today.
-///
-/// **Transitional.** `LinePage` is a strict superset of `LineWindow` —
-/// `total_lines` and `lines` carry across unchanged and the sampling metadata
-/// (`strategy`, `strategyNote`, `scannedLines`, `stats`, plus `offset`/`count`)
-/// is dropped on the floor because the viewer has never seen those fields.
-/// WP-16 ships `LinePage` straight through and deletes this function.
-pub(crate) fn line_window(
-    ctx: &ServiceCtx,
-    request: LineRequest,
-) -> Result<LineWindow, ServiceError> {
-    let page = lines::get_lines(ctx, lines_request(request))?;
-    Ok(LineWindow {
-        total_lines: page.total_lines,
-        lines: page.lines,
-    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1217,16 +1206,28 @@ mod get_lines_golden {
     use serde_json::{Value, json};
     use std::collections::HashMap;
 
+    /// The shape `get_lines` returned before it shipped `LinePage`: exactly
+    /// `{ totalLines, lines }`. The frozen reference below builds this, and
+    /// [`render_page`] projects the live `LinePage` onto it, so the parity
+    /// table keeps diffing every field of every line even though the command
+    /// now returns a superset.
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct RefWindow {
+        total_lines: usize,
+        lines: Vec<ViewLine>,
+    }
+
     /// Frozen copy of the pre-service `commands::files::get_lines` body,
     /// taken verbatim from commit 6d1e19b with only the Tauri `State`
     /// extractor replaced by a plain `&AppState`.
     ///
     /// The viewer's wire shape is the one thing this refactor is least allowed
-    /// to move, so the parity table below diffs the serialized `LineWindow` —
-    /// every field of every line — against this copy rather than spot-checking
-    /// a few. If a case fails, the new code is wrong; this copy is never
-    /// "fixed".
-    fn ref_get_lines(state: &AppState, request: LineRequest) -> Result<LineWindow, String> {
+    /// to move, so the parity table below diffs the `{ totalLines, lines }`
+    /// projection of the live `LinePage` — every field of every line — against
+    /// this copy rather than spot-checking a few. If a case fails, the new code
+    /// is wrong; this copy is never "fixed".
+    fn ref_get_lines(state: &AppState, request: LineRequest) -> Result<RefWindow, String> {
         let sessions = lock_or_err(&state.sessions, "sessions")?;
         let session = sessions
             .get(&request.session_id)
@@ -1284,7 +1285,7 @@ mod get_lines_golden {
                     };
                     lines.push(view_line);
                 }
-                Ok(LineWindow { total_lines, lines })
+                Ok(RefWindow { total_lines, lines })
             }
 
             ViewMode::Processor => {
@@ -1300,7 +1301,7 @@ mod get_lines_golden {
                         .unwrap_or_default()
                 };
                 if matched.is_empty() {
-                    return Ok(LineWindow {
+                    return Ok(RefWindow {
                         total_lines,
                         lines: vec![],
                     });
@@ -1378,7 +1379,7 @@ mod get_lines_golden {
                     };
                     lines.push(view_line);
                 }
-                Ok(LineWindow {
+                Ok(RefWindow {
                     total_lines: total_collapsed,
                     lines,
                 })
@@ -1449,7 +1450,7 @@ mod get_lines_golden {
                     };
                     lines.push(view_line);
                 }
-                Ok(LineWindow { total_lines, lines })
+                Ok(RefWindow { total_lines, lines })
             }
         }
     }
@@ -1534,11 +1535,30 @@ mod get_lines_golden {
         }
     }
 
-    fn render(result: Result<LineWindow, String>) -> Value {
+    fn render(result: Result<RefWindow, String>) -> Value {
         match result {
             Ok(window) => serde_json::to_value(&window).unwrap(),
             Err(e) => json!({ "error": e }),
         }
+    }
+
+    /// The new path's `LinePage`, narrowed to the two fields the frozen
+    /// reference produces. `get_lines` now *returns* the extra sampling
+    /// metadata; this table is about the fields that existed before, so it
+    /// projects them away rather than pretending the reference had them.
+    fn render_page(result: Result<LinePage, String>) -> Value {
+        match result {
+            Ok(page) => serde_json::to_value(&RefWindow {
+                total_lines: page.total_lines,
+                lines: page.lines,
+            })
+            .unwrap(),
+            Err(e) => json!({ "error": e }),
+        }
+    }
+
+    fn page(ctx: &ServiceCtx, request: LineRequest) -> Result<LinePage, String> {
+        lines::get_lines(ctx, lines_request(request)).map_err(|e| e.to_string())
     }
 
     #[test]
@@ -1667,8 +1687,8 @@ mod get_lines_golden {
 
         for (name, request) in cases {
             let expected = render(ref_get_lines(ref_ctx.state(), request.clone()));
-            let actual = render(line_window(&new_ctx, request).map_err(|e| e.to_string()));
-            assert_eq!(actual, expected, "LineWindow changed for case: {name}");
+            let actual = render_page(page(&new_ctx, request));
+            assert_eq!(actual, expected, "LinePage's window changed for case: {name}");
         }
     }
 
@@ -1681,7 +1701,7 @@ mod get_lines_golden {
         let (ctx, _tmp) = test_ctx()
             .with_session_object(fixture_session_from("p1", vec![long.clone()]))
             .build();
-        let window = line_window(&ctx, req("p1", ViewMode::Full, 0, 1)).unwrap();
+        let window = page(&ctx, req("p1", ViewMode::Full, 0, 1)).unwrap();
         assert_eq!(window.lines[0].raw, long);
     }
 }
