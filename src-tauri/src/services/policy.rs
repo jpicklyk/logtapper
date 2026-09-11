@@ -222,6 +222,15 @@ fn agent_raw_access_enabled(state: &AppState) -> bool {
 /// naming the session it is about — the decision is deliberately global, so
 /// nothing a session carries (its pipeline chain above all) can change what an
 /// agent is allowed to see.
+///
+/// `services::export` is the one caller that does NOT use this function to
+/// decide a `Ui` export's redaction: `.lts` export has its own explicit,
+/// per-export "Anonymize PII" checkbox (`ExportAllOptions::anonymize`,
+/// `services::export::should_anonymize_export`) — ticking it calls
+/// [`anonymize_session_text`] directly rather than going through this
+/// caller-only decision, since a `Ui` caller always resolves to `false` here.
+/// An `Agent` export still funnels through this function unchanged; the
+/// checkbox is silently ignored for that caller.
 pub fn should_anonymize(ctx: &ServiceCtx, _session_id: &str) -> bool {
     match ctx.caller() {
         Caller::Ui => false,

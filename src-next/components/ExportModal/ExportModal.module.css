@@ -64,6 +64,13 @@
   color: var(--text-muted);
 }
 
+.hint {
+  padding-left: 24px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
 .actions {
   display: flex;
   justify-content: flex-end;

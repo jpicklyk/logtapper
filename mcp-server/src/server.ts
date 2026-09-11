@@ -1737,15 +1737,19 @@ server.tool(
     "by the same anti-probing design as logtapper_open_file. Raw log-line text " +
     "in the bundle is PII-redacted the same way every other raw-line tool " +
     "is — unless the user allowed raw agent access in Settings (see " +
-    "logtapper_settings action 'agent_access').",
+    "logtapper_settings action 'agent_access'). `anonymize` is a Ui-only " +
+    "option (the desktop app's Export dialog checkbox) and is SILENTLY " +
+    "IGNORED for an agent caller — an agent's export redaction is governed " +
+    "solely by 'agent_access', never by this flag.",
   {
     action: z.enum(["info", "run"]).describe("Action to perform"),
     dest_path: z.string().optional().describe("Destination `.lts` path (required for 'run')"),
     include_bookmarks: z.boolean().optional().describe("Include bookmarks in the bundle (used with 'run', default true)"),
     include_analyses: z.boolean().optional().describe("Include analysis artifacts in the bundle (used with 'run', default true)"),
     include_processors: z.boolean().optional().describe("Include installed processor definitions in the bundle (used with 'run', default true)"),
+    anonymize: z.boolean().optional().describe("Ui-only; ignored for an agent caller (see the tool description)"),
   },
-  async ({ action, dest_path, include_bookmarks, include_analyses, include_processors }) => {
+  async ({ action, dest_path, include_bookmarks, include_analyses, include_processors, anonymize }) => {
     try {
       switch (action) {
         case "info":
@@ -1759,6 +1763,7 @@ server.tool(
               includeAnalyses: include_analyses ?? true,
               includeProcessors: include_processors ?? true,
               editorTabs: [],
+              anonymize: anonymize ?? false,
             })
           );
         }

@@ -124,8 +124,13 @@ indexer and the ADB reader task depend on landing on that runtime. Test doubles
   global on purpose, so nothing a session carries — above all its pipeline chain — can
   widen what an agent sees. (The per-session `mcp_anonymize` map this replaced was
   mirrored from `chain.includes('__pii_anonymizer')` by the frontend and therefore turned
-  agent anonymization *off* for the default chain.) Also used by `services::export`, so a
-  `.lts` archive an agent writes obeys the same rule as its bridge reads.
+  agent anonymization *off* for the default chain.) An `Agent`'s `.lts` export still funnels
+  through this function, so it obeys the same rule as its bridge reads. A `Ui` export is
+  the one exception: it has its own explicit, per-export "Anonymize PII" checkbox
+  (`ExportAllOptions::anonymize`, `services::export::should_anonymize_export`) that calls
+  `anonymize_session_text` directly rather than going through this function — a `Ui` caller
+  always resolves to `false` here, so routing the checkbox through `should_anonymize` would
+  never redact anything.
 - **`redact_line(ctx, session_id, raw, max_chars) -> String`** — the single choke point for
   raw log text leaving the backend. **Anonymize first, truncate second** — load-bearing
   order, so a redaction token is never cut mid-token by the length cap. Every service

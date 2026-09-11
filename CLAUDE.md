@@ -156,16 +156,23 @@ individual service, never "am I in `mcp_bridge/`":
   name must be a single plain segment. `Ui` passes through untouched (the native save
   dialog is consent).
 - **PII anonymization** (`policy::should_anonymize` / `policy::redact_line`) is keyed on
-  `Caller`, not on which transport served the request: `Ui` is never redacted (the human
-  is looking at their own machine), an **`Agent` is always redacted** unless the user
-  ticked "Allow agents to read raw (un-anonymized) log text" in Settings → General → MCP
-  Integration. That one setting (`AppState::agent_raw_access`, persisted to
-  `{app_data_dir}/mcp_agent_access.json`, `Ui`-only via `set_agent_raw_access`) is the
-  whole decision — **no session state, and above all no pipeline chain, participates in
-  it.** It replaced a per-session `mcp_anonymize` map the frontend mirrored from
-  `chain.includes('__pii_anonymizer')`, which meant the default chain switched agent
-  anonymization *off* as soon as the UI opened a tab. Never add a second writer; see
-  "Issue 1" in `design_docs/MCP_SECURITY_DESIGN.md`.
+  `Caller`, not on which transport served the request: `Ui` is never redacted when reading
+  logs in the viewer (the human is looking at their own machine), an **`Agent` is always
+  redacted** unless the user ticked "Allow agents to read raw (un-anonymized) log text" in
+  Settings → General → MCP Integration. That one setting (`AppState::agent_raw_access`,
+  persisted to `{app_data_dir}/mcp_agent_access.json`, `Ui`-only via
+  `set_agent_raw_access`) is the whole decision — **no session state, and above all no
+  pipeline chain, participates in it.** It replaced a per-session `mcp_anonymize` map the
+  frontend mirrored from `chain.includes('__pii_anonymizer')`, which meant the default
+  chain switched agent anonymization *off* as soon as the UI opened a tab. Never add a
+  second writer; see "Issue 1" in `design_docs/MCP_SECURITY_DESIGN.md`. **`.lts` export is
+  the one place a `Ui` caller can also be redacted**, via an explicit, per-export
+  "Anonymize PII in exported log lines" checkbox (`ExportAllOptions.anonymize`,
+  `#[serde(default)]` so old callers still deserialize) — `services::export::run` calls
+  `policy::anonymize_session_text` directly when it's ticked, bypassing the
+  always-`false`-for-`Ui` `should_anonymize` decision. The flag is silently ignored for an
+  `Agent` caller; an agent's export is still governed solely by `agent_raw_access`, never
+  by a flag the agent's own request body controls.
 - **Agents cannot mutate their own gates.** `policy::deny_agent_gate_mutation` refuses an
   agent request to change the open-file allowlist, the anonymizer config, agent raw log
   access, or add/remove a marketplace source (a supply-chain surface) — `Forbidden`/`NOT_ALLOWED` for `Agent`,

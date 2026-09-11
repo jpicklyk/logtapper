@@ -18,6 +18,8 @@ export interface AppSettings {
   bookmarkCategories: BookmarkCategoryDef[];
   /** Whether the MCP HTTP bridge (port 40404) is enabled. */
   mcpBridgeEnabled: boolean;
+  /** Last choice for the Export dialog's "Anonymize PII in exported log lines" checkbox. */
+  exportAnonymize: boolean;
 }
 
 const STORAGE_KEY = 'logtapper_settings';
@@ -37,6 +39,7 @@ export const SETTING_DEFAULTS: AppSettings = {
   autoReconnectStream: true,
   bookmarkCategories: DEFAULT_BOOKMARK_CATEGORIES,
   mcpBridgeEnabled: false,
+  exportAnonymize: false,
 };
 
 /** Map of old default hex colors → new theme-aware token references.

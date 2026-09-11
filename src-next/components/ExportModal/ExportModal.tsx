@@ -4,6 +4,7 @@ import { Modal } from '../../ui';
 import { Spinner, Button } from '../../ui';
 import { getExportAllSessionsInfo } from '../../bridge/commands';
 import { useFileActions } from '../../context';
+import { useSettings } from '../../hooks';
 import type { ExportAllSessionsInfo } from '../../bridge/types';
 import { allPanes, STORAGE_KEY, collectEditorTabs } from '../../hooks/workspace';
 import { storageGetJSON } from '../../utils';
@@ -29,6 +30,7 @@ interface ExportModalProps {
 
 export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ open, onClose }) {
   const { exportAllSessions } = useFileActions();
+  const { settings, updateSetting } = useSettings();
   const [info, setInfo] = useState<ExportAllSessionsInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -87,6 +89,7 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
         includeAnalyses,
         includeProcessors,
         editorTabs: collectEditorTabs(),
+        anonymize: settings.exportAnonymize,
       });
       onClose();
     } catch (e) {
@@ -94,7 +97,7 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
     } finally {
       setExporting(false);
     }
-  }, [info, includeBookmarks, includeAnalyses, includeProcessors, onClose, exportAllSessions]);
+  }, [info, includeBookmarks, includeAnalyses, includeProcessors, onClose, exportAllSessions, settings.exportAnonymize]);
 
   const multiSession = info && info.sessions.length > 1;
   const title = multiSession ? 'Export Sessions' : 'Export Session';
@@ -150,6 +153,21 @@ export const ExportModal = React.memo<ExportModalProps>(function ExportModal({ o
                 Editor tabs ({editorTabCount})
               </div>
             )}
+          </div>
+
+          <div className={styles.section}>
+            <label className={styles.checkbox}>
+              <input
+                type="checkbox"
+                checked={settings.exportAnonymize}
+                onChange={(e) => updateSetting('exportAnonymize', e.target.checked)}
+              />
+              Anonymize PII in exported log lines
+            </label>
+            <div className={styles.hint}>
+              Detected emails, IMEIs, MAC/IP addresses etc. are replaced by stable tokens
+              such as {'<EMAIL-1>'} (consistent within one export).
+            </div>
           </div>
 
           <div className={styles.actions}>

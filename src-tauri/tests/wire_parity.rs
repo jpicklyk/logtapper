@@ -1114,3 +1114,71 @@ async fn snapshot_mode_state_at_returns_the_full_dump_identically_via_the_ui_ada
         "the UI adapter path and the HTTP path must return the exact same Snapshot dump"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 15. ExportAllOptions — POST /mcp/export request body (item 0ea8aad3)
+// ---------------------------------------------------------------------------
+//
+// `ExportAllOptions` is a request body, not a service return value, so it has
+// no second "service call" producer to compare against the HTTP route the
+// way every other section in this file does. What matters here instead: (a)
+// the new `anonymize` field round-trips through the live route exactly like
+// every other field, and (b) the generated `ExportAllOptions.ts` binding
+// actually mentions it — a rename or a forgotten `#[serde(rename_all =
+// "camelCase")]` on the new field would otherwise only surface as a frontend
+// type error, not a test failure here.
+
+#[tokio::test]
+async fn export_all_options_body_accepts_and_the_ts_binding_covers_the_anonymize_field() {
+    let (bridge_ctx, state, _sink, tmp) = support::ctx_only();
+    state.sessions.lock().unwrap().insert("s1".to_string(), fixture_session("s1", 3));
+    let router = mcp_bridge::router(bridge_ctx);
+
+    let dest = tmp.path().join("wire-parity-export.lts");
+    let body = json!({
+        "destPath": dest.to_string_lossy(),
+        "includeBookmarks": false,
+        "includeAnalyses": false,
+        "includeProcessors": false,
+        "editorTabs": [],
+        "anonymize": true,
+    });
+
+    // The route's Caller is always Agent, so no `mcp_open_allowlist` entry
+    // means this is expected to be denied — the point of this test is the
+    // body's shape, not the destination gate (that's `bridge_http.rs`'s
+    // job). A 403 still proves the body deserialized: a shape mismatch would
+    // fail at 400 `INVALID_ARGUMENT` before the destination gate ever runs.
+    let (status, resp) = send_json(&router, Method::POST, "/mcp/export", &trusted_headers(), &body).await;
+    assert_eq!(status, axum::http::StatusCode::FORBIDDEN, "{resp}: anonymize must not affect the destination gate");
+    assert_eq!(resp["error"]["code"], "NOT_ALLOWED");
+
+    // The TS binding must mention every key this test sent, `anonymize`
+    // included.
+    assert_ts_binding_covers_json_keys("ExportAllOptions", &body);
+}
+
+#[tokio::test]
+async fn export_all_options_omitting_anonymize_still_deserializes_serde_default() {
+    // Acceptance criterion 4: an old export payload without the field still
+    // works — `#[serde(default)]` on `ExportAllOptions::anonymize`.
+    let (bridge_ctx, state, _sink, tmp) = support::ctx_only();
+    state.sessions.lock().unwrap().insert("s1".to_string(), fixture_session("s1", 3));
+    let router = mcp_bridge::router(bridge_ctx);
+
+    let dest = tmp.path().join("wire-parity-export-legacy.lts");
+    let body = json!({
+        "destPath": dest.to_string_lossy(),
+        "includeBookmarks": false,
+        "includeAnalyses": false,
+        "includeProcessors": false,
+        "editorTabs": [],
+        // `anonymize` deliberately omitted.
+    });
+
+    let (status, resp) = send_json(&router, Method::POST, "/mcp/export", &trusted_headers(), &body).await;
+    // Same destination-gate refusal as above, NOT a 400 deserialization
+    // error — proving the missing field defaulted rather than failing.
+    assert_eq!(status, axum::http::StatusCode::FORBIDDEN, "{resp}: a legacy body (no `anonymize`) must still deserialize");
+    assert_eq!(resp["error"]["code"], "NOT_ALLOWED");
+}

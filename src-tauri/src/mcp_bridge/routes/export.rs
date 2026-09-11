@@ -38,6 +38,12 @@ pub(crate) async fn h_export_info(
 /// Body is `ExportAllOptions` as-is — `dest_path` already carries the
 /// destination, so there is nothing to add beyond the options the desktop UI
 /// already sends.
+///
+/// `options.anonymize` is `Ui`-only (the Export dialog's "Anonymize PII"
+/// checkbox) and is silently ignored for this route: an agent's export is
+/// redacted solely by `services::policy::should_anonymize` (i.e.
+/// `agent_raw_access`), never by a flag the agent's own request body
+/// controls — see `services::export`'s module doc comment ("Redaction").
 pub(crate) async fn h_export_run(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
