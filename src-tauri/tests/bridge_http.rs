@@ -479,15 +479,15 @@ async fn open_file_rejects_malformed_paths_as_invalid() {
 
 #[tokio::test]
 async fn open_file_allowed_and_existing_is_not_403_or_400() {
-    // The allowlist + path-hygiene gate (the part this test package owns)
-    // passes for an allowed, existing file. Today's actual outcome is 503
-    // TRANSPORT_UNAVAILABLE: `BridgeCtx::from_parts` (this harness) carries no
-    // Tauri `AppHandle`, and `h_open_file` still calls `open_file_inner`
-    // through one. WP-6 converts that handler to `ServiceCtx`, after which
-    // this becomes a real 200 — this test only pins that the gate itself does
-    // not stand in the way.
+    // WP-6 converted `h_open_file` to `services::sessions::open`, which no
+    // longer needs a Tauri `AppHandle` at all — this harness's `BridgeCtx`
+    // (no `app` field, retired in the same package) is now sufficient to
+    // drive a real open end to end. An allowed, existing file now resolves to
+    // a genuine 200 with a session in the body, not just "not 403/400".
     let (router, state, _sink, tmp) = app();
-    let file = NamedTempFile::new_in(tmp.path()).expect("create temp file inside the allowlist dir");
+    let file_path = tmp.path().join("device.log");
+    std::fs::write(&file_path, "01-01 00:00:00.000  1000  1000 I Tag: hello\n")
+        .expect("write a real log file so the open actually succeeds");
     state
         .mcp_open_allowlist
         .lock()
@@ -495,17 +495,17 @@ async fn open_file_allowed_and_existing_is_not_403_or_400() {
         .allowed_dirs
         .push(tmp.path().to_string_lossy().to_string());
 
-    let (status, _body) = send_json(
+    let (status, body) = send_json(
         &router,
         Method::POST,
         "/mcp/open_file",
         &trusted_headers(),
-        &json!({ "path": file.path().to_string_lossy() }),
+        &json!({ "path": file_path.to_string_lossy() }),
     )
     .await;
 
-    assert_ne!(status, StatusCode::FORBIDDEN, "gate should have permitted this path");
-    assert_ne!(status, StatusCode::BAD_REQUEST, "gate should have permitted this path");
+    assert_eq!(status, StatusCode::OK, "an allowed, existing file must now open for real: {body:?}");
+    assert!(body["sessionId"].as_str().is_some_and(|s| !s.is_empty()), "body must carry a session id: {body:?}");
 }
 
 // ---------------------------------------------------------------------------

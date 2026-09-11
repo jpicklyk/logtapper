@@ -1,11 +1,14 @@
+//! Thin Tauri adapters over `services::sessions`. Each command builds a
+//! [`crate::commands::adapters::ui_ctx`], calls one service function, and
+//! marshals the `Result<T, ServiceError>` into the `Result<T, String>` the
+//! frontend expects.
+
 use std::collections::HashMap;
 
 use serde::Serialize;
-use tauri::State;
-
-use crate::commands::{lock_or_err, AppState};
-use crate::mcp_bridge::PORT as MCP_PORT;
 use ts_rs::TS;
+
+use crate::commands::adapters::ui_ctx;
 
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -21,11 +24,14 @@ pub struct McpStatus {
 /// session. Called by the frontend whenever __pii_anonymizer is added to or
 /// removed from that session's pipeline chain. Per-session — see
 /// `AppState::mcp_anonymize` for why a global flag is unsafe here.
+///
+/// Thin adapter over [`crate::services::sessions::set_anonymize`] — `Ui`-only;
+/// an agent calling the equivalent service function directly gets `Forbidden`
+/// (see `services::policy::deny_agent_gate_mutation`).
 #[tauri::command]
-pub fn set_mcp_anonymize(state: State<'_, std::sync::Arc<AppState>>, session_id: String, enabled: bool) {
-    if let Ok(mut flags) = state.mcp_anonymize.lock() {
-        flags.insert(session_id, enabled);
-    }
+pub fn set_mcp_anonymize(app: tauri::AppHandle, session_id: String, enabled: bool) -> Result<(), String> {
+    let ctx = ui_ctx(&app);
+    Ok(crate::services::sessions::set_anonymize(&ctx, &session_id, enabled)?)
 }
 
 /// Records which session is currently the focused pane session in the
@@ -36,30 +42,17 @@ pub fn set_mcp_anonymize(state: State<'_, std::sync::Arc<AppState>>, session_id:
 /// can tell which of several open — possibly same-named — sessions the user
 /// is actually looking at.
 #[tauri::command]
-pub fn set_focused_session(
-    state: State<'_, std::sync::Arc<AppState>>,
-    session_id: Option<String>,
-) -> Result<(), String> {
-    let mut focused = lock_or_err(&state.focused_session, "focused_session")?;
-    *focused = session_id;
-    Ok(())
+pub fn set_focused_session(app: tauri::AppHandle, session_id: Option<String>) -> Result<(), String> {
+    let ctx = ui_ctx(&app);
+    Ok(crate::services::sessions::set_focused(&ctx, session_id)?)
 }
 
-/// Returns the MCP bridge status (bound + last-activity age).
+/// Returns the MCP bridge status (bound + last-activity age). Thin adapter
+/// over [`crate::services::sessions::mcp_status`].
 #[tauri::command]
-pub fn get_mcp_status(state: State<'_, std::sync::Arc<AppState>>) -> McpStatus {
-    let port = state.mcp_bridge_port.lock().map(|p| *p).unwrap_or(None);
-    let idle_secs = state
-        .mcp_last_activity
-        .lock()
-        .ok()
-        .and_then(|ts| *ts)
-        .map(|t| t.elapsed().as_secs() as u32);
-    McpStatus {
-        running: port.is_some(),
-        port: port.unwrap_or(MCP_PORT),
-        idle_secs,
-    }
+pub fn get_mcp_status(app: tauri::AppHandle) -> McpStatus {
+    let ctx = ui_ctx(&app);
+    crate::services::sessions::mcp_status(&ctx)
 }
 
 // ---------------------------------------------------------------------------
@@ -97,62 +90,9 @@ pub struct TagCount {
     pub count: usize,
 }
 
+/// Thin adapter over [`crate::services::sessions::metadata`].
 #[tauri::command]
-pub fn get_session_metadata(
-    state: State<'_, std::sync::Arc<AppState>>,
-    session_id: String,
-) -> Result<SessionMetadata, String> {
-    let sessions = lock_or_err(&state.sessions, "sessions")?;
-    let session = sessions
-        .get(&session_id)
-        .ok_or_else(|| format!("Session '{session_id}' not found"))?;
-
-    let source = session.primary_source().ok_or("No source in session")?;
-
-    let total_lines = source.total_lines();
-    let first_ts = source.first_timestamp();
-    let last_ts = source.last_timestamp();
-
-    // Compute file size
-    let file_size = if let Some(file_src) = session.file_source() {
-        file_src.mmap().len() as u64
-    } else if let Some(stream_src) = session.stream_source() {
-        stream_src.stream_byte_count()
-    } else {
-        0
-    };
-
-    // Scan line meta for level distribution and tag counts
-    let mut level_dist: HashMap<String, usize> = HashMap::new();
-    let mut tag_counts: HashMap<u16, usize> = HashMap::new();
-
-    for meta in source.line_meta_slice() {
-        *level_dist.entry(format!("{:?}", meta.level)).or_insert(0) += 1;
-        *tag_counts.entry(meta.tag_id).or_insert(0) += 1;
-    }
-
-    // Resolve tag IDs to strings and sort by count descending
-    let mut top_tags: Vec<TagCount> = tag_counts
-        .into_iter()
-        .map(|(tag_id, count)| TagCount {
-            tag: session.resolve_tag(tag_id).to_string(),
-            count,
-        })
-        .collect();
-    top_tags.sort_by(|a, b| b.count.cmp(&a.count));
-    top_tags.truncate(50);
-
-    Ok(SessionMetadata {
-        session_id,
-        source_name: source.name().to_string(),
-        source_type: source.source_type().to_string(),
-        total_lines,
-        file_size,
-        is_live: source.is_live(),
-        is_indexing: source.is_indexing(),
-        first_timestamp: first_ts,
-        last_timestamp: last_ts,
-        log_level_distribution: level_dist,
-        top_tags,
-    })
+pub fn get_session_metadata(app: tauri::AppHandle, session_id: String) -> Result<SessionMetadata, String> {
+    let ctx = ui_ctx(&app);
+    Ok(crate::services::sessions::metadata(&ctx, &session_id)?)
 }
