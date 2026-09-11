@@ -1484,6 +1484,7 @@ mod tests {
     use crate::core::line::{LineMeta, LogLevel};
     use crate::core::log_source::StreamLogSource;
     use crate::core::session::SourceType;
+    use crate::processors::marketplace::SchemaContract;
     use crate::processors::reporter::engine::{Emission, RunResult};
     use crate::processors::reporter::schema::ReporterDef;
     use crate::processors::state_tracker::types::FieldChange;
@@ -1554,6 +1555,22 @@ transitions:
 
     fn tracker_processor(id: &str) -> AnyProcessor {
         processor_from(id, TRACKER_YAML)
+    }
+
+    const TRANSFORMER_YAML: &str = r#"
+type: transformer
+id: __xform
+name: X
+version: 1.0.0
+transforms:
+  - op: replace_field
+    field: message
+    regex: "secret"
+    replacement: "***"
+"#;
+
+    fn transformer_processor(id: &str) -> AnyProcessor {
+        processor_from(id, TRANSFORMER_YAML)
     }
 
     fn install(ctx: &ServiceCtx, id: &str, proc: AnyProcessor) {
@@ -1743,37 +1760,81 @@ transitions:
 
     // ── The __pii_anonymizer carve-out ─────────────────────────────────────
 
-    /// The security-critical invariant: a transformer whose declared
-    /// `source_types` exclude this session is dropped from the run, but the
-    /// built-in anonymizer never is. Asserted against the exact predicate
-    /// `run_blocking`'s transformer retain uses, with a declared list that
-    /// *would* exclude — the built-in ships with none today, so a test that
-    /// only checked the shipped YAML would pass vacuously.
-    #[test]
-    fn the_pii_anonymizer_is_never_excluded_by_declared_source_types() {
-        let declared = vec!["logcat".to_string()];
-        let actual = SourceType::Kernel;
+    /// The security-critical invariant, driven through the real `run_blocking`
+    /// transformer-retain carve-out (~line 550) rather than a duplicated
+    /// inline closure: a transformer whose declared `source_types` exclude
+    /// this session is dropped from the run and reported as a skip row, but
+    /// the built-in anonymizer — given the *same* excluding declaration, so
+    /// the guard is what saves it rather than the shipped YAML happening to
+    /// declare no schema — always survives and actually runs.
+    #[tokio::test]
+    async fn the_pii_anonymizer_is_never_excluded_by_declared_source_types() {
+        let (ctx, _t) = test_ctx()
+            .agent("mcp")
+            .with_session("s1", 3)
+            .mcp_anonymize("s1", true)
+            .build();
+
+        // The fixture session is a logcat StreamLogSource (see
+        // `services::testing::fixture_session`); this declared list excludes it.
+        let mismatched = vec!["kernel".to_string()];
+
+        let mut ordinary = transformer_processor("mismatched-transformer");
+        ordinary.schema = Some(SchemaContract {
+            source_types: mismatched.clone(),
+            emissions: vec![],
+            mcp: None,
+        });
+        install(&ctx, "mismatched-transformer@official", ordinary);
+
+        let mut anonymizer = transformer_processor(PII_ANONYMIZER_ID);
+        anonymizer.schema = Some(SchemaContract {
+            source_types: mismatched.clone(),
+            emissions: vec![],
+            mcp: None,
+        });
+        install(&ctx, PII_ANONYMIZER_ID, anonymizer);
+
+        let out = run(
+            ctx.clone(),
+            "s1".to_string(),
+            Some(vec!["mismatched-transformer".to_string()]),
+            Arc::new(NullProgressSink),
+        )
+        .await
+        .expect("run succeeds");
+
         assert!(
-            excluded_by_declared_source_types(&declared, &actual),
-            "precondition: this declared list DOES exclude a kernel source"
+            out.effective_processor_ids
+                .contains(&PII_ANONYMIZER_ID.to_string()),
+            "should_anonymize must force the anonymizer into the effective chain"
         );
 
-        let keep = |id: &str| -> bool {
-            if id == PII_ANONYMIZER_ID {
-                return true;
-            }
-            !excluded_by_declared_source_types(&declared, &actual)
-        };
+        let anonymizer_summary = out
+            .summaries
+            .iter()
+            .find(|s| s.processor_id == PII_ANONYMIZER_ID)
+            .expect(
+                "the built-in anonymizer must survive source-type exclusion — a skipped \
+                 anonymizer means unredacted PII reaching exports and the MCP bridge",
+            );
+        assert!(
+            anonymizer_summary.skipped.is_none(),
+            "the anonymizer must actually run, not merely appear in the chain"
+        );
 
-        assert!(
-            !keep("some-transformer@official"),
-            "an ordinary transformer that declares a mismatched source type is skipped"
-        );
-        assert!(
-            keep(PII_ANONYMIZER_ID),
-            "the built-in anonymizer must survive source-type exclusion — a skipped \
-             anonymizer means unredacted PII reaching exports and the MCP bridge"
-        );
+        let transformer_summary = out
+            .summaries
+            .iter()
+            .find(|s| s.processor_id == "mismatched-transformer@official")
+            .expect("an excluded transformer still gets a skip row, not silent removal");
+        let reason = transformer_summary
+            .skipped
+            .as_ref()
+            .expect("an ordinary transformer that declares a mismatched source type is skipped");
+        assert_eq!(reason.reason, "source_type_mismatch");
+        assert_eq!(reason.declared, mismatched);
+        assert_eq!(reason.actual, SourceType::Logcat.to_string());
     }
 
     // ── run() ──────────────────────────────────────────────────────────────
@@ -1855,23 +1916,93 @@ transitions:
     async fn a_queued_cancel_aborts_the_run_without_clearing_stored_results() {
         let (ctx, _t) = test_ctx().with_session("s1", 3).build();
         install(&ctx, "a@official", reporter_processor("a"));
+
+        // Seed a sentinel result so we can tell a queued-cancel abort left
+        // previously stored results untouched rather than clearing them.
+        let mut sentinel_results = HashMap::new();
+        sentinel_results.insert(
+            "sentinel@official".to_string(),
+            RunResult {
+                matched_line_nums: vec![42],
+                ..Default::default()
+            },
+        );
         ctx.state()
             .pipeline_results
             .lock()
             .unwrap()
-            .insert("s1".to_string(), HashMap::new());
+            .insert("s1".to_string(), sentinel_results);
 
-        // Register a run and cancel every in-flight token, exactly as
-        // `stop_pipeline` does — the token this run registers is created after,
-        // so instead simulate the queued case by cancelling from another thread
-        // is racy; assert the simpler invariant that a run whose token is
-        // already set returns an empty summary list.
         let state = ctx.state_arc();
-        let (_id, tok) = state.register_pipeline_run();
-        tok.store(true, Ordering::Relaxed);
-        // A second run registers its own token, so this one is unaffected —
-        // that is the per-run-token guarantee.
-        assert_eq!(state.cancel_all_pipeline_runs(), 1);
+
+        // Hold the session's run lock on a real OS thread BEFORE starting the
+        // run — mirrors `commands::pipeline::tests::poisoned_run_lock_...`,
+        // which drives the same lock via a spawned `std::thread`. This forces
+        // `run_blocking` down the actual "queued" path: it registers its
+        // cancellation token (before attempting the run lock, per its own
+        // comment) and then blocks on `run_lock.lock()` until this thread
+        // releases it — exactly what `stop_pipeline` targets when a run is
+        // still queued behind another same-session run.
+        let run_lock = state.pipeline_run_lock("s1").expect("run lock");
+        let (held_tx, held_rx) = std::sync::mpsc::channel::<()>();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let lock_for_holder = Arc::clone(&run_lock);
+        let holder = std::thread::spawn(move || {
+            let _guard = lock_for_holder.lock().unwrap();
+            held_tx.send(()).expect("test thread still listening");
+            let _ = release_rx.recv();
+        });
+        held_rx.recv().expect("holder thread acquired the run lock");
+
+        let run_ctx = ctx.clone();
+        let handle = tokio::task::spawn(async move {
+            run(
+                run_ctx,
+                "s1".to_string(),
+                Some(vec!["a".to_string()]),
+                Arc::new(NullProgressSink),
+            )
+            .await
+        });
+
+        // Wait deterministically for `run_blocking` to register its token
+        // (it does so before ever touching the run lock) instead of sleeping
+        // a guessed delay — the registry is a `pub` AppState field so the
+        // test can observe it directly.
+        loop {
+            if state.pipeline_cancels.lock().unwrap().len() == 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+
+        // This is the queued run's own token — cancel it exactly as
+        // `stop_pipeline` would while the run is still queued behind the
+        // held lock.
+        let signalled = state.cancel_all_pipeline_runs();
+        assert_eq!(signalled, 1, "the queued run's token must be the one signalled");
+
+        // Let the queued run proceed now that its token is already cancelled.
+        release_tx.send(()).expect("holder thread still listening");
+        holder.join().expect("holder thread must not panic");
+
+        let out = handle
+            .await
+            .expect("run task must not panic")
+            .expect("a queued-cancel abort returns Ok, not an error");
+
+        assert!(
+            out.summaries.is_empty(),
+            "a queued cancel must abort before any processor executes"
+        );
+
+        let stored = ctx.state().pipeline_results.lock().unwrap();
+        assert!(
+            stored
+                .get("s1")
+                .is_some_and(|m| m.contains_key("sentinel@official")),
+            "a queued-cancel abort must leave previously stored results untouched"
+        );
     }
 
     // ── SourceSnapshot (moved with the run logic) ──────────────────────────

@@ -21,10 +21,27 @@ fn main() {
   // to ONLY this package's own `[[test]]` targets — it does not touch the
   // real app binary (which already gets its own manifest via
   // `tauri_build::build()` above) or any dependency's build script.
-  #[cfg(windows)]
+  #[cfg(all(windows, target_env = "msvc"))]
   {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support/msvc-test.manifest");
     println!("cargo:rustc-link-arg-tests=/MANIFEST:EMBED");
     println!("cargo:rustc-link-arg-tests=/MANIFESTINPUT:{}", manifest.display());
+
+    // The lib's own unit-test harness (`cargo test --lib`) is NOT a `[[test]]`
+    // target, so the directive above does not reach it — and since Wave 1 the
+    // unit tests also construct `BridgeCtx` (WP-4's route golden tests), so
+    // that harness crashes the same way. Cargo has no `-lib-tests` variant,
+    // and a crate-wide `/MANIFEST:EMBED` would collide (CVT1100) with the
+    // RT_MANIFEST resource `tauri_build` already embeds in the app binary.
+    // Instead ask the linker for an EXTERNAL manifest next to every
+    // executable it produces for this crate: `<exe>.manifest` carrying the
+    // same Common-Controls v6 dependency. The loader only consults an
+    // external manifest when the image has no embedded one, so the app
+    // binary keeps using tauri's embedded manifest and the unit-test harness
+    // picks up the external file.
+    println!("cargo:rustc-link-arg=/MANIFEST");
+    println!(
+      "cargo:rustc-link-arg=/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls'        version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'"
+    );
   }
 }

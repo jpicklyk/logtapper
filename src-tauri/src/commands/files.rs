@@ -10,14 +10,16 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tempfile::NamedTempFile;
 
 use crate::commands::{lock_or_err, AppState};
-use crate::core::line::{
-    HighlightKind, HighlightSpan, LineRequest, LineWindow, SearchQuery, SearchSummary,
-};
+use crate::core::line::{LineRequest, LineWindow, SearchQuery, SearchSummary};
 use crate::core::session::{AnalysisSession, SectionInfo, parser_for};
 use crate::commands::adapters::ui_ctx;
 use crate::services::lines::{
     self, LineFilters, LineMetadataSource, LineSelection, LinesRequest,
 };
+// Only the `#[cfg(test)]` module below calls this directly; production code
+// reaches it through `services::lines::build_view_line`.
+#[cfg(test)]
+use crate::services::lines::compute_search_highlights;
 use crate::services::{ServiceCtx, ServiceError};
 use ts_rs::TS;
 
@@ -1548,67 +1550,6 @@ pub async fn get_sections(
     let ctx = crate::commands::adapters::ui_ctx(&app);
     let page = crate::services::sections::list(&ctx, &session_id, None, 0, usize::MAX)?;
     Ok(page.items)
-}
-
-// ---------------------------------------------------------------------------
-// Highlight computation
-// ---------------------------------------------------------------------------
-
-pub fn compute_search_highlights(raw: &str, query: &SearchQuery) -> Vec<HighlightSpan> {
-    if query.text.is_empty() {
-        return vec![];
-    }
-
-    let mut spans = Vec::new();
-
-    if query.is_regex {
-        let pattern = if query.case_sensitive {
-            query.text.clone()
-        } else {
-            format!("(?i){}", query.text)
-        };
-        if let Ok(re) = Regex::new(&pattern) {
-            for m in re.find_iter(raw) {
-                spans.push(HighlightSpan {
-                    start: m.start(),
-                    end: m.end(),
-                    kind: HighlightKind::Search,
-                });
-            }
-        }
-    } else if query.case_sensitive {
-        let mut offset = 0;
-        while let Some(pos) = raw[offset..].find(query.text.as_str()) {
-            let abs = offset + pos;
-            spans.push(HighlightSpan {
-                start: abs,
-                end: abs + query.text.len(),
-                kind: HighlightKind::Search,
-            });
-            offset = abs + query.text.len().max(1);
-            if offset >= raw.len() {
-                break;
-            }
-        }
-    } else {
-        let lower_raw = raw.to_lowercase();
-        let lower_needle = query.text.to_lowercase();
-        let mut offset = 0;
-        while let Some(pos) = lower_raw[offset..].find(&lower_needle) {
-            let abs = offset + pos;
-            spans.push(HighlightSpan {
-                start: abs,
-                end: abs + lower_needle.len(),
-                kind: HighlightKind::Search,
-            });
-            offset = abs + lower_needle.len().max(1);
-            if offset >= lower_raw.len() {
-                break;
-            }
-        }
-    }
-
-    spans
 }
 
 // ---------------------------------------------------------------------------

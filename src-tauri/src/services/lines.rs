@@ -31,8 +31,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::commands::files::compute_search_highlights;
-use crate::core::line::{LogLevel, SearchQuery, ViewLine, ViewMode};
+use regex::Regex;
+
+use crate::core::line::{HighlightKind, HighlightSpan, LogLevel, SearchQuery, ViewLine, ViewMode};
 use crate::core::log_source::LogSource;
 use crate::core::parser::LogParser;
 use crate::core::session::{AnalysisSession, parser_for};
@@ -140,6 +141,69 @@ pub fn level_at_least(line_level: &str, filter: &str) -> bool {
         }
     }
     priority(line_level) >= priority(filter)
+}
+
+/// Locate every occurrence of `query` in `raw`, as spans for the viewer (and
+/// the MCP bridge) to highlight.
+///
+/// Moved here from `commands::files` (WP-1 review) — a pure function over
+/// [`core::line`](crate::core::line) types, so it belongs with the rest of
+/// `services` rather than pulled backward from `commands/`.
+pub fn compute_search_highlights(raw: &str, query: &SearchQuery) -> Vec<HighlightSpan> {
+    if query.text.is_empty() {
+        return vec![];
+    }
+
+    let mut spans = Vec::new();
+
+    if query.is_regex {
+        let pattern = if query.case_sensitive {
+            query.text.clone()
+        } else {
+            format!("(?i){}", query.text)
+        };
+        if let Ok(re) = Regex::new(&pattern) {
+            for m in re.find_iter(raw) {
+                spans.push(HighlightSpan {
+                    start: m.start(),
+                    end: m.end(),
+                    kind: HighlightKind::Search,
+                });
+            }
+        }
+    } else if query.case_sensitive {
+        let mut offset = 0;
+        while let Some(pos) = raw[offset..].find(query.text.as_str()) {
+            let abs = offset + pos;
+            spans.push(HighlightSpan {
+                start: abs,
+                end: abs + query.text.len(),
+                kind: HighlightKind::Search,
+            });
+            offset = abs + query.text.len().max(1);
+            if offset >= raw.len() {
+                break;
+            }
+        }
+    } else {
+        let lower_raw = raw.to_lowercase();
+        let lower_needle = query.text.to_lowercase();
+        let mut offset = 0;
+        while let Some(pos) = lower_raw[offset..].find(&lower_needle) {
+            let abs = offset + pos;
+            spans.push(HighlightSpan {
+                start: abs,
+                end: abs + lower_needle.len(),
+                kind: HighlightKind::Search,
+            });
+            offset = abs + lower_needle.len().max(1);
+            if offset >= lower_raw.len() {
+                break;
+            }
+        }
+    }
+
+    spans
 }
 
 // ---------------------------------------------------------------------------

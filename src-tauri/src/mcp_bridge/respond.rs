@@ -98,19 +98,6 @@ macro_rules! get_session_and_source {
 }
 pub(super) use get_session_and_source;
 
-/// Verify a session exists (by key) and return a JSON error if not (or if
-/// the lock is poisoned — see `lock_or_json_err!` above).
-/// Does not bind the session — drops the lock immediately.
-macro_rules! verify_session_exists {
-    ($state:expr, $session_id:expr) => {{
-        let sessions = crate::mcp_bridge::respond::lock_or_json_err!($state.sessions, "sessions");
-        if !sessions.contains_key(&$session_id) {
-            return Json(json!({ "error": format!("Session not found: {}", $session_id) }));
-        }
-    }};
-}
-pub(super) use verify_session_exists;
-
 // ---------------------------------------------------------------------------
 // PII anonymization helpers — used by every raw-line handler
 // (h_query, h_search, h_lines_around, h_search_with_context).

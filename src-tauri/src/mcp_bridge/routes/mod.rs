@@ -14,3 +14,11 @@ pub(super) mod search;
 pub(super) mod sessions;
 pub(super) mod tracker;
 pub(super) mod watches;
+
+// Wave-2 route modules (stubs until the owning package lands).
+pub(super) mod export;
+pub(super) mod filters;
+pub(super) mod settings;
+pub(super) mod stream;
+pub(super) mod timeline;
+pub(super) mod workspace;
