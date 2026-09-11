@@ -9,27 +9,18 @@
 //! ([`ServiceCtx`] is `Clone + Send + 'static`, so it owns its own blocking
 //! task instead of the caller cloning a handle).
 //!
-//! ## Destination policy (this package's one judgment call)
+//! ## Destination policy
 //!
-//! [`authorize_export_dest`] cannot simply call [`super::policy::authorize_open`]
-//! on the destination path: that function (via
-//! `bridge_access::validate_open_path`) canonicalizes the **whole** path,
-//! which requires it to already exist — correct for *opening* a file, wrong
-//! for a destination we are about to create. Instead:
-//!
-//! - `Ui`: passes straight through, same as `authorize_open` — the native
-//!   save dialog is the consent step.
-//! - `Agent`: the destination must be absolute, on a local drive (no UNC,
-//!   `\\?\` verbatim, or `\\.\` device forms), and free of NTFS
-//!   alternate-data-stream suffixes — the identical raw-form hygiene checks
-//!   `validate_open_path` applies before it ever touches the filesystem —
-//!   **and** its *parent directory* (which must already exist) must resolve
-//!   inside a directory on the MCP open allowlist (or `allow_all`). An agent
-//!   can therefore only export into a directory it could already read files
-//!   from — it cannot escape the sandbox merely because export is a write
-//!   instead of a read. A missing parent directory and a parent outside the
-//!   allowlist collapse into the same refusal, for the same anti-probing
-//!   reason `authorize_open` gives denied/nonexistent the same shape.
+//! The export destination is authorized via [`policy::authorize_write_dest`]
+//! — the same write-destination gate `workspace::save` and
+//! `stream::save_live_capture` use. `Ui` passes straight through (the native
+//! save dialog is the consent step); an `Agent`'s destination must be
+//! absolute, on a local drive, free of NTFS alternate-data-stream suffixes,
+//! and its parent directory must resolve inside the MCP open allowlist (or
+//! `allow_all`) — the destination file itself need not exist yet. An agent
+//! can therefore only export into a directory it could already read files
+//! from — it cannot escape the sandbox merely because export is a write
+//! instead of a read.
 //!
 //! ## Redaction
 //!
@@ -61,7 +52,6 @@
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
-use std::path::{Component, Path, PathBuf, Prefix};
 use std::sync::Arc;
 
 use memmap2::Mmap;
@@ -73,7 +63,6 @@ use crate::core::analysis::artifact_references_session;
 use crate::core::log_source::{FileLogSource, StreamLogSource, ZipLogSource};
 use crate::workspace::lts::{LtsEditorTab, LtsSessionData, LtsSessionMeta};
 
-use super::error::INVALID_PATH;
 use super::paths::AppPaths;
 use super::policy;
 use super::{lock_svc, Caller, ServiceCtx, ServiceError};
@@ -220,94 +209,6 @@ fn session_display_name(session: &crate::core::session::AnalysisSession) -> Stri
 }
 
 // ---------------------------------------------------------------------------
-// Destination policy
-// ---------------------------------------------------------------------------
-
-/// Validate an export destination path and return the directory-canonical
-/// form to write to. See the module doc comment's "Destination policy"
-/// section for the full rationale and why this cannot simply delegate to
-/// [`policy::authorize_open`].
-pub fn authorize_export_dest(ctx: &ServiceCtx, dest_path: &str) -> Result<PathBuf, ServiceError> {
-    if matches!(ctx.caller(), Caller::Ui) {
-        return Ok(crate::simplified_path(Path::new(dest_path)));
-    }
-
-    let path = Path::new(dest_path);
-
-    // Same raw-form hygiene checks `bridge_access::validate_open_path` (via
-    // `authorize_open`) applies before ever touching the filesystem: must be
-    // absolute, must be a local drive path (no UNC/verbatim/device forms), no
-    // NTFS alternate-data-stream suffix.
-    if !path.is_absolute() {
-        return Err(ServiceError::InvalidArg {
-            code: INVALID_PATH,
-            message: "path must be absolute".to_string(),
-        });
-    }
-    match path.components().next() {
-        Some(Component::Prefix(p)) if matches!(p.kind(), Prefix::Disk(_)) => {}
-        _ => {
-            return Err(ServiceError::InvalidArg {
-                code: INVALID_PATH,
-                message: "only local drive paths (C:\\...) are allowed; UNC (\\\\server\\share), verbatim (\\\\?\\...), and device (\\\\.\\...) paths are not"
-                    .to_string(),
-            });
-        }
-    }
-    if dest_path.match_indices(':').any(|(i, _)| i > 1) {
-        return Err(ServiceError::InvalidArg {
-            code: INVALID_PATH,
-            message: "alternate data stream paths are not allowed".to_string(),
-        });
-    }
-
-    // Unlike `authorize_open` (which canonicalizes the WHOLE path — correct
-    // for opening a file that must already exist, wrong for a destination we
-    // are about to create), containment is checked against the destination's
-    // PARENT directory, which must already exist.
-    let Some(file_name) = path.file_name() else {
-        return Err(ServiceError::InvalidArg {
-            code: INVALID_PATH,
-            message: "destination has no file name".to_string(),
-        });
-    };
-    let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
-
-    let (allowed, allow_all): (Vec<String>, bool) = {
-        let cfg = ctx
-            .state()
-            .mcp_open_allowlist
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        (cfg.allowed_dirs.clone(), cfg.allow_all)
-    };
-
-    // A parent that cannot be canonicalized (does not exist, permission
-    // error, junction loop) collapses into the same refusal as "outside the
-    // allowlist" — an agent must not be able to probe the filesystem for
-    // which directories exist through this error, mirroring
-    // `authorize_open`'s denied/nonexistent contract.
-    let canonical_parent = std::fs::canonicalize(parent)
-        .map_err(|_| ServiceError::not_allowed("path is not allowed"))?;
-
-    if !allow_all {
-        use crate::commands::bridge_access::canonical_compare_form;
-        let Some(candidate_normalized) = canonical_compare_form(&canonical_parent) else {
-            return Err(ServiceError::not_allowed("path is not allowed"));
-        };
-        let contained = allowed.iter().any(|dir| {
-            canonical_compare_form(Path::new(dir))
-                .is_some_and(|d| Path::new(&candidate_normalized).starts_with(Path::new(&d)))
-        });
-        if !contained {
-            return Err(ServiceError::not_allowed("path is not allowed"));
-        }
-    }
-
-    Ok(canonical_parent.join(file_name))
-}
-
-// ---------------------------------------------------------------------------
 // Multi-session export types
 // ---------------------------------------------------------------------------
 
@@ -396,7 +297,7 @@ pub fn info(ctx: &ServiceCtx) -> Result<ExportAllSessionsInfo, ServiceError> {
 /// to. Journals `export.run` with the destination and session count on
 /// success.
 pub async fn run(ctx: ServiceCtx, options: ExportAllOptions) -> Result<(), ServiceError> {
-    let dest = authorize_export_dest(&ctx, &options.dest_path)?;
+    let dest = policy::authorize_write_dest(&ctx, &options.dest_path)?;
 
     // Source snapshot helper (outside lock scope).
     enum SourceRef {
@@ -997,84 +898,8 @@ mod tests {
         assert_eq!(info.sessions[0].analysis_count, 1);
     }
 
-    // ── authorize_export_dest ─────────────────────────────────────────────
-
-    #[test]
-    fn authorize_export_dest_ui_passes_through_unconditionally() {
-        let (ctx, tmp) = test_ctx().build();
-        let dest = tmp.path().join("does-not-exist-yet.lts");
-        let ok = authorize_export_dest(&ctx, &dest.to_string_lossy()).expect("ui always allowed");
-        assert!(ok.to_string_lossy().to_lowercase().contains("does-not-exist-yet.lts"));
-    }
-
-    #[test]
-    fn authorize_export_dest_agent_denies_by_default() {
-        let (ctx, tmp) = test_ctx().caller(Caller::Agent { client: "mcp".into() }).build();
-        let dest = tmp.path().join("out.lts");
-        let err = authorize_export_dest(&ctx, &dest.to_string_lossy()).unwrap_err();
-        assert_eq!(err.code(), "NOT_ALLOWED");
-        assert_eq!(err.http_status(), 403);
-    }
-
-    #[test]
-    fn authorize_export_dest_agent_permits_a_new_file_inside_an_allowed_directory() {
-        let (ctx, tmp) = test_ctx().caller(Caller::Agent { client: "mcp".into() }).build();
-        ctx.state()
-            .mcp_open_allowlist
-            .lock()
-            .unwrap()
-            .allowed_dirs
-            .push(tmp.path().to_string_lossy().to_string());
-
-        // The destination FILE does not exist yet — only the parent directory
-        // must exist and be inside the allowlist.
-        let dest = tmp.path().join("new-export.lts");
-        let ok = authorize_export_dest(&ctx, &dest.to_string_lossy()).expect("inside the allowlist");
-        assert!(ok.to_string_lossy().to_lowercase().contains("new-export.lts"));
-    }
-
-    #[test]
-    fn authorize_export_dest_agent_denies_outside_the_allowlist() {
-        let (ctx, tmp) = test_ctx().caller(Caller::Agent { client: "mcp".into() }).build();
-        let allowed_dir = tmp.path().join("allowed");
-        std::fs::create_dir_all(&allowed_dir).unwrap();
-        ctx.state()
-            .mcp_open_allowlist
-            .lock()
-            .unwrap()
-            .allowed_dirs
-            .push(allowed_dir.to_string_lossy().to_string());
-
-        let outside_dir = tmp.path().join("elsewhere");
-        std::fs::create_dir_all(&outside_dir).unwrap();
-        let dest = outside_dir.join("out.lts");
-
-        let err = authorize_export_dest(&ctx, &dest.to_string_lossy()).unwrap_err();
-        assert_eq!(err.code(), "NOT_ALLOWED");
-    }
-
-    #[test]
-    fn authorize_export_dest_agent_rejects_a_relative_path_as_invalid_not_forbidden() {
-        let (ctx, _tmp) = test_ctx().caller(Caller::Agent { client: "mcp".into() }).build();
-        let err = authorize_export_dest(&ctx, "relative/out.lts").unwrap_err();
-        assert_eq!(err.code(), "INVALID_PATH");
-        assert_eq!(err.http_status(), 400);
-    }
-
-    #[test]
-    fn authorize_export_dest_agent_denies_when_the_parent_directory_does_not_exist() {
-        let (ctx, tmp) = test_ctx().caller(Caller::Agent { client: "mcp".into() }).build();
-        ctx.state()
-            .mcp_open_allowlist
-            .lock()
-            .unwrap()
-            .allowed_dirs
-            .push(tmp.path().to_string_lossy().to_string());
-        let dest = tmp.path().join("does-not-exist").join("out.lts");
-        let err = authorize_export_dest(&ctx, &dest.to_string_lossy()).unwrap_err();
-        // Same refusal shape as "outside the allowlist" — no probing signal.
-        assert_eq!(err.code(), "NOT_ALLOWED");
-    }
+    // `authorize_write_dest`'s tests (formerly `authorize_export_dest` here)
+    // now live in `services::policy`, next to the consolidated function.
 
     // ── run (end-to-end) ──────────────────────────────────────────────────
 

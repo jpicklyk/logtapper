@@ -58,7 +58,7 @@ use crate::processors::reporter::schema::ReporterDef;
 use crate::processors::state_tracker::engine::build_defaults;
 
 use super::events::{RingSink, SeqItem, Sink};
-use super::{lock_svc, pipeline, policy, Caller, ServiceCtx, ServiceError};
+use super::{lock_svc, pipeline, policy, ServiceCtx, ServiceError};
 
 // ---------------------------------------------------------------------------
 // Wire types (moved verbatim from commands/adb.rs, serde + TS derives intact)
@@ -1100,7 +1100,7 @@ pub fn save_live_capture(
 ) -> Result<u32, ServiceError> {
     use std::io::Write;
 
-    let dest = authorize_save_dest(ctx, output_path)?;
+    let dest = policy::authorize_write_dest(ctx, output_path)?;
 
     let count = {
         let sessions = lock_svc(&ctx.state().sessions, "sessions")?;
@@ -1130,76 +1130,6 @@ pub fn save_live_capture(
     );
 
     Ok(count)
-}
-
-/// Destination gate for [`save_live_capture`].
-///
-/// `Ui` passes through (the native save dialog is the consent step). `Agent`
-/// gets the same raw-form hygiene `bridge_access::validate_open_path` applies,
-/// then containment of the destination's **parent directory** against the MCP
-/// open allowlist — the file itself does not exist yet, so the parent is what
-/// can be canonicalized. A parent that is missing and a parent that is outside
-/// the allowlist collapse into the identical refusal, same anti-probing
-/// rationale as [`policy::authorize_open`].
-fn authorize_save_dest(ctx: &ServiceCtx, dest: &str) -> Result<std::path::PathBuf, ServiceError> {
-    use crate::commands::bridge_access::canonical_compare_form;
-    use std::path::{Component, Path, Prefix};
-
-    let path = Path::new(dest);
-
-    if matches!(ctx.caller(), Caller::Ui) {
-        return Ok(crate::simplified_path(path));
-    }
-
-    // Raw-form hygiene — pure string checks, no filesystem access.
-    if !path.is_absolute() {
-        return Err(ServiceError::InvalidArg {
-            code: super::error::INVALID_PATH,
-            message: "path must be absolute".to_string(),
-        });
-    }
-    match path.components().next() {
-        Some(Component::Prefix(p)) if matches!(p.kind(), Prefix::Disk(_)) => {}
-        _ => {
-            return Err(ServiceError::InvalidArg {
-                code: super::error::INVALID_PATH,
-                message: "only local drive paths (C:\\...) are allowed; UNC (\\\\server\\share), verbatim (\\\\?\\...), and device (\\\\.\\...) paths are not".to_string(),
-            });
-        }
-    }
-    if dest.match_indices(':').any(|(i, _)| i > 1) {
-        return Err(ServiceError::InvalidArg {
-            code: super::error::INVALID_PATH,
-            message: "alternate data stream paths are not allowed".to_string(),
-        });
-    }
-
-    let (allowed, allow_all): (Vec<String>, bool) = {
-        let cfg = ctx
-            .state()
-            .mcp_open_allowlist
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        (cfg.allowed_dirs.clone(), cfg.allow_all)
-    };
-
-    let denied = || ServiceError::not_allowed("path is not allowed");
-
-    let parent = path.parent().ok_or_else(denied)?;
-    let parent_form = canonical_compare_form(parent).ok_or_else(denied)?;
-
-    if allow_all {
-        return Ok(path.to_path_buf());
-    }
-    for dir in &allowed {
-        let Some(dir_form) = canonical_compare_form(Path::new(dir)) else {
-            continue;
-        };
-        if Path::new(&parent_form).starts_with(Path::new(&dir_form)) {
-            return Ok(path.to_path_buf());
-        }
-    }
-    Err(denied())
 }
 
 // ---------------------------------------------------------------------------
@@ -2836,38 +2766,8 @@ pipeline:
         assert!(entries.iter().any(|e| e.action == "stream.stop"));
     }
 
-    // ── save destination gate ──────────────────────────────────────────────
-
-    #[test]
-    fn save_dest_passes_through_for_the_ui() {
-        let (ctx, tmp) = test_ctx().build();
-        let dest = tmp.path().join("capture.log");
-        let got = authorize_save_dest(&ctx, &dest.to_string_lossy()).unwrap();
-        assert!(got.ends_with("capture.log"));
-    }
-
-    #[test]
-    fn save_dest_denies_an_agent_by_default() {
-        let (ctx, tmp) = test_ctx().agent("mcp").build();
-        let dest = tmp.path().join("capture.log");
-        let err = authorize_save_dest(&ctx, &dest.to_string_lossy()).unwrap_err();
-        assert_eq!(err.code(), "NOT_ALLOWED");
-    }
-
-    #[test]
-    fn save_dest_permits_an_agent_inside_the_allowlist_even_when_the_file_is_new() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (ctx, _t) = test_ctx().agent("mcp").allowlist(tmp.path()).build();
-        let dest = tmp.path().join("not-yet-created.log");
-        assert!(authorize_save_dest(&ctx, &dest.to_string_lossy()).is_ok());
-    }
-
-    #[test]
-    fn save_dest_rejects_a_relative_path_as_invalid_not_denied() {
-        let (ctx, _tmp) = test_ctx().agent("mcp").build();
-        let err = authorize_save_dest(&ctx, "relative/capture.log").unwrap_err();
-        assert_eq!(err.code(), "INVALID_PATH");
-    }
+    // `authorize_write_dest`'s tests (formerly `authorize_save_dest` here)
+    // now live in `services::policy`, next to the consolidated function.
 
     #[test]
     fn save_live_capture_writes_retained_lines_and_journals() {

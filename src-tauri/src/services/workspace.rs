@@ -51,7 +51,7 @@ use crate::workspace::ltw_v4::{
 };
 use crate::workspace::{now_ms, SessionMeta};
 
-use super::{lock_svc, Caller, ServiceCtx, ServiceError};
+use super::{lock_svc, ServiceCtx, ServiceError};
 
 // ---------------------------------------------------------------------------
 // Paths (Tauri-free counterparts of workspace::workspace_dir /
@@ -93,87 +93,14 @@ pub(crate) fn workspaces_dir(ctx: &ServiceCtx) -> Result<PathBuf, ServiceError> 
 // Write gate
 // ---------------------------------------------------------------------------
 
-/// Authorize a caller-chosen *write* destination.
-///
-/// `Ui` passes the path through untouched — the native save dialog is the
-/// consent step, and rewriting the string the dialog handed back would change
-/// what the desktop writes today.
-///
-/// `Agent` is held to the same containment rule as
-/// [`super::policy::authorize_open`], with one necessary difference: the
-/// destination usually does not exist yet, so it cannot be canonicalized.
-/// The *parent directory* is validated instead (it must exist and sit inside
-/// an allowlisted directory), and the file name is required to be a single
-/// plain segment. That closes the two ways a non-existent path could escape:
-/// `..` traversal is resolved away by canonicalizing the parent, and an
-/// alternate-data-stream suffix (`file.ltw:evil`) is rejected by the
-/// file-name check.
-///
-/// Deliberately reuses `validate_open_path` for the parent rather than
-/// growing a second copy of the raw-form hygiene + containment logic; the
-/// empty `open_session_canonical_paths` argument disables the
-/// "already-open session" auto-permit, which has no meaning for a write.
-pub(crate) fn authorize_write(ctx: &ServiceCtx, path: &str) -> Result<PathBuf, ServiceError> {
-    use crate::commands::bridge_access::{validate_open_path, OpenAccessError};
-    use super::error::{INVALID_PATH, NOT_ALLOWED};
-
-    if matches!(ctx.caller(), Caller::Ui) {
-        return Ok(PathBuf::from(path));
-    }
-
-    let dest = Path::new(path);
-    let file_name = dest
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| ServiceError::InvalidArg {
-            code: INVALID_PATH,
-            message: "destination must name a file".to_string(),
-        })?;
-    if file_name.contains(':') || file_name == "." || file_name == ".." {
-        return Err(ServiceError::InvalidArg {
-            code: INVALID_PATH,
-            message: "destination file name is not a plain file name".to_string(),
-        });
-    }
-    let parent = dest.parent().ok_or_else(|| ServiceError::InvalidArg {
-        code: INVALID_PATH,
-        message: "destination has no parent directory".to_string(),
-    })?;
-    let parent_str = parent.to_str().ok_or_else(|| ServiceError::InvalidArg {
-        code: INVALID_PATH,
-        message: "destination path is not valid UTF-8".to_string(),
-    })?;
-
-    let state = ctx.state();
-    let (allowed, allow_all): (Vec<String>, bool) = {
-        let cfg = state
-            .mcp_open_allowlist
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        (cfg.allowed_dirs.clone(), cfg.allow_all)
-    };
-
-    match validate_open_path(&allowed, &[], parent_str, allow_all) {
-        Ok(canonical_parent) => Ok(canonical_parent.join(file_name)),
-        Err(OpenAccessError::NotAllowed) => Err(ServiceError::Forbidden {
-            code: NOT_ALLOWED,
-            message: "path is not allowed".to_string(),
-        }),
-        Err(OpenAccessError::InvalidPath(msg)) => Err(ServiceError::InvalidArg {
-            code: INVALID_PATH,
-            message: msg,
-        }),
-    }
-}
-
 /// Reject a workspace id that could escape the app-data `workspaces/`
 /// directory when used as a file stem.
 ///
 /// The auto-save and app-state destinations are app-owned (they are always
-/// `app_data_dir/...`), so [`authorize_write`]'s allowlist containment does
-/// not apply — an agent cannot choose *where* they land. The one piece of
-/// caller-supplied data that reaches the path is the workspace id, so that is
-/// what gets checked.
+/// `app_data_dir/...`), so [`super::policy::authorize_write_dest`]'s
+/// allowlist containment does not apply — an agent cannot choose *where* they
+/// land. The one piece of caller-supplied data that reaches the path is the
+/// workspace id, so that is what gets checked.
 fn check_workspace_id(workspace_id: &str) -> Result<(), ServiceError> {
     let bad = workspace_id.is_empty()
         || workspace_id == "."
@@ -438,10 +365,10 @@ fn write_workspace_snapshot(
 /// at the caller's chosen destination.
 ///
 /// An `Agent` destination must sit inside the MCP open-file allowlist (see
-/// [`authorize_write`]); a `Ui` destination comes from the native save dialog
-/// and is written verbatim.
+/// [`super::policy::authorize_write_dest`]); a `Ui` destination comes from the
+/// native save dialog and is written verbatim.
 pub fn save(ctx: &ServiceCtx, options: SaveWorkspaceOptions) -> Result<(), ServiceError> {
-    let dest = authorize_write(ctx, &options.dest_path)?;
+    let dest = super::policy::authorize_write_dest(ctx, &options.dest_path)?;
 
     let chain = LtwPipelineChain {
         chain: options.pipeline_chain,
@@ -477,7 +404,7 @@ pub fn save(ctx: &ServiceCtx, options: SaveWorkspaceOptions) -> Result<(), Servi
 /// name-keyed files left over from before that change are deliberately not
 /// migrated or touched here.
 ///
-/// The destination is app-owned, so [`authorize_write`]'s allowlist rule does
+/// The destination is app-owned, so [`super::policy::authorize_write_dest`]'s allowlist rule does
 /// not apply — the only caller-supplied component is the id, which
 /// [`check_workspace_id`] constrains to a single path segment.
 pub fn auto_save(
@@ -885,7 +812,7 @@ pub fn app_state(ctx: &ServiceCtx) -> Result<AppStateFile, ServiceError> {
 /// Write `app-state.json`.
 ///
 /// The destination is app-owned (always `app_data_dir/app-state.json`) with
-/// no caller-supplied path component at all, so [`authorize_write`]'s
+/// no caller-supplied path component at all, so [`super::policy::authorize_write_dest`]'s
 /// allowlist containment has nothing to check — there is no destination for a
 /// caller to choose. The bridge deliberately exposes no route for this: an
 /// agent has no business rewriting the desktop's workspace list wholesale.
@@ -1397,40 +1324,11 @@ mod tests {
     }
 
     // -- gates ---------------------------------------------------------------
-
-    #[test]
-    fn ui_write_destination_passes_through_untouched() {
-        let (ctx, _tmp) = test_ctx().build();
-        let dest = authorize_write(&ctx, "C:\\anywhere\\at\\all.ltw").expect("ui may write anywhere");
-        assert_eq!(dest, PathBuf::from("C:\\anywhere\\at\\all.ltw"));
-    }
-
-    #[test]
-    fn agent_write_inside_the_allowlist_is_permitted() {
-        let allowed = tempfile::tempdir().expect("allowlisted dir");
-        let (ctx, _tmp) = test_ctx().agent("test").allowlist(allowed.path()).build();
-        let dest = allowed.path().join("agent.ltw");
-        let out = authorize_write(&ctx, &dest.to_string_lossy()).expect("inside allowlist");
-        assert_eq!(out.file_name().unwrap(), "agent.ltw");
-    }
-
-    #[test]
-    fn agent_write_outside_the_allowlist_is_forbidden() {
-        let (ctx, _tmp) = test_ctx().agent("test").build();
-        let outside = tempfile::tempdir().expect("outside dir");
-        let err = authorize_write(&ctx, &outside.path().join("x.ltw").to_string_lossy())
-            .expect_err("outside the allowlist must be refused");
-        assert_eq!(err.code(), "NOT_ALLOWED");
-    }
-
-    #[test]
-    fn agent_write_rejects_an_alternate_data_stream_file_name() {
-        let allowed = tempfile::tempdir().expect("allowlisted dir");
-        let (ctx, _tmp) = test_ctx().agent("test").allowlist(allowed.path()).build();
-        let dest = format!("{}\\ok.ltw:evil", allowed.path().to_string_lossy());
-        let err = authorize_write(&ctx, &dest).expect_err("ADS suffix must be refused");
-        assert_eq!(err.code(), "INVALID_PATH");
-    }
+    //
+    // `authorize_write_dest`'s own gate tests (formerly `authorize_write`
+    // here) now live in `services::policy`, next to the consolidated
+    // function. What remains here is end-to-end: `save` must actually honor
+    // the gate's refusal rather than writing anyway.
 
     #[test]
     fn agent_save_outside_the_allowlist_never_writes() {

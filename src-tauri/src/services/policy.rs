@@ -87,6 +87,94 @@ pub fn authorize_open(ctx: &ServiceCtx, path: &str) -> Result<PathBuf, ServiceEr
     }
 }
 
+// ---------------------------------------------------------------------------
+// Write-destination gate
+// ---------------------------------------------------------------------------
+
+/// Decide whether `raw` may be written to by this caller, returning the
+/// canonical path to write on success.
+///
+/// - `Ui`: passes through untouched — the native save dialog is the consent
+///   step, and rewriting the string the dialog handed back would change what
+///   the desktop writes today.
+/// - `Agent`: held to the same containment rule as [`authorize_open`], with
+///   one necessary difference: the destination usually does not exist yet, so
+///   the whole path cannot be canonicalized the way an *open* target can.
+///   Only the destination's **parent directory** (which must already exist)
+///   is validated — via [`crate::commands::bridge_access::validate_open_path`],
+///   the exact same raw-form-hygiene-then-canonicalize-then-containment gate
+///   `authorize_open` uses, called on the parent instead of the whole path
+///   (with the "already open session" auto-permit disabled via an empty
+///   `open_session_canonical_paths` — that has no meaning for a write). The
+///   file name itself is required to be a single plain segment, free of an
+///   NTFS alternate-data-stream suffix — `validate_open_path` never sees the
+///   file name, so that one hygiene check is not delegated.
+///
+/// This consolidates three call-for-call-identical copies that used to live
+/// in `services::export` (`authorize_export_dest`), `services::workspace`
+/// (`authorize_write`), and `services::stream` (`authorize_save_dest`) —
+/// each of those modules had converged on the same allowlist +
+/// parent-containment + path-hygiene logic for an agent-supplied write
+/// destination. This is now the one place that answers the question.
+///
+/// A missing parent directory and a parent outside the allowlist collapse
+/// into the identical `Forbidden`/`NOT_ALLOWED` refusal — same anti-probing
+/// rationale as [`authorize_open`]: an agent must not be able to tell "does
+/// not exist" from "not permitted" by probing paths.
+pub fn authorize_write_dest(ctx: &ServiceCtx, raw: &str) -> Result<PathBuf, ServiceError> {
+    use crate::commands::bridge_access::{validate_open_path, OpenAccessError};
+
+    let path = std::path::Path::new(raw);
+
+    if matches!(ctx.caller(), Caller::Ui) {
+        return Ok(crate::simplified_path(path));
+    }
+
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| ServiceError::InvalidArg {
+            code: INVALID_PATH,
+            message: "destination must name a file".to_string(),
+        })?;
+    if file_name.contains(':') {
+        return Err(ServiceError::InvalidArg {
+            code: INVALID_PATH,
+            message: "alternate data stream paths are not allowed".to_string(),
+        });
+    }
+
+    let parent = path.parent().ok_or_else(|| ServiceError::InvalidArg {
+        code: INVALID_PATH,
+        message: "destination has no parent directory".to_string(),
+    })?;
+    let parent_str = parent.to_str().ok_or_else(|| ServiceError::InvalidArg {
+        code: INVALID_PATH,
+        message: "destination path is not valid UTF-8".to_string(),
+    })?;
+
+    let state = ctx.state();
+    let (allowed, allow_all): (Vec<String>, bool) = {
+        let cfg = state
+            .mcp_open_allowlist
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (cfg.allowed_dirs.clone(), cfg.allow_all)
+    };
+
+    match validate_open_path(&allowed, &[], parent_str, allow_all) {
+        Ok(canonical_parent) => Ok(canonical_parent.join(file_name)),
+        Err(OpenAccessError::NotAllowed) => Err(ServiceError::Forbidden {
+            code: NOT_ALLOWED,
+            message: "path is not allowed".to_string(),
+        }),
+        Err(OpenAccessError::InvalidPath(msg)) => Err(ServiceError::InvalidArg {
+            code: INVALID_PATH,
+            message: msg,
+        }),
+    }
+}
+
 /// Refuse a gate-widening mutation from an agent.
 ///
 /// An agent may not edit the open-file allowlist or the anonymizer config: a
@@ -704,6 +792,73 @@ mod tests {
         let err = authorize_open(&ctx, "relative/path.log").unwrap_err();
         assert_eq!(err.code(), "INVALID_PATH");
         assert_eq!(err.http_status(), 400);
+    }
+
+    // ── authorize_write_dest ───────────────────────────────────────────────
+
+    #[test]
+    fn authorize_write_dest_ui_passes_through_unconditionally() {
+        let (ctx, _tmp) = test_ctx().build();
+        let dest = authorize_write_dest(&ctx, "C:\\anywhere\\at\\all.ltw").expect("ui may write anywhere");
+        assert_eq!(dest, PathBuf::from("C:\\anywhere\\at\\all.ltw"));
+    }
+
+    #[test]
+    fn authorize_write_dest_agent_denies_by_default() {
+        let (ctx, tmp) = test_ctx().agent("mcp").build();
+        let dest = tmp.path().join("out.dat");
+        let err = authorize_write_dest(&ctx, &dest.to_string_lossy()).unwrap_err();
+        assert_eq!(err.code(), "NOT_ALLOWED");
+        assert_eq!(err.http_status(), 403);
+    }
+
+    #[test]
+    fn authorize_write_dest_agent_permits_a_new_file_inside_an_allowed_directory() {
+        let allowed = tempfile::tempdir().expect("allowlisted dir");
+        let (ctx, _tmp) = test_ctx().agent("mcp").allowlist(allowed.path()).build();
+
+        // The destination FILE does not exist yet — only the parent directory
+        // must exist and be inside the allowlist.
+        let dest = allowed.path().join("new-file.dat");
+        let ok = authorize_write_dest(&ctx, &dest.to_string_lossy()).expect("inside the allowlist");
+        assert_eq!(ok.file_name().unwrap(), "new-file.dat");
+    }
+
+    #[test]
+    fn authorize_write_dest_agent_denies_outside_the_allowlist() {
+        let (ctx, _tmp) = test_ctx().agent("mcp").build();
+        let outside = tempfile::tempdir().expect("outside dir");
+        let dest = outside.path().join("x.dat");
+        let err = authorize_write_dest(&ctx, &dest.to_string_lossy())
+            .expect_err("outside the allowlist must be refused");
+        assert_eq!(err.code(), "NOT_ALLOWED");
+    }
+
+    #[test]
+    fn authorize_write_dest_agent_rejects_a_relative_path_as_invalid_not_forbidden() {
+        let (ctx, _tmp) = test_ctx().agent("mcp").build();
+        let err = authorize_write_dest(&ctx, "relative/out.dat").unwrap_err();
+        assert_eq!(err.code(), "INVALID_PATH");
+        assert_eq!(err.http_status(), 400);
+    }
+
+    #[test]
+    fn authorize_write_dest_agent_denies_when_the_parent_directory_does_not_exist() {
+        let allowed = tempfile::tempdir().expect("allowlisted dir");
+        let (ctx, _tmp) = test_ctx().agent("mcp").allowlist(allowed.path()).build();
+        let dest = allowed.path().join("does-not-exist").join("out.dat");
+        let err = authorize_write_dest(&ctx, &dest.to_string_lossy()).unwrap_err();
+        // Same refusal shape as "outside the allowlist" — no probing signal.
+        assert_eq!(err.code(), "NOT_ALLOWED");
+    }
+
+    #[test]
+    fn authorize_write_dest_agent_rejects_an_alternate_data_stream_file_name() {
+        let allowed = tempfile::tempdir().expect("allowlisted dir");
+        let (ctx, _tmp) = test_ctx().agent("mcp").allowlist(allowed.path()).build();
+        let dest = format!("{}\\ok.dat:evil", allowed.path().to_string_lossy());
+        let err = authorize_write_dest(&ctx, &dest).expect_err("ADS suffix must be refused");
+        assert_eq!(err.code(), "INVALID_PATH");
     }
 
     #[test]
