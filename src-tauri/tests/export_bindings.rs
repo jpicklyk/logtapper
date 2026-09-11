@@ -112,6 +112,13 @@ macro_rules! ROOT_TYPES {
             app_lib::services::insights::Insights,
             // --- marketplace / update engine ----------------------------------
             app_lib::processors::marketplace::Source,
+            // Bug ee4ddb0b (WP-9): `Source.source_type` is now `#[serde(flatten)]`
+            // + `#[ts(flatten)]`, which — like the `#[ts(type = "Record<…>")]`
+            // overrides above — clears ts-rs's dependency tracking: `Source.ts`
+            // now inlines this type's variants rather than importing it, so
+            // without an explicit root here this file would go stale (freeze on
+            // its pre-fix `git_ref` shape) the moment nothing else reaches it.
+            app_lib::processors::marketplace::SourceType,
             app_lib::processors::marketplace::MarketplacePackEntry,
             app_lib::commands::sources::MarketplaceFetchResult,
             app_lib::commands::sources::UpdateCheckResult,

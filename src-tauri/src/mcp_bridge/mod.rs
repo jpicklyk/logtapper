@@ -38,7 +38,11 @@ use routes::export::{h_export_info, h_export_run};
 use routes::insights::h_insights;
 use routes::lines::{h_lines_around, h_query, h_tag_stats};
 use routes::pipeline::{h_pipeline, h_processor_detail, h_run_pipeline};
-use routes::processors::{h_processor_defs_list, h_processor_defs_single};
+use routes::processors::{
+    h_install_processor, h_marketplace_fetch, h_marketplace_install, h_marketplace_sources,
+    h_marketplace_update_all, h_marketplace_updates, h_packs, h_processor_defs_list,
+    h_processor_defs_single, h_uninstall_processor,
+};
 use routes::search::{h_search, h_search_with_context};
 use routes::sessions::{h_close_session, h_metadata, h_open_file, h_sessions, h_status};
 use routes::settings::{h_get_anonymizer_config, h_get_open_allowlist, h_test_anonymizer};
@@ -199,6 +203,15 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/mcp/sessions/{session_id}/timeline"),
     ("GET", "/mcp/export/info"),
     ("POST", "/mcp/export"),
+    // WP-9 processors/marketplace
+    ("POST", "/mcp/processors/install"),
+    ("DELETE", "/mcp/processors/{processor_id}"),
+    ("GET", "/mcp/packs"),
+    ("GET", "/mcp/marketplace/sources"),
+    ("GET", "/mcp/marketplace/sources/{source_id}/fetch"),
+    ("GET", "/mcp/marketplace/updates"),
+    ("POST", "/mcp/marketplace/install"),
+    ("POST", "/mcp/marketplace/update_all/{source_id}"),
 ];
 
 /// Build the bridge's `Router` without binding a socket.
@@ -228,7 +241,7 @@ pub fn router(ctx: BridgeCtx) -> Router {
         .route("/mcp/sessions/{session_id}/lines_around", get(h_lines_around))
         .route("/mcp/sessions/{session_id}/search_with_context", get(h_search_with_context))
         .route("/mcp/processors", get(h_processor_defs_list))
-        .route("/mcp/processors/{processor_id}", get(h_processor_defs_single))
+        .route("/mcp/processors/{processor_id}", get(h_processor_defs_single).delete(h_uninstall_processor))
         // Phase 2 — Bookmarks
         .route("/mcp/sessions/{session_id}/bookmarks", get(h_list_bookmarks).post(h_create_bookmark))
         .route("/mcp/sessions/{session_id}/bookmarks/{bookmark_id}", delete(h_delete_bookmark).put(h_update_bookmark))
@@ -260,6 +273,14 @@ pub fn router(ctx: BridgeCtx) -> Router {
         .route("/mcp/sessions/{session_id}/timeline", get(h_timeline))
         .route("/mcp/export/info", get(h_export_info))
         .route("/mcp/export", post(h_export_run))
+        // WP-9 processors/marketplace
+        .route("/mcp/processors/install", post(h_install_processor))
+        .route("/mcp/packs", get(h_packs))
+        .route("/mcp/marketplace/sources", get(h_marketplace_sources))
+        .route("/mcp/marketplace/sources/{source_id}/fetch", get(h_marketplace_fetch))
+        .route("/mcp/marketplace/updates", get(h_marketplace_updates))
+        .route("/mcp/marketplace/install", post(h_marketplace_install))
+        .route("/mcp/marketplace/update_all/{source_id}", post(h_marketplace_update_all))
         .layer(axum_middleware::from_fn_with_state(ctx.clone(), middleware::record_activity))
         // `require_local` is added AFTER `record_activity`, which in axum/tower
         // layering means it becomes the OUTERMOST layer and therefore runs
@@ -382,6 +403,14 @@ mod tests {
             "GET /mcp/sessions/{session_id}/timeline",
             "GET /mcp/export/info",
             "POST /mcp/export",
+            "POST /mcp/processors/install",
+            "DELETE /mcp/processors/{processor_id}",
+            "GET /mcp/packs",
+            "GET /mcp/marketplace/sources",
+            "GET /mcp/marketplace/sources/{source_id}/fetch",
+            "GET /mcp/marketplace/updates",
+            "POST /mcp/marketplace/install",
+            "POST /mcp/marketplace/update_all/{source_id}",
         ];
 
         assert_eq!(rendered, expected, "ROUTES drifted from the pinned route table — update both this test and router() together");

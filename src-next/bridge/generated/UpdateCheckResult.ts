@@ -3,11 +3,8 @@ import type { PackUpdateAvailable } from "./PackUpdateAvailable";
 import type { SourceError } from "./SourceError";
 import type { UpdateAvailable } from "./UpdateAvailable";
 
-/**
- * Result of a check_updates call.
- */
 export type UpdateCheckResult = { updates: Array<UpdateAvailable>, packUpdates: Array<PackUpdateAvailable>, 
 /**
- * Sources that failed to fetch (name -> error message).
+ * Sources that failed to fetch.
  */
 errors: Array<SourceError>, };
