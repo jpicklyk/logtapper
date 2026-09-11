@@ -1,0 +1,259 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: var(--accent); } a:hover { color: var(--accent-base); }
+    * { box-sizing: border-box; }
+    .theme-dark {
+      --bg-base: #0c1014; --bg-raised: #141b21; --bg-overlay: #1b2530; --bg-input: #0e1318;
+      --border: #243040; --border-subtle: #2d3d4e;
+      --text: #b8c4ce; --text-subtle: #9faab4; --text-muted: #8b949e; --text-dimmed: #484f58;
+      --accent: #58a6ff; --accent-base: #1f6feb; --accent-muted: rgba(88,166,255,0.12); --accent-border: rgba(88,166,255,0.25);
+      --danger: #f85149; --danger-muted: rgba(248,81,73,0.12);
+      --success: #3fb950; --success-muted: rgba(63,185,80,0.14);
+      --warning: #d29922; --warning-muted: rgba(210,153,34,0.12);
+      --brand: #e2383d; --android: #ff6128;
+      --level-verbose: #6e7b8b; --level-debug: #9faab4; --level-info: #b8c4ce; --level-warning: #d29922; --level-error: #f47067; --level-fatal: #ff6e6e;
+      --level-warning-bg: rgba(210,153,34,0.08); --level-error-bg: #2d1117; --level-fatal-bg: #3d1118;
+      --active-line: rgba(255,255,255,0.04); --selection: rgba(88,166,255,0.2);
+      --match: rgba(210,153,34,0.35); --pii: rgba(226,56,61,0.22);
+      --agent-idle: #7c8ea3; --agent-reading: #58a6ff; --agent-running: #3fb950; --agent-wrote: #c9a227; --agent-needs: #f0a500; --agent-raw: #f85149;
+      --caller-human: #7c8ea3; --caller-agent: #58a6ff;
+      --shadow: 0 8px 24px rgba(0,0,0,0.45);
+    }
+    .theme-light {
+      --bg-base: #ffffff; --bg-raised: #e9ecf0; --bg-overlay: #dce0e6; --bg-input: #f2f4f7;
+      --border: #b8c2cc; --border-subtle: #c8d0d8;
+      --text: #1a1f26; --text-subtle: #4b5563; --text-muted: #5d6672; --text-dimmed: #8b95a1;
+      --accent: #0969da; --accent-base: #0550ae; --accent-muted: rgba(9,105,218,0.10); --accent-border: rgba(9,105,218,0.20);
+      --danger: #cf222e; --danger-muted: rgba(207,34,46,0.10);
+      --success: #1a7f37; --success-muted: rgba(26,127,55,0.12);
+      --warning: #9a6700; --warning-muted: rgba(154,103,0,0.10);
+      --brand: #d42f34; --android: #ff6128;
+      --level-verbose: #8c959f; --level-debug: #57606a; --level-info: #1a1f26; --level-warning: #9a6700; --level-error: #cf222e; --level-fatal: #a40e26;
+      --level-warning-bg: rgba(154,103,0,0.08); --level-error-bg: rgba(207,34,46,0.05); --level-fatal-bg: rgba(164,14,38,0.06);
+      --active-line: rgba(0,0,0,0.03); --selection: rgba(9,105,218,0.2);
+      --match: rgba(154,103,0,0.28); --pii: rgba(212,47,52,0.18);
+      --agent-idle: #6b7a8c; --agent-reading: #0969da; --agent-running: #1a7f37; --agent-wrote: #7d4e00; --agent-needs: #b35c00; --agent-raw: #cf222e;
+      --caller-human: #6b7a8c; --caller-agent: #0969da;
+      --shadow: 0 8px 24px rgba(16,24,40,0.16);
+    }
+    .theme-dark, .theme-light {
+      --font-ui: 'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
+      --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
+      font-family: var(--font-ui); color: var(--text); font-size: 13px; line-height: 1.4;
+      -webkit-font-smoothing: antialiased;
+    }
+    @keyframes lt-breathe { 0%,100% { transform: scale(1); opacity: .85 } 50% { transform: scale(1.06); opacity: 1 } }
+  </style>
+</helmet>
+
+<div class="theme-{{theme}}" style="width:1600px;height:1000px;display:flex;flex-direction:column;background:var(--bg-base);overflow:hidden">
+
+  <!-- sheet chrome -->
+  <div style="display:flex;align-items:center;gap:12px;height:44px;padding:0 20px;border-bottom:1px solid var(--border);background:var(--bg-raised)">
+    <div style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;color:var(--text)">
+      <span style="width:10px;height:10px;border-radius:2px;background:var(--brand)"></span>LogTapper
+    </div>
+    <span style="font-size:15px;font-weight:600;color:var(--text)">Theme &amp; tokens</span>
+    <span style="font-size:12px;color:var(--text-muted)">primitive → semantic → domain; components consume the last two only</span>
+    <span style="flex:1"></span>
+    <span style="display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:9999px;border:1px solid var(--border);background:var(--bg-base);font-size:12px;color:var(--text-subtle)">Both palettes shown at once</span>
+  </div>
+
+  <div style="flex:1;min-height:0;display:flex;gap:16px;padding:16px 20px;overflow:hidden">
+
+    <!-- ===================== DARK ===================== -->
+    <div class="theme-dark" style="flex:1;min-width:0;display:flex;flex-direction:column;gap:11px;padding:14px 16px;border-radius:8px;border:1px solid var(--border);background:var(--bg-base);overflow:hidden">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:15px;font-weight:600;color:var(--text)">Dark</span>
+        <span style="font-size:12px;color:var(--text-muted)">primary target — sessions run long</span>
+        <span style="flex:1"></span>
+        <span style="display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:9999px;border:1px solid var(--border);background:var(--bg-raised);font:11px var(--font-mono);color:var(--text-subtle)">.theme-dark</span>
+      </div>
+
+      <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)">Surfaces</div>
+      <div style="display:grid;grid-template-columns:repeat(4, minmax(0, 1fr));gap:8px">
+        <div style="display:flex;flex-direction:column;gap:4px"><div style="height:40px;border-radius:6px;border:1px solid var(--border);background:var(--bg-base)"></div><span style="font:11px var(--font-mono);color:var(--text-muted)">bg-base #0c1014</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px"><div style="height:40px;border-radius:6px;border:1px solid var(--border);background:var(--bg-raised)"></div><span style="font:11px var(--font-mono);color:var(--text-muted)">bg-raised #141b21</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px"><div style="height:40px;border-radius:6px;border:1px solid var(--border);background:var(--bg-overlay)"></div><span style="font:11px var(--font-mono);color:var(--text-muted)">bg-overlay #1b2530</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px"><div style="height:40px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input)"></div><span style="font:11px var(--font-mono);color:var(--text-muted)">bg-input #0e1318</span></div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:12px">
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)">Text ramp</div>
+          <span style="color:var(--text);font-weight:500">text — primary reading colour</span>
+          <span style="color:var(--text-subtle)">text-subtle — secondary rows</span>
+          <span style="color:var(--text-muted)">text-muted — labels, meta</span>
+          <span style="color:var(--text-dimmed)">text-dimmed — line numbers</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)">Status</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <span style="display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:9999px;border:1px solid var(--accent-border);background:var(--accent-muted);font-size:12px;color:var(--accent)">accent</span>
+            <span style="display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:9999px;background:var(--danger-muted);font-size:12px;color:var(--danger)">danger</span>
+            <span style="display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:9999px;background:var(--success-muted);font-size:12px;color:var(--success)">success</span>
+            <span style="display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:9999px;background:var(--warning-muted);font-size:12px;color:var(--warning)">warning</span>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <span style="display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:9999px;background:var(--selection);font-size:12px;color:var(--text)">selection</span>
+            <span style="display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:9999px;background:var(--match);font-size:12px;color:var(--text)">match</span>
+            <span style="display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:9999px;background:var(--pii);font-size:12px;color:var(--text)">pii token</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)">Log levels on bg-base</div>
+      <div style="display:flex;flex-direction:column;background:var(--bg-base);border-radius:6px;border:1px solid var(--border);overflow:hidden">
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-verbose)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">48201</span><span>V</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">kernel: PM: suspend entry (deep)</span></div>
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-debug)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">48206</span><span>D</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">UsbPortManager: resetUsbPort(port0) requested</span></div>
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-info)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">48207</span><span>I</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">kernel: usb usb1-port2: attempt power cycle</span></div>
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-warning);background:var(--level-warning-bg)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">48208</span><span style="font-weight:500">W</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">UsbDeviceManager: attempt 2 failed: ENUMERATING timed out</span></div>
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-error);background:var(--level-error-bg)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">48213</span><span style="font-weight:500">E</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">UsbDeviceManager: giving up enumeration after 4 attempts</span></div>
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-fatal);background:var(--level-fatal-bg)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">51044</span><span style="font-weight:500">F</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">AndroidRuntime: FATAL EXCEPTION: main — com.vendor.usbplugin</span></div>
+      </div>
+
+      <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)">Same levels on bg-raised</div>
+      <div style="display:flex;flex-direction:column;background:var(--bg-raised);border-radius:6px;border:1px solid var(--border);overflow:hidden">
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-verbose)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">48201</span><span>V</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">kernel: PM: suspend entry (deep)</span></div>
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-debug)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">48206</span><span>D</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">UsbPortManager: resetUsbPort(port0) requested</span></div>
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-info)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">48207</span><span>I</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">kernel: usb usb1-port2: attempt power cycle</span></div>
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-warning)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">48208</span><span style="font-weight:500">W</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">UsbDeviceManager: attempt 2 failed: ENUMERATING timed out</span></div>
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-error)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">48213</span><span style="font-weight:500">E</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">UsbDeviceManager: giving up enumeration after 4 attempts</span></div>
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-fatal)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">51044</span><span style="font-weight:500">F</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">AndroidRuntime: FATAL EXCEPTION: main — com.vendor.usbplugin</span></div>
+      </div>
+
+      <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)">Agent states</div>
+      <div style="display:grid;grid-template-columns:repeat(6, minmax(0, 1fr));gap:8px">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:5px"><div style="width:26px;height:26px;border-radius:9999px;background:radial-gradient(circle at 35% 35%, var(--agent-idle), transparent 70%), var(--bg-overlay);border:1px solid var(--border);animation:lt-breathe 4.5s ease-in-out infinite"></div><span style="font-size:11px;color:var(--text-muted)">idle</span></div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:5px"><div style="width:26px;height:26px;border-radius:9999px;background:radial-gradient(circle at 35% 35%, var(--agent-reading), transparent 70%), var(--bg-overlay);border:1px solid var(--accent-border);animation:lt-breathe 3s ease-in-out infinite"></div><span style="font-size:11px;color:var(--text-muted)">reading</span></div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:5px"><div style="width:26px;height:26px;border-radius:9999px;background:radial-gradient(circle at 35% 35%, var(--agent-running), transparent 70%), var(--bg-overlay);border:1px solid var(--success);animation:lt-breathe 1.6s ease-in-out infinite"></div><span style="font-size:11px;color:var(--text-muted)">running</span></div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:5px"><div style="width:26px;height:26px;border-radius:9999px;background:radial-gradient(circle at 35% 35%, var(--agent-wrote), transparent 70%), var(--bg-overlay);border:1px solid var(--warning)"></div><span style="font-size:11px;color:var(--text-muted)">wrote</span></div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:5px"><div style="width:26px;height:26px;border-radius:9999px;background:radial-gradient(circle at 35% 35%, var(--agent-needs), transparent 70%), var(--bg-overlay);border:1px solid var(--agent-needs);box-shadow:0 0 0 5px var(--warning-muted);animation:lt-breathe 1.2s ease-in-out infinite"></div><span style="font-size:11px;color:var(--text-muted)">needs you</span></div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:5px"><div style="width:26px;height:26px;border-radius:9999px;background:radial-gradient(circle at 35% 35%, var(--agent-raw), transparent 70%), var(--bg-overlay);border:1px solid var(--agent-raw);box-shadow:0 0 0 5px var(--danger-muted)"></div><span style="font-size:11px;color:var(--text-muted)">raw access</span></div>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 6px;border-radius:9999px;background:var(--accent-muted);color:var(--caller-agent);font:500 11px var(--font-ui)"><svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M8 1.5l1.6 4.4L14 7.5l-4.4 1.6L8 13.5 6.4 9.1 2 7.5l4.4-1.6z"/></svg>agent</span>
+        <span style="display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:9999px;background:var(--bg-overlay);color:var(--caller-human);font:500 11px var(--font-ui)">you</span>
+        <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:9999px;border:1px solid var(--border);background:var(--bg-raised);font-size:12px;color:var(--text-subtle)">chip</span>
+        <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:9999px;border:1px solid var(--accent-border);background:var(--accent-muted);font-size:12px;color:var(--accent)">chip · on</span>
+        <button style="display:inline-flex;align-items:center;height:28px;padding:0 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-raised);color:var(--text);font:500 12px var(--font-ui);cursor:pointer">Button</button>
+        <button style="display:inline-flex;align-items:center;height:28px;padding:0 10px;border-radius:6px;border:1px solid var(--accent-base);background:var(--accent-base);color:#fff;font:500 12px var(--font-ui);cursor:pointer">Primary</button>
+      </div>
+
+      <div style="padding:9px 11px;border-radius:6px;border:1px dashed var(--border);font-size:12px;line-height:1.5;color:var(--text-muted)">
+        High-contrast dark raises <span style="font-family:var(--font-mono)">text</span> to pure #fff, thickens <span style="font-family:var(--font-mono)">border</span> to <span style="font-family:var(--font-mono)">border-subtle</span>, and drops the level backgrounds so only the glyph colour carries level. Every level keeps AA on both surfaces.
+      </div>
+    </div>
+
+    <!-- ===================== LIGHT ===================== -->
+    <div class="theme-light" style="flex:1;min-width:0;display:flex;flex-direction:column;gap:11px;padding:14px 16px;border-radius:8px;border:1px solid var(--border);background:var(--bg-base);overflow:hidden">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:15px;font-weight:600;color:var(--text)">Light</span>
+        <span style="font-size:12px;color:var(--text-muted)">same token names, different values</span>
+        <span style="flex:1"></span>
+        <span style="display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:9999px;border:1px solid var(--border);background:var(--bg-raised);font:11px var(--font-mono);color:var(--text-subtle)">.theme-light</span>
+      </div>
+
+      <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)">Surfaces</div>
+      <div style="display:grid;grid-template-columns:repeat(4, minmax(0, 1fr));gap:8px">
+        <div style="display:flex;flex-direction:column;gap:4px"><div style="height:40px;border-radius:6px;border:1px solid var(--border);background:var(--bg-base)"></div><span style="font:11px var(--font-mono);color:var(--text-muted)">bg-base #ffffff</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px"><div style="height:40px;border-radius:6px;border:1px solid var(--border);background:var(--bg-raised)"></div><span style="font:11px var(--font-mono);color:var(--text-muted)">bg-raised #e9ecf0</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px"><div style="height:40px;border-radius:6px;border:1px solid var(--border);background:var(--bg-overlay)"></div><span style="font:11px var(--font-mono);color:var(--text-muted)">bg-overlay #dce0e6</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px"><div style="height:40px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input)"></div><span style="font:11px var(--font-mono);color:var(--text-muted)">bg-input #f2f4f7</span></div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:12px">
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)">Text ramp</div>
+          <span style="color:var(--text);font-weight:500">text — primary reading colour</span>
+          <span style="color:var(--text-subtle)">text-subtle — secondary rows</span>
+          <span style="color:var(--text-muted)">text-muted — labels, meta</span>
+          <span style="color:var(--text-dimmed)">text-dimmed — line numbers</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)">Status</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <span style="display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:9999px;border:1px solid var(--accent-border);background:var(--accent-muted);font-size:12px;color:var(--accent)">accent</span>
+            <span style="display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:9999px;background:var(--danger-muted);font-size:12px;color:var(--danger)">danger</span>
+            <span style="display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:9999px;background:var(--success-muted);font-size:12px;color:var(--success)">success</span>
+            <span style="display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:9999px;background:var(--warning-muted);font-size:12px;color:var(--warning)">warning</span>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <span style="display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:9999px;background:var(--selection);font-size:12px;color:var(--text)">selection</span>
+            <span style="display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:9999px;background:var(--match);font-size:12px;color:var(--text)">match</span>
+            <span style="display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:9999px;background:var(--pii);font-size:12px;color:var(--text)">pii token</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)">Log levels on bg-base</div>
+      <div style="display:flex;flex-direction:column;background:var(--bg-base);border-radius:6px;border:1px solid var(--border);overflow:hidden">
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-verbose)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">48201</span><span>V</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">kernel: PM: suspend entry (deep)</span></div>
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-debug)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">48206</span><span>D</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">UsbPortManager: resetUsbPort(port0) requested</span></div>
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-info)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">48207</span><span>I</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">kernel: usb usb1-port2: attempt power cycle</span></div>
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-warning);background:var(--level-warning-bg)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">48208</span><span style="font-weight:500">W</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">UsbDeviceManager: attempt 2 failed: ENUMERATING timed out</span></div>
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-error);background:var(--level-error-bg)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">48213</span><span style="font-weight:500">E</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">UsbDeviceManager: giving up enumeration after 4 attempts</span></div>
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-fatal);background:var(--level-fatal-bg)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">51044</span><span style="font-weight:500">F</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">AndroidRuntime: FATAL EXCEPTION: main — com.vendor.usbplugin</span></div>
+      </div>
+
+      <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)">Same levels on bg-raised</div>
+      <div style="display:flex;flex-direction:column;background:var(--bg-raised);border-radius:6px;border:1px solid var(--border);overflow:hidden">
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-verbose)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">48201</span><span>V</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">kernel: PM: suspend entry (deep)</span></div>
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-debug)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">48206</span><span>D</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">UsbPortManager: resetUsbPort(port0) requested</span></div>
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-info)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">48207</span><span>I</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">kernel: usb usb1-port2: attempt power cycle</span></div>
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-warning)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">48208</span><span style="font-weight:500">W</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">UsbDeviceManager: attempt 2 failed: ENUMERATING timed out</span></div>
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-error)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">48213</span><span style="font-weight:500">E</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">UsbDeviceManager: giving up enumeration after 4 attempts</span></div>
+        <div style="display:grid;grid-template-columns:62px 20px minmax(0,1fr);align-items:center;height:22px;padding:0 8px;font:13px/22px var(--font-mono);color:var(--level-fatal)"><span style="color:var(--text-dimmed);text-align:right;padding-right:8px">51044</span><span style="font-weight:500">F</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">AndroidRuntime: FATAL EXCEPTION: main — com.vendor.usbplugin</span></div>
+      </div>
+
+      <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)">Agent states</div>
+      <div style="display:grid;grid-template-columns:repeat(6, minmax(0, 1fr));gap:8px">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:5px"><div style="width:26px;height:26px;border-radius:9999px;background:radial-gradient(circle at 35% 35%, var(--agent-idle), transparent 70%), var(--bg-overlay);border:1px solid var(--border);animation:lt-breathe 4.5s ease-in-out infinite"></div><span style="font-size:11px;color:var(--text-muted)">idle</span></div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:5px"><div style="width:26px;height:26px;border-radius:9999px;background:radial-gradient(circle at 35% 35%, var(--agent-reading), transparent 70%), var(--bg-overlay);border:1px solid var(--accent-border);animation:lt-breathe 3s ease-in-out infinite"></div><span style="font-size:11px;color:var(--text-muted)">reading</span></div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:5px"><div style="width:26px;height:26px;border-radius:9999px;background:radial-gradient(circle at 35% 35%, var(--agent-running), transparent 70%), var(--bg-overlay);border:1px solid var(--success);animation:lt-breathe 1.6s ease-in-out infinite"></div><span style="font-size:11px;color:var(--text-muted)">running</span></div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:5px"><div style="width:26px;height:26px;border-radius:9999px;background:radial-gradient(circle at 35% 35%, var(--agent-wrote), transparent 70%), var(--bg-overlay);border:1px solid var(--warning)"></div><span style="font-size:11px;color:var(--text-muted)">wrote</span></div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:5px"><div style="width:26px;height:26px;border-radius:9999px;background:radial-gradient(circle at 35% 35%, var(--agent-needs), transparent 70%), var(--bg-overlay);border:1px solid var(--agent-needs);box-shadow:0 0 0 5px var(--warning-muted);animation:lt-breathe 1.2s ease-in-out infinite"></div><span style="font-size:11px;color:var(--text-muted)">needs you</span></div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:5px"><div style="width:26px;height:26px;border-radius:9999px;background:radial-gradient(circle at 35% 35%, var(--agent-raw), transparent 70%), var(--bg-overlay);border:1px solid var(--agent-raw);box-shadow:0 0 0 5px var(--danger-muted)"></div><span style="font-size:11px;color:var(--text-muted)">raw access</span></div>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 6px;border-radius:9999px;background:var(--accent-muted);color:var(--caller-agent);font:500 11px var(--font-ui)"><svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M8 1.5l1.6 4.4L14 7.5l-4.4 1.6L8 13.5 6.4 9.1 2 7.5l4.4-1.6z"/></svg>agent</span>
+        <span style="display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:9999px;background:var(--bg-overlay);color:var(--caller-human);font:500 11px var(--font-ui)">you</span>
+        <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:9999px;border:1px solid var(--border);background:var(--bg-raised);font-size:12px;color:var(--text-subtle)">chip</span>
+        <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:9999px;border:1px solid var(--accent-border);background:var(--accent-muted);font-size:12px;color:var(--accent)">chip · on</span>
+        <button style="display:inline-flex;align-items:center;height:28px;padding:0 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-raised);color:var(--text);font:500 12px var(--font-ui);cursor:pointer">Button</button>
+        <button style="display:inline-flex;align-items:center;height:28px;padding:0 10px;border-radius:6px;border:1px solid var(--accent-base);background:var(--accent-base);color:#fff;font:500 12px var(--font-ui);cursor:pointer">Primary</button>
+      </div>
+
+      <div style="padding:9px 11px;border-radius:6px;border:1px dashed var(--border);font-size:12px;line-height:1.5;color:var(--text-muted)">
+        High-contrast light darkens the whole text ramp one step, uses <span style="font-family:var(--font-mono)">border-subtle</span> everywhere, and swaps <span style="font-family:var(--font-mono)">level-warning</span> for a darker amber so W keeps AA on <span style="font-family:var(--font-mono)">bg-raised</span> as well as <span style="font-family:var(--font-mono)">bg-base</span>.
+      </div>
+    </div>
+  </div>
+
+  <!-- footer note -->
+  <div style="display:flex;align-items:center;gap:16px;height:34px;padding:0 20px;border-top:1px solid var(--border);background:var(--bg-raised);font-size:12px;color:var(--text-muted)">
+    <span>A user theme is a JSON file of token overrides; partial overrides fall back to the base theme.</span>
+    <span style="flex:1"></span>
+    <span>Density (compact / comfortable) is independent of theme — the viewer's row height and font are user-set.</span>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"theme":{"editor":"enum","options":["dark","light"],"default":"dark","section":"Theme"},"$preview":{"width":1600,"height":1000}}'>
+class Component extends DCLogic {
+  renderVals() { return { theme: this.props.theme ?? 'dark' }; }
+}
+</script>
+</body>
+</html>

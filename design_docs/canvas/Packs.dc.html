@@ -1,0 +1,313 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: var(--accent); } a:hover { color: var(--accent-base); }
+    * { box-sizing: border-box; }
+    .theme-dark {
+      --bg-base: #0c1014; --bg-raised: #141b21; --bg-overlay: #1b2530; --bg-input: #0e1318;
+      --border: #243040; --border-subtle: #2d3d4e;
+      --text: #b8c4ce; --text-subtle: #9faab4; --text-muted: #8b949e; --text-dimmed: #484f58;
+      --accent: #58a6ff; --accent-base: #1f6feb; --accent-muted: rgba(88,166,255,0.12); --accent-border: rgba(88,166,255,0.25);
+      --danger: #f85149; --danger-muted: rgba(248,81,73,0.12);
+      --success: #3fb950; --success-muted: rgba(63,185,80,0.14);
+      --warning: #d29922; --warning-muted: rgba(210,153,34,0.12);
+      --brand: #e2383d; --android: #ff6128;
+      --level-verbose: #6e7b8b; --level-debug: #9faab4; --level-info: #b8c4ce; --level-warning: #d29922; --level-error: #f47067; --level-fatal: #ff6e6e;
+      --level-warning-bg: rgba(210,153,34,0.08); --level-error-bg: #2d1117; --level-fatal-bg: #3d1118;
+      --active-line: rgba(255,255,255,0.04); --selection: rgba(88,166,255,0.2);
+      --match: rgba(210,153,34,0.35); --pii: rgba(226,56,61,0.22);
+      --agent-idle: #7c8ea3; --agent-reading: #58a6ff; --agent-running: #3fb950; --agent-wrote: #c9a227; --agent-needs: #f0a500; --agent-raw: #f85149;
+      --caller-human: #7c8ea3; --caller-agent: #58a6ff;
+      --shadow: 0 8px 24px rgba(0,0,0,0.45);
+    }
+    .theme-light {
+      --bg-base: #ffffff; --bg-raised: #e9ecf0; --bg-overlay: #dce0e6; --bg-input: #f2f4f7;
+      --border: #b8c2cc; --border-subtle: #c8d0d8;
+      --text: #1a1f26; --text-subtle: #4b5563; --text-muted: #5d6672; --text-dimmed: #8b95a1;
+      --accent: #0969da; --accent-base: #0550ae; --accent-muted: rgba(9,105,218,0.10); --accent-border: rgba(9,105,218,0.20);
+      --danger: #cf222e; --danger-muted: rgba(207,34,46,0.10);
+      --success: #1a7f37; --success-muted: rgba(26,127,55,0.12);
+      --warning: #9a6700; --warning-muted: rgba(154,103,0,0.10);
+      --brand: #d42f34; --android: #ff6128;
+      --level-verbose: #8c959f; --level-debug: #57606a; --level-info: #1a1f26; --level-warning: #9a6700; --level-error: #cf222e; --level-fatal: #a40e26;
+      --level-warning-bg: rgba(154,103,0,0.08); --level-error-bg: rgba(207,34,46,0.05); --level-fatal-bg: rgba(164,14,38,0.06);
+      --active-line: rgba(0,0,0,0.03); --selection: rgba(9,105,218,0.2);
+      --match: rgba(154,103,0,0.28); --pii: rgba(212,47,52,0.18);
+      --agent-idle: #6b7a8c; --agent-reading: #0969da; --agent-running: #1a7f37; --agent-wrote: #7d4e00; --agent-needs: #b35c00; --agent-raw: #cf222e;
+      --caller-human: #6b7a8c; --caller-agent: #0969da;
+      --shadow: 0 8px 24px rgba(16,24,40,0.16);
+    }
+    .theme-dark, .theme-light {
+      --font-ui: 'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
+      --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
+      font-family: var(--font-ui); color: var(--text); font-size: 13px; line-height: 1.4;
+      -webkit-font-smoothing: antialiased;
+    }
+    @keyframes lt-breathe { 0%,100% { transform: scale(1); opacity: .85 } 50% { transform: scale(1.06); opacity: 1 } }
+  </style>
+</helmet>
+
+<div class="theme-{{theme}}" style="width:1920px;height:1080px;display:flex;flex-direction:column;background:var(--bg-base);overflow:hidden">
+
+  <!-- ===== top bar ===== -->
+  <div style="display:flex;align-items:center;gap:12px;height:44px;padding:0 14px;border-bottom:1px solid var(--border);background:var(--bg-raised)">
+    <div style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;color:var(--text)">
+      <span style="width:10px;height:10px;border-radius:2px;background:var(--brand)"></span>LogTapper
+    </div>
+    <div style="display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 10px 0 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-base);color:var(--text);font-weight:500">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" style="color:var(--text-muted)"><path d="M1.5 4.5h5l1.5 1.5h6.5v7.5h-13z"/></svg>
+      USB plugin · S911 enumeration
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-muted)"><path d="M4 6l4 4 4-4"/></svg>
+    </div>
+    <div style="display:flex;align-items:center;gap:2px;height:44px;margin-left:8px">
+      <div style="display:flex;align-items:center;gap:8px;height:44px;padding:0 14px;color:var(--text-muted)">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/></svg>
+        dumpstate_S911
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;height:44px;padding:0 14px;color:var(--text-muted)">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/></svg>
+        logcat_run2
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;height:44px;padding:0 14px;border-bottom:2px solid var(--accent);color:var(--text);font-weight:500">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" style="color:var(--text-muted)"><path d="M1.5 4.5h5l1.5 1.5h6.5v7.5h-13z"/></svg>
+        Packs
+      </div>
+    </div>
+    <div style="flex:1"></div>
+    <div style="display:flex;align-items:center;gap:8px;width:300px;height:30px;padding:0 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-dimmed)">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+      <span style="flex:1">Jump to session, section, analysis…</span>
+      <span style="font-size:11px;font-family:var(--font-mono)">Ctrl K</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;height:30px;padding:0 10px 0 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-base)">
+      <div style="width:18px;height:18px;border-radius:9999px;background:radial-gradient(circle at 35% 35%, var(--agent-idle), transparent 70%), var(--bg-overlay);animation:lt-breathe 4.5s ease-in-out infinite"></div>
+      <span style="font-size:12px;color:var(--text-subtle);font-weight:500">Claude · idle</span>
+    </div>
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--text-muted)"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/></svg>
+  </div>
+
+  <!-- ===== body ===== -->
+  <div style="display:flex;flex:1;min-height:0">
+
+    <!-- category rail -->
+    <div style="width:272px;display:flex;flex-direction:column;border-right:1px solid var(--border);background:var(--bg-base)">
+      <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);padding:12px 14px 6px">Packs</div>
+      <div style="display:flex;flex-direction:column;padding:0 6px;gap:1px">
+        <div style="display:flex;align-items:center;gap:8px;height:30px;padding:0 10px;border-radius:6px;background:var(--accent-muted);color:var(--accent);font-weight:500"><span style="flex:1">All packs</span><span style="font:11px var(--font-mono)">6</span></div>
+        <div style="display:flex;align-items:center;gap:8px;height:30px;padding:0 10px;border-radius:6px;color:var(--text-subtle)"><span style="flex:1">Enabled here</span><span style="font:11px var(--font-mono);color:var(--text-dimmed)">3</span></div>
+        <div style="display:flex;align-items:center;gap:8px;height:30px;padding:0 10px;border-radius:6px;color:var(--text-subtle)"><span style="flex:1">Updates available</span><span style="height:18px;padding:0 6px;border-radius:9999px;background:var(--warning-muted);color:var(--warning);font:500 11px var(--font-ui);line-height:18px">1</span></div>
+      </div>
+
+      <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);padding:18px 14px 6px">Subsystem</div>
+      <div style="display:flex;flex-direction:column;padding:0 6px;gap:1px">
+        <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 10px;border-radius:6px;color:var(--text-subtle)"><span style="flex:1">USB &amp; peripherals</span><span style="font:11px var(--font-mono);color:var(--text-dimmed)">1</span></div>
+        <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 10px;border-radius:6px;color:var(--text-subtle)"><span style="flex:1">Battery &amp; thermal</span><span style="font:11px var(--font-mono);color:var(--text-dimmed)">1</span></div>
+        <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 10px;border-radius:6px;color:var(--text-subtle)"><span style="flex:1">Connectivity</span><span style="font:11px var(--font-mono);color:var(--text-dimmed)">1</span></div>
+        <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 10px;border-radius:6px;color:var(--text-subtle)"><span style="flex:1">Memory &amp; performance</span><span style="font:11px var(--font-mono);color:var(--text-dimmed)">1</span></div>
+        <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 10px;border-radius:6px;color:var(--text-subtle)"><span style="flex:1">Bluetooth</span><span style="font:11px var(--font-mono);color:var(--text-dimmed)">1</span></div>
+        <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 10px;border-radius:6px;color:var(--text-subtle)"><span style="flex:1">Camera</span><span style="font:11px var(--font-mono);color:var(--text-dimmed)">1</span></div>
+      </div>
+
+      <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);padding:18px 14px 6px">What a pack does</div>
+      <div style="margin:0 12px;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-raised);font-size:12px;line-height:1.55;color:var(--text-muted)">
+        Enabling a pack adds its analyzers to this workspace for both operators — your one-click runs and the agent's deterministic toolkit are the same set.
+      </div>
+      <div style="flex:1"></div>
+      <div style="display:flex;align-items:center;gap:8px;height:34px;padding:0 14px;border-top:1px solid var(--border);font-size:12px;color:var(--text-muted)">
+        <span style="flex:1">Source: official</span><span style="font-family:var(--font-mono)">index v12</span>
+      </div>
+    </div>
+
+    <!-- centre: packs grid + expanded pack + advanced -->
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column;padding:22px 24px;gap:16px;overflow:hidden">
+
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="display:flex;flex-direction:column;gap:2px">
+          <span style="font-size:20px;font-weight:600;color:var(--text)">Capability packs</span>
+          <span style="font-size:13px;color:var(--text-muted)">Turn on the subsystems this investigation touches. Everything else stays out of the way.</span>
+        </div>
+        <span style="flex:1"></span>
+        <div style="display:flex;align-items:center;gap:8px;width:240px;height:30px;padding:0 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-dimmed)">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+          <span style="flex:1">Search packs</span>
+        </div>
+        <span style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:9999px;border:1px solid var(--border);background:var(--bg-raised);font-size:12px;color:var(--text-subtle)">3 enabled · 18 analyzers</span>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:12px">
+
+        <!-- USB (expanded selection) -->
+        <div style="display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:8px;border:1px solid var(--accent-border);background:var(--bg-raised)">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="flex:1;font-weight:600;color:var(--text)">USB &amp; peripherals</span>
+            <span style="display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:9999px;border:1px solid var(--accent-border);background:var(--accent-muted);font-size:12px;color:var(--accent);font-weight:500"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3 3 7-7"/></svg>Enabled</span>
+          </div>
+          <div style="font-size:12px;line-height:1.5;color:var(--text-muted)">Finds devices that never enumerate, interfaces that vanish seconds after appearing, and Ethernet settings overwritten behind your back.</div>
+          <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-dimmed)"><span>4 analyzers</span><span>·</span><span>official</span><span>·</span><span style="font-family:var(--font-mono)">v1.0.3</span></div>
+        </div>
+
+        <!-- Battery & thermal -->
+        <div style="display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg-raised)">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="flex:1;font-weight:600;color:var(--text)">Battery &amp; thermal</span>
+            <span style="display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:9999px;border:1px solid var(--accent-border);background:var(--accent-muted);font-size:12px;color:var(--accent);font-weight:500"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3 3 7-7"/></svg>Enabled</span>
+          </div>
+          <div style="font-size:12px;line-height:1.5;color:var(--text-muted)">Finds charge stalls, protection-mode trips and the per-zone temperature curve behind a device that slowed down.</div>
+          <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-dimmed)"><span>9 analyzers</span><span>·</span><span>official</span><span>·</span><span style="font-family:var(--font-mono)">v1.1.0</span><span style="flex:1"></span><span style="color:var(--warning)">update v1.2.0</span></div>
+        </div>
+
+        <!-- Connectivity -->
+        <div style="display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg-raised)">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="flex:1;font-weight:600;color:var(--text)">Connectivity</span>
+            <span style="display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:9999px;border:1px solid var(--accent-border);background:var(--accent-muted);font-size:12px;color:var(--accent);font-weight:500"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3 3 7-7"/></svg>Enabled</span>
+          </div>
+          <div style="font-size:12px;line-height:1.5;color:var(--text-muted)">Finds Wi-Fi drops with their 802.11 reason codes, captive-portal probes that failed validation, and DNS queries that never resolved.</div>
+          <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-dimmed)"><span>5 analyzers</span><span>·</span><span>official</span><span>·</span><span style="font-family:var(--font-mono)">v1.1.0</span></div>
+        </div>
+
+        <!-- Memory & performance -->
+        <div style="display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg-raised)">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="flex:1;font-weight:600;color:var(--text)">Memory &amp; performance</span>
+            <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:9999px;border:1px solid var(--border);background:var(--bg-base);font-size:12px;color:var(--text-subtle)">Enable</span>
+          </div>
+          <div style="font-size:12px;line-height:1.5;color:var(--text-muted)">Finds GC storms, low-memory process kills, and the system_server heap and FD pressure that precedes them.</div>
+          <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-dimmed)"><span>4 analyzers</span><span>·</span><span>official</span><span>·</span><span style="font-family:var(--font-mono)">v1.1.0</span></div>
+        </div>
+
+        <!-- Bluetooth (not published) -->
+        <div style="display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:8px;border:1px dashed var(--border);background:transparent;opacity:.8">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="flex:1;font-weight:600;color:var(--text-subtle)">Bluetooth</span>
+            <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:9999px;border:1px dashed var(--border);background:transparent;font-size:12px;color:var(--text-muted)">Not in index yet</span>
+          </div>
+          <div style="font-size:12px;line-height:1.5;color:var(--text-muted)">Would find pairing failures, A2DP codec renegotiation and LE connection-interval churn. Placeholder — no official pack published.</div>
+          <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-dimmed)"><span>planned</span><span>·</span><span>official</span></div>
+        </div>
+
+        <!-- Camera (not published) -->
+        <div style="display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:8px;border:1px dashed var(--border);background:transparent;opacity:.8">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="flex:1;font-weight:600;color:var(--text-subtle)">Camera</span>
+            <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:9999px;border:1px dashed var(--border);background:transparent;font-size:12px;color:var(--text-muted)">Not in index yet</span>
+          </div>
+          <div style="font-size:12px;line-height:1.5;color:var(--text-muted)">Would find session open failures, HAL timeouts and dropped capture requests. Placeholder — no official pack published.</div>
+          <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-dimmed)"><span>planned</span><span>·</span><span>official</span></div>
+        </div>
+      </div>
+
+      <!-- expanded pack -->
+      <div style="display:flex;flex-direction:column;border-radius:8px;border:1px solid var(--accent-border);background:var(--bg-raised);overflow:hidden">
+        <div style="display:flex;align-items:center;gap:10px;height:44px;padding:0 16px;border-bottom:1px solid var(--border)">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent)"><path d="M4 6l4 4 4-4"/></svg>
+          <span style="font-weight:600;color:var(--text)">USB &amp; peripherals</span>
+          <span style="font:11px var(--font-mono);color:var(--text-muted)">usb-ethernet-diagnostics · v1.0.3 · official</span>
+          <span style="flex:1"></span>
+          <span style="font-size:12px;color:var(--text-muted)">Enabled for this workspace</span>
+          <span style="display:inline-flex;align-items:center;width:36px;height:20px;padding:2px;border-radius:9999px;background:var(--accent-base)"><span style="margin-left:16px;width:16px;height:16px;border-radius:9999px;background:#fff"></span></span>
+        </div>
+        <div style="display:flex;flex-direction:column;padding:6px 8px">
+          <div style="display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr) 150px 110px;align-items:center;gap:12px;height:38px;padding:0 10px;border-radius:6px">
+            <span style="font-weight:600;color:var(--text)">USB Enumeration Health</span>
+            <span style="font-size:12px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Tells you why a device never came up — which stage failed, how often, and with what errno.</span>
+            <span style="font-size:11px;color:var(--text-dimmed);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">kernel · dumpstate</span>
+            <span style="display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 8px;border-radius:9999px;background:var(--danger-muted);color:var(--danger);font-size:11px">3 findings</span>
+          </div>
+          <div style="height:1px;background:var(--border);margin:0 10px"></div>
+          <div style="display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr) 150px 110px;align-items:center;gap:12px;height:38px;padding:0 10px;border-radius:6px">
+            <span style="font-weight:600;color:var(--text)">USB Netdev Lifetime</span>
+            <span style="font-size:12px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Pairs register with unregister and reports how long each interface actually survived.</span>
+            <span style="font-size:11px;color:var(--text-dimmed);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">kernel</span>
+            <span style="display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 8px;border-radius:9999px;background:var(--bg-overlay);color:var(--text-subtle);font-size:11px">0 findings</span>
+          </div>
+          <div style="height:1px;background:var(--border);margin:0 10px"></div>
+          <div style="display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr) 150px 110px;align-items:center;gap:12px;height:38px;padding:0 10px;border-radius:6px">
+            <span style="font-weight:600;color:var(--text)">Ethernet Config Audit</span>
+            <span style="font-size:12px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Shows every write to the Ethernet IP configuration and attributes it to the caller.</span>
+            <span style="font-size:11px;color:var(--text-dimmed);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">dumpstate</span>
+            <span style="display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 8px;border-radius:9999px;background:var(--warning-muted);color:var(--warning);font-size:11px">2 findings</span>
+          </div>
+          <div style="height:1px;background:var(--border);margin:0 10px"></div>
+          <div style="display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr) 150px 110px;align-items:center;gap:12px;height:38px;padding:0 10px;border-radius:6px;opacity:.7">
+            <span style="font-weight:600;color:var(--text-subtle)">Ethernet Interface Flap</span>
+            <span style="font-size:12px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Counts add/remove cycles the framework saw, even when there is no kernel log at all.</span>
+            <span style="font-size:11px;color:var(--text-dimmed);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">dumpstate · logcat</span>
+            <span style="display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 8px;border-radius:9999px;background:var(--bg-overlay);color:var(--text-muted);font-size:11px">not run yet</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- advanced disclosure, collapsed -->
+      <div style="display:flex;align-items:center;gap:10px;height:40px;padding:0 14px;border-radius:8px;border:1px solid var(--border);background:transparent">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-muted)"><path d="M6 4l4 4-4 4"/></svg>
+        <span style="font-weight:500;color:var(--text-subtle)">Advanced</span>
+        <span style="font-size:12px;color:var(--text-muted)">Library · YAML authoring · Sources · Updates · Uninstall</span>
+        <span style="flex:1"></span>
+        <span style="font-size:12px;color:var(--text-muted)">41 analyzers installed · 1 custom source</span>
+      </div>
+      <div style="flex:1"></div>
+    </div>
+
+    <!-- right: agent presence, compact -->
+    <div style="width:420px;display:flex;flex-direction:column;border-left:1px solid var(--border);background:var(--bg-base)">
+      <div style="display:flex;flex-direction:column;gap:10px;padding:14px;border-bottom:1px solid var(--border);background:var(--bg-raised)">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="width:36px;height:36px;border-radius:9999px;background:radial-gradient(circle at 35% 35%, var(--agent-idle), transparent 70%), var(--bg-overlay);border:1px solid var(--border);animation:lt-breathe 4.5s ease-in-out infinite"></div>
+          <div style="display:flex;flex-direction:column">
+            <span style="font-weight:600;color:var(--text)">Claude Code</span>
+            <span style="font-size:12px;color:var(--text-muted)">Idle · sees the same 18 analyzers</span>
+          </div>
+          <span style="flex:1"></span>
+          <span style="display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:9999px;border:1px solid var(--border);background:var(--bg-base);font-size:12px;color:var(--text-subtle)">PII tokens on</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;font-size:12px">
+          <div style="display:flex;gap:8px;align-items:baseline"><span style="font-family:var(--font-mono);color:var(--text-dimmed)">09:35</span><span style="flex:1;color:var(--text-subtle);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">chose <span style="color:var(--text)">USB &amp; peripherals</span> for this session — source type matched</span></div>
+          <div style="display:flex;gap:8px;align-items:baseline"><span style="font-family:var(--font-mono);color:var(--text-dimmed)">09:34</span><span style="flex:1;color:var(--text-subtle);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">skipped <span style="color:var(--text)">CPU Load</span> — needs logcat, session is dumpstate</span></div>
+        </div>
+      </div>
+
+      <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);padding:14px 14px 6px">Why these packs</div>
+      <div style="margin:0 14px;display:flex;flex-direction:column;gap:10px;padding:12px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg-raised);font-size:12px;line-height:1.55;color:var(--text-subtle)">
+        This workspace holds two dumpstates and one saved logcat from an SM-S911U. Packs whose analyzers declare a source type this workspace has no capture for stay off by default — enabling them is never harmful, they are simply skipped with a reason on the card.
+      </div>
+
+      <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);padding:18px 14px 6px">Coverage gaps</div>
+      <div style="margin:0 14px;display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-raised)">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="color:var(--warning)"><path d="M8 2.5l6 11H2z"/><path d="M8 6.5v3.5M8 12h.01"/></svg>
+          <span style="flex:1;font-size:12px;color:var(--text-subtle);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">No analyzer covers Bluetooth in this index</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-raised)">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="color:var(--warning)"><path d="M8 2.5l6 11H2z"/><path d="M8 6.5v3.5M8 12h.01"/></svg>
+          <span style="flex:1;font-size:12px;color:var(--text-subtle);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">No analyzer covers Camera in this index</span>
+        </div>
+      </div>
+      <div style="flex:1"></div>
+    </div>
+  </div>
+
+  <!-- ===== status bar ===== -->
+  <div style="display:flex;align-items:center;gap:16px;height:26px;padding:0 14px;border-top:1px solid var(--border);background:var(--bg-raised);font-size:12px;color:var(--text-muted)">
+    <span>Packs</span><span>USB plugin · S911 enumeration</span><span>3 of 6 enabled · 18 analyzers active</span>
+    <span style="flex:1"></span>
+    <span style="display:inline-flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:9999px;background:var(--success)"></span>Bridge 40404 · Claude Code connected</span>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"theme":{"editor":"enum","options":["dark","light"],"default":"dark","section":"Theme"},"$preview":{"width":1920,"height":1080}}'>
+class Component extends DCLogic {
+  renderVals() { return { theme: this.props.theme ?? 'dark' }; }
+}
+</script>
+</body>
+</html>

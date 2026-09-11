@@ -1,0 +1,300 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: var(--accent); } a:hover { color: var(--accent-base); }
+    * { box-sizing: border-box; }
+    .theme-dark {
+      --bg-base: #0c1014; --bg-raised: #141b21; --bg-overlay: #1b2530; --bg-input: #0e1318;
+      --border: #243040; --border-subtle: #2d3d4e;
+      --text: #b8c4ce; --text-subtle: #9faab4; --text-muted: #8b949e; --text-dimmed: #484f58;
+      --accent: #58a6ff; --accent-base: #1f6feb; --accent-muted: rgba(88,166,255,0.12); --accent-border: rgba(88,166,255,0.25);
+      --danger: #f85149; --danger-muted: rgba(248,81,73,0.12);
+      --success: #3fb950; --success-muted: rgba(63,185,80,0.14);
+      --warning: #d29922; --warning-muted: rgba(210,153,34,0.12);
+      --brand: #e2383d; --android: #ff6128;
+      --level-verbose: #6e7b8b; --level-debug: #9faab4; --level-info: #b8c4ce; --level-warning: #d29922; --level-error: #f47067; --level-fatal: #ff6e6e;
+      --level-warning-bg: rgba(210,153,34,0.08); --level-error-bg: #2d1117; --level-fatal-bg: #3d1118;
+      --active-line: rgba(255,255,255,0.04); --selection: rgba(88,166,255,0.2);
+      --match: rgba(210,153,34,0.35); --pii: rgba(226,56,61,0.22);
+      --agent-idle: #7c8ea3; --agent-reading: #58a6ff; --agent-running: #3fb950; --agent-wrote: #c9a227; --agent-needs: #f0a500; --agent-raw: #f85149;
+      --caller-human: #7c8ea3; --caller-agent: #58a6ff;
+      --shadow: 0 8px 24px rgba(0,0,0,0.45);
+    }
+    .theme-light {
+      --bg-base: #ffffff; --bg-raised: #e9ecf0; --bg-overlay: #dce0e6; --bg-input: #f2f4f7;
+      --border: #b8c2cc; --border-subtle: #c8d0d8;
+      --text: #1a1f26; --text-subtle: #4b5563; --text-muted: #5d6672; --text-dimmed: #8b95a1;
+      --accent: #0969da; --accent-base: #0550ae; --accent-muted: rgba(9,105,218,0.10); --accent-border: rgba(9,105,218,0.20);
+      --danger: #cf222e; --danger-muted: rgba(207,34,46,0.10);
+      --success: #1a7f37; --success-muted: rgba(26,127,55,0.12);
+      --warning: #9a6700; --warning-muted: rgba(154,103,0,0.10);
+      --brand: #d42f34; --android: #ff6128;
+      --level-verbose: #8c959f; --level-debug: #57606a; --level-info: #1a1f26; --level-warning: #9a6700; --level-error: #cf222e; --level-fatal: #a40e26;
+      --level-warning-bg: rgba(154,103,0,0.08); --level-error-bg: rgba(207,34,46,0.05); --level-fatal-bg: rgba(164,14,38,0.06);
+      --active-line: rgba(0,0,0,0.03); --selection: rgba(9,105,218,0.2);
+      --match: rgba(154,103,0,0.28); --pii: rgba(212,47,52,0.18);
+      --agent-idle: #6b7a8c; --agent-reading: #0969da; --agent-running: #1a7f37; --agent-wrote: #7d4e00; --agent-needs: #b35c00; --agent-raw: #cf222e;
+      --caller-human: #6b7a8c; --caller-agent: #0969da;
+      --shadow: 0 8px 24px rgba(16,24,40,0.16);
+    }
+    .theme-dark, .theme-light {
+      --font-ui: 'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
+      --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
+      font-family: var(--font-ui); color: var(--text); font-size: 13px; line-height: 1.4;
+      -webkit-font-smoothing: antialiased;
+    }
+    @keyframes lt-breathe { 0%,100% { transform: scale(1); opacity: .85 } 50% { transform: scale(1.06); opacity: 1 } }
+  </style>
+</helmet>
+
+<div class="theme-{{theme}}" style="width:1920px;height:1080px;display:flex;flex-direction:column;background:var(--bg-base);overflow:hidden">
+
+  <!-- ===== top bar (workspace level — no session tabs, no mode chip) ===== -->
+  <div style="display:flex;align-items:center;gap:12px;height:44px;padding:0 14px;border-bottom:1px solid var(--border);background:var(--bg-raised)">
+    <div style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;color:var(--text)">
+      <span style="width:10px;height:10px;border-radius:2px;background:var(--brand)"></span>LogTapper
+    </div>
+    <div style="display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 10px 0 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-base);color:var(--text);font-weight:500">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" style="color:var(--text-muted)"><path d="M1.5 4.5h5l1.5 1.5h6.5v7.5h-13z"/></svg>
+      USB plugin · S911 enumeration
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-muted)"><path d="M4 6l4 4 4-4"/></svg>
+    </div>
+    <div style="flex:1"></div>
+    <div style="display:flex;align-items:center;gap:8px;width:300px;height:30px;padding:0 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-dimmed)">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+      <span style="flex:1">Jump to session, section, analysis…</span>
+      <span style="font-size:11px;font-family:var(--font-mono)">Ctrl K</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;height:30px;padding:0 10px 0 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-base)">
+      <div style="width:18px;height:18px;border-radius:9999px;background:radial-gradient(circle at 35% 35%, var(--agent-idle), transparent 70%), var(--bg-overlay);animation:lt-breathe 4.5s ease-in-out infinite"></div>
+      <span style="font-size:12px;color:var(--text-subtle);font-weight:500">Claude · idle</span>
+    </div>
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--text-muted)"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/></svg>
+  </div>
+
+  <!-- ===== body ===== -->
+  <div style="display:flex;flex:1;min-height:0">
+
+    <!-- workspace rail -->
+    <div style="width:272px;display:flex;flex-direction:column;border-right:1px solid var(--border);background:var(--bg-base)">
+      <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);padding:12px 14px 6px">Workspaces</div>
+      <div style="display:flex;flex-direction:column;padding:0 6px;gap:2px">
+        <div style="display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:6px;background:var(--accent-muted);border:1px solid var(--accent-border)">
+          <div style="display:flex;align-items:center;gap:8px"><span style="flex:1;font-weight:600;color:var(--accent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">USB plugin · S911 enumeration</span><span style="width:7px;height:7px;border-radius:9999px;background:var(--accent)"></span></div>
+          <div style="font-size:12px;color:var(--text-muted)">3 sessions · edited 4 min ago</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:6px;color:var(--text-subtle)">
+          <div style="font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Wi-Fi roaming · Pixel 8</div>
+          <div style="font-size:12px;color:var(--text-muted)">2 sessions · yesterday</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:6px;color:var(--text-subtle)">
+          <div style="font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Thermal throttling · S23</div>
+          <div style="font-size:12px;color:var(--text-muted)">1 session · 3 days ago</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;height:30px;padding:0 10px;margin-top:4px;border-radius:6px;border:1px dashed var(--border);color:var(--text-muted);font-weight:500">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 3.5v9M3.5 8h9"/></svg>
+          New workspace
+        </div>
+      </div>
+
+      <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);padding:18px 14px 6px">This workspace</div>
+      <div style="display:flex;flex-direction:column;padding:0 6px;gap:1px">
+        <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 10px;border-radius:6px;color:var(--text-subtle)"><span style="flex:1">Sessions</span><span style="font:11px var(--font-mono);color:var(--text-dimmed)">3</span></div>
+        <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 10px;border-radius:6px;color:var(--text-subtle)"><span style="flex:1">Packs enabled</span><span style="font:11px var(--font-mono);color:var(--text-dimmed)">3</span></div>
+        <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 10px;border-radius:6px;color:var(--text-subtle)"><span style="flex:1">Analyses</span><span style="font:11px var(--font-mono);color:var(--text-dimmed)">2</span></div>
+        <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 10px;border-radius:6px;color:var(--text-subtle)"><span style="flex:1">Bookmarks</span><span style="font:11px var(--font-mono);color:var(--text-dimmed)">7</span></div>
+      </div>
+      <div style="flex:1"></div>
+      <div style="display:flex;align-items:center;gap:8px;height:34px;padding:0 14px;border-top:1px solid var(--border);font-size:12px;color:var(--text-muted)">
+        <span style="flex:1">Restored 09:08</span><span style="font-family:var(--font-mono)">widths saved</span>
+      </div>
+    </div>
+
+    <!-- centre: workspace home -->
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column;padding:22px 24px;gap:20px;overflow:hidden">
+
+      <div style="display:flex;align-items:baseline;gap:12px">
+        <span style="font-size:20px;font-weight:600;color:var(--text)">USB plugin · S911 enumeration</span>
+        <span style="font-size:13px;color:var(--text-muted)">Peripheral stops enumerating after deep suspend on SM-S911U build UP1A.231005.007</span>
+      </div>
+
+      <!-- sessions -->
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)">Sessions</span>
+          <span style="flex:1"></span>
+          <button style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-raised);color:var(--text);font:500 12px var(--font-ui);cursor:pointer">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" style="color:var(--text-muted)"><path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/></svg>Open file
+          </button>
+          <button style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:6px;border:1px solid var(--accent-base);background:var(--accent-base);color:#fff;font:500 12px var(--font-ui);cursor:pointer">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4.5" y="1.5" width="7" height="13" rx="1.5"/><path d="M7 12.5h2"/></svg>Attach device
+          </button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:12px">
+
+          <div style="display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:8px;border:1px solid var(--accent-border);background:var(--bg-raised)">
+            <div style="display:flex;align-items:center;gap:8px">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" style="color:var(--accent)"><path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/></svg>
+              <span style="flex:1;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">dumpstate_S911</span>
+              <span style="height:18px;padding:0 6px;border-radius:9999px;background:var(--bg-overlay);color:var(--text-muted);font-size:11px;line-height:18px">dumpstate</span>
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Failing capture · 1.34 M lines · 10:00:01 – 10:41:55</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <span style="height:20px;padding:0 7px;border-radius:9999px;background:var(--danger-muted);color:var(--danger);font-size:11px;line-height:20px">1 give-up</span>
+              <span style="height:20px;padding:0 7px;border-radius:9999px;background:var(--bg-overlay);color:var(--text-subtle);font-size:11px;line-height:20px">2 analyses</span>
+              <span style="height:20px;padding:0 7px;border-radius:9999px;background:var(--bg-overlay);color:var(--text-subtle);font-size:11px;line-height:20px">5 bookmarks</span>
+            </div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg-raised)">
+            <div style="display:flex;align-items:center;gap:8px">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" style="color:var(--text-muted)"><path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/></svg>
+              <span style="flex:1;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">dumpstate_S911_working</span>
+              <span style="height:18px;padding:0 6px;border-radius:9999px;background:var(--bg-overlay);color:var(--text-muted);font-size:11px;line-height:18px">dumpstate</span>
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Working reference · 1.28 M lines · same peripheral</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <span style="height:20px;padding:0 7px;border-radius:9999px;background:var(--success-muted);color:var(--success);font-size:11px;line-height:20px">enumerates in 120 ms</span>
+              <span style="height:20px;padding:0 7px;border-radius:9999px;background:var(--bg-overlay);color:var(--text-subtle);font-size:11px;line-height:20px">2 bookmarks</span>
+            </div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg-raised)">
+            <div style="display:flex;align-items:center;gap:8px">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--text-muted)"><rect x="4.5" y="1.5" width="7" height="13" rx="1.5"/><path d="M7 12.5h2"/></svg>
+              <span style="flex:1;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">logcat_run2</span>
+              <span style="height:18px;padding:0 6px;border-radius:9999px;background:var(--bg-overlay);color:var(--text-muted);font-size:11px;line-height:18px">logcat</span>
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Live capture saved 08:52 · 214,880 lines · 6 min 12 s</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <span style="height:20px;padding:0 7px;border-radius:9999px;background:var(--warning-muted);color:var(--warning);font-size:11px;line-height:20px">3 watch matches</span>
+              <span style="height:20px;padding:0 7px;border-radius:9999px;background:var(--bg-overlay);color:var(--text-subtle);font-size:11px;line-height:20px">com.vendor.usbplugin</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- packs enabled -->
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)">Packs enabled</span>
+          <span style="flex:1"></span>
+          <button style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-raised);color:var(--text);font:500 12px var(--font-ui);cursor:pointer">Manage packs</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:9999px;border:1px solid var(--accent-border);background:var(--accent-muted);font-size:12px;color:var(--accent)">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3 3 7-7"/></svg>
+            USB Ethernet Diagnostics <span style="color:var(--text-muted)">4 analyzers</span>
+          </span>
+          <span style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:9999px;border:1px solid var(--accent-border);background:var(--accent-muted);font-size:12px;color:var(--accent)">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3 3 7-7"/></svg>
+            Device Health <span style="color:var(--text-muted)">9 analyzers</span>
+          </span>
+          <span style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:9999px;border:1px solid var(--accent-border);background:var(--accent-muted);font-size:12px;color:var(--accent)">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3 3 7-7"/></svg>
+            Network Connectivity <span style="color:var(--text-muted)">5 analyzers</span>
+          </span>
+          <span style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:9999px;border:1px dashed var(--border);background:transparent;font-size:12px;color:var(--text-muted)">Telephony Suite · not enabled</span>
+        </div>
+      </div>
+
+      <!-- recent analyses -->
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)">Recent analyses</span>
+          <span style="flex:1"></span>
+          <span style="font-size:12px;color:var(--text-muted)">2 in this workspace</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:12px">
+          <div style="display:flex;flex-direction:column;gap:6px;padding:12px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg-raised)">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="flex:1;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">USB enumeration fails after suspend — root cause</span>
+              <span style="display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 6px;border-radius:9999px;background:var(--accent-muted);color:var(--caller-agent);font:500 11px var(--font-ui)"><svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M8 1.5l1.6 4.4L14 7.5l-4.4 1.6L8 13.5 6.4 9.1 2 7.5l4.4-1.6z"/></svg>agent · 09:41</span>
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">After the deep-suspend at L47980, every enumeration attempt times out at 500 ms.</div>
+            <div style="display:flex;gap:6px"><span style="height:20px;padding:0 7px;border-radius:9999px;background:var(--danger-muted);color:var(--danger);font-size:11px;line-height:20px">Critical</span><span style="height:20px;padding:0 7px;border-radius:9999px;background:var(--bg-overlay);color:var(--text-subtle);font-size:11px;line-height:20px">dumpstate_S911 · 3 sections · 2 anchors</span></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;padding:12px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg-raised)">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="flex:1;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Static IP clobbered by a privileged write</span>
+              <span style="display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:9999px;background:var(--bg-overlay);color:var(--caller-human);font:500 11px var(--font-ui)">you · yesterday</span>
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">The operator address at L61402 is overwritten 900 ms later by an unattributed caller.</div>
+            <div style="display:flex;gap:6px"><span style="height:20px;padding:0 7px;border-radius:9999px;background:var(--warning-muted);color:var(--warning);font-size:11px;line-height:20px">Warning</span><span style="height:20px;padding:0 7px;border-radius:9999px;background:var(--bg-overlay);color:var(--text-subtle);font-size:11px;line-height:20px">dumpstate_S911 · 2 sections · 1 anchor</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- right: agent presence, compact -->
+    <div style="width:420px;display:flex;flex-direction:column;border-left:1px solid var(--border);background:var(--bg-base)">
+      <div style="display:flex;flex-direction:column;gap:10px;padding:14px;border-bottom:1px solid var(--border);background:var(--bg-raised)">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="width:36px;height:36px;border-radius:9999px;background:radial-gradient(circle at 35% 35%, var(--agent-idle), transparent 70%), var(--bg-overlay);border:1px solid var(--border);animation:lt-breathe 4.5s ease-in-out infinite"></div>
+          <div style="display:flex;flex-direction:column">
+            <span style="font-weight:600;color:var(--text)">Claude Code</span>
+            <span style="font-size:12px;color:var(--text-muted)">Idle · last action 6 min ago</span>
+          </div>
+          <span style="flex:1"></span>
+          <span style="display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:9999px;border:1px solid var(--border);background:var(--bg-base);font-size:12px;color:var(--text-subtle)">PII tokens on</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;font-size:12px">
+          <div style="display:flex;gap:8px;align-items:baseline"><span style="font-family:var(--font-mono);color:var(--text-dimmed)">09:41</span><span style="flex:1;color:var(--text-subtle);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">published analysis <span style="color:var(--text)">USB enumeration fails after suspend</span></span></div>
+          <div style="display:flex;gap:8px;align-items:baseline"><span style="font-family:var(--font-mono);color:var(--text-dimmed)">09:40</span><span style="flex:1;color:var(--text-subtle);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">ran usb-enumeration-health on dumpstate_S911 · 3 findings</span></div>
+          <div style="display:flex;gap:8px;align-items:baseline"><span style="font-family:var(--font-mono);color:var(--text-dimmed)">09:39</span><span style="flex:1;color:var(--text-subtle);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">opened dumpstate_S911_working for comparison</span></div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-base);color:var(--text);font:500 12px var(--font-ui);cursor:pointer">Full activity</button>
+          <button style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-base);color:var(--text);font:500 12px var(--font-ui);cursor:pointer">Agent access…</button>
+        </div>
+      </div>
+
+      <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);padding:14px 14px 6px">When no agent is attached</div>
+      <div style="margin:0 14px;display:flex;flex-direction:column;gap:10px;padding:14px;border-radius:8px;border:1px dashed var(--border);background:transparent">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="width:28px;height:28px;border-radius:9999px;background:radial-gradient(circle at 35% 35%, var(--agent-idle), transparent 70%), var(--bg-overlay);border:1px solid var(--border);opacity:.5"></div>
+          <div style="display:flex;flex-direction:column">
+            <span style="font-weight:600;color:var(--text-subtle)">No agent on this workspace</span>
+            <span style="font-size:12px;color:var(--text-muted)">Bridge is listening on 40404 — nothing connected.</span>
+          </div>
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);line-height:1.55">Every surface here works without one. Attach Claude Code or Claude Desktop to have analyzers run, findings published and watches explained alongside your own work.</div>
+        <div style="display:flex;gap:8px">
+          <button style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:6px;border:1px solid var(--accent-base);background:var(--accent-base);color:#fff;font:500 12px var(--font-ui);cursor:pointer"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M8 1.5l1.6 4.4L14 7.5l-4.4 1.6L8 13.5 6.4 9.1 2 7.5l4.4-1.6z"/></svg>Attach an agent</button>
+          <button style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-base);color:var(--text-subtle);font:500 12px var(--font-ui);cursor:pointer">What can it do?</button>
+        </div>
+      </div>
+
+      <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);padding:18px 14px 6px">Shared focus</div>
+      <div style="margin:0 14px;display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-raised);font-size:12px;color:var(--text-subtle)">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--text-muted)"><path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></svg>
+        <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Sharing <span style="font-family:var(--font-mono);color:var(--accent)">dumpstate_S911 · L48213</span> with the agent</span>
+      </div>
+      <div style="flex:1"></div>
+    </div>
+  </div>
+
+  <!-- ===== status bar ===== -->
+  <div style="display:flex;align-items:center;gap:16px;height:26px;padding:0 14px;border-top:1px solid var(--border);background:var(--bg-raised);font-size:12px;color:var(--text-muted)">
+    <span>Workspace home</span><span>3 sessions · 3 packs · 18 analyzers</span><span>No session open</span>
+    <span style="flex:1"></span>
+    <span style="display:inline-flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:9999px;background:var(--success)"></span>Bridge 40404 · Claude Code connected</span>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"theme":{"editor":"enum","options":["dark","light"],"default":"dark","section":"Theme"},"$preview":{"width":1920,"height":1080}}'>
+class Component extends DCLogic {
+  renderVals() { return { theme: this.props.theme ?? 'dark' }; }
+}
+</script>
+</body>
+</html>

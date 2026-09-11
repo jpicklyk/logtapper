@@ -1,0 +1,302 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: var(--accent); } a:hover { color: var(--accent-base); }
+    * { box-sizing: border-box; }
+    .theme-dark {
+      --bg-base: #0c1014; --bg-raised: #141b21; --bg-overlay: #1b2530; --bg-input: #0e1318;
+      --border: #243040; --border-subtle: #2d3d4e;
+      --text: #b8c4ce; --text-subtle: #9faab4; --text-muted: #8b949e; --text-dimmed: #484f58;
+      --accent: #58a6ff; --accent-base: #1f6feb; --accent-muted: rgba(88,166,255,0.12); --accent-border: rgba(88,166,255,0.25);
+      --danger: #f85149; --danger-muted: rgba(248,81,73,0.12);
+      --success: #3fb950; --success-muted: rgba(63,185,80,0.14);
+      --warning: #d29922; --warning-muted: rgba(210,153,34,0.12);
+      --brand: #e2383d; --android: #ff6128;
+      --level-verbose: #6e7b8b; --level-debug: #9faab4; --level-info: #b8c4ce; --level-warning: #d29922; --level-error: #f47067; --level-fatal: #ff6e6e;
+      --level-warning-bg: rgba(210,153,34,0.08); --level-error-bg: #2d1117; --level-fatal-bg: #3d1118;
+      --active-line: rgba(255,255,255,0.04); --selection: rgba(88,166,255,0.2);
+      --match: rgba(210,153,34,0.35); --pii: rgba(226,56,61,0.22);
+      --agent-idle: #7c8ea3; --agent-reading: #58a6ff; --agent-running: #3fb950; --agent-wrote: #c9a227; --agent-needs: #f0a500; --agent-raw: #f85149;
+      --caller-human: #7c8ea3; --caller-agent: #58a6ff;
+      --shadow: 0 8px 24px rgba(0,0,0,0.45);
+    }
+    .theme-light {
+      --bg-base: #ffffff; --bg-raised: #e9ecf0; --bg-overlay: #dce0e6; --bg-input: #f2f4f7;
+      --border: #b8c2cc; --border-subtle: #c8d0d8;
+      --text: #1a1f26; --text-subtle: #4b5563; --text-muted: #5d6672; --text-dimmed: #8b95a1;
+      --accent: #0969da; --accent-base: #0550ae; --accent-muted: rgba(9,105,218,0.10); --accent-border: rgba(9,105,218,0.20);
+      --danger: #cf222e; --danger-muted: rgba(207,34,46,0.10);
+      --success: #1a7f37; --success-muted: rgba(26,127,55,0.12);
+      --warning: #9a6700; --warning-muted: rgba(154,103,0,0.10);
+      --brand: #d42f34; --android: #ff6128;
+      --level-verbose: #8c959f; --level-debug: #57606a; --level-info: #1a1f26; --level-warning: #9a6700; --level-error: #cf222e; --level-fatal: #a40e26;
+      --level-warning-bg: rgba(154,103,0,0.08); --level-error-bg: rgba(207,34,46,0.05); --level-fatal-bg: rgba(164,14,38,0.06);
+      --active-line: rgba(0,0,0,0.03); --selection: rgba(9,105,218,0.2);
+      --match: rgba(154,103,0,0.28); --pii: rgba(212,47,52,0.18);
+      --agent-idle: #6b7a8c; --agent-reading: #0969da; --agent-running: #1a7f37; --agent-wrote: #7d4e00; --agent-needs: #b35c00; --agent-raw: #cf222e;
+      --caller-human: #6b7a8c; --caller-agent: #0969da;
+      --shadow: 0 8px 24px rgba(16,24,40,0.16);
+    }
+    .theme-dark, .theme-light {
+      --font-ui: 'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
+      --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
+      font-family: var(--font-ui); color: var(--text); font-size: 13px; line-height: 1.4;
+      -webkit-font-smoothing: antialiased;
+    }
+    @keyframes lt-breathe { 0%,100% { transform: scale(1); opacity: .85 } 50% { transform: scale(1.06); opacity: 1 } }
+  </style>
+</helmet>
+
+<div class="theme-{{theme}}" style="width:1920px;height:1080px;display:flex;flex-direction:column;background:var(--bg-base);overflow:hidden">
+
+  <!-- ===== top bar ===== -->
+  <div style="display:flex;align-items:center;gap:12px;height:44px;padding:0 14px;border-bottom:1px solid var(--border);background:var(--bg-raised)">
+    <div style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;color:var(--text)">
+      <span style="width:10px;height:10px;border-radius:2px;background:var(--brand)"></span>LogTapper
+    </div>
+    <div style="display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 10px 0 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-base);color:var(--text);font-weight:500">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" style="color:var(--text-muted)"><path d="M1.5 4.5h5l1.5 1.5h6.5v7.5h-13z"/></svg>
+      USB plugin · S911 enumeration
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-muted)"><path d="M4 6l4 4 4-4"/></svg>
+    </div>
+    <div style="display:flex;align-items:center;gap:2px;height:44px;margin-left:8px">
+      <div style="display:flex;align-items:center;gap:8px;height:44px;padding:0 14px;border-bottom:2px solid var(--accent);color:var(--text);font-weight:500">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" style="color:var(--text-muted)"><path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/></svg>
+        dumpstate_S911
+        <span style="height:18px;padding:0 6px;border-radius:9999px;background:var(--bg-overlay);color:var(--text-muted);font-size:11px;line-height:18px">dumpstate</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;height:44px;padding:0 14px;border-bottom:2px solid transparent;color:var(--text-muted)">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/></svg>
+        logcat_run2
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;height:44px;padding:0 14px;color:var(--text-muted)">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/></svg>
+        dumpstate_S911_working
+      </div>
+    </div>
+    <span style="display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:9999px;border:1px solid var(--border);background:var(--bg-base);font-size:12px;color:var(--text-subtle)">Post-mortem</span>
+    <div style="flex:1"></div>
+    <div style="display:flex;align-items:center;gap:8px;width:300px;height:30px;padding:0 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-dimmed)">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+      <span style="flex:1">Jump to session, section, analysis…</span>
+      <span style="font-size:11px;font-family:var(--font-mono)">Ctrl K</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;height:30px;padding:0 10px 0 6px;border-radius:6px;border:1px solid var(--accent-border);background:var(--accent-muted)">
+      <div style="width:18px;height:18px;border-radius:9999px;background:radial-gradient(circle at 35% 35%, var(--agent-reading), transparent 70%), var(--bg-overlay);animation:lt-breathe 3s ease-in-out infinite"></div>
+      <span style="font-size:12px;color:var(--accent);font-weight:500">Claude · reading</span>
+    </div>
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--text-muted)"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/></svg>
+  </div>
+
+  <!-- ===== body ===== -->
+  <div style="display:flex;flex:1;min-height:0">
+
+    <!-- navigator -->
+    <div style="width:272px;display:flex;flex-direction:column;border-right:1px solid var(--border);background:var(--bg-base)">
+      <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);padding:12px 14px 6px">Sections</div>
+      <div style="display:flex;flex-direction:column;padding:0 6px;gap:1px">
+        <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;border-radius:6px;color:var(--text-subtle)"><span style="flex:1">SYSTEM LOG</span><span style="font:11px var(--font-mono);color:var(--text-dimmed)">1,204,331</span></div>
+        <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;border-radius:6px;color:var(--text-subtle)"><span style="flex:1">EVENT LOG</span><span style="font:11px var(--font-mono);color:var(--text-dimmed)">88,210</span></div>
+        <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;border-radius:6px;color:var(--text-subtle)"><span style="flex:1">KERNEL LOG</span><span style="font:11px var(--font-mono);color:var(--text-dimmed)">41,902</span></div>
+        <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;border-radius:6px;color:var(--text-subtle)"><span style="flex:1">DUMPSYS</span><span style="font:11px var(--font-mono);color:var(--text-dimmed)">312 sections</span></div>
+        <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 8px 0 24px;border-radius:6px;background:var(--accent-muted);color:var(--accent);font-weight:500"><span style="flex:1">usb</span><span style="font:11px var(--font-mono);color:var(--accent)">L48,102–48,940</span></div>
+        <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 8px 0 24px;border-radius:6px;color:var(--text-subtle)"><span style="flex:1">batterystats</span><span style="font:11px var(--font-mono);color:var(--text-dimmed)">L52,001</span></div>
+        <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 8px 0 24px;border-radius:6px;color:var(--text-subtle)"><span style="flex:1">connectivity</span><span style="font:11px var(--font-mono);color:var(--text-dimmed)">L61,388</span></div>
+        <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 8px 0 24px;border-radius:6px;color:var(--text-subtle)"><span style="flex:1">meminfo</span><span style="font:11px var(--font-mono);color:var(--text-dimmed)">L70,115</span></div>
+      </div>
+
+      <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);padding:18px 14px 6px">Bookmarks</div>
+      <div style="display:flex;flex-direction:column;padding:0 6px;gap:2px">
+        <div style="display:flex;flex-direction:column;gap:3px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-raised)">
+          <div style="display:flex;align-items:center;gap:8px"><span style="font:11px var(--font-mono);color:var(--accent)">L48213</span><span style="flex:1;font-weight:500;color:var(--text)">First enumeration retry</span><span style="display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 6px;border-radius:9999px;background:var(--accent-muted);color:var(--caller-agent);font:500 11px var(--font-ui)"><svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M8 1.5l1.6 4.4L14 7.5l-4.4 1.6L8 13.5 6.4 9.1 2 7.5l4.4-1.6z"/></svg>agent</span></div>
+          <div style="font-size:12px;color:var(--text-muted)">Retry loop begins after resume; 4 attempts before give-up.</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:3px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-raised)">
+          <div style="display:flex;align-items:center;gap:8px"><span style="font:11px var(--font-mono);color:var(--accent)">L47980</span><span style="flex:1;font-weight:500;color:var(--text)">Suspend entry</span><span style="display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:9999px;background:var(--bg-overlay);color:var(--caller-human);font:500 11px var(--font-ui)">you</span></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:3px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-raised)">
+          <div style="display:flex;align-items:center;gap:8px"><span style="font:11px var(--font-mono);color:var(--accent)">L48287</span><span style="flex:1;font-weight:500;color:var(--text)">Port reset timeout</span><span style="display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 6px;border-radius:9999px;background:var(--accent-muted);color:var(--caller-agent);font:500 11px var(--font-ui)"><svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M8 1.5l1.6 4.4L14 7.5l-4.4 1.6L8 13.5 6.4 9.1 2 7.5l4.4-1.6z"/></svg>agent</span></div>
+        </div>
+      </div>
+      <div style="flex:1"></div>
+      <div style="display:flex;align-items:center;gap:8px;height:34px;padding:0 14px;border-top:1px solid var(--border);font-size:12px;color:var(--text-muted)">
+        <span style="flex:1">1 of 3 sessions · 1.34 M lines</span><span style="font-family:var(--font-mono)">UTF-8</span>
+      </div>
+    </div>
+
+    <!-- centre: viewer + analysis -->
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+      <!-- one query bar -->
+      <div style="display:flex;align-items:center;gap:8px;height:44px;padding:0 12px;border-bottom:1px solid var(--border);background:var(--bg-base)">
+        <div style="display:flex;align-items:center;gap:8px;flex:1;height:30px;padding:0 10px;border-radius:6px;border:1px solid var(--accent-border);background:var(--bg-input);color:var(--text)">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="color:var(--text-muted)"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+          <span style="font-family:var(--font-mono)">UsbDeviceManager: .*enumerat</span>
+          <span style="flex:1"></span>
+          <span style="font-size:12px;color:var(--text-muted)">312 lines</span>
+        </div>
+        <span style="display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:9999px;border:1px solid var(--accent-border);background:var(--accent-muted);font-size:12px;color:var(--accent)">level ≥ W</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:9999px;border:1px solid var(--accent-border);background:var(--accent-muted);font-size:12px;color:var(--accent)">regex</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:9999px;border:1px solid var(--border);background:var(--bg-raised);font-size:12px;color:var(--text-subtle)">10:00:00 – 10:05:00</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:9999px;border:1px solid var(--border);background:var(--bg-raised);font-size:12px;color:var(--text-subtle)">section: usb</span>
+        <button style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-raised);color:var(--text);font:500 12px var(--font-ui);cursor:pointer">Save as watch</button>
+      </div>
+
+      <!-- viewer -->
+      <div style="flex:1;min-height:0;display:flex;flex-direction:column;background:var(--bg-base);font:13px/22px var(--font-mono);overflow:hidden">
+        <div style="display:grid;grid-template-columns:76px 22px minmax(0,1fr);align-items:center;height:22px;color:var(--level-info)"><span style="color:var(--text-dimmed);text-align:right;padding-right:10px">48198</span><span style="color:var(--level-debug)">D</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">10:00:01.402  1291  1295 UsbDeviceManager: setCurrentFunctions(mtp) called by pid 1291</span></div>
+        <div style="display:grid;grid-template-columns:76px 22px minmax(0,1fr);align-items:center;height:22px;color:var(--level-info)"><span style="color:var(--text-dimmed);text-align:right;padding-right:10px">48199</span><span style="color:var(--level-info)">I</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">10:00:01.418  1291  1295 UsbPortManager: portId=port0 mode=dfp powerRole=source dataRole=host</span></div>
+        <div style="display:grid;grid-template-columns:76px 22px minmax(0,1fr);align-items:center;height:22px;color:var(--level-info)"><span style="color:var(--text-dimmed);text-align:right;padding-right:10px">48200</span><span style="color:var(--level-debug)">D</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">10:00:01.420  1291  1295 UsbDeviceManager: onSuspend() — draining pending attach events (0)</span></div>
+        <div style="display:grid;grid-template-columns:76px 22px minmax(0,1fr);align-items:center;height:22px;color:var(--level-verbose)"><span style="color:var(--text-dimmed);text-align:right;padding-right:10px">48201</span><span>V</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">10:00:01.441   612   612 kernel: PM: suspend entry (deep)</span></div>
+        <div style="display:grid;grid-template-columns:76px 22px minmax(0,1fr);align-items:center;height:22px;color:var(--level-verbose)"><span style="color:var(--text-dimmed);text-align:right;padding-right:10px">48202</span><span>V</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">10:00:01.442   612   612 kernel: Filesystems sync: 0.003 seconds</span></div>
+        <div style="display:grid;grid-template-columns:76px 22px minmax(0,1fr);align-items:center;height:22px;color:var(--level-info)"><span style="color:var(--text-dimmed);text-align:right;padding-right:10px">48203</span><span style="color:var(--level-info)">I</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">10:00:04.917   612   612 kernel: PM: suspend exit</span></div>
+        <div style="display:grid;grid-template-columns:76px 22px minmax(0,1fr);align-items:center;height:22px;color:var(--level-info)"><span style="color:var(--text-dimmed);text-align:right;padding-right:10px">48204</span><span style="color:var(--level-info)">I</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">10:00:04.931  1291  1295 UsbDeviceManager: onResume() — replaying attach for vid=0x1db2 pid=0x0301</span></div>
+        <div style="display:grid;grid-template-columns:76px 22px minmax(0,1fr);align-items:center;height:22px;color:var(--level-warning);background:var(--level-warning-bg)"><span style="color:var(--text-dimmed);text-align:right;padding-right:10px">48205</span><span style="font-weight:500">W</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">10:00:04.933  1291  1295 UsbDeviceManager: <span style="background:var(--match);border-radius:2px">enumeration</span> attempt 1 failed: ENUMERATING timed out (500 ms)</span></div>
+        <div style="display:grid;grid-template-columns:76px 22px minmax(0,1fr);align-items:center;height:22px;color:var(--level-info)"><span style="color:var(--text-dimmed);text-align:right;padding-right:10px">48206</span><span style="color:var(--level-debug)">D</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">10:00:04.934  1291  1295 UsbPortManager: resetUsbPort(port0) requested</span></div>
+        <div style="display:grid;grid-template-columns:76px 22px minmax(0,1fr);align-items:center;height:22px;color:var(--level-info)"><span style="color:var(--text-dimmed);text-align:right;padding-right:10px">48207</span><span style="color:var(--level-info)">I</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">10:00:05.101   612   612 kernel: usb usb1-port2: attempt power cycle</span></div>
+        <div style="display:grid;grid-template-columns:76px 22px minmax(0,1fr);align-items:center;height:22px;color:var(--level-warning);background:var(--level-warning-bg)"><span style="color:var(--text-dimmed);text-align:right;padding-right:10px">48208</span><span style="font-weight:500">W</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">10:00:05.612  1291  1295 UsbDeviceManager: <span style="background:var(--match);border-radius:2px">enumeration</span> attempt 2 failed: ENUMERATING timed out (500 ms)</span></div>
+        <div style="display:grid;grid-template-columns:76px 22px minmax(0,1fr);align-items:center;height:22px;color:var(--level-info)"><span style="color:var(--text-dimmed);text-align:right;padding-right:10px">48209</span><span style="color:var(--level-debug)">D</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">10:00:05.613  1291  1295 UsbAlsaManager: no audio devices, skipping</span></div>
+        <div style="display:grid;grid-template-columns:76px 22px minmax(0,1fr);align-items:center;height:22px;color:var(--level-info)"><span style="color:var(--text-dimmed);text-align:right;padding-right:10px">48210</span><span style="color:var(--level-info)">I</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">10:00:05.790   612   612 kernel: usb usb1-port2: attempt power cycle</span></div>
+        <div style="display:grid;grid-template-columns:76px 22px minmax(0,1fr);align-items:center;height:22px;color:var(--level-warning);background:var(--level-warning-bg)"><span style="color:var(--text-dimmed);text-align:right;padding-right:10px">48211</span><span style="font-weight:500">W</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">10:00:06.302  1291  1295 UsbDeviceManager: <span style="background:var(--match);border-radius:2px">enumeration</span> attempt 3 failed: ENUMERATING timed out (500 ms)</span></div>
+        <div style="display:grid;grid-template-columns:76px 22px minmax(0,1fr);align-items:center;height:22px;color:var(--level-info)"><span style="color:var(--text-dimmed);text-align:right;padding-right:10px">48212</span><span style="color:var(--level-debug)">D</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">10:00:06.304  1291  1295 UsbPortManager: resetUsbPort(port0) requested</span></div>
+        <div style="display:grid;grid-template-columns:76px 22px minmax(0,1fr);align-items:center;height:22px;color:var(--level-error);background:var(--level-error-bg);box-shadow:inset 3px 0 var(--accent)"><span style="color:var(--accent);text-align:right;padding-right:10px;font-weight:500">48213</span><span style="font-weight:500">E</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">10:00:06.988  1291  1295 UsbDeviceManager: giving up <span style="background:var(--match);border-radius:2px">enumeration</span> after 4 attempts — device vid=0x1db2 pid=0x0301 left in ENUMERATING</span></div>
+        <div style="display:grid;grid-template-columns:76px 22px minmax(0,1fr);align-items:center;height:22px;color:var(--level-info)"><span style="color:var(--text-dimmed);text-align:right;padding-right:10px">48214</span><span style="color:var(--level-info)">I</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">10:00:06.990  1291  1295 UsbDeviceManager: broadcasting ACTION_USB_STATE connected=false</span></div>
+        <div style="display:grid;grid-template-columns:76px 22px minmax(0,1fr);align-items:center;height:22px;color:var(--level-info)"><span style="color:var(--text-dimmed);text-align:right;padding-right:10px">48215</span><span style="color:var(--level-debug)">D</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">10:00:06.991  2210  2288 NetworkPolicy: usb tethering not active, ignoring</span></div>
+        <div style="display:grid;grid-template-columns:76px 22px minmax(0,1fr);align-items:center;height:22px;color:var(--level-info)"><span style="color:var(--text-dimmed);text-align:right;padding-right:10px">48216</span><span style="color:var(--level-info)">I</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">10:00:07.104   612   612 kernel: usb 1-2: USB disconnect, device number 9</span></div>
+        <div style="display:grid;grid-template-columns:76px 22px minmax(0,1fr);align-items:center;height:22px;color:var(--level-info)"><span style="color:var(--text-dimmed);text-align:right;padding-right:10px">48217</span><span style="color:var(--level-debug)">D</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">10:00:07.110  1291  1295 UsbDeviceManager: mConnected=false mHostConnected=false mCurrentFunctions=mtp</span></div>
+        <div style="display:grid;grid-template-columns:76px 22px minmax(0,1fr);align-items:center;height:22px;color:var(--level-info)"><span style="color:var(--text-dimmed);text-align:right;padding-right:10px">48218</span><span style="color:var(--level-info)">I</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">10:00:07.204  1291  1310 ActivityManager: Start proc 9931:com.android.mtp/u0a45 for broadcast</span></div>
+        <div style="display:grid;grid-template-columns:76px 22px minmax(0,1fr);align-items:center;height:22px;color:var(--level-info)"><span style="color:var(--text-dimmed);text-align:right;padding-right:10px">48219</span><span style="color:var(--level-debug)">D</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">10:00:07.211  1291  1295 UsbDeviceManager: user=<span style="background:var(--pii);border-radius:2px;padding:0 3px">&lt;EMAIL-1&gt;</span> requested mtp session (redacted for agent)</span></div>
+        <div style="flex:1"></div>
+        <!-- timeline strip, collapsed -->
+        <div style="display:flex;align-items:center;gap:10px;height:30px;padding:0 12px;border-top:1px solid var(--border);background:var(--bg-raised);font-family:var(--font-ui);font-size:12px;color:var(--text-muted)">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"/></svg>
+          <span>Timeline</span>
+          <span style="flex:1;height:6px;border-radius:3px;background:linear-gradient(90deg, var(--bg-overlay) 0 62%, var(--warning) 62% 64%, var(--bg-overlay) 64% 66%, var(--danger) 66% 67%, var(--bg-overlay) 67%)"></span>
+          <span style="font-family:var(--font-mono)">10:00:06.988</span>
+        </div>
+      </div>
+
+      <!-- analysis reader (open, line-anchored) -->
+      <div style="height:300px;display:flex;flex-direction:column;border-top:1px solid var(--border);background:var(--bg-raised)">
+        <div style="display:flex;align-items:center;gap:10px;height:40px;padding:0 16px;border-bottom:1px solid var(--border)">
+          <span style="font-weight:600;color:var(--text)">USB enumeration fails after suspend — root cause</span>
+          <span style="display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 6px;border-radius:9999px;background:var(--accent-muted);color:var(--caller-agent);font:500 11px var(--font-ui)"><svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M8 1.5l1.6 4.4L14 7.5l-4.4 1.6L8 13.5 6.4 9.1 2 7.5l4.4-1.6z"/></svg>agent · 09:41</span>
+          <span style="flex:1"></span>
+          <span style="font-size:12px;color:var(--text-muted)">3 sections · 2 anchors</span>
+          <button style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-base);color:var(--text);font:500 12px var(--font-ui);cursor:pointer">Open in reader</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:24px;padding:14px 16px;font-size:13px;line-height:1.55;color:var(--text)">
+          <div>
+            <div style="font-weight:600;margin-bottom:6px">Finding</div>
+            <div>After the deep-suspend at <span style="display:inline-flex;align-items:center;height:20px;padding:0 6px;border-radius:4px;background:var(--bg-base);border:1px solid var(--border);font:12px var(--font-mono);color:var(--accent)">L47980</span>, resume replays the attach for vid 0x1db2 but every enumeration attempt times out at 500 ms. The port is power-cycled twice by the kernel, which resets the device mid-handshake. The framework gives up at <span style="display:inline-flex;align-items:center;height:20px;padding:0 6px;border-radius:4px;background:var(--accent-muted);border:1px solid var(--accent-border);font:12px var(--font-mono);color:var(--accent)">L48213</span> and broadcasts connected=false.</div>
+          </div>
+          <div>
+            <div style="font-weight:600;margin-bottom:6px">Evidence</div>
+            <div style="display:flex;flex-direction:column;gap:6px;color:var(--text-subtle)">
+              <div>usb-enumeration-health: 4 attempts, 0 successes, retry interval 680 ms</div>
+              <div>usb-netdev-lifetime: no interface ever added in this boot</div>
+              <div>Working capture (dumpstate_S911_working): same device enumerates in 120 ms without a port reset</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- right: agent presence + analyzers / device state -->
+    <div style="width:420px;display:flex;flex-direction:column;border-left:1px solid var(--border);background:var(--bg-base)">
+      <!-- agent presence (compact) -->
+      <div style="display:flex;flex-direction:column;gap:10px;padding:14px;border-bottom:1px solid var(--border);background:var(--bg-raised)">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="width:36px;height:36px;border-radius:9999px;background:radial-gradient(circle at 35% 35%, var(--agent-reading), transparent 70%), var(--bg-overlay);border:1px solid var(--accent-border);animation:lt-breathe 3s ease-in-out infinite"></div>
+          <div style="display:flex;flex-direction:column">
+            <span style="font-weight:600;color:var(--text)">Claude Code</span>
+            <span style="font-size:12px;color:var(--text-muted)">Reading dumpstate_S911 · usb section</span>
+          </div>
+          <span style="flex:1"></span>
+          <span style="display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:9999px;border:1px solid var(--border);background:var(--bg-base);font-size:12px;color:var(--text-subtle)">PII tokens on</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;font-size:12px">
+          <div style="display:flex;gap:8px;align-items:baseline"><span style="font-family:var(--font-mono);color:var(--text-dimmed)">09:41</span><span style="color:var(--text-subtle)">published analysis <span style="color:var(--text)">USB enumeration fails after suspend</span></span></div>
+          <div style="display:flex;gap:8px;align-items:baseline"><span style="font-family:var(--font-mono);color:var(--text-dimmed)">09:40</span><span style="color:var(--text-subtle)">ran usb-enumeration-health · 3 findings</span></div>
+          <div style="display:flex;gap:8px;align-items:baseline"><span style="font-family:var(--font-mono);color:var(--text-dimmed)">09:39</span><span style="color:var(--text-subtle)">opened dumpstate_S911_working for comparison</span></div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:6px;border:1px solid var(--accent-base);background:var(--accent-base);color:#fff;font:500 12px var(--font-ui);cursor:pointer">Ask about L48213</button>
+          <button style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-base);color:var(--text);font:500 12px var(--font-ui);cursor:pointer">Full activity</button>
+        </div>
+      </div>
+
+      <!-- tabs -->
+      <div style="display:flex;align-items:center;height:36px;padding:0 6px;border-bottom:1px solid var(--border)">
+        <span style="display:flex;align-items:center;height:36px;padding:0 10px;border-bottom:2px solid var(--accent);color:var(--text);font-weight:500">Analyzers</span>
+        <span style="display:flex;align-items:center;height:36px;padding:0 10px;color:var(--text-muted)">Device state</span>
+        <span style="display:flex;align-items:center;height:36px;padding:0 10px;color:var(--text-muted)">Analyses <span style="margin-left:6px;height:16px;padding:0 5px;border-radius:9999px;background:var(--bg-overlay);font-size:11px;line-height:16px">2</span></span>
+      </div>
+
+      <!-- analyzers -->
+      <div style="display:flex;flex-direction:column;gap:8px;padding:12px;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:12px;color:var(--text-muted)">USB pack · 4 analyzers active</span>
+          <span style="flex:1"></span>
+          <button style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:6px;border:1px solid var(--accent-base);background:var(--accent-base);color:#fff;font:500 12px var(--font-ui);cursor:pointer"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M4 2.5v11l9-5.5z"/></svg>Run all</button>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:8px;border:1px solid var(--accent-border);background:var(--bg-raised)">
+          <div style="display:flex;align-items:center;gap:8px"><span style="width:8px;height:8px;border-radius:9999px;background:var(--danger)"></span><span style="font-weight:600;color:var(--text)">USB enumeration health</span><span style="flex:1"></span><span style="font:11px var(--font-mono);color:var(--text-muted)">3 findings</span></div>
+          <div style="font-size:12px;color:var(--text-muted)">Finds enumeration retries, timeouts and give-ups per device.</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap"><span style="height:20px;padding:0 7px;border-radius:9999px;background:var(--danger-muted);color:var(--danger);font-size:11px;line-height:20px">give-up ×1</span><span style="height:20px;padding:0 7px;border-radius:9999px;background:var(--warning-muted);color:var(--warning);font-size:11px;line-height:20px">timeout ×4</span><span style="height:20px;padding:0 7px;border-radius:9999px;background:var(--bg-overlay);color:var(--text-subtle);font-size:11px;line-height:20px">ran 09:40 by agent</span></div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-raised)">
+          <div style="display:flex;align-items:center;gap:8px"><span style="width:8px;height:8px;border-radius:9999px;background:var(--success)"></span><span style="font-weight:600;color:var(--text)">USB device state</span><span style="flex:1"></span><span style="font:11px var(--font-mono);color:var(--text-muted)">12 transitions</span></div>
+          <div style="font-size:12px;color:var(--text-muted)">Tracks connection, data role and current function over time.</div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-raised)">
+          <div style="display:flex;align-items:center;gap:8px"><span style="width:8px;height:8px;border-radius:9999px;background:var(--text-dimmed)"></span><span style="font-weight:600;color:var(--text)">USB network lifetime</span><span style="flex:1"></span><span style="font:11px var(--font-mono);color:var(--text-muted)">0 findings</span></div>
+          <div style="font-size:12px;color:var(--text-muted)">No usb0/rndis interface appeared in this boot — that absence is itself evidence.</div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:8px;border:1px dashed var(--border);background:transparent;opacity:.75">
+          <div style="display:flex;align-items:center;gap:8px"><span style="width:8px;height:8px;border-radius:9999px;border:1px solid var(--text-dimmed)"></span><span style="font-weight:600;color:var(--text-subtle)">CPU load</span><span style="flex:1"></span><span style="height:20px;padding:0 7px;border-radius:9999px;background:var(--bg-overlay);color:var(--text-muted);font-size:11px;line-height:20px">skipped · needs logcat</span></div>
+        </div>
+
+        <!-- device state at cursor -->
+        <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);padding:10px 2px 4px">Device state at L48213</div>
+        <div style="display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:1px;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--border)">
+          <div style="display:flex;flex-direction:column;gap:2px;padding:8px 10px;background:var(--bg-raised)"><span style="font-size:11px;color:var(--text-muted)">usb.state</span><span style="font:500 13px var(--font-mono);color:var(--danger)">ENUMERATING</span></div>
+          <div style="display:flex;flex-direction:column;gap:2px;padding:8px 10px;background:var(--bg-raised)"><span style="font-size:11px;color:var(--text-muted)">usb.attempts</span><span style="font:500 13px var(--font-mono);color:var(--text)">4 <span style="color:var(--warning)">↑ changed here</span></span></div>
+          <div style="display:flex;flex-direction:column;gap:2px;padding:8px 10px;background:var(--bg-raised)"><span style="font-size:11px;color:var(--text-muted)">usb.device</span><span style="font:500 13px var(--font-mono);color:var(--text)">1db2:0301</span></div>
+          <div style="display:flex;flex-direction:column;gap:2px;padding:8px 10px;background:var(--bg-raised)"><span style="font-size:11px;color:var(--text-muted)">power.suspended</span><span style="font:500 13px var(--font-mono);color:var(--text)">false</span></div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-base);color:var(--text-subtle);font:500 12px var(--font-ui);cursor:pointer">‹ previous change</button>
+          <button style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-base);color:var(--text-subtle);font:500 12px var(--font-ui);cursor:pointer">next change ›</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== status bar ===== -->
+  <div style="display:flex;align-items:center;gap:16px;height:26px;padding:0 14px;border-top:1px solid var(--border);background:var(--bg-raised);font-size:12px;color:var(--text-muted)">
+    <span>dumpstate_S911.txt</span><span>Dumpstate</span><span>L48213 · usb</span>
+    <span style="flex:1"></span>
+    <span style="display:inline-flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:9999px;background:var(--success)"></span>Bridge 40404 · Claude Code connected</span>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"theme":{"editor":"enum","options":["dark","light"],"default":"dark","section":"Theme"},"$preview":{"width":1920,"height":1080}}'>
+class Component extends DCLogic {
+  renderVals() { return { theme: this.props.theme ?? 'dark' }; }
+}
+</script>
+</body>
+</html>
