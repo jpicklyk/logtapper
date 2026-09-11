@@ -1,9 +1,8 @@
-"""Agent orb generator for the redesign canvas — the "cell" orb.
+"""Agent orb generator for the redesign canvas — the "network" orb.
 
-A translucent membrane with a bright rim, a dense speckled nucleus inside its own
-envelope, drifting organelles, tilted orbit rings carrying particles, and per-state
-behaviour (radar sweep when reading, emission from the nucleus when running, ...).
-Pure CSS; every colour derives from one state token via color-mix.
+A transparent sphere of nodes and edges (sparse shell + dense core) in a slowly turning
+CSS-3D core. Motion is pulses travelling along edges; each state enables edge tiers and
+sets speed. Pure CSS; every colour derives from one state token via color-mix.
 
     python design_docs/canvas/orb.py            # rewrites every orb in *.dc.html + AgentOrb board
     from orb import orb_html, ORB_CSS
@@ -14,61 +13,37 @@ import math
 import random
 import re
 
-ORB_CSS = """    /* ---- agent orb: cell ---- */
-    @property --orb-a { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
-    .orb { position: relative; flex-shrink: 0; width: var(--orb-size); height: var(--orb-size); --c: var(--orb-c); }
-    .orb::after { content: ''; position: absolute; inset: -14%; border-radius: 9999px; pointer-events: none; background: radial-gradient(circle, transparent 52%, color-mix(in srgb, var(--c) 22%, transparent) 66%, transparent 76%); }
-    .orb__m { position: absolute; inset: 0; border-radius: 9999px; overflow: hidden; isolation: isolate; transform: translateZ(0);
-      background: radial-gradient(circle at 32% 26%, rgba(255,255,255,.26), rgba(255,255,255,0) 36%),
-                  radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--c) 5%, transparent) 0%, color-mix(in srgb, var(--c) 9%, transparent) 58%, color-mix(in srgb, var(--c) 42%, transparent) 88%, color-mix(in srgb, var(--c) 85%, transparent) 100%);
-      box-shadow: inset 0 0 calc(var(--orb-size) / 9) color-mix(in srgb, var(--c) 50%, transparent);
-      border: 1px solid color-mix(in srgb, var(--c) 60%, transparent); }
-    .orb__n { position: absolute; left: 47%; top: 48%; width: var(--orb-nw, 40%); height: var(--orb-nw, 40%); border-radius: 9999px; transform: translate(-50%, -50%);
-      background: radial-gradient(circle at 36% 32%, rgba(255,255,255,.5), transparent 34%),
-                  radial-gradient(circle at 56% 58%, color-mix(in srgb, var(--c) 55%, #fff) 0 9%, color-mix(in srgb, var(--c) 40%, #000) 10%, transparent 13%),
-                  radial-gradient(circle at 35% 52%, color-mix(in srgb, var(--c) 30%, #000) 0 2.9%, transparent 3.9%),
-                  radial-gradient(circle at 56% 57%, color-mix(in srgb, var(--c) 30%, #000) 0 2.3%, transparent 3.3%),
-                  radial-gradient(circle at 23% 69%, color-mix(in srgb, var(--c) 30%, #000) 0 2.7%, transparent 3.7%),
-                  radial-gradient(circle at 35% 78%, color-mix(in srgb, var(--c) 30%, #000) 0 3.1%, transparent 4.1%),
-                  radial-gradient(circle at 69% 49%, color-mix(in srgb, var(--c) 30%, #000) 0 3.5%, transparent 4.5%),
-                  radial-gradient(circle at 30% 58%, color-mix(in srgb, var(--c) 30%, #000) 0 3.9%, transparent 4.9%),
-                  radial-gradient(circle at 51% 64%, color-mix(in srgb, var(--c) 30%, #000) 0 3.5%, transparent 4.5%),
-                  radial-gradient(circle at 26% 64%, color-mix(in srgb, var(--c) 30%, #000) 0 3.4%, transparent 4.4%),
-                  radial-gradient(circle at 39% 24%, color-mix(in srgb, var(--c) 30%, #000) 0 3.9%, transparent 4.9%),
-                  radial-gradient(circle, color-mix(in srgb, var(--c) 90%, #fff) 0%, var(--c) 48%, color-mix(in srgb, var(--c) 65%, #000) 100%);
-      box-shadow: 0 0 calc(var(--orb-size) / 7) color-mix(in srgb, var(--c) 75%, transparent), inset 0 0 calc(var(--orb-size) / 18) rgba(0,0,0,.4);
-      animation: orb-nuc var(--orb-nuc, 4.5s) ease-in-out infinite; }
-    .orb__n::after { content: ''; position: absolute; inset: -14%; border-radius: 9999px; border: 1px solid color-mix(in srgb, var(--c) 55%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 18%, transparent); }
-    @keyframes orb-nuc { 0%, 100% { transform: translate(-50%, -50%) scale(1); } 50% { transform: translate(-50%, -50%) scale(1.07); } }
-    .orb__o { position: absolute; border-radius: 9999px; opacity: .5; background: linear-gradient(135deg, color-mix(in srgb, var(--c) 70%, #fff), color-mix(in srgb, var(--c) 45%, transparent)); box-shadow: inset 0 0 0 1px rgba(255,255,255,.28), 0 0 calc(var(--orb-size) / 30) color-mix(in srgb, var(--c) 40%, transparent);
-      animation: orb-drift var(--t) ease-in-out infinite alternate; animation-delay: var(--dl); }
-    @keyframes orb-drift { 0% { transform: translate(0, 0) rotate(var(--rot)); } 35% { transform: translate(var(--dx), var(--dy)) rotate(calc(var(--rot) + 18deg)); } 70% { transform: translate(calc(var(--dx) * -.7), calc(var(--dy) * .4)) rotate(calc(var(--rot) - 12deg)); } 100% { transform: translate(calc(var(--dx) * .3), calc(var(--dy) * -1)) rotate(var(--rot)); } }
-    .orb__r { position: absolute; left: 50%; top: 50%; width: var(--rw); height: var(--rw); margin: calc(var(--rw) / -2) 0 0 calc(var(--rw) / -2); border-radius: 9999px; border: 1px solid transparent;
-      border-top-color: color-mix(in srgb, var(--c) 75%, transparent); border-right-color: color-mix(in srgb, var(--c) 22%, transparent);
-      transform: rotate3d(1, .2, 0, var(--tilt)) rotate(var(--orb-a)); animation: orb-ring var(--t) linear infinite; animation-delay: var(--dl); }
-    .orb__r i { position: absolute; left: 50%; top: -1px; width: var(--orb-dot); height: var(--orb-dot); margin: calc(var(--orb-dot) / -2) 0 0 calc(var(--orb-dot) / -2); border-radius: 9999px; background: #fff; box-shadow: 0 0 calc(var(--orb-dot) * 1.5) var(--c), 0 0 2px #fff; }
-    @keyframes orb-ring { to { --orb-a: 360deg; } }
-    .orb__s { display: none; position: absolute; inset: 0; border-radius: 9999px; background: conic-gradient(from 0deg, transparent 0 68%, color-mix(in srgb, var(--c) 40%, transparent) 100%); animation: orb-sweep 1.6s linear infinite; }
-    @keyframes orb-sweep { to { transform: rotate(360deg); } }
-    .orb__e { display: none; position: absolute; left: 47%; top: 48%; width: var(--orb-dot); height: var(--orb-dot); margin: calc(var(--orb-dot) / -2) 0 0 calc(var(--orb-dot) / -2); border-radius: 9999px; background: #fff; box-shadow: 0 0 calc(var(--orb-dot) * 1.5) var(--c);
-      animation: orb-emit var(--orb-emit, 1.4s) ease-out infinite; animation-delay: var(--dl); }
-    @keyframes orb-emit { 0% { transform: translate(0, 0) scale(1); opacity: 1; } 70% { opacity: .9; } 100% { transform: translate(var(--ex), var(--ey)) scale(.4); opacity: 0; } }
-    /* detached: dim, still */
-    .orb--detached { filter: saturate(.25) brightness(.7); } .orb--detached::after { opacity: 0; } .orb--detached .orb__m, .orb--detached .orb__n, .orb--detached .orb__o, .orb--detached .orb__r { animation-play-state: paused; }
-    /* reading: rings speed up, a sweep circles the cytoplasm */
-    .orb--reading .orb__s { display: block; } .orb--reading .orb__r { animation-duration: calc(var(--t) / 2.5); } .orb--reading { --orb-nuc: 2.4s; }
-    /* running: nucleus pumps, rings race, particles emit from the nucleus to the membrane */
-    .orb--running { --orb-nuc: 1s; } .orb--running .orb__e { display: block; } .orb--running .orb__r { animation-duration: calc(var(--t) / 4); } .orb--running .orb__o { animation-duration: calc(var(--t) / 2); }
-    /* wrote: one flare of the membrane and a single emission burst, then settles (loops slowly in the mockup) */
-    .orb--wrote .orb__m { animation: orb-flare 5s ease-out infinite; } .orb--wrote .orb__e { display: block; --orb-emit: 5s; }
-    @keyframes orb-flare { 0% { box-shadow: inset 0 0 calc(var(--orb-size) / 4) color-mix(in srgb, var(--c) 95%, #fff), 0 0 calc(var(--orb-size) / 3) color-mix(in srgb, var(--c) 80%, transparent); filter: brightness(1.7); } 20% { filter: brightness(1); box-shadow: inset 0 0 calc(var(--orb-size) / 9) color-mix(in srgb, var(--c) 50%, transparent); } 100% { box-shadow: inset 0 0 calc(var(--orb-size) / 9) color-mix(in srgb, var(--c) 50%, transparent); } }
-    /* needs you: attention ring outside, organelles jitter, nucleus quickens */
-    .orb--needs { --orb-nuc: .9s; } .orb--needs::before { content: ''; position: absolute; inset: -5px; border-radius: 9999px; animation: lt-pulse 1.4s ease-out infinite; } .orb--needs .orb__o { animation: orb-jitter .5s steps(2, jump-none) infinite; animation-delay: var(--dl); }
-    @keyframes orb-jitter { 0%, 100% { transform: translate(0, 0) rotate(var(--rot)); } 50% { transform: translate(1.5px, -1px) rotate(calc(var(--rot) + 6deg)); } }
-    /* raw access on: denser nucleus, steadier, warmer membrane */
-    .orb--raw { --orb-nw: 50%; --orb-nuc: 7s; } .orb--raw .orb__m { border-color: color-mix(in srgb, var(--c) 85%, transparent); box-shadow: inset 0 0 calc(var(--orb-size) / 6) color-mix(in srgb, var(--c) 70%, transparent); }
+ORB_CSS = """    /* ---- agent orb: the network ---- */
+    .orb { position: relative; flex-shrink: 0; width: var(--orb-size); height: var(--orb-size); --c: var(--orb-c); perspective: calc(var(--orb-size) * 4); }
+    .orb::after { content: ''; position: absolute; inset: -10%; border-radius: 9999px; pointer-events: none; background: radial-gradient(circle, color-mix(in srgb, var(--c) 10%, transparent) 0%, color-mix(in srgb, var(--c) 6%, transparent) 45%, transparent 68%); }
+    .orb__w { position: absolute; inset: 0; transform-style: preserve-3d; transform: rotateX(-16deg); }
+    .orb__core { position: absolute; inset: 0; transform-style: preserve-3d; animation: orb-spin var(--orb-spin, 48s) linear infinite; }
+    @keyframes orb-spin { to { transform: rotateY(360deg); } }
+    .orb__n { position: absolute; left: 50%; top: 50%; width: var(--orb-dot); height: var(--orb-dot); margin: calc(var(--orb-dot) / -2) 0 0 calc(var(--orb-dot) / -2); border-radius: 9999px; background: color-mix(in srgb, var(--c) 75%, #fff); box-shadow: 0 0 calc(var(--orb-dot) * 1.1) var(--c); opacity: .55; animation: orb-node var(--orb-node, 7s) ease-in-out infinite; animation-delay: var(--dl); }
+    .orb__n--c { width: calc(var(--orb-dot) * 1.5); height: calc(var(--orb-dot) * 1.5); margin: calc(var(--orb-dot) * -.75) 0 0 calc(var(--orb-dot) * -.75); opacity: .95; box-shadow: 0 0 calc(var(--orb-dot) * 2.2) var(--c), 0 0 1px #fff; }
+    @keyframes orb-node { 0%, 100% { opacity: .5; } 50% { opacity: .95; } }
+    .orb__e { position: absolute; left: 50%; top: 50%; width: var(--l); height: var(--orb-line); margin: calc(var(--orb-line) / -2) 0 0 calc(var(--l) / -2); transform-origin: center;
+      background: linear-gradient(90deg, transparent 30%, color-mix(in srgb, var(--c) 40%, #fff) 50%, transparent 70%) no-repeat 160% 0 / 220% 100%,
+                  linear-gradient(color-mix(in srgb, var(--c) 22%, transparent), color-mix(in srgb, var(--c) 22%, transparent)); }
+    @keyframes orb-pulse { 0% { background-position: 160% 0, 0 0; } 55%, 100% { background-position: -160% 0, 0 0; } }
+    .orb__x { display: none; position: absolute; left: 50%; top: 50%; width: var(--orb-dot); height: var(--orb-dot); margin: calc(var(--orb-dot) / -2) 0 0 calc(var(--orb-dot) / -2); border-radius: 9999px; background: #fff; box-shadow: 0 0 calc(var(--orb-dot) * 2) var(--c); animation: orb-exit 5s ease-in infinite; animation-delay: var(--dl); }
+    @keyframes orb-exit { 0% { transform: translate(0, 0) scale(.6); opacity: 0; } 8% { opacity: 1; } 30% { transform: translate(var(--ex), var(--ey)) scale(1); opacity: 1; } 42% { transform: translate(calc(var(--ex) * 1.5), calc(var(--ey) * 1.5)) scale(.3); opacity: 0; } 100% { opacity: 0; } }
+    /* detached: the graph is there, dark and still */
+    .orb--detached { opacity: .38; } .orb--detached .orb__core, .orb--detached .orb__n { animation-play-state: paused; } .orb--detached::after { opacity: 0; }
+    /* idle: a few pathways fire now and then */
+    .orb--idle .orb__e--t1 { --t: 3.2s; animation: orb-pulse var(--t) linear infinite; animation-delay: var(--dl); }
+    /* reading: activity arrives from the shell and converges — many pathways, quick */
+    .orb--reading { --orb-spin: 22s; --orb-node: 2.5s; } .orb--reading .orb__e--t1, .orb--reading .orb__e--t2 { --t: 1.3s; animation: orb-pulse var(--t) linear infinite; animation-delay: var(--dl); }
+    /* running: a sustained pattern cycles through the whole graph */
+    .orb--running { --orb-spin: 12s; --orb-node: 1.2s; } .orb--running .orb__e--t1, .orb--running .orb__e--t2, .orb--running .orb__e--t3 { --t: .9s; animation: orb-pulse var(--t) linear infinite; animation-delay: var(--dl); }
+    /* wrote: a path lights and leaves the sphere — an output actually exited */
+    .orb--wrote .orb__e--t1, .orb--wrote .orb__e--t2 { --t: 2s; animation: orb-pulse var(--t) linear infinite; animation-delay: var(--dl); } .orb--wrote .orb__x { display: block; }
+    /* needs you: one pathway held bright and still; attention ring outside */
+    .orb--needs { --orb-spin: 90s; --orb-node: 10s; } .orb--needs .orb__e--t1 { background-position: 50% 0, 0 0; filter: brightness(1.6); } .orb--needs::before { content: ''; position: absolute; inset: -5px; border-radius: 9999px; animation: lt-pulse 1.4s ease-out infinite; }
+    /* raw access on: every pathway visible and slow; the tint never animates away */
+    .orb--raw { --orb-spin: 60s; } .orb--raw .orb__e { background-image: linear-gradient(90deg, transparent 30%, color-mix(in srgb, var(--c) 40%, #fff) 50%, transparent 70%), linear-gradient(color-mix(in srgb, var(--c) 45%, transparent), color-mix(in srgb, var(--c) 45%, transparent)); --t: 3.5s; animation: orb-pulse var(--t) linear infinite; animation-delay: var(--dl); }
+    .orb--raw::after { background: radial-gradient(circle, color-mix(in srgb, var(--c) 22%, transparent) 0%, color-mix(in srgb, var(--c) 10%, transparent) 50%, transparent 70%); }
 """
-
 STATE_TOKEN = {
     'detached': 'var(--agent-idle)', 'idle': 'var(--agent-idle)', 'reading': 'var(--agent-reading)',
     'running': 'var(--agent-running)', 'wrote': 'var(--agent-wrote)', 'needs': 'var(--agent-needs)', 'raw': 'var(--agent-raw)',
@@ -76,50 +51,84 @@ STATE_TOKEN = {
 STATES = list(STATE_TOKEN)
 
 
-def _detail(size: int) -> tuple[int, int, int]:
-    """(organelles, rings, emitters) by diameter."""
+def _fib(n: int, rng: random.Random, jitter: float = 0.0) -> list[tuple[float, float, float]]:
+    pts = []
+    for i in range(n):
+        y = 1 - 2 * (i + 0.5) / n
+        rad = math.sqrt(max(0.0, 1 - y * y))
+        a = i * math.pi * (3 - math.sqrt(5))
+        x, z = math.cos(a) * rad, math.sin(a) * rad
+        if jitter:
+            x, y, z = (v + rng.uniform(-jitter, jitter) for v in (x, y, z))
+            m = math.sqrt(x * x + y * y + z * z) or 1
+            x, y, z = x / m, y / m, z / m
+        pts.append((x, y, z))
+    return pts
+
+
+def _detail(size: int) -> tuple[int, int]:
+    """(shell nodes, core nodes) by diameter."""
     if size < 24:
-        return 0, 1, 3
+        return 10, 4
     if size < 40:
-        return 4, 2, 4
+        return 18, 6
     if size < 80:
-        return 7, 3, 6
-    return 11, 3, 8
+        return 30, 10
+    return 44, 14
+
+
+def _edge(p, q, rng, tier, delay_max):
+    mx, my, mz = ((p[i] + q[i]) / 2 for i in range(3))
+    dx, dy, dz = (q[i] - p[i] for i in range(3))
+    L = math.sqrt(dx * dx + dy * dy + dz * dz)
+    dx, dy, dz = dx / L, dy / L, dz / L
+    theta = math.degrees(math.asin(max(-1, min(1, dy))))
+    phi = math.degrees(math.atan2(-dz, dx))
+    return (f'<i class="orb__e orb__e--t{tier}" style="--l:{L:.1f}px;--dl:{-rng.uniform(0, delay_max):.2f}s;'
+            f'transform:translate3d({mx:.1f}px,{my:.1f}px,{mz:.1f}px) rotateY({phi:.1f}deg) rotateZ({theta:.1f}deg)"></i>')
 
 
 def orb_html(size: int, state: str, extra_style: str = '', title: str | None = None) -> str:
-    rng = random.Random(size * 7 + STATES.index(state))
-    n_org, n_ring, n_emit = _detail(size)
-    dot = max(2, round(size / 14))
-    parts = ['<div class="orb__s"></div>']
-    # rings: three tilts so they read as a 3D cage around the nucleus
-    for k in range(n_ring):
-        rw = (0.86, 0.70, 0.94)[k]
-        tilt = (64, -58, 78)[k]
-        t = (9, 14, 20)[k]
-        parts.append(f'<div class="orb__r" style="--rw:{rw * 100:.0f}%;--tilt:{tilt}deg;--t:{t}s;--dl:{-rng.uniform(0, t):.1f}s"><i></i></div>')
-    # organelles: elongated blobs placed in the cytoplasm, outside the nucleus
-    for _ in range(n_org):
-        ang = rng.uniform(0, 2 * math.pi)
-        rad = rng.uniform(0.30, 0.42)
-        cx, cy = 0.5 + rad * math.cos(ang), 0.5 + rad * math.sin(ang)
-        w, h = rng.uniform(0.07, 0.14), rng.uniform(0.04, 0.07)
-        t = rng.uniform(5, 11)
-        parts.append(
-            f'<div class="orb__o" style="left:{(cx - w / 2) * 100:.0f}%;top:{(cy - h / 2) * 100:.0f}%;width:{w * 100:.0f}%;height:{h * 100:.0f}%;'
-            f'--rot:{rng.uniform(0, 180):.0f}deg;--t:{t:.1f}s;--dl:{-rng.uniform(0, t):.1f}s;'
-            f'--dx:calc(var(--orb-size) * {rng.uniform(-.06, .06):.3f});--dy:calc(var(--orb-size) * {rng.uniform(-.06, .06):.3f})"></div>')
-    # emitters: nucleus -> membrane
-    for k in range(n_emit):
-        ang = 2 * math.pi * k / n_emit + rng.uniform(-.3, .3)
-        parts.append(f'<div class="orb__e" style="--ex:calc(var(--orb-size) * {0.46 * math.cos(ang):.3f});--ey:calc(var(--orb-size) * {0.46 * math.sin(ang):.3f});--dl:{-rng.uniform(0, 1.4):.2f}s"></div>')
-    parts.append('<div class="orb__n"></div>')
-    style = f'--orb-size:{size}px;--orb-dot:{dot}px;--orb-c:{STATE_TOKEN[state]}'
+    rng = random.Random(size * 7 + 3)
+    n_shell, n_core = _detail(size)
+    r = size / 2 - 2
+    dot = max(2, round(size / 22))
+    line = 1 if size < 80 else 1.5
+    shell = [(x * r, y * r, z * r) for x, y, z in _fib(n_shell, rng, .08)]
+    core = [(x * r * .42, y * r * .42, z * r * .42) for x, y, z in _fib(n_core, rng, .25)]
+    allpts = shell + core
+
+    def nearest(idx, pool_range, k):
+        p = allpts[idx]
+        order = sorted((j for j in pool_range if j != idx), key=lambda j: sum((p[i] - allpts[j][i]) ** 2 for i in range(3)))
+        return order[:k]
+
+    edges = set()
+    for i in range(n_shell):
+        for j in nearest(i, range(n_shell), 2):
+            edges.add((min(i, j), max(i, j)))
+    for i in range(n_shell, n_shell + n_core):
+        for j in nearest(i, range(n_shell, n_shell + n_core), 2):
+            edges.add((min(i, j), max(i, j)))
+        for j in nearest(i, range(n_shell), 1):
+            edges.add((min(i, j), max(i, j)))
+    parts = []
+    for a, b in sorted(edges):
+        tier = rng.choices((1, 2, 3, 4), weights=(18, 27, 30, 25))[0]
+        parts.append(_edge(allpts[a], allpts[b], rng, tier, 3))
+    for x, y, z in shell:
+        parts.append(f'<b class="orb__n" style="--dl:{-rng.uniform(0, 7):.1f}s;transform:translate3d({x:.1f}px,{y:.1f}px,{z:.1f}px)"></b>')
+    for x, y, z in core:
+        parts.append(f'<b class="orb__n orb__n--c" style="--dl:{-rng.uniform(0, 7):.1f}s;transform:translate3d({x:.1f}px,{y:.1f}px,{z:.1f}px)"></b>')
+    exits = ''.join(
+        f'<u class="orb__x" style="--ex:calc(var(--orb-size) * {0.5 * math.cos(a):.3f});--ey:calc(var(--orb-size) * {0.5 * math.sin(a):.3f});--dl:{-rng.uniform(0, 5):.2f}s"></u>'
+        for a in [rng.uniform(0, 2 * math.pi) for _ in range(3)])
+    style = f'--orb-size:{size}px;--orb-dot:{dot}px;--orb-line:{line}px;--orb-c:{STATE_TOKEN[state]}'
     if extra_style:
         style += ';' + extra_style.strip(';')
     t = f' title="{title}"' if title else ''
-    return f'<div class="orb orb--{state}" style="{style}"{t}><div class="orb__m">{"".join(parts)}</div></div>'
-
+    return (f'<div class="orb orb--{state}" style="{style}"{t}><div class="orb__w"><div class="orb__core">{"".join(parts)}</div></div>'
+            f'{exits}<!--/orb--></div>')
 
 LEGACY = re.compile(
     r'<div style="width:(\d+)px;height:\1px;border-radius:9999px;background:radial-gradient\(circle at 35% 35%, '
@@ -132,6 +141,10 @@ LATTICE = re.compile(
 CELL = re.compile(
     r'<div class="orb orb--(\w+)" style="--orb-size:(\d+)px;--orb-dot:\d+px;--orb-c:var\(--agent-\w+\)((?:;[^"]*)?)"(?: title="[^"]*")?>'
     r'<div class="orb__m">.*?<div class="orb__n"></div></div></div>'
+)
+NET = re.compile(
+    r'<div class="orb orb--(\w+)" style="--orb-size:(\d+)px;--orb-dot:\d+px;--orb-line:[\d.]+px;--orb-c:var\(--agent-\w+\)((?:;[^"]*)?)"(?: title="[^"]*")?>'
+    r'.*?<!--/orb--></div>'
 )
 DROP = re.compile(r'(?:^|;)\s*(?:animation|border|box-shadow|filter|opacity)\s*:[^;]*')
 CSS_BLOCK = re.compile(r'    /\* ---- agent orb: [^\n]*\n.*?(?=  </style>\n</helmet>)', re.S)
@@ -157,6 +170,7 @@ def convert(src: str) -> tuple[str, int]:
     out = LEGACY.sub(legacy, src)
     out = LATTICE.sub(modern, out)
     out = CELL.sub(modern, out)
+    out = NET.sub(modern, out)
     if count:
         if CSS_BLOCK.search(out):
             out = CSS_BLOCK.sub(lambda _: ORB_CSS, out, count=1)
@@ -166,13 +180,13 @@ def convert(src: str) -> tuple[str, int]:
 
 
 BOARD_STATES = [
-    ('detached', 'Bridge on, no client activity', 'dim, everything still'),
-    ('idle', 'Connected, no recent action', 'organelles drift, nucleus breathes'),
-    ('reading', 'query / search / lines activity', 'rings speed up, a sweep circles the cytoplasm'),
-    ('running', 'pipeline run in progress', 'nucleus pumps, particles emit to the membrane'),
-    ('wrote', 'published analysis / created watch or bookmark', 'membrane flares once, single burst, settles'),
-    ('needs', 'consent prompt pending', 'attention ring outside, organelles jitter'),
-    ('raw', 'agentRawAccess is on', 'denser nucleus, steady, red membrane'),
+    ('detached', 'Bridge on, no client activity', 'the graph is there, dark and still'),
+    ('idle', 'Connected, no recent action', 'a few pathways fire now and then'),
+    ('reading', 'query / search / lines activity', 'many pathways, quick; activity converges'),
+    ('running', 'pipeline run in progress', 'a sustained pattern cycles the whole graph'),
+    ('wrote', 'published analysis / created watch or bookmark', 'a path lights and leaves the sphere'),
+    ('needs', 'consent prompt pending', 'one pathway held bright and still; ring outside'),
+    ('raw', 'agentRawAccess is on', 'every pathway visible, slow; red never fades'),
 ]
 
 
@@ -190,8 +204,8 @@ def write_board() -> None:
     sizes = ''.join(f'<div style="display:flex;flex-direction:column;align-items:center;gap:8px">{orb_html(n, "running")}<span style="font:11px var(--font-mono);color:var(--text-muted)">{n}px</span></div>' for n in (18, 26, 36, 44, 56, 96, 140))
     body = f'''<div class="theme-{{{{theme}}}}" style="width:1600px;height:820px;display:flex;flex-direction:column;gap:22px;padding:28px 32px;background:var(--bg-base);overflow:hidden">
   <div style="display:flex;align-items:baseline;gap:14px">
-    <span style="font-size:20px;font-weight:600;color:var(--text)">Agent orb — the cell</span>
-    <span style="font-size:13px;color:var(--text-muted)">A living cell: translucent membrane, dense nucleus, moving internals. Motion is state-driven from the activity journal and bridge status; never decorative.</span>
+    <span style="font-size:20px;font-weight:600;color:var(--text)">Agent orb — the network</span>
+    <span style="font-size:13px;color:var(--text-muted)">A transparent sphere of nodes and pathways. Thought is signal moving along connections, not a spinning object. Quiet when nothing happens.</span>
   </div>
   <div style="display:grid;grid-template-columns:repeat(7, minmax(0, 1fr));gap:14px">
       {cards}
@@ -200,16 +214,16 @@ def write_board() -> None:
     <div style="display:flex;flex-direction:column;gap:12px;padding:16px 18px;border:1px solid var(--border);border-radius:10px;background:var(--bg-raised)">
       <span style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)">Sizes (running state)</span>
       <div style="display:flex;align-items:flex-end;gap:26px;flex:1">{sizes}</div>
-      <span style="font-size:12px;color:var(--text-subtle)">Top bar and rails use 18–28 px (membrane, nucleus, one ring); panel headers 44–56 px add organelles; the expanded presence panel and first run use 96 px+ with the full cage.</span>
+      <span style="font-size:12px;color:var(--text-subtle)">Top bar and rails use 18–28 px (a dozen nodes, the core still visible); panel headers 44–56 px; the expanded presence panel and first run use 96 px+ with the full graph.</span>
     </div>
     <div style="display:flex;flex-direction:column;gap:10px;padding:16px 18px;border:1px solid var(--border);border-radius:10px;background:var(--bg-raised);font-size:13px;line-height:1.55;color:var(--text)">
       <span style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)">Anatomy &amp; rules</span>
-      <div><b>Membrane.</b> A translucent sphere with a Fresnel rim: near-clear at the centre, bright at the edge, a specular highlight top-left and an outer halo. Everything inside is clipped to it.</div>
-      <div><b>Nucleus.</b> Dense, slightly off-centre, speckled with chromatin, inside its own thin envelope. It breathes slowly at rest and pumps when the agent works.</div>
-      <div><b>Internals.</b> Organelles drift on their own loops; three tilted rings form a cage, each carrying a bright particle; when running, particles emit from the nucleus to the membrane.</div>
-      <div><b>Colour.</b> One token per state (<span style="font-family:var(--font-mono)">--agent-idle … --agent-raw</span>). Membrane, nucleus, rings and halo are all mixed from it, so a theme swap or a user theme restyles the cell for free.</div>
-      <div><b>Motion budget.</b> Opacity, transform and one registered angle property only; each layer composites on the GPU. Honour <span style="font-family:var(--font-mono)">prefers-reduced-motion</span>: freeze the drift and rings, keep colour and the needs-you ring.</div>
-      <div><b>Truthfulness.</b> Reading, running and wrote hold for a minimum beat so a 40 ms query still registers. Needs-you persists until answered. The raw-access tint never animates away.</div>
+      <div><b>Why a network.</b> This is what the agent is, structurally: many simple nodes, connections between them, and activity that is a pattern of signals moving along those connections. Nothing is hidden behind a surface; it is seen through, not looked at.</div>
+      <div><b>Construction.</b> A sparse shell of nodes on a sphere and a denser core cluster for what is currently held. Each node links to its nearest neighbours; core nodes also reach the shell. The whole graph turns very slowly so depth reads.</div>
+      <div><b>Signal, not spin.</b> The primary motion is a pulse travelling along an edge. Pathways are tiered; each state enables tiers and sets speed, so idle fires a few, reading many, running all. No state performs "thinking" while nothing is happening.</div>
+      <div><b>Direction means something.</b> Reading converges inward. Wrote lights a path that leaves the sphere: an output actually exited. Needs-you holds one pathway bright and still, with the attention ring outside — blocked on a person, from the inside.</div>
+      <div><b>Colour.</b> One token per state (<span style="font-family:var(--font-mono)">--agent-idle … --agent-raw</span>); nodes, edges, pulses and halo are mixed from it. No face, no eyes, no orientation toward the viewer — ever.</div>
+      <div><b>Later.</b> The shared-focus handoff becomes a bright entry point on the shell where the human's context enters. Under <span style="font-family:var(--font-mono)">prefers-reduced-motion</span>: freeze the turn, keep pulses slow, keep colour and the ring.</div>
     </div>
   </div>
 </div>
