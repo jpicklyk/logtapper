@@ -206,6 +206,11 @@ macro_rules! ROOT_TYPES {
             // --- ADB stream service (WP-11) -------------------------------------
             app_lib::services::stream::StartStreamRequest,
             app_lib::services::stream::StreamStatus,
+            // --- B1: shared focus context + agent navigation requests -----------
+            app_lib::services::focus::FocusContext,
+            app_lib::services::focus::FocusContextInput,
+            app_lib::services::navigation::NavRequest,
+            app_lib::services::navigation::NavRequestInput,
         ]
     };
 }

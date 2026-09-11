@@ -78,8 +78,8 @@ use app_lib::processors::{AnyProcessor, ProcessorKind, ProcessorMeta};
 use app_lib::services::pipeline::{self, DetailPage, ProcessorDetail as SvcProcessorDetail};
 use app_lib::services::testing::{fixture_session, fixture_session_with_pii};
 use app_lib::services::{
-    analyses, bookmarks, correlator, filters, insights, search, sections, settings, stream,
-    tracker, watches, workspace,
+    analyses, bookmarks, correlator, filters, focus, insights, navigation, search, sections,
+    settings, stream, tracker, watches, workspace,
 };
 use app_lib::services::lines::{self, LineSelection, LinesRequest};
 use app_lib::services::search::SearchHitsRequest;
@@ -1181,4 +1181,108 @@ async fn export_all_options_omitting_anonymize_still_deserializes_serde_default(
     // error — proving the missing field defaulted rather than failing.
     assert_eq!(status, axum::http::StatusCode::FORBIDDEN, "{resp}: a legacy body (no `anonymize`) must still deserialize");
     assert_eq!(resp["error"]["code"], "NOT_ALLOWED");
+}
+
+// ---------------------------------------------------------------------------
+// 16. B1 — FocusContext / NavRequest
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn focus_context_is_byte_identical_between_the_service_call_and_the_http_read() {
+    let (bridge_ctx, state, _sink, _tmp) = support::ctx_only();
+    state.sessions.lock().unwrap().insert("s1".to_string(), fixture_session("s1", 5));
+
+    let svc = bridge_ctx.svc("wire-parity");
+    let router = mcp_bridge::router(bridge_ctx);
+
+    // Mutate through the service path (the same function `PUT /mcp/focus`
+    // calls) …
+    let input = focus::FocusContextInput {
+        session_id: "s1".to_string(),
+        line: Some(42),
+        section: Some("boot".to_string()),
+        selection: Some(focus::LineRange { start: 40, end: 44 }),
+        note: Some("check this ANR".to_string()),
+    };
+    let expected = focus::set_focus(&svc, Some(input)).expect("service set_focus").expect("Some");
+    let expected_value = serde_json::to_value(&expected).unwrap();
+
+    // … and read it back over HTTP (`GET /mcp/focus` is a pure passthrough of
+    // the same stored value).
+    let (status, http_value) = get(&router, "/mcp/focus", &trusted_headers()).await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{http_value}");
+    assert_eq!(expected_value, http_value, "FocusContext must be byte-identical between the command path and the HTTP path");
+    assert_ts_binding_covers_json_keys("FocusContext", &http_value);
+}
+
+#[tokio::test]
+async fn put_focus_over_http_is_read_back_byte_identical_by_get_focus_service_call() {
+    // The reverse direction of the case above: mutate over HTTP, read back
+    // through the service function directly.
+    let (bridge_ctx, state, _sink, _tmp) = support::ctx_only();
+    state.sessions.lock().unwrap().insert("s1".to_string(), fixture_session("s1", 5));
+
+    let svc = bridge_ctx.svc("wire-parity");
+    let router = mcp_bridge::router(bridge_ctx);
+
+    let (status, http_value) = send_json(
+        &router,
+        Method::PUT,
+        "/mcp/focus",
+        &trusted_headers(),
+        &json!({ "sessionId": "s1", "line": 7, "section": null, "selection": null, "note": null }),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{http_value}");
+
+    let expected = focus::get_focus(&svc).expect("service get_focus").expect("Some");
+    let expected_value = serde_json::to_value(&expected).unwrap();
+    assert_eq!(expected_value, http_value, "FocusContext must be byte-identical between the HTTP path and the command path");
+}
+
+#[tokio::test]
+async fn nav_request_shape_matches_between_the_service_call_and_the_http_route() {
+    // `NavRequest` has no pending store to read back (there is no second
+    // producer of the SAME value — every call assigns a fresh `id`/`ts`), so
+    // this proves shape parity (identical key set, TS binding coverage)
+    // rather than byte-for-byte equality, matching this file's documented
+    // pattern for routes with no second value-identical producer.
+    let (bridge_ctx, state, _sink, _tmp) = support::ctx_only();
+    state.sessions.lock().unwrap().insert("s1".to_string(), fixture_session("s1", 5));
+
+    let svc = bridge_ctx.svc("wire-parity");
+    let router = mcp_bridge::router(bridge_ctx);
+
+    let expected = navigation::request_navigation(
+        &svc,
+        navigation::NavRequestInput {
+            session_id: "s1".to_string(),
+            line: Some(101),
+            analysis_id: Some("a1".to_string()),
+            reason: "found the root cause".to_string(),
+        },
+    )
+    .expect("service request_navigation");
+    let expected_value = serde_json::to_value(&expected).unwrap();
+
+    let (status, http_value) = send_json(
+        &router,
+        Method::POST,
+        "/mcp/navigate",
+        &trusted_headers(),
+        &json!({ "sessionId": "s1", "line": 101, "analysisId": "a1", "reason": "found the root cause" }),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{http_value}");
+
+    assert_top_level_keys(
+        &http_value,
+        &["id", "sessionId", "line", "analysisId", "reason", "requestedBy", "ts"],
+    );
+    let mut expected_keys = expected_value.as_object().unwrap().keys().cloned().collect::<Vec<_>>();
+    let mut http_keys = http_value.as_object().unwrap().keys().cloned().collect::<Vec<_>>();
+    expected_keys.sort();
+    http_keys.sort();
+    assert_eq!(expected_keys, http_keys, "NavRequest must expose the same field set over both paths");
+    assert_ts_binding_covers_json_keys("NavRequest", &http_value);
 }

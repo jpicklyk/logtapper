@@ -67,6 +67,8 @@ pub mod timeline;
 pub mod tracker;
 pub mod watches;
 pub mod workspace;
+pub mod focus;
+pub mod navigation;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;

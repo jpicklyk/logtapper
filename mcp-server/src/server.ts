@@ -53,11 +53,13 @@ import type {
   FilterCreateResult,
   FilterInfo,
   FilteredLinesResult,
+  FocusContext,
   Insights,
   LinePage,
   MarketplaceFetchResult,
   McpAgentAccess,
   McpOpenAllowlist,
+  NavRequest,
   OpenedSession,
   Page,
   PackSummary,
@@ -2095,6 +2097,96 @@ server.tool(
   async ({ since, limit }) => {
     try {
       return ok(await bridgeGet<ActivityEntry[]>("/mcp/activity", { since, limit }));
+    } catch (err) {
+      return handleBridgeError(err);
+    }
+  }
+);
+
+// ── 33. logtapper_focus ─────────────────────────────────────────────────────
+
+server.tool(
+  "logtapper_focus",
+  "Manage the shared focus context — an explicit \"ask about this\" handoff " +
+    "between the UI and an agent (distinct from which pane the UI happens to " +
+    "have open). Use 'get' to read it, 'set' to point at a session/line/section " +
+    "(and optionally a selection range or note), and 'clear' to remove it. " +
+    "Whoever calls 'set' is recorded as `setBy` — you cannot claim another " +
+    "caller's identity or backdate `ts`.",
+  {
+    action: z.enum(["get", "set", "clear"]).describe("Action to perform"),
+    session_id: z.string().optional().describe("Session ID to focus (required for 'set')"),
+    line: z.number().int().min(0).optional().describe("Line number to focus (used with 'set')"),
+    section: z.string().optional().describe("Section name to focus (used with 'set')"),
+    selection_start: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("Selection range start line, inclusive (used with 'set'; requires selection_end)"),
+    selection_end: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("Selection range end line, inclusive (used with 'set'; requires selection_start)"),
+    note: z.string().optional().describe("Free-text note describing why this is focused (used with 'set')"),
+  },
+  async ({ action, session_id, line, section, selection_start, selection_end, note }) => {
+    try {
+      switch (action) {
+        case "get":
+          return ok(await bridgeGet<FocusContext | null>("/mcp/focus"));
+        case "set": {
+          if (!session_id) return argError("session_id is required for 'set'");
+          const selection =
+            selection_start !== undefined && selection_end !== undefined
+              ? { start: selection_start, end: selection_end }
+              : null;
+          return ok(
+            await bridgePut<FocusContext>("/mcp/focus", {
+              sessionId: session_id,
+              line: line ?? null,
+              section: section ?? null,
+              selection,
+              note: note ?? null,
+            })
+          );
+        }
+        case "clear":
+          return ok(await bridgeDelete<Ack>("/mcp/focus"));
+      }
+    } catch (err) {
+      return handleBridgeError(err);
+    }
+  }
+);
+
+// ── 34. logtapper_navigate ───────────────────────────────────────────────────
+
+server.tool(
+  "logtapper_navigate",
+  "Ask the UI to jump to a specific line or analysis in a session. This never " +
+    "applies the jump itself — it journals the request and emits it as an " +
+    "event; the UI decides whether to navigate immediately or hold for the " +
+    "user's confirmation. `reason` is required and shows up in the activity " +
+    "feed, so make it something the user can act on.",
+  {
+    session_id: z.string().describe("Session ID to navigate within"),
+    line: z.number().int().min(0).optional().describe("Line number to jump to"),
+    analysis_id: z.string().optional().describe("Analysis artifact ID to open instead of (or alongside) a line"),
+    reason: z.string().describe("Why the UI should navigate here — shown to the user"),
+  },
+  async ({ session_id, line, analysis_id, reason }) => {
+    try {
+      return ok(
+        await bridgePost<NavRequest>("/mcp/navigate", {
+          sessionId: session_id,
+          line: line ?? null,
+          analysisId: analysis_id ?? null,
+          reason,
+        })
+      );
     } catch (err) {
       return handleBridgeError(err);
     }

@@ -210,6 +210,10 @@ const ROUTE_TABLE: Row[] = [
   { route: "GET /mcp/sessions/{session_id}/stream/events", tool: "logtapper_stream", args: { action: "events", session_id: S, since: 5 }, method: "GET", expectPath: `/mcp/sessions/${S}/stream/events`, queryKeysInclude: ["since"] },
   { route: "POST /mcp/sessions/{session_id}/stream/stop", tool: "logtapper_stream", args: { action: "stop", session_id: S }, method: "POST", expectPath: `/mcp/sessions/${S}/stream/stop` },
   { route: "POST /mcp/sessions/{session_id}/stream/save", tool: "logtapper_stream", args: { action: "save", session_id: S, dest_path: "C:\\out\\cap.txt" }, method: "POST", expectPath: `/mcp/sessions/${S}/stream/save` },
+  { route: "GET /mcp/focus", tool: "logtapper_focus", args: { action: "get" }, method: "GET", expectPath: "/mcp/focus" },
+  { route: "PUT /mcp/focus", tool: "logtapper_focus", args: { action: "set", session_id: S }, method: "PUT", expectPath: "/mcp/focus" },
+  { route: "DELETE /mcp/focus", tool: "logtapper_focus", args: { action: "clear" }, method: "DELETE", expectPath: "/mcp/focus" },
+  { route: "POST /mcp/navigate", tool: "logtapper_navigate", args: { session_id: S, reason: "look here" }, method: "POST", expectPath: "/mcp/navigate" },
 ];
 
 const covered = new Set<string>();
@@ -236,7 +240,7 @@ describe("mcp-server tool → route coverage", () => {
 
   it("ROUTE_TABLE covers every entry in mcp_bridge::ROUTES", () => {
     const bridgeRoutes = parseBridgeRoutes();
-    expect(bridgeRoutes.length).toBe(70);
+    expect(bridgeRoutes.length).toBe(74);
 
     const missing = bridgeRoutes.filter((r) => !covered.has(r));
     expect(missing, `ROUTE_TABLE is missing rows for: ${missing.join(", ")}`).toEqual([]);

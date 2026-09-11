@@ -58,6 +58,8 @@ use routes::workspace::{
     h_autosave_workspace, h_current_workspace, h_list_workspaces, h_load_workspace,
     h_save_workspace,
 };
+use routes::focus::{h_clear_focus, h_get_focus, h_set_focus};
+use routes::navigation::h_request_navigation;
 
 pub const PORT: u16 = 40404;
 
@@ -246,6 +248,11 @@ pub const ROUTES: &[(&str, &str)] = &[
     // `routes/settings.rs`): an agent may see whether it is being redacted,
     // and may never change it.
     ("GET", "/mcp/settings/agent_access"),
+    // B1 — shared focus context + agent navigation requests.
+    ("GET", "/mcp/focus"),
+    ("PUT", "/mcp/focus"),
+    ("DELETE", "/mcp/focus"),
+    ("POST", "/mcp/navigate"),
 ];
 
 /// Build the bridge's `Router` without binding a socket.
@@ -329,6 +336,9 @@ pub fn router(ctx: BridgeCtx) -> Router {
         .route("/mcp/sessions/{session_id}/stream/save", post(h_save_stream))
         // Agent raw-access opt-out — read only, on purpose.
         .route("/mcp/settings/agent_access", get(h_get_agent_access))
+        // B1 — shared focus context + agent navigation requests.
+        .route("/mcp/focus", get(h_get_focus).put(h_set_focus).delete(h_clear_focus))
+        .route("/mcp/navigate", post(h_request_navigation))
         .layer(axum_middleware::from_fn_with_state(ctx.clone(), middleware::record_activity))
         // `require_local` is added AFTER `record_activity`, which in axum/tower
         // layering means it becomes the OUTERMOST layer and therefore runs
@@ -470,6 +480,10 @@ mod tests {
             "POST /mcp/sessions/{session_id}/stream/stop",
             "POST /mcp/sessions/{session_id}/stream/save",
             "GET /mcp/settings/agent_access",
+            "GET /mcp/focus",
+            "PUT /mcp/focus",
+            "DELETE /mcp/focus",
+            "POST /mcp/navigate",
         ];
 
         assert_eq!(rendered, expected, "ROUTES drifted from the pinned route table — update both this test and router() together");

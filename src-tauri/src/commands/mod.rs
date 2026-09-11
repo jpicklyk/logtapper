@@ -40,6 +40,8 @@ pub mod state_tracker;
 pub mod watch;
 pub mod workspace_cmd;
 pub mod workspace_sync;
+pub mod focus;
+pub mod navigation;
 
 /// Global application state managed by Tauri.
 pub struct AppState {
@@ -229,6 +231,12 @@ pub struct AppState {
     /// agent can tell which of several open — possibly same-named — sessions
     /// the user is actually looking at, without guessing from tab order.
     pub focused_session: Mutex<Option<String>>,
+    /// Shared focus context — an explicit "ask about this" handoff between
+    /// the UI and an agent, distinct from `focused_session` above (which pane
+    /// the UI currently has open). See `services::focus`.
+    pub focus: Mutex<Option<crate::services::focus::FocusContext>>,
+    /// Monotonic id source for `services::navigation::NavRequest`.
+    pub nav_request_seq: AtomicU64,
 }
 
 impl Default for AppState {
@@ -298,6 +306,8 @@ impl AppState {
             autosave_switch_suppressed_until: Mutex::new(None),
             focused_session: Mutex::new(None),
             activity: crate::services::ActivityJournal::new(),
+            focus: Mutex::new(None),
+            nav_request_seq: AtomicU64::new(0),
         }
     }
 

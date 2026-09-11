@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { ActivityEntry, AdbStreamStopped, AdbTrackerUpdate, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress, PipelineProgress, BookmarkUpdateEvent, AnalysisUpdateEvent, WatchMatchEvent, WatchUpdateEvent, LoadResult, SessionClosedEvent, WorkspaceAutoSavedEvent, WorkspaceRestoredEvent, LtsEditorTabPayload } from './types';
+import type { ActivityEntry, AdbStreamStopped, AdbTrackerUpdate, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress, PipelineProgress, BookmarkUpdateEvent, AnalysisUpdateEvent, WatchMatchEvent, WatchUpdateEvent, LoadResult, SessionClosedEvent, WorkspaceAutoSavedEvent, WorkspaceRestoredEvent, LtsEditorTabPayload, FocusContext, NavRequest } from './types';
 
 // ---------------------------------------------------------------------------
 // ADB streaming events
@@ -139,6 +139,37 @@ export function onActivity(
   cb: (entry: ActivityEntry) => void,
 ): Promise<UnlistenFn> {
   return listen<ActivityEntry>('activity', (e) => cb(e.payload));
+}
+
+// ---------------------------------------------------------------------------
+// Shared focus context + agent navigation requests (B1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Emitted whenever the shared focus context changes, by either caller —
+ * `setFocus()`/`PUT /mcp/focus` set it, `setFocus(null)`/`DELETE /mcp/focus`
+ * clear it (payload `null`). Distinct from `focused_session` (which pane is
+ * open) — this is the explicit "ask about this" handoff.
+ */
+export function onFocusChanged(
+  cb: (payload: FocusContext | null) => void,
+): Promise<UnlistenFn> {
+  return listen<FocusContext | null>('focus-changed', (e) => cb(e.payload));
+}
+
+/**
+ * Emitted when an agent (or the UI's own `requestNavigation()`, for testing
+ * the same path) asks to jump to a specific line/analysis in a session. This
+ * event never applies the jump itself — the consumer decides whether to
+ * navigate immediately or hold for confirmation, per its own
+ * `require_nav_confirmation` setting (frontend-local for now). The payload
+ * carries `sessionId`, so a consumer bound to one pane must match on it
+ * rather than treating this as a broadcast.
+ */
+export function onNavigateRequest(
+  cb: (payload: NavRequest) => void,
+): Promise<UnlistenFn> {
+  return listen<NavRequest>('navigate-request', (e) => cb(e.payload));
 }
 
 // ---------------------------------------------------------------------------
