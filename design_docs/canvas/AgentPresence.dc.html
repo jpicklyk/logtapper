@@ -53,6 +53,59 @@
       -webkit-font-smoothing: antialiased;
     }
     @keyframes lt-breathe { 0%,100% { transform: scale(1); opacity: .85 } 50% { transform: scale(1.06); opacity: 1 } }
+    /* ---- agent orb: cell ---- */
+    @property --orb-a { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+    .orb { position: relative; flex-shrink: 0; width: var(--orb-size); height: var(--orb-size); --c: var(--orb-c); }
+    .orb::after { content: ''; position: absolute; inset: -14%; border-radius: 9999px; pointer-events: none; background: radial-gradient(circle, transparent 52%, color-mix(in srgb, var(--c) 22%, transparent) 66%, transparent 76%); }
+    .orb__m { position: absolute; inset: 0; border-radius: 9999px; overflow: hidden; isolation: isolate; transform: translateZ(0);
+      background: radial-gradient(circle at 32% 26%, rgba(255,255,255,.26), rgba(255,255,255,0) 36%),
+                  radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--c) 5%, transparent) 0%, color-mix(in srgb, var(--c) 9%, transparent) 58%, color-mix(in srgb, var(--c) 42%, transparent) 88%, color-mix(in srgb, var(--c) 85%, transparent) 100%);
+      box-shadow: inset 0 0 calc(var(--orb-size) / 9) color-mix(in srgb, var(--c) 50%, transparent);
+      border: 1px solid color-mix(in srgb, var(--c) 60%, transparent); }
+    .orb__n { position: absolute; left: 47%; top: 48%; width: var(--orb-nw, 40%); height: var(--orb-nw, 40%); border-radius: 9999px; transform: translate(-50%, -50%);
+      background: radial-gradient(circle at 36% 32%, rgba(255,255,255,.5), transparent 34%),
+                  radial-gradient(circle at 56% 58%, color-mix(in srgb, var(--c) 55%, #fff) 0 9%, color-mix(in srgb, var(--c) 40%, #000) 10%, transparent 13%),
+                  radial-gradient(circle at 35% 52%, color-mix(in srgb, var(--c) 30%, #000) 0 2.9%, transparent 3.9%),
+                  radial-gradient(circle at 56% 57%, color-mix(in srgb, var(--c) 30%, #000) 0 2.3%, transparent 3.3%),
+                  radial-gradient(circle at 23% 69%, color-mix(in srgb, var(--c) 30%, #000) 0 2.7%, transparent 3.7%),
+                  radial-gradient(circle at 35% 78%, color-mix(in srgb, var(--c) 30%, #000) 0 3.1%, transparent 4.1%),
+                  radial-gradient(circle at 69% 49%, color-mix(in srgb, var(--c) 30%, #000) 0 3.5%, transparent 4.5%),
+                  radial-gradient(circle at 30% 58%, color-mix(in srgb, var(--c) 30%, #000) 0 3.9%, transparent 4.9%),
+                  radial-gradient(circle at 51% 64%, color-mix(in srgb, var(--c) 30%, #000) 0 3.5%, transparent 4.5%),
+                  radial-gradient(circle at 26% 64%, color-mix(in srgb, var(--c) 30%, #000) 0 3.4%, transparent 4.4%),
+                  radial-gradient(circle at 39% 24%, color-mix(in srgb, var(--c) 30%, #000) 0 3.9%, transparent 4.9%),
+                  radial-gradient(circle, color-mix(in srgb, var(--c) 90%, #fff) 0%, var(--c) 48%, color-mix(in srgb, var(--c) 65%, #000) 100%);
+      box-shadow: 0 0 calc(var(--orb-size) / 7) color-mix(in srgb, var(--c) 75%, transparent), inset 0 0 calc(var(--orb-size) / 18) rgba(0,0,0,.4);
+      animation: orb-nuc var(--orb-nuc, 4.5s) ease-in-out infinite; }
+    .orb__n::after { content: ''; position: absolute; inset: -14%; border-radius: 9999px; border: 1px solid color-mix(in srgb, var(--c) 55%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 18%, transparent); }
+    @keyframes orb-nuc { 0%, 100% { transform: translate(-50%, -50%) scale(1); } 50% { transform: translate(-50%, -50%) scale(1.07); } }
+    .orb__o { position: absolute; border-radius: 9999px; opacity: .5; background: linear-gradient(135deg, color-mix(in srgb, var(--c) 70%, #fff), color-mix(in srgb, var(--c) 45%, transparent)); box-shadow: inset 0 0 0 1px rgba(255,255,255,.28), 0 0 calc(var(--orb-size) / 30) color-mix(in srgb, var(--c) 40%, transparent);
+      animation: orb-drift var(--t) ease-in-out infinite alternate; animation-delay: var(--dl); }
+    @keyframes orb-drift { 0% { transform: translate(0, 0) rotate(var(--rot)); } 35% { transform: translate(var(--dx), var(--dy)) rotate(calc(var(--rot) + 18deg)); } 70% { transform: translate(calc(var(--dx) * -.7), calc(var(--dy) * .4)) rotate(calc(var(--rot) - 12deg)); } 100% { transform: translate(calc(var(--dx) * .3), calc(var(--dy) * -1)) rotate(var(--rot)); } }
+    .orb__r { position: absolute; left: 50%; top: 50%; width: var(--rw); height: var(--rw); margin: calc(var(--rw) / -2) 0 0 calc(var(--rw) / -2); border-radius: 9999px; border: 1px solid transparent;
+      border-top-color: color-mix(in srgb, var(--c) 75%, transparent); border-right-color: color-mix(in srgb, var(--c) 22%, transparent);
+      transform: rotate3d(1, .2, 0, var(--tilt)) rotate(var(--orb-a)); animation: orb-ring var(--t) linear infinite; animation-delay: var(--dl); }
+    .orb__r i { position: absolute; left: 50%; top: -1px; width: var(--orb-dot); height: var(--orb-dot); margin: calc(var(--orb-dot) / -2) 0 0 calc(var(--orb-dot) / -2); border-radius: 9999px; background: #fff; box-shadow: 0 0 calc(var(--orb-dot) * 1.5) var(--c), 0 0 2px #fff; }
+    @keyframes orb-ring { to { --orb-a: 360deg; } }
+    .orb__s { display: none; position: absolute; inset: 0; border-radius: 9999px; background: conic-gradient(from 0deg, transparent 0 68%, color-mix(in srgb, var(--c) 40%, transparent) 100%); animation: orb-sweep 1.6s linear infinite; }
+    @keyframes orb-sweep { to { transform: rotate(360deg); } }
+    .orb__e { display: none; position: absolute; left: 47%; top: 48%; width: var(--orb-dot); height: var(--orb-dot); margin: calc(var(--orb-dot) / -2) 0 0 calc(var(--orb-dot) / -2); border-radius: 9999px; background: #fff; box-shadow: 0 0 calc(var(--orb-dot) * 1.5) var(--c);
+      animation: orb-emit var(--orb-emit, 1.4s) ease-out infinite; animation-delay: var(--dl); }
+    @keyframes orb-emit { 0% { transform: translate(0, 0) scale(1); opacity: 1; } 70% { opacity: .9; } 100% { transform: translate(var(--ex), var(--ey)) scale(.4); opacity: 0; } }
+    /* detached: dim, still */
+    .orb--detached { filter: saturate(.25) brightness(.7); } .orb--detached::after { opacity: 0; } .orb--detached .orb__m, .orb--detached .orb__n, .orb--detached .orb__o, .orb--detached .orb__r { animation-play-state: paused; }
+    /* reading: rings speed up, a sweep circles the cytoplasm */
+    .orb--reading .orb__s { display: block; } .orb--reading .orb__r { animation-duration: calc(var(--t) / 2.5); } .orb--reading { --orb-nuc: 2.4s; }
+    /* running: nucleus pumps, rings race, particles emit from the nucleus to the membrane */
+    .orb--running { --orb-nuc: 1s; } .orb--running .orb__e { display: block; } .orb--running .orb__r { animation-duration: calc(var(--t) / 4); } .orb--running .orb__o { animation-duration: calc(var(--t) / 2); }
+    /* wrote: one flare of the membrane and a single emission burst, then settles (loops slowly in the mockup) */
+    .orb--wrote .orb__m { animation: orb-flare 5s ease-out infinite; } .orb--wrote .orb__e { display: block; --orb-emit: 5s; }
+    @keyframes orb-flare { 0% { box-shadow: inset 0 0 calc(var(--orb-size) / 4) color-mix(in srgb, var(--c) 95%, #fff), 0 0 calc(var(--orb-size) / 3) color-mix(in srgb, var(--c) 80%, transparent); filter: brightness(1.7); } 20% { filter: brightness(1); box-shadow: inset 0 0 calc(var(--orb-size) / 9) color-mix(in srgb, var(--c) 50%, transparent); } 100% { box-shadow: inset 0 0 calc(var(--orb-size) / 9) color-mix(in srgb, var(--c) 50%, transparent); } }
+    /* needs you: attention ring outside, organelles jitter, nucleus quickens */
+    .orb--needs { --orb-nuc: .9s; } .orb--needs::before { content: ''; position: absolute; inset: -5px; border-radius: 9999px; animation: lt-pulse 1.4s ease-out infinite; } .orb--needs .orb__o { animation: orb-jitter .5s steps(2, jump-none) infinite; animation-delay: var(--dl); }
+    @keyframes orb-jitter { 0%, 100% { transform: translate(0, 0) rotate(var(--rot)); } 50% { transform: translate(1.5px, -1px) rotate(calc(var(--rot) + 6deg)); } }
+    /* raw access on: denser nucleus, steadier, warmer membrane */
+    .orb--raw { --orb-nw: 50%; --orb-nuc: 7s; } .orb--raw .orb__m { border-color: color-mix(in srgb, var(--c) 85%, transparent); box-shadow: inset 0 0 calc(var(--orb-size) / 6) color-mix(in srgb, var(--c) 70%, transparent); }
   </style>
 </helmet>
 
@@ -86,7 +139,7 @@
       <span style="font-size:11px;font-family:var(--font-mono)">Ctrl K</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;height:30px;padding:0 10px 0 6px;border-radius:6px;border:1px solid var(--agent-needs);background:var(--warning-muted)">
-      <div style="width:18px;height:18px;border-radius:9999px;background:radial-gradient(circle at 35% 35%, var(--agent-needs), transparent 70%), var(--bg-overlay);animation:lt-breathe 1.2s ease-in-out infinite"></div>
+      <div class="orb orb--needs" style="--orb-size:18px;--orb-dot:2px;--orb-c:var(--agent-needs)"><div class="orb__m"><div class="orb__s"></div><div class="orb__r" style="--rw:86%;--tilt:64deg;--t:9s;--dl:-2.8s"><i></i></div><div class="orb__e" style="--ex:calc(var(--orb-size) * 0.454);--ey:calc(var(--orb-size) * 0.074);--dl:-0.12s"></div><div class="orb__e" style="--ex:calc(var(--orb-size) * -0.177);--ey:calc(var(--orb-size) * 0.424);--dl:-0.55s"></div><div class="orb__e" style="--ex:calc(var(--orb-size) * -0.130);--ey:calc(var(--orb-size) * -0.441);--dl:-0.49s"></div><div class="orb__n"></div></div></div>
       <span style="font-size:12px;color:var(--agent-needs);font-weight:500">Claude · needs you</span>
     </div>
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--text-muted)"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/></svg>
@@ -180,7 +233,7 @@
 
       <!-- header: needs-you orb -->
       <div style="display:flex;align-items:center;gap:14px;padding:14px 16px;border-bottom:1px solid var(--border);background:var(--bg-raised)">
-        <div style="width:44px;height:44px;border-radius:9999px;background:radial-gradient(circle at 35% 35%, var(--agent-needs), transparent 70%), var(--bg-overlay);border:1px solid var(--agent-needs);box-shadow:0 0 0 7px var(--warning-muted);animation:lt-breathe 1.2s ease-in-out infinite"></div>
+        <div class="orb orb--needs" style="--orb-size:44px;--orb-dot:3px;--orb-c:var(--agent-needs)"><div class="orb__m"><div class="orb__s"></div><div class="orb__r" style="--rw:86%;--tilt:64deg;--t:9s;--dl:-5.1s"><i></i></div><div class="orb__r" style="--rw:70%;--tilt:-58deg;--t:14s;--dl:-13.6s"><i></i></div><div class="orb__r" style="--rw:94%;--tilt:78deg;--t:20s;--dl:-8.5s"><i></i></div><div class="orb__o" style="left:68%;top:24%;width:8%;height:5%;--rot:81deg;--t:5.1s;--dl:-2.1s;--dx:calc(var(--orb-size) * 0.009);--dy:calc(var(--orb-size) * 0.048)"></div><div class="orb__o" style="left:67%;top:71%;width:11%;height:6%;--rot:94deg;--t:6.2s;--dl:-1.4s;--dx:calc(var(--orb-size) * -0.020);--dy:calc(var(--orb-size) * -0.037)"></div><div class="orb__o" style="left:36%;top:82%;width:12%;height:6%;--rot:1deg;--t:10.4s;--dl:-0.8s;--dx:calc(var(--orb-size) * -0.001);--dy:calc(var(--orb-size) * -0.033)"></div><div class="orb__o" style="left:79%;top:46%;width:14%;height:7%;--rot:8deg;--t:10.3s;--dl:-8.9s;--dx:calc(var(--orb-size) * 0.032);--dy:calc(var(--orb-size) * -0.054)"></div><div class="orb__o" style="left:50%;top:17%;width:13%;height:6%;--rot:13deg;--t:8.5s;--dl:-7.1s;--dx:calc(var(--orb-size) * -0.001);--dy:calc(var(--orb-size) * 0.050)"></div><div class="orb__o" style="left:61%;top:78%;width:10%;height:6%;--rot:5deg;--t:5.5s;--dl:-1.0s;--dx:calc(var(--orb-size) * 0.031);--dy:calc(var(--orb-size) * 0.055)"></div><div class="orb__o" style="left:81%;top:57%;width:11%;height:6%;--rot:127deg;--t:9.0s;--dl:-7.8s;--dx:calc(var(--orb-size) * 0.011);--dy:calc(var(--orb-size) * -0.007)"></div><div class="orb__e" style="--ex:calc(var(--orb-size) * 0.460);--ey:calc(var(--orb-size) * 0.020);--dl:-0.88s"></div><div class="orb__e" style="--ex:calc(var(--orb-size) * 0.315);--ey:calc(var(--orb-size) * 0.335);--dl:-1.38s"></div><div class="orb__e" style="--ex:calc(var(--orb-size) * -0.246);--ey:calc(var(--orb-size) * 0.389);--dl:-0.74s"></div><div class="orb__e" style="--ex:calc(var(--orb-size) * -0.446);--ey:calc(var(--orb-size) * -0.111);--dl:-1.01s"></div><div class="orb__e" style="--ex:calc(var(--orb-size) * -0.263);--ey:calc(var(--orb-size) * -0.377);--dl:-0.84s"></div><div class="orb__e" style="--ex:calc(var(--orb-size) * 0.155);--ey:calc(var(--orb-size) * -0.433);--dl:-0.34s"></div><div class="orb__n"></div></div></div>
         <div style="display:flex;flex-direction:column;gap:2px">
           <span style="font-size:15px;font-weight:600;color:var(--text)">Claude Code</span>
           <span style="font-size:12px;color:var(--agent-needs);font-weight:500">Needs you — 1 request waiting since 09:43</span>
@@ -307,7 +360,7 @@
       <div style="margin:12px 16px 16px;display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:8px;border:1px dashed var(--border);background:transparent">
         <span style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)">Variant — panel header when Raw access is ON</span>
         <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:8px;border:1px solid var(--agent-raw);background:var(--danger-muted)">
-          <div style="width:32px;height:32px;border-radius:9999px;background:radial-gradient(circle at 35% 35%, var(--agent-raw), transparent 70%), var(--bg-overlay);border:1px solid var(--agent-raw)"></div>
+          <div class="orb orb--raw" style="--orb-size:32px;--orb-dot:2px;--orb-c:var(--agent-raw)"><div class="orb__m"><div class="orb__s"></div><div class="orb__r" style="--rw:86%;--tilt:64deg;--t:9s;--dl:-6.3s"><i></i></div><div class="orb__r" style="--rw:70%;--tilt:-58deg;--t:14s;--dl:-4.2s"><i></i></div><div class="orb__o" style="left:82%;top:32%;width:11%;height:6%;--rot:88deg;--t:9.6s;--dl:-8.7s;--dx:calc(var(--orb-size) * 0.045);--dy:calc(var(--orb-size) * 0.045)"></div><div class="orb__o" style="left:15%;top:21%;width:14%;height:4%;--rot:149deg;--t:9.1s;--dl:-0.2s;--dx:calc(var(--orb-size) * 0.033);--dy:calc(var(--orb-size) * -0.023)"></div><div class="orb__o" style="left:72%;top:32%;width:10%;height:6%;--rot:52deg;--t:8.4s;--dl:-0.3s;--dx:calc(var(--orb-size) * 0.056);--dy:calc(var(--orb-size) * -0.022)"></div><div class="orb__o" style="left:38%;top:12%;width:9%;height:5%;--rot:164deg;--t:7.7s;--dl:-4.9s;--dx:calc(var(--orb-size) * -0.011);--dy:calc(var(--orb-size) * -0.007)"></div><div class="orb__e" style="--ex:calc(var(--orb-size) * 0.451);--ey:calc(var(--orb-size) * 0.088);--dl:-1.19s"></div><div class="orb__e" style="--ex:calc(var(--orb-size) * 0.136);--ey:calc(var(--orb-size) * 0.440);--dl:-0.39s"></div><div class="orb__e" style="--ex:calc(var(--orb-size) * -0.457);--ey:calc(var(--orb-size) * -0.049);--dl:-0.20s"></div><div class="orb__e" style="--ex:calc(var(--orb-size) * -0.021);--ey:calc(var(--orb-size) * -0.460);--dl:-1.14s"></div><div class="orb__n"></div></div></div>
           <div style="display:flex;flex-direction:column;gap:1px">
             <span style="font-weight:600;color:var(--danger)">Raw access ON</span>
             <span style="font-size:12px;color:var(--text-subtle)">Claude reads un-anonymized log text — emails, IPs, IMEIs and serials are not tokenized.</span>

@@ -92,6 +92,7 @@
                 <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--level-warning)">10:00:01.767  7513  7561 UsbDeviceManager: …</span>
               </div>
   active row: background:var(--active-line)   cursor row: box-shadow: inset 2px 0 var(--accent)
-  agent orb:  <div style="width:28px;height:28px;border-radius:9999px;background:radial-gradient(circle at 35% 35%, var(--agent-reading), transparent 70%), var(--bg-overlay);border:1px solid var(--accent-border);animation:lt-breathe 3s ease-in-out infinite"></div>
-              states: swap the gradient colour for --agent-idle / --agent-running / --agent-wrote / --agent-needs (+ animation lt-pulse) / --agent-raw
+  agent orb:  generated — run `python design_docs/canvas/orb.py` (rewrites legacy gradient orbs) or import
+              `orb_html(size, state)` from it. States: detached idle reading running wrote needs raw.
+              CSS block ORB_CSS must be present in the board's helmet (the script inserts it once).
 -->
