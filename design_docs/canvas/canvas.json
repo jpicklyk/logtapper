@@ -1,23 +1,126 @@
 {
   "pages": [
-    { "id": "page-1", "name": "Screens" },
-    { "id": "page-2", "name": "Compact & tokens" }
+    {
+      "id": "page-1",
+      "name": "Screens"
+    },
+    {
+      "id": "page-2",
+      "name": "Compact & tokens"
+    }
   ],
   "artboards": [
-    { "file": "WorkspaceHome.dc.html", "title": "1 · Workspace home", "x": 0, "y": 0, "w": 1920, "h": 1080, "page": "page-1" },
-    { "file": "Main.dc.html", "title": "2 · Post-mortem mode", "x": 2040, "y": 0, "w": 1920, "h": 1080, "page": "page-1" },
-    { "file": "LiveMode.dc.html", "title": "3 · Live mode", "x": 0, "y": 1240, "w": 1920, "h": 1080, "page": "page-1" },
-    { "file": "AgentPresence.dc.html", "title": "4 · Agent presence, expanded", "x": 2040, "y": 1240, "w": 1920, "h": 1080, "page": "page-1" },
-    { "file": "Packs.dc.html", "title": "5 · Packs", "x": 0, "y": 2480, "w": 1920, "h": 1080, "page": "page-1" },
-    { "file": "FirstRun.dc.html", "title": "6 · First run · attach an agent", "x": 2040, "y": 2480, "w": 1920, "h": 1080, "page": "page-1" },
-    { "file": "UltraWide.dc.html", "title": "8 · Ultra-wide post-mortem (3440)", "x": 0, "y": 3720, "w": 3440, "h": 1440, "page": "page-1" },
-    { "file": "TokenSheet.dc.html", "title": "7 · Theme & tokens", "x": 0, "y": 0, "w": 1600, "h": 1000, "page": "page-2" },
-    { "file": "CompactPostMortem.dc.html", "title": "Compact · post-mortem (1440)", "x": 1720, "y": 0, "w": 1440, "h": 900, "page": "page-2" },
-    { "file": "CompactLive.dc.html", "title": "Compact · live (1440)", "x": 1720, "y": 1060, "w": 1440, "h": 900, "page": "page-2" }
+    {
+      "file": "WorkspaceHome.dc.html",
+      "title": "1 · Workspace home",
+      "x": 0,
+      "y": 0,
+      "w": 1920,
+      "h": 1080,
+      "page": "page-1"
+    },
+    {
+      "file": "Main.dc.html",
+      "title": "2 · Post-mortem mode",
+      "x": 2040,
+      "y": 0,
+      "w": 1920,
+      "h": 1080,
+      "page": "page-1"
+    },
+    {
+      "file": "LiveMode.dc.html",
+      "title": "3 · Live mode",
+      "x": 0,
+      "y": 1240,
+      "w": 1920,
+      "h": 1080,
+      "page": "page-1"
+    },
+    {
+      "file": "AgentPresence.dc.html",
+      "title": "4 · Agent presence, expanded",
+      "x": 2040,
+      "y": 1240,
+      "w": 1920,
+      "h": 1080,
+      "page": "page-1"
+    },
+    {
+      "file": "Packs.dc.html",
+      "title": "5 · Packs",
+      "x": 0,
+      "y": 2480,
+      "w": 1920,
+      "h": 1080,
+      "page": "page-1"
+    },
+    {
+      "file": "FirstRun.dc.html",
+      "title": "6 · First run · attach an agent",
+      "x": 2040,
+      "y": 2480,
+      "w": 1920,
+      "h": 1080,
+      "page": "page-1"
+    },
+    {
+      "file": "UltraWide.dc.html",
+      "title": "8 · Ultra-wide post-mortem (3440)",
+      "x": 0,
+      "y": 3720,
+      "w": 3440,
+      "h": 1440,
+      "page": "page-1"
+    },
+    {
+      "file": "TokenSheet.dc.html",
+      "title": "7 · Theme & tokens",
+      "x": 0,
+      "y": 0,
+      "w": 1600,
+      "h": 1000,
+      "page": "page-2"
+    },
+    {
+      "file": "CompactPostMortem.dc.html",
+      "title": "Compact · post-mortem (1440)",
+      "x": 1720,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "page": "page-2"
+    },
+    {
+      "file": "CompactLive.dc.html",
+      "title": "Compact · live (1440)",
+      "x": 1720,
+      "y": 1140,
+      "w": 1440,
+      "h": 900,
+      "page": "page-2"
+    }
   ],
   "annotations": [
-    { "id": "brief", "x": 0, "y": -150, "w": 620, "text": "LogTapper phase-2 redesign — from design_docs/ui-redesign-brief.md.\nTwo modes (post-mortem / live), workspace as top-level nav, analyzers replace dashboard+chain+library, agent presence always visible.\nEvery board has a theme tweak (dark | light). Comparison mode deferred.", "page": "page-1" },
-    { "id": "tiers", "x": 1720, "y": -150, "w": 520, "text": "Compact tier (1280–1599 px): single column, icon rails, drawers. These are low-fi to prove the collapse behaviour only.", "page": "page-2" }
+    {
+      "id": "brief",
+      "x": 0,
+      "y": -150,
+      "w": 620,
+      "text": "LogTapper phase-2 redesign — from design_docs/ui-redesign-brief.md.\nTwo modes (post-mortem / live), workspace as top-level nav, analyzers replace dashboard+chain+library, agent presence always visible.\nEvery board has a theme tweak (dark | light). Comparison mode deferred.",
+      "page": "page-1"
+    },
+    {
+      "id": "tiers",
+      "x": 1720,
+      "y": -150,
+      "w": 520,
+      "text": "Compact tier (1280–1599 px): single column, icon rails, drawers. These are low-fi to prove the collapse behaviour only.",
+      "page": "page-2"
+    }
   ],
-  "launch": { "view": "canvas", "page": "page-1" }
+  "launch": {
+    "view": "canvas",
+    "page": "page-1"
+  }
 }
