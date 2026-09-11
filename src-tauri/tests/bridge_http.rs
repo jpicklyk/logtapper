@@ -531,6 +531,121 @@ async fn processor_detail_route_honors_the_anonymization_gate() {
     }
 }
 
+/// Same gate as the reporter arm above, but for `ProcessorDetail::StateTracker`
+/// (`TrackerDetail`) — its `transitions[].raw` goes through the identical
+/// `include_line_text` + `policy::redact_line` gate the reporter arm uses
+/// (`services/pipeline.rs` tracker branch mirrors the reporter branch), but
+/// was never exercised at the HTTP layer under an `Agent` caller (WP-14
+/// review, should-fix #1).
+#[tokio::test]
+async fn processor_detail_tracker_arm_route_honors_the_anonymization_gate() {
+    const SESSION: &str = "pii-session-detail-tracker";
+    const NEEDLE: &str = "user0@example.com";
+    const TRACKER_ID: &str = "pii-gate-tracker";
+    let path = format!("/mcp/sessions/{SESSION}/processor/{TRACKER_ID}?include_line_text=true");
+
+    fn seed(state: &Arc<AppState>) {
+        use app_lib::processors::state_tracker::schema::{
+            StateFieldDecl, StateFieldType, StateTrackerDef, StateTrackerOutput, TrackerMode,
+        };
+        use app_lib::processors::state_tracker::types::{FieldChange, StateTrackerResult, StateTransition};
+        use app_lib::processors::{AnyProcessor, ProcessorKind, ProcessorMeta};
+        use std::collections::HashMap;
+
+        state
+            .sessions
+            .lock()
+            .unwrap()
+            .insert(SESSION.to_string(), fixture_session_with_pii(SESSION, 5));
+
+        let def = StateTrackerDef {
+            group: String::new(),
+            sections: vec![],
+            mode: TrackerMode::TimeSeries,
+            state: vec![StateFieldDecl {
+                name: "enabled".to_string(),
+                field_type: StateFieldType::Bool,
+                default: serde_json::json!(false),
+            }],
+            transitions: vec![],
+            output: StateTrackerOutput { timeline: false, annotate: false },
+        };
+        state.processors.lock().unwrap().insert(
+            TRACKER_ID.to_string(),
+            AnyProcessor {
+                meta: ProcessorMeta {
+                    id: TRACKER_ID.to_string(),
+                    name: TRACKER_ID.to_string(),
+                    version: "1.0.0".to_string(),
+                    author: String::new(),
+                    description: String::new(),
+                    tags: vec![],
+                    builtin: false,
+                    license: None,
+                    category: None,
+                    repository: None,
+                    deprecated: false,
+                },
+                kind: ProcessorKind::StateTracker(Arc::new(def)),
+                schema: None,
+                source: None,
+            },
+        );
+
+        // Line 0 of `fixture_session_with_pii` contains `user0@example.com` —
+        // reference it from a transition so the tracker arm's raw-text
+        // resolution has PII to gate.
+        let mut changes = HashMap::new();
+        changes.insert(
+            "enabled".to_string(),
+            FieldChange { from: serde_json::json!(null), to: serde_json::json!(true) },
+        );
+        let transition = StateTransition {
+            line_num: 0,
+            timestamp: 1000,
+            transition_name: "t0".to_string(),
+            changes,
+        };
+        state
+            .state_tracker_results
+            .lock()
+            .unwrap()
+            .entry(SESSION.to_string())
+            .or_default()
+            .insert(
+                TRACKER_ID.to_string(),
+                StateTrackerResult {
+                    tracker_id: TRACKER_ID.to_string(),
+                    transitions: vec![transition],
+                    final_state: HashMap::new(),
+                    source_sections: vec![],
+                    mode: TrackerMode::TimeSeries,
+                },
+            );
+    }
+
+    // mcp_anonymize ABSENT -> fails closed -> redacted.
+    {
+        let (router, state, _sink, _tmp) = app();
+        seed(&state);
+        let (status, body) = get(&router, &path, &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let text = serde_json::to_string(&body).unwrap();
+        assert!(!text.contains(NEEDLE), "mcp_anonymize absent must fail closed and redact; leaked PII: {text}");
+    }
+
+    // mcp_anonymize[session] = false -> raw.
+    {
+        let (router, state, _sink, _tmp) = app();
+        seed(&state);
+        state.mcp_anonymize.lock().unwrap().insert(SESSION.to_string(), false);
+        let (status, body) = get(&router, &path, &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let text = serde_json::to_string(&body).unwrap();
+        assert!(text.contains(NEEDLE), "mcp_anonymize=false must serve raw text; missing expected PII: {text}");
+    }
+}
+
 #[tokio::test]
 async fn export_route_honors_the_anonymization_gate_explicit_false_too() {
     // `wp10_timeline_export::export_route_inside_the_allowlist_succeeds_and_redacts_for_an_agent`

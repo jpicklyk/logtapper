@@ -598,6 +598,14 @@ async fn pipeline_run_result_matches_the_service_value_the_route_wraps() {
     let svc = bridge_ctx.svc("wire-parity");
     let router = mcp_bridge::router(bridge_ctx);
 
+    // Run the pipeline twice against identical fixture state: once through the
+    // service directly under the same `Caller::Agent` identity `h_run_pipeline`
+    // builds (`ctx.svc(client_name(&headers))`), once through the HTTP route.
+    // `h_run_pipeline` is a pure `Ok(Json(pipeline::run(...).await?))`
+    // passthrough — the same shape class as the byte-identical bucket above —
+    // and `PipelineRunSummary` carries no timestamp/duration field (confirmed
+    // via `commands/pipeline.rs:40-55`), so two independent runs over the same
+    // fixture must be byte-identical, not just agree on 3 top-level fields.
     let expected = pipeline::run(
         svc.clone(),
         "s1".to_string(),
@@ -619,13 +627,7 @@ async fn pipeline_run_result_matches_the_service_value_the_route_wraps() {
     assert_eq!(status, axum::http::StatusCode::OK, "{http_value}");
     assert_top_level_keys(&http_value, &["sessionId", "effectiveProcessorIds", "summaries"]);
     assert_ts_binding_covers_json_keys("PipelineRunResult", &http_value);
-
-    assert_eq!(http_value["sessionId"], expected_value["sessionId"]);
-    assert_eq!(http_value["effectiveProcessorIds"], expected_value["effectiveProcessorIds"]);
-    assert_eq!(
-        http_value["summaries"].as_array().unwrap().len(),
-        expected_value["summaries"].as_array().unwrap().len()
-    );
+    assert_eq!(expected_value, http_value, "PipelineRunResult must be byte-identical — the route is a pure passthrough");
 }
 
 #[tokio::test]
@@ -680,6 +682,97 @@ async fn processor_detail_reporter_arm_reports_the_same_counts_as_the_service() 
     assert_eq!(http_value["emissionCount"], expected_reporter.emission_count);
     assert_eq!(http_value["emissions"]["total"], expected_reporter.emission_count);
     assert_eq!(http_value["emissions"]["items"].as_array().unwrap().len(), 0);
+}
+
+/// The `StateTracker` arm (`TrackerDetail`) of `processor_detail` was
+/// completely untested for wire parity (WP-14 review, should-fix #1) despite
+/// carrying raw line text through the identical `include_line_text` +
+/// `policy::redact_line` gate the Reporter arm uses (`services/pipeline.rs`
+/// tracker branch mirrors the reporter branch). The route reshapes the
+/// service's `Vec<TransitionRow>` into a `Page<TransitionEntry>` and adds
+/// `processorId`/`sessionId`/`processorType` the service value doesn't carry
+/// (same "route narrows/renames" class as `ReporterDetail` just above) — so
+/// full parity here means constructing the exact wire shape from the service
+/// value's own fields and comparing it byte-for-byte against the HTTP body,
+/// rather than a field-by-field spot check.
+#[tokio::test]
+async fn processor_detail_tracker_arm_reports_the_same_transitions_as_the_service() {
+    let (bridge_ctx, state, _sink, _tmp) = support::ctx_only();
+    state.sessions.lock().unwrap().insert("s1".to_string(), fixture_session("s1", 5));
+    install_tracker(&state, "wire-parity-tracker", TrackerMode::TimeSeries);
+    seed_pipeline_tracker_result(
+        &state,
+        "s1",
+        "wire-parity-tracker",
+        vec![transition(1, "enabled", json!(true)), transition(3, "ssid", json!("HomeWifi"))],
+        vec!["WIFI DUMP".to_string()],
+        TrackerMode::TimeSeries,
+    );
+
+    let svc = bridge_ctx.svc("wire-parity");
+    let router = mcp_bridge::router(bridge_ctx);
+
+    let expected = pipeline::processor_detail(
+        &svc,
+        "s1",
+        "wire-parity-tracker",
+        DetailPage { offset: 0, limit: 50, include_emissions: false },
+        true, // include_line_text — the exact gate criterion 4 (and the review) called out
+    )
+    .expect("service processor_detail");
+    let SvcProcessorDetail::StateTracker(expected_tracker) = expected else {
+        panic!("expected a StateTracker detail");
+    };
+
+    let (status, http_value) = get(
+        &router,
+        "/mcp/sessions/s1/processor/wire-parity-tracker?include_line_text=true",
+        &trusted_headers(),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{http_value}");
+    assert_top_level_keys(
+        &http_value,
+        &[
+            "processorId", "sessionId", "processorType", "name", "description", "transitionCount",
+            "finalState", "transitions",
+        ],
+    );
+    assert_ts_binding_covers_json_keys("TrackerDetail", &http_value);
+
+    let expected_items: Vec<Value> = expected_tracker
+        .transitions
+        .iter()
+        .map(|row| {
+            json!({
+                "lineNum": row.transition.line_num,
+                "timestamp": row.transition.timestamp,
+                "transitionName": row.transition.transition_name,
+                "changes": row.transition.changes,
+                "rawLine": row.raw,
+            })
+        })
+        .collect();
+    let expected_value = json!({
+        "processorId": "wire-parity-tracker",
+        "sessionId": "s1",
+        "processorType": "state_tracker",
+        "name": expected_tracker.name,
+        "description": expected_tracker.description,
+        "transitionCount": expected_tracker.transition_count,
+        "finalState": expected_tracker.final_state,
+        "transitions": {
+            "items": expected_items,
+            "offset": expected_tracker.offset,
+            "limit": expected_tracker.limit,
+            "total": expected_tracker.transition_count,
+            "truncated": false,
+        },
+    });
+    assert_eq!(
+        expected_value, http_value,
+        "TrackerDetail must be byte-identical to the shape built from the service value's own fields"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -883,6 +976,36 @@ async fn open_allowlist_get_is_a_pure_passthrough_of_the_service_value() {
     assert_eq!(status, axum::http::StatusCode::OK, "{http_value}");
     assert_eq!(expected_value, http_value, "McpOpenAllowlist must be byte-identical");
     assert_ts_binding_covers_json_keys("McpOpenAllowlist", &http_value);
+}
+
+/// `POST /mcp/settings/anonymizer/test` (WP-14 review, nit #3) — it has a
+/// generated binding and a trivial same-service passthrough shape, but the
+/// section above only covers the settings surface's GETs. Add it: it echoes
+/// caller-supplied text through a fresh, throwaway `LogAnonymizer` built from
+/// the current config (see `services::settings::test_anonymizer`'s own doc
+/// comment) — deterministic across two independent calls with identical input.
+#[tokio::test]
+async fn anonymizer_test_result_matches_the_service_value() {
+    let (bridge_ctx, _state, _sink, _tmp) = support::ctx_only();
+    let svc = bridge_ctx.svc("wire-parity");
+    let router = mcp_bridge::router(bridge_ctx);
+
+    let text = "contact user0@example.com for access".to_string();
+    let expected = settings::test_anonymizer(&svc, text.clone()).expect("service test_anonymizer");
+    let expected_value = serde_json::to_value(&expected).unwrap();
+
+    let (status, http_value) = send_json(
+        &router,
+        Method::POST,
+        "/mcp/settings/anonymizer/test",
+        &trusted_headers(),
+        &json!({ "text": text }),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{http_value}");
+    assert_top_level_keys(&http_value, &["anonymized", "replacements"]);
+    assert_eq!(expected_value, http_value, "AnonymizerTestResult must be byte-identical");
+    assert_ts_binding_covers_json_keys("AnonymizerTestResult", &http_value);
 }
 
 // ---------------------------------------------------------------------------
