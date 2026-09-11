@@ -30,7 +30,7 @@
 
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::HeaderMap,
 };
 use serde::Deserialize;
@@ -40,7 +40,7 @@ use crate::processors::marketplace::resolve_processor_id_checked;
 use crate::processors::state_tracker::types::StateSnapshot;
 
 use crate::mcp_bridge::BridgeCtx;
-use crate::mcp_bridge::respond::client_name;
+use crate::mcp_bridge::respond::{Qs, client_name};
 use crate::services::wire::{
     CorrelationSummary, CorrelatorEvents, Page, SectionLocation, SessionCorrelations,
     TrackerEventEntry,
@@ -61,7 +61,7 @@ pub(crate) async fn h_events(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
     Path(session_id): Path<String>,
-    Query(params): Query<EventParams>,
+    Qs(params): Qs<EventParams>,
 ) -> Result<Json<Page<TrackerEventEntry>>, ServiceError> {
     let limit = params.limit.unwrap_or(50).min(200);
     let svc = ctx.svc(client_name(&headers));
@@ -103,7 +103,7 @@ pub(crate) async fn h_correlations(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
     Path(session_id): Path<String>,
-    Query(params): Query<CorrelationParams>,
+    Qs(params): Qs<CorrelationParams>,
 ) -> Result<Json<SessionCorrelations>, ServiceError> {
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);
@@ -163,7 +163,7 @@ pub(crate) async fn h_state_at_line(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
     Path((session_id, tracker_id)): Path<(String, String)>,
-    Query(params): Query<StateAtParams>,
+    Qs(params): Qs<StateAtParams>,
 ) -> Result<Json<StateSnapshot>, ServiceError> {
     let line_num = params.line;
 
@@ -216,7 +216,7 @@ pub(crate) async fn h_section_at(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
     Path(session_id): Path<String>,
-    Query(params): Query<SectionAtParams>,
+    Qs(params): Qs<SectionAtParams>,
 ) -> Result<Json<SectionLocation>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
     let result = sections::at(&svc, &session_id, params.line)?;
@@ -235,7 +235,7 @@ pub(crate) async fn h_sections(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
     Path(session_id): Path<String>,
-    Query(params): Query<SectionsParams>,
+    Qs(params): Qs<SectionsParams>,
 ) -> Result<Json<Page<SectionInfo>>, ServiceError> {
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);

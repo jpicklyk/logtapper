@@ -54,7 +54,7 @@ use axum::{Json, extract::State, http::HeaderMap};
 use serde::Deserialize;
 
 use crate::mcp_bridge::BridgeCtx;
-use crate::mcp_bridge::respond::client_name;
+use crate::mcp_bridge::respond::{JsonBody, client_name};
 use crate::services::ServiceError;
 use crate::services::workspace::{self, WorkspaceLoadOutcome, WorkspaceSummary};
 use crate::services::wire::{WorkspaceList, WorkspaceSaved};
@@ -101,7 +101,7 @@ pub(crate) struct LoadWorkspaceBody {
 pub(crate) async fn h_load_workspace(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
-    Json(body): Json<LoadWorkspaceBody>,
+    JsonBody(body): JsonBody<LoadWorkspaceBody>,
 ) -> Result<Json<WorkspaceLoadOutcome>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
     Ok(Json(workspace::load_and_restore(&svc, &body.path).await?))
@@ -115,7 +115,7 @@ pub(crate) async fn h_load_workspace(
 pub(crate) async fn h_save_workspace(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
-    Json(options): Json<workspace::SaveWorkspaceOptions>,
+    JsonBody(options): JsonBody<workspace::SaveWorkspaceOptions>,
 ) -> Result<Json<WorkspaceSaved>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
     let path = options.dest_path.clone();
@@ -131,7 +131,7 @@ pub(crate) async fn h_save_workspace(
 pub(crate) async fn h_autosave_workspace(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
-    Json(options): Json<workspace::AutoSaveWorkspaceOptions>,
+    JsonBody(options): JsonBody<workspace::AutoSaveWorkspaceOptions>,
 ) -> Result<Json<WorkspaceSaved>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
     let path = workspace::auto_save(&svc, options)?;

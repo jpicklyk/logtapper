@@ -34,14 +34,14 @@ use std::sync::Arc;
 
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::HeaderMap,
 };
 use serde::Deserialize;
 
 use crate::core::filter::FilterCriteria;
 use crate::mcp_bridge::BridgeCtx;
-use crate::mcp_bridge::respond::client_name;
+use crate::mcp_bridge::respond::{JsonBody, Qs, client_name};
 use crate::services::ServiceError;
 use crate::services::events::ProgressSink;
 use crate::services::filters::{self, FilterCreateResult, FilterInfo, FilteredLinesResult};
@@ -56,7 +56,7 @@ pub(crate) async fn h_create_filter(
     State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     headers: HeaderMap,
-    Json(criteria): Json<FilterCriteria>,
+    JsonBody(criteria): JsonBody<FilterCriteria>,
 ) -> Result<Json<FilterCreateResult>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
     // Same "an agent action still lights up the desktop" pattern as
@@ -96,7 +96,7 @@ pub(crate) struct FilterLinesParams {
 pub(crate) async fn h_filter_lines(
     State(ctx): State<BridgeCtx>,
     Path(filter_id): Path<String>,
-    Query(params): Query<FilterLinesParams>,
+    Qs(params): Qs<FilterLinesParams>,
     headers: HeaderMap,
 ) -> Result<Json<FilteredLinesResult>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));

@@ -39,7 +39,7 @@
 
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::HeaderMap,
 };
 use serde::Deserialize;
@@ -53,7 +53,7 @@ use crate::services::wire::{
 };
 
 use crate::mcp_bridge::BridgeCtx;
-use crate::mcp_bridge::respond::{client_name, truncate_var_maps};
+use crate::mcp_bridge::respond::{JsonBody, Qs, client_name, truncate_var_maps};
 
 // ---------------------------------------------------------------------------
 // Value → typed conversions
@@ -110,7 +110,7 @@ pub(crate) async fn h_pipeline(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
     Path(session_id): Path<String>,
-    Query(params): Query<PipelineParams>,
+    Qs(params): Qs<PipelineParams>,
 ) -> Result<Json<SessionPipelineResults>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
     let results = pipeline::results(&svc, &session_id, params.processor_id.as_deref())?;
@@ -184,7 +184,7 @@ pub(crate) async fn h_processor_detail(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
     Path((session_id, processor_id)): Path<(String, String)>,
-    Query(params): Query<ProcessorDetailParams>,
+    Qs(params): Qs<ProcessorDetailParams>,
 ) -> Result<Json<ProcessorDetail>, ServiceError> {
     let include_emissions = params.include_emissions.unwrap_or(false);
     let emission_limit = params.emission_limit.unwrap_or(50).min(200);
@@ -274,7 +274,7 @@ pub(crate) async fn h_run_pipeline(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
     Path(session_id): Path<String>,
-    Json(body): Json<RunPipelineBody>,
+    JsonBody(body): JsonBody<RunPipelineBody>,
 ) -> Result<Json<PipelineRunResult>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
 

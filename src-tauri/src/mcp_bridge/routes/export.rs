@@ -14,7 +14,7 @@
 use axum::{Json, extract::State, http::HeaderMap};
 
 use crate::mcp_bridge::BridgeCtx;
-use crate::mcp_bridge::respond::client_name;
+use crate::mcp_bridge::respond::{JsonBody, client_name};
 use crate::services::ServiceError;
 use crate::services::export::{self, ExportAllOptions, ExportAllSessionsInfo};
 use crate::services::wire::Ack;
@@ -41,7 +41,7 @@ pub(crate) async fn h_export_info(
 pub(crate) async fn h_export_run(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
-    Json(options): Json<ExportAllOptions>,
+    JsonBody(options): JsonBody<ExportAllOptions>,
 ) -> Result<Json<Ack>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
     export::run(svc, options).await?;

@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 use crate::core::watch::WatchInfo;
 use crate::mcp_bridge::BridgeCtx;
-use crate::mcp_bridge::respond::client_name;
+use crate::mcp_bridge::respond::{JsonBody, client_name};
 use crate::services::ServiceError;
 use crate::services::watches;
 use crate::services::wire::Ack;
@@ -43,7 +43,7 @@ pub(crate) async fn h_create_watch(
     State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     headers: HeaderMap,
-    Json(body): Json<CreateWatchBody>,
+    JsonBody(body): JsonBody<CreateWatchBody>,
 ) -> Result<Json<WatchInfo>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
     Ok(Json(watches::create(&svc, session_id, body.criteria)?))

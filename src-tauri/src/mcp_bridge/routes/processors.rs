@@ -26,7 +26,7 @@ use serde_json::Value;
 
 use crate::commands::sources::{MarketplaceFetchResult, UpdateCheckResult, UpdateResult};
 use crate::mcp_bridge::BridgeCtx;
-use crate::mcp_bridge::respond::client_name;
+use crate::mcp_bridge::respond::{JsonBody, client_name};
 use crate::processors::marketplace::{MarketplacePackEntry, Source};
 use crate::processors::{PackSummary, ProcessorSummary};
 use crate::services::error::ServiceError;
@@ -71,7 +71,7 @@ pub(crate) struct InstallProcessorBody {
 pub(crate) async fn h_install_processor(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
-    Json(body): Json<InstallProcessorBody>,
+    JsonBody(body): JsonBody<InstallProcessorBody>,
 ) -> Result<Json<ProcessorSummary>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
     Ok(Json(processors::install_yaml(&svc, &body.yaml)?))
@@ -169,7 +169,7 @@ pub(crate) enum MarketplaceInstallResult {
 pub(crate) async fn h_marketplace_install(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
-    Json(body): Json<MarketplaceInstallBody>,
+    JsonBody(body): JsonBody<MarketplaceInstallBody>,
 ) -> Result<Json<MarketplaceInstallResult>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
     match (body.entry, body.pack) {

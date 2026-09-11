@@ -1,10 +1,11 @@
 //! GET /mcp/activity?since=&limit=
 
-use axum::extract::{Query, State};
+use axum::extract::State;
 use axum::Json;
 use serde::Deserialize;
 
 use crate::mcp_bridge::BridgeCtx;
+use crate::mcp_bridge::respond::Qs;
 use crate::services::ActivityEntry;
 
 #[derive(Debug, Default, Deserialize)]
@@ -24,7 +25,7 @@ pub(crate) struct ActivityParams {
 /// route does not pollute it.
 pub(crate) async fn h_activity(
     State(ctx): State<BridgeCtx>,
-    Query(params): Query<ActivityParams>,
+    Qs(params): Qs<ActivityParams>,
 ) -> Json<Vec<ActivityEntry>> {
     Json(ctx.state.activity.list(params.limit, params.since))
 }

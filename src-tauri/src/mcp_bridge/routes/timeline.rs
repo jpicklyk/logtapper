@@ -19,14 +19,14 @@
 
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::HeaderMap,
 };
 use serde::Deserialize;
 
 use crate::charts::builder::ChartData;
 use crate::mcp_bridge::BridgeCtx;
-use crate::mcp_bridge::respond::client_name;
+use crate::mcp_bridge::respond::{Qs, client_name};
 use crate::services::ServiceError;
 use crate::services::timeline::{self, TimelineSeriesData};
 
@@ -44,7 +44,7 @@ pub(crate) async fn h_chart(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
     Path(session_id): Path<String>,
-    Query(params): Query<ChartParams>,
+    Qs(params): Qs<ChartParams>,
 ) -> Result<Json<Vec<ChartData>>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
     Ok(Json(timeline::chart_data(&svc, &session_id, &params.processor_id)?))
@@ -65,7 +65,7 @@ pub(crate) async fn h_timeline(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
     Path(session_id): Path<String>,
-    Query(params): Query<TimelineParams>,
+    Qs(params): Qs<TimelineParams>,
 ) -> Result<Json<Vec<TimelineSeriesData>>, ServiceError> {
     let processor_ids: Vec<String> = params
         .processor_ids
