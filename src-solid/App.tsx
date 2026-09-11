@@ -1,18 +1,44 @@
 /** @jsxImportSource solid-js */
-import { createSignal, For, Show } from 'solid-js';
+import { Show, createSignal, onCleanup } from 'solid-js';
 import { open } from '@tauri-apps/plugin-dialog';
 import { getLines, loadLogFile } from '@bridge/commands';
+import {
+  CacheManager,
+  DataSourceRegistry,
+  LogViewer,
+  createCacheDataSource,
+} from './viewer';
+import type { CacheDataSource } from './viewer';
 import styles from './App.module.css';
 
 /**
- * Scaffold hello page. Opens a file through the same dialog + `load_log_file`
- * pair the React app uses (`context/index.tsx` → `openFileDialog`), then reads
- * the head of the session through `get_lines`.
+ * Solid spike shell: open a file, then show it in the virtualized viewer.
+ *
+ * The cache manager and data-source registry are app-wide singletons — one each,
+ * created once here. React builds them in `CacheProvider`; Solid has no provider
+ * in the spike, so they are constructed directly (the barrel re-exports the
+ * classes for exactly this reason).
  */
+
+const CACHE_BUDGET = 100_000;
+const VIEW_ID = 'solid-main';
+
 export function App() {
-  const [status, setStatus] = createSignal('');
+  const cacheManager = new CacheManager(CACHE_BUDGET);
+  const registry = new DataSourceRegistry();
+
+  const [dataSource, setDataSource] = createSignal<CacheDataSource | null>(null);
+  const [sessionId, setSessionId] = createSignal<string | null>(null);
+  const [sourceName, setSourceName] = createSignal('');
+  const [totalLines, setTotalLines] = createSignal(0);
   const [error, setError] = createSignal('');
-  const [lines, setLines] = createSignal<string[]>([]);
+  const [loading, setLoading] = createSignal(false);
+
+  const disposeSource = () => {
+    dataSource()?.dispose?.();
+    setDataSource(null);
+  };
+  onCleanup(disposeSource);
 
   const openFile = async () => {
     setError('');
@@ -25,35 +51,85 @@ export function App() {
     });
     if (typeof selected !== 'string') return;
 
-    setStatus('Loading…');
-    setLines([]);
+    setLoading(true);
     try {
       const [result] = await loadLogFile(selected);
-      const page = await getLines({
-        sessionId: result.sessionId,
+      const id = result.sessionId;
+
+      // Probe for the authoritative total before building the source, so the
+      // viewer's spacer is correct on its very first paint.
+      const head = await getLines({
+        sessionId: id,
         mode: { mode: 'Full' },
         offset: 0,
-        count: 5,
+        count: 1,
         context: 0,
         processorId: null,
         search: null,
       });
-      setStatus(`${result.sourceName} — ${page.totalLines} lines`);
-      setLines(page.lines.map((l) => l.raw));
+
+      disposeSource();
+      cacheManager.releaseView(VIEW_ID);
+      const viewCache = cacheManager.allocateView(VIEW_ID, id);
+
+      const ds = createCacheDataSource({
+        sessionId: id,
+        viewCache,
+        fetchLines: (offset, count) =>
+          getLines({
+            sessionId: id,
+            mode: { mode: 'Full' },
+            offset,
+            count,
+            context: 0,
+            processorId: null,
+            search: null,
+          }),
+        registry,
+      });
+      ds.updateTotalLines(head.totalLines);
+
+      setSessionId(id);
+      setSourceName(result.sourceName);
+      setTotalLines(head.totalLines);
+      setDataSource(ds);
     } catch (e) {
-      setStatus('');
       setError(String(e));
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
     <main class={styles.page}>
-      <h1>LogTapper — Solid scaffold</h1>
-      <button type="button" onClick={openFile}>Open file…</button>
-      <Show when={status()}><p>{status()}</p></Show>
-      <Show when={error()}><p class={styles.error}>{error()}</p></Show>
-      <Show when={lines().length > 0}>
-        <pre class={styles.lines}><For each={lines()}>{(l) => <div>{l}</div>}</For></pre>
+      <header class={styles.bar}>
+        <button type="button" class={styles.openButton} onClick={openFile} disabled={loading()}>
+          Open file…
+        </button>
+        <Show when={sourceName()}>
+          <span class={styles.session}>
+            {sourceName()} — {totalLines().toLocaleString()} lines
+          </span>
+        </Show>
+        <Show when={loading()}>
+          <span class={styles.session}>Loading…</span>
+        </Show>
+        <Show when={error()}>
+          <span class={styles.error}>{error()}</span>
+        </Show>
+      </header>
+
+      <Show
+        when={dataSource()}
+        fallback={<div class={styles.empty}>No log open. Choose a file to begin.</div>}
+      >
+        {(ds) => (
+          <LogViewer
+            dataSource={ds()}
+            totalLineCount={totalLines()}
+            sessionId={sessionId() ?? undefined}
+          />
+        )}
       </Show>
     </main>
   );

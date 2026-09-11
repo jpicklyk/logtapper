@@ -48,3 +48,13 @@ export { buildCopyText, writeClipboard } from '@viewport/copyText';
 
 export { CacheManager, ViewCacheHandle } from '@cache/CacheManager';
 export type { ViewCache, WritableViewCache, CacheController, ViewPriority } from '@cache/CacheManager';
+
+// ── Render layer (P3) ─────────────────────────────────────────────────────
+export { LogViewer } from './LogViewer';
+export type { LogViewerProps } from './LogViewer';
+
+export { Row } from './Row';
+export type { RowProps } from './Row';
+
+export { HighlightedText, segments, segmentClass } from './HighlightedText';
+export type { Segment } from './HighlightedText';

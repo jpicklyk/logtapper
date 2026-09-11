@@ -1,0 +1,218 @@
+/* ── Solid LogViewer ─────────────────────────────────────────────────────
+   Ported from src-next/viewport/ReadOnlyViewer.module.css + TextLine.module.css.
+
+   Every colour, font and metric is a custom property. T1 (the token system) has
+   not landed yet and src-solid/index.html loads no stylesheet, so each one
+   carries a `var(--x, <fallback>)` whose fallback is the dark value from
+   src-next/styles/tokens.css. Once T1 defines the tokens the fallbacks go
+   unused and the viewer follows whichever theme is active.
+
+   Two properties are supplied by the component at runtime rather than set
+   directly: `--row-h` / `--spacer-h` on .spacer, and `--row-top` on each .row. */
+
+.wrapper {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.viewer {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+  background: var(--viewer-bg, var(--bg-base, #0c1014));
+  outline: none;
+}
+
+.viewer:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--focus-ring, rgba(88, 166, 255, 0.4));
+}
+
+.altMode {
+  cursor: crosshair;
+}
+
+.spacer {
+  position: relative;
+  height: var(--spacer-h, 0px);
+  min-width: 100%;
+  width: max-content;
+}
+
+/* ── Rows ─────────────────────────────────────────────────────────────── */
+
+.row {
+  position: absolute;
+  left: 0;
+  top: var(--row-top, 0px);
+  height: var(--row-h, 22px);
+  min-width: 100%;
+  width: max-content;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  white-space: pre;
+  font-family: var(--font-mono, 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace);
+  font-size: var(--viewer-font-size, 12px);
+  line-height: var(--row-h, 22px);
+  border-left: 2px solid transparent;
+  color: var(--text, #b8c4ce);
+}
+
+.row:hover {
+  background: rgba(136, 152, 170, 0.04);
+}
+
+.lineNum {
+  color: var(--viewer-gutter-text, var(--text-dimmed, #484f58));
+  min-width: 60px;
+  text-align: right;
+  padding-right: 8px;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.level {
+  width: 14px;
+  text-align: center;
+  padding-right: 6px;
+  user-select: none;
+  flex-shrink: 0;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.msg {
+  flex: 1;
+}
+
+/* ── Level colours ────────────────────────────────────────────────────── */
+/* Declared before [data-selected] so selection always wins. */
+
+.row[data-level='Verbose'] { color: var(--level-verbose, #6e7681); }
+.row[data-level='Debug']   { color: var(--level-debug, #9ca3af); }
+.row[data-level='Info']    { color: var(--text, #b8c4ce); }
+
+.row[data-level='Warn'] {
+  color: var(--level-warning, #d29922);
+  background: var(--level-warning-bg, rgba(210, 153, 34, 0.06));
+}
+
+.row[data-level='Error'] {
+  color: var(--level-error, #f47067);
+  background: var(--level-error-bg, #2d1117);
+}
+
+.row[data-level='Fatal'] {
+  color: var(--level-fatal, #ff6e6e);
+  background: var(--level-fatal-bg, #3d1118);
+  font-weight: 600;
+}
+
+/* ── Selection + keyboard cursor ──────────────────────────────────────── */
+
+.row[data-selected] {
+  background: var(--viewer-selection-bg, rgba(255, 200, 50, 0.12));
+  border-left-color: var(--viewer-selection-border, rgba(255, 200, 50, 0.75));
+}
+
+.row[data-active] {
+  border-left-color: var(--accent, #58a6ff);
+}
+
+.row[data-active] .lineNum {
+  color: var(--accent, #58a6ff);
+}
+
+/* ── Skeleton placeholder ─────────────────────────────────────────────── */
+
+.row[data-skeleton] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.skeletonBar {
+  display: inline-block;
+  width: 40%;
+  height: 10px;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--bg-raised, #141b21) 25%,
+    var(--bg-overlay, #1b2530) 50%,
+    var(--bg-raised, #141b21) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.8s ease-in-out infinite;
+}
+
+@keyframes skeleton-shimmer {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+
+/* ── Highlight segments ───────────────────────────────────────────────── */
+/* Module-scoped equivalents of the global .hl-* classes in
+   src-next/styles/highlights.css, which src-solid does not load. */
+
+.hlSearch {
+  background: var(--hl-search, rgba(210, 153, 34, 0.4));
+  color: inherit;
+  border-radius: 2px;
+}
+
+.hlSearchActive {
+  background: var(--hl-search-active, rgba(210, 153, 34, 0.8));
+  color: inherit;
+  border-radius: 2px;
+}
+
+.hlProcessor {
+  background: none;
+  color: inherit;
+  border-bottom: 2px solid currentColor;
+}
+
+.hlField {
+  background: none;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.hlPii {
+  background: var(--hl-pii, rgba(207, 34, 46, 0.35));
+  color: inherit;
+  border-radius: 2px;
+}
+
+/* ── "N new lines below" badge ────────────────────────────────────────── */
+
+.newLinesBadge {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-drag, 40);
+  padding: 4px 16px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-on-accent, var(--bg-base, #0c1014));
+  background: var(--accent, #58a6ff);
+  border: none;
+  border-radius: var(--radius-xl, 999px);
+  cursor: pointer;
+}
+
+.newLinesBadge:hover {
+  background: var(--accent-base, #1f6feb);
+}
+
+.newLinesBadge:focus-visible {
+  outline: 2px solid var(--focus-ring, rgba(88, 166, 255, 0.4));
+  outline-offset: 2px;
+}
