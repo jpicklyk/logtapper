@@ -178,10 +178,13 @@ export function usePaneActions() {
 }
 
 export function useSettingsActions() {
-  const { startMcpBridge, stopMcpBridge, setFileAssociation, openDefaultAppsSettings, setMcpOpenAllowlist } = useActionsContext();
+  const { startMcpBridge, stopMcpBridge, setFileAssociation, openDefaultAppsSettings,
+          setMcpOpenAllowlist, setAgentRawAccess } = useActionsContext();
   return useMemo(
-    () => ({ startMcpBridge, stopMcpBridge, setFileAssociation, openDefaultAppsSettings, setMcpOpenAllowlist }),
-    [startMcpBridge, stopMcpBridge, setFileAssociation, openDefaultAppsSettings, setMcpOpenAllowlist],
+    () => ({ startMcpBridge, stopMcpBridge, setFileAssociation, openDefaultAppsSettings,
+             setMcpOpenAllowlist, setAgentRawAccess }),
+    [startMcpBridge, stopMcpBridge, setFileAssociation, openDefaultAppsSettings,
+     setMcpOpenAllowlist, setAgentRawAccess],
   );
 }
 

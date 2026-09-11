@@ -11,15 +11,20 @@
 //! - [`should_anonymize`] — must this caller's view of this session be redacted?
 //! - [`redact_line`] — the single choke point every raw-text response goes through.
 //!
-//! The anonymization helpers below (`resolve_should_anonymize`,
-//! `anonymize_for_session`, `anonymize_line_texts`, `anonymize_scan_line`,
-//! `truncate_str`) were moved here verbatim from `mcp_bridge.rs`, with their
-//! tests, and the bridge now calls them from here. Their fail-closed and
-//! anonymize-before-truncate contracts are unchanged and still pinned by those
-//! tests — they are the difference between an agent seeing a redacted log and
-//! an agent seeing a user's email address.
+//! The anonymization helpers below (`anonymize_session_text`,
+//! `anonymize_scan_line`, `truncate_str`) were moved here from `mcp_bridge.rs`
+//! with their tests, and the bridge calls them from here. Their
+//! anonymize-before-truncate contract is unchanged and still pinned by those
+//! tests — it is the difference between an agent seeing a redacted log and an
+//! agent seeing a user's email address.
+//!
+//! **Anonymization is a single global decision, not a per-session one.** An
+//! agent is anonymized unless `AppState::agent_raw_access` is `true` — one
+//! persisted, UI-only opt-out (`services::settings::set_agent_raw_access`).
+//! The per-session `mcp_anonymize` map this replaced was mirrored from each
+//! session's pipeline chain by the frontend, which meant the default chain
+//! silently turned agent anonymization *off*.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::anonymizer::LogAnonymizer;
@@ -193,41 +198,34 @@ pub fn deny_agent_gate_mutation(ctx: &ServiceCtx, what: &str) -> Result<(), Serv
 // Anonymization gate
 // ---------------------------------------------------------------------------
 
-/// Resolve whether MCP bridge responses for `session_id` should be
-/// anonymized, given the current per-session flag map (`AppState::mcp_anonymize`).
+/// Read the persisted agent raw-access opt-out (`AppState::agent_raw_access`).
 ///
-/// **Fails closed**: a session with no explicit entry — one the frontend has
-/// never signalled a pipeline-chain state for (e.g. just opened, or the
-/// signal hasn't landed yet) — defaults to `true`. Serving raw PII for an
-/// unrecognized session is the wrong default; over-anonymizing a session
-/// that didn't need it is not.
-///
-/// Pulled out as a pure function (no locking, no `AppState`) so the decision
-/// itself is unit-testable without spinning up Axum or Tauri state.
-///
-/// Also reused by `commands::export::export_all_sessions` — export must gate
-/// on the same per-session state as the bridge rather than inventing a
-/// second anonymization decision, or the two could disagree about whether a
-/// given session's raw text is safe to hand out.
-pub fn resolve_should_anonymize(flags: &HashMap<String, bool>, session_id: &str) -> bool {
-    flags.get(session_id).copied().unwrap_or(true)
+/// `false` — the default, and the value on a missing/corrupt settings file —
+/// means agents are anonymized. Kept private: every decision about raw text
+/// goes through [`should_anonymize`], and the *setting* is read/written
+/// through `services::settings`.
+fn agent_raw_access_enabled(state: &AppState) -> bool {
+    *state
+        .agent_raw_access
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Caller-aware form of [`resolve_should_anonymize`].
+/// Must this caller's view of log text be redacted?
 ///
-/// A `Ui` caller is the owner of the machine looking at their own logs — never
-/// redacted. An `Agent` caller resolves the per-session flag, fail-closed.
-pub fn should_anonymize(ctx: &ServiceCtx, session_id: &str) -> bool {
+/// - `Ui` → `false`, always. The user is looking at their own machine's logs
+///   in their own app.
+/// - `Agent` → `!agent_raw_access`. Anonymized by default; raw only when the
+///   user explicitly opted out in Settings → General → MCP Integration.
+///
+/// `session_id` is accepted (and ignored) so every raw-text call site keeps
+/// naming the session it is about — the decision is deliberately global, so
+/// nothing a session carries (its pipeline chain above all) can change what an
+/// agent is allowed to see.
+pub fn should_anonymize(ctx: &ServiceCtx, _session_id: &str) -> bool {
     match ctx.caller() {
         Caller::Ui => false,
-        Caller::Agent { .. } => {
-            let flags = ctx
-                .state()
-                .mcp_anonymize
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            resolve_should_anonymize(&flags, session_id)
-        }
+        Caller::Agent { .. } => !agent_raw_access_enabled(ctx.state()),
     }
 }
 
@@ -244,39 +242,22 @@ pub fn redact_line(ctx: &ServiceCtx, session_id: &str, raw: &str, max_chars: usi
     anonymize_scan_line(ctx.state(), session_id, raw, max_chars)
 }
 
-/// Anonymize `raw` for `session_id` per its resolved per-session flag (see
-/// [`resolve_should_anonymize`]). Reuses this session's persistent
-/// `LogAnonymizer` — cached in `mcp_anonymizers` — so token numbering stays
-/// stable across multiple bridge calls, creating one from the current
-/// default `anonymizer_config` on first use. Returns `raw` unchanged when
-/// anonymization is disabled (or unset — never happens, since unset fails
-/// closed to anonymize) for this session.
+/// Apply `session_id`'s anonymizer to `raw`, unconditionally.
 ///
-/// Locks `mcp_anonymize`, then (only when anonymizing) `anonymizer_config`
-/// and `mcp_anonymizers`, each acquired and released in turn. Never held
-/// across an `.await`; never nested with `sessions` or `pipeline_results`.
-/// Enforced at every call site: `h_query`, `h_search`, `h_search_with_context`,
-/// and `h_lines_around` all collect RAW text under the `sessions` lock first,
-/// drop it, and only then call this function (directly or via
-/// [`anonymize_scan_line`] / [`anonymize_line_texts`]) — `sessions` is never
-/// held while this function's own locks are acquired.
+/// This is the *mechanism*, not the decision — [`should_anonymize`] owns the
+/// decision and [`redact_line`] is the choke point that pairs the two. Reuses
+/// this session's persistent `LogAnonymizer` — cached in `mcp_anonymizers` —
+/// so token numbering stays stable across multiple bridge calls, creating one
+/// from the current default `anonymizer_config` on first use.
 ///
-/// Also called from `commands::export::export_all_sessions` (after its
-/// `sessions` lock has been dropped, mirroring the `resolve_line_texts` /
-/// `anonymize_line_texts` split in `mcp_bridge`) so exported `.lts` archives
-/// honor the same per-session anonymization flag as MCP bridge reads, instead
-/// of writing raw Tier-1 bytes unconditionally.
-pub fn anonymize_for_session(state: &AppState, session_id: &str, raw: &str) -> String {
-    let should_anonymize = {
-        let flags = state
-            .mcp_anonymize
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        resolve_should_anonymize(&flags, session_id)
-    };
-    if !should_anonymize {
-        return raw.to_string();
-    }
+/// Locks `anonymizer_config` then `mcp_anonymizers`, each acquired and
+/// released in turn. Never held across an `.await`; never nested with
+/// `sessions` or `pipeline_results`. Enforced at every call site: `h_query`,
+/// `h_search`, `h_search_with_context`, and `h_lines_around` all collect RAW
+/// text under the `sessions` lock first, drop it, and only then call this
+/// function (via [`anonymize_scan_line`] / [`redact_line`]) — `sessions` is
+/// never held while this function's own locks are acquired.
+pub fn anonymize_session_text(state: &AppState, session_id: &str, raw: &str) -> String {
     let config = state
         .anonymizer_config
         .lock()
@@ -305,51 +286,24 @@ pub fn truncate_str(s: &str, max_chars: usize) -> String {
     }
 }
 
-/// Anonymize and truncate a map of line_num -> raw text produced by
-/// `mcp_bridge::resolve_line_texts`, honoring the session's per-session
-/// `mcp_anonymize` flag via [`anonymize_for_session`].
-///
-/// Must be called AFTER the `sessions` lock used by `resolve_line_texts` has
-/// been dropped: `anonymize_for_session` acquires `mcp_anonymize` /
-/// `anonymizer_config` / `mcp_anonymizers`, and nesting those under
-/// `sessions` violates the lock-ordering rule in `mcp_bridge`'s module header.
-///
-/// Truncation (500 chars, matching `resolve_line_texts`'s historical
-/// behavior) is applied AFTER anonymization so a redaction token is never
-/// cut mid-token by the length cap.
-pub fn anonymize_line_texts(
-    state: &AppState,
-    session_id: &str,
-    raw: HashMap<usize, String>,
-) -> HashMap<usize, String> {
-    raw.into_iter()
-        .map(|(ln, text)| {
-            let anonymized = anonymize_for_session(state, session_id, &text);
-            (ln, truncate_str(&anonymized, 500))
-        })
-        .collect()
-}
-
 /// Anonymize + truncate a single raw line's text for MCP scan-result output,
-/// honoring the session's per-session `mcp_anonymize` flag via
-/// [`anonymize_for_session`]. Truncation is applied AFTER anonymization (same
-/// ordering rationale as [`anonymize_line_texts`]) so a redaction token is
-/// never cut mid-token by the length cap.
+/// via [`anonymize_session_text`]. Truncation is applied AFTER anonymization
+/// so a redaction token is never cut mid-token by the length cap.
 ///
-/// Shared by `h_search` (matched line + context_before/context_after),
-/// `h_search_with_context` (context lines), and `h_lines_around` (each
-/// returned line) — all three call this AFTER the `sessions` lock used to
-/// collect the raw text has been dropped, mirroring the `resolve_line_texts`
-/// / `anonymize_line_texts` split in `mcp_bridge`. Factored out as a pure
-/// function (no locking beyond what `anonymize_for_session` itself does) so
-/// the transformation is unit-testable without a live Tauri `AppHandle`.
+/// Reached through [`redact_line`] by `h_search` (matched line +
+/// context_before/context_after), `h_search_with_context` (context lines) and
+/// `h_lines_around` (each returned line) — all of which call it AFTER the
+/// `sessions` lock used to collect the raw text has been dropped. Factored out
+/// as a pure function (no locking beyond what `anonymize_session_text` itself
+/// does) so the transformation is unit-testable without a live Tauri
+/// `AppHandle`.
 pub fn anonymize_scan_line(
     state: &AppState,
     session_id: &str,
     raw: &str,
     max_chars: usize,
 ) -> String {
-    let clean = anonymize_for_session(state, session_id, raw);
+    let clean = anonymize_session_text(state, session_id, raw);
     truncate_str(&clean, max_chars)
 }
 
@@ -358,203 +312,88 @@ mod tests {
     use super::*;
     use crate::services::testing::test_ctx;
 
-    // ── resolve_should_anonymize / anonymize_for_session ────────────────────
-    // Ported verbatim from `mcp_bridge::tests` when these helpers moved here.
-    // Per-session MCP anonymization flag: must fail closed on an unknown
-    // session, and must not leak one session's raw-vs-anonymized state into
-    // another's (the bug this gate fixes — see AppState::mcp_anonymize).
+    // ── should_anonymize (the agent raw-access rule) ────────────────────────
+    // Replaces the per-session `mcp_anonymize` fail-closed map: anonymization
+    // for agents is ON unless the user persisted the `agent_raw_access`
+    // opt-out. No session-level state — above all no pipeline chain — can
+    // change what an agent is allowed to see.
 
     #[test]
-    fn resolve_should_anonymize_defaults_true_for_unknown_session() {
-        // No entry at all — e.g. a session the frontend has never signalled
-        // a pipeline-chain state for. Must fail closed to anonymize.
-        let flags: HashMap<String, bool> = HashMap::new();
-        assert!(resolve_should_anonymize(&flags, "unknown-session"));
+    fn agent_is_anonymized_by_default() {
+        let (ctx, _tmp) = test_ctx().agent("mcp").build();
+        assert!(should_anonymize(&ctx, "s1"));
     }
 
     #[test]
-    fn resolve_should_anonymize_true_when_flag_set_true() {
-        let mut flags: HashMap<String, bool> = HashMap::new();
-        flags.insert("sess-a".to_string(), true);
-        assert!(resolve_should_anonymize(&flags, "sess-a"));
+    fn agent_is_anonymized_for_a_session_that_was_never_seen() {
+        // There is nothing to "signal" any more — an unknown session id is
+        // exactly as redacted as a known one.
+        let (ctx, _tmp) = test_ctx().agent("mcp").build();
+        assert!(should_anonymize(&ctx, "never-seen"));
     }
 
     #[test]
-    fn resolve_should_anonymize_false_when_flag_set_false() {
-        let mut flags: HashMap<String, bool> = HashMap::new();
-        flags.insert("sess-a".to_string(), false);
-        assert!(!resolve_should_anonymize(&flags, "sess-a"));
+    fn agent_gets_raw_text_only_when_raw_access_is_enabled() {
+        let (ctx, _tmp) = test_ctx().agent("mcp").agent_raw_access(true).build();
+        assert!(!should_anonymize(&ctx, "s1"));
     }
 
     #[test]
-    fn resolve_should_anonymize_is_per_session_not_global() {
-        // The exact scenario from the bug report: two sessions, only one of
-        // which has __pii_anonymizer active. A global bool could not
-        // represent this; the per-session map must.
-        let mut flags: HashMap<String, bool> = HashMap::new();
-        flags.insert("sess-anonymized".to_string(), true);
-        flags.insert("sess-raw".to_string(), false);
-        assert!(resolve_should_anonymize(&flags, "sess-anonymized"));
-        assert!(!resolve_should_anonymize(&flags, "sess-raw"));
+    fn the_rule_is_global_not_per_session() {
+        // Every session answers the same way — the old map could (and did)
+        // disagree between two sessions sharing the same bridge traffic.
+        let (ctx, _tmp) = test_ctx().agent("mcp").build();
+        assert!(should_anonymize(&ctx, "sess-a"));
+        assert!(should_anonymize(&ctx, "sess-b"));
+
+        let (raw_ctx, _tmp2) = test_ctx().agent("mcp").agent_raw_access(true).build();
+        assert!(!should_anonymize(&raw_ctx, "sess-a"));
+        assert!(!should_anonymize(&raw_ctx, "sess-b"));
     }
 
     #[test]
-    fn anonymize_for_session_serves_raw_when_flag_false() {
+    fn ui_is_never_anonymized_in_either_state() {
+        let (ctx, _tmp) = test_ctx().build();
+        assert!(!should_anonymize(&ctx, "s1"));
+        let (ctx, _tmp) = test_ctx().agent_raw_access(true).build();
+        assert!(!should_anonymize(&ctx, "s1"));
+    }
+
+    // ── anonymize_session_text (the mechanism) ──────────────────────────────
+    // Unconditional: the decision belongs to `should_anonymize`, and
+    // `redact_line` is the one place that pairs the two.
+
+    #[test]
+    fn anonymize_session_text_always_redacts() {
         let state = AppState::new();
-        state
-            .mcp_anonymize
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert("sess-a".to_string(), false);
         let raw = "contact user@example.com for access";
-        let out = anonymize_for_session(&state, "sess-a", raw);
-        assert_eq!(out, raw);
-    }
-
-    #[test]
-    fn anonymize_for_session_redacts_when_flag_true() {
-        let state = AppState::new();
-        state
-            .mcp_anonymize
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert("sess-a".to_string(), true);
-        let raw = "contact user@example.com for access";
-        let out = anonymize_for_session(&state, "sess-a", raw);
+        let out = anonymize_session_text(&state, "sess-a", raw);
         assert_ne!(out, raw);
         assert!(!out.contains("user@example.com"));
     }
 
     #[test]
-    fn anonymize_for_session_fails_closed_for_unknown_session() {
-        // No `set_mcp_anonymize` call has ever landed for this session —
-        // must anonymize by default, not serve raw PII.
+    fn anonymize_session_text_reuses_one_anonymizer_per_session() {
+        // Token numbering must stay stable across calls — an agent that saw
+        // <EMAIL-1> in a search hit must see the same token in lines_around.
         let state = AppState::new();
-        let raw = "contact user@example.com for access";
-        let out = anonymize_for_session(&state, "never-seen-session", raw);
-        assert_ne!(out, raw);
-        assert!(!out.contains("user@example.com"));
-    }
-
-    // ── anonymize_line_texts (Tier-2 raw-line-leak fix) ──────────────────────
-    // `h_pipeline` (reporter sampleMatchedLines / tracker recentTransitions)
-    // and `h_processor_detail` (include_line_text=true) both resolve raw text
-    // via `resolve_line_texts` and previously injected it straight into the
-    // JSON response as `rawLine`, never checking the session's
-    // `mcp_anonymize` flag — unlike h_query/h_search/h_lines_around/
-    // h_search_with_context, which all route through `anonymize_for_session`.
-    // These tests exercise the two-phase fix directly: `resolve_line_texts`
-    // stays a pure "fetch under lock" helper, and `anonymize_line_texts` is
-    // the gate callers must pipe its output through afterward.
-
-    #[test]
-    fn anonymize_line_texts_redacts_pii_when_flag_true() {
-        let state = AppState::new();
-        state
-            .mcp_anonymize
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert("sess-a".to_string(), true);
-
-        let mut raw = HashMap::new();
-        raw.insert(10usize, "contact user@example.com for access".to_string());
-        raw.insert(20usize, "no pii on this line".to_string());
-
-        let out = anonymize_line_texts(&state, "sess-a", raw);
-
-        // The PII-bearing line must no longer contain the raw email — this
-        // is exactly the field `h_pipeline` / `h_processor_detail` inject
-        // into `rawLine` in the JSON response.
-        assert!(
-            !out[&10].contains("user@example.com"),
-            "raw PII leaked through rawLine: {}",
-            out[&10]
-        );
-        assert_eq!(out[&20], "no pii on this line");
-    }
-
-    #[test]
-    fn anonymize_line_texts_serves_raw_when_flag_false() {
-        // Anonymization is opt-in per session — a session that explicitly
-        // disabled it must still get its raw text back unchanged.
-        let state = AppState::new();
-        state
-            .mcp_anonymize
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert("sess-raw".to_string(), false);
-
-        let mut raw = HashMap::new();
-        raw.insert(5usize, "contact user@example.com for access".to_string());
-
-        let out = anonymize_line_texts(&state, "sess-raw", raw);
-        assert_eq!(out[&5], "contact user@example.com for access");
-    }
-
-    #[test]
-    fn anonymize_line_texts_fails_closed_for_unknown_session() {
-        // No `set_mcp_anonymize` signal has landed for this session yet —
-        // must anonymize by default (same fail-closed contract as
-        // `anonymize_for_session`), not serve raw PII through rawLine.
-        let state = AppState::new();
-        let mut raw = HashMap::new();
-        raw.insert(1usize, "contact user@example.com for access".to_string());
-
-        let out = anonymize_line_texts(&state, "never-seen-session", raw);
-        assert!(!out[&1].contains("user@example.com"));
-    }
-
-    #[test]
-    fn anonymize_line_texts_anonymizes_before_truncating() {
-        // Order matters: anonymize the FULL raw text first, then truncate.
-        // If it were truncated first, an email straddling the 500-char cut
-        // point would be sliced mid-token (e.g. "user@example." with no
-        // TLD) — the anonymizer's email pattern would no longer match the
-        // mangled fragment, and the "user@" prefix would leak into rawLine
-        // unredacted. Doing it in the right order redacts the whole email
-        // before the cut ever happens.
-        let state = AppState::new();
-        state
-            .mcp_anonymize
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert("sess-a".to_string(), true);
-
-        // Email spans char 490..506 — straddles the 500-char truncation point.
-        // The prefix ends in a space so the email sits on a word boundary
-        // (EMAIL_RE is `\b`-anchored with a bounded local part; without a
-        // boundary a 490-char word prefix would prevent any match at all,
-        // which is unrelated to the ordering this test checks).
-        let long_line = format!("{} user@example.com", "p".repeat(489));
-        let mut raw = HashMap::new();
-        raw.insert(1usize, long_line);
-
-        let out = anonymize_line_texts(&state, "sess-a", raw);
-        assert!(
-            !out[&1].contains("user@"),
-            "partial/full email leaked through rawLine: {}",
-            out[&1]
-        );
+        let a = anonymize_session_text(&state, "sess-a", "contact user@example.com");
+        let b = anonymize_session_text(&state, "sess-a", "again: user@example.com");
+        let token = a.split_whitespace().last().unwrap();
+        assert!(b.contains(token), "token numbering drifted: {a} / {b}");
     }
 
     // ── anonymize_scan_line (h_search / h_search_with_context / h_lines_around) ─
-    // These three handlers used to call `anonymize_for_session` (which locks
-    // `mcp_anonymize` / `anonymizer_config` / `mcp_anonymizers`) WHILE still
-    // holding the `sessions` lock from their chunked scan loop — a lock-order
-    // violation of the bridge's own header rule ("copy/clone the data needed,
-    // drop the `sessions` lock, THEN build the JSON response"). The fix moves
+    // These three handlers used to call the anonymizer WHILE still holding the
+    // `sessions` lock from their chunked scan loop — a lock-order violation of
+    // the bridge's own header rule ("copy/clone the data needed, drop the
+    // `sessions` lock, THEN build the JSON response"). The fix moves
     // anonymization to run after `sessions` is dropped, funneled through this
     // shared helper.
 
     #[test]
-    fn anonymize_scan_line_redacts_pii_when_flag_true() {
+    fn anonymize_scan_line_redacts_pii() {
         let state = AppState::new();
-        state
-            .mcp_anonymize
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert("sess-a".to_string(), true);
-
         let raw = "contact user@example.com for access";
         let out = anonymize_scan_line(&state, "sess-a", raw, 500);
         assert_ne!(out, raw);
@@ -562,69 +401,28 @@ mod tests {
     }
 
     #[test]
-    fn anonymize_scan_line_serves_raw_when_flag_false() {
-        // Anonymization is opt-in per session — matches h_search's contract
-        // of honoring the session's mcp_anonymize flag, not a global switch.
-        let state = AppState::new();
-        state
-            .mcp_anonymize
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert("sess-raw".to_string(), false);
-
-        let raw = "contact user@example.com for access";
-        let out = anonymize_scan_line(&state, "sess-raw", raw, 500);
-        assert_eq!(out, raw);
-    }
-
-    #[test]
-    fn anonymize_scan_line_fails_closed_for_unknown_session() {
-        // No `set_mcp_anonymize` signal has landed for this session — must
-        // anonymize by default (same fail-closed contract as
-        // `anonymize_for_session` / `anonymize_line_texts`), matching what
-        // h_search / h_search_with_context / h_lines_around must do for a
-        // session the frontend hasn't signalled a state for yet.
-        let state = AppState::new();
-        let raw = "contact user@example.com for access";
-        let out = anonymize_scan_line(&state, "never-seen-session", raw, 500);
-        assert!(
-            !out.contains("user@example.com"),
-            "raw PII leaked for unrecognized session: {out}"
-        );
-    }
-
-    #[test]
     fn anonymize_scan_line_anonymizes_before_truncating() {
-        // Same ordering requirement as `anonymize_line_texts`: h_search's
-        // matched line, its contextBefore/contextAfter lines, and
-        // h_search_with_context's/h_lines_around's context lines are all
-        // truncated at up to 500/max_line_chars characters — if truncation
-        // ran first, an email straddling the cut point would be sliced
-        // mid-token and leak its unredacted prefix.
+        // Order matters: anonymize the FULL raw text first, then truncate.
+        // If it were truncated first, an email straddling the cut point would
+        // be sliced mid-token (e.g. "user@example." with no TLD) — the
+        // anonymizer's email pattern would no longer match the mangled
+        // fragment, and the "user@" prefix would leak unredacted.
+        //
+        // Email spans char 490..506 — straddles the 500-char truncation point.
+        // The prefix ends in a space so the email sits on a word boundary
+        // (EMAIL_RE is `\b`-anchored with a bounded local part).
         let state = AppState::new();
-        state
-            .mcp_anonymize
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert("sess-a".to_string(), true);
-
         let long_line = format!("{} user@example.com", "p".repeat(489));
         let out = anonymize_scan_line(&state, "sess-a", &long_line, 500);
         assert!(!out.contains("user@"), "partial/full email leaked: {out}");
     }
 
     #[test]
-    fn anonymize_scan_line_truncates_after_anonymizing_respects_custom_cap() {
+    fn anonymize_scan_line_respects_a_custom_cap() {
         // h_search_with_context accepts a caller-supplied `max_line_chars`
         // (up to 8000) instead of the fixed 500 h_search/h_lines_around use —
         // verify the cap is still honored post-anonymization.
         let state = AppState::new();
-        state
-            .mcp_anonymize
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert("sess-a".to_string(), false); // flag off: raw passes through unchanged
-
         let long = "x".repeat(600);
         let out = anonymize_scan_line(&state, "sess-a", &long, 500);
         assert!(out.ends_with("..."));
@@ -675,17 +473,18 @@ mod tests {
     // ── Caller-aware gates ─────────────────────────────────────────────────
 
     #[test]
-    fn ui_caller_is_never_anonymized_even_when_the_flag_says_yes() {
+    fn ui_caller_is_never_anonymized() {
         // The user is looking at their own machine's logs in their own app.
-        // The per-session flag exists to gate what leaves for an AGENT.
-        let (ctx, _tmp) = test_ctx().with_session("s1", 1).mcp_anonymize("s1", true).build();
+        // The gate exists to bound what leaves for an AGENT.
+        let (ctx, _tmp) = test_ctx().with_session("s1", 1).build();
         assert!(!should_anonymize(&ctx, "s1"));
         let out = redact_line(&ctx, "s1", "contact user@example.com", 500);
         assert_eq!(out, "contact user@example.com");
     }
 
     #[test]
-    fn agent_caller_fails_closed_for_an_unsignalled_session() {
+    fn agent_caller_is_redacted_with_no_configuration_at_all() {
+        // The default state of a fresh install: no settings file, no opt-out.
         let (ctx, _tmp) = test_ctx().caller(Caller::Agent { client: "mcp".into() }).build();
         assert!(should_anonymize(&ctx, "never-seen"));
         let out = redact_line(&ctx, "never-seen", "contact user@example.com", 500);
@@ -693,10 +492,10 @@ mod tests {
     }
 
     #[test]
-    fn agent_caller_gets_raw_text_when_the_session_explicitly_opted_out() {
+    fn agent_caller_gets_raw_text_only_after_the_user_opted_out() {
         let (ctx, _tmp) = test_ctx()
             .caller(Caller::Agent { client: "mcp".into() })
-            .mcp_anonymize("s1", false)
+            .agent_raw_access(true)
             .build();
         assert!(!should_anonymize(&ctx, "s1"));
         assert_eq!(
@@ -720,7 +519,6 @@ mod tests {
     fn redact_line_anonymizes_before_truncating_for_an_agent() {
         let (ctx, _tmp) = test_ctx()
             .caller(Caller::Agent { client: "mcp".into() })
-            .mcp_anonymize("s1", true)
             .build();
         let long_line = format!("{} user@example.com", "p".repeat(489));
         let out = redact_line(&ctx, "s1", &long_line, 500);

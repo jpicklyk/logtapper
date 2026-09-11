@@ -123,6 +123,7 @@ macro_rules! ROOT_TYPES {
             app_lib::commands::session::McpStatus,
             app_lib::commands::session::SessionMetadata,
             app_lib::commands::bridge_access::McpOpenAllowlist,
+            app_lib::services::settings::McpAgentAccess,
             app_lib::commands::mcp::McpBundleInfo,
             app_lib::commands::file_associations::FileAssocEntry,
             // --- ADB streaming ------------------------------------------------

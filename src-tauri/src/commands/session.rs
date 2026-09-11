@@ -18,20 +18,10 @@ pub struct McpStatus {
     /// Seconds since the last request from the MCP client.
     /// None = bridge has never received a request (Claude Code not connected).
     pub idle_secs: Option<u32>,
-}
-
-/// Enable or disable PII anonymization for MCP bridge query results for one
-/// session. Called by the frontend whenever __pii_anonymizer is added to or
-/// removed from that session's pipeline chain. Per-session — see
-/// `AppState::mcp_anonymize` for why a global flag is unsafe here.
-///
-/// Thin adapter over [`crate::services::sessions::set_anonymize`] — `Ui`-only;
-/// an agent calling the equivalent service function directly gets `Forbidden`
-/// (see `services::policy::deny_agent_gate_mutation`).
-#[tauri::command]
-pub fn set_mcp_anonymize(app: tauri::AppHandle, session_id: String, enabled: bool) -> Result<(), String> {
-    let ctx = ui_ctx(&app);
-    Ok(crate::services::sessions::set_anonymize(&ctx, &session_id, enabled)?)
+    /// `true` when the user has opted agents out of PII anonymization
+    /// (Settings → General → MCP Integration). Surfaced here so the status
+    /// pill can warn that agents are reading raw log text.
+    pub agent_raw_access: bool,
 }
 
 /// Records which session is currently the focused pane session in the

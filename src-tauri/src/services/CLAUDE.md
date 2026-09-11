@@ -116,23 +116,32 @@ indexer and the ADB reader task depend on landing on that runtime. Test doubles
   (export, workspace save, stream save) each independently built the identical
   allowlist+parent-containment+hygiene logic before this consolidation; if you're tempted
   to write a fourth copy, you're looking for this function.
-- **`should_anonymize(ctx, session_id) -> bool`** — `Ui` → `false` always. `Agent` →
-  `resolve_should_anonymize`, **fails closed**: a session with no explicit
-  `mcp_anonymize` entry (just opened, signal not landed yet) defaults to `true`. Also used
-  by `commands::export` so exported `.lts` archives honor the same flag as bridge reads.
+- **`should_anonymize(ctx, _session_id) -> bool`** — `Ui` → `false` always. `Agent` →
+  `!agent_raw_access`, i.e. **redacted by default**; raw only when the user ticked the
+  Settings → General → MCP Integration checkbox (`settings::set_agent_raw_access`,
+  `Ui`-only, persisted to `{app_data_dir}/mcp_agent_access.json`, loaded in `lib.rs::setup`
+  like the allowlist). The `session_id` parameter is accepted and ignored: the decision is
+  global on purpose, so nothing a session carries — above all its pipeline chain — can
+  widen what an agent sees. (The per-session `mcp_anonymize` map this replaced was
+  mirrored from `chain.includes('__pii_anonymizer')` by the frontend and therefore turned
+  agent anonymization *off* for the default chain.) Also used by `services::export`, so a
+  `.lts` archive an agent writes obeys the same rule as its bridge reads.
 - **`redact_line(ctx, session_id, raw, max_chars) -> String`** — the single choke point for
   raw log text leaving the backend. **Anonymize first, truncate second** — load-bearing
   order, so a redaction token is never cut mid-token by the length cap. Every service
   returning raw text routes through this: lines, search, pipeline matched lines, insights
   message text, section previews, stream events, filters, export. Reuses the session's
   persistent `LogAnonymizer` (cached in `mcp_anonymizers`) so token numbering is stable
-  across calls. Never call this while holding `sessions` — collect the raw text, drop that
-  lock, then redact (the three `mcp_anonymize`/`anonymizer_config`/`mcp_anonymizers` locks
-  must never nest under `sessions`).
+  across calls (`anonymize_session_text` is the unconditional mechanism behind it — the
+  decision belongs to `should_anonymize`). Never call this while holding `sessions` —
+  collect the raw text, drop that lock, then redact (the
+  `agent_raw_access`/`anonymizer_config`/`mcp_anonymizers` locks must never nest under
+  `sessions`).
 - **`deny_agent_gate_mutation(ctx, what) -> Result<(), ServiceError>`** — an agent may
   never widen its own gate. Called first by `set_anonymizer_config`, `set_open_allowlist`,
-  `add_source`/`remove_source` (marketplace sources are a supply-chain surface, same risk
-  class). `Ui` passes; `Agent` gets `Forbidden`. A differently-worded inline check is used
+  `set_agent_raw_access` (the sharpest case — it decides whether an agent sees PII at all,
+  and has no bridge write route), `add_source`/`remove_source` (marketplace sources are a
+  supply-chain surface, same risk class). `Ui` passes; `Agent` gets `Forbidden`. A differently-worded inline check is used
   for `pii_mappings` (a *read*, not a mutation — the helper's message says "may not
   *modify*", the wrong word for a read) — same `Forbidden`/`NOT_ALLOWED` shape.
 
@@ -179,7 +188,7 @@ indexing; these adjust for stream eviction transparently.
 test_ctx() -> TestCtxBuilder
   .caller(Caller) / .agent("name")
   .with_session(id, n) / .with_pii_session(id, n) / .with_session_object(s)
-  .allowlist(dir) / .mcp_anonymize(id, bool)
+  .allowlist(dir) / .agent_raw_access(bool)
   .build() -> (ServiceCtx, TempDir)
   .build_recording() -> (ServiceCtx, Arc<RecordingSink>, TempDir)
 ```

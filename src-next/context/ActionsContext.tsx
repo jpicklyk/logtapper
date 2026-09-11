@@ -116,6 +116,9 @@ export interface ViewActions {
   startMcpBridge: () => Promise<void>;
   stopMcpBridge: () => Promise<void>;
   setMcpOpenAllowlist: (dirs: string[], allowAll: boolean) => Promise<void>;
+  /** Persist whether agents may read raw (un-anonymized) log text. The only
+   *  writer of that gate anywhere in the app — see `services::settings`. */
+  setAgentRawAccess: (enabled: boolean) => Promise<void>;
   exportAllSessions: (options: ExportAllOptions) => Promise<void>;
 }
 
@@ -286,6 +289,7 @@ const DEFAULT_ACTIONS: ActionsContextValue = {
   startMcpBridge: () => noopAsync(),
   stopMcpBridge: () => noopAsync(),
   setMcpOpenAllowlist: (_dirs: string[], _allowAll: boolean) => noopAsync(),
+  setAgentRawAccess: (_enabled: boolean) => noopAsync(),
   exportAllSessions: (_options: ExportAllOptions) => noopAsync(),
 };
 

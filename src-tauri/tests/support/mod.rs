@@ -42,7 +42,7 @@ use tower::ServiceExt;
 
 /// Build a fresh router over an isolated `AppState`, plus the handles a test
 /// needs to seed state before a request (sessions, allowlist,
-/// `mcp_anonymize`) or assert on after one (`mcp_last_activity`, emitted
+/// `agent_raw_access`) or assert on after one (`mcp_last_activity`, emitted
 /// events). Every call gets its own `AppState` — tests never share one.
 pub fn app() -> (Router, Arc<AppState>, Arc<RecordingSink>, TempDir) {
     let (ctx, state, sink, tmp) = ctx_only();

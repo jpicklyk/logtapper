@@ -5,4 +5,10 @@ export type McpStatus = { running: boolean, port: number,
  * Seconds since the last request from the MCP client.
  * None = bridge has never received a request (Claude Code not connected).
  */
-idleSecs: number | null, };
+idleSecs: number | null, 
+/**
+ * `true` when the user has opted agents out of PII anonymization
+ * (Settings → General → MCP Integration). Surfaced here so the status
+ * pill can warn that agents are reading raw log text.
+ */
+agentRawAccess: boolean, };

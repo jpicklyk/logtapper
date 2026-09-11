@@ -638,7 +638,6 @@ fn close_session_state(ctx: &ServiceCtx, session_id: &str) -> Result<(), Service
         .map_err(ServiceError::Internal)?;
 
     lock_svc(&state.mcp_anonymizers, "mcp_anonymizers")?.remove(session_id);
-    lock_svc(&state.mcp_anonymize, "mcp_anonymize")?.remove(session_id);
 
     lock_svc(&state.bookmarks, "bookmarks")?.remove(session_id);
     lock_svc(&state.session_pipeline_meta, "session_pipeline_meta")?.remove(session_id);
@@ -943,10 +942,15 @@ pub fn mcp_status(ctx: &ServiceCtx) -> crate::commands::session::McpStatus {
         .ok()
         .and_then(|ts| *ts)
         .map(|t| t.elapsed().as_secs() as u32);
+    let agent_raw_access = *state
+        .agent_raw_access
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     crate::commands::session::McpStatus {
         running: port.is_some(),
         port: port.unwrap_or(crate::mcp_bridge::PORT),
         idle_secs,
+        agent_raw_access,
     }
 }
 
@@ -1063,16 +1067,6 @@ pub fn bridge_metadata(ctx: &ServiceCtx, session_id: &str) -> Result<BridgeSessi
         last_timestamp: source.last_timestamp(),
         section_count: source.sections().len(),
     })
-}
-
-/// Set the per-session MCP anonymize flag. `Ui`-only — an agent may not
-/// widen its own redaction gate (see `policy::deny_agent_gate_mutation`).
-pub fn set_anonymize(ctx: &ServiceCtx, session_id: &str, enabled: bool) -> Result<(), ServiceError> {
-    super::policy::deny_agent_gate_mutation(ctx, "the anonymization flag")?;
-    if let Ok(mut flags) = ctx.state().mcp_anonymize.lock() {
-        flags.insert(session_id.to_string(), enabled);
-    }
-    Ok(())
 }
 
 /// Record which session is the frontend's currently focused pane session.
@@ -1570,22 +1564,6 @@ mod tests {
         let err = open(ctx, &f.to_string_lossy(), Some(SourceType::Logcat)).await.unwrap_err();
         assert_eq!(err.code(), "INVALID_ARGUMENT");
         assert!(err.message().contains(".lts session bundles"));
-    }
-
-    // ── set_anonymize ─────────────────────────────────────────────────────────
-
-    #[test]
-    fn set_anonymize_by_agent_is_forbidden() {
-        let (ctx, _tmp) = test_ctx().agent("claude-code").with_session("s1", 1).build();
-        let err = set_anonymize(&ctx, "s1", true).unwrap_err();
-        assert_eq!(err.code(), "NOT_ALLOWED");
-    }
-
-    #[test]
-    fn set_anonymize_by_ui_succeeds() {
-        let (ctx, _tmp) = test_ctx().with_session("s1", 1).build();
-        set_anonymize(&ctx, "s1", true).expect("ui may set the flag");
-        assert_eq!(*ctx.state().mcp_anonymize.lock().unwrap().get("s1").unwrap(), true);
     }
 
     // ── metadata / bridge_metadata / list / status ──────────────────────────

@@ -1022,8 +1022,8 @@ pub fn register_ring(
 
 /// Drain everything newer than `since` from this session's agent event ring.
 ///
-/// Line text goes through [`policy::redact_line`] — fail-closed for an agent
-/// against a session whose `mcp_anonymize` flag was never signalled. The ring
+/// Line text goes through [`policy::redact_line`] — redacted for an agent
+/// unless the user persisted the `agent_raw_access` opt-out. The ring
 /// itself holds whatever the capture produced (the in-chain `__pii_anonymizer`
 /// is the other, earlier, redaction point); this is the gate on the read path.
 ///
@@ -2629,7 +2629,7 @@ pipeline:
 
     #[test]
     fn ring_drains_by_seq_and_reports_a_gap_after_eviction() {
-        let (ctx, _tmp) = test_ctx().agent("mcp").mcp_anonymize("s1", false).build();
+        let (ctx, _tmp) = test_ctx().agent("mcp").agent_raw_access(true).build();
         seed_stream_session(&ctx, "s1");
 
         // A deliberately tiny ring so eviction is observable without pushing
@@ -2679,10 +2679,10 @@ pipeline:
         assert_eq!(err.code(), "NOT_FOUND");
     }
 
-    /// Fail-closed: an agent draining a session with no `mcp_anonymize` entry
-    /// must not see raw PII, even though the ring holds it.
+    /// An agent draining a stream must not see raw PII by default, even
+    /// though the ring holds it.
     #[test]
-    fn events_redacts_line_text_for_an_agent_when_the_flag_is_absent() {
+    fn events_redacts_line_text_for_an_agent_by_default() {
         let (ctx, _tmp) = test_ctx().agent("mcp").build();
         seed_stream_session(&ctx, "s1");
         let ring = new_ring();
@@ -2695,7 +2695,7 @@ pipeline:
         };
         assert!(
             !b.lines[0].raw.contains("user@example.com"),
-            "an agent must not see raw PII when mcp_anonymize is unset: {}",
+            "an agent must not see raw PII by default: {}",
             b.lines[0].raw
         );
         assert!(!b.lines[0].message.contains("user@example.com"));

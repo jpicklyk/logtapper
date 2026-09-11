@@ -134,12 +134,13 @@ async fn route_table_probe_every_route_resolves_through_the_live_router() {
 
     // Pinned alongside `mcp_bridge::route_table_matches_expected` (39 at the
     // time WP-T2 landed, 70 once every Wave-2 package had appended its routes,
-    // 69 after WP-13 deleted the orphaned `tag-stats` route) — a drift here
+    // 69 after WP-13 deleted the orphaned `tag-stats` route, 70 with
+    // `GET /mcp/settings/agent_access`) — a drift here
     // means BOTH tests need updating, which is the point: it forces a route
     // addition or removal to touch this file.
     assert_eq!(
         routes.len(),
-        69,
+        70,
         "mcp_bridge::ROUTES count drifted — update this assertion alongside the route table"
     );
 
@@ -390,23 +391,21 @@ async fn open_file_allowed_and_existing_is_not_403_or_400() {
 // 5. Anonymization gating skeleton
 // ---------------------------------------------------------------------------
 //
-// h_query / h_search / h_search_with_context / h_lines_around all gate on the
-// per-session `mcp_anonymize` flag directly against `AppState` (not through a
-// `Caller`-aware `ServiceCtx` yet) — fail-closed when absent, raw when
-// explicitly `false`. These four routes are being refactored concurrently by
-// WP-1/WP-2; if a route's JSON shape changes under this test at merge time,
-// the gating behavior itself (this test's actual concern) is pinned
-// separately in `services::policy` and is expected to survive unchanged —
-// the orchestrator adjusts the response-shape assertions here as needed.
+// h_query / h_search / h_search_with_context / h_lines_around all gate on
+// `policy::should_anonymize`: an agent is redacted unless the user persisted
+// the `agent_raw_access` opt-out. No session state — above all no pipeline
+// chain — participates in that decision, which is the whole point: the
+// per-session `mcp_anonymize` map this replaced was mirrored from the chain by
+// the UI and so turned agent anonymization OFF for the default chain.
 
-/// Exercise the two-state gate for one route: `mcp_anonymize` absent (fails
-/// closed, must redact) vs. explicitly `false` (must serve raw text).
+/// Exercise the two-state gate for one route: absent configuration (the
+/// default — must redact) vs. `agent_raw_access = true` (must serve raw text).
 /// `build_path` renders the request path for a given session id.
 async fn assert_agent_redaction_gating(build_path: impl Fn(&str) -> String) {
     const SESSION: &str = "pii-session";
     const NEEDLE: &str = "user0@example.com";
 
-    // mcp_anonymize ABSENT -> fails closed -> redacted.
+    // Nothing configured -> an agent is anonymized.
     {
         let (router, state, _sink, _tmp) = app();
         state
@@ -420,11 +419,11 @@ async fn assert_agent_redaction_gating(build_path: impl Fn(&str) -> String) {
         let text = String::from_utf8_lossy(&bytes);
         assert!(
             !text.contains(NEEDLE),
-            "mcp_anonymize absent must fail closed and redact; leaked PII: {text}"
+            "an agent must be redacted by default; leaked PII: {text}"
         );
     }
 
-    // mcp_anonymize[session] = false -> raw.
+    // agent_raw_access opt-out on -> raw.
     {
         let (router, state, _sink, _tmp) = app();
         state
@@ -432,14 +431,14 @@ async fn assert_agent_redaction_gating(build_path: impl Fn(&str) -> String) {
             .lock()
             .unwrap()
             .insert(SESSION.to_string(), fixture_session_with_pii(SESSION, 5));
-        state.mcp_anonymize.lock().unwrap().insert(SESSION.to_string(), false);
+        *state.agent_raw_access.lock().unwrap() = true;
 
         let (status, bytes) = get_raw(&router, &build_path(SESSION), &trusted_headers()).await;
         assert_eq!(status, StatusCode::OK, "path {}", build_path(SESSION));
         let text = String::from_utf8_lossy(&bytes);
         assert!(
             text.contains(NEEDLE),
-            "mcp_anonymize=false must serve raw text; missing expected PII: {text}"
+            "the agent_raw_access opt-out must serve raw text; missing expected PII: {text}"
         );
     }
 }
@@ -470,8 +469,8 @@ async fn lines_around_route_honors_the_anonymization_gate() {
 //
 // Every route whose response can carry raw line/log text gets the same
 // two-state gate proven above for query/search/search_with_context/
-// lines_around: `mcp_anonymize` absent fails closed (redacted), explicit
-// `false` serves raw text. Routes that carry NO raw text at all (a filter's
+// lines_around: absent configuration redacts, the `agent_raw_access` opt-out
+// serves raw text. Routes that carry NO raw text at all (a filter's
 // `info`, an `Ack`, `Insights`' structured signals, …) are recorded in
 // [`RAW_TEXT_ROUTE_COVERAGE`] as deliberately not gated, WITH the reason —
 // so the exhaustiveness check below can tell "considered and exempt" from
@@ -509,25 +508,25 @@ async fn processor_detail_route_honors_the_anonymization_gate() {
         );
     }
 
-    // mcp_anonymize ABSENT -> fails closed -> redacted.
+    // Nothing configured -> an agent is anonymized.
     {
         let (router, state, _sink, _tmp) = app();
         seed(&state);
         let (status, body) = get(&router, &path, &trusted_headers()).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let text = serde_json::to_string(&body).unwrap();
-        assert!(!text.contains(NEEDLE), "mcp_anonymize absent must fail closed and redact; leaked PII: {text}");
+        assert!(!text.contains(NEEDLE), "an agent must be redacted by default; leaked PII: {text}");
     }
 
-    // mcp_anonymize[session] = false -> raw.
+    // agent_raw_access opt-out on -> raw.
     {
         let (router, state, _sink, _tmp) = app();
         seed(&state);
-        state.mcp_anonymize.lock().unwrap().insert(SESSION.to_string(), false);
+        *state.agent_raw_access.lock().unwrap() = true;
         let (status, body) = get(&router, &path, &trusted_headers()).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let text = serde_json::to_string(&body).unwrap();
-        assert!(text.contains(NEEDLE), "mcp_anonymize=false must serve raw text; missing expected PII: {text}");
+        assert!(text.contains(NEEDLE), "the agent_raw_access opt-out must serve raw text; missing expected PII: {text}");
     }
 }
 
@@ -624,25 +623,25 @@ async fn processor_detail_tracker_arm_route_honors_the_anonymization_gate() {
             );
     }
 
-    // mcp_anonymize ABSENT -> fails closed -> redacted.
+    // Nothing configured -> an agent is anonymized.
     {
         let (router, state, _sink, _tmp) = app();
         seed(&state);
         let (status, body) = get(&router, &path, &trusted_headers()).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let text = serde_json::to_string(&body).unwrap();
-        assert!(!text.contains(NEEDLE), "mcp_anonymize absent must fail closed and redact; leaked PII: {text}");
+        assert!(!text.contains(NEEDLE), "an agent must be redacted by default; leaked PII: {text}");
     }
 
-    // mcp_anonymize[session] = false -> raw.
+    // agent_raw_access opt-out on -> raw.
     {
         let (router, state, _sink, _tmp) = app();
         seed(&state);
-        state.mcp_anonymize.lock().unwrap().insert(SESSION.to_string(), false);
+        *state.agent_raw_access.lock().unwrap() = true;
         let (status, body) = get(&router, &path, &trusted_headers()).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let text = serde_json::to_string(&body).unwrap();
-        assert!(text.contains(NEEDLE), "mcp_anonymize=false must serve raw text; missing expected PII: {text}");
+        assert!(text.contains(NEEDLE), "the agent_raw_access opt-out must serve raw text; missing expected PII: {text}");
     }
 }
 
@@ -650,7 +649,7 @@ async fn processor_detail_tracker_arm_route_honors_the_anonymization_gate() {
 async fn export_route_honors_the_anonymization_gate_explicit_false_too() {
     // `wp10_timeline_export::export_route_inside_the_allowlist_succeeds_and_redacts_for_an_agent`
     // already pins the fail-closed (absent) half of this gate. This is the
-    // other half: `mcp_anonymize = false` must produce an UNREDACTED export —
+    // other half: the `agent_raw_access` opt-out must produce an UNREDACTED export —
     // exhaustiveness (§5b below) requires both states be proven for every
     // raw-text route, not just one.
     const SESSION: &str = "pii-session-export";
@@ -658,7 +657,7 @@ async fn export_route_honors_the_anonymization_gate_explicit_false_too() {
 
     let (router, state, _sink, tmp) = app();
     state.sessions.lock().unwrap().insert(SESSION.to_string(), fixture_session_with_pii(SESSION, 3));
-    state.mcp_anonymize.lock().unwrap().insert(SESSION.to_string(), false);
+    *state.agent_raw_access.lock().unwrap() = true;
 
     let out_dir = tmp.path().join("allowed-out");
     std::fs::create_dir_all(&out_dir).unwrap();
@@ -692,11 +691,11 @@ async fn export_route_honors_the_anonymization_gate_explicit_false_too() {
         }
     }
     assert!(found_source, "the archive must contain a source entry");
-    assert!(found_needle, "mcp_anonymize=false must serve a raw (unredacted) export");
+    assert!(found_needle, "the agent_raw_access opt-out must serve a raw (unredacted) export");
 }
 
 /// Every `mcp_bridge::ROUTES` template, mapped to why it either IS or is NOT
-/// gated by `mcp_anonymize`. This is the exhaustiveness list: every route
+/// gated by `policy::should_anonymize`. This is the exhaustiveness list: every route
 /// whose path contains a keyword a raw-line-returning route is likely to use
 /// must appear here — see `no_raw_text_capable_route_is_missing_from_the_gate_coverage_list`
 /// below, which enforces that mechanically so a future route cannot be added
@@ -726,7 +725,7 @@ const RAW_TEXT_ROUTE_COVERAGE: &[(&str, &str, &str)] = &[
         "no raw text: FilterCreateResult is {filterId, sessionId, totalLines} — counts only",
     ),
     ("GET", "/mcp/filters/{filter_id}", "no raw text: FilterInfo is counts/status only"),
-    ("GET", "/mcp/filters/{filter_id}/lines", "gated: wp7_filters::lines_are_redacted_when_mcp_anonymize_is_absent_for_the_session / lines_stay_raw_when_mcp_anonymize_is_explicitly_false"),
+    ("GET", "/mcp/filters/{filter_id}/lines", "gated: wp7_filters::lines_are_redacted_for_an_agent_by_default / lines_stay_raw_when_agent_raw_access_is_on"),
     ("POST", "/mcp/filters/{filter_id}/cancel", "no raw text: Ack only"),
     ("DELETE", "/mcp/filters/{filter_id}", "no raw text: Ack only"),
     (
@@ -738,7 +737,7 @@ const RAW_TEXT_ROUTE_COVERAGE: &[(&str, &str, &str)] = &[
     (
         "GET",
         "/mcp/sessions/{session_id}/stream/events",
-        "gated: wp11_stream::events_are_redacted_when_mcp_anonymize_is_absent_for_the_session / events_stay_raw_when_mcp_anonymize_is_explicitly_false",
+        "gated: wp11_stream::events_are_redacted_for_an_agent_by_default / events_stay_raw_when_agent_raw_access_is_on",
     ),
 ];
 
@@ -875,6 +874,66 @@ mod wp12_settings {
         let err = settings::pii_mappings(&ctx, "s1")
             .expect_err("agents must never receive the token -> original map");
         assert_eq!(err.code(), "NOT_ALLOWED");
+    }
+
+    // ── agent_raw_access — readable over HTTP, writable only from the UI ────
+
+    #[tokio::test]
+    async fn get_agent_access_route_reports_the_default_and_the_opt_out() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, body) = get(&router, "/mcp/settings/agent_access", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["agentRawAccess"], json!(false), "agents are anonymized by default: {body}");
+
+        let (router, state, _sink, _tmp) = app();
+        *state.agent_raw_access.lock().unwrap() = true;
+        let (status, body) = get(&router, "/mcp/settings/agent_access", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["agentRawAccess"], json!(true), "the opt-out must be visible: {body}");
+    }
+
+    #[test]
+    fn the_route_table_carries_no_write_route_for_agent_access() {
+        // The gate that decides whether an agent sees PII has exactly one
+        // writer, and it is not reachable over HTTP.
+        for (method, template) in mcp_bridge::ROUTES {
+            if template.contains("agent_access") {
+                assert_eq!(*method, "GET", "agent_access must be read-only over the bridge");
+            }
+        }
+    }
+
+    #[test]
+    fn agent_cannot_set_agent_raw_access() {
+        let (ctx, _tmp) = test_ctx().agent("claude-code").build();
+        let err = settings::set_agent_raw_access(&ctx, true)
+            .expect_err("agents must not be able to un-redact themselves");
+        assert_eq!(err.code(), "NOT_ALLOWED");
+        assert!(!settings::agent_raw_access(&ctx).unwrap(), "the flag must not have moved");
+    }
+
+    #[test]
+    fn ui_can_set_agent_raw_access_and_it_lands_on_disk() {
+        let (ctx, _tmp) = test_ctx().build();
+        settings::set_agent_raw_access(&ctx, true).expect("the UI owns this setting");
+        assert!(settings::agent_raw_access(&ctx).unwrap());
+
+        let file = ctx
+            .paths()
+            .app_data_dir()
+            .unwrap()
+            .join(settings::AGENT_ACCESS_FILE);
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).expect("persisted file")).unwrap();
+        assert_eq!(on_disk["agentRawAccess"], json!(true), "{on_disk}");
+    }
+
+    #[test]
+    fn mcp_status_carries_the_agent_raw_access_flag() {
+        let (ctx, _tmp) = test_ctx().build();
+        assert!(!app_lib::services::sessions::mcp_status(&ctx).agent_raw_access);
+        settings::set_agent_raw_access(&ctx, true).unwrap();
+        assert!(app_lib::services::sessions::mcp_status(&ctx).agent_raw_access);
     }
 
     #[test]
@@ -1039,19 +1098,19 @@ mod wp7_filters {
         assert!(body["error"]["message"].as_str().unwrap().contains("[invalid"));
     }
 
-    /// Fail-closed anonymization: an Agent caller (every bridge request is one)
-    /// against a session with NO `mcp_anonymize` entry must still be redacted.
-    /// Every bridge request is an `Agent` caller by construction
-    /// (`BridgeCtx::svc`), so this is exercised without any special headers.
+    /// Default anonymization: an Agent caller (every bridge request is one)
+    /// with nothing configured must be redacted. Every bridge request is an
+    /// `Agent` caller by construction (`BridgeCtx::svc`), so this is exercised
+    /// without any special headers.
     #[tokio::test]
-    async fn lines_are_redacted_when_mcp_anonymize_is_absent_for_the_session() {
+    async fn lines_are_redacted_for_an_agent_by_default() {
         let (router, state, _sink, _tmp) = app();
         state
             .sessions
             .lock()
             .unwrap()
             .insert("pii-session".to_string(), fixture_session_with_pii("pii-session", 3));
-        // Deliberately NOT setting `mcp_anonymize` for "pii-session".
+        // Deliberately leaving `agent_raw_access` at its default (false).
 
         let (status, body) = send_json(
             &router,
@@ -1082,20 +1141,20 @@ mod wp7_filters {
             let raw = line["raw"].as_str().unwrap();
             assert!(
                 !raw.contains("user0@example.com") && !raw.contains('@'),
-                "an agent must not see raw PII when mcp_anonymize is unset for the session: {raw}"
+                "an agent must not see raw PII by default: {raw}"
             );
         }
     }
 
     #[tokio::test]
-    async fn lines_stay_raw_when_mcp_anonymize_is_explicitly_false() {
+    async fn lines_stay_raw_when_agent_raw_access_is_on() {
         let (router, state, _sink, _tmp) = app();
         state
             .sessions
             .lock()
             .unwrap()
             .insert("pii-session".to_string(), fixture_session_with_pii("pii-session", 2));
-        state.mcp_anonymize.lock().unwrap().insert("pii-session".to_string(), false);
+        *state.agent_raw_access.lock().unwrap() = true;
 
         let (status, body) = send_json(
             &router,
@@ -1118,7 +1177,7 @@ mod wp7_filters {
         let lines = body["lines"].as_array().unwrap();
         assert!(
             lines.iter().any(|l| l["raw"].as_str().unwrap().contains('@')),
-            "mcp_anonymize=false must serve raw text"
+            "the agent_raw_access opt-out must serve raw text"
         );
     }
 }
@@ -1215,8 +1274,8 @@ pipeline:
     #[tokio::test]
     async fn export_route_inside_the_allowlist_succeeds_and_redacts_for_an_agent() {
         let (router, state, _sink, tmp) = app();
-        // `mcp_anonymize` is never signalled for "s1" — fails closed to
-        // anonymized, so an Agent export must redact its PII regardless.
+        // Nothing configured — an agent export is anonymized, so it must
+        // redact its PII regardless of the session's pipeline chain.
         state.sessions.lock().unwrap().insert("s1".to_string(), fixture_session_with_pii("s1", 3));
 
         let out_dir = tmp.path().join("allowed-out");
@@ -1911,17 +1970,17 @@ mod wp11_stream {
         assert!(!dest.exists(), "a refused save must not create the file");
     }
 
-    /// Fail-closed: the session has no `mcp_anonymize` entry, so an agent
-    /// draining the ring must not see the PII the ring actually holds.
+    /// Default-on redaction: with nothing configured, an agent draining the
+    /// ring must not see the PII the ring actually holds.
     #[tokio::test]
-    async fn events_are_redacted_when_mcp_anonymize_is_absent_for_the_session() {
+    async fn events_are_redacted_for_an_agent_by_default() {
         let (router, state, _sink, _tmp) = app();
         state
             .sessions
             .lock()
             .unwrap()
             .insert("s1".to_string(), fixture_session_with_pii("s1", 1));
-        // Deliberately NOT setting `mcp_anonymize` for "s1".
+        // Deliberately leaving `agent_raw_access` at its default (false).
 
         let ring: Arc<RingSink<AdbStreamEvent>> = Arc::new(RingSink::new(2000));
         ring.send(pii_batch("s1"));
@@ -1946,7 +2005,7 @@ mod wp11_stream {
         let raw = events[0]["item"]["data"]["lines"][0]["raw"].as_str().unwrap();
         assert!(
             !raw.contains("user0@example.com") && !raw.contains('@'),
-            "an agent must not see raw PII when mcp_anonymize is unset: {raw}"
+            "an agent must not see raw PII by default: {raw}"
         );
 
         // A cursor at the head returns nothing new.
@@ -1960,14 +2019,14 @@ mod wp11_stream {
     }
 
     #[tokio::test]
-    async fn events_stay_raw_when_mcp_anonymize_is_explicitly_false() {
+    async fn events_stay_raw_when_agent_raw_access_is_on() {
         let (router, state, _sink, _tmp) = app();
         state
             .sessions
             .lock()
             .unwrap()
             .insert("s1".to_string(), fixture_session_with_pii("s1", 1));
-        state.mcp_anonymize.lock().unwrap().insert("s1".to_string(), false);
+        *state.agent_raw_access.lock().unwrap() = true;
 
         let ring: Arc<RingSink<AdbStreamEvent>> = Arc::new(RingSink::new(2000));
         ring.send(pii_batch("s1"));
@@ -1984,7 +2043,7 @@ mod wp11_stream {
             .unwrap();
         assert!(
             raw.contains("user0@example.com"),
-            "mcp_anonymize=false must serve raw text"
+            "the agent_raw_access opt-out must serve raw text"
         );
     }
 }
@@ -2137,7 +2196,7 @@ mod wp13_wire_contract {
             .lock()
             .unwrap()
             .insert("s1".to_string(), fixture_session_with_pii("s1", 10));
-        state.mcp_anonymize.lock().unwrap().insert("s1".to_string(), false);
+        *state.agent_raw_access.lock().unwrap() = true;
 
         let (status, body) = get(&router, "/mcp/sessions/s1/query?n=3", &trusted_headers()).await;
         assert_eq!(status, StatusCode::OK, "{body}");
@@ -2162,7 +2221,7 @@ mod wp13_wire_contract {
             .lock()
             .unwrap()
             .insert("s1".to_string(), fixture_session_with_pii("s1", 10));
-        state.mcp_anonymize.lock().unwrap().insert("s1".to_string(), false);
+        *state.agent_raw_access.lock().unwrap() = true;
 
         let (status, body) = get(
             &router,
@@ -2193,7 +2252,7 @@ mod wp13_wire_contract {
             "s1".to_string(),
             app_lib::services::testing::fixture_session("s1", 20),
         );
-        state.mcp_anonymize.lock().unwrap().insert("s1".to_string(), false);
+        *state.agent_raw_access.lock().unwrap() = true;
 
         for path in [
             "/mcp/sessions/s1/search?pattern=line&limit=2&context=1",

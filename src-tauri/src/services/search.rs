@@ -1290,11 +1290,11 @@ mod tests {
     }
 
     #[test]
-    fn an_agent_with_anonymize_explicitly_off_gets_raw_text() {
+    fn an_agent_gets_raw_text_only_after_the_user_opted_out() {
         let (ctx, _t) = test_ctx()
             .agent("mcp")
             .with_session_object(fixture_session_with_pii("p1", 20))
-            .mcp_anonymize("p1", false)
+            .agent_raw_access(true)
             .build();
 
         let out = hits(&ctx, &scan_req("p1", "contact")).unwrap();

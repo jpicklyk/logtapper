@@ -56,7 +56,7 @@
 //!   never exposed over HTTP. Covered by a shape-only smoke test with no HTTP
 //!   side to compare against (see `search_summary_has_no_bridge_equivalent`).
 //! - **`Ui`-vs-`Agent` redaction**: every test in this file that involves raw
-//!   line text sets `mcp_anonymize(session, false)` so both the service call
+//!   line text sets `agent_raw_access = true` so both the service call
 //!   (`Caller::Agent`, matching what `BridgeCtx::svc` always builds) and the
 //!   HTTP call serve raw text — anonymization GATING itself is pinned
 //!   exhaustively in `tests/bridge_http.rs`, not here.
@@ -220,7 +220,7 @@ async fn line_page_query_matches_the_service_value_field_for_field() {
         .lock()
         .unwrap()
         .insert("s1".to_string(), fixture_session_with_pii("s1", 10));
-    state.mcp_anonymize.lock().unwrap().insert("s1".to_string(), false);
+    *state.agent_raw_access.lock().unwrap() = true;
 
     let svc = bridge_ctx.svc("wire-parity");
     let router = mcp_bridge::router(bridge_ctx);
@@ -254,7 +254,7 @@ async fn search_hits_matches_the_service_value_field_for_field_on_both_routes() 
         .lock()
         .unwrap()
         .insert("s1".to_string(), fixture_session("s1", 20));
-    state.mcp_anonymize.lock().unwrap().insert("s1".to_string(), false);
+    *state.agent_raw_access.lock().unwrap() = true;
 
     let svc = bridge_ctx.svc("wire-parity");
     let router = mcp_bridge::router(bridge_ctx);

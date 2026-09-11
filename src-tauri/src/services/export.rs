@@ -25,33 +25,20 @@
 //! ## Redaction
 //!
 //! Export is a raw-line pathway — session source text ends up on disk in the
-//! `.lts` archive. Two lines of defense, both already in the pre-existing
-//! code this package inherited:
+//! `.lts` archive, so it funnels through the same choke point every other
+//! raw-text response uses: [`super::policy::redact_line`], with `usize::MAX`
+//! as the character cap so a full-line export is never silently truncated to
+//! the 500-char cap `redact_line` applies to bridge JSON responses.
 //!
-//! 1. The **existing, tested, per-session behavior is preserved for `Ui`**:
-//!    [`policy::anonymize_for_session`] is applied unconditionally to a
-//!    session whose `mcp_anonymize` flag is set, regardless of caller — this
-//!    is the fix for a real PII-leak bug (see `anonymize_lines_to_bytes`'s
-//!    original doc comment, carried into [`export_line_text`] below) and
-//!    must not regress: a human exporting their own machine's logs must not
-//!    get *less* redaction than what they already asked the pipeline to
-//!    compute by installing `__pii_anonymizer`.
-//! 2. **`Agent` callers are additionally routed through the canonical
-//!    [`super::policy::redact_line`] choke point** (fail-closed), per this
-//!    package's task instructions — `policy.rs`'s own doc comment lists
-//!    export among the services that must funnel raw text through it. For
-//!    equal flag values the two routes compute byte-identical output (an
-//!    `Agent`'s `should_anonymize` reduces to the same
-//!    `resolve_should_anonymize` decision `anonymize_for_session` already
-//!    makes) — routing explicitly through `redact_line` is what lets a
-//!    future auditor grep for "every raw-line response goes through
-//!    `redact_line`" and find this call site, rather than relying on that
-//!    equivalence holding by accident. `usize::MAX` is passed as the
-//!    character cap so a full-line export is never silently truncated to the
-//!    500-char cap `redact_line` applies to bridge JSON responses.
+//! An `Agent` export is therefore redacted by default — an agent exporting
+//! every open session is the widest version of the leak this gate exists to
+//! close — and raw only when the user has persisted the `agent_raw_access`
+//! opt-out (`services::settings::set_agent_raw_access`). A `Ui` export is the
+//! user writing their own machine's logs to their own disk through a native
+//! save dialog, and is never redacted.
 
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use memmap2::Mmap;
@@ -65,7 +52,7 @@ use crate::workspace::lts::{LtsEditorTab, LtsSessionData, LtsSessionMeta};
 
 use super::paths::AppPaths;
 use super::policy;
-use super::{lock_svc, Caller, ServiceCtx, ServiceError};
+use super::{lock_svc, ServiceCtx, ServiceError};
 
 // ---------------------------------------------------------------------------
 // Per-session helpers
@@ -149,21 +136,17 @@ fn snapshot_stream_bytes(source: &StreamLogSource) -> Vec<u8> {
     buf
 }
 
-/// Redact (or pass through) one line of raw session text for export, honoring
-/// caller identity. See the module doc comment's "Redaction" section for the
-/// full rationale — `Ui` and `Agent` compute byte-identical output for equal
-/// `mcp_anonymize` flag values; they are routed through different named
-/// functions so an `Agent`'s raw text is provably funneled through the
-/// canonical [`policy::redact_line`] choke point.
+/// Redact (or pass through) one line of raw session text for export, through
+/// the canonical [`policy::redact_line`] choke point. See the module doc
+/// comment's "Redaction" section: `Ui` passes through, an `Agent` is redacted
+/// unless the user persisted the `agent_raw_access` opt-out. `usize::MAX`
+/// keeps export from inheriting the bridge's 500-char line cap.
 fn export_line_text(ctx: &ServiceCtx, session_id: &str, raw: &str) -> String {
-    match ctx.caller() {
-        Caller::Ui => policy::anonymize_for_session(ctx.state(), session_id, raw),
-        Caller::Agent { .. } => policy::redact_line(ctx, session_id, raw, usize::MAX),
-    }
+    policy::redact_line(ctx, session_id, raw, usize::MAX)
 }
 
-/// Anonymize each line in `lines` for `session_id` (honoring that session's
-/// `mcp_anonymize` flag, caller-aware — see [`export_line_text`]) and
+/// Redact each line in `lines` for `session_id` (caller-aware — see
+/// [`export_line_text`]) and
 /// reassemble into the exact byte layout `write_lts` expects for a session's
 /// `source_bytes`: one record per line, `\n`-terminated, in original order.
 fn anonymize_lines_to_bytes(ctx: &ServiceCtx, session_id: &str, lines: &[String]) -> Vec<u8> {
@@ -304,10 +287,10 @@ pub async fn run(ctx: ServiceCtx, options: ExportAllOptions) -> Result<(), Servi
         Mmap(Arc<Mmap>),
         Zip(Arc<Vec<u8>>),
         Stream(Vec<u8>),
-        /// Owned, per-line raw text captured for a session whose
-        /// `mcp_anonymize` flag is set. Redacted line-by-line (via
-        /// [`export_line_text`]) once the `sessions` lock has been dropped —
-        /// see step 2 below — instead of being written raw.
+        /// Owned, per-line raw text captured when this export must be
+        /// redacted. Redacted line-by-line (via [`export_line_text`]) once
+        /// the `sessions` lock has been dropped — see step 2 below — instead
+        /// of being written raw.
         RawLines(Vec<String>),
     }
 
@@ -336,25 +319,23 @@ pub async fn run(ctx: ServiceCtx, options: ExportAllOptions) -> Result<(), Servi
         }
     }
 
-    // 1a. Snapshot the per-session MCP-anonymize flags *before* taking the
-    // `sessions` lock — `export_line_text`/`policy::redact_line` acquire
-    // `mcp_anonymize` themselves, and nesting that under `sessions` would
-    // violate the lock-ordering discipline `services/mod.rs` documents.
-    let anonymize_flags: HashMap<String, bool> = {
-        let flags = lock_svc(&ctx.state().mcp_anonymize, "mcp_anonymize")?;
-        flags.clone()
-    };
+    // 1a. Resolve the redaction decision *before* taking the `sessions` lock
+    // — `export_line_text`/`policy::redact_line` acquire `anonymizer_config` /
+    // `mcp_anonymizers` themselves, and nesting those under `sessions` would
+    // violate the lock-ordering discipline `services/mod.rs` documents. The
+    // decision is global (caller identity + `agent_raw_access`), so one bool
+    // covers every session in this export.
+    let anonymizing = policy::should_anonymize(&ctx, "");
 
     // 1b. Collect all session IDs and snapshot source references under brief lock.
     let session_snapshots: Vec<(String, String, SourceRef)> = {
         let sessions = lock_svc(&ctx.state().sessions, "sessions")?;
         let mut result = Vec::with_capacity(sessions.len());
         for (session_id, session) in sessions.iter() {
-            let should_anonymize = policy::resolve_should_anonymize(&anonymize_flags, session_id);
             let (name, sref) = match session.primary_source() {
                 Some(src) => {
                     let name = src.name().to_string();
-                    let sref = if should_anonymize {
+                    let sref = if anonymizing {
                         let lines: Vec<String> = (0..src.total_lines())
                             .filter_map(|i| src.raw_line(i).map(Cow::into_owned))
                             .collect();
@@ -667,13 +648,13 @@ mod tests {
     // used to snapshot raw session bytes and write them byte-for-byte,
     // with no anonymizer call anywhere in the file. A session with PII
     // anonymization enabled would still export raw, unredacted PII. These
-    // tests now additionally cover the caller split documented in the
-    // module doc comment's "Redaction" section — `Ui` and `Agent` must
-    // produce byte-identical output for the same per-session flag.
+    // tests now cover the caller split documented in the module doc
+    // comment's "Redaction" section — an `Agent` is redacted unless the user
+    // persisted the `agent_raw_access` opt-out; a `Ui` export never is.
 
     #[test]
-    fn anonymize_lines_to_bytes_redacts_pii_when_flag_enabled_for_ui() {
-        let (ctx, _tmp) = test_ctx().mcp_anonymize("sess-anon", true).build();
+    fn anonymize_lines_to_bytes_redacts_pii_for_an_agent_by_default() {
+        let (ctx, _tmp) = test_ctx().agent("mcp").build();
 
         let lines = vec![
             "connecting to 192.168.1.100 now".to_string(),
@@ -700,23 +681,22 @@ mod tests {
     }
 
     #[test]
-    fn anonymize_lines_to_bytes_redacts_pii_when_flag_enabled_for_agent_too() {
-        // Agent callers must get identical redaction to Ui for the same flag
-        // — both routes must funnel through the same effective decision.
-        let (ctx, _tmp) = test_ctx()
-            .caller(Caller::Agent { client: "mcp".into() })
-            .mcp_anonymize("sess-anon", true)
-            .build();
+    fn anonymize_lines_to_bytes_redacts_for_an_agent_whatever_the_session_is_called() {
+        // There is no per-session dimension any more: a session the UI has
+        // "signalled" and one it never touched redact identically.
+        let (ctx, _tmp) = test_ctx().agent("mcp").build();
 
         let lines = vec!["contact user@example.com for access".to_string()];
-        let bytes = anonymize_lines_to_bytes(&ctx, "sess-anon", &lines);
-        let text = String::from_utf8(bytes).unwrap();
-        assert!(!text.contains("user@example.com"), "raw PII leaked for an agent export: {text}");
+        for session in ["sess-anon", "sess-raw", "never-seen"] {
+            let bytes = anonymize_lines_to_bytes(&ctx, session, &lines);
+            let text = String::from_utf8(bytes).unwrap();
+            assert!(!text.contains("user@example.com"), "raw PII leaked for {session}: {text}");
+        }
     }
 
     #[test]
-    fn anonymize_lines_to_bytes_passes_through_raw_when_flag_disabled() {
-        let (ctx, _tmp) = test_ctx().mcp_anonymize("sess-raw", false).build();
+    fn anonymize_lines_to_bytes_passes_through_raw_after_the_user_opted_out() {
+        let (ctx, _tmp) = test_ctx().agent("mcp").agent_raw_access(true).build();
 
         let lines = vec![
             "connecting to 192.168.1.100 now".to_string(),
@@ -734,15 +714,15 @@ mod tests {
     }
 
     #[test]
-    fn anonymize_lines_to_bytes_fails_closed_for_unsignalled_session() {
-        let (ctx, _tmp) = test_ctx().build(); // no mcp_anonymize entry for "sess-unknown"
+    fn anonymize_lines_to_bytes_passes_through_raw_for_the_ui() {
+        // The user exporting their own machine's logs through a native save
+        // dialog is never redacted — same rule the viewer already follows.
+        let (ctx, _tmp) = test_ctx().build();
         let lines = vec!["contact user@example.com for access".to_string()];
-        let bytes = anonymize_lines_to_bytes(&ctx, "sess-unknown", &lines);
+        let bytes = anonymize_lines_to_bytes(&ctx, "sess-any", &lines);
         let text = String::from_utf8(bytes).unwrap();
-        assert!(
-            !text.contains("user@example.com"),
-            "an unsignalled session must fail closed to anonymized, not raw: {text}"
-        );
+        assert_eq!(text, "contact user@example.com for access
+");
     }
 
     // ── analyses_referencing_session ─────────────────────────────────────
@@ -968,9 +948,9 @@ mod tests {
         run(ctx, options).await.expect("export inside the allowlist should succeed");
         assert!(dest.exists());
 
-        // mcp_anonymize was never signalled for "s1" — fails closed to
-        // anonymized, so the archive's source bytes must not contain the
-        // fixture's raw PII (fixture_session_with_pii embeds `userN@example.com`).
+        // Nothing was configured, so an agent export is anonymized: the
+        // archive's source bytes must not contain the fixture's raw PII
+        // (fixture_session_with_pii embeds `userN@example.com`).
         let bytes = std::fs::read(&dest).unwrap();
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
         let mut found_source = false;

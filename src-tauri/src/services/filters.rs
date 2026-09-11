@@ -872,11 +872,10 @@ mod tests {
     // ── redaction gating in `lines` ──────────────────────────────────────
 
     #[tokio::test]
-    async fn lines_redacts_for_an_agent_when_anonymization_is_enabled() {
+    async fn lines_redacts_for_an_agent_by_default() {
         let (ctx, _tmp) = test_ctx()
             .agent("claude-code")
             .with_pii_session("s1", 3)
-            .mcp_anonymize("s1", true)
             .build();
 
         let created = create(&ctx, "s1".to_string(), FilterCriteria::default(), null_progress()).unwrap();
@@ -892,7 +891,7 @@ mod tests {
         for line in &page.lines {
             assert!(
                 !line.raw.contains('@'),
-                "an agent with anonymization enabled must not see raw PII: {}",
+                "an agent must not see raw PII by default: {}",
                 line.raw
             );
         }
@@ -900,7 +899,7 @@ mod tests {
 
     #[test]
     fn lines_never_redacts_for_a_ui_caller() {
-        let (ctx, _tmp) = test_ctx().with_pii_session("s1", 2).mcp_anonymize("s1", true).build();
+        let (ctx, _tmp) = test_ctx().with_pii_session("s1", 2).build();
         let created = create(&ctx, "s1".to_string(), FilterCriteria::default(), null_progress()).unwrap();
         // Force-populate matches directly (no need to run the scan for this
         // assertion — `lines` renders whatever `get_page` returns).

@@ -235,7 +235,7 @@ mod tests {
         let (ctx, _tmp) = test_ctx()
             .agent("a")
             .with_session_object(fixture_session_with_pii("p1", 10))
-            .mcp_anonymize("p1", false)
+            .agent_raw_access(true)
             .build();
 
         let page = query_page(&ctx, "p1", &qp(Some(3), Some("recent"))).expect("page");
@@ -254,7 +254,7 @@ mod tests {
         let (ctx, _tmp) = test_ctx()
             .agent("a")
             .with_session_object(fixture_session_with_pii("p1", 10))
-            .mcp_anonymize("p1", false)
+            .agent_raw_access(true)
             .build();
 
         let filtered = QueryParams {
@@ -283,7 +283,7 @@ mod tests {
         let (ctx, _tmp) = test_ctx()
             .agent("a")
             .with_session_object(fixture_session_with_pii("p1", 10))
-            .mcp_anonymize("p1", false)
+            .agent_raw_access(true)
             .build();
 
         let page = lines_around_page(
@@ -335,8 +335,8 @@ mod tests {
     }
 
     #[test]
-    fn query_redacts_when_the_anonymize_flag_is_absent() {
-        // Fail-closed: no `set_mcp_anonymize` call for this session at all.
+    fn query_redacts_with_no_configuration_at_all() {
+        // The default state: agents are anonymized until the user opts out.
         let (ctx, _tmp) = test_ctx()
             .agent("claude-code")
             .with_session_object(fixture_session_with_pii("p1", 3))
@@ -345,17 +345,17 @@ mod tests {
         for line in &page.lines {
             assert!(
                 !line.raw.contains("@example.com"),
-                "an unset flag must fail closed"
+                "an agent must be redacted by default"
             );
         }
     }
 
     #[test]
-    fn query_leaves_raw_alone_when_anonymization_is_switched_off() {
+    fn query_leaves_raw_alone_after_the_user_opted_out() {
         let (ctx, _tmp) = test_ctx()
             .agent("claude-code")
             .with_session_object(fixture_session_with_pii("p1", 3))
-            .mcp_anonymize("p1", false)
+            .agent_raw_access(true)
             .build();
         let page = query_page(&ctx, "p1", &qp(Some(3), Some("recent"))).expect("page");
         assert!(

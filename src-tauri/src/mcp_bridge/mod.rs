@@ -45,7 +45,9 @@ use routes::processors::{
 };
 use routes::search::{h_search, h_search_with_context};
 use routes::sessions::{h_close_session, h_metadata, h_open_file, h_sessions, h_status};
-use routes::settings::{h_get_anonymizer_config, h_get_open_allowlist, h_test_anonymizer};
+use routes::settings::{
+    h_get_agent_access, h_get_anonymizer_config, h_get_open_allowlist, h_test_anonymizer,
+};
 use routes::timeline::{h_chart, h_timeline};
 use routes::stream::{
     h_adb_devices, h_save_stream, h_start_stream, h_stop_stream, h_stream_events, h_stream_status,
@@ -240,6 +242,10 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/mcp/sessions/{session_id}/stream/events"),
     ("POST", "/mcp/sessions/{session_id}/stream/stop"),
     ("POST", "/mcp/sessions/{session_id}/stream/save"),
+    // Agent raw-access opt-out — READ only, on purpose (see
+    // `routes/settings.rs`): an agent may see whether it is being redacted,
+    // and may never change it.
+    ("GET", "/mcp/settings/agent_access"),
 ];
 
 /// Build the bridge's `Router` without binding a socket.
@@ -321,6 +327,8 @@ pub fn router(ctx: BridgeCtx) -> Router {
         .route("/mcp/sessions/{session_id}/stream/events", get(h_stream_events))
         .route("/mcp/sessions/{session_id}/stream/stop", post(h_stop_stream))
         .route("/mcp/sessions/{session_id}/stream/save", post(h_save_stream))
+        // Agent raw-access opt-out — read only, on purpose.
+        .route("/mcp/settings/agent_access", get(h_get_agent_access))
         .layer(axum_middleware::from_fn_with_state(ctx.clone(), middleware::record_activity))
         // `require_local` is added AFTER `record_activity`, which in axum/tower
         // layering means it becomes the OUTERMOST layer and therefore runs
@@ -461,6 +469,7 @@ mod tests {
             "GET /mcp/sessions/{session_id}/stream/events",
             "POST /mcp/sessions/{session_id}/stream/stop",
             "POST /mcp/sessions/{session_id}/stream/save",
+            "GET /mcp/settings/agent_access",
         ];
 
         assert_eq!(rendered, expected, "ROUTES drifted from the pinned route table — update both this test and router() together");

@@ -156,15 +156,19 @@ individual service, never "am I in `mcp_bridge/`":
   name must be a single plain segment. `Ui` passes through untouched (the native save
   dialog is consent).
 - **PII anonymization** (`policy::should_anonymize` / `policy::redact_line`) is keyed on
-  `Caller`, not on which transport served the request, and is **fail-closed for agents**:
-  a session with no explicit `mcp_anonymize` signal yet defaults to redacted, not raw.
-  `Ui` is never redacted (the human is looking at their own machine). This replaces the
-  old global `mcp_anonymize: Mutex<bool>` design — see "Service-layer era" in
-  `design_docs/MCP_SECURITY_DESIGN.md` for how the fail-closed-per-session model resolves
-  the anonymization-default and chain-coupling issues that document originally raised.
+  `Caller`, not on which transport served the request: `Ui` is never redacted (the human
+  is looking at their own machine), an **`Agent` is always redacted** unless the user
+  ticked "Allow agents to read raw (un-anonymized) log text" in Settings → General → MCP
+  Integration. That one setting (`AppState::agent_raw_access`, persisted to
+  `{app_data_dir}/mcp_agent_access.json`, `Ui`-only via `set_agent_raw_access`) is the
+  whole decision — **no session state, and above all no pipeline chain, participates in
+  it.** It replaced a per-session `mcp_anonymize` map the frontend mirrored from
+  `chain.includes('__pii_anonymizer')`, which meant the default chain switched agent
+  anonymization *off* as soon as the UI opened a tab. Never add a second writer; see
+  "Issue 1" in `design_docs/MCP_SECURITY_DESIGN.md`.
 - **Agents cannot mutate their own gates.** `policy::deny_agent_gate_mutation` refuses an
-  agent request to change the open-file allowlist, the anonymizer config, or add/remove a
-  marketplace source (a supply-chain surface) — `Forbidden`/`NOT_ALLOWED` for `Agent`,
+  agent request to change the open-file allowlist, the anonymizer config, agent raw log
+  access, or add/remove a marketplace source (a supply-chain surface) — `Forbidden`/`NOT_ALLOWED` for `Agent`,
   passthrough for `Ui`. There is no bridge route at all for the marketplace-source
   mutations; every other gated mutation has a route that always answers 403 for an agent
   caller.

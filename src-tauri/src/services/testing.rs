@@ -259,14 +259,17 @@ impl TestCtxBuilder {
         self
     }
 
-    /// Set the per-session `mcp_anonymize` flag (the one that fails closed when
-    /// absent — set it explicitly to test the non-default path).
-    pub fn mcp_anonymize(self, session_id: &str, on: bool) -> Self {
-        self.state
-            .mcp_anonymize
+    /// Set the persisted agent raw-access opt-out (`AppState::agent_raw_access`).
+    ///
+    /// The default is `false` — agents are anonymized — so call this only to
+    /// exercise the opt-out path. There is no per-session variant: agent
+    /// visibility is one global, UI-only setting (see `policy::should_anonymize`).
+    pub fn agent_raw_access(self, on: bool) -> Self {
+        *self
+            .state
+            .agent_raw_access
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(session_id.to_string(), on);
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = on;
         self
     }
 

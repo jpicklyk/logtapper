@@ -215,7 +215,7 @@ mod tests {
         test_ctx()
             .agent("a")
             .with_session_object(fixture_session(session_id, lines))
-            .mcp_anonymize(session_id, false)
+            .agent_raw_access(true)
             .build()
     }
 
@@ -293,8 +293,8 @@ mod tests {
     }
 
     #[test]
-    fn both_endpoints_fail_closed_when_the_anonymize_flag_is_absent() {
-        // No `mcp_anonymize` entry for this session at all.
+    fn both_endpoints_redact_with_no_configuration_at_all() {
+        // The default state: agents are anonymized until the user opts out.
         let (ctx, _tmp) = test_ctx()
             .agent("claude-code")
             .with_session_object(fixture_session_with_pii("p1", 5))
@@ -307,7 +307,7 @@ mod tests {
         )
         .expect("search");
         for hit in &a.hits {
-            assert!(!hit.line.raw.contains("@example.com"), "search must fail closed");
+            assert!(!hit.line.raw.contains("@example.com"), "search must redact by default");
         }
 
         let b = search_with_context_hits(
@@ -319,7 +319,7 @@ mod tests {
         for hit in &b.hits {
             assert!(
                 !hit.line.raw.contains("@example.com"),
-                "search_with_context must fail closed"
+                "search_with_context must redact by default"
             );
         }
     }

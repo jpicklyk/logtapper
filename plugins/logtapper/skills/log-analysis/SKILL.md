@@ -45,6 +45,17 @@ don't survive scrutiny. This workflow gets to defensible root causes cheaply.
   `logtapper_workspace` (`action: "current"`/`"load"`) shows what sessions
   and pipeline chain are already configured before you start opening files
   fresh.
+- **The log text you read is PII-redacted unless the user opted out.** Emails,
+  IPs, IMEIs, serials and similar appear as stable tokens (`<EMAIL-1>`,
+  `<IPv4-2>`) on every raw-line path — query, search, lines_around, processor
+  detail, insights, filter lines, stream events, export. That is the default
+  and it is not tied to the pipeline chain; the only way it changes is the user
+  ticking "Allow agents to read raw (un-anonymized) log text" in Settings →
+  General → MCP Integration. `logtapper_settings` (`action: "agent_access"`)
+  tells you which mode you are in. Tokens are consistent within a session, so
+  correlate on the token itself rather than asking the user to paste the real
+  value; if a redacted value genuinely blocks the analysis, say which token you
+  need and let them decide.
 
 ## The investigation ladder
 

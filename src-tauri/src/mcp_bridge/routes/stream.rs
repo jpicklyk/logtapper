@@ -19,8 +19,8 @@
 //! "everything still retained".
 //!
 //! Line text in a drained batch goes through `policy::redact_line` inside the
-//! service — fail-closed for a session whose `mcp_anonymize` flag was never
-//! signalled — independently of the in-chain `__pii_anonymizer` an agent's
+//! service — redacted unless the user persisted the `agent_raw_access`
+//! opt-out — independently of the in-chain `__pii_anonymizer` an agent's
 //! stream also carries.
 //!
 //! Success bodies are the typed `services::wire` stream envelopes; failures

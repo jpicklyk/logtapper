@@ -8,6 +8,7 @@ import { SegmentedControl, Button, IconButton } from '../../ui';
 import type { SegmentedOption } from '../../ui';
 import type { ThemeMode } from '../../context';
 import {
+  getAgentRawAccess,
   getFileAssociationStatus,
   getMcpOpenAllowlist,
 } from '../../bridge/commands';
@@ -272,8 +273,69 @@ const McpIntegrationSection = memo(function McpIntegrationSection({ settings, on
           <span className={css.mcpStatusText}>{statusText}</span>
         </div>
       )}
+      <AgentRawAccessRow />
       <McpAgentSetup />
     </div>
+  );
+});
+
+// ── Agent raw-log access ──────────────────────────────────────────────────
+//
+// The one switch that decides whether agents reading over the MCP bridge see
+// PII. Off by default and persisted by the backend (not localStorage), because
+// it is a security gate the backend enforces: the read is called directly
+// (same convention as McpFileAccessSection's allowlist read) and the write
+// routes through `useSettingsActions`. Nothing else in the app writes it — in
+// particular the pipeline chain no longer does.
+
+const AgentRawAccessRow = memo(function AgentRawAccessRow() {
+  const { setAgentRawAccess } = useSettingsActions();
+  const [rawAccess, setRawAccess] = useState<boolean | null>(null);
+  const [pending, setPending] = useState(false);
+
+  // StrictMode-safe async load: guard against setState after unmount/re-mount.
+  useEffect(() => {
+    let cancelled = false;
+    getAgentRawAccess()
+      .then((on) => { if (!cancelled) setRawAccess(on); })
+      .catch(() => { if (!cancelled) setRawAccess(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleToggle = useCallback((checked: boolean) => {
+    setRawAccess(checked);
+    setPending(true);
+    setAgentRawAccess(checked)
+      // On failure resync from the backend rather than leaving optimistic
+      // local state that doesn't match what is actually enforced.
+      .catch(() => { getAgentRawAccess().then(setRawAccess).catch(() => {}); })
+      .finally(() => setPending(false));
+  }, [setAgentRawAccess]);
+
+  return (
+    <>
+      <div className={css.row}>
+        <div className={css.label}>
+          <span className={css.labelText}>Show agents the real values behind anonymized PII tokens</span>
+          <span className={css.labelHint}>
+            Off by default: agents always receive full log lines, with detected PII replaced by stable tokens such as <EMAIL-1>.
+          </span>
+        </div>
+        <div className={css.control}>
+          <input
+            type="checkbox"
+            checked={rawAccess ?? false}
+            disabled={pending || rawAccess === null}
+            onChange={(e) => handleToggle(e.target.checked)}
+          />
+        </div>
+      </div>
+      {rawAccess === true && (
+        <div className={css.mcpAllowAllNote}>
+          Agents can now read emails, IMEIs, IPs and other PII verbatim -- including in exports.
+        </div>
+      )}
+    </>
   );
 });
 

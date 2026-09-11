@@ -1435,9 +1435,10 @@ fn processor_names<'a>(
 /// Resolve `line_nums` to redacted text, one line per entry that exists.
 ///
 /// Raw text is collected under the `sessions` lock and the lock is dropped
-/// before [`policy::redact_line`] runs — `redact_line` takes `mcp_anonymize` /
-/// `anonymizer_config` / `mcp_anonymizers`, and nesting those under `sessions`
-/// would violate the lock ordering both transports rely on.
+/// before [`policy::redact_line`] runs — `redact_line` takes
+/// `agent_raw_access` / `anonymizer_config` / `mcp_anonymizers`, and nesting
+/// those under `sessions` would violate the lock ordering both transports
+/// rely on.
 fn redacted_line_texts(
     ctx: &ServiceCtx,
     session_id: &str,
@@ -1712,7 +1713,7 @@ transforms:
         install(&ctx, "a@official", reporter_processor("a"));
         set_meta(&ctx, "s1", &["a@official"], &[]);
 
-        // No explicit mcp_anonymize entry — the gate fails closed to `true`.
+        // Nothing configured — an agent is anonymized by default.
         let chain = resolve_effective_chain(&ctx, "s1", None).expect("resolves");
         assert_eq!(
             chain,
@@ -1745,11 +1746,11 @@ transforms:
     }
 
     #[test]
-    fn an_agent_with_anonymization_explicitly_off_gets_no_forced_anonymizer() {
+    fn an_agent_gets_no_forced_anonymizer_after_the_user_opted_out() {
         let (ctx, _t) = test_ctx()
             .agent("mcp")
             .with_session("s1", 1)
-            .mcp_anonymize("s1", false)
+            .agent_raw_access(true)
             .build();
         install(&ctx, "a@official", reporter_processor("a"));
         set_meta(&ctx, "s1", &["a@official"], &[]);
@@ -1772,7 +1773,6 @@ transforms:
         let (ctx, _t) = test_ctx()
             .agent("mcp")
             .with_session("s1", 3)
-            .mcp_anonymize("s1", true)
             .build();
 
         // The fixture session is a logcat StreamLogSource (see

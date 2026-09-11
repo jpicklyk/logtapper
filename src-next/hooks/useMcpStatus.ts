@@ -12,6 +12,8 @@ export interface McpStatusInfo {
   label: string;
   running: boolean;
   port: number;
+  /** True when the user has opted agents out of PII anonymization. */
+  agentRawAccess: boolean;
 }
 
 const MCP_CONN_LABELS: Record<McpConnState, string> = {
@@ -48,14 +50,20 @@ function _notify() {
 }
 
 export function statusChanged(a: McpStatus | null, b: McpStatus): boolean {
-  return a === null || a.running !== b.running || a.port !== b.port || a.idleSecs !== b.idleSecs;
+  return a === null
+    || a.running !== b.running
+    || a.port !== b.port
+    || a.idleSecs !== b.idleSecs
+    || a.agentRawAccess !== b.agentRawAccess;
 }
 
 function _poll() {
   getMcpStatus()
     .then((s) => { if (statusChanged(_status, s)) { _status = s; _notify(); } })
     .catch(() => {
-      const fallback: McpStatus = { running: false, port: 40404, idleSecs: null };
+      // Fail safe on an unreachable backend: report anonymization ON rather
+      // than claiming agents are reading raw text.
+      const fallback: McpStatus = { running: false, port: 40404, idleSecs: null, agentRawAccess: false };
       if (statusChanged(_status, fallback)) { _status = fallback; _notify(); }
     });
 }
@@ -99,5 +107,6 @@ export function useMcpStatus(mcpBridgeEnabled: boolean): McpStatusInfo {
     label: MCP_CONN_LABELS[connState],
     running: connState !== 'offline' && connState !== 'checking' && connState !== 'disabled',
     port: status?.port ?? 40404,
-  }), [connState, status?.port]);
+    agentRawAccess: status?.agentRawAccess ?? false,
+  }), [connState, status?.port, status?.agentRawAccess]);
 }

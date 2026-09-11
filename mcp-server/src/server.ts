@@ -56,6 +56,7 @@ import type {
   Insights,
   LinePage,
   MarketplaceFetchResult,
+  McpAgentAccess,
   McpOpenAllowlist,
   OpenedSession,
   Page,
@@ -1734,8 +1735,9 @@ server.tool(
     "need not exist yet. A denied destination is HTTP 403 NOT_ALLOWED — " +
     "identical whether the parent is outside the allowlist or does not exist, " +
     "by the same anti-probing design as logtapper_open_file. Raw log-line text " +
-    "is redacted per this MCP client's anonymizer setting the same way every " +
-    "other raw-line tool is (fail-closed if never configured for a session).",
+    "in the bundle is PII-redacted the same way every other raw-line tool " +
+    "is — unless the user allowed raw agent access in Settings (see " +
+    "logtapper_settings action 'agent_access').",
   {
     action: z.enum(["info", "run"]).describe("Action to perform"),
     dest_path: z.string().optional().describe("Destination `.lts` path (required for 'run')"),
@@ -2011,19 +2013,31 @@ server.tool(
 
 server.tool(
   "logtapper_settings",
-  "Read LogTapper's anonymizer configuration and MCP open-file allowlist, and " +
-    "preview what the anonymizer would redact in arbitrary text. Use " +
-    "'anonymizer' to see the configured PII detectors, 'open_allowlist' to see " +
-    "which directories logtapper_open_file/logtapper_export/logtapper_stream " +
-    "('save') will accept, and 'test' to preview redaction on text you supply " +
-    "(nothing is persisted or changed — safe to call freely).\n\n" +
-    "READ-ONLY BY DESIGN: there are no actions to change either setting. An " +
-    "agent widening its own anonymizer config or open-file allowlist would be " +
-    "an agent granting itself more access — that stays a human-only decision " +
-    "made in the LogTapper UI. If a path you need isn't covered, tell the user " +
-    "and ask them to add it, the same guidance logtapper_open_file gives.",
+  "Read LogTapper's anonymizer configuration, MCP open-file allowlist and " +
+    "agent raw-log-access setting, and preview what the anonymizer would " +
+    "redact in arbitrary text. Use 'anonymizer' to see the configured PII " +
+    "detectors, 'open_allowlist' to see which directories " +
+    "logtapper_open_file/logtapper_export/logtapper_stream ('save') will " +
+    "accept, 'agent_access' to see whether the log text you receive is " +
+    "redacted, and 'test' to preview redaction on text you supply (nothing " +
+    "is persisted or changed — safe to call freely).\n\n" +
+    "ANONYMIZATION IS ON UNLESS THE USER TURNED IT OFF: every raw log line " +
+    "you read through any tool — query, search, lines_around, processor " +
+    "detail, insights, filter lines, stream events, export — is " +
+    "PII-redacted (<EMAIL-1>, <IPv4-2>, ...) unless the user ticked 'Allow " +
+    "agents to read raw (un-anonymized) log text' in LogTapper's Settings " +
+    "→ General → MCP Integration. 'agent_access' returns { agentRawAccess } " +
+    "so you can say which one you are seeing. Redaction tokens are stable " +
+    "within a session, so you can still correlate on them; never ask the " +
+    "user to paste an un-redacted value unless they raise it themselves.\n\n" +
+    "READ-ONLY BY DESIGN: there are no actions to change any of these. An " +
+    "agent widening its own anonymizer config, open-file allowlist or " +
+    "raw-log access would be an agent granting itself more access — that " +
+    "stays a human-only decision made in the LogTapper UI. If a path you " +
+    "need isn't covered, tell the user and ask them to add it, the same " +
+    "guidance logtapper_open_file gives.",
   {
-    action: z.enum(["anonymizer", "open_allowlist", "test"]).describe("Action to perform"),
+    action: z.enum(["anonymizer", "open_allowlist", "agent_access", "test"]).describe("Action to perform"),
     text: z.string().optional().describe("Text to preview redaction on (required for 'test')"),
   },
   async ({ action, text }) => {
@@ -2033,6 +2047,8 @@ server.tool(
           return ok(await bridgeGet<AnonymizerConfig>("/mcp/settings/anonymizer"));
         case "open_allowlist":
           return ok(await bridgeGet<McpOpenAllowlist>("/mcp/settings/open_allowlist"));
+        case "agent_access":
+          return ok(await bridgeGet<McpAgentAccess>("/mcp/settings/agent_access"));
         case "test": {
           if (text === undefined) return argError("text is required for 'test'");
           return ok(

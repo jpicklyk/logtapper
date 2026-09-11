@@ -1,8 +1,8 @@
-//! Settings endpoints: anonymizer config (read + preview) and the open-file
-//! allowlist (read only).
+//! Settings endpoints: anonymizer config (read + preview), the open-file
+//! allowlist (read only) and the agent raw-access opt-out (read only).
 //!
 //! **Deliberately no write routes here.** `services::settings::{
-//! set_anonymizer_config, set_open_allowlist}` both call
+//! set_anonymizer_config, set_open_allowlist, set_agent_raw_access}` all call
 //! `policy::deny_agent_gate_mutation` and return `Forbidden` for an
 //! `Agent` caller — every bridge caller *is* an `Agent` (`BridgeCtx::svc`
 //! only ever constructs `Caller::Agent`), so a `POST`/`PUT` route here would
@@ -12,6 +12,14 @@
 //! not existing rather than by always refusing. If a future package needs an
 //! agent-writable setting, it gets its own gate in `services::settings`
 //! first — never relax `deny_agent_gate_mutation` to make room for a route.
+//!
+//! `agent_raw_access` is the sharpest case of that rule: it decides whether
+//! an agent sees PII at all, so the only writer anywhere in the codebase is
+//! the `set_agent_raw_access` Tauri command behind the Settings → General →
+//! MCP Integration checkbox. Reading it is fine — an agent learning that it is
+//! being redacted tells it nothing the redaction doesn't already show — and
+//! `GET /mcp/settings/agent_access` exists so a client can say so plainly
+//! rather than guessing from `<EMAIL-1>` tokens.
 
 use axum::{Json, extract::State, http::HeaderMap};
 use serde::Deserialize;
@@ -21,7 +29,7 @@ use crate::commands::bridge_access::McpOpenAllowlist;
 use crate::mcp_bridge::BridgeCtx;
 use crate::mcp_bridge::respond::client_name;
 use crate::services::ServiceError;
-use crate::services::settings::{self, AnonymizerTestResult};
+use crate::services::settings::{self, AnonymizerTestResult, McpAgentAccess};
 
 /// `GET /mcp/settings/anonymizer` — the current anonymizer configuration.
 pub(crate) async fn h_get_anonymizer_config(
@@ -40,6 +48,16 @@ pub(crate) async fn h_get_open_allowlist(
 ) -> Result<Json<McpOpenAllowlist>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
     Ok(Json(settings::open_allowlist(&svc)?))
+}
+
+/// `GET /mcp/settings/agent_access` — whether agents are reading raw
+/// (un-anonymized) log text. Read-only by design: see the module doc comment.
+pub(crate) async fn h_get_agent_access(
+    State(ctx): State<BridgeCtx>,
+    headers: HeaderMap,
+) -> Result<Json<McpAgentAccess>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(McpAgentAccess { agent_raw_access: settings::agent_raw_access(&svc)? }))
 }
 
 #[derive(Deserialize)]

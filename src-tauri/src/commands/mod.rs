@@ -78,18 +78,25 @@ pub struct AppState {
     pub stream_anonymizers: Mutex<HashMap<String, LogAnonymizer>>,
     /// Persistent anonymizers for MCP query results (one per session for stable token numbering).
     pub mcp_anonymizers: Mutex<HashMap<String, LogAnonymizer>>,
-    /// Per-session flag: whether to apply PII anonymization to MCP bridge
-    /// query results for that session. Keyed by session id; set by the
-    /// frontend (via `set_mcp_anonymize`) whenever `__pii_anonymizer` enters
-    /// or leaves that session's pipeline chain.
+    /// Whether agents may read raw (un-anonymized) log text.
     ///
-    /// A session with no entry here (never signalled — e.g. just opened) is
-    /// NOT assumed safe: bridge handlers must fail closed and treat a
-    /// missing entry as `true` (anonymize). See
-    /// `mcp_bridge::resolve_should_anonymize`. This must stay per-session —
-    /// a single global flag previously applied here served raw PII for any
-    /// session that happened to share bridge traffic with an anonymized one.
-    pub mcp_anonymize: Mutex<HashMap<String, bool>>,
+    /// `false` (the default) means every agent-facing raw-line pathway is
+    /// anonymized, for every session, regardless of what any session's
+    /// pipeline chain contains. `true` is a deliberate, persisted user
+    /// opt-out, settable **only from the UI** (Settings → General → MCP
+    /// Integration) via `set_agent_raw_access`; an agent calling the service
+    /// function gets `Forbidden` (`policy::deny_agent_gate_mutation`).
+    ///
+    /// Persisted to `{app_data_dir}/mcp_agent_access.json` and reloaded at
+    /// startup in `lib.rs::setup`, alongside the open-file allowlist.
+    ///
+    /// This replaced a per-session `mcp_anonymize` map that the frontend
+    /// mirrored from each session's pipeline chain: with the default chain
+    /// (no `__pii_anonymizer`) the mirror actively *disabled* agent
+    /// anonymization as soon as the UI opened a tab, so agents received raw
+    /// PII. Agent visibility must never be a side effect of a pipeline
+    /// choice — it is one explicit setting and nothing else.
+    pub agent_raw_access: Mutex<bool>,
     /// StateTracker results: sessionId -> trackerId -> StateTrackerResult.
     pub state_tracker_results: Mutex<HashMap<String, HashMap<String, StateTrackerResult>>>,
     /// Correlator results: sessionId -> correlatorId -> CorrelatorResult.
@@ -260,7 +267,7 @@ impl AppState {
             pii_mappings: Mutex::new(HashMap::new()),
             stream_anonymizers: Mutex::new(HashMap::new()),
             mcp_anonymizers: Mutex::new(HashMap::new()),
-            mcp_anonymize: Mutex::new(HashMap::new()),
+            agent_raw_access: Mutex::new(false),
             state_tracker_results: Mutex::new(HashMap::new()),
             stream_tracker_state: Mutex::new(HashMap::new()),
             stream_transformer_state: Mutex::new(HashMap::new()),

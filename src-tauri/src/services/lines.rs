@@ -421,7 +421,7 @@ impl LinesRequest {
 /// a lock across an await point.
 pub fn get_lines(ctx: &ServiceCtx, req: LinesRequest) -> Result<LinePage, ServiceError> {
     // Resolve the redaction decision before touching `sessions` — it takes the
-    // `mcp_anonymize` lock, and the two must never nest.
+    // `agent_raw_access` lock, and the two must never nest.
     let anonymizing = should_anonymize(ctx, &req.session_id);
 
     let mut page = match req.view_mode {
@@ -442,8 +442,8 @@ pub fn get_lines(ctx: &ServiceCtx, req: LinesRequest) -> Result<LinePage, Servic
     };
 
     // Redaction happens here, after every `sessions` acquisition above has been
-    // released: `redact_line` takes `mcp_anonymize` / `anonymizer_config` /
-    // `mcp_anonymizers`, and nesting those under `sessions` is the lock-order
+    // released: `redact_line` takes `anonymizer_config` / `mcp_anonymizers`,
+    // and nesting those under `sessions` is the lock-order
     // violation the bridge's module header warns about.
     let max_chars = req.max_line_chars.unwrap_or(usize::MAX);
     if anonymizing || max_chars != usize::MAX {
@@ -1274,8 +1274,8 @@ mod tests {
     // ── Redaction ───────────────────────────────────────────────────────────
 
     #[test]
-    fn an_agent_is_redacted_when_the_anonymize_flag_is_absent_and_the_ui_never_is() {
-        // Fail-closed: neither context calls `set_mcp_anonymize`.
+    fn an_agent_is_redacted_by_default_and_the_ui_never_is() {
+        // Neither context configures anything — the default is redacted.
         let (agent, _t1) = test_ctx()
             .agent("claude-code")
             .with_pii_session("p1", 5)
@@ -1288,7 +1288,7 @@ mod tests {
 
         assert!(
             raws(&agent_page).iter().all(|r| !r.contains("@example.com")),
-            "an unset flag must fail closed: {:?}",
+            "an agent must be redacted with no configuration: {:?}",
             raws(&agent_page)
         );
         assert!(
@@ -1298,11 +1298,11 @@ mod tests {
     }
 
     #[test]
-    fn an_agent_that_explicitly_opted_out_sees_raw_text() {
+    fn an_agent_sees_raw_text_after_the_user_opted_out() {
         let (ctx, _tmp) = test_ctx()
             .agent("claude-code")
             .with_pii_session("p1", 3)
-            .mcp_anonymize("p1", false)
+            .agent_raw_access(true)
             .build();
         let page = get_lines(&ctx, LinesRequest::range("p1", 0, 3).for_agent(None)).unwrap();
         assert!(raws(&page).iter().all(|r| r.contains("@example.com")));

@@ -22,7 +22,9 @@ desktop UI, not just read access. New tool families —
 for ADB streaming), `logtapper_processors` and `logtapper_marketplace`
 (install/uninstall/packs/sources/updates), `logtapper_chart` /
 `logtapper_timeline`, `logtapper_export`, `logtapper_settings` (read-only —
-agents cannot change the anonymizer config or open-file allowlist, by design),
+agents cannot change the anonymizer config, open-file allowlist or their own
+raw-log access, by design; log text reaching an agent is PII-redacted unless
+the user opted out in Settings),
 and `logtapper_activity` (the shared UI+agent action feed). A watch or
 pipeline run created via chat now shows up live in the desktop UI.
 

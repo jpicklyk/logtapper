@@ -5,7 +5,6 @@ import { useSessionCoreCtx, useSessionPaneCtx } from '../context/SessionContext'
 import {
   listProcessors,
   listPacks,
-  setMcpAnonymize,
   setSessionPipelineMeta,
 } from '../bridge/commands';
 import { onPipelineProgress } from '../bridge/events';
@@ -106,18 +105,12 @@ export function usePipelineWiring(
       bus.emit('pipeline:chain-changed', { sessionId: sid, chain: chainFor(sid).chain });
     }
 
-    // Push the MCP-bridge per-session anonymize flag immediately (not
-    // debounced) — it's the security boundary the bridge consults on every
-    // raw-line request, unlike the meta sync below which only feeds
-    // workspace persistence. Resolved the same way setSessionPipelineMeta's
-    // sessionId is below.
-    const anonymizeSessionId = paneSessionMapRef.current.get(activeLogPaneIdRef.current ?? '');
-    if (anonymizeSessionId) {
-      // The anonymizer flag is a per-session security boundary, so it must be
-      // read from that session's OWN chain, not the default.
-      const own = chainFor(anonymizeSessionId);
-      setMcpAnonymize(anonymizeSessionId, own.chain.includes('__pii_anonymizer')).catch(() => {});
-    }
+    // NOTE: the chain deliberately does NOT influence what agents may read.
+    // This effect used to mirror `chain.includes('__pii_anonymizer')` into a
+    // per-session backend flag, which meant the default chain (no anonymizer)
+    // switched agent anonymization OFF the moment a tab opened. Agent
+    // visibility is now one persisted setting — Settings → General → MCP
+    // Integration — and nothing here may reintroduce a second writer.
 
     // Debounced push to backend for workspace persistence (500ms).
     // The target sessions are captured HERE, at edit time — resolving them when
@@ -149,12 +142,9 @@ export function usePipelineWiring(
     const sessionId = paneSessionMap.get(activeLogPaneId ?? '');
     if (!sessionId) return;
     // Push the session's OWN chain. Pushing the default here would clobber a
-    // diverged session's backend pipeline-meta the moment it gains focus, and
-    // would override its per-session __pii_anonymizer flag — the flag the MCP
-    // bridge consults on every raw-line request.
+    // diverged session's backend pipeline-meta the moment it gains focus.
     const own = chainFor(sessionId);
     setSessionPipelineMeta(sessionId, own.chain, own.disabled).catch(() => {});
-    setMcpAnonymize(sessionId, own.chain.includes('__pii_anonymizer')).catch(() => {});
   }, [chainInitialized, activeLogPaneId, paneSessionMap, chainFor]);
 
   // Cleanup debounce timer on unmount

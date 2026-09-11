@@ -181,6 +181,7 @@ const ROUTE_TABLE: Row[] = [
   { route: "GET /mcp/settings/anonymizer", tool: "logtapper_settings", args: { action: "anonymizer" }, method: "GET", expectPath: "/mcp/settings/anonymizer" },
   { route: "GET /mcp/settings/open_allowlist", tool: "logtapper_settings", args: { action: "open_allowlist" }, method: "GET", expectPath: "/mcp/settings/open_allowlist" },
   { route: "POST /mcp/settings/anonymizer/test", tool: "logtapper_settings", args: { action: "test", text: "hi" }, method: "POST", expectPath: "/mcp/settings/anonymizer/test" },
+  { route: "GET /mcp/settings/agent_access", tool: "logtapper_settings", args: { action: "agent_access" }, method: "GET", expectPath: "/mcp/settings/agent_access" },
   { route: "POST /mcp/sessions/{session_id}/filters", tool: "logtapper_filters", args: { session_id: S, action: "create" }, method: "POST", expectPath: `/mcp/sessions/${S}/filters` },
   { route: "GET /mcp/filters/{filter_id}", tool: "logtapper_filters", args: { filter_id: F, action: "info" }, method: "GET", expectPath: `/mcp/filters/${F}` },
   { route: "GET /mcp/filters/{filter_id}/lines", tool: "logtapper_filters", args: { filter_id: F, action: "lines" }, method: "GET", expectPath: `/mcp/filters/${F}/lines` },
@@ -235,7 +236,7 @@ describe("mcp-server tool → route coverage", () => {
 
   it("ROUTE_TABLE covers every entry in mcp_bridge::ROUTES", () => {
     const bridgeRoutes = parseBridgeRoutes();
-    expect(bridgeRoutes.length).toBe(69);
+    expect(bridgeRoutes.length).toBe(70);
 
     const missing = bridgeRoutes.filter((r) => !covered.has(r));
     expect(missing, `ROUTE_TABLE is missing rows for: ${missing.join(", ")}`).toEqual([]);

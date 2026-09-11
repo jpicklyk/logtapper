@@ -318,6 +318,22 @@ pub fn run() {
                 }
             }
 
+            // Load the persisted agent raw-access opt-out (fails closed: a
+            // missing or corrupt file leaves agents anonymized). The ONLY
+            // writer is `set_agent_raw_access`, a Ui-only Tauri command —
+            // nothing an agent or a pipeline chain does can flip it.
+            let agent_access_path = data_dir.join(crate::services::settings::AGENT_ACCESS_FILE);
+            if let Ok(json) = std::fs::read_to_string(&agent_access_path) {
+                match serde_json::from_str::<crate::services::settings::McpAgentAccess>(&json) {
+                    Ok(cfg) => {
+                        if let Ok(mut stored) = state.agent_raw_access.lock() {
+                            *stored = cfg.agent_raw_access;
+                        }
+                    }
+                    Err(e) => eprintln!("Failed to parse mcp_agent_access.json: {e}"),
+                }
+            }
+
             // Resolve the marketplace directory path.
             // In dev builds, resolve relative to the running executable so the path
             // is machine-independent. The exe lives at src-tauri/target/debug/ so
@@ -511,6 +527,8 @@ pub fn run() {
             commands::anonymizer::set_anonymizer_config,
             commands::anonymizer::test_anonymizer,
             commands::anonymizer::get_pii_mappings,
+            commands::anonymizer::get_agent_raw_access,
+            commands::anonymizer::set_agent_raw_access,
             // MCP bridge open-file allowlist (gates the logtapper_open_file endpoint)
             commands::bridge_access::get_mcp_open_allowlist,
             commands::bridge_access::set_mcp_open_allowlist,
@@ -521,7 +539,6 @@ pub fn run() {
             // Correlator query command
             commands::correlator::get_correlator_events,
             commands::session::get_mcp_status,
-            commands::session::set_mcp_anonymize,
             commands::session::get_session_metadata,
             commands::session::set_focused_session,
             // Phase 1 — Filter commands

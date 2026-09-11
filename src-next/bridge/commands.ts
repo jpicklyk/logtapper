@@ -313,10 +313,6 @@ export function getCorrelatorEvents(
   return invoke('get_correlator_events', { sessionId, correlatorId });
 }
 
-export function setMcpAnonymize(sessionId: string, enabled: boolean): Promise<void> {
-  return invoke('set_mcp_anonymize', { sessionId, enabled });
-}
-
 /**
  * Pushes the currently-focused pane session id to the backend (`null` when no
  * pane is focused). Surfaced over the MCP bridge as `focused` on each entry
@@ -740,6 +736,28 @@ export function getMcpOpenAllowlist(): Promise<McpOpenAllowlist> {
 
 export function setMcpOpenAllowlist(dirs: string[], allowAll: boolean): Promise<void> {
   return invoke('set_mcp_open_allowlist', { dirs, allowAll });
+}
+
+// ---------------------------------------------------------------------------
+// Agent raw-log access
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether agents reading over the MCP bridge receive raw (un-anonymized) log
+ * text. `false` — the default — means every agent-facing raw-line pathway is
+ * anonymized, for every session, whatever the pipeline chain contains.
+ */
+export function getAgentRawAccess(): Promise<boolean> {
+  return invoke('get_agent_raw_access');
+}
+
+/**
+ * Persist the agent raw-access opt-out. This is the only writer: the backend
+ * refuses the equivalent call from an agent, and the MCP bridge exposes no
+ * write route for it.
+ */
+export function setAgentRawAccess(enabled: boolean): Promise<void> {
+  return invoke('set_agent_raw_access', { enabled });
 }
 
 /**

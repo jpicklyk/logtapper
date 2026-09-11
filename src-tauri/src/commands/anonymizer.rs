@@ -42,3 +42,20 @@ pub fn get_pii_mappings(app: AppHandle, session_id: String) -> Result<HashMap<St
     let ctx = ui_ctx(&app);
     Ok(settings::pii_mappings(&ctx, &session_id)?)
 }
+
+/// Whether agents may read raw (un-anonymized) log text.
+#[tauri::command]
+pub fn get_agent_raw_access(app: AppHandle) -> Result<bool, String> {
+    let ctx = ui_ctx(&app);
+    Ok(settings::agent_raw_access(&ctx)?)
+}
+
+/// Allow or forbid agents reading raw (un-anonymized) log text, and persist
+/// the choice. This is the **only** way the flag ever changes — there is no
+/// bridge route, and the equivalent service call from an `Agent` is
+/// `Forbidden`.
+#[tauri::command]
+pub fn set_agent_raw_access(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let ctx = ui_ctx(&app);
+    Ok(settings::set_agent_raw_access(&ctx, enabled)?)
+}

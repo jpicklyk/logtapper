@@ -16,7 +16,7 @@
 
 use std::collections::HashMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::anonymizer::config::AnonymizerConfig;
@@ -192,6 +192,72 @@ pub fn set_open_allowlist(ctx: &ServiceCtx, allowlist: McpOpenAllowlist) -> Resu
 }
 
 // ---------------------------------------------------------------------------
+// Agent raw-access opt-out
+// ---------------------------------------------------------------------------
+
+/// File name (under `app_data_dir`) holding the persisted agent raw-access
+/// opt-out. Read at startup by `lib.rs::setup`, written by
+/// [`set_agent_raw_access`].
+pub const AGENT_ACCESS_FILE: &str = "mcp_agent_access.json";
+
+/// On-disk shape of [`AGENT_ACCESS_FILE`]. A struct rather than a bare bool so
+/// a future agent-visibility setting can join it without a migration.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+pub struct McpAgentAccess {
+    /// `true` = agents receive raw, un-anonymized log text. Default `false`.
+    pub agent_raw_access: bool,
+}
+
+/// Whether agents may read raw (un-anonymized) log text.
+///
+/// Readable by both callers: an agent learning *that* it is being redacted
+/// reveals nothing the redaction itself doesn't already make obvious, and the
+/// UI status pill shows the same value. Only *changing* it is gated.
+pub fn agent_raw_access(ctx: &ServiceCtx) -> Result<bool, ServiceError> {
+    let flag = lock_svc(&ctx.state().agent_raw_access, "agent_raw_access")?;
+    Ok(*flag)
+}
+
+/// Persist the agent raw-access opt-out to `{app_data_dir}/mcp_agent_access.json`.
+fn persist_agent_raw_access(paths: &dyn AppPaths, enabled: bool) -> Result<(), ServiceError> {
+    let data_dir = paths.app_data_dir()?;
+    std::fs::create_dir_all(&data_dir).map_err(|e| ServiceError::Internal(e.to_string()))?;
+    let json = serde_json::to_string_pretty(&McpAgentAccess { agent_raw_access: enabled })
+        .map_err(|e| ServiceError::Internal(e.to_string()))?;
+    std::fs::write(data_dir.join(AGENT_ACCESS_FILE), json)
+        .map_err(|e| ServiceError::Internal(format!("Failed to persist MCP agent access: {e}")))
+}
+
+/// Enable or disable raw (un-anonymized) agent reads.
+///
+/// **`Agent` -> `Forbidden`**: this is the gate that decides whether an agent
+/// sees PII at all — an agent able to flip it could un-redact itself, which is
+/// the entire reason [`deny_agent_gate_mutation`] exists. There is deliberately
+/// **no bridge route** for this: the only way to change it is the checkbox in
+/// Settings → General → MCP Integration. Journals `settings.agent_raw_access`.
+pub fn set_agent_raw_access(ctx: &ServiceCtx, enabled: bool) -> Result<(), ServiceError> {
+    deny_agent_gate_mutation(ctx, "agent raw log access")?;
+
+    persist_agent_raw_access(ctx.paths(), enabled)?;
+    {
+        let mut stored = lock_svc(&ctx.state().agent_raw_access, "agent_raw_access")?;
+        *stored = enabled;
+    }
+
+    ctx.journal(
+        "settings.agent_raw_access",
+        None,
+        if enabled {
+            "allowed agents to read raw (un-anonymized) log text"
+        } else {
+            "restored agent log anonymization"
+        },
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -342,6 +408,76 @@ mod tests {
         let activity = ctx.state().activity.list(None, None);
         assert_eq!(activity.len(), 1);
         assert_eq!(activity[0].action, "settings.allowlist");
+    }
+
+    // ── agent_raw_access / set_agent_raw_access ────────────────────────────
+
+    #[test]
+    fn agent_raw_access_defaults_to_false() {
+        let (ctx, _tmp) = test_ctx().build();
+        assert!(!agent_raw_access(&ctx).unwrap(), "agents must be anonymized by default");
+    }
+
+    #[test]
+    fn ui_can_set_agent_raw_access_and_it_persists_and_journals() {
+        let (ctx, _tmp) = test_ctx().build();
+
+        set_agent_raw_access(&ctx, true).expect("Ui must be allowed to set the opt-out");
+        assert!(agent_raw_access(&ctx).unwrap());
+
+        let data_dir = ctx.paths().app_data_dir().unwrap();
+        let on_disk = std::fs::read_to_string(data_dir.join(AGENT_ACCESS_FILE))
+            .expect("the opt-out must be persisted to disk");
+        let reloaded: McpAgentAccess = serde_json::from_str(&on_disk).unwrap();
+        assert!(reloaded.agent_raw_access);
+        assert!(on_disk.contains("agentRawAccess"), "persisted key must be camelCase: {on_disk}");
+
+        let activity = ctx.state().activity.list(None, None);
+        assert_eq!(activity.len(), 1);
+        assert_eq!(activity[0].action, "settings.agent_raw_access");
+    }
+
+    #[test]
+    fn ui_can_turn_agent_raw_access_back_off() {
+        let (ctx, _tmp) = test_ctx().agent_raw_access(true).build();
+        set_agent_raw_access(&ctx, false).expect("Ui may restore anonymization");
+        assert!(!agent_raw_access(&ctx).unwrap());
+
+        let data_dir = ctx.paths().app_data_dir().unwrap();
+        let reloaded: McpAgentAccess = serde_json::from_str(
+            &std::fs::read_to_string(data_dir.join(AGENT_ACCESS_FILE)).unwrap(),
+        )
+        .unwrap();
+        assert!(!reloaded.agent_raw_access);
+    }
+
+    #[test]
+    fn agent_cannot_set_agent_raw_access() {
+        let (ctx, _tmp) = test_ctx().agent("claude-code").build();
+        let err = set_agent_raw_access(&ctx, true)
+            .expect_err("agents must not be able to un-redact themselves");
+        assert!(matches!(err, ServiceError::Forbidden { .. }));
+        assert_eq!(err.code(), "NOT_ALLOWED");
+        // Nothing flipped, nothing persisted, nothing journaled.
+        assert!(!agent_raw_access(&ctx).unwrap());
+        let data_dir = ctx.paths().app_data_dir().unwrap();
+        assert!(!data_dir.join(AGENT_ACCESS_FILE).exists());
+        assert!(ctx.state().activity.list(None, None).is_empty());
+    }
+
+    #[test]
+    fn agent_can_read_agent_raw_access() {
+        let (ctx, _tmp) = test_ctx().agent("claude-code").build();
+        assert!(!agent_raw_access(&ctx).unwrap());
+    }
+
+    #[test]
+    fn a_missing_or_corrupt_settings_file_parses_as_anonymized() {
+        // `#[serde(default)]` on the struct: an empty object, or one written
+        // by a future version with extra fields, must still mean "redact".
+        let empty: McpAgentAccess = serde_json::from_str("{}").unwrap();
+        assert!(!empty.agent_raw_access);
+        assert!(!McpAgentAccess::default().agent_raw_access);
     }
 
     #[test]

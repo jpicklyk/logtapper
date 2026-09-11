@@ -49,6 +49,12 @@ and therefore runs *first*. `router()` adds `record_activity` before `require_lo
 `record_activity` ever stamps `mcp_last_activity`. If you reorder these, untrusted traffic
 can stamp activity timestamps before being rejected.
 
+**Agent anonymization is decided in `services::policy`, never here.** A bridge caller is
+always `Caller::Agent`, so every raw-line route is redacted unless the user persisted the
+`agent_raw_access` opt-out (Settings → General → MCP Integration). `GET
+/mcp/settings/agent_access` reads that flag; there is deliberately **no write route** for
+it — `routes/settings.rs`'s module doc explains why, and nothing may add one.
+
 `require_local`'s `is_trusted_request` (in `middleware.rs`) checks Host (must be exactly
 `127.0.0.1:40404` or `localhost:40404`), Origin (must be absent — a real MCP client never
 sets it; a browser always does), and Referer (if present, must start with the bridge's own
@@ -70,7 +76,7 @@ guard against drift:
 - `route_table_probe_every_route_resolves_through_the_live_router` (in
   `tests/bridge_http.rs`) — actually drives the real `router()` via
   `tower::ServiceExt::oneshot` for every `ROUTES` entry and asserts none 404/405s. Also
-  pins the **total route count** (currently 69).
+  pins the **total route count** (currently 70).
 
 **To add a route:** append one line to `ROUTES`, one `.route(...)` call to `router()` in
 the same relative position, update both pinned literals in the same change, and add the
@@ -129,8 +135,9 @@ Never trusted for authorization, only for the activity feed and journal.
   other `{...}` → `x`). `get`/`get_raw`, `send_json`/`send_json_raw` issue requests (`_raw`
   variants return bytes, needed for byte-identical-body assertions).
 - **`tests/bridge_http.rs`** — CSRF wiring, the open-file 403/400 matrix, anonymization
-  gating parameterized over every raw-line route, the route-table probe above, and a
-  status-code matrix (`unknown_ids_yield_404...`, `denied_destinations_yield_403...`,
+  gating parameterized over every raw-line route (absent configuration ⇒ redacted,
+  `agent_raw_access` ⇒ raw — plus the exhaustiveness list that forces a decision for any
+  new raw-text route), the route-table probe above, and a status-code matrix (`unknown_ids_yield_404...`, `denied_destinations_yield_403...`,
   `malformed_params_yield_400...`).
 - **`tests/wire_parity.rs`** — for each shared `services::wire` type, builds the value two
   ways (call the service function directly vs. hit the route through `router()`) and
