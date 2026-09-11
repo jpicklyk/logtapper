@@ -28,13 +28,11 @@
 use std::sync::Arc;
 
 use app_lib::commands::AppState;
-use app_lib::mcp_bridge::{self, BridgeCtx};
+use app_lib::mcp_bridge;
 use app_lib::services::activity::ACTIVITY_CAP;
-use app_lib::services::paths::{FixedPaths, NullSpawner};
-use app_lib::services::testing::{fixture_session_with_pii, RecordingSink};
-use app_lib::services::{AppPaths, Caller, EventSink, Spawner};
+use app_lib::services::testing::fixture_session_with_pii;
+use app_lib::services::Caller;
 
-use axum::Router;
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use http_body_util::BodyExt;
@@ -45,136 +43,14 @@ use tower::ServiceExt;
 // ---------------------------------------------------------------------------
 // Harness
 // ---------------------------------------------------------------------------
+//
+// Moved into `tests/support/mod.rs` (WP-14) so `tests/wire_parity.rs` can
+// share the exact same `app()`/`ctx_only()` construction instead of a second
+// hand-copied one — see that module's doc comment for the full rationale.
 
-mod harness {
-    use super::*;
+mod support;
 
-    /// Build a fresh router over an isolated `AppState`, plus the handles a
-    /// test needs to seed state before a request (sessions, allowlist,
-    /// `mcp_anonymize`) or assert on after one (`mcp_last_activity`, emitted
-    /// events). Every call gets its own `AppState` — tests never share one.
-    pub fn app() -> (Router, Arc<AppState>, Arc<RecordingSink>, TempDir) {
-        let (ctx, state, sink, tmp) = ctx_only();
-        let router = mcp_bridge::router(ctx);
-        (router, state, sink, tmp)
-    }
-
-    /// Like [`app`], but hands back the `BridgeCtx` itself before `router()`
-    /// consumes it. Needed only by the test that exercises `BridgeCtx::svc()`
-    /// / `ServiceCtx::journal` directly — reads are never journaled, so no
-    /// GET route can be used to observe a journal write.
-    pub fn ctx_only() -> (BridgeCtx, Arc<AppState>, Arc<RecordingSink>, TempDir) {
-        let state = Arc::new(AppState::new());
-        let sink = Arc::new(RecordingSink::new());
-        let tmp = tempfile::tempdir().expect("tempdir for test AppPaths");
-        let paths: Arc<dyn AppPaths> = Arc::new(FixedPaths(tmp.path().to_path_buf()));
-        let spawner: Arc<dyn Spawner> = Arc::new(NullSpawner);
-        let ctx = BridgeCtx::from_parts(
-            Arc::clone(&state),
-            Arc::clone(&sink) as Arc<dyn EventSink>,
-            paths,
-            spawner,
-        );
-        (ctx, state, sink, tmp)
-    }
-
-    /// Headers that pass `require_local`: exactly the bridge's own `Host`, no
-    /// `Origin`, no `Referer`.
-    pub fn trusted_headers() -> Vec<(&'static str, &'static str)> {
-        vec![("host", "127.0.0.1:40404")]
-    }
-
-    /// Placeholder-substitute a `ROUTES` path template so it can actually be
-    /// requested: `{session_id}` -> `nosuch` (a plausible-but-absent session
-    /// id), any other `{...}` -> `x`.
-    pub fn substitute_placeholders(template: &str) -> String {
-        template
-            .split('/')
-            .map(|seg| match seg.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
-                Some("session_id") => "nosuch",
-                Some(_) => "x",
-                None => seg,
-            })
-            .collect::<Vec<_>>()
-            .join("/")
-    }
-
-    /// `GET path` with `headers`, returning the status and raw response body
-    /// bytes — some assertions (byte-identical error bodies) need the bytes,
-    /// not a re-serialized parse of them.
-    pub async fn get_raw(router: &Router, path: &str, headers: &[(&str, &str)]) -> (StatusCode, Vec<u8>) {
-        let mut builder = Request::builder().method(Method::GET).uri(path);
-        for (k, v) in headers {
-            builder = builder.header(*k, *v);
-        }
-        let req = builder.body(Body::empty()).expect("build GET request");
-        send(router, req).await
-    }
-
-    /// `GET path` with `headers`, returning the status and parsed JSON body.
-    pub async fn get(router: &Router, path: &str, headers: &[(&str, &str)]) -> (StatusCode, Value) {
-        let (status, bytes) = get_raw(router, path, headers).await;
-        (status, json(&bytes))
-    }
-
-    /// `method path` with `headers` plus a JSON `body`, returning the status
-    /// and raw response bytes.
-    pub async fn send_json_raw(
-        router: &Router,
-        method: Method,
-        path: &str,
-        headers: &[(&str, &str)],
-        body: &Value,
-    ) -> (StatusCode, Vec<u8>) {
-        let mut builder = Request::builder()
-            .method(method)
-            .uri(path)
-            .header("content-type", "application/json");
-        for (k, v) in headers {
-            builder = builder.header(*k, *v);
-        }
-        let req = builder
-            .body(Body::from(serde_json::to_vec(body).expect("serialize request body")))
-            .expect("build request");
-        send(router, req).await
-    }
-
-    /// Same as [`send_json_raw`], but with the parsed JSON body.
-    pub async fn send_json(
-        router: &Router,
-        method: Method,
-        path: &str,
-        headers: &[(&str, &str)],
-        body: &Value,
-    ) -> (StatusCode, Value) {
-        let (status, bytes) = send_json_raw(router, method, path, headers, body).await;
-        (status, json(&bytes))
-    }
-
-    async fn send(router: &Router, req: Request<Body>) -> (StatusCode, Vec<u8>) {
-        let res = router.clone().oneshot(req).await.expect("router must not error");
-        let status = res.status();
-        let bytes = res
-            .into_body()
-            .collect()
-            .await
-            .expect("collect response body")
-            .to_bytes()
-            .to_vec();
-        (status, bytes)
-    }
-
-    /// Parse `bytes` as JSON, or `Value::Null` for an empty body.
-    pub fn json(bytes: &[u8]) -> Value {
-        if bytes.is_empty() {
-            Value::Null
-        } else {
-            serde_json::from_slice(bytes).unwrap_or(Value::Null)
-        }
-    }
-}
-
-use harness::*;
+use support::*;
 
 // ---------------------------------------------------------------------------
 // 1. CSRF wiring
@@ -589,6 +465,199 @@ async fn lines_around_route_honors_the_anonymization_gate() {
 }
 
 // ---------------------------------------------------------------------------
+// 5b. Anonymization gating, exhaustive (WP-14)
+// ---------------------------------------------------------------------------
+//
+// Every route whose response can carry raw line/log text gets the same
+// two-state gate proven above for query/search/search_with_context/
+// lines_around: `mcp_anonymize` absent fails closed (redacted), explicit
+// `false` serves raw text. Routes that carry NO raw text at all (a filter's
+// `info`, an `Ack`, `Insights`' structured signals, …) are recorded in
+// [`RAW_TEXT_ROUTE_COVERAGE`] as deliberately not gated, WITH the reason —
+// so the exhaustiveness check below can tell "considered and exempt" from
+// "simply forgotten".
+
+/// One processor whose reporter pipeline is irrelevant — `processor_detail`'s
+/// `matched_lines`/`include_line_text` path resolves raw text straight out of
+/// `matched_line_nums` regardless of whether any pipeline stage ever ran.
+const PII_GATE_REPORTER: &str = r#"
+meta:
+  id: pii-gate-reporter
+  name: PII Gate Reporter
+  version: 1.0.0
+"#;
+
+#[tokio::test]
+async fn processor_detail_route_honors_the_anonymization_gate() {
+    const SESSION: &str = "pii-session-detail";
+    const NEEDLE: &str = "user0@example.com";
+    let path = format!("/mcp/sessions/{SESSION}/processor/pii-gate-reporter?include_line_text=true");
+
+    fn seed(state: &Arc<AppState>) {
+        state
+            .sessions
+            .lock()
+            .unwrap()
+            .insert(SESSION.to_string(), fixture_session_with_pii(SESSION, 5));
+        state.processors.lock().unwrap().insert(
+            "pii-gate-reporter".to_string(),
+            app_lib::processors::AnyProcessor::from_yaml(PII_GATE_REPORTER).expect("fixture yaml parses"),
+        );
+        state.pipeline_results.lock().unwrap().entry(SESSION.to_string()).or_default().insert(
+            "pii-gate-reporter".to_string(),
+            app_lib::processors::RunResult { matched_line_nums: vec![0, 1], ..Default::default() },
+        );
+    }
+
+    // mcp_anonymize ABSENT -> fails closed -> redacted.
+    {
+        let (router, state, _sink, _tmp) = app();
+        seed(&state);
+        let (status, body) = get(&router, &path, &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let text = serde_json::to_string(&body).unwrap();
+        assert!(!text.contains(NEEDLE), "mcp_anonymize absent must fail closed and redact; leaked PII: {text}");
+    }
+
+    // mcp_anonymize[session] = false -> raw.
+    {
+        let (router, state, _sink, _tmp) = app();
+        seed(&state);
+        state.mcp_anonymize.lock().unwrap().insert(SESSION.to_string(), false);
+        let (status, body) = get(&router, &path, &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let text = serde_json::to_string(&body).unwrap();
+        assert!(text.contains(NEEDLE), "mcp_anonymize=false must serve raw text; missing expected PII: {text}");
+    }
+}
+
+#[tokio::test]
+async fn export_route_honors_the_anonymization_gate_explicit_false_too() {
+    // `wp10_timeline_export::export_route_inside_the_allowlist_succeeds_and_redacts_for_an_agent`
+    // already pins the fail-closed (absent) half of this gate. This is the
+    // other half: `mcp_anonymize = false` must produce an UNREDACTED export —
+    // exhaustiveness (§5b below) requires both states be proven for every
+    // raw-text route, not just one.
+    const SESSION: &str = "pii-session-export";
+    const NEEDLE: &str = "user0@example.com";
+
+    let (router, state, _sink, tmp) = app();
+    state.sessions.lock().unwrap().insert(SESSION.to_string(), fixture_session_with_pii(SESSION, 3));
+    state.mcp_anonymize.lock().unwrap().insert(SESSION.to_string(), false);
+
+    let out_dir = tmp.path().join("allowed-out");
+    std::fs::create_dir_all(&out_dir).unwrap();
+    state.mcp_open_allowlist.lock().unwrap().allowed_dirs.push(out_dir.to_string_lossy().to_string());
+    let dest = out_dir.join("agent-export-raw.lts");
+
+    let body = json!({
+        "destPath": dest.to_string_lossy(),
+        "includeBookmarks": false,
+        "includeAnalyses": false,
+        "includeProcessors": false,
+        "editorTabs": [],
+    });
+    let (status, resp) = send_json(&router, Method::POST, "/mcp/export", &trusted_headers(), &body).await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert!(dest.exists());
+
+    let bytes = std::fs::read(&dest).unwrap();
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut found_source = false;
+    let mut found_needle = false;
+    for i in 0..zip.len() {
+        let mut file = zip.by_index(i).unwrap();
+        if file.name().contains("source/") {
+            found_source = true;
+            let mut buf = Vec::new();
+            std::io::Read::read_to_end(&mut file, &mut buf).unwrap();
+            if String::from_utf8_lossy(&buf).contains(NEEDLE) {
+                found_needle = true;
+            }
+        }
+    }
+    assert!(found_source, "the archive must contain a source entry");
+    assert!(found_needle, "mcp_anonymize=false must serve a raw (unredacted) export");
+}
+
+/// Every `mcp_bridge::ROUTES` template, mapped to why it either IS or is NOT
+/// gated by `mcp_anonymize`. This is the exhaustiveness list: every route
+/// whose path contains a keyword a raw-line-returning route is likely to use
+/// must appear here — see `no_raw_text_capable_route_is_missing_from_the_gate_coverage_list`
+/// below, which enforces that mechanically so a future route cannot be added
+/// without someone deciding (and recording) whether it needs gating.
+const RAW_TEXT_ROUTE_COVERAGE: &[(&str, &str, &str)] = &[
+    ("GET", "/mcp/sessions/{session_id}/query", "gated: query_route_honors_the_anonymization_gate"),
+    ("GET", "/mcp/sessions/{session_id}/lines_around", "gated: lines_around_route_honors_the_anonymization_gate"),
+    ("GET", "/mcp/sessions/{session_id}/search", "gated: search_route_honors_the_anonymization_gate"),
+    (
+        "GET",
+        "/mcp/sessions/{session_id}/search_with_context",
+        "gated: search_with_context_route_honors_the_anonymization_gate",
+    ),
+    (
+        "GET",
+        "/mcp/sessions/{session_id}/events",
+        "no raw text: TrackerEventEntry carries only structured transition fields (tracker id, line/timestamp, named changes) — never raw log lines",
+    ),
+    (
+        "GET",
+        "/mcp/sessions/{session_id}/insights",
+        "no raw text: InsightSignal carries only structured fields rendered from processor vars/templates — services::insights::digest never touches raw line text",
+    ),
+    (
+        "POST",
+        "/mcp/sessions/{session_id}/filters",
+        "no raw text: FilterCreateResult is {filterId, sessionId, totalLines} — counts only",
+    ),
+    ("GET", "/mcp/filters/{filter_id}", "no raw text: FilterInfo is counts/status only"),
+    ("GET", "/mcp/filters/{filter_id}/lines", "gated: wp7_filters::lines_are_redacted_when_mcp_anonymize_is_absent_for_the_session / lines_stay_raw_when_mcp_anonymize_is_explicitly_false"),
+    ("POST", "/mcp/filters/{filter_id}/cancel", "no raw text: Ack only"),
+    ("DELETE", "/mcp/filters/{filter_id}", "no raw text: Ack only"),
+    (
+        "GET",
+        "/mcp/export/info",
+        "no raw text: ExportAllSessionsInfo is session/file metadata (ids, sizes, paths) — never line content",
+    ),
+    ("POST", "/mcp/export", "gated: export_route_inside_the_allowlist_succeeds_and_redacts_for_an_agent (wp10) / export_route_honors_the_anonymization_gate_explicit_false_too"),
+    (
+        "GET",
+        "/mcp/sessions/{session_id}/stream/events",
+        "gated: wp11_stream::events_are_redacted_when_mcp_anonymize_is_absent_for_the_session / events_stay_raw_when_mcp_anonymize_is_explicitly_false",
+    ),
+];
+
+#[test]
+fn no_raw_text_capable_route_is_missing_from_the_gate_coverage_list() {
+    // A cheap heuristic, deliberately over-inclusive: any route whose path
+    // contains one of these words is treated as "plausibly returns raw line
+    // text" and MUST have a decision recorded in `RAW_TEXT_ROUTE_COVERAGE`
+    // (either "gated: <test>" or "no raw text: <reason>") — so a future route
+    // added under one of these names cannot silently skip the question.
+    const KEYWORDS: &[&str] = &["lines", "search", "query", "events", "export", "insights", "filters"];
+
+    let mut missing = Vec::new();
+    for (method, template) in mcp_bridge::ROUTES {
+        if !KEYWORDS.iter().any(|k| template.contains(k)) {
+            continue;
+        }
+        let covered = RAW_TEXT_ROUTE_COVERAGE
+            .iter()
+            .any(|(m, t, _)| m == method && t == template);
+        if !covered {
+            missing.push(format!("{method} {template}"));
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "the following routes look like they might return raw line text (path contains one of {KEYWORDS:?}) \
+         but have no entry in RAW_TEXT_ROUTE_COVERAGE — add one recording whether they are gated and by which \
+         test, or why they carry no raw text: {missing:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // 6. WP-12 settings
 // ---------------------------------------------------------------------------
 //
@@ -703,7 +772,7 @@ mod wp12_settings {
 // 6. WP-7 — filter endpoints
 // ---------------------------------------------------------------------------
 //
-// `harness::app()` wires a `NullSpawner` (see `services::testing`), so
+// `support::app()` wires a `NullSpawner` (see `services::testing`), so
 // `services::filters::create`'s spawned background scan never actually runs
 // under this harness — exactly like a filter observed a moment after
 // creation. The scan loop itself is covered by `services::filters`'s own
@@ -1610,7 +1679,7 @@ mod wp8_workspace {
 // 7. WP-11 — ADB stream endpoints
 // ---------------------------------------------------------------------------
 //
-// `harness::app()` wires a `NullSpawner`, so `POST /mcp/adb/stream` would
+// `support::app()` wires a `NullSpawner`, so `POST /mcp/adb/stream` would
 // never actually run a capture task here even if a device were attached — and
 // `adb` itself may or may not be on PATH on the machine running these. These
 // tests therefore cover what the HTTP surface owes regardless of the
@@ -2122,5 +2191,171 @@ mod wp13_wire_contract {
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
         assert_eq!(body["error"]["code"], "NOT_FOUND");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 10. WP-14 — status-code matrix
+// ---------------------------------------------------------------------------
+//
+// One class per failure kind, each driven across several route families so a
+// single handler's status/code choice can't be mistaken for the contract:
+// unknown-id -> 404 NOT_FOUND, a denied filesystem destination -> 403
+// NOT_ALLOWED, and malformed request parameters -> 400 (with whatever
+// `InvalidArg` code that route uses).
+mod wp14_status_code_matrix {
+    use super::*;
+
+    /// (a) An unknown session/filter/analysis id -> `404` with the one typed
+    /// `{error:{code:"NOT_FOUND"}}` envelope, across five independent route
+    /// families (session lifecycle, filters x2, analyses x2).
+    #[tokio::test]
+    async fn unknown_ids_yield_404_not_found_across_route_families() {
+        let cases: Vec<(Method, &str)> = vec![
+            (Method::GET, "/mcp/sessions/nosuch/metadata"),
+            (Method::POST, "/mcp/sessions/nosuch/close"),
+            (Method::GET, "/mcp/filters/nosuch"),
+            (Method::GET, "/mcp/filters/nosuch/lines"),
+            (Method::GET, "/mcp/analyses/nosuch"),
+            (Method::DELETE, "/mcp/analyses/nosuch"),
+            (Method::GET, "/mcp/sessions/nosuch/stream/status"),
+        ];
+
+        for (method, path) in cases {
+            let (router, _state, _sink, _tmp) = app();
+            let (status, body) = if method == Method::GET {
+                get(&router, path, &trusted_headers()).await
+            } else {
+                send_json(&router, method.clone(), path, &trusted_headers(), &json!({})).await
+            };
+            assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path} -> {status}: {body}");
+            assert_eq!(body["error"]["code"], "NOT_FOUND", "{method} {path}: {body}");
+            assert!(
+                body["error"]["message"].as_str().is_some_and(|m| !m.is_empty()),
+                "{method} {path}: {body}"
+            );
+        }
+    }
+
+    /// (b) A caller-chosen filesystem destination outside the MCP open
+    /// allowlist -> `403 NOT_ALLOWED`, across every gate that authorizes a
+    /// write or open: `open_file` (a path outside the allowlist entirely),
+    /// `export` (a destination whose directory isn't allowlisted), and
+    /// `workspace/save` (same shape, different route).
+    #[tokio::test]
+    async fn denied_destinations_yield_403_not_allowed_across_route_families() {
+        // open_file: an existing file OUTSIDE the allowlist.
+        {
+            let (router, _state, _sink, _tmp) = app();
+            let file = NamedTempFile::new().expect("create temp file");
+            let (status, body) = send_json(
+                &router,
+                Method::POST,
+                "/mcp/open_file",
+                &trusted_headers(),
+                &json!({ "path": file.path().to_string_lossy() }),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+            assert_eq!(body["error"]["code"], "NOT_ALLOWED");
+        }
+
+        // export: a destination whose directory is never allowlisted.
+        {
+            let (router, _state, _sink, tmp) = app();
+            let dest = tmp.path().join("nope.lts");
+            let body = json!({
+                "destPath": dest.to_string_lossy(),
+                "includeBookmarks": false,
+                "includeAnalyses": false,
+                "includeProcessors": false,
+                "editorTabs": [],
+            });
+            let (status, resp) = send_json(&router, Method::POST, "/mcp/export", &trusted_headers(), &body).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+            assert_eq!(resp["error"]["code"], "NOT_ALLOWED");
+            assert!(!dest.exists(), "a denied export must not write anything");
+        }
+
+        // workspace/save: the allowlist covers one directory; the chosen
+        // destination is deliberately in a different one.
+        {
+            let (router, state, _sink, tmp) = app();
+            let allowed = tmp.path().join("allowed");
+            std::fs::create_dir_all(&allowed).unwrap();
+            state.mcp_open_allowlist.lock().unwrap().allowed_dirs.push(allowed.to_string_lossy().to_string());
+            let outside = TempDir::new().expect("a directory that is NOT allowlisted");
+            let dest = outside.path().join("escape.ltw");
+            let body = json!({
+                "workspaceId": "ws-14",
+                "destPath": dest.to_string_lossy(),
+                "workspaceName": "WP-14",
+                "editorTabs": [],
+                "layout": null,
+                "pipelineChain": [],
+                "disabledChainIds": [],
+            });
+            let (status, resp) = send_json(&router, Method::POST, "/mcp/workspace/save", &trusted_headers(), &body).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+            assert_eq!(resp["error"]["code"], "NOT_ALLOWED");
+            assert!(!dest.exists(), "a denied workspace save must not write anything");
+        }
+    }
+
+    /// (c) Malformed request parameters -> `400`, on three independently
+    /// implemented gates: a malformed path string, an uncompilable regex, and
+    /// a request missing a required mutually-exclusive field.
+    #[tokio::test]
+    async fn malformed_params_yield_400_across_three_routes() {
+        // open_file: a relative path is structurally invalid, regardless of
+        // the allowlist.
+        {
+            let (router, _state, _sink, _tmp) = app();
+            let (status, body) = send_json(
+                &router,
+                Method::POST,
+                "/mcp/open_file",
+                &trusted_headers(),
+                &json!({ "path": r"relative\path.log" }),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+            assert_eq!(body["error"]["code"], "INVALID_PATH");
+        }
+
+        // filter create: an uncompilable regex.
+        {
+            let (router, state, _sink, _tmp) = app();
+            state
+                .sessions
+                .lock()
+                .unwrap()
+                .insert("s1".to_string(), app_lib::services::testing::fixture_session("s1", 5));
+            let (status, body) = send_json(
+                &router,
+                Method::POST,
+                "/mcp/sessions/s1/filters",
+                &trusted_headers(),
+                &json!({ "regex": "[invalid" }),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+            assert_eq!(body["error"]["code"], "INVALID_ARGUMENT");
+        }
+
+        // marketplace/install: neither `entry` nor `pack` supplied.
+        {
+            let (router, _state, _sink, _tmp) = app();
+            let (status, body) = send_json(
+                &router,
+                Method::POST,
+                "/mcp/marketplace/install",
+                &trusted_headers(),
+                &json!({ "sourceName": "official" }),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+            assert_eq!(body["error"]["code"], "INVALID_ARGUMENT");
+        }
     }
 }
