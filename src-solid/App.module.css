@@ -1,19 +1,60 @@
+/* Spike shell. Like the viewer module, every token carries a dark-theme
+   fallback from src-next/styles/tokens.css until T1 lands. */
+
 .page {
-  font-family: system-ui, sans-serif;
-  padding: 24px;
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  font-family: var(--font-ui, system-ui, sans-serif);
+  font-size: 13px;
+  color: var(--text, #b8c4ce);
+  background: var(--bg-base, #0c1014);
 }
 
-.lines {
-  margin: 12px 0 0;
-  padding: 12px;
-  overflow-x: auto;
-  white-space: pre;
-  font-family: ui-monospace, monospace;
-  font-size: 12px;
-  line-height: 18px;
-  border: 1px solid currentColor;
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border, #21262d);
+  background: var(--chrome-bg, var(--bg-raised, #141b21));
+}
+
+.openButton {
+  padding: 4px 12px;
+  font: inherit;
+  color: var(--text-on-accent, var(--bg-base, #0c1014));
+  background: var(--accent, #58a6ff);
+  border: none;
+  border-radius: var(--radius-md, 4px);
+  cursor: pointer;
+}
+
+.openButton:hover:not(:disabled) {
+  background: var(--accent-base, #1f6feb);
+}
+
+.openButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.session {
+  color: var(--text-subtle, #8b949e);
+  font-variant-numeric: tabular-nums;
 }
 
 .error {
-  color: #d33;
+  color: var(--danger, #f47067);
+}
+
+.empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dimmed, #484f58);
 }
