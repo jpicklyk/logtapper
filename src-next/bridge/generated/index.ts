@@ -89,6 +89,7 @@ export type { SearchProgressEvent } from './SearchProgressEvent';
 export type { SearchQuery } from './SearchQuery';
 export type { SearchSummary } from './SearchSummary';
 export type { SectionInfo } from './SectionInfo';
+export type { SessionClosedEvent } from './SessionClosedEvent';
 export type { SessionMetadata } from './SessionMetadata';
 export type { Severity } from './Severity';
 export type { SkipReason } from './SkipReason';

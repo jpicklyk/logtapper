@@ -46,49 +46,38 @@ use routes::watches::{h_cancel_watch, h_create_watch, h_list_watches};
 
 pub const PORT: u16 = 40404;
 
-/// Concrete handle type — Wry is the only desktop runtime Tauri ships.
-type Handle = AppHandle<Wry>;
-
 /// Router state for every bridge handler.
 ///
-/// Replaces the bare `AppHandle` the router used to carry. Handlers now reach
+/// Replaces the bare `AppHandle` the router used to carry. Handlers reach
 /// state through `ctx.state` and notify the frontend through `ctx.events`
 /// instead of resolving them out of a Tauri handle, which is what lets
 /// [`router`] be built (and driven with `tower::ServiceExt::oneshot`) without a
 /// live webview.
 ///
-/// `app` is a **transitional** field. It originally covered four call sites
-/// that took an `AppHandle` directly: `files::open_file_inner`,
+/// No longer carries a Tauri handle at all. It originally covered four call
+/// sites that took an `AppHandle` directly — `files::open_file_inner`,
 /// `files::close_session_inner`, the bookmark/analysis mutation handlers (the
-/// former `artifact_mutations::*`), and `pipeline::execute_pipeline`. WP-5
-/// converted the bookmark/analysis handlers to `ServiceCtx` via
-/// `services::{bookmarks,analyses}`, so only the `files.rs` (WP-6) and
-/// `pipeline.rs` (WP-4) call sites remain. The handle rides along until those
-/// convert too. Nothing new may use it: reach for `state`, `events`, `paths`
-/// or `spawner` instead.
+/// former `artifact_mutations::*`), and `pipeline::execute_pipeline` — all of
+/// which have since converted to `ServiceCtx` (WP-4, WP-5, WP-6). Nothing may
+/// reintroduce it: reach for `state`, `events`, `paths` or `spawner` instead.
 #[derive(Clone)]
 pub struct BridgeCtx {
     pub state: Arc<AppState>,
     pub events: Arc<dyn EventSink>,
     pub paths: Arc<dyn AppPaths>,
     pub spawner: Arc<dyn Spawner>,
-    /// Transitional Tauri handle for the handlers not yet on `ServiceCtx`
-    /// (artifact mutations, execute_pipeline, open/close session). `None` when
-    /// the router is built without Tauri (tests); those handlers then return
-    /// `TRANSPORT_UNAVAILABLE`. Removed once WP-4/5/6 land.
-    pub app: Option<Handle>,
 }
 
 impl BridgeCtx {
     /// Assemble a bridge context from a live `AppHandle`. Called once, by
-    /// `commands::mcp::start_mcp_bridge`.
-    pub fn new(app: Handle) -> Self {
+    /// `commands::mcp::start_mcp_bridge`. The handle itself is not retained —
+    /// only what the three adapter types built from it here need.
+    pub fn new(app: AppHandle<Wry>) -> Self {
         Self {
             state: Arc::clone(&*app.state::<Arc<AppState>>()),
             events: Arc::new(crate::commands::adapters::TauriSink::new(app.clone())),
             paths: Arc::new(crate::commands::adapters::TauriPaths::new(app.clone())),
             spawner: Arc::new(crate::commands::adapters::TauriSpawner),
-            app: Some(app),
         }
     }
 
@@ -100,15 +89,7 @@ impl BridgeCtx {
         paths: Arc<dyn AppPaths>,
         spawner: Arc<dyn Spawner>,
     ) -> Self {
-        Self { state, events, paths, spawner, app: None }
-    }
-
-    /// The transitional handle, or the error string handlers surface when the
-    /// router was built without one.
-    pub(crate) fn app(&self) -> Result<&Handle, String> {
-        self.app
-            .as_ref()
-            .ok_or_else(|| "bridge transport handle unavailable (TRANSPORT_UNAVAILABLE)".to_string())
+        Self { state, events, paths, spawner }
     }
 
     /// A [`ServiceCtx`] for an agent caller.
