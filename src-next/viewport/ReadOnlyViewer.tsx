@@ -161,7 +161,9 @@ export default function ReadOnlyViewer({
       getScrollEl: () => parentRef.current,
       getTotalLines: () => liveTotalLines,
       rowHeight: () => LINE_HEIGHT,
-      isReady: () => (parentRef.current?.firstElementChild?.childElementCount ?? 0) > 1,
+      // A real TextLine row (skeletons render no message span). Mirrors Solid's
+      // `[data-line]:not([data-skeleton])` without touching TextLine's markup.
+      isReady: () => parentRef.current?.querySelector('[class*="msg"]') != null,
     });
     if (dataSource.getLine(virtualBase) != null) bench.markLinePage();
   });

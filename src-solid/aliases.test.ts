@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { solidAliasPaths, solidAliases } from '../solid.aliases';
+import { solidAliasPaths, solidAliases, solidRepoRoot } from '../solid.aliases';
 
 /**
  * The Solid frontend declares its aliases three times: `solid.aliases.ts` (which
@@ -10,8 +10,9 @@ import { solidAliasPaths, solidAliases } from '../solid.aliases';
  * together — a new alias in one and not the other fails here, not at runtime.
  */
 
-// Vitest runs from the repo root; `import.meta.url` is not a file: URL here.
-const repoRoot = process.cwd();
+// Resolve from the alias module's own location, not cwd — vitest may be
+// invoked with `--root` from another checkout (worktree runs).
+const repoRoot = solidRepoRoot;
 
 function readTsconfigPaths(): Record<string, string[]> {
   const raw = readFileSync(resolve(repoRoot, 'tsconfig.solid.json'), 'utf8');

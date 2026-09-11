@@ -113,6 +113,9 @@ a dev-server run, not a built-dist run, so say so in the results.
 
 3. Open `bench/logcat-1m.log` through the app's normal open-file flow and wait for the
    viewer to settle (no skeleton rows in the window).
+   Row height must be the default 22 px on both sides: the React viewer hardcodes it,
+   the Solid viewer reads `--viewer-row-h`. Do not set a custom row height or density
+   for a gate run.
 4. Confirm the harness is live and that time-to-first-painted-row was captured:
 
    ```js

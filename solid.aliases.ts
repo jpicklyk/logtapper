@@ -13,6 +13,9 @@ import { fileURLToPath } from "node:url";
  */
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
+/** Absolute repo root (the directory this file lives in), independent of cwd. */
+export const solidRepoRoot = r("./");
+
 /** alias → repo-relative directory, the form the tsconfig `paths` mirror. */
 export const solidAliasPaths: Record<string, string> = {
   "@bridge": "src-next/bridge",
