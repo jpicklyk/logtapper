@@ -82,6 +82,8 @@ export type { ProgressEvent } from './ProgressEvent';
 export type { RestoreSessionOptions } from './RestoreSessionOptions';
 export type { Sampled } from './Sampled';
 export type { SaveWorkspaceOptions } from './SaveWorkspaceOptions';
+export type { SearchHit } from './SearchHit';
+export type { SearchHits } from './SearchHits';
 export type { SearchProgress } from './SearchProgress';
 export type { SearchProgressEvent } from './SearchProgressEvent';
 export type { SearchQuery } from './SearchQuery';

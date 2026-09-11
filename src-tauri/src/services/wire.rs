@@ -225,6 +225,61 @@ pub struct LinePage {
     pub stats: Option<LineStats>,
 }
 
+/// One line that matched a search, together with the lines around it.
+///
+/// The single element shape behind both of today's search endpoints.
+/// `h_search` renders `line` plus two sibling arrays; `h_search_with_context`
+/// renders one flat list in reading order and marks the match with
+/// `isMatch` — which is [`ViewLine::is_context`] inverted, so no information
+/// is lost either way. Every string here has already been through
+/// [`policy::redact_line`](crate::services::policy::redact_line).
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchHit {
+    /// The matching line itself. [`is_context`](ViewLine::is_context) is false.
+    pub line: ViewLine,
+    /// Up to `context_before` lines immediately preceding the match, in
+    /// ascending line order.
+    pub context_before: Vec<ViewLine>,
+    /// Up to `context_after` lines immediately following the match, in
+    /// ascending line order.
+    pub context_after: Vec<ViewLine>,
+    /// Regex capture groups 1..n of this match, in order, with non-participating
+    /// groups dropped. Empty when the pattern has no groups — or when the
+    /// caller asked for a membership test rather than captures.
+    pub captures: Vec<String>,
+}
+
+/// A page of search hits, plus what it took to find them.
+///
+/// `total` is the number of matches the scan *counted*, which is not always
+/// `hits.len()`: a caller that only wants the first page stops scanning once
+/// it has `limit` hits and then the two agree, while a caller that wants an
+/// exact count keeps scanning past the page. `truncated` says the scan itself
+/// stopped short — the [`MCP_SCAN_LINE_CAP`](crate::services::lines::MCP_SCAN_LINE_CAP)
+/// bound, or the session disappearing mid-scan — which is a different fact
+/// from `hits.len() < total`.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchHits {
+    pub session_id: String,
+    /// Matches counted across the scanned range (see the type docs).
+    pub total: usize,
+    /// How many hits are in this page (== `hits.len()`).
+    pub returned: usize,
+    /// Matches skipped before collecting this page.
+    pub offset: usize,
+    /// The page size that was applied.
+    pub limit: usize,
+    pub truncated: bool,
+    /// How many source lines the scan examined.
+    pub scanned_lines: usize,
+    /// Total lines in the session, for orientation — the scan range may be
+    /// narrower.
+    pub total_lines: usize,
+    pub hits: Vec<SearchHit>,
+}
+
 /// The result of one pipeline run.
 ///
 /// `effective_processor_ids` is the chain the backend actually ran, after
