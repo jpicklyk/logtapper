@@ -120,26 +120,10 @@ pub async fn load_log_file(
         .map_err(String::from)
 }
 
-/// Compatibility shim for `commands::workspace_cmd::restore_workspace_session`
-/// (a different work package, not yet converted to `ServiceCtx`), which calls
-/// this exact signature with a real `AppHandle`. The logic now lives in
-/// [`crate::services::sessions::emit_workspace_restored`] — this just builds a
-/// UI context and delegates. `state` is accepted only for call-site
-/// compatibility (the rebuilt `ServiceCtx` resolves the same `Arc<AppState>`
-/// from `app`, since a Tauri process only ever has one). Delete this shim once
-/// `restore_workspace_session` is converted to build a `ServiceCtx` directly.
-pub(crate) fn emit_workspace_restored(
-    _state: &AppState,
-    app: &tauri::AppHandle,
-    session_id: &str,
-    bm_count: usize,
-    an_count: usize,
-    meta: crate::workspace::SessionMeta,
-    source: &str,
-) {
-    let ctx = crate::commands::adapters::ui_ctx(app);
-    crate::services::sessions::emit_workspace_restored(&ctx, session_id, bm_count, an_count, meta, source);
-}
+// `emit_workspace_restored`'s Tauri-taking compatibility shim lived here until
+// WP-8 converted `commands::workspace_cmd::restore_workspace_session` to build
+// its own `ServiceCtx`. Both restore paths now call
+// `services::sessions::emit_workspace_restored` directly.
 
 /// Thin adapter over [`crate::services::sessions::close`] — see that function
 /// for the state-cleanup logic this used to contain directly.

@@ -257,7 +257,8 @@ async fn route_table_probe_every_route_resolves_through_the_live_router() {
     let routes = mcp_bridge::ROUTES;
 
     // Pinned alongside `mcp_bridge::route_table_matches_expected` (39 at the
-    // time WP-T2 landed, 47 after WP-12 (+3 settings) and WP-7 (+5 filters) appended) — a
+    // time WP-T2 landed, 47 after WP-12 (+3 settings) and WP-7 (+5 filters),
+    // 52 after WP-8 (+5 workspace) appended) — a
     // drift here means BOTH tests need updating, which is the point: it
     // forces a route addition/removal to touch this file. Other Wave-2
     // packages append their own routes concurrently in sibling worktrees, so
@@ -266,7 +267,7 @@ async fn route_table_probe_every_route_resolves_through_the_live_router() {
     // not by picking one side.
     assert_eq!(
         routes.len(),
-        47,
+        52,
         "mcp_bridge::ROUTES count drifted — update this assertion alongside the route table"
     );
 
@@ -938,6 +939,312 @@ mod wp7_filters {
         assert!(
             lines.iter().any(|l| l["raw"].as_str().unwrap().contains('@')),
             "mcp_anonymize=false must serve raw text"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 8. WP-8 — workspace save / load / restore over the live router
+// ---------------------------------------------------------------------------
+
+mod wp8_workspace {
+    use super::*;
+
+    /// A file the `.ltw` manifest can point at. Written inside `dir`, which
+    /// every test here also puts on the allowlist — an agent workspace open
+    /// re-opens each session through `services::sessions::open`, so both the
+    /// `.ltw` and every path inside it have to be reachable.
+    fn write_log(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, "01-01 00:00:00.000  1000  1000 I Tag: hello\n")
+            .expect("write a real log file so the open actually succeeds");
+        path
+    }
+
+    fn allow(state: &Arc<AppState>, dir: &std::path::Path) {
+        state
+            .mcp_open_allowlist
+            .lock()
+            .unwrap()
+            .allowed_dirs
+            .push(dir.to_string_lossy().to_string());
+    }
+
+    fn save_body(dest: &std::path::Path) -> Value {
+        json!({
+            "workspaceId": "ws-8",
+            "destPath": dest.to_string_lossy(),
+            "workspaceName": "WP-8 Round Trip",
+            "editorTabs": [],
+            "layout": { "kind": "split", "children": ["a", "b"] },
+            "pipelineChain": ["proc-a", "proc-b"],
+            "disabledChainIds": ["proc-b"],
+        })
+    }
+
+    /// The package's headline acceptance: save the live workspace to a `.ltw`
+    /// inside the allowlist, close the session it named, then load that file
+    /// back through the router and confirm the session is open again with its
+    /// pipeline meta intact — and that `workspace-restored` fired exactly once
+    /// for the one session that was restored.
+    #[tokio::test]
+    async fn save_then_load_restores_the_session_and_its_pipeline_meta() {
+        let (router, state, sink, tmp) = app();
+        allow(&state, tmp.path());
+        let log = write_log(tmp.path(), "device.log");
+
+        // Open a session so the save has something to serialise.
+        let (status, body) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/open_file",
+            &trusted_headers(),
+            &json!({ "path": log.to_string_lossy() }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "open must succeed: {body:?}");
+        let session_id = body["sessionId"].as_str().expect("sessionId").to_string();
+
+        // Give the session a pipeline chain: it rides into the manifest as
+        // `SessionMeta` and is what makes the restore emit at all (the event
+        // is gated on having bookmarks, analyses or a chain to report).
+        state.session_pipeline_meta.lock().unwrap().insert(
+            session_id.clone(),
+            app_lib::workspace::SessionMeta {
+                active_processor_ids: vec!["proc-a".to_string()],
+                disabled_processor_ids: vec!["proc-b".to_string()],
+            },
+        );
+
+        // save
+        let dest = tmp.path().join("round-trip.ltw");
+        let (status, body) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/workspace/save",
+            &trusted_headers(),
+            &save_body(&dest),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "save must succeed: {body:?}");
+        assert_eq!(body["saved"], true);
+        assert!(dest.exists(), "save must have written the .ltw");
+
+        // Close the session so the load has to genuinely re-open it.
+        let (status, _) = send_json(
+            &router,
+            Method::POST,
+            &format!("/mcp/sessions/{session_id}/close"),
+            &trusted_headers(),
+            &json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        state.session_pipeline_meta.lock().unwrap().remove(&session_id);
+        assert!(
+            sink.events_named("workspace-restored").is_empty(),
+            "nothing has been restored yet"
+        );
+
+        // load
+        let (status, body) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/workspace/load",
+            &trusted_headers(),
+            &json!({ "path": dest.to_string_lossy() }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "load must succeed: {body:?}");
+        assert_eq!(body["workspace"]["workspaceName"], "WP-8 Round Trip");
+        assert_eq!(body["workspace"]["workspaceId"], "ws-8");
+        assert_eq!(body["workspace"]["pipelineChain"]["chain"][0], "proc-a");
+        // The layout tree is opaque: it must come back exactly as it went in.
+        assert_eq!(
+            body["workspace"]["layout"],
+            json!({ "kind": "split", "children": ["a", "b"] })
+        );
+
+        let entries = body["sessions"].as_array().expect("sessions array");
+        assert_eq!(entries.len(), 1, "one manifest entry: {body:?}");
+        assert!(entries[0]["error"].is_null(), "entry must restore cleanly: {body:?}");
+        let restored_id = entries[0]["sessionIds"][0].as_str().expect("a restored session id");
+        assert_eq!(restored_id, session_id, "a deterministic id re-derives the same session");
+
+        // The session really is open again, with its chain back in AppState.
+        let (status, listing) = get(&router, "/mcp/sessions", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            listing["sessions"]
+                .as_array()
+                .expect("sessions")
+                .iter()
+                .any(|s| s["id"] == session_id.as_str()),
+            "the restored session must be listed again: {listing:?}"
+        );
+        let restored_meta = state
+            .session_pipeline_meta
+            .lock()
+            .unwrap()
+            .get(&session_id)
+            .map(|m| m.active_processor_ids.clone());
+        assert_eq!(
+            restored_meta,
+            Some(vec!["proc-a".to_string()]),
+            "pipeline meta must survive the round trip"
+        );
+
+        // Exactly one restored session => exactly one event.
+        assert_eq!(
+            sink.events_named("workspace-restored").len(),
+            1,
+            "workspace-restored is emitted once per restored session"
+        );
+    }
+
+    /// A `.ltw` outside the allowlist is refused by
+    /// `services::policy::authorize_open` before anything is read — and the
+    /// refusal carries a real 403, not a 200 an unwary client would read as
+    /// success.
+    #[tokio::test]
+    async fn load_outside_the_allowlist_is_forbidden() {
+        let (router, state, _sink, tmp) = app();
+        allow(&state, tmp.path());
+
+        let outside = TempDir::new().expect("a directory that is NOT allowlisted");
+        let ltw = outside.path().join("elsewhere.ltw");
+        std::fs::write(&ltw, b"not even a real ltw").expect("write the decoy");
+
+        let (status, body) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/workspace/load",
+            &trusted_headers(),
+            &json!({ "path": ltw.to_string_lossy() }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "denied .ltw must be 403: {body:?}");
+        assert_eq!(body["code"], "NOT_ALLOWED");
+    }
+
+    /// The write gate is the destination's parent directory, so a `.ltw` that
+    /// does not exist yet can still be refused — and nothing is written.
+    #[tokio::test]
+    async fn save_outside_the_allowlist_is_forbidden_and_writes_nothing() {
+        let (router, state, _sink, tmp) = app();
+        allow(&state, tmp.path());
+
+        let outside = TempDir::new().expect("a directory that is NOT allowlisted");
+        let dest = outside.path().join("escape.ltw");
+
+        let (status, body) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/workspace/save",
+            &trusted_headers(),
+            &save_body(&dest),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "denied destination must be 403: {body:?}");
+        assert_eq!(body["code"], "NOT_ALLOWED");
+        assert!(!dest.exists(), "a refused save must not have written anything");
+    }
+
+    /// The autosave destination is app-owned — an agent chooses only the id,
+    /// which has to be a single path segment.
+    #[tokio::test]
+    async fn autosave_writes_under_app_data_and_rejects_a_traversing_id() {
+        let (router, _state, _sink, tmp) = app();
+
+        let (status, body) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/workspace/autosave",
+            &trusted_headers(),
+            &json!({
+                "workspaceId": "ws-8",
+                "workspaceName": "Autosaved",
+                "editorTabs": [],
+                "layout": null,
+                "pipelineChain": [],
+                "disabledChainIds": [],
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "autosave must succeed: {body:?}");
+        let written = tmp.path().join("workspaces").join("ws-8.ltw");
+        assert!(written.exists(), "autosave must land under app_data_dir/workspaces: {body:?}");
+        assert_eq!(body["path"], written.to_string_lossy().as_ref());
+
+        let (status, body) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/workspace/autosave",
+            &trusted_headers(),
+            &json!({
+                "workspaceId": "../escape",
+                "workspaceName": "Autosaved",
+                "editorTabs": [],
+                "layout": null,
+                "pipelineChain": [],
+                "disabledChainIds": [],
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "a traversing id must be rejected: {body:?}");
+        assert_eq!(body["code"], "INVALID_ARGUMENT");
+    }
+
+    /// The two read routes: the persisted list and the live summary. Neither
+    /// exposes the opaque layout tree.
+    #[tokio::test]
+    async fn read_routes_report_the_workspace_list_and_the_active_summary() {
+        let (router, _state, _sink, tmp) = app();
+
+        let (status, body) = get(&router, "/mcp/workspaces", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            body["workspaces"].as_array().expect("workspaces array").is_empty(),
+            "a fresh app_data_dir has no persisted workspaces: {body:?}"
+        );
+
+        // Before any envelope is pushed, the summary is empty rather than an error.
+        let (status, body) = get(&router, "/mcp/workspace", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["workspaceId"].is_null(), "no envelope yet: {body:?}");
+        assert_eq!(body["hasLayout"], false);
+
+        // An autosave caches an envelope, which the summary then reflects.
+        let (status, _) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/workspace/autosave",
+            &trusted_headers(),
+            &json!({
+                "workspaceId": "ws-8",
+                "workspaceName": "Summarised",
+                "editorTabs": [],
+                "layout": { "kind": "leaf" },
+                "pipelineChain": ["proc-a"],
+                "disabledChainIds": [],
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let _ = tmp;
+
+        let (status, body) = get(&router, "/mcp/workspace", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["workspaceId"], "ws-8");
+        assert_eq!(body["workspaceName"], "Summarised");
+        assert_eq!(body["pipelineChain"][0], "proc-a");
+        assert_eq!(
+            body["hasLayout"], true,
+            "presence only — the tree itself never leaves the backend"
+        );
+        assert!(
+            body.get("layout").is_none(),
+            "the summary must not carry the layout tree: {body:?}"
         );
     }
 }

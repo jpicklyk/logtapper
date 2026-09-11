@@ -43,6 +43,10 @@ use routes::sessions::{h_close_session, h_metadata, h_open_file, h_sessions, h_s
 use routes::settings::{h_get_anonymizer_config, h_get_open_allowlist, h_test_anonymizer};
 use routes::tracker::{h_correlations, h_events, h_section_at, h_sections, h_state_at_line};
 use routes::watches::{h_cancel_watch, h_create_watch, h_list_watches};
+use routes::workspace::{
+    h_autosave_workspace, h_current_workspace, h_list_workspaces, h_load_workspace,
+    h_save_workspace,
+};
 
 pub const PORT: u16 = 40404;
 
@@ -192,6 +196,13 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/mcp/filters/{filter_id}/lines"),
     ("POST", "/mcp/filters/{filter_id}/cancel"),
     ("DELETE", "/mcp/filters/{filter_id}"),
+    // WP-8 workspace — no `save_app_state` route by design (see
+    // `routes/workspace.rs`); `GET /mcp/workspaces` is the read-only twin.
+    ("GET", "/mcp/workspaces"),
+    ("GET", "/mcp/workspace"),
+    ("POST", "/mcp/workspace/load"),
+    ("POST", "/mcp/workspace/save"),
+    ("POST", "/mcp/workspace/autosave"),
 ];
 
 /// Build the bridge's `Router` without binding a socket.
@@ -248,6 +259,12 @@ pub fn router(ctx: BridgeCtx) -> Router {
         .route("/mcp/filters/{filter_id}", get(h_filter_info).delete(h_close_filter))
         .route("/mcp/filters/{filter_id}/lines", get(h_filter_lines))
         .route("/mcp/filters/{filter_id}/cancel", post(h_cancel_filter))
+        // WP-8 workspace
+        .route("/mcp/workspaces", get(h_list_workspaces))
+        .route("/mcp/workspace", get(h_current_workspace))
+        .route("/mcp/workspace/load", post(h_load_workspace))
+        .route("/mcp/workspace/save", post(h_save_workspace))
+        .route("/mcp/workspace/autosave", post(h_autosave_workspace))
         .layer(axum_middleware::from_fn_with_state(ctx.clone(), middleware::record_activity))
         // `require_local` is added AFTER `record_activity`, which in axum/tower
         // layering means it becomes the OUTERMOST layer and therefore runs
@@ -366,6 +383,11 @@ mod tests {
             "GET /mcp/filters/{filter_id}/lines",
             "POST /mcp/filters/{filter_id}/cancel",
             "DELETE /mcp/filters/{filter_id}",
+            "GET /mcp/workspaces",
+            "GET /mcp/workspace",
+            "POST /mcp/workspace/load",
+            "POST /mcp/workspace/save",
+            "POST /mcp/workspace/autosave",
         ];
 
         assert_eq!(rendered, expected, "ROUTES drifted from the pinned route table — update both this test and router() together");

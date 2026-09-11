@@ -134,11 +134,20 @@ macro_rules! ROOT_TYPES {
             app_lib::commands::export::ExportAllSessionsInfo,
             app_lib::commands::export::ExportAllOptions,
             // --- workspace (.ltw / .lts) --------------------------------------
-            app_lib::commands::workspace_cmd::SaveWorkspaceOptions,
-            app_lib::commands::workspace_cmd::AutoSaveWorkspaceOptions,
-            app_lib::commands::workspace_cmd::SyncWorkspaceEnvelopeOptions,
-            app_lib::commands::workspace_cmd::LoadWorkspaceResult,
-            app_lib::commands::workspace_cmd::RestoreSessionOptions,
+            app_lib::services::workspace::SaveWorkspaceOptions,
+            app_lib::services::workspace::AutoSaveWorkspaceOptions,
+            app_lib::services::workspace::SyncWorkspaceEnvelopeOptions,
+            app_lib::services::workspace::LoadWorkspaceResult,
+            app_lib::services::workspace::RestoreSessionOptions,
+            // WP-8: the agent-facing result/summary shapes and the two
+            // workspace event payloads, which used to be ad hoc `json!{}`.
+            app_lib::services::workspace::RestoreSessionResult,
+            app_lib::services::workspace::RestoredSession,
+            app_lib::services::workspace::WorkspaceLoadOutcome,
+            app_lib::services::workspace::WorkspaceSummary,
+            app_lib::services::workspace::WorkspaceRestoredEvent,
+            app_lib::services::workspace::WorkspaceAutoSavedEvent,
+            app_lib::workspace::app_state::WorkspaceEntry,
             app_lib::workspace::app_state::AppStateFile,
             app_lib::workspace::lts::LtsEditorTab,
             // --- sessions (WP-6) -----------------------------------------------
@@ -242,7 +251,7 @@ fn export_all() {
 /// `#[ts(...)]` attribute fails here and not silently in `tsc`.
 #[test]
 fn wire_shape_overrides_hold() {
-    use app_lib::commands::workspace_cmd::LoadWorkspaceResult;
+    use app_lib::services::workspace::LoadWorkspaceResult;
     use app_lib::core::line::{SearchSummary, ViewLine};
     use app_lib::processors::ProcessorSummary;
     use app_lib::processors::state_tracker::types::{FieldChange, StateSnapshot, StateTransition};

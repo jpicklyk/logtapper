@@ -414,11 +414,14 @@ fn open_lts_file(ctx: &ServiceCtx, lts_path: &str) -> Result<Vec<LoadResult>, Se
     Ok(results)
 }
 
-/// Store pipeline meta in `AppState` and emit `workspace-restored`. Moved
-/// verbatim from `commands::files::emit_workspace_restored` — a thin
-/// Tauri-taking shim at the old location now delegates here for
-/// `commands::workspace_cmd::restore_workspace_session` (not yet converted to
-/// `ServiceCtx`).
+/// Store pipeline meta in `AppState` and emit `workspace-restored`.
+///
+/// Shared by the `.lts` bundle import above (`source = "lts"`) and by
+/// [`super::workspace::restore_session`] (`source = "workspace"`), so it is
+/// the single emit site for this event. The payload is the typed
+/// [`super::workspace::WorkspaceRestoredEvent`] — field-for-field identical to
+/// the ad hoc `serde_json::json!{}` it replaced, so the frontend listener is
+/// unchanged.
 pub(crate) fn emit_workspace_restored(
     ctx: &ServiceCtx,
     session_id: &str,
@@ -440,14 +443,15 @@ pub(crate) fn emit_workspace_restored(
     if bm_count > 0 || an_count > 0 || has_chain {
         ctx.events().emit_json(
             "workspace-restored",
-            serde_json::json!({
-                "sessionId": session_id,
-                "bookmarkCount": bm_count,
-                "analysisCount": an_count,
-                "activeProcessorIds": meta.active_processor_ids,
-                "disabledProcessorIds": meta.disabled_processor_ids,
-                "source": source,
-            }),
+            serde_json::to_value(super::workspace::WorkspaceRestoredEvent {
+                session_id: session_id.to_string(),
+                bookmark_count: bm_count,
+                analysis_count: an_count,
+                active_processor_ids: meta.active_processor_ids,
+                disabled_processor_ids: meta.disabled_processor_ids,
+                source: source.to_string(),
+            })
+            .unwrap_or_default(),
         );
     }
 }
