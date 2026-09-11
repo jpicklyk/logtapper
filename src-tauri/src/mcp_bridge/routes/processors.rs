@@ -1,208 +1,230 @@
-//! Processor definition endpoints: list all, single detail.
-
-use std::borrow::Cow;
+//! Processor + marketplace endpoints: definitions (legacy JSON, unchanged),
+//! and the WP-9 install/uninstall/packs/sources/updates surface.
+//!
+//! `h_processor_defs_list` / `h_processor_defs_single` call
+//! [`crate::services::processors::{definitions, definition}`] — the exact
+//! ad hoc JSON they used to build inline, now owned by the service so the
+//! Tauri-side `list_processors` command and the bridge cannot drift on
+//! *how* a processor is described (WP-13 is what eventually types this).
+//!
+//! Everything below `// WP-9` is new surface: it returns typed structs
+//! directly and renders `ServiceError` through the bridge's existing
+//! `{ error, code }` envelope (the same shape `h_open_file` already uses),
+//! rather than the legacy `{ error }`-only, always-200 shape older routes
+//! still use.
 
 use axum::{
     Json,
     extract::{Path, State},
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::processors::marketplace::resolve_processor_id_checked;
-use crate::processors::{AnyProcessor, ProcessorKind};
-
 use crate::mcp_bridge::BridgeCtx;
+use crate::mcp_bridge::respond::err;
+use crate::mcp_bridge::routes::artifacts::client_name;
+use crate::processors::marketplace::MarketplacePackEntry;
+use crate::processors::{PackSummary, ProcessorSummary};
+use crate::services::error::ServiceError;
+use crate::services::{marketplace, processors};
 
-/// Extract the `sections` list from any processor kind.
-///
-/// Returns a borrowed slice for reporters (already stored) and an owned Vec
-/// for state trackers (computed from transition filters). Other kinds get `[]`.
-fn extract_sections(p: &AnyProcessor) -> Cow<'_, [String]> {
-    match &p.kind {
-        ProcessorKind::Reporter(def) => Cow::Borrowed(&def.sections),
-        ProcessorKind::StateTracker(def) => {
-            let mut sections: Vec<String> = def.transitions.iter()
-                .filter_map(|t| t.filter.section.clone())
-                .collect();
-            sections.sort();
-            sections.dedup();
-            Cow::Owned(sections)
-        }
-        _ => Cow::Borrowed(&[]),
+/// Render a [`ServiceError`] through the `{ error, code }` envelope with its
+/// real HTTP status — the contract every WP-9 route below uses.
+fn service_err(e: ServiceError) -> Response {
+    let status = StatusCode::from_u16(e.http_status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    err(status, e.message(), e.code())
+}
+
+// ---------------------------------------------------------------------------
+// GET /mcp/processors — list all processor definitions (legacy shape)
+// ---------------------------------------------------------------------------
+
+pub(crate) async fn h_processor_defs_list(State(ctx): State<BridgeCtx>, headers: HeaderMap) -> Json<Value> {
+    let svc = ctx.svc(&client_name(&headers));
+    match processors::definitions(&svc) {
+        Ok(body) => Json(body),
+        Err(e) => Json(json!({ "error": e.message() })),
     }
 }
 
-/// Extract `source_types` from the processor's schema contract.
-fn extract_source_types(p: &AnyProcessor) -> &[String] {
-    p.schema.as_ref()
-        .map_or(&[], |s| s.source_types.as_slice())
-}
-
 // ---------------------------------------------------------------------------
-// GET /mcp/processors — list all processor definitions
-// ---------------------------------------------------------------------------
-
-pub(crate) async fn h_processor_defs_list(State(ctx): State<BridgeCtx>) -> Json<Value> {
-    let state = &*ctx.state;
-
-    let processors: Vec<Value> = {
-        let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        procs.iter().map(|(qualified_id, p)| {
-            json!({
-                "id": qualified_id,
-                "name": p.meta.name,
-                "processorType": p.processor_type(),
-                "description": p.meta.description,
-                "version": p.meta.version,
-                "builtin": p.meta.builtin,
-                "tags": p.meta.tags,
-                "sections": extract_sections(p),
-                "sourceTypes": extract_source_types(p),
-            })
-        }).collect()
-    };
-
-    Json(json!({
-        "processorCount": processors.len(),
-        "processors": processors,
-    }))
-}
-
-// ---------------------------------------------------------------------------
-// GET /mcp/processors/{processor_id} — single processor definition detail
+// GET /mcp/processors/{processor_id} — single processor definition (legacy shape)
 // ---------------------------------------------------------------------------
 
 pub(crate) async fn h_processor_defs_single(
     State(ctx): State<BridgeCtx>,
     Path(processor_id): Path<String>,
+    headers: HeaderMap,
 ) -> Json<Value> {
-    let state = &*ctx.state;
+    let svc = ctx.svc(&client_name(&headers));
+    match processors::definition(&svc, &processor_id) {
+        Ok(body) => Json(body),
+        Err(e) => Json(json!({ "error": e.message(), "processorId": processor_id })),
+    }
+}
 
-    let procs = state.processors.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let resolved = match resolve_processor_id_checked(&procs, &processor_id) {
-        Ok(r) => r,
-        Err(e) => return Json(json!({ "error": e, "processorId": processor_id })),
-    };
-    let Some(p) = resolved.as_ref().and_then(|rid| procs.get(rid)) else {
-        return Json(json!({ "error": "processor not found", "processorId": processor_id }));
-    };
+// ---------------------------------------------------------------------------
+// WP-9 processors/marketplace — new surface
+// ---------------------------------------------------------------------------
 
-    let mut result = json!({
-        "id": p.meta.id,
-        "name": p.meta.name,
-        "processorType": p.processor_type(),
-        "description": p.meta.description,
-        "version": p.meta.version,
-        "author": p.meta.author,
-        "builtin": p.meta.builtin,
-        "tags": p.meta.tags,
-        "sections": extract_sections(p),
-        "sourceTypes": extract_source_types(p),
-    });
+#[derive(Deserialize)]
+pub(crate) struct InstallProcessorBody {
+    yaml: String,
+}
 
-    match &p.kind {
-        ProcessorKind::Reporter(def) => {
-            // Summarize filter rules
-            let filters: Vec<Value> = def.pipeline.iter().filter_map(|stage| {
-                use crate::processors::reporter::schema::PipelineStage;
-                match stage {
-                    PipelineStage::Filter(fs) => {
-                        let rules: Vec<String> = fs.rules.iter().map(|r| match r {
-                            crate::processors::reporter::schema::FilterRule::TagMatch { tags, .. } => format!("tag_match: [{}]", tags.join(", ")),
-                            crate::processors::reporter::schema::FilterRule::MessageContains { value } => format!("message_contains: \"{value}\""),
-                            crate::processors::reporter::schema::FilterRule::MessageContainsAny { values } => format!("message_contains_any: [{}]", values.join(", ")),
-                            crate::processors::reporter::schema::FilterRule::MessageRegex { pattern } => format!("message_regex: \"{pattern}\""),
-                            crate::processors::reporter::schema::FilterRule::LevelMin { level } => format!("level_min: {level}"),
-                            crate::processors::reporter::schema::FilterRule::TimeRange { from, to, .. } => format!("time_range: {from} - {to}"),
-                            crate::processors::reporter::schema::FilterRule::SourceTypeIs { source_type } => format!("source_type_is: {source_type}"),
-                            crate::processors::reporter::schema::FilterRule::TagRegex { pattern } => format!("tag_regex: \"{pattern}\""),
-                            crate::processors::reporter::schema::FilterRule::SectionIs { section } => format!("section_is: {section}"),
-                        }).collect();
-                        Some(json!(rules))
-                    }
-                    _ => None,
-                }
-            }).collect();
+/// `POST /mcp/processors/install` — install a processor from a YAML body.
+pub(crate) async fn h_install_processor(
+    State(ctx): State<BridgeCtx>,
+    headers: HeaderMap,
+    Json(body): Json<InstallProcessorBody>,
+) -> Response {
+    let svc = ctx.svc(&client_name(&headers));
+    match processors::install_yaml(&svc, &body.yaml) {
+        Ok(summary) => Json(summary).into_response(),
+        Err(e) => service_err(e),
+    }
+}
 
-            // Extract patterns
-            let extracts: Vec<Value> = def.pipeline.iter().filter_map(|stage| {
-                use crate::processors::reporter::schema::PipelineStage;
-                match stage {
-                    PipelineStage::Extract(es) => {
-                        let fields: Vec<Value> = es.fields.iter().map(|f| {
-                            json!({
-                                "name": f.name,
-                                "pattern": f.pattern,
-                                "cast": f.cast.as_ref().map(|c| format!("{c:?}").to_lowercase()),
-                            })
-                        }).collect();
-                        Some(json!(fields))
-                    }
-                    _ => None,
-                }
-            }).collect();
+/// `DELETE /mcp/processors/{id}` — uninstall an installed processor.
+pub(crate) async fn h_uninstall_processor(
+    State(ctx): State<BridgeCtx>,
+    Path(processor_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let svc = ctx.svc(&client_name(&headers));
+    match processors::uninstall(&svc, &processor_id) {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => service_err(e),
+    }
+}
 
-            // Aggregation types
-            let aggregations: Vec<String> = def.pipeline.iter().filter_map(|stage| {
-                use crate::processors::reporter::schema::PipelineStage;
-                match stage {
-                    PipelineStage::Aggregate(agg) => {
-                        let types: Vec<String> = agg.groups.iter().map(|g| format!("{:?}", g.agg_type).to_lowercase()).collect();
-                        Some(types.join(", "))
-                    }
-                    _ => None,
-                }
-            }).collect();
+/// `GET /mcp/packs` — every installed processor pack.
+pub(crate) async fn h_packs(State(ctx): State<BridgeCtx>, headers: HeaderMap) -> Response {
+    let svc = ctx.svc(&client_name(&headers));
+    match processors::packs(&svc) {
+        Ok(list) => Json(list).into_response(),
+        Err(e) => service_err(e),
+    }
+}
 
-            let has_script = def.pipeline.iter().any(|s| matches!(s, crate::processors::reporter::schema::PipelineStage::Script(_)));
+/// `GET /mcp/marketplace/sources` — configured marketplace sources.
+///
+/// Read-only. There is deliberately no route to add or remove a source: a
+/// marketplace source is a supply-chain surface (it's where every future
+/// processor install's *code* comes from), and
+/// `services::marketplace::{add_source, remove_source}` refuse an agent
+/// caller (`Forbidden`/`NOT_ALLOWED`) — see that module's doc comment. Since
+/// an agent could never succeed at either mutation, no route exposes them.
+pub(crate) async fn h_marketplace_sources(State(ctx): State<BridgeCtx>, headers: HeaderMap) -> Response {
+    let svc = ctx.svc(&client_name(&headers));
+    match marketplace::sources(&svc) {
+        Ok(list) => Json(list).into_response(),
+        Err(e) => service_err(e),
+    }
+}
 
-            // Var declarations
-            let vars: Vec<Value> = def.vars.iter().map(|v| {
-                json!({
-                    "name": v.name,
-                    "type": format!("{:?}", v.var_type).to_lowercase(),
-                    "display": v.display,
-                    "label": v.label,
-                })
-            }).collect();
+/// `GET /mcp/marketplace/sources/{id}/fetch` — fetch one source's marketplace index.
+pub(crate) async fn h_marketplace_fetch(
+    State(ctx): State<BridgeCtx>,
+    Path(source_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let svc = ctx.svc(&client_name(&headers));
+    match marketplace::fetch(&svc, &source_id).await {
+        Ok(result) => Json(result).into_response(),
+        Err(e) => service_err(e),
+    }
+}
 
-            let obj = result.as_object_mut().unwrap();
-            obj.insert("filters".to_string(), json!(filters));
-            obj.insert("extracts".to_string(), json!(extracts));
-            obj.insert("aggregations".to_string(), json!(aggregations));
-            obj.insert("hasScript".to_string(), json!(has_script));
-            obj.insert("vars".to_string(), json!(vars));
+/// `GET /mcp/marketplace/updates` — check every enabled source for updates.
+pub(crate) async fn h_marketplace_updates(State(ctx): State<BridgeCtx>, headers: HeaderMap) -> Response {
+    let svc = ctx.svc(&client_name(&headers));
+    match marketplace::check_updates(&svc).await {
+        Ok(result) => Json(result).into_response(),
+        Err(e) => service_err(e),
+    }
+}
+
+/// Either a single marketplace entry or a pack entry — a
+/// `POST /mcp/marketplace/install` body names exactly one.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MarketplaceInstallBody {
+    source_name: String,
+    #[serde(default)]
+    entry: Option<MarketplaceEntryInstall>,
+    #[serde(default)]
+    pack: Option<MarketplacePackEntry>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MarketplaceEntryInstall {
+    id: String,
+    name: String,
+    path: String,
+    version: String,
+    #[serde(default)]
+    sha256: String,
+}
+
+/// Either result shape `POST /mcp/marketplace/install` can produce, depending
+/// on whether the body named a processor `entry` or a `pack`.
+#[derive(Serialize)]
+#[serde(untagged)]
+pub(crate) enum MarketplaceInstallResult {
+    Processor(ProcessorSummary),
+    Pack(PackSummary),
+}
+
+/// `POST /mcp/marketplace/install` — install a processor or a pack from a
+/// named marketplace source. The body names exactly one of `entry` / `pack`.
+pub(crate) async fn h_marketplace_install(
+    State(ctx): State<BridgeCtx>,
+    headers: HeaderMap,
+    Json(body): Json<MarketplaceInstallBody>,
+) -> Response {
+    let svc = ctx.svc(&client_name(&headers));
+    match (body.entry, body.pack) {
+        (Some(entry), None) => {
+            match marketplace::install_from_marketplace(
+                &svc,
+                &body.source_name,
+                &entry.id,
+                &entry.name,
+                &entry.path,
+                &entry.version,
+                &entry.sha256,
+            )
+            .await
+            {
+                Ok(summary) => Json(MarketplaceInstallResult::Processor(summary)).into_response(),
+                Err(e) => service_err(e),
+            }
         }
-        ProcessorKind::StateTracker(def) => {
-            let state_fields: Vec<Value> = def.state.iter().map(|f| {
-                json!({
-                    "name": f.name,
-                    "type": format!("{:?}", f.field_type).to_lowercase(),
-                    "default": f.default,
-                })
-            }).collect();
-
-            let transition_names: Vec<String> = def.transitions.iter().map(|t| t.name.clone()).collect();
-
-            let obj = result.as_object_mut().unwrap();
-            obj.insert("group".to_string(), json!(def.group));
-            obj.insert("stateFields".to_string(), json!(state_fields));
-            obj.insert("transitionNames".to_string(), json!(transition_names));
-        }
-        ProcessorKind::Correlator(def) => {
-            let source_ids: Vec<String> = def.sources.iter().map(|s| s.id.clone()).collect();
-
-            let obj = result.as_object_mut().unwrap();
-            obj.insert("sourceIds".to_string(), json!(source_ids));
-            obj.insert("trigger".to_string(), json!(def.correlate.trigger));
-            obj.insert("withinLines".to_string(), json!(def.correlate.within_lines));
-            obj.insert("withinMs".to_string(), json!(def.correlate.within_ms));
-            obj.insert("guidance".to_string(), json!(def.correlate.guidance));
-        }
-        ProcessorKind::Transformer(_) => {
-            // Minimal info already in base result
+        (None, Some(pack)) => match marketplace::install_pack_from_marketplace(&svc, &body.source_name, pack).await {
+            Ok(summary) => Json(MarketplaceInstallResult::Pack(summary)).into_response(),
+            Err(e) => service_err(e),
+        },
+        (None, None) => service_err(ServiceError::invalid_arg("body must include either 'entry' or 'pack'")),
+        (Some(_), Some(_)) => {
+            service_err(ServiceError::invalid_arg("body must include only one of 'entry' or 'pack', not both"))
         }
     }
+}
 
-    Json(result)
+/// `POST /mcp/marketplace/update_all/{source_id}` — update every outdated
+/// processor installed from one source.
+pub(crate) async fn h_marketplace_update_all(
+    State(ctx): State<BridgeCtx>,
+    Path(source_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let svc = ctx.svc(&client_name(&headers));
+    match marketplace::update_all_from_source(&svc, &source_id).await {
+        Ok(results) => Json(results).into_response(),
+        Err(e) => service_err(e),
+    }
 }

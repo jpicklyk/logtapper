@@ -257,11 +257,12 @@ async fn route_table_probe_every_route_resolves_through_the_live_router() {
     let routes = mcp_bridge::ROUTES;
 
     // Pinned alongside `mcp_bridge::route_table_matches_expected` (39 at the
-    // time WP-T2 landed) — a drift here means BOTH tests need updating, which
-    // is the point: it forces a route addition/removal to touch this file.
+    // time WP-T2 landed, 47 after WP-9 added the processors/marketplace
+    // surface) — a drift here means BOTH tests need updating, which is the
+    // point: it forces a route addition/removal to touch this file.
     assert_eq!(
         routes.len(),
-        39,
+        47,
         "mcp_bridge::ROUTES count drifted — update this assertion alongside the route table"
     );
 
@@ -584,4 +585,218 @@ async fn search_with_context_route_honors_the_anonymization_gate() {
 #[tokio::test]
 async fn lines_around_route_honors_the_anonymization_gate() {
     assert_agent_redaction_gating(|id| format!("/mcp/sessions/{id}/lines_around?line=0")).await;
+}
+
+// ---------------------------------------------------------------------------
+// 6. WP-9 processors + marketplace
+// ---------------------------------------------------------------------------
+//
+// These routes are pure `ServiceCtx` from day one (no `ctx.app` involved), so
+// unlike open_file/run_pipeline above they exercise real success paths over
+// the live router, not just "the gate doesn't stand in the way".
+
+mod wp9_processors {
+    use super::*;
+    use app_lib::processors::AnyProcessor;
+
+    const MINIMAL_REPORTER: &str = r#"
+meta:
+  id: wp9-test-reporter
+  name: WP9 Test Reporter
+  version: 1.0.0
+"#;
+
+    #[tokio::test]
+    async fn list_and_definition_see_a_processor_installed_via_test_ctx() {
+        // `test_ctx().with_processor(...)` does not exist on the shared
+        // builder (adding it is out of this item's file ownership) — seeding
+        // `AppState::processors` directly, the same way `services::testing`'s
+        // own session fixtures seed `AppState::sessions`, gives equivalent
+        // coverage without touching `services/testing.rs`.
+        let (router, state, _sink, _tmp) = app();
+        state.processors.lock().unwrap().insert(
+            "wp9-test-reporter".to_string(),
+            AnyProcessor::from_yaml(MINIMAL_REPORTER).unwrap(),
+        );
+
+        let (status, body) = get(&router, "/mcp/processors", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["processorCount"], json!(1));
+        assert_eq!(body["processors"][0]["id"], json!("wp9-test-reporter"));
+
+        let (status, body) = get(&router, "/mcp/processors/wp9-test-reporter", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["id"], json!("wp9-test-reporter"));
+        assert!(body.get("vars").is_some(), "reporter detail should include the reporter-specific fields");
+    }
+
+    #[tokio::test]
+    async fn install_yaml_then_list_shows_it() {
+        let (router, _state, _sink, _tmp) = app();
+
+        let (status, body) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/processors/install",
+            &trusted_headers(),
+            &json!({ "yaml": MINIMAL_REPORTER }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "install failed: {body}");
+        assert_eq!(body["id"], json!("wp9-test-reporter"));
+
+        let (status, body) = get(&router, "/mcp/processors", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["processorCount"], json!(1));
+    }
+
+    #[tokio::test]
+    async fn install_then_uninstall_via_the_router() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, _) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/processors/install",
+            &trusted_headers(),
+            &json!({ "yaml": MINIMAL_REPORTER }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = send_json(
+            &router,
+            Method::DELETE,
+            "/mcp/processors/wp9-test-reporter",
+            &trusted_headers(),
+            &json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["ok"], json!(true));
+
+        let (status, body) = get(&router, "/mcp/processors", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["processorCount"], json!(0));
+    }
+
+    #[tokio::test]
+    async fn packs_route_lists_installed_packs() {
+        let (router, state, _sink, _tmp) = app();
+        state.processors.lock().unwrap().insert(
+            "wp9-test-reporter".to_string(),
+            AnyProcessor::from_yaml(MINIMAL_REPORTER).unwrap(),
+        );
+        let mut pack = app_lib::processors::pack::parse_pack_yaml(
+            "name: WP9 Pack\nversion: 1.0.0\nprocessors:\n  - wp9-test-reporter\n",
+        )
+        .unwrap();
+        pack.id = "wp9-pack".to_string();
+        state.packs.lock().unwrap().push(pack);
+
+        let (status, body) = get(&router, "/mcp/packs", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.as_array().unwrap().len(), 1);
+        assert_eq!(body[0]["id"], json!("wp9-pack"));
+    }
+
+    #[tokio::test]
+    async fn marketplace_sources_route_lists_configured_sources_camelcase() {
+        use app_lib::processors::marketplace::{Source, SourceType};
+        let (router, state, _sink, _tmp) = app();
+        state.sources.lock().unwrap().push(Source {
+            name: "official".to_string(),
+            source_type: SourceType::Local { path: "/some/path".to_string() },
+            enabled: true,
+            auto_update: false,
+            last_checked: None,
+        });
+
+        let (status, body) = get(&router, "/mcp/marketplace/sources", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body[0]["name"], json!("official"));
+        // Bug ee4ddb0b: must be `autoUpdate`, not `auto_update`.
+        assert_eq!(body[0]["autoUpdate"], json!(false));
+        assert!(body[0].get("auto_update").is_none());
+    }
+
+    #[tokio::test]
+    async fn marketplace_updates_route_returns_empty_result_with_no_sources_configured() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, body) = get(&router, "/mcp/marketplace/updates", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["updates"], json!([]));
+        assert_eq!(body["packUpdates"], json!([]));
+        assert_eq!(body["errors"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn marketplace_fetch_on_unknown_source_is_not_found() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, body) = get(&router, "/mcp/marketplace/sources/nope/fetch", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["code"], "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn marketplace_install_requires_exactly_one_of_entry_or_pack() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, body) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/marketplace/install",
+            &trusted_headers(),
+            &json!({ "sourceName": "official" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["code"], "INVALID_ARGUMENT");
+    }
+
+    /// Agent `add_source` is `Forbidden` at the service level — there is no
+    /// bridge route to add a source at all (see `h_marketplace_sources`'s doc
+    /// comment: a marketplace source is a supply-chain surface), so this is
+    /// asserted directly against the service rather than over HTTP.
+    #[test]
+    fn agent_add_source_is_forbidden_at_the_service_level() {
+        use app_lib::processors::marketplace::{Source, SourceType};
+        use app_lib::services::marketplace;
+        use app_lib::services::testing::test_ctx;
+
+        let (ctx, _tmp) = test_ctx().agent("claude-code").build();
+        let err = marketplace::add_source(
+            &ctx,
+            Source {
+                name: "official".to_string(),
+                source_type: SourceType::Local { path: "/some/path".to_string() },
+                enabled: true,
+                auto_update: false,
+                last_checked: None,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err.code(), "NOT_ALLOWED");
+    }
+
+    /// The corresponding `Ui` caller must succeed at the same mutation —
+    /// proves the gate is caller-specific, not a blanket refusal.
+    #[test]
+    fn ui_add_source_succeeds_at_the_service_level() {
+        use app_lib::processors::marketplace::{Source, SourceType};
+        use app_lib::services::marketplace;
+        use app_lib::services::testing::test_ctx;
+
+        let (ctx, _tmp) = test_ctx().build();
+        marketplace::add_source(
+            &ctx,
+            Source {
+                name: "official".to_string(),
+                source_type: SourceType::Local { path: "/some/path".to_string() },
+                enabled: true,
+                auto_update: false,
+                last_checked: None,
+            },
+        )
+        .expect("a Ui caller may add a marketplace source");
+        assert_eq!(marketplace::sources(&ctx).unwrap().len(), 1);
+    }
 }

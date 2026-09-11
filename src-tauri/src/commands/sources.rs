@@ -1,117 +1,43 @@
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State};
+//! Thin Tauri adapters over [`crate::services::marketplace`].
+//!
+//! Every real decision — persistence, network fetch, version comparison,
+//! journaling — lives in the service. A command here is expected to be:
+//! build a [`crate::commands::adapters::ui_ctx`], call one service function,
+//! marshal the `Result`.
+//!
+//! The DTOs, pure helpers (`is_newer`, `detect_pack_updates`,
+//! `chrono_now_iso`, `build_provenance_yaml`) and the `try_add_source` /
+//! `try_remove_source` cores all now live in `services::marketplace` and are
+//! re-exported here under their original names — `lib.rs`'s startup update
+//! check and `AppState.pending_updates` / `pending_pack_updates` (declared in
+//! `commands/mod.rs`) reference them via `commands::sources::*` and must keep
+//! compiling unchanged; ts-rs's `ROOT_TYPES!` list in
+//! `tests/export_bindings.rs` also names the DTOs at this path.
 
-use crate::commands::{lock_or_err, AppState};
-use crate::processors::marketplace::{self, MarketplaceEntry, Source};
-use crate::processors::pack::{parse_pack_yaml, validate_pack};
-use crate::processors::registry;
-use crate::processors::{AnyProcessor, PackMeta, PackSummary, ProcessorSummary};
-use ts_rs::TS;
+use tauri::AppHandle;
+
+use crate::processors::marketplace::Source;
+use crate::services::marketplace as svc;
+
+pub use svc::{
+    MarketplaceEntryDto, MarketplaceFetchResult, MarketplacePackEntryDto, PackUpdateAvailable,
+    SourceError, UpdateAvailable, UpdateCheckResult, UpdateResult,
+};
+pub(crate) use svc::{build_provenance_yaml, chrono_now_iso, detect_pack_updates, is_newer};
+// Only referenced by this file's own rollback-semantics tests below.
+#[cfg(test)]
+pub(crate) use svc::{try_add_source, try_remove_source};
 
 // ---------------------------------------------------------------------------
-// Source persistence helpers
+// Startup-only helper (needs a raw AppHandle before any ServiceCtx exists)
 // ---------------------------------------------------------------------------
 
-fn sources_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-    app.path()
-        .app_data_dir()
-        .map(|d| d.join("sources.json"))
-        .map_err(|e| e.to_string())
-}
-
+/// Load `sources.json` from disk, or an empty Vec if missing/corrupt. Called
+/// once at startup (`lib.rs`'s `.setup()`), before `AppState.sources` exists
+/// in memory.
 pub fn load_sources(app: &AppHandle) -> Vec<Source> {
-    let Ok(path) = sources_path(app) else {
-        return Vec::new();
-    };
-    let Ok(json) = std::fs::read_to_string(&path) else {
-        return Vec::new();
-    };
-    serde_json::from_str(&json).unwrap_or_default()
-}
-
-fn save_sources(app: &AppHandle, sources: &[Source]) -> Result<(), String> {
-    let path = sources_path(app)?;
-    let json =
-        serde_json::to_string_pretty(sources).map_err(|e| format!("Serialize error: {e}"))?;
-    std::fs::write(&path, json).map_err(|e| format!("Failed to write sources.json: {e}"))
-}
-
-// ---------------------------------------------------------------------------
-// DTO for frontend (camelCase serialization)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct MarketplaceEntryDto {
-    pub id: String,
-    pub name: String,
-    pub version: String,
-    pub description: Option<String>,
-    pub path: String,
-    pub tags: Vec<String>,
-    pub sha256: String,
-    pub category: Option<String>,
-    pub license: Option<String>,
-    pub processor_type: Option<String>,
-    pub source_types: Vec<String>,
-    pub deprecated: bool,
-}
-
-impl From<MarketplaceEntry> for MarketplaceEntryDto {
-    fn from(e: MarketplaceEntry) -> Self {
-        Self {
-            id: e.id,
-            name: e.name,
-            version: e.version,
-            description: e.description,
-            path: e.path,
-            tags: e.tags,
-            sha256: e.sha256,
-            category: e.category,
-            license: e.license,
-            processor_type: e.processor_type,
-            source_types: e.source_types,
-            deprecated: e.deprecated,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct MarketplacePackEntryDto {
-    pub id: String,
-    pub name: String,
-    pub version: String,
-    pub description: Option<String>,
-    pub path: String,
-    pub tags: Vec<String>,
-    pub sha256: String,
-    pub category: Option<String>,
-    pub processor_ids: Vec<String>,
-}
-
-impl From<marketplace::MarketplacePackEntry> for MarketplacePackEntryDto {
-    fn from(e: marketplace::MarketplacePackEntry) -> Self {
-        Self {
-            id: e.id,
-            name: e.name,
-            version: e.version,
-            description: e.description,
-            path: e.path,
-            tags: e.tags,
-            sha256: e.sha256,
-            category: e.category,
-            processor_ids: e.processor_ids,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct MarketplaceFetchResult {
-    pub processors: Vec<MarketplaceEntryDto>,
-    pub packs: Vec<MarketplacePackEntryDto>,
+    let paths = crate::commands::adapters::TauriPaths::new(app.clone());
+    svc::load_sources_file(&paths)
 }
 
 // ---------------------------------------------------------------------------
@@ -119,286 +45,41 @@ pub struct MarketplaceFetchResult {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub async fn list_sources(state: State<'_, std::sync::Arc<AppState>>) -> Result<Vec<Source>, String> {
-    let sources = lock_or_err(&state.sources, "sources")?;
-    Ok(sources.clone())
-}
-
-/// Pure core of `add_source`: computes the post-add source list without mutating
-/// `current`. Returns an error (unchanged `current` implied) if a source with the
-/// same name already exists. Callers only commit the returned Vec into shared state
-/// after it has been durably persisted — see `add_source` below.
-fn try_add_source(current: &[Source], source: Source) -> Result<Vec<Source>, String> {
-    if current.iter().any(|s| s.name == source.name) {
-        return Err(format!("A source named '{}' already exists", source.name));
-    }
-    let mut updated = current.to_vec();
-    updated.push(source);
-    Ok(updated)
-}
-
-/// Pure core of `remove_source`: computes the post-removal source list without
-/// mutating `current`. Returns an error if no source with `source_name` exists.
-fn try_remove_source(current: &[Source], source_name: &str) -> Result<Vec<Source>, String> {
-    let mut updated = current.to_vec();
-    let before = updated.len();
-    updated.retain(|s| s.name != source_name);
-    if updated.len() == before {
-        return Err(format!("Source '{source_name}' not found"));
-    }
-    Ok(updated)
+pub async fn list_sources(app: AppHandle) -> Result<Vec<Source>, String> {
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::sources(&ctx).map_err(|e| e.message())
 }
 
 #[tauri::command]
-pub async fn add_source(
-    state: State<'_, std::sync::Arc<AppState>>,
-    app: AppHandle,
-    source: Source,
-) -> Result<(), String> {
-    let mut sources = lock_or_err(&state.sources, "sources")?;
-    // Compute the new state and persist it *before* committing to memory — if
-    // save_sources fails, `sources` (and therefore list_sources) must still
-    // reflect exactly what's on disk, not a phantom entry that vanishes on
-    // the next restart.
-    let updated = try_add_source(&sources, source)?;
-    save_sources(&app, &updated)?;
-    *sources = updated;
-    Ok(())
+pub async fn add_source(app: AppHandle, source: Source) -> Result<(), String> {
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::add_source(&ctx, source).map_err(|e| e.message())
 }
 
 #[tauri::command]
-pub async fn remove_source(
-    state: State<'_, std::sync::Arc<AppState>>,
-    app: AppHandle,
-    source_name: String,
-) -> Result<(), String> {
-    let mut sources = lock_or_err(&state.sources, "sources")?;
-    // Same commit-after-persist ordering as add_source: if save_sources fails,
-    // the source must still be present in memory (matching disk), not silently
-    // gone while the on-disk copy still has it.
-    let updated = try_remove_source(&sources, &source_name)?;
-    save_sources(&app, &updated)?;
-    *sources = updated;
-    Ok(())
+pub async fn remove_source(app: AppHandle, source_name: String) -> Result<(), String> {
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::remove_source(&ctx, &source_name).map_err(|e| e.message())
 }
 
 #[tauri::command]
 pub async fn fetch_marketplace_for_source(
-    state: State<'_, std::sync::Arc<AppState>>,
+    app: AppHandle,
     source_name: String,
 ) -> Result<MarketplaceFetchResult, String> {
-    let source = {
-        let sources = lock_or_err(&state.sources, "sources")?;
-        sources
-            .iter()
-            .find(|s| s.name == source_name)
-            .cloned()
-            .ok_or_else(|| format!("Source '{source_name}' not found"))?
-    };
-    // Lock released before await
-    let index = registry::fetch_marketplace(&state.http_client, &source).await?;
-    Ok(MarketplaceFetchResult {
-        processors: index.processors.into_iter().map(MarketplaceEntryDto::from).collect(),
-        packs: index.packs.into_iter().map(MarketplacePackEntryDto::from).collect(),
-    })
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::fetch(&ctx, &source_name).await.map_err(|e| e.message())
 }
 
-// ---------------------------------------------------------------------------
-// Update types
-// ---------------------------------------------------------------------------
-
-/// A processor that has a newer version available in the marketplace.
-#[derive(Debug, Clone, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct UpdateAvailable {
-    /// Qualified processor ID (id@source).
-    pub processor_id: String,
-    pub processor_name: String,
-    pub source_name: String,
-    pub installed_version: String,
-    pub available_version: String,
-    /// Marketplace entry for performing the update.
-    pub entry: MarketplaceEntryDto,
-}
-
-/// A pack that has a newer version available (new processors or version bump).
-#[derive(Debug, Clone, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct PackUpdateAvailable {
-    pub pack_id: String,
-    pub pack_name: String,
-    pub source_name: String,
-    pub installed_version: String,
-    pub available_version: String,
-    /// New processor IDs present in marketplace version but absent from installed pack.
-    pub new_processor_ids: Vec<String>,
-    /// The full marketplace pack entry, for driving install_pack_from_marketplace.
-    pub entry: MarketplacePackEntryDto,
-}
-
-/// Result of a check_updates call.
-#[derive(Debug, Clone, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct UpdateCheckResult {
-    pub updates: Vec<UpdateAvailable>,
-    pub pack_updates: Vec<PackUpdateAvailable>,
-    /// Sources that failed to fetch (name -> error message).
-    pub errors: Vec<SourceError>,
-}
-
-#[derive(Debug, Clone, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct SourceError {
-    pub source_name: String,
-    pub error: String,
-}
-
-/// Result of applying a single update.
-#[derive(Debug, Clone, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct UpdateResult {
-    pub processor_id: String,
-    pub old_version: String,
-    pub new_version: String,
-    pub success: bool,
-    pub error: Option<String>,
-}
-
-// ---------------------------------------------------------------------------
-// Version comparison helper
-// ---------------------------------------------------------------------------
-
-/// Compare installed version against marketplace version using SemVer.
-/// Returns true if `available` is newer than `installed`.
-pub(crate) fn is_newer(installed: &str, available: &str) -> bool {
-    match (semver::Version::parse(installed), semver::Version::parse(available)) {
-        (Ok(inst), Ok(avail)) => avail > inst,
-        // If either fails to parse as semver, fall back to string inequality
-        _ => installed != available,
-    }
-}
-
-/// Compare installed packs against marketplace packs. Returns detected updates.
-pub(crate) fn detect_pack_updates(
-    installed_packs: &std::collections::HashMap<String, (String, Vec<String>)>,
-    marketplace_packs: &[marketplace::MarketplacePackEntry],
-    source_name: &str,
-) -> Vec<PackUpdateAvailable> {
-    let mut results = Vec::new();
-    for market_pack in marketplace_packs {
-        if let Some((inst_ver, inst_procs)) = installed_packs.get(&market_pack.id) {
-            let version_bumped = is_newer(inst_ver, &market_pack.version);
-            let inst_set: std::collections::HashSet<&str> =
-                inst_procs.iter().map(String::as_str).collect();
-            let new_procs: Vec<String> = market_pack
-                .processor_ids
-                .iter()
-                .filter(|pid| !inst_set.contains(pid.as_str()))
-                .cloned()
-                .collect();
-            if version_bumped || !new_procs.is_empty() {
-                results.push(PackUpdateAvailable {
-                    pack_id: market_pack.id.clone(),
-                    pack_name: market_pack.name.clone(),
-                    source_name: source_name.to_string(),
-                    installed_version: inst_ver.clone(),
-                    available_version: market_pack.version.clone(),
-                    new_processor_ids: new_procs,
-                    entry: MarketplacePackEntryDto::from(market_pack.clone()),
-                });
-            }
-        }
-    }
-    results
-}
-
-// ---------------------------------------------------------------------------
-// Update commands
-// ---------------------------------------------------------------------------
-
-/// Check all enabled sources for processor updates.
-/// Compares installed processor versions against marketplace entries.
 #[tauri::command]
-pub async fn check_updates(
-    state: State<'_, std::sync::Arc<AppState>>,
-) -> Result<UpdateCheckResult, String> {
-    // Snapshot sources and installed processors (release locks before network I/O).
-    let sources: Vec<Source> = {
-        let s = lock_or_err(&state.sources, "sources")?;
-        s.iter().filter(|s| s.enabled).cloned().collect()
-    };
-    // HashMap<qualified_id, (bare_id, installed_version)> for O(1) lookups per marketplace entry.
-    let installed: HashMap<String, (String, String)> = {
-        let procs = lock_or_err(&state.processors, "processors")?;
-        procs.iter()
-            .filter_map(|(qid, proc)| {
-                proc.source.as_ref().map(|_src| {
-                    (qid.clone(), (proc.meta.id.clone(), proc.meta.version.clone()))
-                })
-            })
-            .collect()
-    };
-    // HashMap<pack_id, (installed_version, processor_ids)> for pack update detection.
-    let installed_packs: std::collections::HashMap<String, (String, Vec<String>)> = {
-        let packs = lock_or_err(&state.packs, "packs")?;
-        packs
-            .iter()
-            .map(|p| (p.id.clone(), (p.version.clone(), p.processors.clone())))
-            .collect()
-    };
-
-    let mut updates = Vec::new();
-    let mut pack_updates = Vec::new();
-    let mut errors = Vec::new();
-
-    for source in &sources {
-        let index = match registry::fetch_marketplace(&state.http_client, source).await {
-            Ok(idx) => idx,
-            Err(e) => {
-                errors.push(SourceError {
-                    source_name: source.name.clone(),
-                    error: e,
-                });
-                continue;
-            }
-        };
-
-        for market_entry in &index.processors {
-            let qid = marketplace::qualified_id(&market_entry.id, &source.name);
-
-            // O(1) lookup instead of linear scan.
-            if let Some((_bare_id, inst_ver)) = installed.get(&qid) {
-                if is_newer(inst_ver, &market_entry.version) {
-                    updates.push(UpdateAvailable {
-                        processor_id: qid.clone(),
-                        processor_name: market_entry.name.clone(),
-                        source_name: source.name.clone(),
-                        installed_version: inst_ver.clone(),
-                        available_version: market_entry.version.clone(),
-                        entry: MarketplaceEntryDto::from(market_entry.clone()),
-                    });
-                }
-            }
-        }
-
-        pack_updates.extend(detect_pack_updates(&installed_packs, &index.packs, &source.name));
-
-        // Update last_checked timestamp for this source.
-        if let Ok(mut srcs) = state.sources.lock() {
-            if let Some(s) = srcs.iter_mut().find(|s| s.name == source.name) {
-                s.last_checked = Some(chrono_now_iso());
-            }
-        }
-    }
-
-    Ok(UpdateCheckResult { updates, pack_updates, errors })
+pub async fn check_updates(app: AppHandle) -> Result<UpdateCheckResult, String> {
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::check_updates(&ctx).await.map_err(|e| e.message())
 }
 
-/// Update a single processor from its marketplace source.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn update_processor(
-    state: State<'_, std::sync::Arc<AppState>>,
     app: AppHandle,
     processor_id: String,
     entry_name: String,
@@ -406,211 +87,42 @@ pub async fn update_processor(
     entry_version: String,
     entry_sha256: String,
 ) -> Result<UpdateResult, String> {
-    let (bare_id, source_name) = match marketplace::split_qualified_id(&processor_id) {
-        (id, Some(src)) => (id.to_string(), src.to_string()),
-        _ => return Err(format!("Processor '{processor_id}' has no source qualifier — cannot update")),
-    };
-
-    // Find the source config.
-    let source = {
-        let srcs = lock_or_err(&state.sources, "sources")?;
-        srcs.iter()
-            .find(|s| s.name == source_name)
-            .cloned()
-            .ok_or_else(|| format!("Source '{source_name}' not found"))?
-    };
-
-    // Construct entry from frontend-supplied metadata (avoids re-fetching full index).
-    let entry = marketplace::MarketplaceEntry {
-        id: bare_id,
-        name: entry_name,
-        path: entry_path,
-        version: entry_version,
-        sha256: entry_sha256,
-        description: None,
-        tags: Vec::new(),
-        category: None,
-        license: None,
-        processor_type: None,
-        source_types: Vec::new(),
-        deprecated: false,
-    };
-
-    // Get current installed version.
-    let old_version = {
-        let procs = lock_or_err(&state.processors, "processors")?;
-        procs.get(&processor_id).map_or_else(|| "unknown".to_string(), |p| p.meta.version.clone())
-    };
-
-    let def = download_and_install_processor(&state, &app, &source, &entry, &processor_id).await?;
-    let new_version = def.meta.version;
-
-    Ok(UpdateResult {
-        processor_id,
-        old_version,
-        new_version,
-        success: true,
-        error: None,
-    })
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::update_processor(&ctx, &processor_id, &entry_name, &entry_path, &entry_version, &entry_sha256)
+        .await
+        .map_err(|e| e.message())
 }
 
-/// Update all processors from a given source that have newer versions.
 #[tauri::command]
-pub async fn update_all_from_source(
-    state: State<'_, std::sync::Arc<AppState>>,
-    app: AppHandle,
-    source_name: String,
-) -> Result<Vec<UpdateResult>, String> {
-    // Find the source config.
-    let source = {
-        let srcs = lock_or_err(&state.sources, "sources")?;
-        srcs.iter()
-            .find(|s| s.name == source_name)
-            .cloned()
-            .ok_or_else(|| format!("Source '{source_name}' not found"))?
-    };
-
-    // Fetch marketplace.
-    let index = registry::fetch_marketplace(&state.http_client, &source).await?;
-
-    // Snapshot installed processors from this source.
-    let installed: Vec<(String, String)> = {
-        let procs = lock_or_err(&state.processors, "processors")?;
-        procs.iter()
-            .filter_map(|(qid, p)| {
-                if p.source.as_deref() == Some(&source_name) {
-                    Some((qid.clone(), p.meta.version.clone()))
-                } else {
-                    None
-                }
-            })
-            .collect()
-    };
-
-    let mut results = Vec::new();
-
-    for entry in &index.processors {
-        let qid = marketplace::qualified_id(&entry.id, &source_name);
-
-        // Check if installed and needs update.
-        let Some((_, inst_ver)) = installed.iter().find(|(q, _)| *q == qid) else {
-            continue;
-        };
-
-        if !is_newer(inst_ver, &entry.version) {
-            continue;
-        }
-
-        // Download, parse, persist, and insert.
-        match download_and_install_processor(&state, &app, &source, entry, &qid).await {
-            Ok(def) => {
-                results.push(UpdateResult {
-                    processor_id: qid,
-                    old_version: inst_ver.clone(),
-                    new_version: def.meta.version.clone(),
-                    success: true,
-                    error: None,
-                });
-            }
-            Err(e) => {
-                results.push(UpdateResult {
-                    processor_id: qid,
-                    old_version: inst_ver.clone(),
-                    new_version: entry.version.clone(),
-                    success: false,
-                    error: Some(e),
-                });
-            }
-        }
-    }
-
-    // Update last_checked.
-    if let Ok(mut srcs) = state.sources.lock() {
-        if let Some(s) = srcs.iter_mut().find(|s| s.name == source_name) {
-            s.last_checked = Some(chrono_now_iso());
-        }
-    }
-
-    Ok(results)
+pub async fn update_all_from_source(app: AppHandle, source_name: String) -> Result<Vec<UpdateResult>, String> {
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::update_all_from_source(&ctx, &source_name).await.map_err(|e| e.message())
 }
 
-/// Save sources to disk (called after modifying last_checked, etc.).
+/// Kept as a direct `AppHandle`-based helper (not routed through a
+/// `ServiceCtx`) — it just re-persists whatever is already in `AppState`, no
+/// service decision involved.
 #[tauri::command]
-pub async fn save_sources_to_disk(
-    state: State<'_, std::sync::Arc<AppState>>,
-    app: AppHandle,
-) -> Result<(), String> {
-    let sources = lock_or_err(&state.sources, "sources")?;
-    save_sources(&app, &sources)
+pub async fn save_sources_to_disk(app: AppHandle) -> Result<(), String> {
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::save_sources_to_disk(&ctx).map_err(|e| e.message())
 }
 
-/// Get pending updates discovered by the startup check.
-/// Returns and clears the pending list (UI consumes once, then uses check_updates for refresh).
 #[tauri::command]
-pub async fn get_pending_updates(
-    state: State<'_, std::sync::Arc<AppState>>,
-) -> Result<Vec<UpdateAvailable>, String> {
-    let mut pending = lock_or_err(&state.pending_updates, "pending_updates")?;
-    Ok(std::mem::take(&mut *pending))
+pub async fn get_pending_updates(app: AppHandle) -> Result<Vec<UpdateAvailable>, String> {
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::pending_updates(&ctx).map_err(|e| e.message())
 }
 
-/// Get pending pack updates discovered by the startup check.
-/// Returns and clears the pending list (UI consumes once, then uses check_updates for refresh).
 #[tauri::command]
-pub async fn get_pending_pack_updates(
-    state: State<'_, std::sync::Arc<AppState>>,
-) -> Result<Vec<PackUpdateAvailable>, String> {
-    let mut pending = lock_or_err(&state.pending_pack_updates, "pending_pack_updates")?;
-    Ok(std::mem::take(&mut *pending))
+pub async fn get_pending_pack_updates(app: AppHandle) -> Result<Vec<PackUpdateAvailable>, String> {
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::pending_pack_updates(&ctx).map_err(|e| e.message())
 }
 
-// ---------------------------------------------------------------------------
-// Shared install helper
-// ---------------------------------------------------------------------------
-
-/// Download, parse, persist, and install a single processor from a marketplace source.
-///
-/// Performs the full sequence: download YAML → append provenance → parse → set source
-/// field → persist to disk → insert into state. Returns the parsed `AnyProcessor` so
-/// callers can extract the version or build a summary without re-locking.
-async fn download_and_install_processor(
-    state: &AppState,
-    app: &AppHandle,
-    source: &Source,
-    entry: &MarketplaceEntry,
-    qualified_id: &str,
-) -> Result<AnyProcessor, String> {
-    // 1. Download and verify SHA256.
-    let yaml = registry::download_processor_from_source(&state.http_client, source, entry).await?;
-
-    // 2. Append provenance metadata.
-    let final_yaml = format!("{}{}", yaml, build_provenance_yaml(&source.name, &entry.version, &entry.sha256));
-
-    // 3. Parse.
-    let mut def = AnyProcessor::from_yaml(&final_yaml)
-        .map_err(|e| format!("Failed to parse processor YAML: {e}"))?;
-
-    // 4. Set source field.
-    def.source = Some(source.name.clone());
-
-    // 5. Persist to disk.
-    super::processors::persist_processor(app, qualified_id, &final_yaml)?;
-
-    // 6. Insert into state.
-    {
-        let mut procs = lock_or_err(&state.processors, "processors")?;
-        procs.insert(qualified_id.to_string(), def.clone());
-    }
-
-    Ok(def)
-}
-
-/// Install a processor from a named marketplace source.
-/// Downloads the YAML, verifies SHA256, appends provenance, parses, persists, and inserts.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn install_from_marketplace(
-    state: State<'_, std::sync::Arc<AppState>>,
     app: AppHandle,
     source_name: String,
     entry_id: String,
@@ -618,244 +130,27 @@ pub async fn install_from_marketplace(
     entry_path: String,
     entry_version: String,
     entry_sha256: String,
-) -> Result<ProcessorSummary, String> {
-    // Look up the source.
-    let source = {
-        let srcs = lock_or_err(&state.sources, "sources")?;
-        srcs.iter()
-            .find(|s| s.name == source_name)
-            .cloned()
-            .ok_or_else(|| format!("Source '{source_name}' not found"))?
-    };
-
-    // Construct entry from frontend-supplied metadata (avoids re-fetching full index).
-    let entry = marketplace::MarketplaceEntry {
-        id: entry_id,
-        name: entry_name,
-        path: entry_path,
-        version: entry_version,
-        sha256: entry_sha256,
-        // Fields not needed for download/install — defaults are fine.
-        description: None,
-        tags: Vec::new(),
-        category: None,
-        license: None,
-        processor_type: None,
-        source_types: Vec::new(),
-        deprecated: false,
-    };
-
-    let qualified_id = marketplace::qualified_id(&entry.id, &source_name);
-
-    let def = download_and_install_processor(&state, &app, &source, &entry, &qualified_id).await?;
-
-    // Build summary with the qualified ID (From impl uses bare id).
-    let mut summary = ProcessorSummary::from(&def);
-    summary.id = qualified_id;
-
-    Ok(summary)
+) -> Result<crate::processors::ProcessorSummary, String> {
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::install_from_marketplace(&ctx, &source_name, &entry_id, &entry_name, &entry_path, &entry_version, &entry_sha256)
+        .await
+        .map_err(|e| e.message())
 }
 
-// ---------------------------------------------------------------------------
-// Pack marketplace commands
-// ---------------------------------------------------------------------------
-
-/// Download text (pack manifest YAML or any file) from a source using a relative path.
-async fn download_text_from_source(
-    client: &reqwest::Client,
-    source: &Source,
-    path: &str,
-) -> Result<String, String> {
-    use crate::processors::marketplace::SourceType;
-    match &source.source_type {
-        SourceType::Github { repo, git_ref } => {
-            let full_path = format!("marketplace/{path}");
-            let url = registry::github_raw_url(repo, git_ref, &full_path);
-            let resp = client
-                .get(&url)
-                .header("User-Agent", "LogTapper/1.0")
-                .send()
-                .await
-                .map_err(|e| format!("Failed to download '{path}': {e}"))?;
-            if !resp.status().is_success() {
-                let status = resp.status();
-                return Err(format!("Download of '{path}' returned HTTP {status}"));
-            }
-            resp.text().await.map_err(|e| format!("Failed to read response for '{path}': {e}"))
-        }
-        SourceType::Local { path: base } => {
-            let full = std::path::Path::new(base).join(path);
-            std::fs::read_to_string(&full)
-                .map_err(|e| format!("Failed to read local file '{}': {e}", full.display()))
-        }
-    }
-}
-
-/// Install a processor pack from a named marketplace source.
-///
-/// For each processor ID listed in the pack, the corresponding processor entry is located
-/// in the marketplace index and installed (skipping any that are already installed).
-/// Finally, the pack manifest YAML is fetched and stored.
 #[tauri::command]
 pub async fn install_pack_from_marketplace(
-    state: State<'_, std::sync::Arc<AppState>>,
     app: AppHandle,
     source_name: String,
-    pack_entry: marketplace::MarketplacePackEntry,
-) -> Result<PackSummary, String> {
-    // Look up the source (release lock before any network I/O).
-    let source = {
-        let srcs = lock_or_err(&state.sources, "sources")?;
-        srcs.iter()
-            .find(|s| s.name == source_name)
-            .cloned()
-            .ok_or_else(|| format!("Source '{source_name}' not found"))?
-    };
-
-    // Fetch the full marketplace index to look up processors by ID.
-    let index = registry::fetch_marketplace(&state.http_client, &source).await?;
-
-    // Build a map of processor entries for O(1) lookup.
-    let proc_map: std::collections::HashMap<&str, &MarketplaceEntry> = index
-        .processors
-        .iter()
-        .map(|e| (e.id.as_str(), e))
-        .collect();
-
-    // Install each processor in the pack (skip already-installed ones).
-    for proc_id in &pack_entry.processor_ids {
-        let qualified_id = marketplace::qualified_id(proc_id, &source_name);
-
-        let entry = proc_map
-            .get(proc_id.as_str())
-            .ok_or_else(|| format!("Processor '{proc_id}' not found in marketplace index for source '{source_name}'"))?;
-
-        // Skip only if installed version is >= marketplace version.
-        {
-            let procs = lock_or_err(&state.processors, "processors")?;
-            if let Some(installed) = procs.get(&qualified_id) {
-                if !is_newer(&installed.meta.version, &entry.version) {
-                    continue;
-                }
-            }
-        }
-
-        download_and_install_processor(&state, &app, &source, entry, &qualified_id).await?;
-    }
-
-    // Download and install the pack manifest.
-    let pack_yaml = download_text_from_source(&state.http_client, &source, &pack_entry.path).await?;
-    let mut pack_meta: PackMeta = parse_pack_yaml(&pack_yaml)
-        .map_err(|e| format!("Failed to parse pack manifest: {e}"))?;
-    pack_meta.id = pack_entry.id.clone();
-    validate_pack(&pack_meta)?;
-
-    // The marketplace index is authoritative for the pack version. `detect_pack_updates`
-    // compares the index entry against the *installed manifest's* version, so a manifest
-    // whose `version` lags its index entry re-reports the same update after every install —
-    // the update row never clears. Reconcile here and persist the corrected manifest so the
-    // fix survives a restart (packs are reloaded from disk on startup).
-    let pack_yaml = if pack_meta.version == pack_entry.version {
-        pack_yaml
-    } else {
-        pack_meta.version = pack_entry.version.clone();
-        serde_yaml::to_string(&pack_meta)
-            .map_err(|e| format!("Failed to re-serialize pack manifest: {e}"))?
-    };
-
-    // Persist the pack manifest.
-    super::processors::persist_pack_yaml(&app, &pack_meta.id, &pack_yaml)?;
-
-    let summary = PackSummary::from(&pack_meta);
-
-    // Upsert into in-memory pack store.
-    {
-        let mut packs = lock_or_err(&state.packs, "packs")?;
-        if let Some(existing) = packs.iter_mut().find(|p| p.id == pack_meta.id) {
-            *existing = pack_meta;
-        } else {
-            packs.push(pack_meta);
-        }
-    }
-
-    Ok(summary)
+    pack_entry: crate::processors::marketplace::MarketplacePackEntry,
+) -> Result<crate::processors::PackSummary, String> {
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::install_pack_from_marketplace(&ctx, &source_name, pack_entry).await.map_err(|e| e.message())
 }
 
-/// Uninstall a processor pack from a named marketplace source.
-///
-/// Processors belonging to this pack are removed only if they are not referenced by any
-/// other installed pack. The pack manifest is removed unconditionally.
 #[tauri::command]
-pub async fn uninstall_pack_from_marketplace(
-    state: State<'_, std::sync::Arc<AppState>>,
-    app: AppHandle,
-    source_name: String,
-    pack_id: String,
-) -> Result<(), String> {
-    // Find the pack and get its processor list.
-    let processor_ids: Vec<String> = {
-        let packs = lock_or_err(&state.packs, "packs")?;
-        packs
-            .iter()
-            .find(|p| p.id == pack_id)
-            .ok_or_else(|| format!("Pack '{pack_id}' not found"))?
-            .processors
-            .iter()
-            .map(|id| marketplace::qualified_id(id, &source_name))
-            .collect()
-    };
-
-    // Determine which other packs (excluding the one being removed) reference each processor.
-    let other_pack_proc_ids: std::collections::HashSet<String> = {
-        let packs = lock_or_err(&state.packs, "packs")?;
-        packs
-            .iter()
-            .filter(|p| p.id != pack_id)
-            .flat_map(|p| p.processors.iter().map(|id| marketplace::qualified_id(id, &source_name)))
-            .collect()
-    };
-
-    // Remove processors that are not referenced by any other pack.
-    for qid in &processor_ids {
-        if other_pack_proc_ids.contains(qid) {
-            continue;
-        }
-        {
-            let mut procs = lock_or_err(&state.processors, "processors")?;
-            procs.remove(qid);
-        }
-        super::processors::delete_processor_file_by_id(&app, qid);
-    }
-
-    // Remove the pack from in-memory store.
-    {
-        let mut packs = lock_or_err(&state.packs, "packs")?;
-        packs.retain(|p| p.id != pack_id);
-    }
-
-    // Delete the pack manifest file.
-    super::processors::delete_pack_file_by_id(&app, &pack_id);
-
-    Ok(())
-}
-
-/// Simple ISO 8601 timestamp (no chrono dependency — use std).
-pub(crate) fn chrono_now_iso() -> String {
-    // Use std::time — format as seconds since epoch for simplicity.
-    // For a proper ISO timestamp we'd need the `chrono` crate, but this is
-    // sufficient for provenance tracking.
-    let dur = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    format!("{}Z", dur.as_secs())
-}
-
-/// Build the provenance YAML suffix appended to downloaded processor YAMLs.
-pub(crate) fn build_provenance_yaml(source_name: &str, version: &str, sha256: &str) -> String {
-    let now = chrono_now_iso();
-    format!(
-        "\n_source: {source_name}\n_installed_version: {version}\n_installed_at: {now}\n_sha256: {sha256}\n"
-    )
+pub async fn uninstall_pack_from_marketplace(app: AppHandle, source_name: String, pack_id: String) -> Result<(), String> {
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::uninstall_pack_from_marketplace(&ctx, &source_name, &pack_id).map_err(|e| e.message())
 }
 
 // ---------------------------------------------------------------------------
@@ -865,7 +160,7 @@ pub(crate) fn build_provenance_yaml(source_name: &str, version: &str, sha256: &s
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::processors::marketplace::SourceType;
+    use crate::processors::marketplace::{self, SourceType};
 
     #[test]
     fn is_newer_basic() {
@@ -878,11 +173,8 @@ mod tests {
 
     #[test]
     fn is_newer_different_lengths() {
-        // Non-semver strings fall back to string inequality (installed != available).
-        // Both directions return true when strings differ.
         assert!(is_newer("1.0", "1.0.1"));
         assert!(is_newer("1.0.1", "1.0"));
-        // Same non-semver strings → false (equal strings, no newer version)
         assert!(!is_newer("1.0", "1.0"));
     }
 
@@ -942,30 +234,20 @@ mod tests {
 
     #[test]
     fn download_text_github_url_has_marketplace_prefix() {
-        // Verify the URL construction logic in download_text_from_source.
-        // For GitHub sources, the path (e.g. "packs/wifi.pack.yaml") must be
-        // prefixed with "marketplace/" to match the repo directory structure.
         let path = "packs/wifi-diagnostics.pack.yaml";
         let full_path = format!("marketplace/{path}");
-        let url = registry::github_raw_url("jpicklyk/logtapper", "main", &full_path);
+        let url = crate::processors::registry::github_raw_url("jpicklyk/logtapper", "main", &full_path);
         assert!(
             url.contains("/marketplace/packs/"),
             "download URL must include marketplace/ prefix, got: {url}"
         );
-        assert!(!url.contains("/marketplace/marketplace/"),
-            "must not double-prefix marketplace/, got: {url}"
-        );
+        assert!(!url.contains("/marketplace/marketplace/"), "must not double-prefix marketplace/, got: {url}");
     }
 
     #[test]
     fn fetch_result_github_url_has_marketplace_prefix() {
-        // Verify fetch_marketplace_for_source constructs the correct URL.
-        // This mirrors the logic at the top of the command.
-        let url = registry::github_raw_url("jpicklyk/logtapper", "main", "marketplace/marketplace.json");
-        assert_eq!(
-            url,
-            "https://raw.githubusercontent.com/jpicklyk/logtapper/main/marketplace/marketplace.json"
-        );
+        let url = crate::processors::registry::github_raw_url("jpicklyk/logtapper", "main", "marketplace/marketplace.json");
+        assert_eq!(url, "https://raw.githubusercontent.com/jpicklyk/logtapper/main/marketplace/marketplace.json");
     }
 
     // -----------------------------------------------------------------------
@@ -981,10 +263,8 @@ mod tests {
 
     fn load_marketplace_index() -> (std::path::PathBuf, marketplace::MarketplaceIndex) {
         let dir = project_root().join("marketplace");
-        let json = std::fs::read_to_string(dir.join("marketplace.json"))
-            .expect("should read marketplace.json");
-        let index: marketplace::MarketplaceIndex = serde_json::from_str(&json)
-            .expect("should parse marketplace.json");
+        let json = std::fs::read_to_string(dir.join("marketplace.json")).expect("should read marketplace.json");
+        let index: marketplace::MarketplaceIndex = serde_json::from_str(&json).expect("should parse marketplace.json");
         (dir, index)
     }
 
@@ -1022,8 +302,7 @@ mod tests {
     #[test]
     fn pack_processor_ids_exist_in_index() {
         let (_dir, index) = load_marketplace_index();
-        let proc_ids: std::collections::HashSet<&str> =
-            index.processors.iter().map(|p| p.id.as_str()).collect();
+        let proc_ids: std::collections::HashSet<&str> = index.processors.iter().map(|p| p.id.as_str()).collect();
         for pack in &index.packs {
             for proc_id in &pack.processor_ids {
                 assert!(
@@ -1061,9 +340,6 @@ mod tests {
         }
     }
 
-    /// A pack manifest whose `version` lags its index entry makes the pack's update row
-    /// reappear after every install — `detect_pack_updates` reads the installed manifest,
-    /// not the index. Bump both or neither.
     #[test]
     fn pack_yaml_versions_match_index() {
         let (dir, index) = load_marketplace_index();
@@ -1082,12 +358,6 @@ mod tests {
         }
     }
 
-    /// The YAML is what governs execution — the installed processor is built
-    /// from it, and enforcement reads `AnyProcessor::schema`. The index copy is
-    /// only what the Marketplace UI shows before install. When they drift, the
-    /// UI advertises eligibility the processor does not have (or hides
-    /// eligibility it does), and anyone auditing declarations from the index
-    /// reaches the wrong conclusion about which processors are affected.
     #[test]
     fn processor_source_types_match_index() {
         let (dir, index) = load_marketplace_index();
@@ -1097,17 +367,12 @@ mod tests {
                 Err(_) => continue,
             };
             let Ok(p) = crate::processors::AnyProcessor::from_yaml(&yaml_str) else {
-                continue; // parse failures are reported by their own test
+                continue;
             };
-            let declared = p
-                .schema
-                .as_ref()
-                .map(|s| s.source_types.clone())
-                .unwrap_or_default();
+            let declared = p.schema.as_ref().map(|s| s.source_types.clone()).unwrap_or_default();
             assert_eq!(
                 declared, entry.source_types,
-                "source_types mismatch for '{}': YAML={:?} (governs execution), \
-                 index={:?} (shown in the Marketplace)",
+                "source_types mismatch for '{}': YAML={:?} (governs execution), index={:?} (shown in the Marketplace)",
                 entry.id, declared, entry.source_types
             );
         }
@@ -1177,7 +442,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Dev source resolution and auto-correction
+    // Dev vs release source configuration
     // -----------------------------------------------------------------------
 
     #[test]
@@ -1190,8 +455,6 @@ mod tests {
         assert!(result_str.contains("marketplace"));
     }
 
-    // These tests are debug-only because resolve_dev_marketplace_path is #[cfg(debug_assertions)].
-    // They will be silently skipped in `cargo test --release`.
     #[cfg(debug_assertions)]
     #[test]
     fn resolve_dev_marketplace_path_is_valid() {
@@ -1258,19 +521,19 @@ mod tests {
 
     #[test]
     fn github_source_constructs_correct_index_url() {
-        let url = registry::github_raw_url("jpicklyk/logtapper", "main", "marketplace/marketplace.json");
+        let url = crate::processors::registry::github_raw_url("jpicklyk/logtapper", "main", "marketplace/marketplace.json");
         assert_eq!(url, "https://raw.githubusercontent.com/jpicklyk/logtapper/main/marketplace/marketplace.json");
     }
 
     #[test]
     fn github_source_constructs_correct_processor_url() {
-        let url = registry::github_raw_url("jpicklyk/logtapper", "main", "marketplace/processors/battery_state.yaml");
+        let url = crate::processors::registry::github_raw_url("jpicklyk/logtapper", "main", "marketplace/processors/battery_state.yaml");
         assert_eq!(url, "https://raw.githubusercontent.com/jpicklyk/logtapper/main/marketplace/processors/battery_state.yaml");
     }
 
     #[test]
     fn github_source_constructs_correct_pack_url() {
-        let url = registry::github_raw_url("jpicklyk/logtapper", "main", "marketplace/packs/device-health.pack.yaml");
+        let url = crate::processors::registry::github_raw_url("jpicklyk/logtapper", "main", "marketplace/packs/device-health.pack.yaml");
         assert_eq!(url, "https://raw.githubusercontent.com/jpicklyk/logtapper/main/marketplace/packs/device-health.pack.yaml");
     }
 
@@ -1345,7 +608,7 @@ mod tests {
     #[test]
     fn pack_update_skips_uninstalled_packs() {
         use crate::processors::marketplace::MarketplacePackEntry;
-        let installed = std::collections::HashMap::new(); // nothing installed
+        let installed = std::collections::HashMap::new();
         let market = vec![MarketplacePackEntry {
             id: "wifi-diag".to_string(),
             name: "WiFi Diagnostics".to_string(),
@@ -1406,15 +669,6 @@ mod tests {
     // -----------------------------------------------------------------------
     // add_source / remove_source: persist-before-commit rollback (defect 1)
     // -----------------------------------------------------------------------
-    //
-    // `try_add_source` / `try_remove_source` are the pure cores of the Tauri
-    // commands (see sources.rs above). They compute the *new* Vec<Source>
-    // without touching `current`; the commands only assign it into the locked
-    // AppState after save_sources() succeeds. These tests exercise that same
-    // "compute -> persist -> commit" sequence directly (standing in for the
-    // AppHandle-backed save_sources, which needs a real Tauri app context and
-    // so can't be exercised in a plain unit test) to prove that a persist
-    // failure leaves the in-memory Vec byte-for-byte unchanged.
 
     fn test_source(name: &str) -> Source {
         Source {
@@ -1429,13 +683,9 @@ mod tests {
     #[test]
     fn add_source_rolls_back_in_memory_state_when_save_fails() {
         let mut sources = vec![test_source("existing")];
-
-        // Mirrors the command body: compute the candidate state, "persist" it
-        // (simulated failure), and only commit on success.
         let updated = try_add_source(&sources, test_source("new")).expect("no name clash");
         let save_result: Result<(), String> = Err("disk full".to_string());
         let outcome = save_result.map(|()| sources = updated);
-
         assert!(outcome.is_err());
         assert_eq!(sources.len(), 1, "in-memory Vec must be unchanged after a failed save");
         assert_eq!(sources[0].name, "existing");
@@ -1444,11 +694,9 @@ mod tests {
     #[test]
     fn remove_source_rolls_back_in_memory_state_when_save_fails() {
         let mut sources = vec![test_source("existing"), test_source("target")];
-
         let updated = try_remove_source(&sources, "target").expect("target exists");
         let save_result: Result<(), String> = Err("disk full".to_string());
         let outcome = save_result.map(|()| sources = updated);
-
         assert!(outcome.is_err());
         assert_eq!(sources.len(), 2, "in-memory Vec must be unchanged after a failed save");
         assert!(sources.iter().any(|s| s.name == "target"), "removed source must still be present in memory");
@@ -1457,33 +705,36 @@ mod tests {
     #[test]
     fn add_source_commits_new_state_when_save_succeeds() {
         let mut sources = vec![test_source("existing")];
-
         let updated = try_add_source(&sources, test_source("new")).expect("no name clash");
         let save_result: Result<(), String> = Ok(());
         let outcome = save_result.map(|()| sources = updated);
-
         assert!(outcome.is_ok());
         assert_eq!(sources.len(), 2);
         assert!(sources.iter().any(|s| s.name == "new"));
     }
 
-    /// Documents the pre-fix defect directly: the original add_source pushed
-    /// into the locked Vec *before* calling save_sources, with no rollback on
-    /// failure. Reproducing that ordering here shows the in-memory Vec ends
-    /// up out of sync with disk the moment persistence fails.
     #[test]
     fn buggy_push_before_save_ordering_leaves_stale_state_on_failure() {
         let mut sources = vec![test_source("existing")];
-
-        // Old (buggy) order: mutate first, persist second, no undo on Err.
         sources.push(test_source("new"));
         let save_result: Result<(), String> = Err("disk full".to_string());
-
         assert!(save_result.is_err());
-        assert_eq!(
-            sources.len(),
-            2,
-            "reproduces defect 1: the unpersisted source remains in memory after save fails"
-        );
+        assert_eq!(sources.len(), 2, "reproduces defect 1: the unpersisted source remains in memory after save fails");
+    }
+
+    /// `load_sources` (the `AppHandle`-based startup helper kept in this file)
+    /// delegates to the same `AppPaths`-based loader the service uses — proven
+    /// here via a fixed-dir `AppPaths` standing in for a real `TauriPaths`.
+    #[test]
+    fn load_sources_file_reads_back_what_was_written() {
+        use crate::services::paths::FixedPaths;
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = FixedPaths(tmp.path().to_path_buf());
+        let sources = vec![test_source("official")];
+        let json = serde_json::to_string_pretty(&sources).unwrap();
+        std::fs::write(tmp.path().join("sources.json"), json).unwrap();
+        let loaded = svc::load_sources_file(&paths);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].name, "official");
     }
 }
