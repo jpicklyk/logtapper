@@ -92,6 +92,8 @@ export function useFileSession(
       offset: 0,
       count: 100,
       context: 0,
+      processorId: null,
+      search: null,
     }).then((window) => {
       diag('file-load', 'optimistic fetch: received', { lines: window.lines.length });
       preSeedSession(result.sessionId, window.lines);

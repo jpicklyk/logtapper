@@ -1,35 +1,41 @@
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 /// Who created the bookmark.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 pub enum CreatedBy {
     User,
     Agent,
 }
 
 /// A lightweight line pin with an optional label and note.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Bookmark {
     pub id: String,
     pub session_id: String,
     pub line_number: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub line_number_end: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub snippet: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub category: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub tags: Option<Vec<String>>,
     pub label: String,
     pub note: String,
     pub created_by: CreatedBy,
+    #[ts(type = "number")]
     pub created_at: i64,
 }
 
 /// Payload emitted as `bookmark-update` Tauri event.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct BookmarkUpdateEvent {
     pub session_id: String,

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { Plus } from 'lucide-react';
 import { useSession, useIsStreaming, useSessionWatchActions } from '../../context';
 import { useWatchList } from '../../hooks';
@@ -11,16 +11,12 @@ import styles from './WatchesPanel.module.css';
 export const WatchesPanel = React.memo(function WatchesPanel() {
   const session = useSession();
   const isStreaming = useIsStreaming();
-  const { watches, refreshWatches } = useWatchList();
+  // The hook owns the initial fetch AND the `watch-match` / `watch-update`
+  // listeners for this session, so a watch an agent creates over the MCP bridge
+  // appears here without the panel doing anything.
+  const { watches } = useWatchList(session?.sessionId ?? null);
   const { addWatch, removeWatch } = useSessionWatchActions();
   const [showCreate, setShowCreate] = useState(false);
-
-  // Refresh watch list on session change
-  useEffect(() => {
-    if (session?.sessionId) {
-      refreshWatches(session.sessionId);
-    }
-  }, [session?.sessionId, refreshWatches]);
 
   const [activeWatches, cancelledWatches] = useMemo(() => {
     const active = watches.filter((w) => w.active);

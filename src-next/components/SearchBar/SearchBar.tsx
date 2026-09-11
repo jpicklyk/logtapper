@@ -69,7 +69,16 @@ export const SearchBar = React.memo<SearchBarProps>(function SearchBar({
         if (!value.trim()) {
           setSearch(null);
         } else {
-          setSearch({ text: value, isRegex: regex, caseSensitive: cs });
+          setSearch({
+            text: value,
+            isRegex: regex,
+            caseSensitive: cs,
+            withinProcessor: null,
+            minLevel: null,
+            tags: null,
+            startTime: null,
+            endTime: null,
+          });
         }
       }, 250);
     },

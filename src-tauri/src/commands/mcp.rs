@@ -4,6 +4,7 @@
 /// `start_mcp_bridge` when `mcpBridgeEnabled` is true and `stop_mcp_bridge`
 /// when the user disables it in Settings.
 use crate::commands::{lock_or_err, AppState};
+use ts_rs::TS;
 
 /// Inner logic for starting the MCP bridge.
 ///
@@ -57,11 +58,15 @@ pub(crate) fn stop_mcp_bridge_inner(state: &AppState) -> Result<(), String> {
 #[tauri::command]
 pub async fn start_mcp_bridge(
     app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, std::sync::Arc<AppState>>,
 ) -> Result<(), String> {
     if let Some(rx) = start_mcp_bridge_inner(&state)? {
         // Spawn the bridge — it will clear the shutdown sender when it exits.
-        tauri::async_runtime::spawn(crate::mcp_bridge::start(app, rx));
+        // Build the bridge's own context (state + the Tauri-backed sinks)
+        // once, here — the bridge itself never resolves anything out of an
+        // `AppHandle` any more.
+        let ctx = crate::mcp_bridge::BridgeCtx::new(app);
+        tauri::async_runtime::spawn(crate::mcp_bridge::start(ctx, rx));
     }
     Ok(())
 }
@@ -73,7 +78,7 @@ pub async fn start_mcp_bridge(
 /// `AppState::mcp_bridge_port`.  Returns `Ok(())` even if the bridge was not
 /// running.
 #[tauri::command]
-pub fn stop_mcp_bridge(state: tauri::State<'_, AppState>) -> Result<(), String> {
+pub fn stop_mcp_bridge(state: tauri::State<'_, std::sync::Arc<AppState>>) -> Result<(), String> {
     stop_mcp_bridge_inner(&state)
 }
 
@@ -221,7 +226,7 @@ fn has_mcpb_handler() -> bool {
 /// `installable` reports whether the OS can actually open it — when false the
 /// caller should offer "save a copy" only, since a one-click install would
 /// raise an unrelated chooser dialog.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct McpBundleInfo {
     pub path: String,

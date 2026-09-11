@@ -24,7 +24,7 @@ function disk(
 }
 
 function wsEntry(over: Partial<WorkspaceEntry> = {}): WorkspaceEntry {
-  return { id: 'd-1', name: 'wifi-debug', ltwPath: null, dirty: false, ...over };
+  return { id: 'd-1', name: 'wifi-debug', ltwPath: null, dirty: false, autoSavePath: null, lastAutoSaveAt: null, ...over };
 }
 
 // --- Tests ------------------------------------------------------------------
@@ -87,8 +87,10 @@ describe('reconcileWorkspaceList', () => {
   it('defaults the auto-save fields to null when disk omits them (old file)', () => {
     const { state } = reconcileWorkspaceList(
       mem([wsId({ id: 'ws-1' })]),
-      // Legacy entry without autoSavePath / lastAutoSaveAt.
-      disk([{ id: 'ws-1', name: 'w', ltwPath: '/w.ltw', dirty: false }]),
+      // Legacy entry without autoSavePath / lastAutoSaveAt — an app-state.json
+      // written before those fields existed. Cast past the wire type (which now
+      // requires them) to simulate the real legacy JSON shape at runtime.
+      disk([{ id: 'ws-1', name: 'w', ltwPath: '/w.ltw', dirty: false } as WorkspaceEntry]),
     );
     expect(state.workspaces[0].autoSavePath).toBeNull();
     expect(state.workspaces[0].lastAutoSaveAt).toBeNull();

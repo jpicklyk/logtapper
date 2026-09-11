@@ -58,11 +58,13 @@ function processor(id: string, name = id): ProcessorSummary {
     varsMeta: [],
     deprecated: false,
     hasSchema: false,
+    trackerSections: [],
+    sourceTypes: [],
   };
 }
 
 function runResult(processorId: string, matchedLines = 1): PipelineRunSummary {
-  return { processorId, matchedLines, emissionCount: 0 };
+  return { processorId, matchedLines, emissionCount: 0, scriptErrors: 0, scannedFrom: 0 };
 }
 
 // ---------------------------------------------------------------------------
@@ -670,11 +672,11 @@ describe('per-session results', () => {
     });
 
     expect(state.resultsBySession.get(A)!.results).toEqual([
-      { processorId: 'p1', matchedLines: 3, emissionCount: 1 },
-      { processorId: 'p2', matchedLines: 4, emissionCount: 0 },
+      { processorId: 'p1', matchedLines: 3, emissionCount: 1, scriptErrors: 0, scannedFrom: 0 },
+      { processorId: 'p2', matchedLines: 4, emissionCount: 0, scriptErrors: 0, scannedFrom: 0 },
     ]);
     expect(state.resultsBySession.get(B)!.results).toEqual([
-      { processorId: 'p1', matchedLines: 7, emissionCount: 2 },
+      { processorId: 'p1', matchedLines: 7, emissionCount: 2, scriptErrors: 0, scannedFrom: 0 },
     ]);
   });
 
@@ -687,7 +689,7 @@ describe('per-session results', () => {
     );
 
     expect(state.resultsBySession.get(A)!.results).toEqual([
-      { processorId: 'p1', matchedLines: 9, emissionCount: 4 },
+      { processorId: 'p1', matchedLines: 9, emissionCount: 4, scriptErrors: 0, scannedFrom: 0 },
     ]);
   });
 

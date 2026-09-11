@@ -120,10 +120,15 @@ LogTapper maintains two distinct data tiers. Understanding which tier is accessi
 
 `AnalysisSession` holds raw log data via the `LogSource` trait. Accessed via `source.raw_line(i)` / `source.meta_at(i)`.
 
-**What reads Tier 1:**
-- `get_lines` Tauri command — serves `ViewLine[]` to the frontend viewer **only** (internal)
-- `run_pipeline` / `flush_batch` — reads raw lines as pipeline input
-- MCP bridge raw-line endpoints, all under `/mcp/sessions/{session_id}/` — `query`, `search`, `search_with_context`, `lines_around`
+**What reads Tier 1:** both transports go through the same `services/` functions now (see
+`src-tauri/src/services/CLAUDE.md`) — there is no separate bridge-only implementation to
+drift out of sync with the desktop path.
+- `services::lines` / `services::search` — serve `ViewLine`/line-text results to **both**
+  the frontend viewer (`get_lines` Tauri command) and MCP agents (`query`, `lines_around`,
+  `search`, `search_with_context` under `/mcp/sessions/{session_id}/`)
+- `services::pipeline::run` / ADB `services::stream` — read raw lines as pipeline input
+- `services::insights`, `services::sections`, `services::filters`, `services::export`,
+  `services::stream` — every other place raw line text can leave the backend
 
 ### Tier 2 — Pipeline results (`AppState::pipeline_results`, `state_tracker_results`, `correlator_results`)
 
@@ -133,9 +138,41 @@ Produced by `run_pipeline` (file mode) or `flush_batch` (ADB streaming) after la
 
 The unified `CacheManager` (`src-next/cache/`) is **not** a pathway for external access — the MCP bridge reads `AppState` directly and never sees it.
 
-### MCP bridge
+### MCP bridge — caller-based gates, not transport-based
 
-Axum HTTP server bound to `127.0.0.1:40404` (`src-tauri/src/mcp_bridge.rs`). MCP tool definitions live in `mcp-server/`. Raw-line endpoints return unredacted data by default — PII anonymization is opt-in via the `mcp_anonymize` flag.
+Axum HTTP server bound to `127.0.0.1:40404` (`src-tauri/src/mcp_bridge/`, see its own
+`CLAUDE.md`). MCP tool definitions live in `mcp-server/`. Every service call carries a
+`services::Caller` (`Ui` from a Tauri command adapter, `Agent { client }` from the bridge)
+and `services::policy` is the single place that identity becomes a decision — never an
+individual service, never "am I in `mcp_bridge/`":
+
+- **Open/read a path** (`policy::authorize_open`) — `Ui` passes through (the native file
+  dialog is the consent step); `Agent` is checked against the configured allowlist. Denied
+  and nonexistent are deliberately indistinguishable, so an agent cannot probe the
+  filesystem by comparing error messages.
+- **Write a new destination** (`policy::authorize_write_dest`) — the same allowlist gate
+  for a path that doesn't exist yet (workspace save, export, ADB stream save-to-file): an
+  agent's destination must have its **parent directory** inside the allowlist; the file
+  name must be a single plain segment. `Ui` passes through untouched (the native save
+  dialog is consent).
+- **PII anonymization** (`policy::should_anonymize` / `policy::redact_line`) is keyed on
+  `Caller`, not on which transport served the request, and is **fail-closed for agents**:
+  a session with no explicit `mcp_anonymize` signal yet defaults to redacted, not raw.
+  `Ui` is never redacted (the human is looking at their own machine). This replaces the
+  old global `mcp_anonymize: Mutex<bool>` design — see "Service-layer era" in
+  `design_docs/MCP_SECURITY_DESIGN.md` for how the fail-closed-per-session model resolves
+  the anonymization-default and chain-coupling issues that document originally raised.
+- **Agents cannot mutate their own gates.** `policy::deny_agent_gate_mutation` refuses an
+  agent request to change the open-file allowlist, the anonymizer config, or add/remove a
+  marketplace source (a supply-chain surface) — `Forbidden`/`NOT_ALLOWED` for `Agent`,
+  passthrough for `Ui`. There is no bridge route at all for the marketplace-source
+  mutations; every other gated mutation has a route that always answers 403 for an agent
+  caller.
+- **Every bridge failure is a real HTTP status**, not `200 + {"error": ...}`: 404
+  `NOT_FOUND`, 400 `INVALID_ARGUMENT`/`INVALID_PATH`/…, 403 `NOT_ALLOWED`, 409 `CONFLICT`,
+  499 `CANCELLED`, 500 `LOCK_POISONED`/`INTERNAL` — see `mcp_bridge/CLAUDE.md`'s error
+  table. A client that doesn't check the status code will misread a gate refusal as
+  success, so `mcp-server/` must treat any non-2xx as `isError: true`.
 
 ### Transformers and the pre-filter exemption
 

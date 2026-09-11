@@ -1,6 +1,6 @@
 import React from 'react';
 import { ChevronRight } from 'lucide-react';
-import type { PipelineRunSummary, ProcessorSummary, VarMeta } from '../../bridge/types';
+import type { PipelineRunSummary, ProcessorSummary } from '../../bridge/types';
 import { isNumeric, isRankedObject, groupVars } from './utils';
 import { StatCard, RankedList, DataTable } from './SubComponents';
 import type { UseProcessorDetailResult } from './useProcessorDetail';
@@ -39,7 +39,10 @@ export const ProcessorDetailView = React.memo(function ProcessorDetailView({
 
   const varGroups = vars ? groupVars(vars) : null;
 
-  const displayMeta: VarMeta[] = (selectedProc?.varsMeta ?? []).filter(
+  // Note: selectedProc.varsMeta is Generated.VarMeta (displayAs: string | null) — the
+  // narrowed `VarMeta` in bridge/types doesn't thread through the ProcessorSummary
+  // field, so this is left uninferred rather than force-annotated.
+  const displayMeta = (selectedProc?.varsMeta ?? []).filter(
     (m) => m.display,
   );
   const hasVarMeta = displayMeta.length > 0;

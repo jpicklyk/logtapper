@@ -3,11 +3,19 @@ name = "log-tapper"
 version = "0.11.0"
 description = "Android log file analyzer with AI-assisted analysis"
 edition = "2021"
-rust-version = "1.77.2"
+# Bumped from 1.77.2 for ts-rs 11.1.0 (its own rust-version is 1.78.0).
+rust-version = "1.78.0"
 
 [lib]
 name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+# Compiles `services::testing` (RecordingSink, `test_ctx()`, session fixtures)
+# into the rlib so integration tests under `src-tauri/tests/` can build a
+# Tauri-free `ServiceCtx` the same way the inline unit tests do. Off by default:
+# it pulls test doubles into a normal build for no benefit.
+test-support = []
 
 [build-dependencies]
 tauri-build = { version = "2.5.4", features = [] }
@@ -20,6 +28,14 @@ tauri-plugin-log = "2"
 # Serialization
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
+
+# TypeScript binding generation (see src-tauri/tests/export_bindings.rs).
+# Export dir comes from TS_RS_EXPORT_DIR in the root .cargo/config.toml.
+ts-rs = { version = "11", default-features = false, features = [
+    "serde-compat",
+    "serde-json-impl",
+    "no-serde-warnings",
+] }
 
 # Logging
 log = "0.4"
@@ -70,6 +86,22 @@ windows-sys = { version = "0.59", features = ["Win32_UI_Shell"] }
 # `test-util` enables tokio::time::pause / #[tokio::test(start_paused = true)]
 # used by the Q4 auto-save debounce tests in workspace/autosave.rs.
 tokio = { version = "1", features = ["full", "test-util"] }
+# In-process HTTP harness for the MCP bridge router (see
+# src-tauri/tests/bridge_http.rs) — drives `mcp_bridge::router(ctx)` with
+# `tower::ServiceExt::oneshot` instead of binding a real TCP listener.
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+# Self-dependency so `cargo test` (no extra flags) links `services::testing`
+# into the integration-test build: that module is `cfg(any(test, feature =
+# "test-support"))`, and `#[cfg(test)]` on the lib crate itself is NOT visible
+# to a separate integration-test crate — only the `test-support` feature is.
+# Declaring it here activates the feature during feature unification for the
+# `cargo test` build without requiring every contributor to remember
+# `--features test-support`. NOTE: this makes `tests/bridge_http.rs` COMPILE
+# and LINK under plain `cargo test` — see `implementation-notes` on this work
+# item for a separate, unrelated Windows/MSVC runtime issue that currently
+# makes the resulting test binary crash at OS load (not a build problem).
+log-tapper = { path = ".", features = ["test-support"] }
 
 [lints.clippy]
 # === Deny (safety-critical, zero tolerance) ===

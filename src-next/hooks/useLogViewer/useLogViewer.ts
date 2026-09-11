@@ -1,5 +1,5 @@
 import { useCallback, useRef, useEffect } from 'react';
-import type { LoadResult, LineWindow } from '../../bridge/types';
+import type { LoadResult, LinePage } from '../../bridge/types';
 import { useSessionCoreCtx, useSessionPaneCtx } from '../../context/SessionContext';
 import { useViewerContext } from '../../context/ViewerContext';
 import type { CacheController } from '../../cache';
@@ -20,8 +20,8 @@ export interface LogViewerActions {
   setStreamFilter: (expr: string) => Promise<void>;
   cancelStreamFilter: () => void;
   setTimeFilter: (start: string, end: string) => Promise<void>;
-  /** Fetch lines from backend for file mode. Returns a LineWindow. */
-  fetchLines: (offset: number, count: number) => Promise<LineWindow>;
+  /** Fetch lines from backend for file mode. Returns the backend's `LinePage`. */
+  fetchLines: (offset: number, count: number) => Promise<LinePage>;
   jumpToLine: (lineNum: number, paneId?: string, sessionId?: string) => void;
   jumpToEnd: () => void;
   setProcessorView: (processorId: string) => void;

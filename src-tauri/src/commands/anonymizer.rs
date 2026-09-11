@@ -1,116 +1,44 @@
-use serde::Serialize;
+//! Thin Tauri adapters over `services::settings`. Each command builds a
+//! [`crate::commands::adapters::ui_ctx`], calls one service function, and
+//! marshals the `Result<T, ServiceError>` into the `Result<T, String>` the
+//! frontend expects.
+//!
+//! The `AnonymizerTestResult` / `PiiReplacement` wire types, and the
+//! anonymizer-config persistence logic, moved to `services::settings` (WP-12)
+//! — nothing anonymizer-specific is defined in this file any more.
+
 use std::collections::HashMap;
-use tauri::{AppHandle, Manager, State};
 
-use crate::anonymizer::{config::AnonymizerConfig, LogAnonymizer};
-use crate::commands::{lock_or_err, AppState};
+use tauri::AppHandle;
 
-// ---------------------------------------------------------------------------
-// Test result types
-// ---------------------------------------------------------------------------
+use crate::anonymizer::config::AnonymizerConfig;
+use crate::commands::adapters::ui_ctx;
+use crate::services::settings::{self, AnonymizerTestResult};
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PiiReplacement {
-    pub token: String,
-    pub original: String,
-    pub category: String,
-    pub start: usize,
-    pub end: usize,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AnonymizerTestResult {
-    pub anonymized: String,
-    pub replacements: Vec<PiiReplacement>,
-}
-
-// ---------------------------------------------------------------------------
-// get_anonymizer_config
-// ---------------------------------------------------------------------------
-
+/// Read the current anonymizer configuration.
 #[tauri::command]
-pub async fn get_anonymizer_config(
-    state: State<'_, AppState>,
-) -> Result<AnonymizerConfig, String> {
-    let config = lock_or_err(&state.anonymizer_config, "anonymizer_config")?;
-    Ok(config.clone())
+pub fn get_anonymizer_config(app: AppHandle) -> Result<AnonymizerConfig, String> {
+    let ctx = ui_ctx(&app);
+    Ok(settings::anonymizer_config(&ctx)?)
 }
 
-// ---------------------------------------------------------------------------
-// set_anonymizer_config
-// ---------------------------------------------------------------------------
-
-fn persist_anonymizer_config(app: &AppHandle, config: &AnonymizerConfig) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-    let json = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
-    std::fs::write(data_dir.join("anonymizer_config.json"), json)
-        .map_err(|e| format!("Failed to persist anonymizer config: {e}"))
-}
-
+/// Replace the anonymizer configuration and persist it to disk.
 #[tauri::command]
-pub async fn set_anonymizer_config(
-    state: State<'_, AppState>,
-    app: AppHandle,
-    config: AnonymizerConfig,
-) -> Result<(), String> {
-    persist_anonymizer_config(&app, &config)?;
-    let mut stored = lock_or_err(&state.anonymizer_config, "anonymizer_config")?;
-    *stored = config;
-    Ok(())
+pub fn set_anonymizer_config(app: AppHandle, config: AnonymizerConfig) -> Result<(), String> {
+    let ctx = ui_ctx(&app);
+    Ok(settings::set_anonymizer_config(&ctx, config)?)
 }
 
-// ---------------------------------------------------------------------------
-// test_anonymizer
-// ---------------------------------------------------------------------------
-
+/// Preview what the current anonymizer configuration would redact in `text`.
 #[tauri::command]
-pub async fn test_anonymizer(
-    state: State<'_, AppState>,
-    text: String,
-) -> Result<AnonymizerTestResult, String> {
-    let config = {
-        let c = lock_or_err(&state.anonymizer_config, "anonymizer_config")?;
-        c.clone()
-    };
-
-    let anon = LogAnonymizer::from_config(&config);
-    let (anonymized, spans) = anon.anonymize(&text);
-
-    let mut replacements = Vec::with_capacity(spans.len());
-    for span in spans {
-        let token = anonymized[span.start..span.end].to_string();
-        let original = anon.mappings.reveal(&token).unwrap_or_default();
-        // Parse category from token: "<EMAIL-1>" → "EMAIL"
-        let category = token
-            .trim_start_matches('<')
-            .split('-')
-            .next()
-            .unwrap_or("PII")
-            .to_string();
-        replacements.push(PiiReplacement {
-            token,
-            original,
-            category,
-            start: span.start,
-            end: span.end,
-        });
-    }
-
-    Ok(AnonymizerTestResult { anonymized, replacements })
+pub fn test_anonymizer(app: AppHandle, text: String) -> Result<AnonymizerTestResult, String> {
+    let ctx = ui_ctx(&app);
+    Ok(settings::test_anonymizer(&ctx, text)?)
 }
 
-// ---------------------------------------------------------------------------
-// get_pii_mappings
-// ---------------------------------------------------------------------------
-
+/// The token -> original-value map accumulated for `session_id`.
 #[tauri::command]
-pub async fn get_pii_mappings(
-    state: State<'_, AppState>,
-    session_id: String,
-) -> Result<HashMap<String, String>, String> {
-    let mappings = lock_or_err(&state.pii_mappings, "pii_mappings")?;
-    Ok(mappings.get(&session_id).cloned().unwrap_or_default())
+pub fn get_pii_mappings(app: AppHandle, session_id: String) -> Result<HashMap<String, String>, String> {
+    let ctx = ui_ctx(&app);
+    Ok(settings::pii_mappings(&ctx, &session_id)?)
 }

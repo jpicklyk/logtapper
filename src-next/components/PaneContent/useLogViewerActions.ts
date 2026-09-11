@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react';
-import type { LineWindow } from '../../bridge/types';
+import { emptyPage, type LinePage } from '../../bridge/types';
 import { getLines } from '../../bridge/commands';
 import { useSessionForPane, useProcessorId, usePaneSearchQuery } from '../../context';
 
@@ -20,11 +20,11 @@ export function useLogViewerActions(paneId: string) {
   searchRef.current = search;
 
   const fetchLines = useCallback(
-    (offset: number, count: number): Promise<LineWindow> => {
+    (offset: number, count: number): Promise<LinePage> => {
       const sess = sessionRef.current;
       if (!sess) {
         console.warn('[fetchLines] called with no session — paneId:', paneId, 'offset:', offset);
-        return Promise.resolve({ totalLines: 0, lines: [] });
+        return Promise.resolve(emptyPage(offset));
       }
 
       const pid = processorIdRef.current;
@@ -36,8 +36,8 @@ export function useLogViewerActions(paneId: string) {
         offset,
         count,
         context: 3,
-        processorId: pid ?? undefined,
-        search: searchRef.current ?? undefined,
+        processorId: pid ?? null,
+        search: searchRef.current ?? null,
       });
     },
     [paneId],

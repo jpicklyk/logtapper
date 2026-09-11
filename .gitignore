@@ -47,3 +47,4 @@ yarn-error.log*
 mcp-server/dist/logtapper-mcp*
 mcp-server/build/
 mcp-server/dist/logtapper.mcpb
+src-tauri/target-it/

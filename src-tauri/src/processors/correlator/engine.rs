@@ -9,6 +9,7 @@ use std::collections::{HashMap, VecDeque};
 use crate::core::line::{LineContext, PipelineContext};
 // Arc<str> fields deref to &str, so most comparisons work via deref.
 use super::schema::{CorrelatorDef, ExtractField, SourceDef};
+use ts_rs::TS;
 
 // ---------------------------------------------------------------------------
 // Public output types
@@ -16,27 +17,34 @@ use super::schema::{CorrelatorDef, ExtractField, SourceDef};
 
 /// A single correlated observation: the trigger event plus the matching context
 /// from every other source, all within the configured window.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct CorrelationEvent {
     pub trigger_line_num: usize,
+    #[ts(type = "number")]
     pub trigger_timestamp: i64,
     pub trigger_source_id: String,
+    #[ts(type = "Record<string, unknown>")]
     pub trigger_fields: HashMap<String, JsonValue>,
     /// Raw log line text for the trigger line.
     pub trigger_raw_line: String,
     /// Non-trigger source matches available within the window at trigger time.
+    // See the note on `StateTransition::changes`: a `#[ts(type)]` override drops
+    // the import ts-rs would have emitted for the named value type.
+    #[ts(type = "Record<string, Array<import('./SourceMatchRecord').SourceMatchRecord>>")]
     pub matched_sources: HashMap<String, Vec<ArcSourceMatchRecord>>,
     /// Human-readable message formatted from `CorrelateDef::emit` template.
     pub message: String,
 }
 
 /// A single match from a non-trigger source stored in the ring buffer.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceMatchRecord {
     pub line_num: usize,
+    #[ts(type = "number")]
     pub timestamp: i64,
+    #[ts(type = "Record<string, unknown>")]
     pub fields: HashMap<String, JsonValue>,
     /// Raw log line text for this matched source line.
     pub raw_line: String,
@@ -313,7 +321,7 @@ impl<'a> CorrelatorRun<'a> {
 // CorrelatorResult
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct CorrelatorResult {
     /// Optional plain-English guidance from the YAML author, rendered in the panel header.

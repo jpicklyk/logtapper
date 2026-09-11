@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 // ---------------------------------------------------------------------------
 // Core log-line types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
 #[serde(rename_all = "PascalCase")]
 pub enum LogLevel {
     Verbose,
@@ -188,7 +189,7 @@ pub struct LineMeta {
 // IPC types (cross the Tauri invoke boundary)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchQuery {
     pub text: String,
@@ -211,7 +212,7 @@ fn bool_true() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "mode", content = "center", rename_all = "PascalCase")]
 pub enum ViewMode {
     Full,
@@ -226,7 +227,7 @@ impl Default for ViewMode {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct LineRequest {
     pub session_id: String,
@@ -245,7 +246,7 @@ pub struct LineRequest {
 // Highlight system
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(tag = "type", rename_all = "PascalCase")]
 pub enum HighlightKind {
     Search,
@@ -255,7 +256,7 @@ pub enum HighlightKind {
     PiiReplaced,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 pub struct HighlightSpan {
     pub start: usize,
     pub end: usize,
@@ -266,7 +267,7 @@ pub struct HighlightSpan {
 // View types — what the frontend receives
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ViewLine {
     pub line_num: usize,
@@ -275,6 +276,7 @@ pub struct ViewLine {
     pub level: LogLevel,
     pub tag: String,
     pub message: String,
+    #[ts(type = "number")]
     pub timestamp: i64,
     pub pid: i32,
     pub tid: i32,
@@ -284,19 +286,14 @@ pub struct ViewLine {
     pub is_context: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LineWindow {
-    pub total_lines: usize,
-    pub lines: Vec<ViewLine>,
-}
-
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchSummary {
     pub total_matches: usize,
     pub match_line_nums: Vec<usize>,
+    #[ts(type = "Record<string, number>")]
     pub by_level: HashMap<String, usize>,
+    #[ts(type = "Record<string, number>")]
     pub by_tag: HashMap<String, usize>,
 }
 

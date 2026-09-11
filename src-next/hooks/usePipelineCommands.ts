@@ -5,6 +5,7 @@ import {
   loadProcessorYaml,
   uninstallProcessor,
   runPipeline,
+  setSessionPipelineMeta,
   stopPipeline,
   getProcessorVars,
 } from '../bridge/commands';
@@ -12,11 +13,18 @@ import { usePipelineContext } from '../context/PipelineContext';
 import { bus } from '../events';
 import { loadChainFromStorage, loadDisabledFromStorage } from './pipelineChainStorage';
 
+/** `services::pipeline::resolve_effective_chain`'s refusal when a session has no
+ *  chain to run. Matched as a substring because the backend interpolates the
+ *  session id into it. */
+const NO_CHAIN_CONFIGURED = 'no pipeline chain configured';
+
 export interface PipelineActions {
   loadProcessors: () => Promise<void>;
   installFromYaml: (yaml: string) => Promise<void>;
   removeProcessor: (id: string) => Promise<void>;
-  run: (sessionId: string, anonymize?: boolean, override?: { chain: string[]; disabled: string[] }) => Promise<void>;
+  run: (sessionId: string, override?: { chain: string[]; disabled: string[] }) => Promise<void>;
+  /** A session's enabled chain, filtered to processors that are actually installed. */
+  activeInstalledFor: (sessionId: string | null) => string[];
   stop: (sessionId: string) => Promise<void>;
   getVars: (sessionId: string, processorId: string) => Promise<Record<string, unknown>>;
   clearResults: (sessionId: string) => void;
@@ -99,41 +107,33 @@ export function usePipelineCommands(): PipelineActions {
   const run = useCallback(
     async (
       sessionId: string,
-      anonymize = false,
       override?: { chain: string[]; disabled: string[] },
     ) => {
-      let chain: string[];
-      let disabled: Set<string>;
-      if (override) {
-        // Auto-run after a workspace restore: use the session's restored chain
-        // directly. `chain:restore` (dispatched by useWorkspaceRestore) only
-        // reaches the chain refs on the next render, which has not happened yet
-        // when this fires — reading the ref would run a stale/empty chain and
-        // no-op (the exact bug §Q2 fixes). Filter to installed processors,
-        // mirroring useWorkspaceRestore's chain:restore filter.
-        const installed = new Set(processorsRef.current.map((p) => p.id));
-        chain = override.chain.filter((id) => installed.has(id) || id.includes('@lts-'));
-        disabled = new Set(override.disabled);
-      } else {
-        // Run THIS session's own chain. Reading the default here would run the
-        // wrong processors for any session whose chain has diverged — the exact
-        // cross-session bug per-session chains exist to fix.
-        const own = chainFor(sessionId);
-        chain = own.chain;
-        disabled = new Set(own.disabled);
-      }
-      const effectiveChain = chain.filter((id) => !disabled.has(id));
-      if (effectiveChain.length === 0) return;
+      // WHICH processors run is the backend's decision now. `resolve_effective_chain`
+      // reads `session_pipeline_meta`, subtracts `disabled`, drops ids that are no
+      // longer installed (keeping `@lts-` ones) and appends `__pii_anonymizer` when
+      // the session's anonymize flag is on — all of which this hook used to
+      // duplicate. So: push the session's chain, then ask for `null`.
+      //
+      // The push is not optional and not a re-derivation. `usePipelineWiring`
+      // debounces its own `setSessionPipelineMeta` by 500ms, so a user who edits
+      // the chain and immediately hits Run would otherwise race the timer and run
+      // the previous chain. And on the restore path the reducer has not rendered
+      // yet, which is why `override` carries the chain directly (reading the ref
+      // there yields an empty chain — the bug the override argument exists to fix).
+      const own = override ?? chainFor(sessionId);
       dispatch({ type: 'run:started', sessionId });
       try {
-        const results = await runPipeline(sessionId, effectiveChain, anonymize);
+        await setSessionPipelineMeta(sessionId, own.chain, own.disabled);
+        const result = await runPipeline(sessionId, null);
         // Compute newRunCount before dispatching — the reducer will set runCount to this value.
         const prevState = resultsBySessionRef.current.get(sessionId);
         const newRunCount = (prevState?.runCount ?? 0) + 1;
-        dispatch({ type: 'run:complete', sessionId, results, newRunCount });
+        dispatch({ type: 'run:complete', sessionId, results: result.summaries, newRunCount });
 
-        // Determine which processor types are active in this run
-        const chainSet = new Set(effectiveChain);
+        // Which processor TYPES ran, read off the chain the backend reports it
+        // actually used rather than the one we asked for.
+        const chainSet = new Set(result.effectiveProcessorIds);
         const activeProcessors = processorsRef.current.filter((p) => chainSet.has(p.id));
         bus.emit('pipeline:completed', {
           sessionId,
@@ -143,11 +143,31 @@ export function usePipelineCommands(): PipelineActions {
           hasCorrelators: activeProcessors.some((p) => p.processorType === 'correlator'),
         });
       } catch (e) {
-        dispatch({ type: 'run:failed', sessionId, error: String(e) });
+        const message = String(e);
+        if (message.includes(NO_CHAIN_CONFIGURED)) {
+          // Nothing to run. Before the resolution moved server-side this was a
+          // silent early return on an empty effective chain, and it stays silent —
+          // an empty chain is not a failure the user needs a red banner for.
+          dispatch({ type: 'run:stopped', sessionId });
+          return;
+        }
+        dispatch({ type: 'run:failed', sessionId, error: message });
       }
     },
     [dispatch, chainFor],
   );
+
+  const activeInstalledFor = useCallback((sessionId: string | null): string[] => {
+    // `start_adb_stream` resolves its explicit id list through
+    // `resolve_effective_chain`, which REJECTS an id that is not installed —
+    // the whole stream start fails with InvalidArg rather than silently
+    // skipping it, as the old backend did. A chain can legitimately hold a
+    // dangling id: `processors:loaded` (the refresh a pack uninstall triggers)
+    // replaces the library without pruning chains, so the filter happens here.
+    // `@lts-` ids are workspace-local processors the backend also exempts.
+    const installed = new Set(processorsRef.current.map((p) => p.id));
+    return chainFor(sessionId).active.filter((id) => installed.has(id) || id.includes('@lts-'));
+  }, [chainFor]);
 
   const clearResults = useCallback((sessionId: string) => {
     dispatch({ type: 'results:cleared', sessionId });
@@ -175,6 +195,7 @@ export function usePipelineCommands(): PipelineActions {
     installFromYaml,
     removeProcessor,
     run,
+    activeInstalledFor,
     stop,
     getVars,
     clearResults,

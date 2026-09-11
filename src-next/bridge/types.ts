@@ -1,7 +1,304 @@
 // Types that mirror the Rust serde structs crossing the Tauri IPC boundary.
-// Keep in sync with src-tauri/src/core/line.rs
+//
+// Most types below are re-exported from `./generated` — ts-rs bindings produced by
+// `npm run gen:types` (see `src-tauri/tests/export_bindings.rs`). This file stays the
+// import surface for the ~127 files that import from it; only types with no backing
+// Rust struct, or whose Rust representation (`String`, `serde_json::Value`) ts-rs
+// cannot narrow, are hand-written below — each such case carries a one-line comment
+// explaining why. See `src-next/bridge/CLAUDE.md` for the full generated-types flow.
 
-export type LogLevel = 'Verbose' | 'Debug' | 'Info' | 'Warn' | 'Error' | 'Fatal';
+import type * as Generated from './generated';
+
+// ---------------------------------------------------------------------------
+// Straight re-exports — identical shape to the generated type, same name.
+// Imported (not just re-exported) so the narrowing/local types below this
+// block can reference them unqualified too.
+// ---------------------------------------------------------------------------
+
+import type {
+  LogLevel,
+  CreatedBy,
+  CombineMode,
+  ViewMode,
+  HighlightKind,
+  AdbStreamEvent,
+  AdbDevice,
+  AdbProcessorUpdate,
+  AdbStreamStopped,
+  AdbTrackerUpdate,
+  AnalysisArtifact,
+  AnalysisSection,
+  AnonymizerConfig,
+  AnonymizerTestResult,
+  AppStateFile,
+  Bookmark,
+  CorrelationEvent,
+  CorrelatorResult,
+  DumpstateMetadata,
+  ExportAllSessionsInfo,
+  ExportSessionEntry,
+  FieldChange,
+  FileAssocEntry,
+  FileIndexComplete,
+  FileIndexProgress,
+  FilterCreateResult,
+  FilterCriteria,
+  FilterProgress,
+  ActivityEntry,
+  Caller,
+  HighlightSpan,
+  LinePage,
+  LineRequest,
+  LineStats,
+  LineStrategy,
+  LoadWorkspaceSessionData,
+  LtwEditorTab,
+  LtwManifestSession,
+  LtwPipelineChain,
+  MarketplaceFetchResult,
+  McpBundleInfo,
+  McpOpenAllowlist,
+  McpStatus,
+  PackSummary,
+  PackUpdateAvailable,
+  PatternEntry,
+  PiiReplacement,
+  PipelineProgress,
+  PipelineRunResult,
+  PipelineRunSummary,
+  RestoreSessionOptions,
+  SearchProgress,
+  SearchQuery,
+  SearchSummary,
+  SectionInfo,
+  SessionClosedEvent,
+  SessionMetadata,
+  SkipReason,
+  SourceError,
+  SourceReference,
+  StateSnapshot,
+  StateTransition,
+  SyncWorkspaceEnvelopeOptions,
+  TagCount,
+  TimelinePoint,
+  TimelineSeriesData,
+  UpdateAvailable,
+  UpdateCheckResult,
+  UpdateResult,
+  ViewLine,
+  WatchInfo,
+  WatchMatchEvent,
+  WorkspaceAutoSavedEvent,
+  WorkspaceEntry,
+} from './generated';
+
+export type {
+  LogLevel,
+  CreatedBy,
+  CombineMode,
+  ViewMode,
+  HighlightKind,
+  AdbStreamEvent,
+  AdbDevice,
+  AdbProcessorUpdate,
+  AdbStreamStopped,
+  AdbTrackerUpdate,
+  AnalysisArtifact,
+  AnalysisSection,
+  AnonymizerConfig,
+  AnonymizerTestResult,
+  AppStateFile,
+  Bookmark,
+  CorrelationEvent,
+  CorrelatorResult,
+  DumpstateMetadata,
+  ExportAllSessionsInfo,
+  ExportSessionEntry,
+  FieldChange,
+  FileAssocEntry,
+  FileIndexComplete,
+  FileIndexProgress,
+  FilterCreateResult,
+  FilterCriteria,
+  FilterProgress,
+  ActivityEntry,
+  Caller,
+  HighlightSpan,
+  LinePage,
+  LineRequest,
+  LineStats,
+  LineStrategy,
+  LoadWorkspaceSessionData,
+  LtwEditorTab,
+  LtwManifestSession,
+  LtwPipelineChain,
+  MarketplaceFetchResult,
+  McpBundleInfo,
+  McpOpenAllowlist,
+  McpStatus,
+  PackSummary,
+  PackUpdateAvailable,
+  PatternEntry,
+  PiiReplacement,
+  PipelineProgress,
+  PipelineRunResult,
+  PipelineRunSummary,
+  RestoreSessionOptions,
+  SearchProgress,
+  SearchQuery,
+  SearchSummary,
+  SectionInfo,
+  SessionClosedEvent,
+  SessionMetadata,
+  SkipReason,
+  SourceError,
+  SourceReference,
+  StateSnapshot,
+  StateTransition,
+  SyncWorkspaceEnvelopeOptions,
+  TagCount,
+  TimelinePoint,
+  TimelineSeriesData,
+  UpdateAvailable,
+  UpdateCheckResult,
+  UpdateResult,
+  ViewLine,
+  WatchInfo,
+  WatchMatchEvent,
+  WorkspaceAutoSavedEvent,
+  WorkspaceEntry,
+};
+
+// ---------------------------------------------------------------------------
+// Renamed re-exports — structurally identical to the generated type, but kept
+// under their historical local name (call sites unchanged). Imported under the
+// local alias so the rest of this file can reference them unqualified too.
+// ---------------------------------------------------------------------------
+
+import type {
+  /** `core::analysis::Severity` — renamed to avoid ambiguity with other severities. */
+  Severity as AnalysisSeverity,
+  /** `SourceReference::highlight_type`'s enum — renamed to avoid ambiguity with `HighlightKind`. */
+  HighlightType as HighlightTypeAnnotation,
+  /** Correlator ring-buffer match record — renamed to a shorter local alias. */
+  SourceMatchRecord as SourceMatch,
+  /** Matched-line summary from `get_matched_lines` — renamed to a shorter local alias. */
+  MatchedLineInfo as MatchedLine,
+  /** ADB streaming batch — renamed to `*Payload` to match the other Channel/event payload names. */
+  AdbBatch as AdbBatchPayload,
+  /** `.ltw` v4 load result — renamed to keep the historical `V4` local name. */
+  LoadWorkspaceResult as LoadWorkspaceV4Result,
+  /** `save_workspace_v4` options — renamed to keep the historical `V4` local name. */
+  SaveWorkspaceOptions as SaveWorkspaceV4Options,
+  /** Marketplace processor index entry (camelCase DTO) — renamed to drop the `Dto` suffix locally. */
+  MarketplaceEntryDto as MarketplaceEntry,
+  /**
+   * Marketplace pack index entry (camelCase DTO, as returned by `fetch_marketplace_for_source`)
+   * — renamed to drop the `Dto` suffix locally. Distinct from the generated `MarketplacePackEntry`
+   * (snake_case `processor_ids`, the `install_pack_from_marketplace` argument shape) — do not
+   * collapse the two; `commands.ts` declares that argument shape inline.
+   */
+  MarketplacePackEntryDto as MarketplacePackEntry,
+} from './generated';
+
+export type {
+  AnalysisSeverity,
+  HighlightTypeAnnotation,
+  SourceMatch,
+  MatchedLine,
+  AdbBatchPayload,
+  LoadWorkspaceV4Result,
+  SaveWorkspaceV4Options,
+  MarketplaceEntry,
+  MarketplacePackEntry,
+};
+
+// ---------------------------------------------------------------------------
+// Narrowed re-exports — the Rust field is a plain `String` (or `Option<String>`),
+// so ts-rs cannot narrow it to a literal union. Each hand-written narrowing below
+// reflects the values the Rust source actually emits today. These are candidates
+// to become real Rust enums (derive `TS` on the enum instead of overriding here) —
+// once that happens the override can be deleted.
+// ---------------------------------------------------------------------------
+
+/** Rust `action` field is a `String`; only these four values are ever emitted. */
+export type AnalysisUpdateEvent = Omit<Generated.AnalysisUpdateEvent, 'action'> & {
+  action: 'published' | 'updated' | 'deleted' | 'restored';
+};
+
+/** Rust `action` field is a `String`; only these three values are ever emitted. */
+export type BookmarkUpdateEvent = Omit<Generated.BookmarkUpdateEvent, 'action'> & {
+  action: 'created' | 'updated' | 'deleted';
+};
+
+/** Rust `status` field is a `String`; only these three values are ever emitted. */
+export type FilterInfo = Omit<Generated.FilterInfo, 'status'> & {
+  status: 'scanning' | 'complete' | 'cancelled';
+};
+
+/** Rust `status` field is a `String`; only these three values are ever emitted. */
+export type FilteredLinesResult = Omit<Generated.FilteredLinesResult, 'status'> & {
+  status: 'scanning' | 'complete' | 'cancelled';
+};
+
+/**
+ * Rust `processorType` field is a `String`; only these four values are ever emitted.
+ * `varsMeta: VarMeta[]` is still `Generated.VarMeta` underneath (its `displayAs` is
+ * widened to `string | null`, not the narrowed `VarMeta` below) — narrowing does not
+ * thread through nested generated types.
+ */
+export type ProcessorSummary = Omit<Generated.ProcessorSummary, 'processorType'> & {
+  processorType: 'transformer' | 'reporter' | 'state_tracker' | 'correlator';
+};
+
+/** Rust `action` field is a `String`; only these two values are ever emitted. */
+export type WatchUpdateEvent = Omit<Generated.WatchUpdateEvent, 'action'> & {
+  action: 'created' | 'cancelled';
+};
+
+/** Rust `source` field is a `String`; only these two values are ever emitted —
+ *  `"lts"` for a `.lts` bundle import, `"workspace"` for a `.ltw` restore. */
+export type WorkspaceRestoredEvent = Omit<Generated.WorkspaceRestoredEvent, 'source'> & {
+  source: 'lts' | 'workspace';
+};
+
+/** Rust `tier` field is a `String`; only these three values are ever emitted. */
+export type DetectorEntry = Omit<Generated.DetectorEntry, 'tier'> & {
+  tier: 'tier1' | 'tier2' | 'tier3';
+};
+
+/**
+ * Rust `viewMode` field on `LtsEditorTab` (the `.lts` zip's `editor-tabs.json` shape)
+ * is a `String`; only these three values are ever written/read. Renamed locally to
+ * `LtsEditorTabPayload` to avoid colliding with the unrelated `.ltw` `LtwEditorTab`
+ * (also `viewMode: string`, kept untouched as a straight re-export above).
+ */
+export type LtsEditorTabPayload = Omit<Generated.LtsEditorTab, 'viewMode'> & {
+  viewMode: 'editor' | 'split' | 'preview';
+};
+
+/** Rust `displayAs` field is `Option<String>`; only these two values are ever emitted. */
+export type VarMeta = Omit<Generated.VarMeta, 'displayAs'> & {
+  displayAs: 'table' | 'value' | null;
+};
+
+// ---------------------------------------------------------------------------
+// Local extensions — the generated type is correct but incomplete for a
+// client-side-only field with no Rust counterpart.
+// ---------------------------------------------------------------------------
+
+/**
+ * `lostLineCount` is client-side only: cumulative count of live-stream lines
+ * permanently lost because they could not be spilled to disk. Never sent by the
+ * backend at load time (a fresh session has none); populated from
+ * `AdbBatchPayload` via `updateSession` as the stream runs. Undefined for file
+ * sessions. The Rust `LoadResult` struct does not have this field.
+ */
+export type LoadResult = Generated.LoadResult & { lostLineCount?: number };
+
+// ---------------------------------------------------------------------------
+// Hand-written — no generated twin, or deliberately divergent from the Rust type.
+// ---------------------------------------------------------------------------
 
 /**
  * Mirrors the Rust `SourceType` enum in `src-tauri/src/core/session.rs` — that
@@ -9,6 +306,12 @@ export type LogLevel = 'Verbose' | 'Debug' | 'Info' | 'Warn' | 'Error' | 'Fatal'
  * `Events`, `Tombstone` and `ANRTrace` exist on the backend and can arrive over
  * IPC. `Custom { parser_id }` serializes as `Custom(<id>)` and is intentionally
  * not enumerated here.
+ *
+ * `core::session::SourceType` is NOT derived with `TS` (every IPC field that
+ * carries it — `LoadResult.sourceType`, `SessionMetadata.sourceType`,
+ * `LtwManifestSession.sourceType` — is already a plain Rust `String`), so this
+ * stays hand-written and deliberately divergent (it's a strict frontend-side
+ * narrowing plus the `'Unknown'` fallback below).
  *
  * `'Unknown'` is NOT a backend variant — it is a frontend-only fallback used
  * when a session's type cannot be resolved locally (see `useSessionTabManager`).
@@ -29,215 +332,45 @@ export function isBugreportLike(t: SourceType | string): boolean {
   return t === 'Bugreport' || t === 'Dumpstate';
 }
 
-export type HighlightKind =
-  | { type: 'Search' }
-  | { type: 'SearchActive' }
-  | { type: 'ProcessorMatch'; id: string }
-  | { type: 'ExtractedField'; name: string }
-  | { type: 'PiiReplaced' };
-
-export interface HighlightSpan {
-  start: number;
-  end: number;
-  kind: HighlightKind;
+/**
+ * The `LinePage` to hand a caller when there is nothing to fetch — no session
+ * bound to the pane yet, or one that closed mid-scroll. Shaped like a real
+ * empty answer at `offset` rather than a sentinel, so consumers need no
+ * null branch. `sessionId` is empty because there is no session to name.
+ */
+export function emptyPage(offset = 0): LinePage {
+  return { sessionId: '', totalLines: 0, offset, count: 0, truncated: false, lines: [] };
 }
 
-export interface ViewLine {
-  lineNum: number;
-  virtualIndex: number;  // sequential 0-based position in current view
-  raw: string;
-  level: LogLevel;
-  tag: string;
-  message: string;
-  timestamp: number;
-  pid: number;
-  tid: number;
-  sourceId: string;
-  highlights: HighlightSpan[];
-  matchedBy: string[];
-  isContext: boolean;
-}
-
-export interface LineWindow {
-  totalLines: number;
-  lines: ViewLine[];
-}
-
-export type ViewMode =
-  | { mode: 'Full' }
-  | { mode: 'Processor' }
-  | { mode: 'Focus'; center: number };
-
-export interface SearchQuery {
-  text: string;
-  isRegex: boolean;
-  caseSensitive: boolean;
-  withinProcessor?: string;
-  minLevel?: LogLevel;
-  tags?: string[];
-  /** Time-of-day lower bound, format "HH:MM" or "HH:MM:SS" */
-  startTime?: string;
-  /** Time-of-day upper bound, format "HH:MM" or "HH:MM:SS" */
-  endTime?: string;
-}
-
-export interface LineRequest {
-  sessionId: string;
-  mode: ViewMode;
-  offset: number;
-  count: number;
-  context: number;
-  processorId?: string;
-  search?: SearchQuery;
-}
-
-export interface SearchSummary {
-  totalMatches: number;
-  matchLineNums: number[];
-  byLevel: Record<string, number>;
-  byTag: Record<string, number>;
-}
-
-export interface SearchProgress {
-  sessionId: string;
-  matchedSoFar: number;
-  linesScanned: number;
-  totalLines: number;
-  newMatches: number[];
-  done: boolean;
-}
-
-export interface LoadResult {
-  sessionId: string;
-  sourceId: string;
-  sourceName: string;
-  /** Full filesystem path for file-backed sessions; null for ADB streams. */
-  filePath: string | null;
-  totalLines: number;
-  fileSize: number;
-  firstTimestamp: number | null;
-  lastTimestamp: number | null;
-  sourceType: string;
-  /** True for live ADB streaming sessions. */
-  isStreaming: boolean;
-  /** True while background file indexing is still in progress. */
-  isIndexing: boolean;
-  /** True if the file uses CRLF line endings. Always false for streams. */
-  hasCrlf: boolean;
-  /** Detected file encoding (e.g. "UTF-8", "UTF-16 LE", "UTF-16 BE"). */
-  encoding: string;
-  /**
-   * Client-side only: cumulative count of live-stream lines permanently lost
-   * because they could not be spilled to disk. Never sent by the backend at
-   * load time (a fresh session has none); populated from `AdbBatchPayload`
-   * via `updateSession` as the stream runs. Undefined for file sessions.
-   */
-  lostLineCount?: number;
+/**
+ * HAND-WRITTEN, deliberately NOT switched to `Generated.Source` yet — tracked bug
+ * `ee4ddb0b`. The Rust `processors::marketplace::Source` has no
+ * `#[serde(rename_all = "camelCase")]`, so its real wire shape is snake_case
+ * (`auto_update`, `last_checked`) and its `type` field is the internally-tagged
+ * union `{type:'github', repo, git_ref} | {type:'local', path}` — not the flat
+ * `repo?/ref?/path?` shape below, and `ref` should be `git_ref`. This mismatch is
+ * a live defect (today `autoUpdate` silently drops to `false` on the wire and
+ * `lastChecked` never round-trips), fixed by WP-9 on the Rust side. Do not
+ * switch this to the generated type until that lands, or `addSource` breaks.
+ */
+export interface Source {
+  name: string;
+  type: 'github' | 'local';
+  repo?: string;
+  ref?: string;
+  path?: string;
+  enabled: boolean;
+  autoUpdate: boolean;
+  lastChecked?: string;
 }
 
 // ---------------------------------------------------------------------------
-// Progressive file-indexing events
+// Processor authoring / UI-only types — no Rust struct backs these; they exist
+// only to shape data the UI builds or groups locally.
 // ---------------------------------------------------------------------------
 
-export interface FileIndexProgress {
-  sessionId: string;
-  indexedLines: number;
-  bytesScanned: number;
-  totalBytes: number;
-}
-
-export interface FileIndexComplete {
-  sessionId: string;
-  totalLines: number;
-}
-
-// ---------------------------------------------------------------------------
-// MCP bridge status
-// ---------------------------------------------------------------------------
-
-export interface McpStatus {
-  running: boolean;
-  port: number;
-  /** Seconds since last request from the MCP client. null = never connected. */
-  idleSecs: number | null;
-}
-
-/** Directories an MCP client is permitted to open files from via
- *  `logtapper_open_file`, plus the allow-all bypass. Mirrors
- *  `McpOpenAllowlist` in `src-tauri/src/commands/bridge_access.rs`. */
-export interface McpOpenAllowlist {
-  allowedDirs: string[];
-  allowAll: boolean;
-}
-
-// ---------------------------------------------------------------------------
-// ADB streaming types
-// ---------------------------------------------------------------------------
-
-export interface AdbDevice {
-  serial: string;
-  model: string;
-  state: string;
-}
-
-export interface AdbBatchPayload {
-  sessionId: string;
-  lines: ViewLine[];
-  totalLines: number;
-  /** Cumulative bytes received from ADB (for Size display in file info panel). */
-  byteCount: number;
-  /** First non-zero timestamp in the stream (ns since 2000-01-01 UTC), or null. */
-  firstTimestamp: number | null;
-  /** Most recent non-zero timestamp (ns since 2000-01-01 UTC), or null. */
-  lastTimestamp: number | null;
-  /**
-   * Cumulative count of evicted lines that could not be spilled to disk and are
-   * therefore permanently lost. 0 in the normal case; non-zero surfaces
-   * otherwise-silent data loss (spill-file create/write failure).
-   */
-  lostLineCount: number;
-}
-
-export interface AdbProcessorUpdate {
-  sessionId: string;
-  processorId: string;
-  matchedLines: number;
-  emissionCount: number;
-}
-
-export interface AdbStreamStopped {
-  sessionId: string;
-  reason: string;
-}
-
-/** Discriminated union received via Channel<AdbStreamEvent>. */
-export type AdbStreamEvent =
-  | { event: 'batch';           data: AdbBatchPayload }
-  | { event: 'processorUpdate'; data: AdbProcessorUpdate }
-  | { event: 'streamStopped';   data: AdbStreamStopped };
-
-// ---------------------------------------------------------------------------
-// Dumpstate metadata (extracted from bugreport/dumpstate files)
-// ---------------------------------------------------------------------------
-
-export interface DumpstateMetadata {
-  buildString: string | null;
-  buildFingerprint: string | null;
-  osVersion: string | null;
-  buildType: string | null;
-  bootloader: string | null;
-  serial: string | null;
-  uptime: string | null;
-  kernelVersion: string | null;
-  sdkVersion: string | null;
-  deviceModel: string | null;
-  manufacturer: string | null;
-}
-
-// ---------------------------------------------------------------------------
-// Processor types (Phase 2)
-// ---------------------------------------------------------------------------
-
+/** UI-only: registry browsing metadata for `fetchRegistry` — a legacy Phase 4 list
+ *  item shape, not currently backed by an IPC struct beyond `RegistryEntry` itself. */
 export interface ProcessorMeta {
   id: string;
   name: string;
@@ -246,8 +379,12 @@ export interface ProcessorMeta {
   tags: string[];
 }
 
+/** UI-only: the set of var kinds the processor-authoring editor can declare. No Rust struct — a
+ *  Rhai `VarDecl` is untyped YAML on the backend; this union exists only to drive the editor form. */
 export type VarType = 'int' | 'bool' | 'string' | 'float' | 'map' | 'list';
 
+/** UI-only: a var declaration as edited in the processor-authoring form, before it is
+ *  serialized to YAML. Not an IPC type — see `VarType` above. */
 export interface VarDecl {
   name: string;
   type: VarType;
@@ -257,173 +394,6 @@ export interface VarDecl {
   displayAs?: 'table' | 'value';
   columns?: string[];
   configurable?: boolean;
-}
-
-export interface VarMeta {
-  name: string;
-  /** Human-readable label (from YAML label:, or title-cased name as fallback). */
-  label: string;
-  display: boolean;
-  /** 'table' | 'value', or undefined. */
-  displayAs?: 'table' | 'value';
-  columns: string[];
-}
-
-export interface ProcessorSummary {
-  id: string;
-  name: string;
-  version: string;
-  description: string;
-  tags: string[];
-  builtin: boolean;  // true for built-in processors (id starts with __)
-  // 'transformer' is reserved for built-in processors only (e.g. __pii_anonymizer)
-  processorType: 'transformer' | 'reporter' | 'state_tracker' | 'correlator';
-  group: string | null;
-  /** Var declarations from the YAML (reporters only; empty for other types). */
-  varsMeta: VarMeta[];
-  /** SPDX license identifier (e.g. "MIT"). */
-  license?: string;
-  /** Standardized category from taxonomy. */
-  category?: string;
-  /** Source repository URL. */
-  repository?: string;
-  /** Whether this processor is deprecated. */
-  deprecated: boolean;
-  /** Whether this processor has a schema contract defined. */
-  hasSchema: boolean;
-  /** Marketplace source name (e.g. "official"), if installed from a source. */
-  source?: string;
-  /** Pack this processor belongs to, if any. */
-  packId?: string;
-  /** State tracker mode. Only set for state_tracker type. */
-  trackerMode?: 'snapshot' | 'time_series';
-  /** Whether this state tracker outputs to the timeline. */
-  trackerTimeline?: boolean;
-  /** Section names this state tracker targets (bugreport/dumpstate only). */
-  trackerSections?: string[];
-  /** Log source types this processor supports (e.g. "logcat", "bugreport", "dumpstate"). */
-  sourceTypes?: string[];
-}
-
-// ---------------------------------------------------------------------------
-// Pack types
-// ---------------------------------------------------------------------------
-
-export interface PackSummary {
-  id: string;
-  name: string;
-  version: string;
-  description: string;
-  tags: string[];
-  category?: string;
-  license?: string;
-  repository?: string;
-  deprecated: boolean;
-  processorIds: string[];
-}
-
-// ---------------------------------------------------------------------------
-// PII Anonymizer types
-// ---------------------------------------------------------------------------
-
-export interface PatternEntry {
-  label: string;
-  regex: string;
-  builtin: boolean;
-  enabled: boolean;
-}
-
-export interface DetectorEntry {
-  id: string;
-  label: string;
-  tier: 'tier1' | 'tier2' | 'tier3';
-  fpHint: string;
-  enabled: boolean;
-  patterns: PatternEntry[];
-}
-
-export interface AnonymizerConfig {
-  detectors: DetectorEntry[];
-}
-
-export interface PiiReplacement {
-  token: string;
-  original: string;
-  category: string;
-  start: number;
-  end: number;
-}
-
-export interface AnonymizerTestResult {
-  anonymized: string;
-  replacements: PiiReplacement[];
-}
-
-export interface PipelineRunSummary {
-  processorId: string;
-  matchedLines: number;
-  emissionCount: number;
-  scriptErrors?: number;
-  firstScriptError?: string;
-  /** Absolute line number of the first line scanned in this run. Omitted
-   * (undefined) when 0 — i.e. for file sources and streams that haven't
-   * evicted yet. When present, lines before this number were excluded from
-   * the run because they'd already been evicted from the stream's in-memory
-   * buffer (spilled to disk, not read back in for the pipeline scan). Not
-   * currently rendered in the UI. */
-  scannedFrom?: number;
-  /** Present when the backend excluded this processor before running it, so
-   * `matchedLines: 0` means "never ran" rather than "ran and matched nothing".
-   *
-   * The backend owns this decision — do NOT re-derive it here by comparing the
-   * session's source type against the processor's declared `sourceTypes`. A
-   * second implementation of that rule is exactly how the frontend and backend
-   * drift (the `Dumpstate`/`Bugreport` superset asymmetry is easy to invert).
-   * Render what arrives. */
-  skipped?: SkipReason;
-}
-
-/** Why the backend excluded a processor from a run before executing it. */
-export interface SkipReason {
-  /** Machine-readable discriminant, currently only `source_type_mismatch`. */
-  reason: string;
-  /** The processor's declared `source_types`. */
-  declared: string[];
-  /** The session's actual source type. */
-  actual: string;
-}
-
-export interface MatchedLine {
-  lineNum: number;
-  raw: string;
-}
-
-export interface PipelineProgress {
-  sessionId: string;
-  processorId: string;
-  linesProcessed: number;
-  totalLines: number;
-  percent: number;
-}
-
-// ---------------------------------------------------------------------------
-// Timeline sparkline types
-// ---------------------------------------------------------------------------
-
-export interface TimelinePoint {
-  lineNum: number;
-  value: number;
-}
-
-export interface TimelineSeriesData {
-  processorId: string;
-  processorName: string;
-  field: string;
-  label: string;
-  color: string | null;
-  points: TimelinePoint[];
-  minValue: number;
-  maxValue: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -473,6 +443,7 @@ export function resolveChainProcessors(
   return resolved;
 }
 
+/** UI-only: no Rust struct — groups an already-resolved processor list by owning pack for rendering. */
 export interface ProcessorPackGroup {
   pack: PackSummary;
   processors: ProcessorSummary[];
@@ -510,49 +481,6 @@ export function groupProcessorsByPack(
   return { packGroups: groups, standaloneProcessors: standalone };
 }
 
-export interface Source {
-  name: string;
-  type: 'github' | 'local';
-  repo?: string;
-  ref?: string;
-  path?: string;
-  enabled: boolean;
-  autoUpdate: boolean;
-  lastChecked?: string;
-}
-
-export interface MarketplaceEntry {
-  id: string;
-  name: string;
-  version: string;
-  description?: string;
-  path: string;
-  tags: string[];
-  sha256: string;
-  category?: string;
-  license?: string;
-  processorType?: string;
-  sourceTypes?: string[];
-  deprecated: boolean;
-}
-
-export interface MarketplacePackEntry {
-  id: string;
-  name: string;
-  version: string;
-  description?: string;
-  path: string;
-  tags: string[];
-  sha256: string;
-  category?: string;
-  processorIds: string[];
-}
-
-export interface MarketplaceFetchResult {
-  processors: MarketplaceEntry[];
-  packs: MarketplacePackEntry[];
-}
-
 /** Check if all active filter tags are present in the item's tags. */
 export function matchesAllTags(tags: string[], activeFilters: Set<string>): boolean {
   for (const tag of activeFilters) {
@@ -567,7 +495,7 @@ export function matchesAllTags(tags: string[], activeFilters: Set<string>): bool
  * query rather than re-lowercasing per item.
  */
 export function matchesQuery(
-  item: { name: string; description?: string; tags: string[] },
+  item: { name: string; description?: string | null; tags: string[] },
   q: string,
 ): boolean {
   return (
@@ -585,84 +513,8 @@ export function filterMarketplaceEntries(entries: MarketplaceEntry[], query: str
 }
 
 // ---------------------------------------------------------------------------
-// StateTracker IPC types
-// ---------------------------------------------------------------------------
-
-export interface FieldChange {
-  from: unknown;
-  to: unknown;
-}
-
-export interface StateTransition {
-  lineNum: number;
-  timestamp: number;
-  transitionName: string;
-  changes: Record<string, FieldChange>;
-}
-
-export interface StateSnapshot {
-  lineNum: number;
-  timestamp: number;
-  fields: Record<string, unknown>;
-  /** Field names explicitly set by at least one transition before this line.
-   *  Fields absent from this list are still at their declared default and
-   *  have never been triggered — treat their value as Unknown. */
-  initializedFields: string[];
-  /** Section names this tracker's data was sourced from (bugreport/dumpstate only). */
-  sourceSections: string[];
-}
-
-export interface AdbTrackerUpdate {
-  sessionId: string;
-  trackerId: string;
-  transitionCount: number;
-}
-
-// ---------------------------------------------------------------------------
-// Correlator IPC types
-// ---------------------------------------------------------------------------
-
-export interface SourceMatch {
-  lineNum: number;
-  timestamp: number;
-  fields: Record<string, unknown>;
-  rawLine: string;
-}
-
-export interface CorrelationEvent {
-  triggerLineNum: number;
-  triggerTimestamp: number;
-  triggerSourceId: string;
-  triggerFields: Record<string, unknown>;
-  triggerRawLine: string;
-  /** Non-trigger source matches available at trigger time. */
-  matchedSources: Record<string, SourceMatch[]>;
-  /** Human-readable message from the emit template. */
-  message: string;
-}
-
-export interface CorrelatorResult {
-  /** Plain-English explanation from the YAML author. */
-  guidance: string | null;
-  events: CorrelationEvent[];
-}
-
-// ---------------------------------------------------------------------------
 // Filter types (Phase 1)
 // ---------------------------------------------------------------------------
-
-export type CombineMode = 'and' | 'or';
-
-export interface FilterCriteria {
-  textSearch?: string;
-  regex?: string;
-  logLevels?: LogLevel[];
-  tags?: string[];
-  timeStart?: number;
-  timeEnd?: number;
-  pids?: number[];
-  combine?: CombineMode;
-}
 
 /** Short single-letter labels for LogLevel, used in compact chip/text displays. */
 export const LEVEL_SHORT: Record<string, string> = {
@@ -693,102 +545,15 @@ export function describeCriteriaParts(criteria: FilterCriteria): string[] {
   return parts;
 }
 
-export interface FilterCreateResult {
-  filterId: string;
-  sessionId: string;
-  totalLines: number;
-}
-
-export interface FilterProgress {
-  filterId: string;
-  matchedSoFar: number;
-  linesScanned: number;
-  totalLines: number;
-  done: boolean;
-}
-
-export interface FilteredLinesResult {
-  filterId: string;
-  totalMatches: number;
-  lines: ViewLine[];
-  status: 'scanning' | 'complete' | 'cancelled';
-}
-
-export interface SectionInfo {
-  name: string;
-  startLine: number;
-  endLine: number;
-  parentIndex?: number;
-}
-
-export interface FilterInfo {
-  filterId: string;
-  sessionId: string;
-  totalMatches: number;
-  linesScanned: number;
-  totalLines: number;
-  status: 'scanning' | 'complete' | 'cancelled';
-}
-
-// ---------------------------------------------------------------------------
-// Session metadata (Phase 1B)
-// ---------------------------------------------------------------------------
-
-export interface TagCount {
-  tag: string;
-  count: number;
-}
-
-export interface SessionMetadata {
-  sessionId: string;
-  sourceName: string;
-  sourceType: string;
-  totalLines: number;
-  fileSize: number;
-  isLive: boolean;
-  isIndexing: boolean;
-  firstTimestamp: number | null;
-  lastTimestamp: number | null;
-  logLevelDistribution: Record<string, number>;
-  topTags: TagCount[];
-}
-
 // ---------------------------------------------------------------------------
 // Bookmark types (Phase 2)
 // ---------------------------------------------------------------------------
 
-export type CreatedBy = 'User' | 'Agent';
-
+/** UI-only: no Rust struct — a fixed local vocabulary for bookmark category chips.
+ *  The wire field (`Bookmark.category`) is a plain `string`. */
 export type BookmarkCategory = 'error' | 'warning' | 'state-change' | 'timing' | 'observation' | 'custom';
 
-export interface Bookmark {
-  id: string;
-  sessionId: string;
-  lineNumber: number;
-  lineNumberEnd?: number;
-  snippet?: string[];
-  category?: string;
-  tags?: string[];
-  label: string;
-  note: string;
-  createdBy: CreatedBy;
-  createdAt: number;
-}
-
-export interface BookmarkUpdateEvent {
-  sessionId: string;
-  action: 'created' | 'updated' | 'deleted';
-  bookmark: Bookmark;
-}
-
-// ---------------------------------------------------------------------------
-// Analysis types (Phase 2)
-// ---------------------------------------------------------------------------
-
-export type HighlightTypeAnnotation = 'Annotation' | 'Anchor';
-
-export type AnalysisSeverity = 'Info' | 'Warning' | 'Error' | 'Critical';
-
+/** Renders a severity as a CSS color token. */
 export function severityColor(severity: AnalysisSeverity | null): string {
   switch (severity) {
     case 'Critical': return 'var(--danger)';
@@ -799,135 +564,11 @@ export function severityColor(severity: AnalysisSeverity | null): string {
   }
 }
 
-export interface SourceReference {
-  lineNumber: number;
-  endLine: number | null;
-  label: string;
-  highlightType: HighlightTypeAnnotation;
-  /** Which session this reference's line numbers resolve against. `null`
-   *  means unattributed/unresolved. */
-  sessionId: string | null;
-}
-
-export interface AnalysisSection {
-  heading: string;
-  body: string;
-  references: SourceReference[];
-  severity: AnalysisSeverity | null;
-}
-
-export interface AnalysisArtifact {
-  id: string;
-  title: string;
-  createdAt: number;
-  sections: AnalysisSection[];
-}
-
-export interface AnalysisUpdateEvent {
-  artifactId: string;
-  action: 'published' | 'updated' | 'deleted' | 'restored';
-  sessionIds: string[];
-  sessionId: string | null;
-}
-
-export interface WorkspaceRestoredPayload {
-  sessionId: string;
-  bookmarkCount: number;
-  analysisCount: number;
-  activeProcessorIds?: string[];
-  disabledProcessorIds?: string[];
-  /** Which backend emitted this: `"lts"` (recreated from a `.lts` archive mid
-   *  `load_log_file` — `useWorkspaceRestore` owns its auto-run) or `"workspace"`
-   *  (from `restore_workspace_session` on the `.ltw` path — the restore core owns
-   *  it). Optional so payloads from older backends still parse. */
-  source?: 'lts' | 'workspace';
-}
-
 // ---------------------------------------------------------------------------
-// Watch types (Phase 4)
+// Export types (T4 + T5) — hand-written: nested `editorTabs` needs the narrowed
+// `LtsEditorTabPayload.viewMode` union above; `Generated.ExportAllOptions` widens
+// it to `string` (narrowing doesn't thread through nested generated types).
 // ---------------------------------------------------------------------------
-
-export interface WatchInfo {
-  watchId: string;
-  sessionId: string;
-  totalMatches: number;
-  active: boolean;
-  criteria: FilterCriteria;
-}
-
-export interface WatchMatchEvent {
-  watchId: string;
-  sessionId: string;
-  newMatches: number;
-  totalMatches: number;
-}
-
-// ---------------------------------------------------------------------------
-// Update engine types (Phase 4)
-// ---------------------------------------------------------------------------
-
-export interface UpdateAvailable {
-  processorId: string;
-  processorName: string;
-  sourceName: string;
-  installedVersion: string;
-  availableVersion: string;
-  entry: MarketplaceEntry;
-}
-
-export interface SourceError {
-  sourceName: string;
-  error: string;
-}
-
-export interface PackUpdateAvailable {
-  packId: string;
-  packName: string;
-  sourceName: string;
-  installedVersion: string;
-  availableVersion: string;
-  newProcessorIds: string[];
-  entry: MarketplacePackEntry;
-}
-
-export interface UpdateCheckResult {
-  updates: UpdateAvailable[];
-  packUpdates: PackUpdateAvailable[];
-  errors: SourceError[];
-}
-
-export interface UpdateResult {
-  processorId: string;
-  oldVersion: string;
-  newVersion: string;
-  success: boolean;
-  error?: string;
-}
-
-// ---------------------------------------------------------------------------
-// Export types (T4 + T5)
-// ---------------------------------------------------------------------------
-
-export interface ExportSessionEntry {
-  sessionId: string;
-  sourceFilename: string;
-  bookmarkCount: number;
-  analysisCount: number;
-}
-
-export interface ExportAllSessionsInfo {
-  sessions: ExportSessionEntry[];
-  totalProcessorCount: number;
-  totalPipelineProcessorCount: number;
-}
-
-export interface LtsEditorTabPayload {
-  label: string;
-  content: string;
-  viewMode: 'editor' | 'split' | 'preview';
-  wordWrap: boolean;
-  filePath: string | null;
-}
 
 export interface ExportAllOptions {
   destPath: string;
@@ -935,140 +576,4 @@ export interface ExportAllOptions {
   includeAnalyses: boolean;
   includeProcessors: boolean;
   editorTabs: LtsEditorTabPayload[];
-}
-
-// ---------------------------------------------------------------------------
-// Workspace v4 (.ltw)
-// ---------------------------------------------------------------------------
-
-export interface LtwManifestSession {
-  filePath: string;
-  sourceName: string;
-  sourceType: string;
-  /** The label explicitly supplied at open to replace content detection, absent
-   *  when `sourceType` was detected. Only this is replayed on restore —
-   *  replaying `sourceType` would freeze detection, so a later fix to the
-   *  detector could never reach an already-saved workspace. */
-  sourceTypeOverride?: string;
-  /** The session id this entry's file resolved to when the workspace was
-   *  saved (T8). Restore re-derives the id for the same file and compares it
-   *  against this value — a mismatch means the file's content changed since
-   *  the save, so any analysis reference keyed to the old id is now
-   *  unresolved. Absent on a manifest written before this field existed. */
-  expectedSessionId?: string;
-}
-
-export interface LtwPipelineChain {
-  chain: string[];
-  disabledIds: string[];
-}
-
-export interface LtwEditorTab {
-  label: string;
-  content: string;
-  viewMode: string;
-  wordWrap: boolean;
-  filePath: string | null;
-}
-
-export interface SaveWorkspaceV4Options {
-  /** Stable workspace id — cached into the backend envelope so a background
-   *  flush can update this workspace's app-state.json entry. */
-  workspaceId: string;
-  destPath: string;
-  workspaceName: string;
-  editorTabs: LtwEditorTab[];
-  layout: unknown | null;
-  pipelineChain: string[];
-  disabledChainIds: string[];
-}
-
-/** Options for `sync_workspace_envelope` — a lightweight backend cache refresh
- *  (no file write). Mirrors the save options but carries the workspace's
- *  explicit `.ltw` path (if any) rather than a save destination. */
-export interface SyncWorkspaceEnvelopeOptions {
-  workspaceId: string;
-  workspaceName: string;
-  ltwPath: string | null;
-  editorTabs: LtwEditorTab[];
-  layout: unknown | null;
-  pipelineChain: string[];
-  disabledChainIds: string[];
-}
-
-export interface LoadWorkspaceSessionData {
-  bookmarks: Bookmark[];
-  /** Legacy per-session analyses payload — populated only when the source
-   *  `.ltw` predates the analyses migration. Current files always carry `[]`
-   *  here; the workspace's real analyses are on `LoadWorkspaceV4Result.analyses`. */
-  analyses: AnalysisArtifact[];
-  activeProcessorIds: string[];
-  disabledProcessorIds: string[];
-}
-
-export interface LoadWorkspaceV4Result {
-  workspaceName: string;
-  /** Stable workspace id from the manifest, or null for legacy files. Fed to
-   *  Q3's `assessRestoreCandidate` as the candidate's `workspaceId`. */
-  workspaceId: string | null;
-  /** Manifest savedAt epoch-ms — Q3's timestamp check against `lastAutoSaveAt`. */
-  savedAt: number;
-  sessions: LtwManifestSession[];
-  pipelineChain: LtwPipelineChain;
-  editorTabs: LtwEditorTab[];
-  layout: unknown | null;
-  /** Workspace-level analyses (top-level `analyses.json`). Empty for a
-   *  pre-migration file — see `LoadWorkspaceSessionData.analyses` for where
-   *  that data surfaces instead. */
-  analyses: AnalysisArtifact[];
-  /** Per-session artifacts ordered to match `sessions` by index. */
-  sessionData: LoadWorkspaceSessionData[];
-}
-
-export interface RestoreSessionOptions {
-  sessionId: string;
-  bookmarks: Bookmark[];
-  analyses: AnalysisArtifact[];
-  activeProcessorIds: string[];
-  disabledProcessorIds: string[];
-}
-
-// ---------------------------------------------------------------------------
-// App state persistence
-// ---------------------------------------------------------------------------
-
-export interface WorkspaceEntry {
-  id: string;
-  name: string;
-  ltwPath: string | null;
-  dirty: boolean;
-  /** Path to the app-data-dir auto-save `.ltw` (`workspaces/{id}.ltw`), or null
-   *  if never auto-saved. Distinct from `ltwPath` (explicit user save). Optional
-   *  because app-state.json files written before this field parse without it. */
-  autoSavePath?: string | null;
-  /** Epoch-millis timestamp of the last completed auto-save, or null. Paired
-   *  with `autoSavePath`. Optional for the same backward-compat reason. */
-  lastAutoSaveAt?: number | null;
-}
-
-export interface AppStateFile {
-  workspaces: WorkspaceEntry[];
-  activeWorkspaceId: string | null;
-}
-
-// ---------------------------------------------------------------------------
-// File associations
-// ---------------------------------------------------------------------------
-
-export interface FileAssocEntry {
-  ext: string;
-  label: string;
-  registered: boolean;
-  isDefault: boolean;
-}
-
-/** The bundled `.mcpb` MCP Bundle and whether the OS can open it. */
-export interface McpBundleInfo {
-  path: string;
-  installable: boolean;
 }

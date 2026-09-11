@@ -6,6 +6,7 @@ pub mod core;
 pub mod mcp_bridge;
 pub mod processors;
 pub mod scripting;
+pub mod services;
 pub mod workspace;
 
 use commands::AppState;
@@ -122,7 +123,7 @@ fn load_persisted_processors(state: &AppState, proc_dir: &std::path::Path) {
 async fn startup_update_check(handle: tauri::AppHandle) {
     use processors::marketplace;
 
-    let state = handle.state::<AppState>();
+    let state = handle.state::<std::sync::Arc<AppState>>();
 
     // Snapshot sources and installed processors.
     let sources: Vec<Source> = {
@@ -235,7 +236,7 @@ async fn startup_update_check(handle: tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(AppState::new())
+        .manage(std::sync::Arc::new(AppState::new()))
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             // Focus the existing window.
             if let Some(window) = app.get_webview_window("main") {
@@ -278,7 +279,7 @@ pub fn run() {
             let proc_dir = data_dir.join("processors");
             let packs_dir = data_dir.join("packs");
             let sources_path = data_dir.join("sources.json");
-            let state = app.state::<AppState>();
+            let state = app.state::<std::sync::Arc<AppState>>();
 
             // Sweep orphaned ADB-stream spill files left by a previous run.
             // Stream sessions are in-memory only and never persisted to `.ltw`
@@ -475,6 +476,7 @@ pub fn run() {
             commands::adb::update_stream_transformers,
             commands::adb::get_package_pids,
             commands::adb::save_live_capture,
+            commands::adb::get_stream_status,
             commands::files::load_log_file,
             commands::files::get_lines,
             commands::files::search_logs,
@@ -574,6 +576,8 @@ pub fn run() {
             commands::workspace_cmd::get_app_state,
             commands::workspace_cmd::save_app_state_cmd,
             // MCP bridge control
+            // Shared activity feed (UI + agent actions)
+            commands::activity::get_activity,
             commands::mcp::get_mcp_sidecar_path,
             commands::mcp::get_mcp_bundle_path,
             commands::mcp::open_mcp_bundle,
@@ -592,7 +596,7 @@ pub fn run() {
                     // flushed would otherwise be lost. `RunEvent::Exit` (not
                     // `ExitRequested`, which can be vetoed) is the final exit
                     // path, so this fires exactly once for a real quit.
-                    let state = app_handle.state::<AppState>();
+                    let state = app_handle.state::<std::sync::Arc<AppState>>();
                     if workspace::autosave::has_pending_flush(&state) {
                         log::info!("[autosave] pending mutation(s) on exit; flushing synchronously");
                         workspace::autosave::flush_now_blocking(app_handle);

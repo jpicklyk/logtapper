@@ -1,23 +1,19 @@
 use serde::Serialize;
 use std::collections::HashMap;
-use tauri::{AppHandle, Manager, State};
+use tauri::AppHandle;
 
-use crate::commands::{lock_or_err, AppState};
-use crate::processors::marketplace;
-use crate::processors::pack::{parse_pack_yaml, validate_pack};
-use crate::processors::{AnyProcessor, PackMeta, PackSummary, ProcessorSummary};
+use crate::processors::{AnyProcessor, PackSummary, ProcessorSummary};
+use crate::services::processors as svc;
+use ts_rs::TS;
 
+/// Persist a processor YAML to disk. Kept as a direct `AppHandle`-based
+/// helper — `lib.rs`'s startup auto-update path calls this before any
+/// `ServiceCtx` exists — but delegates to the same `AppPaths`-based writer
+/// [`crate::services::processors::install_yaml`] uses, so there is exactly
+/// one place that knows the on-disk layout.
 pub(crate) fn persist_processor(app: &AppHandle, id: &str, yaml: &str) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let proc_dir = data_dir.join("processors");
-    std::fs::create_dir_all(&proc_dir).map_err(|e| e.to_string())?;
-    let filename = marketplace::id_to_filename(id);
-    // Defense-in-depth: `id` may be a qualified `id@source` string assembled
-    // outside validate_processor_id() (see marketplace install / auto-update
-    // call sites), so re-check the actual on-disk filename before writing.
-    marketplace::ensure_filename_safe(&filename)?;
-    std::fs::write(proc_dir.join(format!("{filename}.yaml")), yaml)
-        .map_err(|e| format!("Failed to persist processor: {e}"))
+    let paths = crate::commands::adapters::TauriPaths::new(app.clone());
+    svc::persist_processor_file(&paths, id, yaml).map_err(|e| e.message())
 }
 
 /// Pure validation checks for an `AnyProcessor` — no I/O, no AppHandle needed.
@@ -80,273 +76,96 @@ pub(crate) fn validate_processor(processor: &AnyProcessor) -> Result<(), String>
     Ok(())
 }
 
-/// Validate, persist, and install a parsed processor into the store.
-fn validate_and_install(
-    app: &AppHandle,
-    state: &AppState,
-    yaml: &str,
-    processor: AnyProcessor,
-) -> Result<ProcessorSummary, String> {
-    validate_processor(&processor)?;
-    persist_processor(app, &processor.meta.id, yaml)?;
-    let summary = ProcessorSummary::from(&processor);
-    let mut procs = lock_or_err(&state.processors, "processors")?;
-    procs.insert(processor.meta.id.clone(), processor);
-    Ok(summary)
-}
+// ---------------------------------------------------------------------------
+// Tauri commands — thin adapters over services::processors
+// ---------------------------------------------------------------------------
 
-fn delete_processor_file(app: &AppHandle, id: &str) {
-    if let Ok(data_dir) = app.path().app_data_dir() {
-        let filename = marketplace::id_to_filename(id);
-        if marketplace::ensure_filename_safe(&filename).is_err() {
-            return;
-        }
-        let _ = std::fs::remove_file(
-            data_dir.join("processors").join(format!("{filename}.yaml"))
-        );
-    }
+#[tauri::command]
+pub async fn list_processors(app: AppHandle) -> Result<Vec<ProcessorSummary>, String> {
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::list(&ctx).map_err(|e| e.message())
 }
 
 #[tauri::command]
-pub async fn list_processors(
-    state: State<'_, AppState>,
-) -> Result<Vec<ProcessorSummary>, String> {
-    let procs = lock_or_err(&state.processors, "processors")?;
-    let mut out: Vec<ProcessorSummary> = procs.iter().map(|(key, p)| {
-        let mut summary = ProcessorSummary::from(p);
-        // Use the map key (qualified ID for marketplace processors) instead of bare meta.id.
-        summary.id = key.clone();
-        summary
-    }).collect();
-    drop(procs);
-
-    // Cross-reference packs to annotate each summary with its pack_id.
-    let packs = lock_or_err(&state.packs, "packs")?;
-    let proc_to_pack: HashMap<&str, &str> = packs
-        .iter()
-        .flat_map(|pk| pk.processors.iter().map(move |pid| (pid.as_str(), pk.id.as_str())))
-        .collect();
-    for summary in &mut out {
-        if let Some(pack_id) = proc_to_pack.get(summary.id.as_str()) {
-            summary.pack_id = Some((*pack_id).to_string());
-        }
-    }
-    drop(packs);
-
-    out.sort_by(|a, b| b.builtin.cmp(&a.builtin).then(a.name.cmp(&b.name)));
-    Ok(out)
+pub async fn load_processor_yaml(app: AppHandle, yaml: String) -> Result<ProcessorSummary, String> {
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::install_yaml(&ctx, &yaml).map_err(|e| e.message())
 }
 
 #[tauri::command]
-pub async fn load_processor_yaml(
-    state: State<'_, AppState>,
-    app: AppHandle,
-    yaml: String,
-) -> Result<ProcessorSummary, String> {
-    let processor = AnyProcessor::from_yaml(&yaml)?;
-    validate_and_install(&app, &state, &yaml, processor)
+pub async fn load_processor_from_file(app: AppHandle, path: String) -> Result<ProcessorSummary, String> {
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::install_from_file(&ctx, &path).map_err(|e| e.message())
 }
 
-#[tauri::command]
-pub async fn load_processor_from_file(
-    state: State<'_, AppState>,
-    app: AppHandle,
-    path: String,
-) -> Result<ProcessorSummary, String> {
-    let yaml = std::fs::read_to_string(&path).map_err(|e| format!("Cannot read file: {e}"))?;
-    let processor = AnyProcessor::from_yaml(&yaml)?;
-    validate_and_install(&app, &state, &yaml, processor)
-}
-
+/// Accumulated variables for one reporter. Thin adapter over
+/// [`crate::services::pipeline::processor_vars`] — the same aggregate the MCP
+/// bridge reads, so the two transports cannot drift. (WP-4; unchanged.)
 #[tauri::command]
 pub async fn get_processor_vars(
-    state: State<'_, AppState>,
+    app: AppHandle,
     session_id: String,
     processor_id: String,
 ) -> Result<HashMap<String, serde_json::Value>, String> {
-    let pr = lock_or_err(&state.pipeline_results, "pipeline_results")?;
-    let session_results = pr.get(&session_id)
-        .ok_or_else(|| format!("No pipeline results for session '{session_id}'" ))?;
-    let result = session_results.get(&processor_id)
-        .ok_or_else(|| format!("No result for processor '{processor_id}'" ))?;
-    Ok(result.vars.clone())
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    crate::services::pipeline::processor_vars(&ctx, &session_id, &processor_id)
+        .map_err(|e| e.message())
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MatchedLineInfo {
     pub line_num: usize,
     pub raw: String,
 }
 
+/// Every line one processor touched, with its text. Thin adapter over
+/// [`crate::services::pipeline::matched_lines`], which owns the
+/// reporter → state-tracker → correlator fallback and the caller's redaction
+/// gate (a no-op for the UI caller). (WP-4; unchanged.)
 #[tauri::command]
 pub async fn get_matched_lines(
-    state: State<'_, AppState>,
+    app: AppHandle,
     session_id: String,
     processor_id: String,
 ) -> Result<Vec<MatchedLineInfo>, String> {
-    // 1. Reporter pipeline results
-    let line_nums: Vec<usize> = {
-        let pr = lock_or_err(&state.pipeline_results, "pipeline_results")?;
-        if let Some(nums) = pr.get(&session_id)
-            .and_then(|s| s.get(&processor_id))
-            .map(|r| r.matched_line_nums.clone())
-        {
-            nums
-        } else {
-            drop(pr);
-            // 2. State tracker transition lines
-            let str_lock = lock_or_err(&state.state_tracker_results, "state_tracker_results")?;
-            if let Some(nums) = str_lock.get(&session_id)
-                .and_then(|s| s.get(&processor_id))
-                .map(|r| r.transitions.iter().map(|t| t.line_num).collect::<Vec<_>>())
-            {
-                nums
-            } else {
-                drop(str_lock);
-                // 3. Correlator event trigger lines
-                let cr_lock = lock_or_err(&state.correlator_results, "correlator_results")?;
-                cr_lock.get(&session_id)
-                    .and_then(|s| s.get(&processor_id))
-                    .map(|r| r.events.iter().map(|e| e.trigger_line_num).collect::<Vec<_>>())
-                    .unwrap_or_default()
-            }
-        }
-    };
-    let mut line_nums = line_nums;
-    line_nums.sort_unstable();
-
-    let sessions = lock_or_err(&state.sessions, "sessions")?;
-    let session = sessions.get(&session_id)
-        .ok_or_else(|| format!("Session '{session_id}' not found"))?;
-    let src = session.primary_source().ok_or("No sources in session")?;
-    let result = line_nums.iter().map(|&n| MatchedLineInfo {
-        line_num: n,
-        raw: src.raw_line(n).as_deref().unwrap_or("").trim_end_matches(['\r', '\n']).to_string(),
-    }).collect();
-    Ok(result)
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    crate::services::pipeline::matched_lines(&ctx, &session_id, &processor_id)
+        .map_err(|e| e.message())
 }
 
 #[tauri::command]
-pub async fn uninstall_processor(
-    state: State<'_, AppState>,
-    app: AppHandle,
-    processor_id: String,
-) -> Result<(), String> {
-    if processor_id.starts_with("__") {
-        return Err("Built-in processors cannot be uninstalled".to_string());
-    }
-    let mut procs = lock_or_err(&state.processors, "processors")?;
-    if procs.remove(&processor_id).is_none() {
-        return Err(format!("Processor '{processor_id}' not found"));
-    }
-    delete_processor_file(&app, &processor_id);
-    Ok(())
+pub async fn uninstall_processor(app: AppHandle, processor_id: String) -> Result<(), String> {
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::uninstall(&ctx, &processor_id).map_err(|e| e.message())
 }
 
 // ---------------------------------------------------------------------------
-// Pack commands
+// Pack commands — thin adapters over services::processors
 // ---------------------------------------------------------------------------
 
-fn persist_pack(app: &AppHandle, id: &str, yaml: &str) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let packs_dir = data_dir.join("packs");
-    std::fs::create_dir_all(&packs_dir).map_err(|e| e.to_string())?;
-    std::fs::write(packs_dir.join(format!("{id}.pack.yaml")), yaml)
-        .map_err(|e| format!("Failed to persist pack: {e}"))
-}
-
-/// Public alias for pack manifest persistence — used by marketplace pack install.
-pub(crate) fn persist_pack_yaml(app: &AppHandle, id: &str, yaml: &str) -> Result<(), String> {
-    persist_pack(app, id, yaml)
-}
-
-fn delete_pack_file(app: &AppHandle, id: &str) {
-    if let Ok(data_dir) = app.path().app_data_dir() {
-        let _ = std::fs::remove_file(data_dir.join("packs").join(format!("{id}.pack.yaml")));
-    }
-}
-
-/// Public alias for pack file deletion — used by marketplace pack uninstall.
-pub(crate) fn delete_pack_file_by_id(app: &AppHandle, id: &str) {
-    delete_pack_file(app, id);
-}
-
-/// Public alias for processor file deletion — used by marketplace pack uninstall.
-pub(crate) fn delete_processor_file_by_id(app: &AppHandle, id: &str) {
-    delete_processor_file(app, id);
+#[tauri::command]
+pub async fn list_packs(app: AppHandle) -> Result<Vec<PackSummary>, String> {
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::packs(&ctx).map_err(|e| e.message())
 }
 
 #[tauri::command]
-pub async fn list_packs(state: State<'_, AppState>) -> Result<Vec<PackSummary>, String> {
-    let packs = lock_or_err(&state.packs, "packs")?;
-    Ok(packs.iter().map(PackSummary::from).collect())
+pub async fn install_pack_from_yaml(app: AppHandle, pack_id: String, yaml: String) -> Result<PackSummary, String> {
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::install_pack_yaml(&ctx, &pack_id, &yaml).map_err(|e| e.message())
 }
 
 #[tauri::command]
-pub async fn install_pack_from_yaml(
-    state: State<'_, AppState>,
-    app: AppHandle,
-    pack_id: String,
-    yaml: String,
-) -> Result<PackSummary, String> {
-    if pack_id.trim().is_empty() {
-        return Err("pack_id must not be empty".to_string());
-    }
-    let mut pack = parse_pack_yaml(&yaml)?;
-    pack.id = pack_id;
-    validate_pack(&pack)?;
-    persist_pack(&app, &pack.id, &yaml)?;
-    let summary = PackSummary::from(&pack);
-    let mut packs = lock_or_err(&state.packs, "packs")?;
-    // Replace if already present, otherwise push.
-    if let Some(existing) = packs.iter_mut().find(|p| p.id == pack.id) {
-        *existing = pack;
-    } else {
-        packs.push(pack);
-    }
-    Ok(summary)
+pub async fn uninstall_pack(app: AppHandle, pack_id: String) -> Result<(), String> {
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::uninstall_pack(&ctx, &pack_id).map_err(|e| e.message())
 }
 
 #[tauri::command]
-pub async fn uninstall_pack(
-    state: State<'_, AppState>,
-    app: AppHandle,
-    pack_id: String,
-) -> Result<(), String> {
-    let mut packs = lock_or_err(&state.packs, "packs")?;
-    let before = packs.len();
-    packs.retain(|p| p.id != pack_id);
-    if packs.len() == before {
-        return Err(format!("Pack '{pack_id}' not found"));
-    }
-    drop(packs);
-    delete_pack_file(&app, &pack_id);
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn load_pack_from_file(
-    state: State<'_, AppState>,
-    app: AppHandle,
-    path: String,
-) -> Result<PackSummary, String> {
-    let yaml = std::fs::read_to_string(&path).map_err(|e| format!("Cannot read file: {e}"))?;
-    let file_path = std::path::Path::new(&path);
-    let id = crate::processors::pack::pack_id_from_path(file_path)
-        .ok_or_else(|| "File must have a '.pack.yaml' extension to be loaded as a pack".to_string())?;
-    let mut pack: PackMeta = parse_pack_yaml(&yaml)?;
-    pack.id = id;
-    validate_pack(&pack)?;
-    persist_pack(&app, &pack.id, &yaml)?;
-    let summary = PackSummary::from(&pack);
-    let mut packs = lock_or_err(&state.packs, "packs")?;
-    if let Some(existing) = packs.iter_mut().find(|p| p.id == pack.id) {
-        *existing = pack;
-    } else {
-        packs.push(pack);
-    }
-    Ok(summary)
+pub async fn load_pack_from_file(app: AppHandle, path: String) -> Result<PackSummary, String> {
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::load_pack_from_file(&ctx, &path).map_err(|e| e.message())
 }
 
 // ---------------------------------------------------------------------------

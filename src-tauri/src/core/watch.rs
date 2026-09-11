@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use serde::Serialize;
 
 use crate::core::filter::{FilterCriteria, PrecomputedNeedles};
+use ts_rs::TS;
 
 /// A live watch that evaluates new lines against filter criteria.
 /// Reuses the Phase 1 FilterCriteria and line_matches_criteria evaluation.
@@ -67,7 +68,7 @@ impl WatchSession {
 }
 
 /// Payload emitted as `watch-match` Tauri event.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct WatchMatchEvent {
     pub watch_id: String,
@@ -77,7 +78,7 @@ pub struct WatchMatchEvent {
 }
 
 /// Info about a watch, returned by list_watches.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct WatchInfo {
     pub watch_id: String,

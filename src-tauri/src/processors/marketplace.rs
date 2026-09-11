@@ -5,6 +5,7 @@
 //! and hold that contract at install time.
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 // ---------------------------------------------------------------------------
 // Source configuration types
@@ -14,24 +15,55 @@ fn default_git_ref() -> String {
     "main".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Bug ee4ddb0b: two defects, both fixed here.
+///
+/// 1. This struct previously had no `rename_all = "camelCase"`, unlike every
+///    other IPC struct, so the wire was `auto_update` / `last_checked` while
+///    `src-next/bridge/types.ts::Source` was hand-written against
+///    `autoUpdate` / `lastChecked`. `autoUpdate` silently dropped to `false`
+///    on every `add_source` call (masked by `#[serde(default)]`) and
+///    `lastChecked` never round-tripped back to the UI.
+/// 2. `source_type` was a plain (non-flattened) field renamed to `"type"`,
+///    so it serialized as a *nested* object — `{"type": {"type": "github",
+///    "repo": ..., "git_ref": ...}}` — instead of the flat `{"type": "github",
+///    "repo": ..., "ref": ...}` `types.ts::Source` already modeled.
+///    `#[serde(flatten)]` merges `SourceType`'s own internally-tagged fields
+///    (its `tag = "type"` already supplies the outer `"type"` key) directly
+///    onto `Source`.
+///
+/// The `alias` attributes below let a `sources.json` written by the old
+/// snake_case, nested-`type` wire format still deserialize — see
+/// `old_format_sources_json_still_loads`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct Source {
     pub name: String,
-    #[serde(rename = "type")]
+    #[serde(flatten)]
+    #[ts(flatten)]
     pub source_type: SourceType,
     pub enabled: bool,
-    #[serde(default)]
+    #[serde(default, alias = "auto_update")]
     pub auto_update: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "last_checked")]
+    #[ts(optional)]
     pub last_checked: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "lowercase")]
+// Renamed for the TS surface only: `src-next/bridge/types.ts` already exports a
+// `SourceType` — the *log* source union mirroring `core::session::SourceType`.
+// Two unrelated types cannot share a name in the generated barrel.
+#[ts(rename = "MarketplaceSourceType")]
 pub enum SourceType {
     Github {
         repo: String,
-        #[serde(default = "default_git_ref")]
+        /// Bug ee4ddb0b: renamed `git_ref` -> `ref` on the wire to match the
+        /// flat `{type, repo, ref, path}` shape `types.ts::Source` already
+        /// modeled (and to avoid the confusing `gitRef` a bare
+        /// `rename_all = "camelCase"` on this enum would have produced). The
+        /// `alias` lets an old-format `sources.json` (`git_ref`) still load.
+        #[serde(default = "default_git_ref", rename = "ref", alias = "git_ref")]
         git_ref: String,
     },
     Local {
@@ -56,7 +88,7 @@ pub struct MarketplaceIndex {
 }
 
 /// Marketplace index entry for a processor pack.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 pub struct MarketplacePackEntry {
     pub id: String,
     pub name: String,
@@ -810,5 +842,92 @@ mcp:
             !eval_parsed_condition(mcp.signals[2].parsed_condition.as_ref(), &low),
             "valid condition should not fire when unsatisfied"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Bug ee4ddb0b — Source camelCase wire fix + old-format migration
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn source_serializes_camelcase_with_flat_ref() {
+        let source = Source {
+            name: "official".to_string(),
+            source_type: SourceType::Github {
+                repo: "jpicklyk/logtapper".to_string(),
+                git_ref: "develop".to_string(),
+            },
+            enabled: true,
+            auto_update: true,
+            last_checked: Some("12345Z".to_string()),
+        };
+        let json: serde_json::Value = serde_json::to_value(&source).unwrap();
+        assert_eq!(json["autoUpdate"], serde_json::json!(true));
+        assert_eq!(json["lastChecked"], serde_json::json!("12345Z"));
+        assert_eq!(json["type"], serde_json::json!("github"));
+        assert_eq!(json["repo"], serde_json::json!("jpicklyk/logtapper"));
+        assert_eq!(json["ref"], serde_json::json!("develop"));
+        // The old snake_case field names must not appear on the wire anymore.
+        assert!(json.get("auto_update").is_none());
+        assert!(json.get("last_checked").is_none());
+        assert!(json.get("git_ref").is_none());
+    }
+
+    /// A `sources.json` written by a pre-fix build (snake_case `auto_update` /
+    /// `last_checked` / `git_ref`) must still deserialize after this fix, or
+    /// every existing user's configured marketplace sources vanish on upgrade.
+    #[test]
+    fn old_format_sources_json_still_loads() {
+        let old_format = r#"[
+            {
+                "name": "official",
+                "type": "github",
+                "repo": "jpicklyk/logtapper",
+                "git_ref": "main",
+                "enabled": true,
+                "auto_update": true,
+                "last_checked": "99999Z"
+            },
+            {
+                "name": "local-dev",
+                "type": "local",
+                "path": "/some/path/marketplace",
+                "enabled": true,
+                "auto_update": false
+            }
+        ]"#;
+        let sources: Vec<Source> = serde_json::from_str(old_format)
+            .expect("old snake_case sources.json must still deserialize");
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0].name, "official");
+        assert!(sources[0].auto_update);
+        assert_eq!(sources[0].last_checked.as_deref(), Some("99999Z"));
+        match &sources[0].source_type {
+            SourceType::Github { repo, git_ref } => {
+                assert_eq!(repo, "jpicklyk/logtapper");
+                assert_eq!(git_ref, "main");
+            }
+            other => panic!("expected Github, got {other:?}"),
+        }
+        assert!(!sources[1].auto_update);
+        assert_eq!(sources[1].last_checked, None);
+    }
+
+    /// The new camelCase wire format must also round-trip (the format any
+    /// build after this fix actually writes to disk).
+    #[test]
+    fn new_format_sources_json_round_trips() {
+        let json = r#"[{
+            "name": "official",
+            "type": "github",
+            "repo": "jpicklyk/logtapper",
+            "ref": "main",
+            "enabled": true,
+            "autoUpdate": true,
+            "lastChecked": "12345Z"
+        }]"#;
+        let sources: Vec<Source> = serde_json::from_str(json).expect("new camelCase format must load");
+        assert_eq!(sources.len(), 1);
+        assert!(sources[0].auto_update);
+        assert_eq!(sources[0].last_checked.as_deref(), Some("12345Z"));
     }
 }

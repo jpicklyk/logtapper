@@ -30,6 +30,7 @@ use zip::write::SimpleFileOptions;
 use crate::core::analysis::AnalysisArtifact;
 use crate::core::bookmark::Bookmark;
 use crate::workspace::{now_ms, zip_read_json, zip_write_json, SessionMeta};
+use ts_rs::TS;
 
 pub const LTW_V4_FORMAT_VERSION: u32 = 4;
 
@@ -53,7 +54,7 @@ pub struct LtwManifest {
     pub sessions: Vec<LtwManifestSession>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct LtwManifestSession {
     /// Absolute path to the log file on disk.
@@ -71,6 +72,7 @@ pub struct LtwManifestSession {
     /// already-saved workspace. Defaults on read, so `.ltw` files written
     /// before this field existed still load.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub source_type_override: Option<String>,
     /// The session id this entry's file resolved to when the workspace was
     /// saved (T8). Stamped from the live session at save time
@@ -82,6 +84,7 @@ pub struct LtwManifestSession {
     /// manifest written before this field existed parses as `None`, which the
     /// frontend treats as "nothing to diagnose" rather than a mismatch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub expected_session_id: Option<String>,
 }
 
@@ -89,7 +92,7 @@ pub struct LtwManifestSession {
 // Pipeline chain (workspace-level)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct LtwPipelineChain {
     pub chain: Vec<String>,
@@ -100,7 +103,7 @@ pub struct LtwPipelineChain {
 // Editor tabs
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct LtwEditorTab {
     pub label: String,

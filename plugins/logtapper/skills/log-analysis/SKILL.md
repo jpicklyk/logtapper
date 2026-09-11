@@ -36,6 +36,15 @@ don't survive scrutiny. This workflow gets to defensible root causes cheaply.
   The multi-boot timeline rules and section map below apply to dumpstates;
   logcat/kernel files have no named sections, and live streams grow while you
   query them (`recent` sampling, events arriving continuously).
+- **Check what already happened.** `logtapper_activity` is one shared feed of
+  every state-changing action — the user's in the UI and yours through MCP —
+  so before re-running a pipeline or re-opening a file, a quick check can
+  save a redundant call and tells you what the user has already tried.
+- **A workspace persists what you're investigating.** If the user wants to
+  resume this investigation later (or you're picking up someone else's),
+  `logtapper_workspace` (`action: "current"`/`"load"`) shows what sessions
+  and pipeline chain are already configured before you start opening files
+  fresh.
 
 ## The investigation ladder
 
@@ -113,8 +122,14 @@ the boot attribution wrong produces a false timeline.
 
 - **500k-line scan cap** per search request. A "0 matches" result is only a
   negative finding if `truncated: false`; otherwise page with `start_line`
-  until the whole file is covered. Check `scannedLines` and `matchCount`
-  (true total) in every response.
+  until the whole file is covered. Check `scannedLines` and `total` in every
+  response — but the two search tools mean `total` differently:
+  `logtapper_search_with_context`'s `total` is the TRUE count across the
+  whole scanned range (it keeps scanning past the page to get an exact
+  number); `logtapper_search`'s `total` always equals `returned` (it stops
+  scanning once the page is full), so it tells you nothing about how many
+  matches exist beyond this page — use `search_with_context` when the count
+  itself matters.
 - **Wide dumpsys lines get cut at 500 chars.** Raise `max_line_chars` (up to
   8000) when the value you need may sit past the cut.
 - **`get_lines_around` caps `before`/`after` at 100.**
@@ -123,6 +138,20 @@ the boot attribution wrong produces a false timeline.
   in the suspected range — dumpstate section headers are greppable.
 - Filtered `logtapper_query` switches to full-scan mode; prefer
   `search_with_context` with ranges for anything targeted.
+- `logtapper_query`'s `strategy` field in the response is an object
+  (`{"kind":"recent"}`, `{"kind":"around","line":N}`, …), not the echoed
+  query string — a typo in the `strategy` argument is now visible instead of
+  silently reflected back. `logtapper_get_lines_around` marks the target
+  line with `isContext: false` (every surrounding line is `true`) rather
+  than the old `isCenter` flag.
+- **Repeated paging over the same criteria** (walking every match of a
+  regex across a huge file, one page at a time) is cheaper with
+  `logtapper_filters`: it scans ONCE in the background and pages the
+  matched-line list for free afterward, instead of re-scanning on every
+  call the way `logtapper_query`/`logtapper_search*` do. It is a snapshot
+  of the session at creation time, so it never sees lines a live stream
+  receives afterward — create a fresh filter (or use `logtapper_watches`)
+  to cover new data.
 
 ## High-value dumpstate sections
 

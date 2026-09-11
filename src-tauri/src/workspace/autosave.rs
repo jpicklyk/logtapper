@@ -24,8 +24,8 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
-use crate::commands::workspace_cmd::{
-    collect_session_data, entry_refs, snapshot_session_ids, SessionEntry,
+use crate::services::workspace::{
+    collect_session_data, entry_refs, snapshot_session_ids, SessionEntry, WorkspaceAutoSavedEvent,
 };
 use crate::commands::AppState;
 use crate::core::analysis::AnalysisArtifact;
@@ -270,7 +270,7 @@ pub fn flush_dest(envelope: &WorkspaceEnvelope, ws_dir: &Path) -> PathBuf {
 }
 
 async fn flush(app: &AppHandle) {
-    let state = app.state::<AppState>();
+    let state = app.state::<std::sync::Arc<AppState>>();
 
     // Captured before any of the snapshot work below, so that a mutation
     // racing this flush (landing after the snapshot but before completion)
@@ -400,11 +400,16 @@ async fn flush(app: &AppHandle) {
                 .store(generation_at_start, Ordering::Relaxed);
             let _ = app.emit(
                 "workspace-auto-saved",
-                serde_json::json!({
-                    "workspaceId": workspace_id,
-                    "path": path.to_string_lossy(),
-                    "savedAt": saved_at,
-                }),
+                // Typed payload (WP-8) in place of the ad hoc `json!{}` this
+                // used to build — identical field names and shape, so the
+                // frontend listener is unchanged, but the wire contract now
+                // has a Rust struct and a generated TypeScript twin. The
+                // scheduler itself stays Tauri-bound and otherwise untouched.
+                WorkspaceAutoSavedEvent {
+                    workspace_id: workspace_id.clone(),
+                    path: path.to_string_lossy().to_string(),
+                    saved_at,
+                },
             );
             log::info!(
                 "[autosave] flushed workspace {workspace_id} to {}",
@@ -431,7 +436,7 @@ async fn flush(app: &AppHandle) {
 /// first; this function does not re-check it, so it always attempts a flush
 /// when called.
 pub fn flush_now_blocking(app: &AppHandle) {
-    let state = app.state::<AppState>();
+    let state = app.state::<std::sync::Arc<AppState>>();
     let generation_at_start = state.autosave_generation.load(Ordering::Relaxed);
 
     // Exit racing an in-flight workspace switch: the switch-start auto-save

@@ -1,13 +1,14 @@
 use serde::{Deserialize, Serialize};
 use super::detectors::PiiCategory;
+use ts_rs::TS;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AnonymizerConfig {
     pub detectors: Vec<DetectorEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct DetectorEntry {
     /// Stable key used to map to the built-in detector struct.
@@ -22,7 +23,7 @@ pub struct DetectorEntry {
     pub patterns: Vec<PatternEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PatternEntry {
     /// Human-readable label for the pattern, e.g. "AWS Access Key".

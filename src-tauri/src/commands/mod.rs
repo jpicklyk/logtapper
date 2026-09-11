@@ -16,10 +16,11 @@ use crate::core::filter::FilterSession;
 use crate::core::watch::WatchSession;
 use crate::processors::correlator::engine::CorrelatorResult;
 
+pub mod activity;
+pub mod adapters;
 pub mod adb;
 pub mod analysis;
 pub mod anonymizer;
-pub mod artifact_mutations;
 pub mod bookmark;
 pub mod bridge_access;
 pub mod charts;
@@ -111,6 +112,17 @@ pub struct AppState {
     /// without holding any lock across batch processing. Lock order is always
     /// `stream_epochs` (outer) → the specific stream-state map (inner).
     pub stream_epochs: Mutex<HashMap<String, u64>>,
+    /// Per-session agent-facing ring buffer of ADB stream events.
+    ///
+    /// An agent has no persistent socket, so a stream it starts over the MCP
+    /// bridge buffers into one of these (cap
+    /// `services::stream::AGENT_RING_CAPACITY`) and is drained with a `?since=`
+    /// cursor by `GET /mcp/sessions/{id}/stream/events`. A UI-started stream
+    /// has no entry here at all — it delivers straight down a Tauri IPC
+    /// `Channel`. Registered by `services::stream::register_ring`, which also
+    /// prunes entries whose session is gone.
+    pub stream_rings:
+        Mutex<HashMap<String, Arc<crate::services::events::RingSink<crate::services::stream::AdbStreamEvent>>>>,
     /// Per-run pipeline cancellation tokens, keyed by a monotonic run id drawn
     /// from `pipeline_run_seq`. Each `execute_pipeline` invocation registers its
     /// own token (via `register_pipeline_run`) and removes it on completion, so
@@ -195,6 +207,13 @@ pub struct AppState {
     /// lapses — so a transition that dies mid-way degrades to a bounded window of
     /// suppressed autosave, never a permanently disabled one.
     pub autosave_switch_suppressed_until: Mutex<Option<std::time::Instant>>,
+    /// Cross-transport activity journal: every state-changing action, whether
+    /// the user performed it in the UI or an agent performed it over the MCP
+    /// bridge. Bounded ring (500 entries). Written only through
+    /// `services::ServiceCtx::journal`, which also emits the `activity` event,
+    /// so a mutation cannot land in one transport's feed and not the other's.
+    /// Read by the `get_activity` command and `GET /mcp/activity`.
+    pub activity: crate::services::ActivityJournal,
     /// Session id the frontend currently has focused (the active pane's
     /// logviewer session), or `None` when no pane is focused. Pushed by the
     /// frontend via the `set_focused_session` command whenever focus changes
@@ -246,6 +265,7 @@ impl AppState {
             stream_tracker_state: Mutex::new(HashMap::new()),
             stream_transformer_state: Mutex::new(HashMap::new()),
             stream_epochs: Mutex::new(HashMap::new()),
+            stream_rings: Mutex::new(HashMap::new()),
             correlator_results: Mutex::new(HashMap::new()),
             pipeline_cancels: Mutex::new(HashMap::new()),
             pipeline_run_seq: AtomicU64::new(0),
@@ -270,6 +290,7 @@ impl AppState {
             autosave_flushed_generation: AtomicU64::new(0),
             autosave_switch_suppressed_until: Mutex::new(None),
             focused_session: Mutex::new(None),
+            activity: crate::services::ActivityJournal::new(),
         }
     }
 

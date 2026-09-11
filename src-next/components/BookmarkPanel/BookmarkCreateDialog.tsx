@@ -58,6 +58,8 @@ const BookmarkCreateDialog = React.memo(function BookmarkCreateDialog({
         offset: lineNumber,
         count: 1,
         context: 0,
+        processorId: null,
+        search: null,
       })
         .then((result) => {
           if (labelFetchedRef.current !== token) return; // request changed
@@ -103,6 +105,8 @@ const BookmarkCreateDialog = React.memo(function BookmarkCreateDialog({
             offset: lineNumber,
             count,
             context: 0,
+            processorId: null,
+            search: null,
           });
           snippet = result.lines.map((l) => l.raw);
         } catch {

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use ts_rs::TS;
 
 /// Metadata for a processor pack — deserialized from a `*.pack.yaml` file.
 /// The `id` field is derived from the filename, not stored in YAML.
@@ -29,7 +30,7 @@ pub struct PackMeta {
 }
 
 /// IPC-serializable summary of a pack (returned by list_packs and related commands).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PackSummary {
     pub id: String,

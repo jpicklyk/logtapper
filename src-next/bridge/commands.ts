@@ -1,14 +1,14 @@
 import { invoke, Channel } from '@tauri-apps/api/core';
 import type {
   LineRequest,
-  LineWindow,
+  LinePage,
   LoadResult,
   SourceType,
   SearchQuery,
   SearchSummary,
   ProcessorSummary,
   PackSummary,
-  PipelineRunSummary,
+  PipelineRunResult,
   MatchedLine,
   RegistryEntry,
   DumpstateMetadata,
@@ -49,6 +49,7 @@ import type {
   LtwEditorTab,
   AppStateFile,
   RestoreSessionOptions,
+  ActivityEntry,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -139,7 +140,12 @@ export function closeSession(sessionId: string): Promise<void> {
   return invoke('close_session', { sessionId });
 }
 
-export function getLines(request: LineRequest): Promise<LineWindow> {
+/**
+ * Read a window of lines. Returns the backend's `LinePage`: `totalLines` and
+ * `lines` as before, plus `offset`/`count`/`truncated` and (when the backend
+ * had to *choose* the lines rather than page them) `strategy`.
+ */
+export function getLines(request: LineRequest): Promise<LinePage> {
   return invoke('get_lines', { request });
 }
 
@@ -154,12 +160,23 @@ export function searchLogs(
 // Phase 2 — Pipeline / Processors
 // ---------------------------------------------------------------------------
 
+/**
+ * Run a processor chain over one session.
+ *
+ * Pass `null` for `processorIds` to run the session's OWN chain — the backend
+ * resolves `active − disabled` from the `session_pipeline_meta` that
+ * {@link setSessionPipelineMeta} pushes, filters it to installed processors and
+ * appends `__pii_anonymizer` when the session's anonymize flag is on. An
+ * explicit list overrides that resolution and rejects uninstalled ids.
+ *
+ * The result's `effectiveProcessorIds` is the chain the backend actually ran,
+ * so a `null` caller learns what it got instead of re-deriving it.
+ */
 export function runPipeline(
   sessionId: string,
-  processorIds: string[],
-  anonymize = false,
-): Promise<PipelineRunSummary[]> {
-  return invoke('run_pipeline', { sessionId, processorIds, anonymize });
+  processorIds: string[] | null,
+): Promise<PipelineRunResult> {
+  return invoke('run_pipeline', { sessionId, processorIds });
 }
 
 export function stopPipeline(): Promise<void> {
@@ -603,11 +620,11 @@ export function installPackFromMarketplace(
     id: string;
     name: string;
     version: string;
-    description?: string;
+    description: string | null;
     path: string;
     tags: string[];
     sha256: string;
-    category?: string;
+    category: string | null;
     processor_ids: string[];
   },
 ): Promise<PackSummary> {
@@ -679,6 +696,26 @@ export function getAppState(): Promise<AppStateFile> {
 
 export function saveAppState(state: AppStateFile): Promise<void> {
   return invoke('save_app_state_cmd', { state });
+}
+
+// ---------------------------------------------------------------------------
+// Activity feed (shared UI + agent journal)
+// ---------------------------------------------------------------------------
+
+/**
+ * Journaled actions, newest LAST.
+ *
+ * One feed for both callers: a UI mutation and an agent mutation land in the
+ * same journal, each tagged with its `caller`. The backing store is a bounded
+ * ring (500 entries), so poll incrementally with `sinceId` (the `id` of the
+ * newest entry already seen) rather than refetching; ids are monotonic for the
+ * life of the process, which makes a dropped range detectable instead of
+ * silent. Live appends also arrive as the `activity` Tauri event
+ * (`onActivity`), so the normal pattern is one fetch on mount plus the
+ * listener.
+ */
+export function getActivity(limit?: number, sinceId?: number): Promise<ActivityEntry[]> {
+  return invoke('get_activity', { limit: limit ?? null, sinceId: sinceId ?? null });
 }
 
 // ---------------------------------------------------------------------------

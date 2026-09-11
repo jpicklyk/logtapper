@@ -15,6 +15,24 @@ Once attached, LogTapper's tools appear under the `logtapper` namespace
 processors, read state-tracker/correlator events, and manage bookmarks and
 watches.
 
+**New in 0.3.0** (backend service-layer migration): full agent parity with the
+desktop UI, not just read access. New tool families —
+`logtapper_workspace` (list/load/save/autosave), `logtapper_filters`
+(create/info/lines/cancel/close), `logtapper_stream` (start/status/events/stop
+for ADB streaming), `logtapper_processors` and `logtapper_marketplace`
+(install/uninstall/packs/sources/updates), `logtapper_chart` /
+`logtapper_timeline`, `logtapper_export`, `logtapper_settings` (read-only —
+agents cannot change the anonymizer config or open-file allowlist, by design),
+and `logtapper_activity` (the shared UI+agent action feed). A watch or
+pipeline run created via chat now shows up live in the desktop UI.
+
+This is a breaking change for anything calling the bridge's HTTP API directly:
+response fields are camelCase and some were renamed (e.g. a search tool's
+`matchCount` is now `total`), and failures are real HTTP status codes
+(404/400/403/etc.) instead of `200` with an error in the body. Tools invoked
+through this plugin are unaffected — the field renames and status handling
+are internal to the bundled MCP server.
+
 ## Requirements
 
 - **LogTapper installed and running**, with the MCP Bridge enabled in

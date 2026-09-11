@@ -8,6 +8,7 @@ use zip::write::SimpleFileOptions;
 
 use crate::core::analysis::AnalysisArtifact;
 use crate::core::bookmark::Bookmark;
+use ts_rs::TS;
 
 pub const LTS_FORMAT_VERSION: u32 = 3;
 
@@ -56,7 +57,7 @@ impl From<LtsSessionMeta> for super::SessionMeta {
 }
 
 /// One editor tab stored in `editor-tabs.json` inside the `.lts` zip.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct LtsEditorTab {
     pub label: String,
