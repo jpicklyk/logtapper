@@ -17,16 +17,16 @@ ORB_CSS = """    /* ---- agent orb: the network nucleus with broken rings ---- *
     @property --orb-a { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
     .orb { position: relative; flex-shrink: 0; width: var(--orb-size); height: var(--orb-size); --c: var(--orb-c); perspective: calc(var(--orb-size) * 9); }
     .orb::after { content: ''; position: absolute; inset: -10%; border-radius: 9999px; pointer-events: none; background: radial-gradient(circle, color-mix(in srgb, var(--c) 10%, transparent) 0%, color-mix(in srgb, var(--c) 6%, transparent) 45%, transparent 68%); }
-    .orb__w { position: absolute; inset: 0; transform-style: preserve-3d; transform: rotateX(-16deg); }
+    .orb__w { position: absolute; inset: 0; transform-style: preserve-3d; }
     .orb__core { position: absolute; inset: 0; transform-style: preserve-3d; animation: orb-spin var(--orb-spin, 48s) linear infinite; }
     @keyframes orb-spin { to { transform: rotateY(360deg); } }
     .orb__ring { position: absolute; left: 50%; top: 50%; width: var(--rw); height: var(--rw); margin: calc(var(--rw) / -2) 0 0 calc(var(--rw) / -2); border-radius: 9999px; opacity: .9;
       -webkit-mask: radial-gradient(circle, transparent calc(50% - var(--rt) - .5px), #000 calc(50% - var(--rt)), #000 calc(50% - .5px), transparent 50%); mask: radial-gradient(circle, transparent calc(50% - var(--rt) - .5px), #000 calc(50% - var(--rt)), #000 calc(50% - .5px), transparent 50%);
-      transform: rotate3d(1, .15, 0, var(--tilt)) rotate(var(--orb-a)); animation: orb-ring var(--t) linear infinite var(--dir, normal); }
+      transform: rotate(var(--orb-a)); animation: orb-ring var(--t) linear infinite var(--dir, normal); }
     @keyframes orb-ring { to { --orb-a: 360deg; } }
-    .orb__n { position: absolute; left: 50%; top: 50%; width: var(--orb-dot); height: var(--orb-dot); margin: calc(var(--orb-dot) / -2) 0 0 calc(var(--orb-dot) / -2); border-radius: 9999px; background: color-mix(in srgb, var(--c) 75%, #fff); box-shadow: 0 0 calc(var(--orb-dot) * 1.1) var(--c); opacity: .5; animation: orb-node var(--orb-node, 7s) ease-in-out infinite; animation-delay: var(--dl); }
-    .orb__n--c { width: calc(var(--orb-dot) * 1.5); height: calc(var(--orb-dot) * 1.5); margin: calc(var(--orb-dot) * -.75) 0 0 calc(var(--orb-dot) * -.75); opacity: .95; box-shadow: 0 0 calc(var(--orb-dot) * 2.2) var(--c), 0 0 1px #fff; }
-    @keyframes orb-node { 0%, 100% { opacity: .5; } 50% { opacity: .95; } }
+    .orb__n { position: absolute; left: 50%; top: 50%; width: var(--orb-dot); height: var(--orb-dot); margin: calc(var(--orb-dot) / -2) 0 0 calc(var(--orb-dot) / -2); border-radius: 9999px; background: radial-gradient(circle at 40% 40%, #fff 0 30%, color-mix(in srgb, var(--c) 70%, #fff) 60%, var(--c) 100%); box-shadow: 0 0 0 .5px color-mix(in srgb, var(--c) 60%, #fff), 0 0 calc(var(--orb-dot) * .8) color-mix(in srgb, var(--c) 70%, transparent); opacity: .7; animation: orb-node var(--orb-node, 7s) ease-in-out infinite; animation-delay: var(--dl); }
+    .orb__n--c { width: calc(var(--orb-dot) * 1.5); height: calc(var(--orb-dot) * 1.5); margin: calc(var(--orb-dot) * -.75) 0 0 calc(var(--orb-dot) * -.75); opacity: 1; box-shadow: 0 0 0 .5px #fff, 0 0 calc(var(--orb-dot) * 1.6) var(--c); }
+    @keyframes orb-node { 0%, 100% { opacity: .6; } 50% { opacity: 1; } }
     .orb__e { position: absolute; left: 50%; top: 50%; width: var(--l); height: var(--orb-line); margin: calc(var(--orb-line) / -2) 0 0 calc(var(--l) / -2); transform-origin: center;
       background: linear-gradient(90deg, transparent 30%, color-mix(in srgb, var(--c) 40%, #fff) 50%, transparent 70%) no-repeat 160% 0 / 220% 100%,
                   linear-gradient(color-mix(in srgb, var(--c) 22%, transparent), color-mix(in srgb, var(--c) 22%, transparent)); }
@@ -113,20 +113,20 @@ def _ring_html(size: int, rng: random.Random, rw: float, rt: float, tilt: int, t
             a += gap
     grad = 'conic-gradient(from 0deg, ' + ', '.join(stops) + ')'
     d = ';--dir:reverse' if reverse else ''
-    op = ';opacity:.55' if tilt else ''
+    op = ''
     return (f'<s class="orb__ring" style="--rw:{rw * 100:.0f}%;--rt:{rt:.1f}px;--tilt:{tilt}deg;--t:{t:.0f}s{d}{op};'
             f'background:{grad}"></s>')
 
 
 def _rings(size: int) -> list[tuple[float, float, int, float, bool, bool]]:
-    """(diameter fraction, thickness px, tilt deg, period s, reverse, ticks)"""
+    """(diameter fraction, thickness px, tilt deg [always 0: rings face the viewer], period s, reverse, ticks)"""
     if size < 24:
         return [(1.0, 1.5, 0, 24, False, False)]
     if size < 40:
-        return [(0.84, 1.5, 0, 26, False, False), (1.0, 1.0, 66, 34, True, False)]
+        return [(0.84, 1.5, 0, 26, False, False), (1.0, 1.0, 0, 34, True, False)]
     if size < 80:
-        return [(0.72, max(2.0, size / 32), 0, 28, False, False), (0.86, 1.0, 0, 20, True, True), (1.0, max(1.5, size / 60), 68, 44, False, False)]
-    return [(0.68, size / 36, 0, 30, False, False), (0.80, max(1.0, size / 110), 0, 22, True, True), (0.92, size / 70, 68, 40, False, False), (1.0, size / 80, -64, 52, True, False)]
+        return [(0.72, max(2.0, size / 32), 0, 28, False, False), (0.86, 1.0, 0, 20, True, True), (1.0, max(1.5, size / 60), 0, 44, False, False)]
+    return [(0.68, size / 36, 0, 30, False, False), (0.79, max(1.0, size / 110), 0, 22, True, True), (0.90, size / 64, 0, 40, False, False), (1.0, size / 80, 0, 52, True, False)]
 
 
 def orb_html(size: int, state: str, extra_style: str = '', title: str | None = None) -> str:
@@ -134,7 +134,7 @@ def orb_html(size: int, state: str, extra_style: str = '', title: str | None = N
     n_shell, n_core = _detail(size)
     rings = _rings(size)
     r = (size / 2 - 2) * (0.40 if size >= 40 else 0.55)
-    dot = max(2, round(size / 30))
+    dot = max(2, round(size / 40))
     line = 1 if size < 80 else 1.5
     shell = [(x * r, y * r, z * r) for x, y, z in _fib(n_shell, rng, .08)]
     core = [(x * r * .42, y * r * .42, z * r * .42) for x, y, z in _fib(n_core, rng, .25)]
@@ -228,7 +228,7 @@ BOARD_STATES = [
     ('reading', 'query / search / lines activity', 'many pathways; rings turn faster'),
     ('running', 'pipeline run in progress', 'whole graph cycles; rings race'),
     ('wrote', 'published analysis / created watch or bookmark', 'a path lights and leaves the sphere'),
-    ('needs', 'consent prompt pending', 'rings stop and brighten; one pathway held'),
+    ('needs', 'consent prompt pending', 'rings stop and breathe bright; one pathway held'),
     ('raw', 'agentRawAccess is on', 'every pathway visible, slow; red never fades'),
 ]
 
@@ -263,9 +263,9 @@ def write_board() -> None:
       <span style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)">Anatomy &amp; rules</span>
       <div><b>Why a network.</b> This is what the agent is, structurally: many simple nodes, connections between them, and activity that is a pattern of signals moving along those connections. Nothing is hidden behind a surface; it is seen through, not looked at.</div>
       <div><b>Nucleus.</b> A sparse shell of nodes on a sphere and a denser core cluster for what is currently held. Each node links to its nearest neighbours; core nodes also reach the shell. The whole graph turns very slowly so depth reads.</div>
-      <div><b>Rings.</b> Two to four broken rings orbit the nucleus: arcs of uneven length and brightness with gaps between, one flat like a dial, the others tilted so they read as orbits, alternating direction. They are the instrument around the mind: they speed up with reading and running, stop dead and brighten when the agent needs you, and slow when raw access is on.</div>
+      <div><b>Rings.</b> Two to four concentric broken rings face the viewer around the nucleus: arcs of uneven length and brightness with gaps between, a fine tick ring among them, alternating direction and period. They are the instrument around the mind: they speed up with reading and running, stop and breathe bright when the agent needs you, and slow when raw access is on.</div>
       <div><b>Signal, not spin.</b> The primary motion is a pulse travelling along an edge. Pathways are tiered; each state enables tiers and sets speed, so idle fires a few, reading many, running all. No state performs "thinking" while nothing is happening.</div>
-      <div><b>Direction means something.</b> Reading converges inward. Wrote lights a path that leaves the sphere: an output actually exited. Needs-you holds one pathway bright and still, with the attention ring outside — blocked on a person, from the inside.</div>
+      <div><b>Direction means something.</b> Reading converges inward. Wrote lights a path that leaves the sphere: an output actually exited. Needs-you holds one pathway bright and still while the rings stop and breathe — blocked on a person, from the inside.</div>
       <div><b>Colour.</b> One token per state (<span style="font-family:var(--font-mono)">--agent-idle … --agent-raw</span>); nodes, edges, pulses and halo are mixed from it. No face, no eyes, no orientation toward the viewer — ever.</div>
       <div><b>Later.</b> The shared-focus handoff becomes a bright entry point on the shell where the human's context enters. Under <span style="font-family:var(--font-mono)">prefers-reduced-motion</span>: freeze the turn, keep pulses slow, keep colour and the ring.</div>
     </div>
