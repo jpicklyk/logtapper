@@ -33,6 +33,7 @@ use routes::artifacts::{
     h_list_bookmarks, h_publish_analysis, h_publish_workspace_analysis, h_update_analysis,
     h_update_analysis_scoped, h_update_bookmark,
 };
+use routes::filters::{h_cancel_filter, h_close_filter, h_create_filter, h_filter_info, h_filter_lines};
 use routes::insights::h_insights;
 use routes::lines::{h_lines_around, h_query, h_tag_stats};
 use routes::pipeline::{h_pipeline, h_processor_detail, h_run_pipeline};
@@ -198,6 +199,12 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("DELETE", "/mcp/sessions/{session_id}/watches/{watch_id}"),
     // Activity feed (both callers' actions; see `services::activity`).
     ("GET", "/mcp/activity"),
+    // WP-7 filters
+    ("POST", "/mcp/sessions/{session_id}/filters"),
+    ("GET", "/mcp/filters/{filter_id}"),
+    ("GET", "/mcp/filters/{filter_id}/lines"),
+    ("POST", "/mcp/filters/{filter_id}/cancel"),
+    ("DELETE", "/mcp/filters/{filter_id}"),
 ];
 
 /// Build the bridge's `Router` without binding a socket.
@@ -245,6 +252,11 @@ pub fn router(ctx: BridgeCtx) -> Router {
         .route("/mcp/sessions/{session_id}/watches/{watch_id}", delete(h_cancel_watch))
         // Activity feed (both callers' actions; see `services::activity`).
         .route("/mcp/activity", get(h_activity))
+        // WP-7 filters
+        .route("/mcp/sessions/{session_id}/filters", post(h_create_filter))
+        .route("/mcp/filters/{filter_id}", get(h_filter_info).delete(h_close_filter))
+        .route("/mcp/filters/{filter_id}/lines", get(h_filter_lines))
+        .route("/mcp/filters/{filter_id}/cancel", post(h_cancel_filter))
         .layer(axum_middleware::from_fn_with_state(ctx.clone(), middleware::record_activity))
         // `require_local` is added AFTER `record_activity`, which in axum/tower
         // layering means it becomes the OUTERMOST layer and therefore runs
@@ -355,6 +367,11 @@ mod tests {
             "POST /mcp/sessions/{session_id}/watches",
             "DELETE /mcp/sessions/{session_id}/watches/{watch_id}",
             "GET /mcp/activity",
+            "POST /mcp/sessions/{session_id}/filters",
+            "GET /mcp/filters/{filter_id}",
+            "GET /mcp/filters/{filter_id}/lines",
+            "POST /mcp/filters/{filter_id}/cancel",
+            "DELETE /mcp/filters/{filter_id}",
         ];
 
         assert_eq!(rendered, expected, "ROUTES drifted from the pinned route table — update both this test and router() together");

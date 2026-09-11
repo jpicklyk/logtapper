@@ -257,11 +257,12 @@ async fn route_table_probe_every_route_resolves_through_the_live_router() {
     let routes = mcp_bridge::ROUTES;
 
     // Pinned alongside `mcp_bridge::route_table_matches_expected` (39 at the
-    // time WP-T2 landed) — a drift here means BOTH tests need updating, which
-    // is the point: it forces a route addition/removal to touch this file.
+    // time WP-T2 landed, 44 after WP-7 appended the five `/mcp/filters`
+    // routes) — a drift here means BOTH tests need updating, which is the
+    // point: it forces a route addition/removal to touch this file.
     assert_eq!(
         routes.len(),
-        39,
+        44,
         "mcp_bridge::ROUTES count drifted — update this assertion alongside the route table"
     );
 
@@ -584,4 +585,244 @@ async fn search_with_context_route_honors_the_anonymization_gate() {
 #[tokio::test]
 async fn lines_around_route_honors_the_anonymization_gate() {
     assert_agent_redaction_gating(|id| format!("/mcp/sessions/{id}/lines_around?line=0")).await;
+}
+
+// ---------------------------------------------------------------------------
+// 6. WP-7 — filter endpoints
+// ---------------------------------------------------------------------------
+//
+// `harness::app()` wires a `NullSpawner` (see `services::testing`), so
+// `services::filters::create`'s spawned background scan never actually runs
+// under this harness — exactly like a filter observed a moment after
+// creation. The scan loop itself is covered by `services::filters`'s own
+// `#[tokio::test]`s, which call it directly; these tests are about the HTTP
+// surface: routing, the create/info/lines/cancel/close round trip, the
+// error-body shape for an unknown id, and the anonymization gate.
+mod wp7_filters {
+    use super::*;
+
+    #[tokio::test]
+    async fn create_info_lines_cancel_close_round_trip_over_the_harness() {
+        let (router, state, _sink, _tmp) = app();
+        state.sessions.lock().unwrap().insert(
+            "s1".to_string(),
+            app_lib::services::testing::fixture_session("s1", 10),
+        );
+
+        // create
+        let (status, body) =
+            send_json(&router, Method::POST, "/mcp/sessions/s1/filters", &trusted_headers(), &json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["sessionId"], "s1");
+        assert_eq!(body["totalLines"], 10);
+        let filter_id = body["filterId"].as_str().expect("filterId must be a string").to_string();
+
+        // info
+        let (status, body) = get(&router, &format!("/mcp/filters/{filter_id}"), &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["filterId"], filter_id);
+        assert_eq!(body["sessionId"], "s1");
+        assert_eq!(body["totalLines"], 10);
+        assert_eq!(body["status"], "scanning");
+
+        // lines — nothing matched yet (the background scan never runs under
+        // this harness's NullSpawner), but the route itself must respond.
+        let (status, body) =
+            get(&router, &format!("/mcp/filters/{filter_id}/lines"), &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["filterId"], filter_id);
+        assert_eq!(body["totalMatches"], 0);
+        assert!(body["lines"].as_array().expect("lines must be an array").is_empty());
+
+        // lines respects offset/limit query params without erroring even
+        // when the page they describe is empty.
+        let (status, _body) = get(
+            &router,
+            &format!("/mcp/filters/{filter_id}/lines?offset=5&limit=10"),
+            &trusted_headers(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        // cancel
+        let (status, body) = send_json(
+            &router,
+            Method::POST,
+            &format!("/mcp/filters/{filter_id}/cancel"),
+            &trusted_headers(),
+            &json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["ok"], true);
+
+        let (status, body) = get(&router, &format!("/mcp/filters/{filter_id}"), &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"], "cancelled");
+
+        // close
+        let (status, body) = send_json(
+            &router,
+            Method::DELETE,
+            &format!("/mcp/filters/{filter_id}"),
+            &trusted_headers(),
+            &json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["ok"], true);
+
+        // gone — both `info` and `lines` now report NOT_FOUND for it.
+        let (status, body) = get(&router, &format!("/mcp/filters/{filter_id}"), &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK, "pre-WP-13 envelope is always 200");
+        assert_eq!(body["code"], "NOT_FOUND");
+        assert!(body["error"].as_str().unwrap().contains(&filter_id));
+
+        let (status, body) =
+            get(&router, &format!("/mcp/filters/{filter_id}/lines"), &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["code"], "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn unknown_filter_id_gets_a_not_found_style_error_body_on_every_route() {
+        let (router, _state, _sink, _tmp) = app();
+
+        let (status, body) = get(&router, "/mcp/filters/nosuch", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK, "pre-WP-13 envelope is always 200");
+        assert_eq!(body["code"], "NOT_FOUND");
+        assert!(body["error"].as_str().unwrap().contains("nosuch"));
+
+        let (status, body) = get(&router, "/mcp/filters/nosuch/lines", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["code"], "NOT_FOUND");
+
+        let (status, body) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/filters/nosuch/cancel",
+            &trusted_headers(),
+            &json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["code"], "NOT_FOUND");
+
+        // close is idempotent — closing an id that was never created is
+        // success, not NOT_FOUND (matches `services::filters::close`).
+        let (status, body) = send_json(
+            &router,
+            Method::DELETE,
+            "/mcp/filters/nosuch",
+            &trusted_headers(),
+            &json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn create_rejects_an_invalid_regex_with_an_error_body() {
+        let (router, state, _sink, _tmp) = app();
+        state.sessions.lock().unwrap().insert(
+            "s1".to_string(),
+            app_lib::services::testing::fixture_session("s1", 5),
+        );
+
+        let (status, body) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/sessions/s1/filters",
+            &trusted_headers(),
+            &json!({ "regex": "[invalid" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "pre-WP-13 envelope is always 200");
+        assert_eq!(body["code"], "INVALID_ARGUMENT");
+        assert!(body["error"].as_str().unwrap().contains("[invalid"));
+    }
+
+    /// Fail-closed anonymization: an Agent caller (every bridge request is one)
+    /// against a session with NO `mcp_anonymize` entry must still be redacted.
+    /// Every bridge request is an `Agent` caller by construction
+    /// (`BridgeCtx::svc`), so this is exercised without any special headers.
+    #[tokio::test]
+    async fn lines_are_redacted_when_mcp_anonymize_is_absent_for_the_session() {
+        let (router, state, _sink, _tmp) = app();
+        state
+            .sessions
+            .lock()
+            .unwrap()
+            .insert("pii-session".to_string(), fixture_session_with_pii("pii-session", 3));
+        // Deliberately NOT setting `mcp_anonymize` for "pii-session".
+
+        let (status, body) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/sessions/pii-session/filters",
+            &trusted_headers(),
+            &json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let filter_id = body["filterId"].as_str().unwrap().to_string();
+
+        // Populate matches directly: this harness's `NullSpawner` never runs
+        // the real background scan, and this test is only about the
+        // redaction gate in `services::filters::lines`, not the scan loop
+        // (covered by `services::filters`'s own unit tests).
+        {
+            let filters = state.active_filters.lock().unwrap();
+            filters.get(&filter_id).expect("filter must be registered").append_matches(&[0, 1, 2]);
+        }
+
+        let (status, body) =
+            get(&router, &format!("/mcp/filters/{filter_id}/lines"), &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        let lines = body["lines"].as_array().expect("lines must be an array");
+        assert_eq!(lines.len(), 3);
+        for line in lines {
+            let raw = line["raw"].as_str().unwrap();
+            assert!(
+                !raw.contains("user0@example.com") && !raw.contains('@'),
+                "an agent must not see raw PII when mcp_anonymize is unset for the session: {raw}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn lines_stay_raw_when_mcp_anonymize_is_explicitly_false() {
+        let (router, state, _sink, _tmp) = app();
+        state
+            .sessions
+            .lock()
+            .unwrap()
+            .insert("pii-session".to_string(), fixture_session_with_pii("pii-session", 2));
+        state.mcp_anonymize.lock().unwrap().insert("pii-session".to_string(), false);
+
+        let (status, body) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/sessions/pii-session/filters",
+            &trusted_headers(),
+            &json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let filter_id = body["filterId"].as_str().unwrap().to_string();
+        {
+            let filters = state.active_filters.lock().unwrap();
+            filters.get(&filter_id).unwrap().append_matches(&[0, 1]);
+        }
+
+        let (status, body) =
+            get(&router, &format!("/mcp/filters/{filter_id}/lines"), &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        let lines = body["lines"].as_array().unwrap();
+        assert!(
+            lines.iter().any(|l| l["raw"].as_str().unwrap().contains('@')),
+            "mcp_anonymize=false must serve raw text"
+        );
+    }
 }
