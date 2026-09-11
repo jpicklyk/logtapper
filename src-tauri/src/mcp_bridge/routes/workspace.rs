@@ -44,47 +44,20 @@
 //!
 //! ## Response shapes
 //!
-//! These are new routes (no legacy JSON shape to preserve), so success
-//! responses serialize the typed `services::workspace` structs directly.
-//!
-//! The error envelope is `{ "error", "code" }` everywhere, but the status
-//! differs by handler class, following the split `h_open_file` established:
-//!
-//! - The three **write** routes (`load`, `save`, `autosave`) render real HTTP
-//!   statuses from [`ServiceError::http_status`] / [`ServiceError::code`] —
-//!   `403 NOT_ALLOWED` for a destination or `.ltw` outside the allowlist,
-//!   `400 INVALID_PATH` / `INVALID_ARGUMENT` for a malformed one. A gate
-//!   refusal that answered `200` would be indistinguishable from success to
-//!   any client that checks the status, which is exactly why `h_open_file`
-//!   and `h_close_session` were exempted from the 200-always convention.
-//! - The two **read** routes keep the ordinary `200 + { "error" }` shape of
-//!   every sibling GET in this bridge, pending WP-13's uniform migration.
+//! Success bodies are the typed `services::workspace` structs; `save` and
+//! `autosave` share one [`WorkspaceSaved`] shape (pre-WP-13 they spelled the
+//! same fact `destPath` and `path` respectively). Failures carry a real
+//! status — `403 NOT_ALLOWED` for a destination or `.ltw` outside the
+//! allowlist, `400 INVALID_PATH` / `INVALID_ARGUMENT` for a malformed one.
 
-use axum::{
-    extract::State,
-    http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
-    Json,
-};
+use axum::{Json, extract::State, http::HeaderMap};
 use serde::Deserialize;
-use serde_json::{json, Value};
 
-use crate::mcp_bridge::respond::err;
-use crate::mcp_bridge::routes::artifacts::client_name;
 use crate::mcp_bridge::BridgeCtx;
-use crate::services::{workspace, ServiceError};
-
-/// The legacy read-route envelope: `200` with `{ "error", "code" }`.
-fn err_json(e: &ServiceError) -> Json<Value> {
-    Json(json!({ "error": e.message(), "code": e.code() }))
-}
-
-/// The write-route envelope: the same body under the error's real status.
-fn err_response(e: &ServiceError) -> Response {
-    let status =
-        StatusCode::from_u16(e.http_status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    err(status, e.message(), e.code())
-}
+use crate::mcp_bridge::respond::client_name;
+use crate::services::ServiceError;
+use crate::services::workspace::{self, WorkspaceLoadOutcome, WorkspaceSummary};
+use crate::services::wire::{WorkspaceList, WorkspaceSaved};
 
 // ---------------------------------------------------------------------------
 // GET /mcp/workspaces
@@ -94,12 +67,9 @@ fn err_response(e: &ServiceError) -> Response {
 pub(crate) async fn h_list_workspaces(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
-) -> Json<Value> {
-    let svc = ctx.svc(&client_name(&headers));
-    match workspace::list(&svc) {
-        Ok(entries) => Json(json!({ "workspaces": entries })),
-        Err(e) => err_json(&e),
-    }
+) -> Result<Json<WorkspaceList>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(WorkspaceList { workspaces: workspace::list(&svc)? }))
 }
 
 // ---------------------------------------------------------------------------
@@ -112,12 +82,9 @@ pub(crate) async fn h_list_workspaces(
 pub(crate) async fn h_current_workspace(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
-) -> Json<Value> {
-    let svc = ctx.svc(&client_name(&headers));
-    match workspace::current(&svc) {
-        Ok(summary) => Json(json!(summary)),
-        Err(e) => err_json(&e),
-    }
+) -> Result<Json<WorkspaceSummary>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(workspace::current(&svc)?))
 }
 
 // ---------------------------------------------------------------------------
@@ -135,12 +102,9 @@ pub(crate) async fn h_load_workspace(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
     Json(body): Json<LoadWorkspaceBody>,
-) -> Response {
-    let svc = ctx.svc(&client_name(&headers));
-    match workspace::load_and_restore(&svc, &body.path).await {
-        Ok(outcome) => Json(json!(outcome)).into_response(),
-        Err(e) => err_response(&e),
-    }
+) -> Result<Json<WorkspaceLoadOutcome>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(workspace::load_and_restore(&svc, &body.path).await?))
 }
 
 // ---------------------------------------------------------------------------
@@ -152,13 +116,11 @@ pub(crate) async fn h_save_workspace(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
     Json(options): Json<workspace::SaveWorkspaceOptions>,
-) -> Response {
-    let svc = ctx.svc(&client_name(&headers));
-    let dest = options.dest_path.clone();
-    match workspace::save(&svc, options) {
-        Ok(()) => Json(json!({ "saved": true, "destPath": dest })).into_response(),
-        Err(e) => err_response(&e),
-    }
+) -> Result<Json<WorkspaceSaved>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    let path = options.dest_path.clone();
+    workspace::save(&svc, options)?;
+    Ok(Json(WorkspaceSaved { saved: true, path }))
 }
 
 // ---------------------------------------------------------------------------
@@ -170,10 +132,8 @@ pub(crate) async fn h_autosave_workspace(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
     Json(options): Json<workspace::AutoSaveWorkspaceOptions>,
-) -> Response {
-    let svc = ctx.svc(&client_name(&headers));
-    match workspace::auto_save(&svc, options) {
-        Ok(path) => Json(json!({ "saved": true, "path": path })).into_response(),
-        Err(e) => err_response(&e),
-    }
+) -> Result<Json<WorkspaceSaved>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    let path = workspace::auto_save(&svc, options)?;
+    Ok(Json(WorkspaceSaved { saved: true, path }))
 }

@@ -257,16 +257,13 @@ async fn route_table_probe_every_route_resolves_through_the_live_router() {
     let routes = mcp_bridge::ROUTES;
 
     // Pinned alongside `mcp_bridge::route_table_matches_expected` (39 at the
-    // time WP-T2 landed, 70 after every Wave-2 package appended its routes) — a
-    // drift here means BOTH tests need updating, which is the point: it
-    // forces a route addition/removal to touch this file. Other Wave-2
-    // packages append their own routes concurrently in sibling worktrees, so
-    // this exact number is expected to hit a merge conflict when those
-    // branches combine — resolve it by summing every package's additions,
-    // not by picking one side.
+    // time WP-T2 landed, 70 once every Wave-2 package had appended its routes,
+    // 69 after WP-13 deleted the orphaned `tag-stats` route) — a drift here
+    // means BOTH tests need updating, which is the point: it forces a route
+    // addition or removal to touch this file.
     assert_eq!(
         routes.len(),
-        70,
+        69,
         "mcp_bridge::ROUTES count drifted — update this assertion alongside the route table"
     );
 
@@ -421,7 +418,7 @@ async fn open_file_outside_allowlist_is_forbidden() {
     .await;
 
     assert_eq!(status, StatusCode::FORBIDDEN);
-    assert_eq!(body["code"], "NOT_ALLOWED");
+    assert_eq!(body["error"]["code"], "NOT_ALLOWED");
 }
 
 #[tokio::test]
@@ -478,7 +475,7 @@ async fn open_file_rejects_malformed_paths_as_invalid() {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "path {bad:?} should be rejected as INVALID_PATH");
-        assert_eq!(body["code"], "INVALID_PATH", "path {bad:?}");
+        assert_eq!(body["error"]["code"], "INVALID_PATH", "path {bad:?}");
     }
 }
 
@@ -787,16 +784,16 @@ mod wp7_filters {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["ok"], true);
 
-        // gone — both `info` and `lines` now report NOT_FOUND for it.
+        // gone — both `info` and `lines` now report a real 404 for it.
         let (status, body) = get(&router, &format!("/mcp/filters/{filter_id}"), &trusted_headers()).await;
-        assert_eq!(status, StatusCode::OK, "pre-WP-13 envelope is always 200");
-        assert_eq!(body["code"], "NOT_FOUND");
-        assert!(body["error"].as_str().unwrap().contains(&filter_id));
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["error"]["code"], "NOT_FOUND");
+        assert!(body["error"]["message"].as_str().unwrap().contains(&filter_id));
 
         let (status, body) =
             get(&router, &format!("/mcp/filters/{filter_id}/lines"), &trusted_headers()).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["code"], "NOT_FOUND");
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["error"]["code"], "NOT_FOUND");
     }
 
     #[tokio::test]
@@ -804,13 +801,13 @@ mod wp7_filters {
         let (router, _state, _sink, _tmp) = app();
 
         let (status, body) = get(&router, "/mcp/filters/nosuch", &trusted_headers()).await;
-        assert_eq!(status, StatusCode::OK, "pre-WP-13 envelope is always 200");
-        assert_eq!(body["code"], "NOT_FOUND");
-        assert!(body["error"].as_str().unwrap().contains("nosuch"));
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["error"]["code"], "NOT_FOUND");
+        assert!(body["error"]["message"].as_str().unwrap().contains("nosuch"));
 
         let (status, body) = get(&router, "/mcp/filters/nosuch/lines", &trusted_headers()).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["code"], "NOT_FOUND");
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["error"]["code"], "NOT_FOUND");
 
         let (status, body) = send_json(
             &router,
@@ -820,8 +817,8 @@ mod wp7_filters {
             &json!({}),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["code"], "NOT_FOUND");
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["error"]["code"], "NOT_FOUND");
 
         // close is idempotent — closing an id that was never created is
         // success, not NOT_FOUND (matches `services::filters::close`).
@@ -853,9 +850,9 @@ mod wp7_filters {
             &json!({ "regex": "[invalid" }),
         )
         .await;
-        assert_eq!(status, StatusCode::OK, "pre-WP-13 envelope is always 200");
-        assert_eq!(body["code"], "INVALID_ARGUMENT");
-        assert!(body["error"].as_str().unwrap().contains("[invalid"));
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["code"], "INVALID_ARGUMENT");
+        assert!(body["error"]["message"].as_str().unwrap().contains("[invalid"));
     }
 
     /// Fail-closed anonymization: an Agent caller (every bridge request is one)
@@ -1085,7 +1082,7 @@ pipeline:
         });
         let (status, resp) = send_json(&router, Method::POST, "/mcp/export", &trusted_headers(), &body).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "body: {resp}");
-        assert_eq!(resp["code"], "NOT_ALLOWED");
+        assert_eq!(resp["error"]["code"], "NOT_ALLOWED");
         assert!(!dest.exists(), "no file must be written on a denied destination");
     }
 }
@@ -1236,7 +1233,7 @@ meta:
         let (router, _state, _sink, _tmp) = app();
         let (status, body) = get(&router, "/mcp/marketplace/sources/nope/fetch", &trusted_headers()).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
-        assert_eq!(body["code"], "NOT_FOUND");
+        assert_eq!(body["error"]["code"], "NOT_FOUND");
     }
 
     #[tokio::test]
@@ -1251,7 +1248,7 @@ meta:
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(body["code"], "INVALID_ARGUMENT");
+        assert_eq!(body["error"]["code"], "INVALID_ARGUMENT");
     }
 
     /// Agent `add_source` is `Forbidden` at the service level — there is no
@@ -1484,7 +1481,7 @@ mod wp8_workspace {
         )
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN, "denied .ltw must be 403: {body:?}");
-        assert_eq!(body["code"], "NOT_ALLOWED");
+        assert_eq!(body["error"]["code"], "NOT_ALLOWED");
     }
 
     /// The write gate is the destination's parent directory, so a `.ltw` that
@@ -1506,7 +1503,7 @@ mod wp8_workspace {
         )
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN, "denied destination must be 403: {body:?}");
-        assert_eq!(body["code"], "NOT_ALLOWED");
+        assert_eq!(body["error"]["code"], "NOT_ALLOWED");
         assert!(!dest.exists(), "a refused save must not have written anything");
     }
 
@@ -1552,7 +1549,7 @@ mod wp8_workspace {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "a traversing id must be rejected: {body:?}");
-        assert_eq!(body["code"], "INVALID_ARGUMENT");
+        assert_eq!(body["error"]["code"], "INVALID_ARGUMENT");
     }
 
     /// The two read routes: the persisted list and the live summary. Neither
@@ -1661,12 +1658,11 @@ mod wp11_stream {
     async fn devices_route_answers_with_a_typed_body_whether_or_not_adb_exists() {
         let (router, _state, _sink, _tmp) = app();
         let (status, body) = get(&router, "/mcp/adb/devices", &trusted_headers()).await;
-        assert_eq!(status, StatusCode::OK);
-        if body.get("devices").is_some() {
+        if status == StatusCode::OK {
             assert!(body["devices"].is_array(), "devices must be an array: {body}");
         } else {
-            assert!(body["error"].is_string(), "expected a typed error body: {body}");
-            assert!(body["code"].is_string(), "a typed error must carry a code: {body}");
+            assert!(body["error"]["code"].is_string(), "a typed error must carry a code: {body}");
+            assert!(body["error"]["message"].is_string(), "...and a message: {body}");
         }
     }
 
@@ -1675,9 +1671,9 @@ mod wp11_stream {
         let (router, _state, _sink, _tmp) = app();
         let (status, body) =
             get(&router, "/mcp/sessions/nosuch/stream/status", &trusted_headers()).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["code"], "NOT_FOUND");
-        assert_eq!(body["error"], "Session 'nosuch' not found");
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["error"]["code"], "NOT_FOUND");
+        assert_eq!(body["error"]["message"], "Session 'nosuch' not found");
     }
 
     #[tokio::test]
@@ -1685,10 +1681,10 @@ mod wp11_stream {
         let (router, _state, _sink, _tmp) = app();
         let (status, body) =
             get(&router, "/mcp/sessions/nosuch/stream/events", &trusted_headers()).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["code"], "NOT_FOUND");
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["error"]["code"], "NOT_FOUND");
         assert!(
-            body["error"].as_str().unwrap().contains("No event stream registered"),
+            body["error"]["message"].as_str().unwrap().contains("No event stream registered"),
             "{body}"
         );
     }
@@ -1726,8 +1722,8 @@ mod wp11_stream {
             &json!({ "destPath": dest.to_string_lossy() }),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["code"], "NOT_ALLOWED", "{body}");
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body["error"]["code"], "NOT_ALLOWED", "{body}");
         assert!(!dest.exists(), "a refused save must not create the file");
     }
 
@@ -1806,5 +1802,325 @@ mod wp11_stream {
             raw.contains("user0@example.com"),
             "mcp_anonymize=false must serve raw text"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 9. WP-13 — one typed wire contract, real status codes
+// ---------------------------------------------------------------------------
+//
+// The bridge no longer answers `200 + { "error": "…" }`. Every failure is
+// `ServiceError`'s real status plus `{ "error": { "code", "message" } }`
+// (`mcp_bridge::respond`'s `IntoResponse` impl), and every success is a typed
+// `services::wire` value. These tests pin both halves over the live router.
+mod wp13_wire_contract {
+    use super::*;
+
+    /// Minimal query string a route needs before its handler is even reached.
+    ///
+    /// Without these, axum's `Query` extractor rejects the request before
+    /// `IntoResponse for ServiceError` is involved at all — which is a
+    /// different (and correct) failure mode, but not the one under test.
+    fn probe_query(template: &str) -> &'static str {
+        match template {
+            t if t.ends_with("/state_at") => "?line=0",
+            t if t.ends_with("/search") => "?pattern=x",
+            t if t.ends_with("/search_with_context") => "?query=x",
+            t if t.ends_with("/section_at") || t.ends_with("/lines_around") => "?line=0",
+            t if t.ends_with("/chart") => "?processor_id=x",
+            t if t.ends_with("/timeline") => "?processor_ids=x",
+            _ => "",
+        }
+    }
+
+    /// Every route in the table, driven against a session/filter/processor id
+    /// that does not exist: whatever comes back, if it is a failure with a JSON
+    /// body then it must be the one envelope — never a bare top-level `error`
+    /// string, and never a 200 pretending to be a success.
+    ///
+    /// Bodies that are not JSON are skipped on purpose: a POST probed with `{}`
+    /// can be rejected by axum's own `Json` extractor (missing required field)
+    /// before any handler runs, and that rejection is plain text by design.
+    #[tokio::test]
+    async fn every_route_answers_failures_with_the_typed_error_envelope() {
+        let (router, _state, _sink, _tmp) = app();
+        let mut asserted = 0usize;
+
+        for (method_str, template) in mcp_bridge::ROUTES {
+            let path = format!("{}{}", substitute_placeholders(template), probe_query(template));
+            let method = Method::from_bytes(method_str.as_bytes()).expect("valid method");
+
+            let (status, bytes) = if method == Method::GET {
+                get_raw(&router, &path, &trusted_headers()).await
+            } else {
+                send_json_raw(&router, method.clone(), &path, &trusted_headers(), &json!({})).await
+            };
+
+            if status.is_success() {
+                continue;
+            }
+            let Ok(body) = serde_json::from_slice::<Value>(&bytes) else {
+                // An extractor rejection (plain text) — not this test's concern.
+                continue;
+            };
+
+            asserted += 1;
+            assert!(
+                !body["error"].is_string(),
+                "{method_str} {template} -> {status}: the pre-WP-13 bare `error` string is gone, \
+                 but this route still emits one: {body}"
+            );
+            assert!(
+                body["error"]["code"].is_str_nonempty(),
+                "{method_str} {template} -> {status}: error.code must be a non-empty string: {body}"
+            );
+            assert!(
+                body["error"]["message"].is_str_nonempty(),
+                "{method_str} {template} -> {status}: error.message must be a non-empty string: {body}"
+            );
+            assert!(
+                body.get("code").is_none(),
+                "{method_str} {template}: the old sibling `code` key must be gone: {body}"
+            );
+        }
+
+        assert!(
+            asserted >= 20,
+            "the probe should have reached far more failing routes than {asserted} — \
+             did `substitute_placeholders` stop producing absent ids?"
+        );
+    }
+
+    /// Small helper so the assertions above read as one thought.
+    trait StrNonEmpty {
+        fn is_str_nonempty(&self) -> bool;
+    }
+    impl StrNonEmpty for Value {
+        fn is_str_nonempty(&self) -> bool {
+            self.as_str().is_some_and(|s| !s.is_empty())
+        }
+    }
+
+    /// `require_local`'s refusal used to be a bare, empty-bodied 403. It is
+    /// still a 403, but it now carries the same envelope as everything else, so
+    /// a client has exactly one error shape to parse.
+    #[tokio::test]
+    async fn the_csrf_refusal_uses_the_same_envelope() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, bytes) = get_raw(&router, "/mcp/status", &[]).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let body: Value = serde_json::from_slice(&bytes).expect("the refusal must be JSON now");
+        assert_eq!(body["error"]["code"], "NOT_ALLOWED");
+        assert!(body["error"]["message"].as_str().is_some_and(|m| !m.is_empty()));
+    }
+
+    /// The deleted orphan. Nothing in `mcp-server/` ever called it, so no
+    /// shipped client breaks — but it must genuinely be gone from the table,
+    /// not merely unregistered in `router()`.
+    #[tokio::test]
+    async fn tag_stats_is_gone_from_the_route_table_and_the_router() {
+        assert!(
+            !mcp_bridge::ROUTES.iter().any(|(_, p)| p.contains("tag-stats")),
+            "tag-stats must be removed from ROUTES"
+        );
+
+        let (router, _state, _sink, _tmp) = app();
+        let (status, bytes) = get_raw(&router, "/mcp/sessions/s1/tag-stats", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(bytes.is_empty(), "axum's own routing 404, not a handler's");
+    }
+
+    // ── Renamed / retyped success bodies ───────────────────────────────────
+
+    #[tokio::test]
+    async fn status_reports_the_processor_count_under_its_own_key() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, body) = get(&router, "/mcp/status", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["running"], true);
+        assert_eq!(body["installedProcessorCount"], 0);
+        assert!(
+            body.get("installedProcessors").is_none(),
+            "that key now means the *list* on GET /mcp/sessions: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn query_answers_a_line_page() {
+        let (router, state, _sink, _tmp) = app();
+        state
+            .sessions
+            .lock()
+            .unwrap()
+            .insert("s1".to_string(), fixture_session_with_pii("s1", 10));
+        state.mcp_anonymize.lock().unwrap().insert("s1".to_string(), false);
+
+        let (status, body) = get(&router, "/mcp/sessions/s1/query?n=3", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["sessionId"], "s1");
+        assert_eq!(body["totalLines"], 10);
+        assert_eq!(body["count"], 3);
+        assert_eq!(body["strategy"]["kind"], "recent");
+        // The renamed keys are gone, not merely duplicated.
+        for gone in ["totalLinesInSession", "sampledCount"] {
+            assert!(body.get(gone).is_none(), "{gone} should be gone: {body}");
+        }
+        // Elements are full `ViewLine`s now, not `{lineNum, level, tag, raw}`.
+        assert!(body["lines"][0]["message"].is_string(), "{body}");
+        assert_eq!(body["lines"][0]["isContext"], false);
+    }
+
+    #[tokio::test]
+    async fn lines_around_answers_a_line_page_whose_strategy_carries_the_centre() {
+        let (router, state, _sink, _tmp) = app();
+        state
+            .sessions
+            .lock()
+            .unwrap()
+            .insert("s1".to_string(), fixture_session_with_pii("s1", 10));
+        state.mcp_anonymize.lock().unwrap().insert("s1".to_string(), false);
+
+        let (status, body) = get(
+            &router,
+            "/mcp/sessions/s1/lines_around?line=4&before=1&after=1",
+            &trusted_headers(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["strategy"]["kind"], "around");
+        assert_eq!(body["strategy"]["line"], 4);
+        assert_eq!(body["count"], 3);
+        assert!(body.get("centerLine").is_none(), "replaced by strategy.line: {body}");
+        // `isCenter` became `isContext`, inverted.
+        let centres: Vec<&Value> = body["lines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|l| l["isContext"] == false)
+            .collect();
+        assert_eq!(centres.len(), 1);
+        assert_eq!(centres[0]["lineNum"], 4);
+    }
+
+    #[tokio::test]
+    async fn both_search_routes_answer_the_same_search_hits_shape() {
+        let (router, state, _sink, _tmp) = app();
+        state.sessions.lock().unwrap().insert(
+            "s1".to_string(),
+            app_lib::services::testing::fixture_session("s1", 20),
+        );
+        state.mcp_anonymize.lock().unwrap().insert("s1".to_string(), false);
+
+        for path in [
+            "/mcp/sessions/s1/search?pattern=line&limit=2&context=1",
+            "/mcp/sessions/s1/search_with_context?query=line&max_results=2&context_lines=1",
+        ] {
+            let (status, body) = get(&router, path, &trusted_headers()).await;
+            assert_eq!(status, StatusCode::OK, "{path}: {body}");
+            assert_eq!(body["sessionId"], "s1", "{path}");
+            assert_eq!(body["limit"], 2, "{path}");
+            assert_eq!(body["returned"], 2, "{path}");
+            assert_eq!(body["totalLines"], 20, "{path}");
+            assert!(body["hits"].is_array(), "{path}: {body}");
+            assert!(body["hits"][0]["line"]["lineNum"].is_number(), "{path}: {body}");
+            assert!(body["hits"][0]["contextBefore"].is_array(), "{path}: {body}");
+            assert!(body["hits"][0]["captures"].is_array(), "{path}: {body}");
+            for gone in ["matches", "matchCount", "maxResults", "totalLinesInSession"] {
+                assert!(body.get(gone).is_none(), "{path}: {gone} should be gone: {body}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn sections_answers_a_page_with_items() {
+        let (router, state, _sink, _tmp) = app();
+        state.sessions.lock().unwrap().insert(
+            "s1".to_string(),
+            app_lib::services::testing::fixture_session("s1", 5),
+        );
+
+        let (status, body) = get(&router, "/mcp/sessions/s1/sections", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(body["items"].is_array(), "{body}");
+        assert!(body["total"].is_number(), "{body}");
+        assert_eq!(body["offset"], 0);
+        assert_eq!(body["limit"], 50);
+        for gone in ["sections", "returned", "sessionId"] {
+            assert!(body.get(gone).is_none(), "{gone} should be gone: {body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn events_answers_a_page_with_items() {
+        let (router, state, _sink, _tmp) = app();
+        state.sessions.lock().unwrap().insert(
+            "s1".to_string(),
+            app_lib::services::testing::fixture_session("s1", 5),
+        );
+
+        let (status, body) = get(&router, "/mcp/sessions/s1/events", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(body["items"].is_array(), "{body}");
+        for gone in ["events", "count"] {
+            assert!(body.get(gone).is_none(), "{gone} should be gone: {body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_pipeline_listing_renames_the_matched_line_count() {
+        let (router, state, _sink, _tmp) = app();
+        state.sessions.lock().unwrap().insert(
+            "s1".to_string(),
+            app_lib::services::testing::fixture_session("s1", 5),
+        );
+
+        let (status, body) = get(&router, "/mcp/sessions/s1/pipeline", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["sessionId"], "s1");
+        assert_eq!(body["hasResults"], false);
+        assert!(body["reporters"].as_array().unwrap().is_empty());
+        assert!(body["stateTrackers"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_deleted_bookmark_acks_and_an_unknown_one_is_a_404() {
+        let (router, state, _sink, _tmp) = app();
+        state.sessions.lock().unwrap().insert(
+            "s1".to_string(),
+            app_lib::services::testing::fixture_session("s1", 5),
+        );
+
+        let (status, created) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/sessions/s1/bookmarks",
+            &trusted_headers(),
+            &json!({ "lineNumber": 1, "label": "here" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{created}");
+        let id = created["id"].as_str().expect("a bookmark id").to_string();
+
+        let (status, body) = send_json(
+            &router,
+            Method::DELETE,
+            &format!("/mcp/sessions/s1/bookmarks/{id}"),
+            &trusted_headers(),
+            &json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["ok"], true);
+
+        let (status, body) = send_json(
+            &router,
+            Method::DELETE,
+            "/mcp/sessions/s1/bookmarks/nosuch",
+            &trusted_headers(),
+            &json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(body["error"]["code"], "NOT_FOUND");
     }
 }

@@ -24,6 +24,10 @@
 //! `ctx.svc(client)` — the same functions `commands::{bookmark,analysis}`
 //! call for the UI — so both transports share one implementation, one set of
 //! emitted events, and one autosave/journal trigger.
+//!
+//! Success bodies are the domain types themselves (`Bookmark`,
+//! `AnalysisArtifact`, or a list of them); a delete answers [`Ack`]. An
+//! unknown id is a real `404`, not a 200 with an `error` key.
 
 use axum::{
     Json,
@@ -31,21 +35,14 @@ use axum::{
     http::HeaderMap,
 };
 use serde::Deserialize;
-use serde_json::{Value, json};
 
+use crate::core::analysis::AnalysisArtifact;
+use crate::core::bookmark::Bookmark;
 use crate::mcp_bridge::BridgeCtx;
+use crate::mcp_bridge::respond::client_name;
+use crate::services::ServiceError;
 use crate::services::{analyses, bookmarks};
-
-/// The self-reported `X-LogTapper-Client` header value an agent caller sends,
-/// defaulting to `"mcp"` when absent — mirrors `Caller::agent`'s doc comment.
-/// Shared with `routes::watches`, which has the identical need.
-pub(super) fn client_name(headers: &HeaderMap) -> String {
-    headers
-        .get("x-logtapper-client")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("mcp")
-        .to_string()
-}
+use crate::services::wire::Ack;
 
 // ---------------------------------------------------------------------------
 // Bookmark endpoints
@@ -62,12 +59,14 @@ pub(crate) async fn h_list_bookmarks(
     Path(session_id): Path<String>,
     Query(query): Query<BookmarkListQuery>,
     headers: HeaderMap,
-) -> Json<Value> {
-    let svc = ctx.svc(&client_name(&headers));
-    match bookmarks::list(&svc, &session_id, query.category.as_deref(), query.tag.as_deref()) {
-        Ok(list) => Json(json!(list)),
-        Err(e) => Json(json!({ "error": e.message() })),
-    }
+) -> Result<Json<Vec<Bookmark>>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(bookmarks::list(
+        &svc,
+        &session_id,
+        query.category.as_deref(),
+        query.tag.as_deref(),
+    )?))
 }
 
 #[derive(Deserialize)]
@@ -89,11 +88,11 @@ pub(crate) async fn h_create_bookmark(
     Path(session_id): Path<String>,
     headers: HeaderMap,
     Json(body): Json<CreateBookmarkBody>,
-) -> Json<Value> {
+) -> Result<Json<Bookmark>, ServiceError> {
     use crate::core::bookmark::CreatedBy;
 
-    let svc = ctx.svc(&client_name(&headers));
-    match bookmarks::create(
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(bookmarks::create(
         &svc,
         session_id,
         body.line_number,
@@ -104,22 +103,17 @@ pub(crate) async fn h_create_bookmark(
         body.snippet,
         body.category,
         body.tags,
-    ) {
-        Ok(bookmark) => Json(json!(bookmark)),
-        Err(e) => Json(json!({ "error": e.message() })),
-    }
+    )?))
 }
 
 pub(crate) async fn h_delete_bookmark(
     State(ctx): State<BridgeCtx>,
     Path((session_id, bookmark_id)): Path<(String, String)>,
     headers: HeaderMap,
-) -> Json<Value> {
-    let svc = ctx.svc(&client_name(&headers));
-    match bookmarks::remove(&svc, session_id, bookmark_id) {
-        Ok(_) => Json(json!({ "ok": true })),
-        Err(e) => Json(json!({ "error": e.message() })),
-    }
+) -> Result<Json<Ack>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    bookmarks::remove(&svc, session_id, bookmark_id)?;
+    Ok(Json(Ack::ok()))
 }
 
 #[derive(Deserialize)]
@@ -136,9 +130,9 @@ pub(crate) async fn h_update_bookmark(
     Path((session_id, bookmark_id)): Path<(String, String)>,
     headers: HeaderMap,
     Json(body): Json<UpdateBookmarkBody>,
-) -> Json<Value> {
-    let svc = ctx.svc(&client_name(&headers));
-    match bookmarks::update(
+) -> Result<Json<Bookmark>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(bookmarks::update(
         &svc,
         session_id,
         bookmark_id,
@@ -146,10 +140,7 @@ pub(crate) async fn h_update_bookmark(
         body.note,
         body.category,
         body.tags,
-    ) {
-        Ok(updated) => Json(json!(updated)),
-        Err(e) => Json(json!({ "error": e.message() })),
-    }
+    )?))
 }
 
 // ---------------------------------------------------------------------------
@@ -157,12 +148,12 @@ pub(crate) async fn h_update_bookmark(
 // ---------------------------------------------------------------------------
 
 /// `GET /mcp/analyses` — every workspace analysis artifact, unfiltered.
-pub(crate) async fn h_list_all_analyses(State(ctx): State<BridgeCtx>, headers: HeaderMap) -> Json<Value> {
-    let svc = ctx.svc(&client_name(&headers));
-    match analyses::list(&svc, None) {
-        Ok(list) => Json(json!(list)),
-        Err(e) => Json(json!({ "error": e.message() })),
-    }
+pub(crate) async fn h_list_all_analyses(
+    State(ctx): State<BridgeCtx>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<AnalysisArtifact>>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(analyses::list(&svc, None)?))
 }
 
 /// `GET /mcp/sessions/{session_id}/analyses` — analyses with at least one
@@ -172,12 +163,9 @@ pub(crate) async fn h_list_analyses(
     State(ctx): State<BridgeCtx>,
     Path(session_id): Path<String>,
     headers: HeaderMap,
-) -> Json<Value> {
-    let svc = ctx.svc(&client_name(&headers));
-    match analyses::list(&svc, Some(&session_id)) {
-        Ok(list) => Json(json!(list)),
-        Err(e) => Json(json!({ "error": e.message() })),
-    }
+) -> Result<Json<Vec<AnalysisArtifact>>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(analyses::list(&svc, Some(&session_id))?))
 }
 
 #[derive(Deserialize)]
@@ -194,12 +182,9 @@ pub(crate) async fn h_publish_workspace_analysis(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
     Json(body): Json<PublishAnalysisBody>,
-) -> Json<Value> {
-    let svc = ctx.svc(&client_name(&headers));
-    match analyses::publish(&svc, None, body.title, body.sections) {
-        Ok(artifact) => Json(json!(artifact)),
-        Err(e) => Json(json!({ "error": e.message() })),
-    }
+) -> Result<Json<AnalysisArtifact>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(analyses::publish(&svc, None, body.title, body.sections)?))
 }
 
 /// `POST /mcp/sessions/{session_id}/analyses` — publish an analysis
@@ -210,20 +195,23 @@ pub(crate) async fn h_publish_analysis(
     Path(session_id): Path<String>,
     headers: HeaderMap,
     Json(body): Json<PublishAnalysisBody>,
-) -> Json<Value> {
-    let svc = ctx.svc(&client_name(&headers));
-    match analyses::publish(&svc, Some(session_id), body.title, body.sections) {
-        Ok(artifact) => Json(json!(artifact)),
-        Err(e) => Json(json!({ "error": e.message() })),
-    }
+) -> Result<Json<AnalysisArtifact>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(analyses::publish(
+        &svc,
+        Some(session_id),
+        body.title,
+        body.sections,
+    )?))
 }
 
-fn lookup_analysis(ctx: &BridgeCtx, client: &str, artifact_id: &str) -> Json<Value> {
+fn lookup_analysis(
+    ctx: &BridgeCtx,
+    client: &str,
+    artifact_id: &str,
+) -> Result<Json<AnalysisArtifact>, ServiceError> {
     let svc = ctx.svc(client);
-    match analyses::get(&svc, artifact_id) {
-        Ok(art) => Json(json!(art)),
-        Err(e) => Json(json!({ "error": e.message() })),
-    }
+    Ok(Json(analyses::get(&svc, artifact_id)?))
 }
 
 /// `GET /mcp/analyses/{artifact_id}` — look up by artifact id (workspace-unique).
@@ -231,8 +219,8 @@ pub(crate) async fn h_get_analysis(
     State(ctx): State<BridgeCtx>,
     Path(artifact_id): Path<String>,
     headers: HeaderMap,
-) -> Json<Value> {
-    lookup_analysis(&ctx, &client_name(&headers), &artifact_id)
+) -> Result<Json<AnalysisArtifact>, ServiceError> {
+    lookup_analysis(&ctx, client_name(&headers), &artifact_id)
 }
 
 /// `GET /mcp/sessions/{session_id}/analyses/{artifact_id}` — same lookup as
@@ -242,8 +230,8 @@ pub(crate) async fn h_get_analysis_scoped(
     State(ctx): State<BridgeCtx>,
     Path((_session_id, artifact_id)): Path<(String, String)>,
     headers: HeaderMap,
-) -> Json<Value> {
-    lookup_analysis(&ctx, &client_name(&headers), &artifact_id)
+) -> Result<Json<AnalysisArtifact>, ServiceError> {
+    lookup_analysis(&ctx, client_name(&headers), &artifact_id)
 }
 
 #[derive(Deserialize)]
@@ -259,12 +247,15 @@ fn do_update_analysis(
     artifact_id: String,
     body: UpdateAnalysisBody,
     fallback_session: Option<String>,
-) -> Json<Value> {
+) -> Result<Json<AnalysisArtifact>, ServiceError> {
     let svc = ctx.svc(client);
-    match analyses::update(&svc, artifact_id, body.title, body.sections, fallback_session) {
-        Ok(updated) => Json(json!(updated)),
-        Err(e) => Json(json!({ "error": e.message() })),
-    }
+    Ok(Json(analyses::update(
+        &svc,
+        artifact_id,
+        body.title,
+        body.sections,
+        fallback_session,
+    )?))
 }
 
 /// `PUT /mcp/analyses/{artifact_id}` — update by artifact id (workspace-unique).
@@ -276,8 +267,8 @@ pub(crate) async fn h_update_analysis(
     Path(artifact_id): Path<String>,
     headers: HeaderMap,
     Json(body): Json<UpdateAnalysisBody>,
-) -> Json<Value> {
-    do_update_analysis(&ctx, &client_name(&headers), artifact_id, body, None)
+) -> Result<Json<AnalysisArtifact>, ServiceError> {
+    do_update_analysis(&ctx, client_name(&headers), artifact_id, body, None)
 }
 
 /// `PUT /mcp/sessions/{session_id}/analyses/{artifact_id}` — same update as
@@ -291,16 +282,18 @@ pub(crate) async fn h_update_analysis_scoped(
     Path((session_id, artifact_id)): Path<(String, String)>,
     headers: HeaderMap,
     Json(body): Json<UpdateAnalysisBody>,
-) -> Json<Value> {
-    do_update_analysis(&ctx, &client_name(&headers), artifact_id, body, Some(session_id))
+) -> Result<Json<AnalysisArtifact>, ServiceError> {
+    do_update_analysis(&ctx, client_name(&headers), artifact_id, body, Some(session_id))
 }
 
-fn do_delete_analysis(ctx: &BridgeCtx, client: &str, artifact_id: String) -> Json<Value> {
+fn do_delete_analysis(
+    ctx: &BridgeCtx,
+    client: &str,
+    artifact_id: String,
+) -> Result<Json<Ack>, ServiceError> {
     let svc = ctx.svc(client);
-    match analyses::remove(&svc, artifact_id) {
-        Ok(()) => Json(json!({ "ok": true })),
-        Err(e) => Json(json!({ "error": e.message() })),
-    }
+    analyses::remove(&svc, artifact_id)?;
+    Ok(Json(Ack::ok()))
 }
 
 /// `DELETE /mcp/analyses/{artifact_id}` — delete by artifact id (workspace-unique).
@@ -308,8 +301,8 @@ pub(crate) async fn h_delete_analysis(
     State(ctx): State<BridgeCtx>,
     Path(artifact_id): Path<String>,
     headers: HeaderMap,
-) -> Json<Value> {
-    do_delete_analysis(&ctx, &client_name(&headers), artifact_id)
+) -> Result<Json<Ack>, ServiceError> {
+    do_delete_analysis(&ctx, client_name(&headers), artifact_id)
 }
 
 /// `DELETE /mcp/sessions/{session_id}/analyses/{artifact_id}` — same delete
@@ -319,6 +312,6 @@ pub(crate) async fn h_delete_analysis_scoped(
     State(ctx): State<BridgeCtx>,
     Path((_session_id, artifact_id)): Path<(String, String)>,
     headers: HeaderMap,
-) -> Json<Value> {
-    do_delete_analysis(&ctx, &client_name(&headers), artifact_id)
+) -> Result<Json<Ack>, ServiceError> {
+    do_delete_analysis(&ctx, client_name(&headers), artifact_id)
 }
