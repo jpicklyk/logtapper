@@ -1,10 +1,7 @@
 use memmap2::Mmap;
-use regex::Regex;
 use serde::Serialize;
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Weak;
-#[cfg(test)]
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tempfile::NamedTempFile;
@@ -12,10 +9,12 @@ use tempfile::NamedTempFile;
 use crate::commands::{lock_or_err, AppState};
 use crate::core::line::{LineRequest, LineWindow, SearchQuery, SearchSummary};
 use crate::core::session::{AnalysisSession, SectionInfo, parser_for};
-use crate::commands::adapters::ui_ctx;
+use crate::commands::adapters::{TauriProgressSink, ui_ctx};
+use crate::services::events::ProgressSink;
 use crate::services::lines::{
     self, LineFilters, LineMetadataSource, LineSelection, LinesRequest,
 };
+use crate::services::search;
 // Only the `#[cfg(test)]` module below calls this directly; production code
 // reaches it through `services::lines::build_view_line`.
 #[cfg(test)]
@@ -1137,6 +1136,15 @@ pub(crate) fn line_window(
 // search_logs (streaming chunked results via events)
 // ---------------------------------------------------------------------------
 
+/// Payload of the `search-progress` event.
+///
+/// No longer constructed here: `search_logs` emits through
+/// [`ProgressEvent::Search`](crate::services::events::ProgressEvent::Search),
+/// whose `SearchProgressEvent` is field-for-field identical and serializes to
+/// the same bytes. Kept as an exported root type so the generated TypeScript
+/// binding the frontend listener imports does not move in this package —
+/// **WP-15/WP-16 should repoint that listener at `SearchProgressEvent` and
+/// delete this struct** (and its line in `tests/export_bindings.rs`).
 #[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchProgress {
@@ -1148,181 +1156,32 @@ pub struct SearchProgress {
     done: bool,
 }
 
-/// Parse "HH:MM" or "HH:MM:SS" into nanoseconds within a 24-hour day.
-/// Returns None on invalid input.
-fn parse_time_to_day_ns(s: &str) -> Option<i64> {
-    let mut parts = s.splitn(3, ':');
-    let h: i64 = parts.next()?.trim().parse().ok()?;
-    let m: i64 = parts.next()?.trim().parse().ok()?;
-    let sec: i64 = parts
-        .next()
-        .and_then(|s| s.split('.').next())
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0);
-    if !(0..=23).contains(&h) || !(0..=59).contains(&m) || !(0..=59).contains(&sec) {
-        return None;
-    }
-    Some((h * 3600 + m * 60 + sec) * 1_000_000_000)
-}
-
 const SEARCH_CHUNK_SIZE: usize = 10_000;
 
+/// Count the lines matching `query`, streaming partial results to the viewer
+/// as `search-progress` events while the scan runs.
+///
+/// A thin adapter over [`services::search::summary`](crate::services::search::summary),
+/// which owns the scan, the filters, the histograms and the progress cadence.
+/// The service is synchronous by contract — it re-acquires the `sessions` lock
+/// once per chunk and must never hold one across an await — so it runs on the
+/// blocking pool, which is also what the pre-service body's `yield_now()`
+/// between chunks was approximating.
+///
+/// The signature lost its `State` parameter (the context carries `AppState`
+/// now); the invoke payload and the `SearchSummary` return shape are unchanged.
 #[tauri::command]
 pub async fn search_logs(
-    state: State<'_, std::sync::Arc<AppState>>,
     app_handle: AppHandle,
     session_id: String,
     query: SearchQuery,
 ) -> Result<SearchSummary, String> {
-    // Acquire the lock briefly to read total_lines and validate the session exists.
-    let total_lines = {
-        let sessions = lock_or_err(&state.sessions, "sessions")?;
-        let session = sessions
-            .get(&session_id)
-            .ok_or_else(|| format!("Session '{session_id}' not found"))?;
-        let source = session.primary_source().ok_or("No sources in session")?;
-        source.total_lines()
-    };
-
-    let compiled_re = if query.is_regex {
-        let pattern = if query.case_sensitive {
-            query.text.clone()
-        } else {
-            format!("(?i){}", query.text)
-        };
-        Some(Regex::new(&pattern).map_err(|e| format!("Invalid regex: {e}"))?)
-    } else {
-        None
-    };
-
-    let needle_lower = query.text.to_lowercase();
-
-    // Pre-compute time range bounds (nanoseconds within a 24-hour day)
-    const DAY_NS: i64 = 86_400_000_000_000; // 24 * 60 * 60 * 1_000_000_000
-    let start_ns = query.start_time.as_deref().and_then(parse_time_to_day_ns);
-    let end_ns = query.end_time.as_deref().and_then(parse_time_to_day_ns);
-    let has_time_filter = start_ns.is_some() || end_ns.is_some();
-
-    let mut match_line_nums: Vec<usize> = Vec::new();
-    let mut by_level: HashMap<String, usize> = HashMap::new();
-    let mut by_tag: HashMap<String, usize> = HashMap::new();
-
-    // Process in chunks, emitting progress events
-    let mut chunk_start = 0;
-    while chunk_start < total_lines {
-        let chunk_end = (chunk_start + SEARCH_CHUNK_SIZE).min(total_lines);
-        let mut chunk_matches: Vec<usize> = Vec::new();
-
-        // Acquire lock briefly to read this chunk of lines
-        {
-            let sessions = lock_or_err(&state.sessions, "sessions")?;
-            let session = sessions
-                .get(&session_id)
-                .ok_or_else(|| format!("Session '{session_id}' not found"))?;
-            let source = session.primary_source().ok_or("No sources in session")?;
-
-            for i in chunk_start..chunk_end {
-                let Some(meta) = source.meta_at(i) else {
-                    continue;
-                };
-
-                // Level filter
-                if let Some(min_level) = query.min_level {
-                    if meta.level < min_level {
-                        continue;
-                    }
-                }
-
-                // Tag filter
-                if let Some(ref tags) = query.tags {
-                    let tag_str = session.resolve_tag(meta.tag_id);
-                    if !tags.is_empty() && !tags.iter().any(|t| t == tag_str) {
-                        continue;
-                    }
-                }
-
-                // Time range filter
-                if has_time_filter {
-                    if meta.timestamp == 0 {
-                        continue;
-                    }
-                    let ts_mod = meta.timestamp % DAY_NS;
-                    if let Some(s) = start_ns {
-                        if ts_mod < s {
-                            continue;
-                        }
-                    }
-                    if let Some(e) = end_ns {
-                        if ts_mod > e {
-                            continue;
-                        }
-                    }
-                }
-
-                // Text match
-                let raw_cow = source.raw_line(i);
-                let raw = raw_cow.as_deref().unwrap_or("");
-                let matched = if let Some(ref re) = compiled_re {
-                    re.is_match(raw)
-                } else if query.case_sensitive {
-                    raw.contains(query.text.as_str())
-                } else {
-                    raw.to_lowercase().contains(&needle_lower)
-                };
-
-                if matched {
-                    chunk_matches.push(i);
-                    *by_level
-                        .entry(format!("{:?}", meta.level))
-                        .or_insert(0) += 1;
-                    let tag_str = session.resolve_tag(meta.tag_id);
-                    if !tag_str.is_empty() {
-                        *by_tag.entry(tag_str.to_string()).or_insert(0) += 1;
-                    }
-                }
-            }
-        } // lock released
-
-        match_line_nums.extend_from_slice(&chunk_matches);
-
-        // Emit progress event for this chunk
-        let _ = app_handle.emit(
-            "search-progress",
-            SearchProgress {
-                session_id: session_id.clone(),
-                matched_so_far: match_line_nums.len(),
-                lines_scanned: chunk_end,
-                total_lines,
-                new_matches: chunk_matches,
-                done: false,
-            },
-        );
-
-        chunk_start = chunk_end;
-
-        // Yield to allow other tasks to run between chunks
-        tokio::task::yield_now().await;
-    }
-
-    // Emit final done event
-    let _ = app_handle.emit(
-        "search-progress",
-        SearchProgress {
-            session_id: session_id.clone(),
-            matched_so_far: match_line_nums.len(),
-            lines_scanned: total_lines,
-            total_lines,
-            new_matches: vec![],
-            done: true,
-        },
-    );
-
-    Ok(SearchSummary {
-        total_matches: match_line_nums.len(),
-        match_line_nums,
-        by_level,
-        by_tag,
-    })
+    let ctx = ui_ctx(&app_handle);
+    let progress: Arc<dyn ProgressSink> = Arc::new(TauriProgressSink::new(app_handle));
+    tokio::task::spawn_blocking(move || search::summary(&ctx, &session_id, &query, progress))
+        .await
+        .map_err(|e| format!("search task failed: {e}"))?
+        .map_err(String::from)
 }
 
 // ---------------------------------------------------------------------------
@@ -2997,6 +2856,7 @@ mod get_lines_golden {
     use crate::core::session::AnalysisSession;
     use crate::services::testing::{fixture_session_from, test_ctx};
     use serde_json::{Value, json};
+    use std::collections::HashMap;
 
     /// Frozen copy of the pre-service `commands::files::get_lines` body,
     /// taken verbatim from commit 6d1e19b with only the Tauri `State`

@@ -130,14 +130,10 @@ pub(super) use get_session_and_source;
 // and report `scannedLines` in the JSON response (both purely additive: every
 // existing field is unchanged) so callers know results may be incomplete.
 
-// The scan budget and the pure window math moved to `services::lines` — the
-// service layer owns the shared limit now that both raw-line reads go through
-// it. These re-exports exist only so `routes/search.rs` keeps compiling
-// unchanged; WP-2 repoints it and they go away.
-pub(super) use crate::services::lines::{
-    MCP_SCAN_CHUNK_SIZE, MCP_SCAN_LINE_CAP, capped_range_end, scan_chunk_bounds,
-    scan_window_capped,
-};
+// The scan budget and the pure window math live in `services::lines` — the
+// service layer owns the shared limit now that every raw-line read goes
+// through it. Nothing in this module re-exports them any more: `routes/lines.rs`
+// and `routes/search.rs` both import from `services::lines` directly.
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -260,40 +256,14 @@ pub(super) fn truncate_var_maps(vars: &HashMap<String, Value>) -> serde_json::Ma
         .collect()
 }
 
-/// Resolve multiple line numbers to raw, **un-anonymized, un-truncated**
-/// text, returning a map of line_num -> text. Must be called while holding
-/// the `sessions` lock (it borrows the locked map directly).
-///
-/// Callers MUST pipe the result through [`crate::services::policy::anonymize_line_texts`] —
-/// dropping the `sessions` lock first — before it reaches a JSON response.
-/// This function on its own does not honor the session's `mcp_anonymize`
-/// flag; serving its output directly is the Tier-2 raw-line-leak bug this
-/// pair of functions fixes (see `anonymize_for_session`'s doc comment for
-/// why the gate exists).
-///
-/// WP-4 moved the last in-tree caller (`routes::pipeline`) onto
-/// `services::pipeline`, whose `redacted_line_texts` performs the same
-/// two-phase resolve-then-redact. Kept — and allowed to be unused — because
-/// the remaining raw-line routes are mid-migration and still reach for it; the
-/// package that moves the last of them deletes this.
-#[allow(dead_code)]
-pub(super) fn resolve_line_texts(
-    sessions: &HashMap<String, crate::core::session::AnalysisSession>,
-    session_id: &str,
-    line_nums: &[usize],
-) -> HashMap<usize, String> {
-    let mut map = HashMap::new();
-    if let Some(session) = sessions.get(session_id) {
-        if let Some(source) = session.primary_source() {
-            for &ln in line_nums {
-                if let Some(raw) = source.raw_line(ln) {
-                    map.insert(ln, raw.into_owned());
-                }
-            }
-        }
-    }
-    map
-}
+// `resolve_line_texts` lived here: a resolve-under-the-lock half that callers
+// had to pair with `policy::anonymize_line_texts` after dropping `sessions`.
+// WP-4 moved its last caller (`routes::pipeline`) onto
+// `services::pipeline::redacted_line_texts`, and WP-2 moved the last raw-line
+// routes (`search`, `search_with_context`) onto `services::search`, which
+// redacts through `policy::redact_line`. With no callers left it is deleted
+// rather than kept behind `#[allow(dead_code)]` — a two-phase helper that
+// nothing pairs correctly is a footgun, not an asset.
 
 /// Build a JSON error response with a stable machine-readable `code` for MCP
 /// clients. Shared by the write-style handlers (`h_open_file`,
@@ -352,6 +322,12 @@ mod tests {
     use super::*;
     use crate::commands::AppState;
     use crate::processors::marketplace::resolve_processor_id_checked;
+    // The scan-window math these tests exercise lives in `services::lines`;
+    // this module no longer re-exports it (WP-2).
+    use crate::services::lines::{
+        MCP_SCAN_CHUNK_SIZE, MCP_SCAN_LINE_CAP, capped_range_end, scan_chunk_bounds,
+        scan_window_capped,
+    };
 
     // NOTE: the `resolve_should_anonymize` / `anonymize_for_session` /
     // `anonymize_line_texts` / `anonymize_scan_line` tests moved to

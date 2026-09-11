@@ -45,6 +45,8 @@ macro_rules! ROOT_TYPES {
             app_lib::services::wire::LineStrategy,
             app_lib::services::wire::LinePage,
             app_lib::services::wire::LineStats,
+            app_lib::services::wire::SearchHit,
+            app_lib::services::wire::SearchHits,
             app_lib::services::wire::PipelineRunResult,
             // --- services — caller model, activity journal, progress events ---
             app_lib::services::Caller,
