@@ -1,0 +1,50 @@
+/**
+ * Public API of the Solid viewer core.
+ *
+ * Everything outside `src-solid/viewer/` imports from this barrel only.
+ * Inside the module, files import each other directly.
+ *
+ * Two kinds of export live here:
+ *  1. The Solid ports of the four React viewer hooks (this directory).
+ *  2. Stable re-exports of the framework-free `src-next/` modules the viewer
+ *     reuses unchanged. They are re-exported here so no consumer has to know
+ *     the `@viewport/…` / `@cache/…` alias layout, and so the React barrels
+ *     (which pull in `.tsx`) are never reachable from Solid.
+ *
+ * Reactive ownership: `createVirtualBase` and `createCacheBinding` create
+ * effects, and `new ScrollControls(...)` does too. All three must be
+ * constructed inside a component body or an explicit `createRoot` owned by the
+ * caller. `SelectionManager` is owner-free.
+ */
+
+// ── Solid ports ───────────────────────────────────────────────────────────
+export { createVirtualBase, MAX_BROWSER_SCROLL_PX, DEFAULT_ROW_HEIGHT } from './virtualBase';
+export type { VirtualBase, VirtualBaseOptions, Ref } from './virtualBase';
+
+export { ScrollControls } from './scrollControls';
+export type { ScrollControlsOptions } from './scrollControls';
+
+export { SelectionManager } from './selection';
+export type { Selection, ClickModifiers, BoxPointerEvent } from './selection';
+
+export { createCacheBinding, OVERSCAN } from './cacheBinding';
+export type { CacheBinding, CacheBindingOptions, VisibleRange } from './cacheBinding';
+
+// ── Reused unchanged from src-next/ (framework-free) ──────────────────────
+export { FetchScheduler } from '@viewport/FetchScheduler';
+export type { FetchRange, FetchSchedulerConfig, FetchCallback } from '@viewport/FetchScheduler';
+
+export { createCacheDataSource } from '@viewport/CacheDataSource';
+export type { CacheDataSource } from '@viewport/CacheDataSource';
+
+export { DataSourceRegistry } from '@viewport/DataSourceRegistry';
+export type { StreamPusher, DataSourceRegistrar } from '@viewport/DataSourceRegistry';
+
+export type { DataSource } from '@viewport/DataSource';
+
+export { sessionScrollPositions } from '@viewport/sessionScrollPositions';
+
+export { buildCopyText, writeClipboard } from '@viewport/copyText';
+
+export { CacheManager, ViewCacheHandle } from '@cache/CacheManager';
+export type { ViewCache, WritableViewCache, CacheController, ViewPriority } from '@cache/CacheManager';
