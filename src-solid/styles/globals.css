@@ -1,0 +1,104 @@
+/* ── Global styles (src-solid) ──────────────────────────────────────────
+   Mirrors src-next/styles/globals.css: font-face imports, reset, root
+   typography/background from tokens, thin scrollbars. Imported once from
+   main.tsx alongside tokens.css.
+   ════════════════════════════════════════════════════════════════════── */
+
+@import '@fontsource/geist/400.css';
+@import '@fontsource/geist/500.css';
+@import '@fontsource/geist/600.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+@import './tokens.css';
+
+/* ── Reset ──────────────────────────────────────────────────────────────── */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ── Root ───────────────────────────────────────────────────────────────── */
+
+:root {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+  background-color: var(--surface);
+}
+
+[data-theme='dark'],
+[data-theme='dark-hc'] {
+  color-scheme: dark;
+}
+
+[data-theme='light'],
+[data-theme='light-hc'] {
+  color-scheme: light;
+}
+
+body {
+  min-height: 100vh;
+  background-color: var(--surface);
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Utilities ──────────────────────────────────────────────────────────── */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+.truncate {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.fullHeight {
+  height: 100%;
+}
+.hidden {
+  display: none;
+}
+
+/* ── Scrollbars ────────────────────────────────────────────────────────── */
+
+*::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 3px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dimmed);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}

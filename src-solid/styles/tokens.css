@@ -1,0 +1,420 @@
+/* ── Design tokens (src-solid) ───────────────────────────────────────────
+   Three layers, per plans/ui-phase2a-spike-foundation.md §D:
+     1. Primitives (--p-*)  — raw named values, theme-independent.
+     2. Semantic            — named roles, redefined per [data-theme].
+     3. Domain               — log levels, agent/caller states, processor
+                                kinds, bookmarks, diff, etc. Redefined per
+                                [data-theme].
+   Components must consume semantic/domain tokens only — never --p-* directly.
+
+   Values are lifted from src-next/styles/tokens.css (dark + light) and the
+   redesign canvas foundation (design_docs/canvas/_foundation.html); a
+   handful were nudged for WCAG AA — see tokens.contrast.test.ts and
+   implementation-notes' "AA adjustments" list for exactly which and why.
+
+   Cascade (mirrors how CSS custom properties actually resolve — `:root`
+   always matches the document root regardless of its `data-theme`, so a
+   later, more specific `[data-theme="x"]` block overriding the same
+   property name is what actually picks the active theme, not the literal
+   presence of `:root` in a selector):
+     A. `:root`                                    → primitives + formulas
+        identical in every theme (never overridden below).
+     B. `:root, [data-theme="dark"], [data-theme="dark-hc"]` /
+        `[data-theme="light"], [data-theme="light-hc"]`       → tokens
+        shared within a light/dark family (surfaces, match/pii, agent-idle,
+        diff, viewer selection) — identical between a theme and its -hc
+        variant, so declared once per family instead of four times.
+     C. `:root, [data-theme="dark"]` / `[data-theme="light"]` /
+        `[data-theme="dark-hc"]` / `[data-theme="light-hc"]`  → the tokens
+        that actually change for high contrast (text, border, accent,
+        status colours, level glyphs/backgrounds, selection, focus ring).
+   Every property in (C) is redeclared by all four exact blocks — none of
+   them may rely on falling through to a sibling theme.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ══ A. PRIMITIVES + theme-invariant formulas ═══════════════════════════ */
+
+:root {
+  /* ── Neutrals: dark-oriented ramp (background end is near-black) ── */
+  --p-neutral-950: #0c1014;
+  --p-neutral-925: #0e1318;
+  --p-neutral-900: #141b21;
+  --p-neutral-850: #1b2530;
+  --p-neutral-800: #243040;
+  --p-neutral-750: #2d3d4e;
+  --p-neutral-700: #484f58;
+  --p-neutral-650: #7d8897; /* dark level-verbose, AA-tuned from #6e7b8b */
+  --p-neutral-500: #8b949e;
+  --p-neutral-400: #9faab4;
+  --p-neutral-300: #b8c4ce;
+  --p-neutral-250: #d3dbe2; /* dark-hc text-subtle */
+  --p-neutral-200: #b3bec8; /* dark-hc text-muted */
+
+  /* ── Neutrals: light-oriented ramp (background end is near-white) ── */
+  --p-white: #ffffff;
+  --p-black: #000000;
+  --p-gray-50: #f2f4f7;
+  --p-gray-100: #e9ecf0;
+  --p-gray-150: #dce0e6;
+  --p-gray-200: #c8d0d8;
+  --p-gray-250: #b8c2cc;
+  --p-gray-300: #8b95a1;
+  --p-gray-350: #62686f; /* light level-verbose, AA-tuned from #8c959f */
+  --p-gray-400: #5d6672;
+  --p-gray-450: #4b5563;
+  --p-gray-500: #3d444d; /* light-hc text-muted */
+  --p-gray-550: #2b3138; /* light-hc text-subtle */
+  --p-gray-600: #1a1f26;
+
+  /* ── Blue / accent ── */
+  --p-blue-300: #7fbaff; /* accent, dark-hc */
+  --p-blue-400: #58a6ff; /* accent, dark */
+  --p-blue-450: #60a5fa; /* processor-tracker */
+  --p-blue-500: #1f6feb; /* accent-base, dark */
+  --p-blue-650: #0863cd; /* accent, light — AA-tuned from #0969da */
+  --p-blue-700: #0550ae; /* accent-base, light */
+  --p-blue-800: #0a4f9e; /* accent, light-hc */
+
+  /* ── Red / danger ── */
+  --p-red-300: #ff7b73; /* danger, dark-hc */
+  --p-red-400: #f85149; /* danger, dark */
+  --p-red-450: #f47067; /* level-error, dark */
+  --p-red-460: #ff8a80; /* level-error, dark-hc */
+  --p-red-470: #ff6e6e; /* level-fatal, dark */
+  --p-red-480: #ff9a9a; /* level-fatal, dark-hc */
+  --p-red-500: #cf222e; /* danger / level-error, light */
+  --p-red-600: #a4041a; /* danger, light-hc / level-fatal, light */
+  --p-red-650: #7a0b1e; /* level-fatal, light-hc */
+
+  /* ── Green / success ── */
+  --p-green-300: #5ed776; /* success, dark-hc */
+  --p-green-400: #3fb950; /* success, dark */
+  --p-green-500: #187734; /* success, light — AA-tuned from #1a7f37 */
+  --p-green-600: #0f5c28; /* success, light-hc */
+
+  /* ── Amber / warning ── */
+  --p-amber-300: #e6b73a; /* warning, dark-hc */
+  --p-amber-400: #d29922; /* warning, dark */
+  --p-amber-500: #8b5d00; /* warning, light — AA-tuned from #9a6700 */
+  --p-amber-600: #6b4a00; /* warning, light-hc */
+
+  /* ── Slate (debug level) ── */
+  --p-slate-300: #c3ccd6; /* level-debug, dark-hc */
+  --p-slate-400: #9faab4; /* level-debug, dark (= neutral-400) */
+  --p-slate-500: #57606a; /* level-debug, light */
+  --p-slate-600: #33383e; /* level-debug, light-hc */
+  --p-slate-650: #9aa7b5; /* level-verbose, dark-hc */
+  --p-slate-700: #4c525a; /* level-verbose, light-hc */
+
+  /* ── Purple / correlator, teal / transformer, orange / android ── */
+  --p-purple-400: #c084fc;
+  --p-teal-400: #2dd4bf;
+  --p-orange-500: #ff6128;
+
+  /* ── Dark reds (level backgrounds, dark theme only) ── */
+  --p-darkred-900: #2d1117;
+  --p-darkred-800: #3d1118;
+
+  /* ── Radius scale ── */
+  --p-radius-none: 0;
+  --p-radius-xs: 2px;
+  --p-radius-sm: 3px;
+  --p-radius-md: 6px;
+  --p-radius-lg: 8px;
+  --p-radius-xl: 12px;
+  --p-radius-full: 9999px;
+
+  /* ── Duration ── */
+  --p-duration-fast: 80ms;
+  --p-duration-normal: 150ms;
+  --p-duration-slow: 400ms;
+
+  /* ── Easing (M3 standard curves) ── */
+  --p-easing-standard: cubic-bezier(0.2, 0, 0, 1);
+  --p-easing-enter: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --p-easing-exit: cubic-bezier(0.3, 0, 0.8, 0.15);
+
+  /* ── Z-index scale ── */
+  --p-z-drag: 10;
+  --p-z-overlay: 50;
+  --p-z-tooltip: 1000;
+  --p-z-dropdown: 1050;
+  --p-z-modal: 9000;
+  --p-z-toast: 9500;
+
+  /* ── Fonts (theme-independent) ── */
+  --font-ui: 'Geist', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
+
+  /* ── Viewer user settings — written on <html> at runtime by the theme
+     controller (a user preference, not a theme value). Defaults below. ── */
+  --viewer-row-h: 22px;
+  --viewer-font-size: 13px;
+
+  /* ── Density defaults (comfortable) — overridden by [data-density] below ── */
+  --ui-gap: 8px;
+  --ui-row-h: 32px;
+
+  /* ── Domain tokens whose formula is identical in all four themes ──
+     Safe to declare once: every input they reference (--accent, --danger,
+     --success, --warning, --surface*, --text-dimmed, --match, --pii,
+     --agent-idle) is itself redefined per theme/family below, so these
+     formulas resolve differently per theme without being redeclared. ── */
+  --bookmark-1: var(--danger);
+  --bookmark-2: var(--p-orange-500);
+  --bookmark-3: var(--warning);
+  --bookmark-4: var(--success);
+  --bookmark-5: var(--accent);
+  --bookmark-6: var(--p-purple-400);
+
+  --processor-reporter: var(--p-blue-400);
+  --processor-tracker: var(--p-blue-450);
+  --processor-correlator: var(--p-purple-400);
+  --processor-transformer: var(--p-teal-400);
+
+  --level-verbose-bg: transparent;
+  --level-debug-bg: transparent;
+  --level-info-bg: transparent;
+
+  --agent-reading: var(--accent);
+  --agent-running: var(--success);
+  --agent-raw: var(--danger);
+  --caller-human: var(--agent-idle);
+  --caller-agent: var(--accent);
+
+  /* ── Back-compat aliases consumed by src-solid/viewer and src-solid/App
+     (P3, wave-2 render layer) — see implementation-notes "alias map". P3's
+     CSS is untouched; these make its var(--x, fallback) chains resolve to
+     the live theme instead of the hard-coded fallback. ── */
+  --bg-base: var(--surface);
+  --bg-raised: var(--surface-raised);
+  --bg-overlay: var(--surface-overlay);
+  --bg-input: var(--surface-input);
+  --viewer-bg: var(--surface);
+  --viewer-gutter-text: var(--text-dimmed);
+  --chrome-bg: var(--surface-raised);
+  --hl-search: var(--match);
+  --hl-search-active: color-mix(in srgb, var(--match) 70%, var(--warning) 30%);
+  --hl-pii: var(--pii);
+  --radius-md: var(--p-radius-md);
+  --radius-xl: var(--p-radius-xl);
+  --z-drag: var(--p-z-drag);
+}
+
+/* ══ B. Family-shared tokens (identical between a theme and its -hc variant) ══ */
+
+:root,
+[data-theme='dark'],
+[data-theme='dark-hc'] {
+  --surface: var(--p-neutral-950);
+  --surface-raised: var(--p-neutral-900);
+  --surface-overlay: var(--p-neutral-850);
+  --surface-input: var(--p-neutral-925);
+  --text-dimmed: var(--p-neutral-700);
+
+  --match: rgba(210, 153, 34, 0.35);
+  --pii: rgba(226, 56, 61, 0.22);
+  --watch-match: rgba(45, 212, 191, 0.22);
+
+  --agent-idle: #7c8ea3;
+  --agent-wrote: #c9a227;
+  --agent-needs: #f0a500;
+
+  --diff-added: rgba(63, 185, 80, 0.15);
+  --diff-removed: rgba(248, 81, 73, 0.15);
+
+  --viewer-selection-bg: rgba(255, 200, 50, 0.12);
+  --viewer-selection-border: rgba(255, 200, 50, 0.75);
+}
+
+[data-theme='light'],
+[data-theme='light-hc'] {
+  --surface: var(--p-white);
+  --surface-raised: var(--p-gray-100);
+  --surface-overlay: var(--p-gray-150);
+  --surface-input: var(--p-gray-50);
+  --text-dimmed: var(--p-gray-300);
+
+  --match: rgba(154, 103, 0, 0.28);
+  --pii: rgba(212, 47, 52, 0.18);
+  --watch-match: rgba(15, 118, 110, 0.16);
+
+  --agent-idle: #6b7a8c;
+  --agent-wrote: #7d4e00;
+  --agent-needs: #b35c00;
+
+  --diff-added: rgba(26, 127, 55, 0.12);
+  --diff-removed: rgba(207, 34, 46, 0.12);
+
+  --viewer-selection-bg: rgba(210, 153, 34, 0.14);
+  --viewer-selection-border: rgba(154, 103, 0, 0.45);
+}
+
+/* ══ C. Per-theme exact tokens (the ones that actually change for -hc) ═══
+   Each block is fully self-contained for these keys — none inherits from
+   a sibling theme. AA-required tokens (level-*, danger, success, warning,
+   accent, text, text-subtle, text-muted) are covered by
+   tokens.contrast.test.ts for every block below. ══════════════════════ */
+
+:root,
+[data-theme='dark'] {
+  --border: var(--p-neutral-800);
+  --border-subtle: var(--p-neutral-750);
+  --text-muted: var(--p-neutral-500);
+  --text-subtle: var(--p-neutral-400);
+  --text: var(--p-neutral-300);
+  --text-on-accent: var(--p-white);
+
+  --accent: var(--p-blue-400);
+  --accent-base: var(--p-blue-500);
+  --accent-muted: rgba(88, 166, 255, 0.12);
+  --accent-border: rgba(88, 166, 255, 0.25);
+
+  --danger: var(--p-red-400);
+  --danger-muted: rgba(248, 81, 73, 0.12);
+  --success: var(--p-green-400);
+  --success-muted: rgba(63, 185, 80, 0.14);
+  --warning: var(--p-amber-400);
+  --warning-muted: rgba(210, 153, 34, 0.12);
+
+  --selection: rgba(88, 166, 255, 0.2);
+  --focus-ring: rgba(88, 166, 255, 0.4);
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+
+  --level-verbose: var(--p-neutral-650);
+  --level-debug: var(--p-slate-400);
+  --level-info: var(--text);
+  --level-warning: var(--warning);
+  --level-error: var(--p-red-450);
+  --level-fatal: var(--p-red-470);
+  --level-warning-bg: rgba(210, 153, 34, 0.08);
+  --level-error-bg: var(--p-darkred-900);
+  --level-fatal-bg: var(--p-darkred-800);
+}
+
+[data-theme='light'] {
+  --border: var(--p-gray-250);
+  --border-subtle: var(--p-gray-200);
+  --text-muted: var(--p-gray-400);
+  --text-subtle: var(--p-gray-450);
+  --text: var(--p-gray-600);
+  --text-on-accent: var(--p-white);
+
+  --accent: var(--p-blue-650);
+  --accent-base: var(--p-blue-700);
+  --accent-muted: rgba(9, 105, 218, 0.1);
+  --accent-border: rgba(9, 105, 218, 0.2);
+
+  --danger: var(--p-red-500);
+  --danger-muted: rgba(207, 34, 46, 0.1);
+  --success: var(--p-green-500);
+  --success-muted: rgba(26, 127, 55, 0.12);
+  --warning: var(--p-amber-500);
+  --warning-muted: rgba(154, 103, 0, 0.1);
+
+  --selection: rgba(9, 105, 218, 0.2);
+  --focus-ring: rgba(9, 105, 218, 0.35);
+  --shadow: 0 8px 24px rgba(16, 24, 40, 0.16);
+
+  --level-verbose: var(--p-gray-350);
+  --level-debug: var(--p-slate-500);
+  --level-info: var(--text);
+  --level-warning: var(--warning);
+  --level-error: var(--danger);
+  --level-fatal: var(--p-red-600);
+  --level-warning-bg: rgba(154, 103, 0, 0.08);
+  --level-error-bg: rgba(207, 34, 46, 0.05);
+  --level-fatal-bg: rgba(164, 14, 38, 0.06);
+}
+
+/* High-contrast dark: text raised to pure white, border thickened/lightened,
+   level backgrounds dropped so only the glyph colour carries level. Surfaces
+   inherit from the dark family above (block B). */
+[data-theme='dark-hc'] {
+  --border: #3a4d63;
+  --border-subtle: #4a5f78;
+  --text-muted: var(--p-neutral-200);
+  --text-subtle: var(--p-neutral-250);
+  --text: var(--p-white);
+  --text-on-accent: var(--p-black);
+
+  --accent: var(--p-blue-300);
+  --accent-base: var(--p-blue-400);
+  --accent-muted: rgba(127, 186, 255, 0.16);
+  --accent-border: rgba(127, 186, 255, 0.32);
+
+  --danger: var(--p-red-300);
+  --danger-muted: rgba(255, 123, 115, 0.16);
+  --success: var(--p-green-300);
+  --success-muted: rgba(94, 215, 118, 0.18);
+  --warning: var(--p-amber-300);
+  --warning-muted: rgba(230, 183, 58, 0.16);
+
+  --selection: rgba(127, 186, 255, 0.28);
+  --focus-ring: rgba(127, 186, 255, 0.55);
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+
+  --level-verbose: var(--p-slate-650);
+  --level-debug: var(--p-slate-300);
+  --level-info: var(--text);
+  --level-warning: var(--warning);
+  --level-error: var(--p-red-460);
+  --level-fatal: var(--p-red-480);
+  --level-warning-bg: transparent;
+  --level-error-bg: transparent;
+  --level-fatal-bg: transparent;
+}
+
+/* High-contrast light: whole text ramp darkened one step, border thickened,
+   warning/level-warning swapped for a darker amber so it keeps AA on
+   --surface-raised too. Surfaces inherit from the light family above. */
+[data-theme='light-hc'] {
+  --border: #8b98a5;
+  --border-subtle: #a3aebb;
+  --text-muted: var(--p-gray-500);
+  --text-subtle: var(--p-gray-550);
+  --text: var(--p-black);
+  --text-on-accent: var(--p-white);
+
+  --accent: var(--p-blue-800);
+  --accent-base: #073d7c;
+  --accent-muted: rgba(10, 79, 158, 0.12);
+  --accent-border: rgba(10, 79, 158, 0.28);
+
+  --danger: var(--p-red-600);
+  --danger-muted: rgba(164, 4, 26, 0.12);
+  --success: var(--p-green-600);
+  --success-muted: rgba(15, 92, 40, 0.14);
+  --warning: var(--p-amber-600);
+  --warning-muted: rgba(107, 74, 0, 0.12);
+
+  --selection: rgba(10, 79, 158, 0.22);
+  --focus-ring: rgba(10, 79, 158, 0.45);
+  --shadow: 0 8px 24px rgba(16, 24, 40, 0.24);
+
+  --level-verbose: var(--p-slate-700);
+  --level-debug: var(--p-slate-600);
+  --level-info: var(--text);
+  --level-warning: var(--warning);
+  --level-error: var(--danger);
+  --level-fatal: var(--p-red-650);
+  --level-warning-bg: transparent;
+  --level-error-bg: transparent;
+  --level-fatal-bg: transparent;
+}
+
+/* ══ DENSITY ══════════════════════════════════════════════════════════════
+   Independent of theme. Controls UI chrome spacing/row heights only — the
+   viewer's own row height/font size are user settings (--viewer-row-h /
+   --viewer-font-size), not density-driven.
+   ══════════════════════════════════════════════════════════════════════ */
+
+[data-density='comfortable'] {
+  --ui-gap: 8px;
+  --ui-row-h: 32px;
+}
+
+[data-density='compact'] {
+  --ui-gap: 4px;
+  --ui-row-h: 24px;
+}
