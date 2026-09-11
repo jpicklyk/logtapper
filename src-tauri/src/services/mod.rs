@@ -60,6 +60,7 @@ pub mod pipeline;
 pub mod processors;
 pub mod search;
 pub mod sections;
+pub mod sessions;
 pub mod settings;
 pub mod stream;
 pub mod timeline;

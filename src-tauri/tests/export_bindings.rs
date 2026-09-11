@@ -141,6 +141,8 @@ macro_rules! ROOT_TYPES {
             app_lib::commands::workspace_cmd::RestoreSessionOptions,
             app_lib::workspace::app_state::AppStateFile,
             app_lib::workspace::lts::LtsEditorTab,
+            // --- sessions (WP-6) -----------------------------------------------
+            app_lib::services::sessions::SessionClosedEvent,
         ]
     };
 }
