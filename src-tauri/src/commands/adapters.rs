@@ -117,7 +117,7 @@ impl<T: Clone + serde::Serialize + Send + Sync + 'static> Sink<T> for ChannelSin
 
 /// The ADB streaming sink: `Channel<AdbStreamEvent>` carrying `Batch`,
 /// `ProcessorUpdate` and `StreamStopped` to one pane.
-pub type AdbChannelSink = ChannelSink<crate::commands::adb::AdbStreamEvent>;
+pub type AdbChannelSink = ChannelSink<crate::services::stream::AdbStreamEvent>;
 
 // ---------------------------------------------------------------------------
 // AppPaths
@@ -249,7 +249,7 @@ mod tests {
     /// implementation of the same trait.
     #[test]
     fn adb_channel_sink_implements_the_stream_sink_trait() {
-        fn assert_sink<S: crate::services::events::Sink<crate::commands::adb::AdbStreamEvent>>() {}
+        fn assert_sink<S: crate::services::events::Sink<crate::services::stream::AdbStreamEvent>>() {}
         assert_sink::<super::AdbChannelSink>();
     }
 

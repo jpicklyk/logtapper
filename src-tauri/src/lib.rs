@@ -476,6 +476,7 @@ pub fn run() {
             commands::adb::update_stream_transformers,
             commands::adb::get_package_pids,
             commands::adb::save_live_capture,
+            commands::adb::get_stream_status,
             commands::files::load_log_file,
             commands::files::get_lines,
             commands::files::search_logs,

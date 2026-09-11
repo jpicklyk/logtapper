@@ -47,6 +47,9 @@ use routes::search::{h_search, h_search_with_context};
 use routes::sessions::{h_close_session, h_metadata, h_open_file, h_sessions, h_status};
 use routes::settings::{h_get_anonymizer_config, h_get_open_allowlist, h_test_anonymizer};
 use routes::timeline::{h_chart, h_timeline};
+use routes::stream::{
+    h_adb_devices, h_save_stream, h_start_stream, h_stop_stream, h_stream_events, h_stream_status,
+};
 use routes::tracker::{h_correlations, h_events, h_section_at, h_sections, h_state_at_line};
 use routes::watches::{h_cancel_watch, h_create_watch, h_list_watches};
 use routes::workspace::{
@@ -223,6 +226,13 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/mcp/workspace/load"),
     ("POST", "/mcp/workspace/save"),
     ("POST", "/mcp/workspace/autosave"),
+    // WP-11 stream
+    ("GET", "/mcp/adb/devices"),
+    ("POST", "/mcp/adb/stream"),
+    ("GET", "/mcp/sessions/{session_id}/stream/status"),
+    ("GET", "/mcp/sessions/{session_id}/stream/events"),
+    ("POST", "/mcp/sessions/{session_id}/stream/stop"),
+    ("POST", "/mcp/sessions/{session_id}/stream/save"),
 ];
 
 /// Build the bridge's `Router` without binding a socket.
@@ -298,6 +308,13 @@ pub fn router(ctx: BridgeCtx) -> Router {
         .route("/mcp/workspace/load", post(h_load_workspace))
         .route("/mcp/workspace/save", post(h_save_workspace))
         .route("/mcp/workspace/autosave", post(h_autosave_workspace))
+        // WP-11 stream
+        .route("/mcp/adb/devices", get(h_adb_devices))
+        .route("/mcp/adb/stream", post(h_start_stream))
+        .route("/mcp/sessions/{session_id}/stream/status", get(h_stream_status))
+        .route("/mcp/sessions/{session_id}/stream/events", get(h_stream_events))
+        .route("/mcp/sessions/{session_id}/stream/stop", post(h_stop_stream))
+        .route("/mcp/sessions/{session_id}/stream/save", post(h_save_stream))
         .layer(axum_middleware::from_fn_with_state(ctx.clone(), middleware::record_activity))
         // `require_local` is added AFTER `record_activity`, which in axum/tower
         // layering means it becomes the OUTERMOST layer and therefore runs
@@ -433,6 +450,12 @@ mod tests {
             "POST /mcp/workspace/load",
             "POST /mcp/workspace/save",
             "POST /mcp/workspace/autosave",
+            "GET /mcp/adb/devices",
+            "POST /mcp/adb/stream",
+            "GET /mcp/sessions/{session_id}/stream/status",
+            "GET /mcp/sessions/{session_id}/stream/events",
+            "POST /mcp/sessions/{session_id}/stream/stop",
+            "POST /mcp/sessions/{session_id}/stream/save",
         ];
 
         assert_eq!(rendered, expected, "ROUTES drifted from the pinned route table — update both this test and router() together");
