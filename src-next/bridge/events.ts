@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { ActivityEntry, AdbStreamStopped, AdbTrackerUpdate, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress, PipelineProgress, BookmarkUpdateEvent, AnalysisUpdateEvent, WatchMatchEvent, WatchUpdateEvent, LoadResult, SessionClosedEvent, WorkspaceAutoSavedEvent, WorkspaceRestoredEvent, LtsEditorTabPayload, FocusContext, NavRequest } from './types';
+import type { ActivityEntry, AdbStreamStopped, AdbTrackerUpdate, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress, PipelineProgress, BookmarkUpdateEvent, AnalysisUpdateEvent, WatchMatchEvent, WatchUpdateEvent, LoadResult, SessionClosedEvent, WorkspaceAutoSavedEvent, WorkspaceRestoredEvent, WorkspaceListChangedEvent, LtsEditorTabPayload, FocusContext, NavRequest } from './types';
 
 // ---------------------------------------------------------------------------
 // ADB streaming events
@@ -275,6 +275,23 @@ export function onWorkspaceRestored(
   cb: (payload: WorkspaceRestoredEvent) => void,
 ): Promise<UnlistenFn> {
   return listen<WorkspaceRestoredEvent>('workspace-restored', (e) => cb(e.payload));
+}
+
+// ---------------------------------------------------------------------------
+// Workspace list changed (rename/delete) — B3
+// ---------------------------------------------------------------------------
+
+/**
+ * Emitted after `renameWorkspace`/`deleteWorkspace` changes the app-state
+ * workspace list itself — distinct from `onWorkspaceRestored`/
+ * `onWorkspaceAutoSaved`, which are about one workspace's content. Consumers
+ * that show the workspace list (e.g. a "switch workspace" menu) should
+ * refetch via `getAppState()` rather than trying to patch their own copy.
+ */
+export function onWorkspaceListChanged(
+  cb: (payload: WorkspaceListChangedEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<WorkspaceListChangedEvent>('workspace-list-changed', (e) => cb(e.payload));
 }
 
 // ---------------------------------------------------------------------------

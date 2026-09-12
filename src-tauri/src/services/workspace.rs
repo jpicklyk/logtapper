@@ -265,6 +265,31 @@ pub struct RestoreSessionOptions {
     pub disabled_processor_ids: Vec<String>,
 }
 
+/// Options for [`rename_workspace`].
+#[derive(Debug, Clone, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameWorkspaceRequest {
+    pub workspace_id: String,
+    pub new_name: String,
+}
+
+/// Options for [`delete_workspace`].
+#[derive(Debug, Clone, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteWorkspaceRequest {
+    pub workspace_id: String,
+    /// Also delete the `.ltw` at the entry's `ltwPath` from disk (its
+    /// auto-save file, if any, is always removed regardless of this flag).
+    /// An `Agent` destination must pass
+    /// [`super::policy::authorize_write_dest`]; `Ui` passes through.
+    #[serde(default)]
+    pub delete_file: bool,
+    /// Required to delete the currently active workspace — with this set it
+    /// is closed first (every open session) rather than refused outright.
+    #[serde(default)]
+    pub force: bool,
+}
+
 // ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
@@ -296,6 +321,18 @@ pub struct WorkspaceAutoSavedEvent {
     pub path: String,
     #[ts(type = "number")]
     pub saved_at: i64,
+}
+
+/// Payload of the `workspace-list-changed` event, emitted by both
+/// [`rename_workspace`] and [`delete_workspace`] — the app-state workspace
+/// list itself changed shape, distinct from `workspace-restored`/
+/// `workspace-auto-saved`, which are about one workspace's *content*.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceListChangedEvent {
+    pub workspace_id: String,
+    /// `"renamed"` or `"deleted"`.
+    pub action: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -923,6 +960,162 @@ pub fn current(ctx: &ServiceCtx) -> Result<WorkspaceSummary, ServiceError> {
 }
 
 // ---------------------------------------------------------------------------
+// Rename / delete
+// ---------------------------------------------------------------------------
+
+/// Reject a workspace display name that is empty, over-long, or carries a
+/// path separator.
+fn validate_workspace_name(name: &str) -> Result<(), ServiceError> {
+    if name.is_empty() || name.chars().count() > 128 || name.contains(['/', '\\']) {
+        return Err(ServiceError::invalid_arg(
+            "workspace name must be 1-128 characters with no path separators",
+        ));
+    }
+    Ok(())
+}
+
+/// Rename a workspace's `app-state.json` entry.
+///
+/// Updates only the persisted entry's `name`. The `.ltw` manifest's own
+/// `workspaceName` field (`workspace::ltw_v4::LtwManifest`) is written once,
+/// at save/autosave time, and is deliberately **not** rewritten here — doing
+/// so would mean opening and re-zipping the `.ltw` on every rename, and the
+/// manifest schema is out of this function's scope to touch. A renamed
+/// workspace picks up its new name in the manifest the next time it is
+/// saved or auto-saved, same as any other envelope change.
+///
+/// `Ui` and `Agent` are both allowed unconditionally — a display name carries
+/// no path or content an agent could use to widen its allowlist.
+pub fn rename_workspace(
+    ctx: &ServiceCtx,
+    request: RenameWorkspaceRequest,
+) -> Result<WorkspaceEntry, ServiceError> {
+    validate_workspace_name(&request.new_name)?;
+
+    let mut file = app_state(ctx)?;
+    let entry = file
+        .workspaces
+        .iter_mut()
+        .find(|w| w.id == request.workspace_id)
+        .ok_or_else(|| ServiceError::NotFound(format!("Workspace '{}' not found", request.workspace_id)))?;
+    entry.name = request.new_name.clone();
+    let updated = entry.clone();
+
+    save_app_state(ctx, file)?;
+
+    ctx.journal(
+        "workspace.rename",
+        None,
+        format!("renamed workspace '{}' to '{}'", request.workspace_id, request.new_name),
+    );
+    ctx.events().emit_json(
+        "workspace-list-changed",
+        serde_json::to_value(WorkspaceListChangedEvent {
+            workspace_id: request.workspace_id,
+            action: "renamed".to_string(),
+        })
+        .unwrap_or_default(),
+    );
+    Ok(updated)
+}
+
+/// Delete `path` if — and only if — it names a regular file that exists.
+/// Never follows a symlink and never removes a directory: `symlink_metadata`
+/// (unlike `metadata`) does not follow the final component, so a symlink is
+/// reported as a symlink, not as whatever it points to, and is left alone.
+/// Missing or non-regular is a silent no-op — the caller only wants to clean
+/// up what is actually there.
+fn remove_regular_file_if_present(path: &Path) {
+    let is_regular_file = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_file());
+    if is_regular_file {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// Remove a workspace from `app-state.json`, and its auto-save file if any.
+///
+/// Refuses to delete the **active** workspace (`app-state.json`'s
+/// `activeWorkspaceId`) unless `request.force` is set. When forced, every
+/// currently open session is closed first via [`begin_switch`] +
+/// [`super::sessions::close`] — the same sequence an ordinary switch already
+/// uses, not a second implementation of session teardown — and the cached
+/// in-memory envelope (if it belonged to this workspace) is cleared so a
+/// late autosave flush cannot resurrect a shell for an entry that no longer
+/// exists.
+///
+/// `delete_file` additionally deletes the entry's explicit `.ltw` (at
+/// `ltwPath`, if set), subject to [`super::policy::authorize_write_dest`] for
+/// an `Agent` caller — the same allowlist gate export and workspace-save use.
+/// `Ui` passes through untouched. See [`remove_regular_file_if_present`] for
+/// the safety rule every file removal here follows.
+pub fn delete_workspace(ctx: &ServiceCtx, request: DeleteWorkspaceRequest) -> Result<(), ServiceError> {
+    let mut file = app_state(ctx)?;
+    let index = file
+        .workspaces
+        .iter()
+        .position(|w| w.id == request.workspace_id)
+        .ok_or_else(|| ServiceError::NotFound(format!("Workspace '{}' not found", request.workspace_id)))?;
+
+    // Authorize the explicit `.ltw` removal BEFORE any mutation (closing
+    // sessions, dropping the auto-save file, editing app-state): a refused
+    // agent request must be all-or-nothing and leave every file in place.
+    let ltw_dest = if request.delete_file {
+        match file.workspaces[index].ltw_path.as_deref() {
+            Some(ltw_path) => Some(super::policy::authorize_write_dest(ctx, ltw_path)?),
+            None => None,
+        }
+    } else {
+        None
+    };
+
+    let is_active = file.active_workspace_id.as_deref() == Some(request.workspace_id.as_str());
+    if is_active {
+        if !request.force {
+            return Err(ServiceError::Conflict(format!(
+                "workspace '{}' is active; pass force to close it first",
+                request.workspace_id
+            )));
+        }
+        begin_switch(ctx)?;
+        for session_id in snapshot_session_ids(ctx.state())? {
+            super::sessions::close(ctx, &session_id)?;
+        }
+        let mut envelope = ctx
+            .state()
+            .workspace_envelope
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if envelope.as_ref().map(|e| e.workspace_id.as_str()) == Some(request.workspace_id.as_str()) {
+            *envelope = None;
+        }
+        drop(envelope);
+        file.active_workspace_id = None;
+    }
+
+    let entry = file.workspaces.remove(index);
+
+    if let Some(auto_save_path) = entry.auto_save_path.as_deref() {
+        remove_regular_file_if_present(Path::new(auto_save_path));
+    }
+    if let Some(dest) = ltw_dest.as_deref() {
+        remove_regular_file_if_present(dest);
+    }
+
+    save_app_state(ctx, file)?;
+
+    ctx.journal("workspace.delete", None, format!("deleted workspace '{}'", request.workspace_id));
+    ctx.events().emit_json(
+        "workspace-list-changed",
+        serde_json::to_value(WorkspaceListChangedEvent {
+            workspace_id: request.workspace_id,
+            action: "deleted".to_string(),
+        })
+        .unwrap_or_default(),
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1400,6 +1593,323 @@ mod tests {
             .map(|e| e.action)
             .collect();
         assert_eq!(actions, vec!["workspace.switch"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // rename_workspace / delete_workspace (B3)
+    // -----------------------------------------------------------------------
+
+    fn seed_entry(ctx: &ServiceCtx, id: &str, name: &str) {
+        save_app_state(
+            ctx,
+            AppStateFile {
+                workspaces: vec![WorkspaceEntry {
+                    id: id.to_string(),
+                    name: name.to_string(),
+                    ltw_path: None,
+                    dirty: false,
+                    auto_save_path: None,
+                    last_auto_save_at: None,
+                }],
+                active_workspace_id: None,
+            },
+        )
+        .expect("seed entry");
+    }
+
+    #[test]
+    fn rename_workspace_updates_the_persisted_name_and_journals() {
+        let (ctx, _tmp) = test_ctx().build();
+        seed_entry(&ctx, "ws-1", "old-name");
+
+        let updated = rename_workspace(
+            &ctx,
+            RenameWorkspaceRequest { workspace_id: "ws-1".to_string(), new_name: "new-name".to_string() },
+        )
+        .expect("rename");
+        assert_eq!(updated.name, "new-name");
+        assert_eq!(list(&ctx).unwrap()[0].name, "new-name");
+
+        let actions: Vec<String> = ctx.state().activity.list(None, None).into_iter().map(|e| e.action).collect();
+        assert_eq!(actions, vec!["workspace.rename"]);
+    }
+
+    #[test]
+    fn rename_workspace_emits_workspace_list_changed() {
+        let (ctx, sink, _tmp) = test_ctx().build_recording();
+        seed_entry(&ctx, "ws-1", "old-name");
+        rename_workspace(
+            &ctx,
+            RenameWorkspaceRequest { workspace_id: "ws-1".to_string(), new_name: "new-name".to_string() },
+        )
+        .expect("rename");
+        let ev = sink.only_event("workspace-list-changed");
+        assert_eq!(ev["workspaceId"], "ws-1");
+        assert_eq!(ev["action"], "renamed");
+    }
+
+    #[test]
+    fn rename_workspace_unknown_id_is_not_found() {
+        let (ctx, _tmp) = test_ctx().build();
+        let err = rename_workspace(
+            &ctx,
+            RenameWorkspaceRequest { workspace_id: "nope".to_string(), new_name: "x".to_string() },
+        )
+        .unwrap_err();
+        assert_eq!(err.code(), "NOT_FOUND");
+    }
+
+    #[test]
+    fn rename_workspace_rejects_an_empty_or_overlong_or_path_like_name() {
+        let (ctx, _tmp) = test_ctx().build();
+        seed_entry(&ctx, "ws-1", "old-name");
+
+        for bad in ["", &"x".repeat(129), "a/b", "a\\b"] {
+            let err = rename_workspace(
+                &ctx,
+                RenameWorkspaceRequest { workspace_id: "ws-1".to_string(), new_name: bad.to_string() },
+            )
+            .expect_err(&format!("{bad:?} must be rejected"));
+            assert_eq!(err.code(), "INVALID_ARGUMENT");
+        }
+    }
+
+    #[test]
+    fn rename_workspace_is_allowed_for_an_agent_caller() {
+        let (ctx, _tmp) = test_ctx().agent("test").build();
+        seed_entry(&ctx, "ws-1", "old-name");
+        let updated = rename_workspace(
+            &ctx,
+            RenameWorkspaceRequest { workspace_id: "ws-1".to_string(), new_name: "renamed".to_string() },
+        )
+        .expect("agents may rename");
+        assert_eq!(updated.name, "renamed");
+    }
+
+    #[test]
+    fn delete_workspace_unknown_id_is_not_found() {
+        let (ctx, _tmp) = test_ctx().build();
+        let err = delete_workspace(
+            &ctx,
+            DeleteWorkspaceRequest { workspace_id: "nope".to_string(), delete_file: false, force: false },
+        )
+        .unwrap_err();
+        assert_eq!(err.code(), "NOT_FOUND");
+    }
+
+    #[test]
+    fn delete_workspace_removes_the_entry_and_journals() {
+        let (ctx, _tmp) = test_ctx().build();
+        seed_entry(&ctx, "ws-1", "gone-soon");
+
+        delete_workspace(
+            &ctx,
+            DeleteWorkspaceRequest { workspace_id: "ws-1".to_string(), delete_file: false, force: false },
+        )
+        .expect("delete");
+        assert!(list(&ctx).unwrap().is_empty());
+
+        let actions: Vec<String> = ctx.state().activity.list(None, None).into_iter().map(|e| e.action).collect();
+        assert_eq!(actions, vec!["workspace.delete"]);
+    }
+
+    #[test]
+    fn delete_workspace_emits_workspace_list_changed() {
+        let (ctx, sink, _tmp) = test_ctx().build_recording();
+        seed_entry(&ctx, "ws-1", "gone-soon");
+        delete_workspace(
+            &ctx,
+            DeleteWorkspaceRequest { workspace_id: "ws-1".to_string(), delete_file: false, force: false },
+        )
+        .expect("delete");
+        let ev = sink.only_event("workspace-list-changed");
+        assert_eq!(ev["workspaceId"], "ws-1");
+        assert_eq!(ev["action"], "deleted");
+    }
+
+    #[test]
+    fn delete_workspace_refuses_the_active_workspace_without_force() {
+        let (ctx, _tmp) = test_ctx().build();
+        save_app_state(
+            &ctx,
+            AppStateFile {
+                workspaces: vec![WorkspaceEntry {
+                    id: "ws-1".to_string(),
+                    name: "active".to_string(),
+                    ltw_path: None,
+                    dirty: false,
+                    auto_save_path: None,
+                    last_auto_save_at: None,
+                }],
+                active_workspace_id: Some("ws-1".to_string()),
+            },
+        )
+        .unwrap();
+
+        let err = delete_workspace(
+            &ctx,
+            DeleteWorkspaceRequest { workspace_id: "ws-1".to_string(), delete_file: false, force: false },
+        )
+        .unwrap_err();
+        assert_eq!(err.code(), "CONFLICT");
+        // Refused: the entry must still be there.
+        assert_eq!(list(&ctx).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn delete_workspace_with_force_closes_open_sessions_and_clears_active_id() {
+        let mut session = crate::services::testing::fixture_session("sess-a", 1);
+        session.file_path = Some("C:\\fake\\a.log".to_string());
+        let (ctx, _tmp) = test_ctx().with_session_object(session).build();
+        save_app_state(
+            &ctx,
+            AppStateFile {
+                workspaces: vec![WorkspaceEntry {
+                    id: "ws-1".to_string(),
+                    name: "active".to_string(),
+                    ltw_path: None,
+                    dirty: false,
+                    auto_save_path: None,
+                    last_auto_save_at: None,
+                }],
+                active_workspace_id: Some("ws-1".to_string()),
+            },
+        )
+        .unwrap();
+
+        delete_workspace(
+            &ctx,
+            DeleteWorkspaceRequest { workspace_id: "ws-1".to_string(), delete_file: false, force: true },
+        )
+        .expect("forced delete");
+
+        assert!(ctx.state().sessions.lock().unwrap().is_empty(), "open session must be closed");
+        assert!(app_state(&ctx).unwrap().active_workspace_id.is_none());
+        let actions: Vec<String> = ctx.state().activity.list(None, None).into_iter().map(|e| e.action).collect();
+        assert_eq!(actions, vec!["workspace.switch", "session.close", "workspace.delete"]);
+    }
+
+    #[test]
+    fn delete_workspace_removes_the_auto_save_file_regardless_of_delete_file() {
+        let (ctx, tmp) = test_ctx().build();
+        let auto_save = tmp.path().join("ws-1.ltw");
+        std::fs::write(&auto_save, b"stub").unwrap();
+        save_app_state(
+            &ctx,
+            AppStateFile {
+                workspaces: vec![WorkspaceEntry {
+                    id: "ws-1".to_string(),
+                    name: "w".to_string(),
+                    ltw_path: None,
+                    dirty: false,
+                    auto_save_path: Some(auto_save.to_string_lossy().to_string()),
+                    last_auto_save_at: None,
+                }],
+                active_workspace_id: None,
+            },
+        )
+        .unwrap();
+
+        delete_workspace(
+            &ctx,
+            DeleteWorkspaceRequest { workspace_id: "ws-1".to_string(), delete_file: false, force: false },
+        )
+        .expect("delete");
+        assert!(!auto_save.exists(), "auto-save file must be removed on delete");
+    }
+
+    #[test]
+    fn delete_workspace_with_delete_file_removes_the_explicit_ltw_for_ui() {
+        let (ctx, tmp) = test_ctx().build();
+        let ltw = tmp.path().join("explicit.ltw");
+        std::fs::write(&ltw, b"stub").unwrap();
+        save_app_state(
+            &ctx,
+            AppStateFile {
+                workspaces: vec![WorkspaceEntry {
+                    id: "ws-1".to_string(),
+                    name: "w".to_string(),
+                    ltw_path: Some(ltw.to_string_lossy().to_string()),
+                    dirty: false,
+                    auto_save_path: None,
+                    last_auto_save_at: None,
+                }],
+                active_workspace_id: None,
+            },
+        )
+        .unwrap();
+
+        delete_workspace(
+            &ctx,
+            DeleteWorkspaceRequest { workspace_id: "ws-1".to_string(), delete_file: true, force: false },
+        )
+        .expect("delete");
+        assert!(!ltw.exists(), "explicit .ltw must be removed when delete_file is set");
+    }
+
+    #[test]
+    fn delete_workspace_with_delete_file_is_refused_for_an_agent_outside_the_allowlist() {
+        let (ctx, tmp) = test_ctx().agent("test").build();
+        let ltw = tmp.path().join("explicit.ltw");
+        std::fs::write(&ltw, b"stub").unwrap();
+        let auto_save = tmp.path().join("ws-1.autosave.ltw");
+        std::fs::write(&auto_save, b"autosave").unwrap();
+        save_app_state(
+            &ctx,
+            AppStateFile {
+                workspaces: vec![WorkspaceEntry {
+                    id: "ws-1".to_string(),
+                    name: "w".to_string(),
+                    ltw_path: Some(ltw.to_string_lossy().to_string()),
+                    dirty: false,
+                    auto_save_path: Some(auto_save.to_string_lossy().to_string()),
+                    last_auto_save_at: None,
+                }],
+                active_workspace_id: None,
+            },
+        )
+        .unwrap();
+
+        let err = delete_workspace(
+            &ctx,
+            DeleteWorkspaceRequest { workspace_id: "ws-1".to_string(), delete_file: true, force: false },
+        )
+        .unwrap_err();
+        assert_eq!(err.code(), "NOT_ALLOWED");
+        assert!(ltw.exists(), "a refused delete must not remove the file");
+        // The gate runs before ANY mutation: the auto-save file and the entry
+        // must both survive a refusal (all-or-nothing).
+        assert!(auto_save.exists(), "a refused delete must not remove the auto-save file");
+        assert_eq!(list(&ctx).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn delete_workspace_never_deletes_a_directory() {
+        let (ctx, tmp) = test_ctx().build();
+        let dir_as_ltw = tmp.path().join("looks-like-a-workspace.ltw");
+        std::fs::create_dir(&dir_as_ltw).unwrap();
+        save_app_state(
+            &ctx,
+            AppStateFile {
+                workspaces: vec![WorkspaceEntry {
+                    id: "ws-1".to_string(),
+                    name: "w".to_string(),
+                    ltw_path: Some(dir_as_ltw.to_string_lossy().to_string()),
+                    dirty: false,
+                    auto_save_path: None,
+                    last_auto_save_at: None,
+                }],
+                active_workspace_id: None,
+            },
+        )
+        .unwrap();
+
+        delete_workspace(
+            &ctx,
+            DeleteWorkspaceRequest { workspace_id: "ws-1".to_string(), delete_file: true, force: false },
+        )
+        .expect("delete must still succeed");
+        assert!(dir_as_ltw.is_dir(), "a directory must never be removed");
     }
 
     // -----------------------------------------------------------------------

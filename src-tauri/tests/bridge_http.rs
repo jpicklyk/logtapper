@@ -137,14 +137,15 @@ async fn route_table_probe_every_route_resolves_through_the_live_router() {
     // 69 after WP-13 deleted the orphaned `tag-stats` route, 70 with
     // `GET /mcp/settings/agent_access`, 74 with B1's `GET|PUT|DELETE
     // /mcp/focus` + `POST /mcp/navigate`, 78 with B2's `GET /mcp/themes` +
-    // `GET|PUT|DELETE /mcp/themes/{slug}`) — a drift here means BOTH tests
-    // need updating, which is the point: it forces a route addition or
-    // removal to touch this file. Other packages may bump this same number
-    // concurrently in sibling worktrees — resolve a merge conflict by summing
-    // every package's additions rather than picking one side.
+    // `GET|PUT|DELETE /mcp/themes/{slug}`, 80 with B3's `PATCH|DELETE
+    // /mcp/workspaces/{id}`) — a drift here means BOTH tests need updating,
+    // which is the point: it forces a route addition or removal to touch this
+    // file. Other packages may bump this same number concurrently in sibling
+    // worktrees — resolve a merge conflict by summing every package's
+    // additions rather than picking one side.
     assert_eq!(
         routes.len(),
-        78,
+        80,
         "mcp_bridge::ROUTES count drifted — update this assertion alongside the route table"
     );
 
@@ -153,7 +154,7 @@ async fn route_table_probe_every_route_resolves_through_the_live_router() {
         checked += 1;
         let path = substitute_placeholders(template);
         let method = Method::from_bytes(method_str.as_bytes()).expect("ROUTES entries are valid HTTP methods");
-        let needs_body = matches!(method, Method::POST | Method::PUT);
+        let needs_body = matches!(method, Method::POST | Method::PUT | Method::PATCH);
 
         let mut builder = Request::builder().method(method.clone()).uri(&path);
         for (k, v) in trusted_headers() {
@@ -2994,5 +2995,156 @@ mod b2_themes {
         let (status, body) = get(&router, "/mcp/themes", &trusted_headers()).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body.as_array().unwrap().len(), 0);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// B3 — workspace rename/delete
+// ---------------------------------------------------------------------------
+
+mod b3_workspace_rename_delete {
+    use super::*;
+    use app_lib::services::workspace;
+    use app_lib::workspace::app_state::{AppStateFile, WorkspaceEntry};
+
+    fn seed(ctx: &mcp_bridge::BridgeCtx, entry: WorkspaceEntry) {
+        let svc = ctx.svc("test");
+        workspace::save_app_state(
+            &svc,
+            AppStateFile { workspaces: vec![entry], active_workspace_id: None },
+        )
+        .expect("seed app-state.json");
+    }
+
+    fn entry(id: &str, name: &str) -> WorkspaceEntry {
+        WorkspaceEntry {
+            id: id.to_string(),
+            name: name.to_string(),
+            ltw_path: None,
+            dirty: false,
+            auto_save_path: None,
+            last_auto_save_at: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn patch_renames_and_returns_the_updated_entry() {
+        let (ctx, _state, _sink, _tmp) = ctx_only();
+        seed(&ctx, entry("ws-1", "old-name"));
+        let router = mcp_bridge::router(ctx);
+
+        let (status, body) = send_json(
+            &router,
+            Method::PATCH,
+            "/mcp/workspaces/ws-1",
+            &trusted_headers(),
+            &json!({ "newName": "new-name" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["id"], "ws-1");
+        assert_eq!(body["name"], "new-name");
+    }
+
+    #[tokio::test]
+    async fn patch_unknown_id_yields_404() {
+        let (ctx, _state, _sink, _tmp) = ctx_only();
+        let router = mcp_bridge::router(ctx);
+        let (status, body) = send_json(
+            &router,
+            Method::PATCH,
+            "/mcp/workspaces/nosuch",
+            &trusted_headers(),
+            &json!({ "newName": "x" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(body["error"]["code"], "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn patch_missing_new_name_yields_400() {
+        let (ctx, _state, _sink, _tmp) = ctx_only();
+        seed(&ctx, entry("ws-1", "old-name"));
+        let router = mcp_bridge::router(ctx);
+        let (status, body) =
+            send_json(&router, Method::PATCH, "/mcp/workspaces/ws-1", &trusted_headers(), &json!({})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["code"], "INVALID_ARGUMENT");
+    }
+
+    #[tokio::test]
+    async fn delete_removes_the_entry() {
+        let (ctx, _state, _sink, _tmp) = ctx_only();
+        seed(&ctx, entry("ws-1", "gone-soon"));
+        let router = mcp_bridge::router(ctx);
+
+        let (status, body) =
+            send_json(&router, Method::DELETE, "/mcp/workspaces/ws-1", &trusted_headers(), &json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["ok"], true);
+
+        let (status, body) = get(&router, "/mcp/workspaces", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["workspaces"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn delete_unknown_id_yields_404() {
+        let (ctx, _state, _sink, _tmp) = ctx_only();
+        let router = mcp_bridge::router(ctx);
+        let (status, body) = send_json(
+            &router,
+            Method::DELETE,
+            "/mcp/workspaces/nosuch",
+            &trusted_headers(),
+            &json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(body["error"]["code"], "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn delete_active_workspace_without_force_yields_409() {
+        let (ctx, _state, _sink, _tmp) = ctx_only();
+        let svc = ctx.svc("test");
+        workspace::save_app_state(
+            &svc,
+            AppStateFile {
+                workspaces: vec![entry("ws-1", "active")],
+                active_workspace_id: Some("ws-1".to_string()),
+            },
+        )
+        .expect("seed");
+        let router = mcp_bridge::router(ctx);
+
+        let (status, body) =
+            send_json(&router, Method::DELETE, "/mcp/workspaces/ws-1", &trusted_headers(), &json!({})).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "CONFLICT");
+    }
+
+    #[tokio::test]
+    async fn delete_with_delete_file_outside_the_allowlist_yields_403() {
+        let (ctx, _state, _sink, tmp) = ctx_only();
+        let ltw = tmp.path().join("explicit.ltw");
+        std::fs::write(&ltw, b"stub").unwrap();
+        let mut e = entry("ws-1", "w");
+        e.ltw_path = Some(ltw.to_string_lossy().to_string());
+        seed(&ctx, e);
+        let router = mcp_bridge::router(ctx);
+
+        let (status, body) = send_json(
+            &router,
+            Method::DELETE,
+            "/mcp/workspaces/ws-1?deleteFile=true",
+            &trusted_headers(),
+            &json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["error"]["code"], "NOT_ALLOWED");
+        assert!(ltw.exists(), "a refused delete must not remove the file");
     }
 }

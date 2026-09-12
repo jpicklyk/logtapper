@@ -610,6 +610,9 @@ pub fn run() {
             commands::themes::read_theme,
             commands::themes::write_theme,
             commands::themes::delete_theme,
+            // Workspace rename/delete (B3)
+            commands::workspace_cmd::rename_workspace,
+            commands::workspace_cmd::delete_workspace,
         ])
         .build(tauri::generate_context!())
         .expect("error building tauri application")
