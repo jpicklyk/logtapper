@@ -66,6 +66,14 @@ export function useWorkspace(
   getDefaultDir?: () => string | undefined,
   getPipelineChain?: () => string[],
   getDisabledChainIds?: () => string[],
+  // Dispatches the legacy single-chain `chain:restore` (sessionId: null) so a
+  // `.ltw`'s own top-level `pipelineChain` — the only source for a legacy
+  // workspace with no per-session `session_meta` — becomes the shared default
+  // instead of being silently ignored in favor of whatever localStorage (or the
+  // previous workspace) already seeded. Sessions with their own chain are
+  // unaffected — they restore through the per-session `chain:restore` path in
+  // `useWorkspaceRestore` regardless of this call.
+  restoreLegacyChain?: (chain: string[], disabledChainIds: string[]) => void,
 ): WorkspaceActions {
   const wsCtx = useWorkspaceContext();
   const wsCtxRef = useRef(wsCtx);
@@ -190,6 +198,14 @@ export function useWorkspace(
   const doLoadWorkspace = useCallback(async (path: string) => {
     const result = await loadWorkspaceV4(path);
 
+    // Legacy single-chain workspace support: a `.ltw` whose sessions carry no
+    // `session_meta` chain of their own has ONLY this top-level `pipelineChain`
+    // to restore from. Dispatching it unconditionally (sessionId: null) is safe
+    // for a v4 workspace too — the reducer's `chain:restore` branch sets just
+    // the shared default, and any session with its own chain restores that
+    // through the per-session path below regardless of this call.
+    restoreLegacyChain?.(result.pipelineChain.chain, result.pipelineChain.disabledIds);
+
     // Explicit open: the `.ltw` is the whole truth (no localStorage tabs
     // participate) and its view-state is always applied. The shared core owns the
     // restore-begin/end bracket, per-entry keyed pairing, artifact restore, the
@@ -226,7 +242,7 @@ export function useWorkspace(
         disabledChainIds: result.pipelineChain.disabledIds,
       }, '[useWorkspace]');
     }
-  }, [loadFile, scheduleAutoRun]);
+  }, [loadFile, scheduleAutoRun, restoreLegacyChain]);
 
   /** Persist the workspace list to backend app-state.json. */
   const persistAppState = useCallback(async () => {

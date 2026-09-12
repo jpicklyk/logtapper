@@ -15,7 +15,7 @@ import { AnalysisProvider } from './AnalysisContext';
 
 export { ThemeProvider, useTheme } from './ThemeContext';
 export type { ThemeMode, ResolvedTheme } from './ThemeContext';
-import { PipelineProvider, usePipelineChainCtx } from './PipelineContext';
+import { PipelineProvider, usePipelineChainCtx, legacyChainRestoreAction } from './PipelineContext';
 import { TrackerProvider } from './TrackerContext';
 import { ActionsProvider, trackMutations, type ActionsContextValue } from './ActionsContext';
 import { MarketplaceProvider } from './MarketplaceContext';
@@ -70,6 +70,15 @@ function HookWiring({ children }: { children: ReactNode }) {
 
   const getPipelineChain = useCallback((sessionId: string | null = null) => chainFor(sessionId).chain, [chainFor]);
   const getDisabledChainIds = useCallback((sessionId: string | null = null) => chainFor(sessionId).disabled, [chainFor]);
+
+  // Legacy single-chain workspace restore: sets the shared default chain
+  // (sessionId: null) from a `.ltw`'s own top-level `pipelineChain`, routed
+  // through the same `pipelineDispatch` as `addToChain`/`reorderChain`/etc.
+  // above — see `useWorkspace.doLoadWorkspace` and `useStartupRestore` for the
+  // call sites.
+  const restoreLegacyChain = useCallback((chain: string[], disabledChainIds: string[]) => {
+    pipelineDispatch(legacyChainRestoreAction(chain, disabledChainIds));
+  }, [pipelineDispatch]);
 
   // Pipeline chain mutations â thin wrappers around dispatch, stable via useCallback.
   // Each takes the session whose chain it edits; null targets the shared default.
@@ -295,7 +304,7 @@ function HookWiring({ children }: { children: ReactNode }) {
     return () => { bus.off('session:closed', onClosed); };
   }, []);
 
-  const workspace = useWorkspace(closeAllSessions, logViewer.loadFile, scheduleAutoRun, getDefaultDir, getPipelineChain, getDisabledChainIds);
+  const workspace = useWorkspace(closeAllSessions, logViewer.loadFile, scheduleAutoRun, getDefaultDir, getPipelineChain, getDisabledChainIds, restoreLegacyChain);
   const wsCtx = useWorkspaceContext();
   const { markDirty } = wsCtx;
 
@@ -357,6 +366,7 @@ function HookWiring({ children }: { children: ReactNode }) {
   useStartupRestore({
     loadFile: logViewer.loadFile,
     scheduleAutoRun,
+    restoreLegacyChain,
     setWorkspaceAnalyses,
     getPipelineChain,
     getDisabledChainIds,
