@@ -1056,6 +1056,18 @@ pub fn delete_workspace(ctx: &ServiceCtx, request: DeleteWorkspaceRequest) -> Re
         .position(|w| w.id == request.workspace_id)
         .ok_or_else(|| ServiceError::NotFound(format!("Workspace '{}' not found", request.workspace_id)))?;
 
+    // Authorize the explicit `.ltw` removal BEFORE any mutation (closing
+    // sessions, dropping the auto-save file, editing app-state): a refused
+    // agent request must be all-or-nothing and leave every file in place.
+    let ltw_dest = if request.delete_file {
+        match file.workspaces[index].ltw_path.as_deref() {
+            Some(ltw_path) => Some(super::policy::authorize_write_dest(ctx, ltw_path)?),
+            None => None,
+        }
+    } else {
+        None
+    };
+
     let is_active = file.active_workspace_id.as_deref() == Some(request.workspace_id.as_str());
     if is_active {
         if !request.force {
@@ -1085,11 +1097,8 @@ pub fn delete_workspace(ctx: &ServiceCtx, request: DeleteWorkspaceRequest) -> Re
     if let Some(auto_save_path) = entry.auto_save_path.as_deref() {
         remove_regular_file_if_present(Path::new(auto_save_path));
     }
-    if request.delete_file {
-        if let Some(ltw_path) = entry.ltw_path.as_deref() {
-            let dest = super::policy::authorize_write_dest(ctx, ltw_path)?;
-            remove_regular_file_if_present(&dest);
-        }
+    if let Some(dest) = ltw_dest.as_deref() {
+        remove_regular_file_if_present(dest);
     }
 
     save_app_state(ctx, file)?;
@@ -1843,6 +1852,8 @@ mod tests {
         let (ctx, tmp) = test_ctx().agent("test").build();
         let ltw = tmp.path().join("explicit.ltw");
         std::fs::write(&ltw, b"stub").unwrap();
+        let auto_save = tmp.path().join("ws-1.autosave.ltw");
+        std::fs::write(&auto_save, b"autosave").unwrap();
         save_app_state(
             &ctx,
             AppStateFile {
@@ -1851,7 +1862,7 @@ mod tests {
                     name: "w".to_string(),
                     ltw_path: Some(ltw.to_string_lossy().to_string()),
                     dirty: false,
-                    auto_save_path: None,
+                    auto_save_path: Some(auto_save.to_string_lossy().to_string()),
                     last_auto_save_at: None,
                 }],
                 active_workspace_id: None,
@@ -1866,7 +1877,9 @@ mod tests {
         .unwrap_err();
         assert_eq!(err.code(), "NOT_ALLOWED");
         assert!(ltw.exists(), "a refused delete must not remove the file");
-        // The refusal must also leave the entry untouched (all-or-nothing).
+        // The gate runs before ANY mutation: the auto-save file and the entry
+        // must both survive a refusal (all-or-nothing).
+        assert!(auto_save.exists(), "a refused delete must not remove the auto-save file");
         assert_eq!(list(&ctx).unwrap().len(), 1);
     }
 
