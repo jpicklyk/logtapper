@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@solidjs/testing-library';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import type { SearchSummary } from '@bridge/types';
+import { Show, createSignal } from 'solid-js';
 import { QueryBar } from './QueryBar';
 import { DEFAULT_QUERY_STATE, toSearchQuery } from './queryStore';
 import type { QueryState, QueryStore } from './queryStore';
@@ -55,6 +56,25 @@ function mount(overrides: { store?: QueryStore; controller?: ViewerController; a
 }
 
 describe('QueryBar', () => {
+  it('rebinds to the new session when mounted under a keyed Show (the App.tsx contract)', () => {
+    const [sid, setSid] = createSignal('s1');
+    const seen: string[] = [];
+    const store = createTestStore();
+    const spiedStore: QueryStore = { ...store, state: (id) => { seen.push(id); return store.state(id); } };
+    const controller = createViewerController({ focusSession: () => {} });
+    render(() => (
+      <Show when={sid()} keyed>
+        {(id) => <QueryBar sessionId={id} store={spiedStore} controller={controller} />}
+      </Show>
+    ));
+    expect(document.querySelector('[data-session-id]')?.getAttribute('data-session-id')).toBe('s1');
+
+    setSid('s2');
+
+    expect(document.querySelector('[data-session-id]')?.getAttribute('data-session-id')).toBe('s2');
+    expect(seen).toContain('s2');
+  });
+
   beforeEach(() => {
     bridge.searchLogs.mockReset().mockResolvedValue(emptySummary());
     bridge.createFilter.mockReset();

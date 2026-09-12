@@ -55,10 +55,11 @@ export interface QueryBarProps {
  * persisted `QueryState`.
  */
 export function QueryBar(props: QueryBarProps) {
-  // A one-time snapshot at mount, deliberately non-reactive: the bar remounts
-  // whenever the focused session changes (it lives inside `App.tsx`'s same
-  // `<Show when={store.focused()}>` as `LogViewer`), so there is no later
-  // `props.sessionId` change for this instance to react to.
+  // A one-time snapshot at mount, deliberately non-reactive. CONTRACT: the
+  // parent MUST mount this component under `<Show when={sessionId} keyed>` (see
+  // `App.tsx`) so a session switch remounts it; a non-keyed Show does not
+  // re-run its child on a truthy→truthy change and would leave this instance
+  // bound to the first session forever.
   const sessionId = untrack(() => props.sessionId);
   const controller = untrack(() => props.controller);
   const initial = untrack(() => props.store.state(sessionId));
@@ -233,7 +234,7 @@ export function QueryBar(props: QueryBarProps) {
   });
 
   return (
-    <div class={styles.bar} data-mode={mode()}>
+    <div class={styles.bar} data-mode={mode()} data-session-id={sessionId}>
       <div class={styles.modeSwitch} role="group" aria-label="Query mode">
         <button
           type="button"

@@ -192,11 +192,15 @@ export function App(props: AppProps) {
             >
               {(entry) => (
                 <>
-                  <QueryBar
-                    sessionId={entry().load.sessionId}
-                    store={queryStore}
-                    controller={controller}
-                  />
+                  {/* Keyed on the session id: QueryBar snapshots its session at
+                      mount by design, so it must be remounted per session. The
+                      outer non-keyed Show does NOT remount on a truthy→truthy
+                      switch between two open tabs. */}
+                  <Show when={entry().load.sessionId} keyed>
+                    {(sid) => (
+                      <QueryBar sessionId={sid} store={queryStore} controller={controller} />
+                    )}
+                  </Show>
                   <LogViewer
                     dataSource={entry().dataSource}
                     totalLineCount={renderedLineCount()}
