@@ -83,6 +83,13 @@ export interface SessionStore {
   markPendingClose(sessionId: string): void;
 
   /**
+   * Release a claim made by {@link markPendingClose} when the close command
+   * failed and no echo will ever arrive — otherwise a later, genuinely foreign
+   * `session-closed` for a reused id would be swallowed.
+   */
+  releasePendingClose(sessionId: string): void;
+
+  /**
    * W2 plugs the query bar in here. Kept as an injected accessor rather than a
    * constructor dependency so the query package can land without touching this
    * file: the store is built before any query state exists.
@@ -278,6 +285,7 @@ export function createSessionStore(deps: SessionStoreDeps): SessionStore {
       setFocused: setFocusedId,
       updateTotal,
       markPendingClose: (sessionId) => { pendingClose.add(sessionId); },
+      releasePendingClose: (sessionId) => { pendingClose.delete(sessionId); },
       setSearchQueryProvider: (provider) => { searchQuery = provider; },
       dispose,
     };

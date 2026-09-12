@@ -220,6 +220,17 @@ describe('close', () => {
 
     expect(store.byId('only')).toBeUndefined();
   });
+
+  it('releases the pending-close claim when the backend close rejects', async () => {
+    commands.loadLogFile.mockResolvedValue([load('only')]);
+    await actions.openPath('C:/logs/a.log');
+    const release = vi.spyOn(store, 'releasePendingClose');
+    commands.closeSession.mockRejectedValue(new Error('gone'));
+
+    await expect(actions.close('only')).rejects.toThrow('gone');
+
+    expect(release).toHaveBeenCalledWith('only');
+  });
 });
 
 describe('view reset', () => {

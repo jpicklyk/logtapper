@@ -185,6 +185,11 @@ export function createAppActions(deps: AppActionsDeps): AppActions {
     store.markPendingClose(sessionId);
     try {
       await closeSession(sessionId);
+    } catch (e) {
+      // No echo will come for a failed close: release the claim so a later
+      // foreign `session-closed` for this id is not swallowed.
+      store.releasePendingClose(sessionId);
+      throw e;
     } finally {
       store.remove(sessionId);
       resetView(sessionId);

@@ -210,6 +210,15 @@ describe('createSessionStore', () => {
     expect(store.byId('a')).toBeDefined();
   });
 
+  it('a released pending close no longer suppresses a foreign session-closed', () => {
+    const { store } = harness;
+    store.add(load('a'));
+    store.markPendingClose('a');
+    store.releasePendingClose('a');
+    bridge.handlers.closed?.({ sessionId: 'a' });
+    expect(store.byId('a')).toBeUndefined();
+  });
+
   it('removes on a foreign session-closed, and only suppresses the echo once', () => {
     const { store } = harness;
     store.add(load('a'));
