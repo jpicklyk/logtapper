@@ -360,17 +360,22 @@
   border-radius: var(--p-radius-lg);
 }
 
-/* The orb's own block at the bottom of the expanded panel. `margin-top: auto`
-   pins it to the pane's bottom edge while the feed above takes the slack. */
+/* The orb's own block leading the expanded panel; the feed below takes the slack. */
 .stage {
+  position: relative;
   display: flex;
   flex: 0 0 auto;
   flex-direction: column;
   align-items: center;
   gap: var(--ui-gap);
-  margin-top: auto;
-  padding: calc(var(--ui-gap) * 2) 0 var(--ui-gap);
-  border-top: 1px solid var(--border-subtle);
+  padding: var(--ui-gap) 0 calc(var(--ui-gap) * 2);
+  border-bottom: 1px solid var(--border);
+}
+
+.stageCollapse {
+  position: absolute;
+  top: 0;
+  right: 0;
 }
 
 .stageCaption {

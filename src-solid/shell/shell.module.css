@@ -154,6 +154,14 @@
   border-radius: var(--p-radius-md);
 }
 
+/* On the tiers that give presence its own column it is the sole occupant, so
+   the panel fills the region: the activity feed scrolls inside it and the orb
+   stage pins to the pane's bottom edge instead of pushing the region to scroll. */
+.region[data-region='presence'] > .panel[data-surface='presence'] {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .panelHeader {
   color: var(--text);
   font-weight: 600;

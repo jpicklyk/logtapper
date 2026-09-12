@@ -22,8 +22,8 @@ export const COLLAPSED_STORAGE_KEY = 'logtapper-presence-collapsed';
 
 /** Orb diameter in the collapsed pill (brief §5 / the canvas board). */
 const PILL_ORB_SIZE = 20;
-/** Orb diameter on the stage at the bottom of the expanded panel — the animation is the
- *  point of the surface, so it gets a dedicated block rather than a header icon. */
+/** Orb diameter on the stage that leads the expanded panel — the animation is the point of
+ *  the surface, so it gets a dedicated block at the top rather than a header icon. */
 const STAGE_ORB_SIZE = 200;
 
 /** Orb state → the words next to it. */
@@ -115,15 +115,16 @@ export function PresencePanel(props: PresencePanelProps): JSX.Element {
           </button>
         }
       >
-        <header class={styles.header}>
-          <span class={styles.headerNames}>
-            <span class={styles.headerClient}>{clientName()}</span>
-            <span class={styles.headerState}>{stateText()}</span>
-          </span>
-          <button type="button" class={styles.ghostButton} onClick={toggle} aria-expanded>
+        <div class={styles.stage} data-testid="agent-stage">
+          <button type="button" class={`${styles.ghostButton} ${styles.stageCollapse}`} onClick={toggle} aria-expanded>
             Collapse
           </button>
-        </header>
+          <Orb state={state()} size={STAGE_ORB_SIZE} title={`${clientName()}: ${stateText()}`} />
+          <span class={styles.stageCaption}>
+            <span class={styles.stageClient}>{clientName()}</span>
+            <span class={styles.stageState}>{stateText()}</span>
+          </span>
+        </div>
 
         <Show when={store().agentRawAccess()}>
           <div class={styles.rawBanner} role="status" data-testid="raw-banner">
@@ -214,14 +215,6 @@ export function PresencePanel(props: PresencePanelProps): JSX.Element {
 
         <div class={styles.consentPlaceholder} data-testid="consent-placeholder">
           Consent requests appear here
-        </div>
-
-        <div class={styles.stage} data-testid="agent-stage">
-          <Orb state={state()} size={STAGE_ORB_SIZE} title={`${clientName()}: ${stateText()}`} />
-          <span class={styles.stageCaption}>
-            <span class={styles.stageClient}>{clientName()}</span>
-            <span class={styles.stageState}>{stateText()}</span>
-          </span>
         </div>
       </Show>
     </section>
