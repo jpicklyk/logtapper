@@ -67,6 +67,14 @@ afterEach(() => {
 });
 
 describe('createEditorStore', () => {
+  it('starts a new note in markdown and persists a picked language mode', () => {
+    const { store } = makeStore();
+    const id = store.newDoc();
+    expect(store.tabs().find((d) => d.id === id)?.mode).toBe('markdown');
+    store.setMode(id, 'plain');
+    expect(store.tabs().find((d) => d.id === id)?.mode).toBe('plain');
+  });
+
   it('sets the dirty flag on edit and clears it on save', async () => {
     const { store, commands } = makeStore();
     const id = store.newDoc();

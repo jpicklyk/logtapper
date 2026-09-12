@@ -75,6 +75,9 @@ export interface EditorTabProps {
   /** Controls the preview split; omit to keep the internal toggle button. */
   viewMode?: EditorPreviewMode;
   onViewModeChanged?: (mode: EditorPreviewMode) => void;
+  /** The language mode picked in the toolbar select, so a controlling caller
+   *  (W9's tab manager) can persist it per document. */
+  onModeChanged?: (mode: EditorMode) => void;
   /** Hides this header's own Save/Save As — a caller with its own save path
    *  (W9's toolbar) sets this `false` so there is a single save path. */
   showSaveButtons?: boolean;
@@ -97,6 +100,7 @@ export function EditorTab(props: EditorTabProps) {
   }));
 
   const [value, setValue] = createSignal(initial.content);
+  let lastPath: string | null = initial.filePath;
   const [dirty, setDirty] = createSignal(false);
   const [filePath, setFilePath] = createSignal<string | null>(initial.filePath);
   const [mode, setMode] = createSignal<EditorMode>(initial.mode);
@@ -146,7 +150,15 @@ export function EditorTab(props: EditorTabProps) {
       () => [props.content, props.filePath] as const,
       ([content, path]) => {
         setFilePath(path ?? null);
-        setMode(props.mode ?? modeForPath(path));
+        // Only a path change re-derives the language: the content echo a
+        // controlling store sends back after each keystroke must not undo a
+        // mode the user picked in the select (phase 2b smoke finding). Tracked
+        // by hand because a deferred `on` reports no previous input on its
+        // first run.
+        if ((path ?? null) !== lastPath) {
+          lastPath = path ?? null;
+          setMode(props.mode ?? modeForPath(path));
+        }
         editor?.setValue(content ?? '');
         setValue(content ?? '');
         syncDirty();
@@ -156,6 +168,7 @@ export function EditorTab(props: EditorTabProps) {
   );
 
   createEffect(on(mode, (next) => editor?.setMode(next), { defer: true }));
+  createEffect(on(() => props.mode, (next) => { if (next !== undefined) setMode(next); }, { defer: true }));
 
   const saveAs = async () => {
     const path = await save({ defaultPath: filePath() ?? title(), filters: SAVE_FILTERS });
@@ -196,7 +209,11 @@ export function EditorTab(props: EditorTabProps) {
           <select
             class={styles.select}
             value={mode()}
-            onChange={(event) => setMode(event.currentTarget.value as EditorMode)}
+            onChange={(event) => {
+              const next = event.currentTarget.value as EditorMode;
+              setMode(next);
+              props.onModeChanged?.(next);
+            }}
           >
             <option value="plain">plain</option>
             <option value="markdown">markdown</option>

@@ -1,4 +1,5 @@
 /** @jsxImportSource solid-js */
+import { createSignal } from 'solid-js';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@solidjs/testing-library';
 import { EditorView } from '@codemirror/view';
@@ -80,6 +81,21 @@ describe('EditorTab', () => {
   it('switching the mode toggle to markdown reveals the preview', () => {
     const { container } = render(() => <EditorTab filePath="/tmp/a.txt" content="# x" />);
     fireEvent.change(container.querySelector('select')!, { target: { value: 'markdown' } });
+    expect(container.querySelector('[data-testid="markdown"] h1')?.textContent).toBe('x');
+  });
+
+  it('keeps a picked mode when a controlling store echoes the content back', () => {
+    // W9 passes `content` from its store; every keystroke round-trips through
+    // it. That echo must not reset a mode the user chose in the select.
+    const [content, setContent] = createSignal('# x');
+    const onModeChanged = vi.fn();
+    const { container } = render(() => (
+      <EditorTab filePath={null} content={content()} mode="plain" onModeChanged={onModeChanged} />
+    ));
+    fireEvent.change(container.querySelector('select')!, { target: { value: 'markdown' } });
+    expect(onModeChanged).toHaveBeenCalledWith('markdown');
+    setContent('# x\n\nmore');
+    expect((container.querySelector('select') as HTMLSelectElement).value).toBe('markdown');
     expect(container.querySelector('[data-testid="markdown"] h1')?.textContent).toBe('x');
   });
 

@@ -32,6 +32,8 @@ import { readTextFile, writeTextFile } from '@bridge/commands';
 import type { LtwEditorTab } from '@bridge/types';
 import { basename, SAVE_FILTERS } from './EditorTab';
 import type { EditorPreviewMode } from './EditorTab';
+import { modeForPath } from './EditorTab';
+import type { EditorMode } from './createTextEditor';
 
 /** One open editor document. Mirrors `LtwEditorTab`'s persisted shape plus
  *  the live/saved split a running editor needs. */
@@ -45,6 +47,9 @@ export interface EditorDoc {
   savedContent: string;
   viewMode: EditorPreviewMode | 'preview';
   wordWrap: boolean;
+  /** Language mode: derived from the path when opened, `markdown` for a new
+   *  note (this app's notes are markdown), and whatever the user picks after. */
+  mode: EditorMode;
 }
 
 export type CloseConfirmChoice = 'save' | 'discard' | 'cancel';
@@ -103,6 +108,7 @@ export interface EditorStore {
   /** Explicit `path` skips the dialog (what tests use); omit it to prompt. */
   saveAs(id: string, path?: string): Promise<void>;
   setViewMode(id: string, mode: EditorDoc['viewMode']): void;
+  setMode(id: string, mode: EditorMode): void;
   setWordWrap(id: string, wordWrap: boolean): void;
 
   /** Project the open docs into the `.ltw` save payload shape. */
@@ -167,6 +173,7 @@ export function createEditorStore(deps: EditorStoreDeps): EditorStore {
         content: t.content,
         savedContent: t.content,
         viewMode: normalizeViewMode(t.viewMode),
+        mode: t.filePath ? modeForPath(t.filePath) : 'markdown',
         wordWrap: t.wordWrap,
       }));
       setTabs((prev) => [...prev, ...docs]);
@@ -226,6 +233,7 @@ export function createEditorStore(deps: EditorStoreDeps): EditorStore {
         savedContent: content,
         viewMode: 'editor',
         wordWrap: false,
+        mode: modeForPath(path),
       };
       addDoc(doc);
       notifyMutated();
@@ -242,6 +250,7 @@ export function createEditorStore(deps: EditorStoreDeps): EditorStore {
         savedContent: '',
         viewMode: 'editor',
         wordWrap: false,
+        mode: 'markdown',
       };
       addDoc(doc);
       notifyMutated();
@@ -323,6 +332,11 @@ export function createEditorStore(deps: EditorStoreDeps): EditorStore {
       notifyMutated();
     };
 
+    const setMode = (id: string, mode: EditorMode): void => {
+      if (!findDoc(id)) return;
+      patch(id, { mode });
+    };
+
     const setViewMode = (id: string, mode: EditorDoc['viewMode']): void => {
       if (!findDoc(id)) return;
       patch(id, { viewMode: mode });
@@ -356,6 +370,7 @@ export function createEditorStore(deps: EditorStoreDeps): EditorStore {
       save,
       saveAs,
       setViewMode,
+      setMode,
       setWordWrap,
       toLtwTabs: (): LtwEditorTab[] =>
         tabs().map((t) => ({

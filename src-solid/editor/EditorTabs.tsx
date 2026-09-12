@@ -1,7 +1,7 @@
 /** @jsxImportSource solid-js */
 import { Show, createSignal, onCleanup, onMount } from 'solid-js';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
-import { EditorTab, SAVE_FILTERS, modeForPath } from './EditorTab';
+import { EditorTab, SAVE_FILTERS } from './EditorTab';
 import type { EditorStore } from './editorStore';
 import type { LineRefTarget } from './lineRefs';
 import styles from './editor.module.css';
@@ -118,7 +118,8 @@ export function EditorTabs(props: EditorTabsProps) {
           <EditorTab
             filePath={doc().filePath}
             content={doc().content}
-            mode={modeForPath(doc().filePath)}
+            mode={doc().mode}
+            onModeChanged={(mode) => props.store.setMode(doc().id, mode)}
             showSaveButtons={false}
             dirty={props.store.isDirty(doc().id)}
             viewMode={doc().viewMode === 'split' ? 'split' : 'editor'}
