@@ -64,7 +64,10 @@ export function ThemesTab(props: ThemesTabProps) {
     setError(null);
     props.store.saveTheme(slug, result.theme).then(() => setDraft((prev) => ({ ...prev, slug, isNew: false }))).catch((e: unknown) => setError(String(e)));
   };
+  // Two-step delete: the first click arms the row, the second confirms.
+  const [confirmingDelete, setConfirmingDelete] = createSignal<string | null>(null);
   const handleDelete = (slug: string): void => {
+    setConfirmingDelete(null);
     // Untracked: this runs outside any Solid computation (a promise callback), so the read is a one-time check.
     props.store.deleteTheme(slug).then(() => { if (untrack(draft).slug === slug) startNew(); }).catch((e: unknown) => setError(String(e)));
   };
@@ -91,8 +94,18 @@ export function ThemesTab(props: ThemesTabProps) {
             {(summary) => (
               <div class={styles.listRow}>
                 <span class={styles.listRowPath}>{summary.name} ({summary.base})</span>
-                <button type="button" class={styles.linkBtn} onClick={() => startEdit(summary.slug)}>Edit</button>
-                <button type="button" class={styles.iconBtn} title="Delete theme" onClick={() => handleDelete(summary.slug)}>×</button>
+                <Show
+                  when={confirmingDelete() === summary.slug}
+                  fallback={
+                    <>
+                      <button type="button" class={styles.linkBtn} onClick={() => startEdit(summary.slug)}>Edit</button>
+                      <button type="button" class={styles.iconBtn} title="Delete theme" onClick={() => setConfirmingDelete(summary.slug)}>×</button>
+                    </>
+                  }
+                >
+                  <button type="button" class={styles.linkBtn} onClick={() => handleDelete(summary.slug)}>Delete?</button>
+                  <button type="button" class={styles.iconBtn} title="Keep theme" onClick={() => setConfirmingDelete(null)}>Cancel</button>
+                </Show>
               </div>
             )}
           </For>

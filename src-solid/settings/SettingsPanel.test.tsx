@@ -59,6 +59,19 @@ describe('SettingsPanel', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Sources' }));
     expect(screen.getByTestId('sources-tab')).toBeTruthy();
   });
+  it('deletes a user theme only after the row is confirmed', () => {
+    const store = fakeStore();
+    (store as { themes: () => ThemeSummary[] }).themes = () => [{ slug: 'ember', name: 'Ember', base: 'dark' }];
+    render(() => <SettingsPanel store={store} theme={fakeThemeController()} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Themes' }));
+    fireEvent.click(screen.getByTitle('Delete theme'));
+    expect(store.deleteTheme).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTitle('Keep theme'));
+    expect(screen.getByTitle('Delete theme')).toBeTruthy();
+    fireEvent.click(screen.getByTitle('Delete theme'));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete?' }));
+    expect(store.deleteTheme).toHaveBeenCalledWith('ember');
+  });
   it('renders General without a theme controller (optional prop)', () => {
     render(() => <SettingsPanel store={fakeStore()} />);
     expect(screen.getByTestId('general-tab')).toBeTruthy();
