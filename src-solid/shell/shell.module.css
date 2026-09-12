@@ -1,0 +1,253 @@
+/* Layout shell. Colours, radii, fonts and the gap come from tokens.css; the
+   handful of structural dimensions the grid needs are declared once here, on
+   `.shell`, and consumed as custom properties everywhere below — so no size
+   literal is scattered through the rules. */
+
+.shell {
+  --shell-rail-w: 48px;
+  --shell-splitter-w: 5px;
+  --shell-bar-h: 34px;
+  --shell-drawer-w: 380px;
+  --shell-pad: var(--ui-gap, 8px);
+
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-columns: var(--shell-columns, var(--shell-rail-w) minmax(0, 1fr));
+  grid-template-rows: var(--shell-bar-h) minmax(0, 1fr) var(--shell-bar-h);
+  min-height: 0;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+}
+
+.topBar,
+.statusBar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--shell-pad);
+  min-width: 0;
+  padding: 0 var(--shell-pad);
+  background: var(--surface-raised);
+}
+
+.topBar {
+  grid-row: 1;
+  border-bottom: 1px solid var(--border);
+}
+
+.statusBar {
+  grid-row: 3;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.statusMeta {
+  margin-left: auto;
+  color: var(--text-dimmed);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── rail ───────────────────────────────────────────────────────────────── */
+
+.rail {
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--shell-pad);
+  overflow-y: auto;
+  padding: var(--shell-pad) 0;
+  border-right: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+
+.railButton {
+  display: grid;
+  place-items: center;
+  width: calc(var(--shell-rail-w) - var(--shell-pad) * 2);
+  height: calc(var(--shell-rail-w) - var(--shell-pad) * 2);
+  padding: 0;
+  color: var(--text-muted);
+  font: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--p-radius-md);
+  cursor: pointer;
+}
+
+.railButton:hover {
+  color: var(--text);
+  background: var(--surface-overlay);
+}
+
+.railButton:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.railButtonOpen {
+  color: var(--accent);
+  background: var(--accent-muted);
+  border-color: var(--accent-border);
+}
+
+.railGlyph {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ── regions ────────────────────────────────────────────────────────────── */
+
+.region {
+  position: relative;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  gap: var(--shell-pad);
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.region[data-region='viewer'] {
+  gap: 0;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.region:not([data-region='viewer']) {
+  padding: var(--shell-pad);
+  background: var(--surface-raised);
+}
+
+.region[data-region='navigator'] {
+  border-right: 1px solid var(--border);
+}
+
+.region[data-region='details'],
+.region[data-region='presence'] {
+  border-left: 1px solid var(--border);
+}
+
+.viewerSlot {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* ── panels ─────────────────────────────────────────────────────────────── */
+
+.panel {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: calc(var(--shell-pad) / 2);
+  padding: var(--shell-pad);
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--p-radius-md);
+}
+
+.panelHeader {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.panelDescription {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+/* The viewer region's extra surfaces (the timeline strip) read as a strip. */
+.region[data-region='viewer'] .panel {
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+  border-radius: var(--p-radius-none);
+}
+
+/* ── splitter ───────────────────────────────────────────────────────────── */
+
+.splitter {
+  position: absolute;
+  inset-block: 0;
+  z-index: var(--p-z-dropdown);
+  width: var(--shell-splitter-w);
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.splitter[data-side='start'] {
+  right: calc(var(--shell-splitter-w) / -2);
+}
+
+.splitter[data-side='end'] {
+  left: calc(var(--shell-splitter-w) / -2);
+}
+
+.splitter:hover,
+.splitter:active {
+  background: var(--accent-muted);
+}
+
+.splitter:focus-visible {
+  background: var(--accent-muted);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* ── drawer ─────────────────────────────────────────────────────────────── */
+
+.drawer {
+  position: absolute;
+  inset-block: 0;
+  left: var(--shell-rail-w);
+  z-index: var(--p-z-overlay);
+  display: flex;
+  flex-direction: column;
+  grid-row: 2;
+  grid-column: 1 / -1;
+  width: min(var(--shell-drawer-w), 100%);
+  background: var(--surface-overlay);
+  border-right: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+
+.drawerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--shell-pad);
+  padding: var(--shell-pad);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+
+.drawerClose {
+  padding: 0 calc(var(--shell-pad) / 2);
+  color: var(--text-muted);
+  font: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.drawerClose:hover {
+  color: var(--text);
+}
+
+.drawerBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--shell-pad);
+  overflow: auto;
+  padding: var(--shell-pad);
+}

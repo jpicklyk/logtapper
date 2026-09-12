@@ -9,9 +9,12 @@ import { App } from './App';
 // a best-effort data-theme synchronously; this reconciles it against the
 // live signals (density, prefers-color-scheme changes, user overrides) for
 // the rest of the session. See theme/applyTheme.ts.
-createThemeController(document.documentElement);
+const theme = createThemeController(document.documentElement);
 
 const root = document.getElementById('root');
 if (!root) throw new Error('#root not found');
 
-render(() => <App />, root);
+// Handed to App so the shell's top-bar theme/density selector drives the one
+// controller — a second `createThemeController` would fight this one over
+// `data-theme` whenever `prefers-color-scheme` changed.
+render(() => <App theme={theme} />, root);

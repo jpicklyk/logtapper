@@ -1,5 +1,5 @@
 /** @jsxImportSource solid-js */
-import { Show, createSignal, onCleanup } from 'solid-js';
+import { For, Show, createSignal, onCleanup } from 'solid-js';
 import { open } from '@tauri-apps/plugin-dialog';
 import { getLines, loadLogFile } from '@bridge/commands';
 import {
@@ -10,10 +10,15 @@ import {
 } from './viewer';
 import type { CacheDataSource } from './viewer';
 import { createStreamSession } from './viewer/createStreamSession';
+import { AppShell } from './shell';
+import type { SessionKind } from './shell';
+import { BASE_THEMES } from './theme/applyTheme';
+import type { Density, ThemeController, ThemeMode } from './theme/applyTheme';
 import styles from './App.module.css';
 
 /**
- * Solid spike shell: open a file, then show it in the virtualized viewer.
+ * Solid spike shell: open a file, then show it in the virtualized viewer,
+ * inside the §F layout shell.
  *
  * The cache manager and data-source registry are app-wide singletons — one each,
  * created once here. React builds them in `CacheProvider`; Solid has no provider
@@ -24,6 +29,15 @@ import styles from './App.module.css';
 const CACHE_BUDGET = 100_000;
 const VIEW_ID = 'solid-main';
 
+/**
+ * Workspaces are a 2b surface; until then every session shares one id, which is
+ * the key the shell's column widths are stored under.
+ */
+const WORKSPACE_ID = 'default';
+
+const THEME_MODES: readonly ThemeMode[] = ['system', ...BASE_THEMES];
+const DENSITIES: readonly Density[] = ['comfortable', 'compact'];
+
 /** Bench-only driver (`?bench=1`), so the gate can run without the native dialog. */
 interface BenchApp {
   open(path: string): Promise<void>;
@@ -31,12 +45,22 @@ interface BenchApp {
   stopStream(): Promise<void>;
 }
 
-export function App() {
+export interface AppProps {
+  /**
+   * The live theme/density controller, built in `main.tsx` before first paint.
+   * Optional so tests can mount `App` without a `matchMedia` shim; the theme
+   * selector only renders when one is supplied.
+   */
+  theme?: ThemeController;
+}
+
+export function App(props: AppProps) {
   const cacheManager = new CacheManager(CACHE_BUDGET);
   const registry = new DataSourceRegistry();
 
   const [dataSource, setDataSource] = createSignal<CacheDataSource | null>(null);
   const [sessionId, setSessionId] = createSignal<string | null>(null);
+  const [sessionKind, setSessionKind] = createSignal<SessionKind>(null);
   const [sourceName, setSourceName] = createSignal('');
   const [totalLines, setTotalLines] = createSignal(0);
   const [tailMode, setTailMode] = createSignal(false);
@@ -76,6 +100,7 @@ export function App() {
     setSourceName(name);
     setTotalLines(total);
     setTailMode(tail);
+    setSessionKind(tail ? 'live' : 'file');
     setDataSource(ds);
   };
 
@@ -158,38 +183,73 @@ export function App() {
     onCleanup(() => { void stream.stop(); });
   }
 
-  return (
-    <main class={styles.page}>
-      <header class={styles.bar}>
-        <button type="button" class={styles.openButton} onClick={openFile} disabled={loading()}>
-          Open file…
-        </button>
-        <Show when={sourceName()}>
-          <span class={styles.session}>
-            {sourceName()} — {totalLines().toLocaleString()} lines
+  const topBar = (
+    <>
+      <button type="button" class={styles.openButton} onClick={openFile} disabled={loading()}>
+        Open file…
+      </button>
+      <Show when={sourceName()}>
+        <span class={styles.session}>
+          {sourceName()} — {totalLines().toLocaleString()} lines
+        </span>
+      </Show>
+      <Show when={loading()}>
+        <span class={styles.session}>Loading…</span>
+      </Show>
+      <Show when={error()}>
+        <span class={styles.error}>{error()}</span>
+      </Show>
+      <Show when={props.theme}>
+        {(theme) => (
+          <span class={styles.controls}>
+            <label class={styles.control}>
+              Theme
+              <select
+                class={styles.select}
+                value={theme().mode()}
+                onChange={(event) => theme().setMode(event.currentTarget.value as ThemeMode)}
+              >
+                <For each={THEME_MODES}>{(value) => <option value={value}>{value}</option>}</For>
+              </select>
+            </label>
+            <label class={styles.control}>
+              Density
+              <select
+                class={styles.select}
+                value={theme().density()}
+                onChange={(event) => theme().setDensity(event.currentTarget.value as Density)}
+              >
+                <For each={DENSITIES}>{(value) => <option value={value}>{value}</option>}</For>
+              </select>
+            </label>
           </span>
-        </Show>
-        <Show when={loading()}>
-          <span class={styles.session}>Loading…</span>
-        </Show>
-        <Show when={error()}>
-          <span class={styles.error}>{error()}</span>
-        </Show>
-      </header>
-
-      <Show
-        when={dataSource()}
-        fallback={<div class={styles.empty}>No log open. Choose a file to begin.</div>}
-      >
-        {(ds) => (
-          <LogViewer
-            dataSource={ds()}
-            totalLineCount={totalLines()}
-            sessionId={sessionId() ?? undefined}
-            tailMode={tailMode()}
-          />
         )}
       </Show>
-    </main>
+    </>
+  );
+
+  return (
+    <AppShell
+      workspaceId={WORKSPACE_ID}
+      sessionKind={sessionKind()}
+      topBar={topBar}
+      slots={{
+        viewer: () => (
+          <Show
+            when={dataSource()}
+            fallback={<div class={styles.empty}>No log open. Choose a file to begin.</div>}
+          >
+            {(ds) => (
+              <LogViewer
+                dataSource={ds()}
+                totalLineCount={totalLines()}
+                sessionId={sessionId() ?? undefined}
+                tailMode={tailMode()}
+              />
+            )}
+          </Show>
+        ),
+      }}
+    />
   );
 }

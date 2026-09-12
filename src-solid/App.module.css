@@ -1,40 +1,18 @@
-/* Spike shell. Like the viewer module, every token carries a dark-theme
-   fallback from src-next/styles/tokens.css until T1 lands. */
-
-.page {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  font-family: var(--font-ui, system-ui, sans-serif);
-  font-size: 13px;
-  color: var(--text, #b8c4ce);
-  background: var(--bg-base, #0c1014);
-}
-
-.bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-shrink: 0;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border, #21262d);
-  background: var(--chrome-bg, var(--bg-raised, #141b21));
-}
+/* App-level top-bar controls and the viewer region's empty state. The layout
+   itself lives in shell/shell.module.css; everything here is token-driven. */
 
 .openButton {
   padding: 4px 12px;
   font: inherit;
-  color: var(--text-on-accent, var(--bg-base, #0c1014));
-  background: var(--accent, #58a6ff);
+  color: var(--text-on-accent);
+  background: var(--accent);
   border: none;
-  border-radius: var(--radius-md, 4px);
+  border-radius: var(--radius-md);
   cursor: pointer;
 }
 
 .openButton:hover:not(:disabled) {
-  background: var(--accent-base, #1f6feb);
+  background: var(--accent-base);
 }
 
 .openButton:disabled {
@@ -43,18 +21,46 @@
 }
 
 .session {
-  color: var(--text-subtle, #8b949e);
+  color: var(--text-subtle);
   font-variant-numeric: tabular-nums;
 }
 
 .error {
-  color: var(--danger, #f47067);
+  color: var(--danger);
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-gap);
+  margin-left: auto;
+}
+
+.control {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--ui-gap) / 2);
+  color: var(--text-muted);
+}
+
+.select {
+  padding: 2px 4px;
+  color: var(--text);
+  font: inherit;
+  background: var(--surface-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.select:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
 }
 
 .empty {
-  flex: 1;
   display: flex;
+  flex: 1;
   align-items: center;
   justify-content: center;
-  color: var(--text-dimmed, #484f58);
+  color: var(--text-dimmed);
 }
