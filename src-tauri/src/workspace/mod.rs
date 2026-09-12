@@ -114,33 +114,94 @@ pub fn workspace_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// Delete the oldest `.ltw` files in `dir` so that at most `keep` files remain.
+/// True when `stem` (a `.ltw` filename with its extension stripped) matches
+/// an id shape the auto-saver has ever produced for its id-keyed
+/// `workspaces/{workspace_id}.ltw` file — never a name a person chose when
+/// explicitly saving a `.ltw` into this same directory.
 ///
-/// Never deletes a file that is currently recorded as a workspace's
-/// `auto_save_path` in `app-state.json` at `app_state_path`, even if that
-/// workspace hasn't been flushed recently (e.g. opened but left untouched
-/// while *other* workspaces churn through their own auto-saves). The
-/// `EVICT_KEEP`-per-flush design assumes an active workspace's file is
-/// "always among the newest" because it gets rewritten in place on every
-/// flush — true only while that workspace keeps generating flushes. A
-/// workspace with zero mutations since it was opened never re-flushes, so
-/// its file's mtime can age out from under it purely because unrelated
-/// workspaces kept flushing; deleting it would silently invalidate
-/// `auto_save_path` with nothing to notice or repair the dangling pointer.
-/// Protected files are excluded from the eviction candidate pool entirely
-/// (kept in addition to `keep`, not counted against it), so genuinely
-/// stale, unreferenced files are still trimmed down to `keep` exactly as
-/// before.
+/// Two shapes count, per a `git log`/`git log -S` search of this
+/// repository's history of workspace-id generation (see the
+/// `4ffb7495`-tagged bug-fix commit's `root-cause` note for the exact
+/// commands run):
+///
+/// - **The only generator this codebase has ever shipped**: `workspace_id`
+///   comes from `crypto.randomUUID()` on the frontend
+///   (`src-next/bridge/workspaceTypes.ts::createEmptyWorkspace`) — a
+///   lowercase, hyphenated UUID string, e.g.
+///   `3fa85f64-5717-4562-b3fc-2c963f66afa6` (8-4-4-4-12 hex groups).
+/// - **A legacy bare-hex id observed in real user app-data directories**
+///   (e.g. `375d922faf1d3501.ltw`) that predates this repository's history:
+///   exactly 16 lowercase hex characters, no separators. No generator for
+///   this shape exists anywhere in `git log --all`, so it is included
+///   defensively rather than confirmed — but the risk of treating it as an
+///   eviction candidate is one-sided and safe: nobody names a workspace file
+///   a bare 16-digit hex string by hand, so this can never falsely protect
+///   (or falsely evict) a real user-chosen filename.
+///
+/// A user-chosen filename like `my-notes.ltw` or `presentation.ltw` matches
+/// neither shape and is therefore never an eviction candidate, regardless of
+/// age — it also never counts against `keep`.
+fn is_autosave_id_stem(stem: &str) -> bool {
+    is_uuid_v4_shaped(stem) || is_legacy_hex_id(stem)
+}
+
+/// `8-4-4-4-12` lowercase hex groups, exactly what `crypto.randomUUID()` produces.
+fn is_uuid_v4_shaped(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(i, &b)| match i {
+            8 | 13 | 18 | 23 => b == b'-',
+            _ => b.is_ascii_digit() || (b'a'..=b'f').contains(&b),
+        })
+}
+
+/// Exactly 16 lowercase hex characters, no separators — the legacy shape.
+fn is_legacy_hex_id(s: &str) -> bool {
+    s.len() == 16 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Delete the oldest auto-saved `.ltw` files in `dir` so that at most `keep`
+/// of them remain.
+///
+/// Two independent protections keep this from ever destroying a workspace
+/// file it shouldn't:
+///
+/// 1. **Never an id-pattern mismatch.** Only filenames matching
+///    [`is_autosave_id_stem`] — the shapes the auto-saver itself has ever
+///    produced — are eviction candidates at all; a `.ltw` a user explicitly
+///    saved into this directory under a name of their own choosing (e.g.
+///    `my-notes.ltw`) is invisible to this function, never counted against
+///    `keep` and never deleted no matter how old it is.
+/// 2. **Never a live `auto_save_path`.** Even an id-pattern file is skipped
+///    if it is currently recorded as a workspace's `auto_save_path` in
+///    `app-state.json` at `app_state_path` — e.g. opened but left untouched
+///    while *other* workspaces churn through their own auto-saves. The
+///    `EVICT_KEEP`-per-flush design assumes an active workspace's file is
+///    "always among the newest" because it gets rewritten in place on every
+///    flush — true only while that workspace keeps generating flushes. A
+///    workspace with zero mutations since it was opened never re-flushes, so
+///    its file's mtime can age out from under it purely because unrelated
+///    workspaces kept flushing; deleting it would silently invalidate
+///    `auto_save_path` with nothing to notice or repair the dangling pointer.
+///
+/// Both kinds of protected files are excluded from the eviction candidate
+/// pool entirely (kept in addition to `keep`, not counted against it), so
+/// genuinely stale, unreferenced, id-pattern files are still trimmed down to
+/// `keep` exactly as before.
 ///
 /// All errors are silently ignored — this is a non-fatal housekeeping operation.
 pub fn evict_old_workspaces(dir: &Path, keep: usize, app_state_path: &Path) {
     // Cheap pre-count: statting + sorting every file runs on every flush, but the
-    // common case is being under the keep limit. Count `.ltw` entries by
-    // extension only — no `metadata()` calls — and bail before the expensive pass.
+    // common case is being under the keep limit. Count only id-pattern `.ltw`
+    // entries (no `metadata()` calls) and bail before the expensive pass — a
+    // directory full of user-named `.ltw` files never triggers the full scan.
     let ltw_count = match std::fs::read_dir(dir) {
         Ok(entries) => entries
             .flatten()
-            .filter(|e| e.path().extension().is_some_and(|ext| ext == "ltw"))
+            .filter(|e| {
+                e.path().extension().is_some_and(|ext| ext == "ltw")
+                    && e.path().file_stem().and_then(|s| s.to_str()).is_some_and(is_autosave_id_stem)
+            })
             .count(),
         Err(_) => return,
     };
@@ -163,7 +224,9 @@ pub fn evict_old_workspaces(dir: &Path, keep: usize, app_state_path: &Path) {
         .flatten()
         .filter_map(|e| {
             let path = e.path();
-            if path.extension().is_some_and(|ext| ext == "ltw") && !protected.contains(&path) {
+            let is_id_pattern =
+                path.file_stem().and_then(|s| s.to_str()).is_some_and(is_autosave_id_stem);
+            if path.extension().is_some_and(|ext| ext == "ltw") && is_id_pattern && !protected.contains(&path) {
                 let mtime = e.metadata().ok()?.modified().ok()?;
                 Some((mtime, path))
             } else {
@@ -187,6 +250,15 @@ pub fn evict_old_workspaces(dir: &Path, keep: usize, app_state_path: &Path) {
 mod tests {
     use super::*;
     use std::io::Write as _;
+
+    /// A UUID-v4-shaped `.ltw` filename distinguished by `i` — the id shape
+    /// the auto-saver actually produces, so eviction tests exercise the
+    /// real id-pattern gate rather than accidentally relying on filenames
+    /// `evict_old_workspaces` would now treat as user-named (and therefore
+    /// never touch).
+    fn id_ltw_name(i: usize) -> String {
+        format!("00000000-0000-4000-8000-{i:012x}.ltw")
+    }
 
     // --- write_atomic -------------------------------------------------------
 
@@ -245,9 +317,9 @@ mod tests {
         let tmp_dir = tempfile::tempdir().expect("tmpdir");
         let dir = tmp_dir.path();
 
-        // Create 5 files with distinct modification times using different content sizes
-        // to ensure they are distinct on the filesystem.
-        let names: Vec<String> = (0..5).map(|i| format!("file{i}.ltw")).collect();
+        // Create 5 id-pattern files with distinct modification times using
+        // different content sizes to ensure they are distinct on the filesystem.
+        let names: Vec<String> = (0..5).map(id_ltw_name).collect();
         for (i, name) in names.iter().enumerate() {
             let path = dir.join(name);
             std::fs::write(&path, vec![b'x'; i + 1]).expect("write");
@@ -265,10 +337,10 @@ mod tests {
 
         assert_eq!(remaining.len(), 3, "expected 3 files, got {remaining:?}");
 
-        // The 3 newest files (file2, file3, file4) must survive.
-        for name in &["file2.ltw", "file3.ltw", "file4.ltw"] {
+        // The 3 newest files (index 2, 3, 4) must survive.
+        for name in &[id_ltw_name(2), id_ltw_name(3), id_ltw_name(4)] {
             assert!(
-                remaining.contains(&(*name).to_string()),
+                remaining.contains(name),
                 "{name} should have survived eviction; remaining: {remaining:?}"
             );
         }
@@ -296,9 +368,9 @@ mod tests {
         let tmp_dir = tempfile::tempdir().expect("tmpdir");
         let dir = tmp_dir.path();
 
-        // Create 3 .ltw files.
+        // Create 3 id-pattern .ltw files.
         for i in 0..3 {
-            std::fs::write(dir.join(format!("f{i}.ltw")), vec![b'x'; i + 1]).expect("write ltw");
+            std::fs::write(dir.join(id_ltw_name(i)), vec![b'x'; i + 1]).expect("write ltw");
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
@@ -339,17 +411,17 @@ mod tests {
         let dir = tmp_dir.path();
         let app_state_path = tmp_dir.path().join("app-state.json");
 
-        // 5 files, oldest to newest: file0 (oldest) .. file4 (newest).
-        let names: Vec<String> = (0..5).map(|i| format!("file{i}.ltw")).collect();
+        // 5 id-pattern files, oldest to newest: index 0 (oldest) .. index 4 (newest).
+        let names: Vec<String> = (0..5).map(id_ltw_name).collect();
         for (i, name) in names.iter().enumerate() {
             std::fs::write(dir.join(name), vec![b'x'; i + 1]).expect("write");
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
-        // app-state.json records file0.ltw — the OLDEST file, otherwise the
-        // very first candidate for eviction — as an open workspace's live
+        // app-state.json records index 0's file — the OLDEST file, otherwise
+        // the very first candidate for eviction — as an open workspace's live
         // auto_save_path.
-        let protected_path = dir.join("file0.ltw");
+        let protected_path = dir.join(id_ltw_name(0));
         let state = app_state::AppStateFile {
             workspaces: vec![app_state::WorkspaceEntry {
                 id: "ws-open".to_string(),
@@ -373,20 +445,67 @@ mod tests {
             .collect();
 
         assert!(
-            remaining.contains(&"file0.ltw".to_string()),
-            "file0.ltw is a live auto_save_path and must survive eviction; remaining: {remaining:?}"
+            remaining.contains(&id_ltw_name(0)),
+            "index 0's file is a live auto_save_path and must survive eviction; remaining: {remaining:?}"
         );
         // The 3 newest unreferenced files also survive under `keep = 3`.
-        for name in &["file2.ltw", "file3.ltw", "file4.ltw"] {
+        for i in [2, 3, 4] {
             assert!(
-                remaining.contains(&(*name).to_string()),
-                "{name} should survive eviction; remaining: {remaining:?}"
+                remaining.contains(&id_ltw_name(i)),
+                "index {i}'s file should survive eviction; remaining: {remaining:?}"
             );
         }
-        // file1.ltw is genuinely stale and unreferenced — still evicted.
+        // index 1's file is genuinely stale and unreferenced — still evicted.
         assert!(
-            !remaining.contains(&"file1.ltw".to_string()),
-            "file1.ltw is unreferenced and stale; it should still be evicted; remaining: {remaining:?}"
+            !remaining.contains(&id_ltw_name(1)),
+            "index 1's file is unreferenced and stale; it should still be evicted; remaining: {remaining:?}"
         );
+    }
+
+    /// A user-chosen `.ltw` filename (e.g. saved explicitly via a save-as
+    /// dialog into this same directory) never matches the auto-saver's id
+    /// shapes, so it must never be an eviction candidate — no matter how old
+    /// it is, and even though it sits alongside id-pattern files that do get
+    /// trimmed down to `keep`.
+    #[test]
+    fn evict_never_touches_a_user_named_ltw_file() {
+        let tmp_dir = tempfile::tempdir().expect("tmpdir");
+        let dir = tmp_dir.path();
+
+        // A user-named file, written first so it is the OLDEST file in the
+        // directory — otherwise the first eviction candidate by mtime alone.
+        std::fs::write(dir.join("my-notes.ltw"), b"user content").expect("write user file");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        // 5 id-pattern files, newer than the user file.
+        let names: Vec<String> = (0..5).map(id_ltw_name).collect();
+        for (i, name) in names.iter().enumerate() {
+            std::fs::write(dir.join(name), vec![b'x'; i + 1]).expect("write");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        // Keep 3 id-pattern files — trims the 5 id-pattern files down to 3,
+        // and must leave the user-named file untouched throughout.
+        evict_old_workspaces(dir, 3, &dir.join("app-state.json"));
+
+        let remaining: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+
+        assert!(
+            remaining.contains(&"my-notes.ltw".to_string()),
+            "my-notes.ltw is user-named and must never be evicted; remaining: {remaining:?}"
+        );
+        // The id-pattern files still trim down to `keep = 3` (the 3 newest).
+        let id_pattern_count = remaining.iter().filter(|n| n != &"my-notes.ltw").count();
+        assert_eq!(id_pattern_count, 3, "id-pattern files must still trim to keep=3; remaining: {remaining:?}");
+        for i in [2, 3, 4] {
+            assert!(
+                remaining.contains(&id_ltw_name(i)),
+                "index {i}'s id-pattern file should survive eviction; remaining: {remaining:?}"
+            );
+        }
     }
 }
