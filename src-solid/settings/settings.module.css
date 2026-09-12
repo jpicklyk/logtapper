@@ -1,0 +1,43 @@
+/* Settings surface (W8). Lives inside the shell's drawer, which already
+   supplies padding/scroll/header — this module only styles tab chrome and
+   the four tabs' content. */
+.panel { display: flex; flex-direction: column; gap: 10px; font-family: var(--font-ui); font-size: 12px; color: var(--text); }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border-subtle); }
+.tab { padding: 4px 10px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-muted); font: inherit; cursor: pointer; }
+.tabActive { color: var(--text); border-bottom-color: var(--accent); }
+.section { display: flex; flex-direction: column; gap: 6px; padding-bottom: 10px; border-bottom: 1px solid var(--border-subtle); }
+.sectionTitle { font-weight: 600; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.labelHint { color: var(--text-muted); line-height: 1.4; }
+.input, .select {
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 3px);
+  background: var(--surface-input);
+  color: var(--text);
+  font: inherit;
+}
+.list { display: flex; flex-direction: column; gap: 4px; }
+.listRow { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm, 3px); background: var(--surface-raised); }
+.listRowPath { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.iconBtn { padding: 0 4px; border: 0; background: transparent; color: var(--text-muted); cursor: pointer; }
+.iconBtn:hover { color: var(--danger); }
+.linkBtn { align-self: flex-start; padding: 2px 0; border: 0; background: transparent; color: var(--accent); font: inherit; cursor: pointer; }
+.addRow { display: flex; gap: 6px; }
+.addRow .input { flex: 1 1 auto; min-width: 0; }
+.button { padding: 4px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm, 3px); background: var(--surface-raised); color: var(--text); font: inherit; cursor: pointer; }
+.button:disabled { opacity: 0.6; cursor: default; }
+.primaryButton { composes: button; border-color: var(--accent-border); color: var(--text-on-accent); background: var(--accent); }
+.statusDot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--status-color, var(--text-dimmed)); }
+.statusRow { display: flex; align-items: center; gap: 6px; color: var(--text-muted); }
+.error { margin: 0; padding: 6px 8px; border: 1px solid var(--danger); border-radius: var(--radius-sm, 3px); color: var(--danger); background: var(--danger-muted); }
+.table { width: 100%; border-collapse: collapse; }
+.table th, .table td { padding: 3px 6px; border-bottom: 1px solid var(--border-subtle); text-align: left; font-weight: 400; }
+.table code { font-family: var(--font-mono, monospace); }
+.tokenRow { display: flex; align-items: center; gap: 6px; }
+.tokenName { flex: 0 0 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-family: var(--font-mono, monospace); }
+.tokenValue { flex: 1 1 auto; min-width: 0; }
+.contrastBadge { flex: 0 0 auto; padding: 0 6px; border-radius: var(--radius-sm, 3px); font-size: 10px; white-space: nowrap; }
+.contrastPass { color: var(--success); background: var(--success-muted); }
+.contrastFail { color: var(--danger); background: var(--danger-muted); }

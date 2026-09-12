@@ -21,12 +21,19 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
 // W5 added the device state store, which fetches a tracker's snapshot/
 // transitions once a cursor exists and a tracker is active — stubbed even
 // though no test here opens a session with an active tracker.
+// W8 added the export and settings stores. Neither fetches anything at
+// construction (their commands only run once their drawer panel mounts,
+// via `onMount`), but every command each store's `DEFAULT_COMMANDS` object
+// references must still exist on the mock, or that key resolves to
+// `undefined` — harmless today (no test opens those drawers) but stubbed
+// anyway so the module's shape stays honest as more tests are added.
 vi.mock('@bridge/commands', () => ({
   getLines: vi.fn(),
   loadLogFile: vi.fn(),
   closeSession: vi.fn(() => Promise.resolve()),
   setFocusedSession: vi.fn(() => Promise.resolve()),
   readTextFile: vi.fn(),
+  writeTextFile: vi.fn(() => Promise.resolve()),
   getSections: vi.fn(() => Promise.resolve([])),
   getDumpstateMetadata: vi.fn(() => Promise.resolve(null)),
   getMcpStatus: vi.fn(() => Promise.resolve({ running: false, port: 0, idleSecs: null, agentRawAccess: false })),
@@ -36,6 +43,7 @@ vi.mock('@bridge/commands', () => ({
   getExportAllSessionsInfo: vi.fn(() =>
     Promise.resolve({ sessions: [], totalProcessorCount: 0, totalPipelineProcessorCount: 0 }),
   ),
+  exportAllSessions: vi.fn(() => Promise.resolve()),
   listProcessors: vi.fn(() => Promise.resolve([])),
   listPacks: vi.fn(() => Promise.resolve([])),
   loadProcessorFromFile: vi.fn(),
@@ -53,6 +61,25 @@ vi.mock('@bridge/commands', () => ({
   deleteAnalysis: vi.fn(),
   getStateAtLine: vi.fn(),
   getStateTransitions: vi.fn(() => Promise.resolve([])),
+  getAnonymizerConfig: vi.fn(() => Promise.resolve({ detectors: [] })),
+  setAnonymizerConfig: vi.fn(() => Promise.resolve()),
+  testAnonymizer: vi.fn(() => Promise.resolve({ anonymized: '', replacements: [] })),
+  getPiiMappings: vi.fn(() => Promise.resolve({})),
+  getFileAssociationStatus: vi.fn(() => Promise.resolve([])),
+  setFileAssociation: vi.fn(() => Promise.resolve()),
+  openDefaultAppsSettings: vi.fn(() => Promise.resolve()),
+  getMcpOpenAllowlist: vi.fn(() => Promise.resolve({ allowedDirs: [], allowAll: false })),
+  setMcpOpenAllowlist: vi.fn(() => Promise.resolve()),
+  setAgentRawAccess: vi.fn(() => Promise.resolve()),
+  startMcpBridge: vi.fn(() => Promise.resolve()),
+  stopMcpBridge: vi.fn(() => Promise.resolve()),
+  listThemes: vi.fn(() => Promise.resolve([])),
+  readTheme: vi.fn(),
+  writeTheme: vi.fn(() => Promise.resolve()),
+  deleteTheme: vi.fn(() => Promise.resolve()),
+  listSources: vi.fn(() => Promise.resolve([])),
+  addSource: vi.fn(() => Promise.resolve()),
+  removeSource: vi.fn(() => Promise.resolve()),
 }));
 vi.mock('@bridge/events', () => ({
   onActivity: vi.fn(() => Promise.resolve(() => {})),
