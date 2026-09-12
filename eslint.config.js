@@ -295,9 +295,10 @@ export default tseslint.config(
           // directory pattern has excluded it — so the negation is silently
           // inert. Extend the alternation, by exact file path, to widen it.
           {
-            regex: '^@hooks/(?!useLogViewer/multiSessionImport$).*',
+            regex:
+              '^@hooks/(?!useLogViewer/multiSessionImport$|workspace/appStatePayload$|workspace/reconcileWorkspaceList$|workspace/restorePlan$|workspace/artifactPairing$|workspace/startupFile$).*',
             message:
-              'Only @hooks/useLogViewer/multiSessionImport is shared with src-solid/ — the rest of src-next/hooks/ is React-only.',
+              'Only the framework-free files on the @hooks allow-list are shared with src-solid/ — the rest of src-next/hooks/ is React-only. Extend the alternation in eslint.config.js by exact file path.',
           },
           {
             group: ['@tauri-apps/api/core'],
