@@ -17,6 +17,7 @@ import SectionItem from './SectionItem';
 import SectionGroup from './SectionGroup';
 import ParentSection from './ParentSection';
 import listStyles from './SectionList.module.css';
+import { buildReopenOptions, REOPEN_SOURCE_TYPES } from './reopenOptions';
 
 export type { SectionEntry } from './sectionTree';
 
@@ -44,20 +45,6 @@ interface FileInfoPanelProps {
    *  Absent for streaming sessions and any session with no backing file. */
   onReopenAs?: (sourceType: SourceType) => void;
 }
-
-/** Types a user can reopen a file as. Mirrors the labels the backend's
- *  `SourceType::from_label` accepts; `Unknown` is a frontend-only sentinel and
- *  is deliberately not offered. */
-const REOPEN_SOURCE_TYPES: SourceType[] = [
-  'Logcat',
-  'Kernel',
-  'Radio',
-  'Events',
-  'Bugreport',
-  'Dumpstate',
-  'Tombstone',
-  'ANRTrace',
-];
 
 // ── Stat cell ────────────────────────────────────────────────────────────────
 
@@ -120,6 +107,10 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
     const isScanning = !!sourceType && isBugreportLike(sourceType) && indexingProgress !== null;
     const duration = formatDuration(firstTimestamp, lastTimestamp);
     const meta = dumpstateMetadata;
+    // Includes a disabled placeholder for the current type when it isn't one
+    // of the built-in reopen targets (a custom-parser session's `Custom(<id>)`
+    // label) — see `buildReopenOptions`.
+    const reopenOptions = useMemo(() => buildReopenOptions(sourceType), [sourceType]);
 
     // ── Search state (local per principle #5) ──────────────────────────────
     const [searchQuery, setSearchQuery] = useState('');
@@ -186,12 +177,20 @@ export const FileInfoPanel = React.memo<FileInfoPanelProps>(
                       'If detection got it wrong, reopen the file as the correct type.'
                     }
                     onChange={(e) => {
-                      const next = e.target.value as SourceType;
-                      if (next !== sourceType) onReopenAs(next);
+                      const next = e.target.value;
+                      // Guard against the disabled current-type placeholder (see
+                      // `buildReopenOptions`) — it isn't a real reopen target,
+                      // `SourceType::from_label` rejects it by design, and the
+                      // browser already refuses to select a disabled `<option>`
+                      // via the UI, but this stays defensive against a
+                      // programmatic change event.
+                      if (next !== sourceType && REOPEN_SOURCE_TYPES.includes(next as SourceType)) {
+                        onReopenAs(next as SourceType);
+                      }
                     }}
                   >
-                    {REOPEN_SOURCE_TYPES.map((t) => (
-                      <option key={t} value={t}>{t}</option>
+                    {reopenOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value} disabled={opt.disabled}>{opt.label}</option>
                     ))}
                   </select>
                 </label>
