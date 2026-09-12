@@ -309,7 +309,6 @@ fn open_file(
 /// `commands::files::load_lts_file_inner`.
 fn open_lts_file(ctx: &ServiceCtx, lts_path: &str) -> Result<Vec<LoadResult>, ServiceError> {
     let path_obj = Path::new(lts_path);
-    let state = ctx.state();
 
     let lts = crate::workspace::lts::read_lts(path_obj).map_err(ServiceError::Internal)?;
 
@@ -324,84 +323,41 @@ fn open_lts_file(ctx: &ServiceCtx, lts_path: &str) -> Result<Vec<LoadResult>, Se
     let crate::workspace::lts::LtsData { sessions, processor_manifest, processor_yamls, editor_tabs, .. } = lts;
 
     let mut results = Vec::with_capacity(sessions.len());
+    // Every session id this import has actually inserted into `state.sessions`
+    // so far — used to roll the whole import back if a later entry fails. Only
+    // ids that made it past the insert below are pushed here; an entry that
+    // fails before inserting (bad zip bytes, no primary source) leaves nothing
+    // of its own to clean up, but every *earlier* entry in this same import
+    // must still be torn down rather than left stranded in `AppState`.
+    let mut inserted_session_ids: Vec<String> = Vec::with_capacity(sessions.len());
 
     for (entry_index, session_data) in sessions.into_iter().enumerate() {
-        let session_id = crate::core::session_identity::derive_lts_session_id(path_obj, entry_index);
-
-        let bare_to_scoped: std::collections::HashMap<String, String> =
-            crate::commands::export::resolve_lts_processors_raw(
-                state,
-                &processor_manifest,
-                &processor_yamls,
-                &session_id,
-            )
-            .map_err(ServiceError::Internal)?
-            .into_iter()
-            .collect();
-
-        let source_id = std::path::Path::new(&session_data.source_filename)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("lts-source")
-            .to_string();
-
-        let mut session = crate::core::session::AnalysisSession::new(session_id.clone());
-        session.file_path = Some(lts_path.to_string());
-
-        let source_filename = session_data.source_filename.clone();
-        session
-            .add_zip_source(session_data.source_bytes, source_id.clone(), source_filename)
-            .map_err(ServiceError::Internal)?;
-
-        let source = session
-            .primary_source()
-            .ok_or_else(|| ServiceError::Internal("No source after zip load".to_string()))?;
-        let total_lines = source.total_lines();
-        let first_ts = source.first_timestamp();
-        let last_ts = source.last_timestamp();
-        let source_type_str = source.source_type().to_string();
-        let source_name = source.name().to_string();
-        let has_crlf = source.has_crlf();
-        let encoding = source.encoding().display_name().to_string();
-
-        let result = LoadResult {
-            session_id: session_id.clone(),
-            source_id,
-            source_name,
-            file_path: Some(lts_path.to_string()),
-            total_lines,
+        match import_lts_session_entry(
+            ctx,
+            path_obj,
+            lts_path,
             file_size,
-            first_timestamp: first_ts,
-            last_timestamp: last_ts,
-            source_type: source_type_str,
-            is_streaming: false,
-            is_indexing: false,
-            has_crlf,
-            encoding,
-        };
-
-        {
-            let mut sessions = lock_svc(&state.sessions, "sessions")?;
-            sessions.insert(session_id.clone(), session);
+            entry_index,
+            session_data,
+            &processor_manifest,
+            &processor_yamls,
+        ) {
+            Ok((session_id, result)) => {
+                inserted_session_ids.push(session_id);
+                results.push(result);
+            }
+            Err(e) => {
+                // Roll back every session this import inserted — reuses the
+                // same cleanup `close_stale_sessions` relies on so all its
+                // steps (stream/indexing tasks, pipeline/tracker/correlator
+                // results, bookmarks, watches, filters, lts-scoped processors,
+                // ...) run, rather than hand-rolling a partial `sessions.remove`.
+                for sid in &inserted_session_ids {
+                    let _ = close_session_state(ctx, sid);
+                }
+                return Err(e);
+            }
         }
-
-        let (bm_count, an_count) = crate::commands::files::restore_artifacts(
-            state,
-            &session_id,
-            session_data.bookmarks,
-            session_data.analyses,
-        );
-
-        let mut meta: crate::workspace::SessionMeta = session_data.session_meta.into();
-        let remap = |ids: &[String]| -> Vec<String> {
-            ids.iter().map(|id| bare_to_scoped.get(id).cloned().unwrap_or_else(|| id.clone())).collect()
-        };
-        meta.active_processor_ids = remap(&meta.active_processor_ids);
-        meta.disabled_processor_ids = remap(&meta.disabled_processor_ids);
-
-        emit_workspace_restored(ctx, &session_id, bm_count, an_count, meta, "lts");
-
-        results.push(result);
     }
 
     if !editor_tabs.is_empty() {
@@ -412,6 +368,102 @@ fn open_lts_file(ctx: &ServiceCtx, lts_path: &str) -> Result<Vec<LoadResult>, Se
     }
 
     Ok(results)
+}
+
+/// Import one entry of a `.lts` bundle: build its session, insert it into
+/// `AppState`, restore its artifacts, and record its pipeline meta. Returns
+/// the new session id (so the caller can track it for rollback) alongside the
+/// `LoadResult` to surface. Split out of `open_lts_file`'s loop body so a
+/// later entry's failure can roll back every entry already inserted by this
+/// same import instead of leaving them stranded.
+#[allow(clippy::too_many_arguments)]
+fn import_lts_session_entry(
+    ctx: &ServiceCtx,
+    path_obj: &Path,
+    lts_path: &str,
+    file_size: u64,
+    entry_index: usize,
+    session_data: crate::workspace::lts::LtsSessionData,
+    processor_manifest: &crate::workspace::lts::LtsProcessorManifest,
+    processor_yamls: &std::collections::HashMap<String, String>,
+) -> Result<(String, LoadResult), ServiceError> {
+    let state = ctx.state();
+    let session_id = crate::core::session_identity::derive_lts_session_id(path_obj, entry_index);
+
+    let bare_to_scoped: std::collections::HashMap<String, String> =
+        crate::commands::export::resolve_lts_processors_raw(
+            state,
+            processor_manifest,
+            processor_yamls,
+            &session_id,
+        )
+        .map_err(ServiceError::Internal)?
+        .into_iter()
+        .collect();
+
+    let source_id = std::path::Path::new(&session_data.source_filename)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("lts-source")
+        .to_string();
+
+    let mut session = crate::core::session::AnalysisSession::new(session_id.clone());
+    session.file_path = Some(lts_path.to_string());
+
+    let source_filename = session_data.source_filename.clone();
+    session
+        .add_zip_source(session_data.source_bytes, source_id.clone(), source_filename)
+        .map_err(ServiceError::Internal)?;
+
+    let source = session
+        .primary_source()
+        .ok_or_else(|| ServiceError::Internal("No source after zip load".to_string()))?;
+    let total_lines = source.total_lines();
+    let first_ts = source.first_timestamp();
+    let last_ts = source.last_timestamp();
+    let source_type_str = source.source_type().to_string();
+    let source_name = source.name().to_string();
+    let has_crlf = source.has_crlf();
+    let encoding = source.encoding().display_name().to_string();
+
+    let result = LoadResult {
+        session_id: session_id.clone(),
+        source_id,
+        source_name,
+        file_path: Some(lts_path.to_string()),
+        total_lines,
+        file_size,
+        first_timestamp: first_ts,
+        last_timestamp: last_ts,
+        source_type: source_type_str,
+        is_streaming: false,
+        is_indexing: false,
+        has_crlf,
+        encoding,
+    };
+
+    {
+        let mut sessions = lock_svc(&state.sessions, "sessions")?;
+        sessions.insert(session_id.clone(), session);
+    }
+
+    let (bm_count, an_count) = crate::commands::files::restore_artifacts(
+        state,
+        &session_id,
+        session_data.bookmarks,
+        session_data.analyses,
+    );
+
+    let mut meta: crate::workspace::SessionMeta = session_data.session_meta.into();
+    let remap = |ids: &[String]| -> Vec<String> {
+        ids.iter().map(|id| bare_to_scoped.get(id).cloned().unwrap_or_else(|| id.clone())).collect()
+    };
+    meta.active_processor_ids = remap(&meta.active_processor_ids);
+    meta.disabled_processor_ids = remap(&meta.disabled_processor_ids);
+
+    emit_workspace_restored(ctx, &session_id, bm_count, an_count, meta, "lts");
+
+    Ok((session_id, result))
 }
 
 /// Store pipeline meta in `AppState` and emit `workspace-restored`.
@@ -1409,6 +1461,129 @@ mod tests {
         close_stale_sessions(&ctx, "/logs/no-match.log").unwrap();
 
         assert!(ctx.state().sessions.lock().unwrap().contains_key("sess-keep"));
+    }
+
+    // ── open_lts_file rollback ───────────────────────────────────────────────
+
+    /// A `.lts` bundle with 3 sessions sharing one bundled processor. The
+    /// first two entries import cleanly; a custom [`EventSink`] poisons
+    /// `state.processors` the instant the second entry's `workspace-restored`
+    /// fires, so the third entry's own `resolve_lts_processors_raw` call
+    /// (which touches that same lock for *every* entry, not just the last
+    /// one) fails. This reproduces "some entry fails after earlier ones
+    /// already succeeded" without depending on any per-entry step that is
+    /// otherwise unconditionally infallible today (`add_zip_source`) — the
+    /// import must still roll back the two sessions already inserted by this
+    /// same call and return the error, rather than stranding them.
+    #[test]
+    fn open_lts_file_rolls_back_partially_inserted_sessions_on_later_entry_failure() {
+        use crate::services::events::EventSink;
+        use crate::services::paths::{FixedPaths, NullSpawner};
+        use crate::workspace::lts::{LtsSessionData, LtsSessionMeta, write_lts};
+
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let lts_path = tmp.path().join("bundle.lts");
+
+        let make_entry = |i: usize| LtsSessionData {
+            source_bytes: format!("01-01 00:00:00.00{i}  1000  1000 I Tag: line {i}\n").into_bytes(),
+            source_filename: format!("source{i}.log"),
+            bookmarks: vec![],
+            analyses: vec![],
+            // A non-empty active_processor_ids guarantees `emit_workspace_restored`
+            // fires `workspace-restored` for every successfully-imported entry
+            // (`has_chain` becomes true), which this test's poisoning hook relies on.
+            session_meta: LtsSessionMeta {
+                active_processor_ids: vec!["test-proc".to_string()],
+                disabled_processor_ids: vec![],
+            },
+        };
+        let sessions = vec![make_entry(0), make_entry(1), make_entry(2)];
+
+        let processor_yaml = "meta:\n  id: test-proc\n  name: Test Proc\n  version: \"1.0.0\"\n";
+        write_lts(
+            &lts_path,
+            &sessions,
+            &[("test-proc".to_string(), "test-proc.yaml".to_string(), processor_yaml.to_string())],
+            &[],
+        )
+        .expect("write_lts must succeed");
+
+        let state = Arc::new(crate::commands::AppState::new());
+
+        /// Poisons `state.processors` on the second `workspace-restored`
+        /// event, i.e. right after the second entry finishes importing and
+        /// before the third entry's own processor-resolution step runs.
+        struct PoisonProcessorsAfterSecondEntry {
+            state: Arc<crate::commands::AppState>,
+            seen: std::sync::atomic::AtomicUsize,
+        }
+        impl EventSink for PoisonProcessorsAfterSecondEntry {
+            fn emit_json(&self, event: &str, _payload: serde_json::Value) {
+                if event != "workspace-restored" {
+                    return;
+                }
+                if self.seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1 == 2 {
+                    let state = Arc::clone(&self.state);
+                    // Poison from another thread so this thread's own call
+                    // stack is never unwound — only the mutex ends up poisoned.
+                    let _ = std::thread::spawn(move || {
+                        let _guard = state.processors.lock().unwrap();
+                        panic!("deliberate poison for rollback test");
+                    })
+                    .join();
+                }
+            }
+        }
+
+        let sink = Arc::new(PoisonProcessorsAfterSecondEntry {
+            state: Arc::clone(&state),
+            seen: std::sync::atomic::AtomicUsize::new(0),
+        });
+
+        let ctx = ServiceCtx::new(
+            Arc::clone(&state),
+            sink,
+            Arc::new(FixedPaths(tmp.path().to_path_buf())),
+            Arc::new(NullSpawner),
+            Caller::Ui,
+        );
+
+        let result = open_lts_file(&ctx, lts_path.to_str().expect("utf8 tmp path"));
+
+        assert!(result.is_err(), "the third entry must fail once state.processors is poisoned mid-import");
+        let remaining: Vec<String> = state.sessions.lock().unwrap().keys().cloned().collect();
+        assert!(
+            remaining.is_empty(),
+            "AppState must hold none of the import's sessions after rollback; found {remaining:?}"
+        );
+    }
+
+    /// The happy path companion to the rollback test above: a good 3-session
+    /// `.lts` file must still yield exactly 3 `LoadResult`s and 3 live
+    /// sessions, so the rollback wiring never fires spuriously.
+    #[test]
+    fn open_lts_file_imports_all_sessions_when_none_fail() {
+        use crate::workspace::lts::{LtsSessionData, LtsSessionMeta, write_lts};
+
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let lts_path = tmp.path().join("bundle-good.lts");
+
+        let make_entry = |i: usize| LtsSessionData {
+            source_bytes: format!("01-01 00:00:00.00{i}  1000  1000 I Tag: line {i}\n").into_bytes(),
+            source_filename: format!("source{i}.log"),
+            bookmarks: vec![],
+            analyses: vec![],
+            session_meta: LtsSessionMeta::default(),
+        };
+        let sessions = vec![make_entry(0), make_entry(1), make_entry(2)];
+
+        write_lts(&lts_path, &sessions, &[], &[]).expect("write_lts must succeed");
+
+        let (ctx, _tmp2) = test_ctx().build();
+        let results = open_lts_file(&ctx, lts_path.to_str().expect("utf8 tmp path")).expect("import must succeed");
+
+        assert_eq!(results.len(), 3);
+        assert_eq!(ctx.state().sessions.lock().unwrap().len(), 3);
     }
 
     #[test]
