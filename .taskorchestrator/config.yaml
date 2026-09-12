@@ -99,6 +99,12 @@ work_item_schemas:
         required: true
         description: "How the fix was verified and test results after fix."
         guidance: "Run tests and report results. Note if a new test was added to cover the fix. For UI bugs, describe manual verification performed."
+      - key: session-tracking
+        role: work
+        required: true
+        description: "Session context for retrospective."
+        guidance: "Record outcome, files changed, deviations from plan, friction encountered, and test results. This feeds /session-retrospective -- focus on what future sessions need to know."
+
 
       - key: review-summary
         role: review
