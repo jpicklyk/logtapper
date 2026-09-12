@@ -1837,6 +1837,61 @@ transforms:
         assert_eq!(reason.actual, SourceType::Logcat.to_string());
     }
 
+    /// A processor excluded by an *embedded* `source_type_is` filter rule
+    /// (as opposed to declared `schema.source_types` metadata, covered by the
+    /// test above) must also surface as a skip row — not vanish from the
+    /// summary with no trace, and not be conflated with the declared-metadata
+    /// exclusion's `"source_type_mismatch"` reason. `find_embedded_source_type_exclusions`
+    /// identifies the exclusion; this exercises the full `run()` path end to
+    /// end to prove the resulting `PipelineRunSummary` actually carries the
+    /// distinct `"source_type_filter_excluded"` discriminant.
+    #[tokio::test]
+    async fn reporter_excluded_by_embedded_source_type_is_gets_a_distinct_skip_row() {
+        let (ctx, _t) = test_ctx().with_session("s1", 3).build();
+
+        // The fixture session is a Logcat StreamLogSource; this reporter's
+        // own filter stage restricts it to Kernel, so it is excluded by the
+        // *embedded* pass (find_embedded_source_type_exclusions), not by any
+        // declared `schema.source_types` metadata (none is set here).
+        let yaml = r#"
+meta:
+  id: kernel_only_reporter
+  name: Kernel Only
+pipeline:
+  - stage: filter
+    rules:
+      - type: source_type_is
+        source_type: Kernel
+"#;
+        install(&ctx, "kernel_only_reporter@official", processor_from("kernel_only_reporter", yaml));
+        set_meta(&ctx, "s1", &["kernel_only_reporter@official"], &[]);
+
+        let out = run(
+            ctx.clone(),
+            "s1".to_string(),
+            None,
+            Arc::new(NullProgressSink),
+        )
+        .await
+        .expect("run succeeds");
+
+        let summary = out
+            .summaries
+            .iter()
+            .find(|s| s.processor_id == "kernel_only_reporter@official")
+            .expect("a processor excluded by an embedded source_type_is rule still gets a skip row, not silent removal");
+        let reason = summary
+            .skipped
+            .as_ref()
+            .expect("the embedded filter-rule exclusion must produce a SkipReason");
+        assert_eq!(
+            reason.reason, "source_type_filter_excluded",
+            "must use its own discriminant, distinct from the declared-metadata \"source_type_mismatch\""
+        );
+        assert_eq!(reason.declared, vec!["Kernel".to_string()]);
+        assert_eq!(reason.actual, SourceType::Logcat.to_string());
+    }
+
     // ── run() ──────────────────────────────────────────────────────────────
 
     #[tokio::test]
