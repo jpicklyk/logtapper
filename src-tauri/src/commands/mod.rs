@@ -133,6 +133,17 @@ pub struct AppState {
     /// prunes entries whose session is gone.
     pub stream_rings:
         Mutex<HashMap<String, Arc<crate::services::events::RingSink<crate::services::stream::AdbStreamEvent>>>>,
+    /// Per-session cache of the processor ids most recently announced as
+    /// excluded from a live stream by declared `source_types` (sorted, for
+    /// cheap equality comparison). `services::stream::flush_batch` re-derives
+    /// the current excluded set every batch (it already recomputes eligibility
+    /// there) and only sends a fresh
+    /// `AdbStreamEvent::ProcessorsExcluded` down the sink when this cache says
+    /// the set actually changed — added/removed processor, or a chain change
+    /// mid-stream that alters eligibility. Cleared on stream stop and session
+    /// close alongside the other per-session stream-state maps; unlike those,
+    /// it is purely a dedup cache and needs no `stream_epochs` guard.
+    pub stream_excluded_processors: Mutex<HashMap<String, Vec<String>>>,
     /// Per-run pipeline cancellation tokens, keyed by a monotonic run id drawn
     /// from `pipeline_run_seq`. Each `execute_pipeline` invocation registers its
     /// own token (via `register_pipeline_run`) and removes it on completion, so
@@ -282,6 +293,7 @@ impl AppState {
             stream_transformer_state: Mutex::new(HashMap::new()),
             stream_epochs: Mutex::new(HashMap::new()),
             stream_rings: Mutex::new(HashMap::new()),
+            stream_excluded_processors: Mutex::new(HashMap::new()),
             correlator_results: Mutex::new(HashMap::new()),
             pipeline_cancels: Mutex::new(HashMap::new()),
             pipeline_run_seq: AtomicU64::new(0),

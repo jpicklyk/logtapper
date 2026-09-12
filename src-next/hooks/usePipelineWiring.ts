@@ -1,6 +1,6 @@
 import { useCallback, useRef, useEffect } from 'react';
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import type { AdbProcessorUpdate } from '../bridge/types';
+import type { AdbExcludedProcessor, AdbProcessorUpdate } from '../bridge/types';
 import { useSessionCoreCtx, useSessionPaneCtx } from '../context/SessionContext';
 import {
   listProcessors,
@@ -20,9 +20,10 @@ import { computeChangedChainSessionIds, type ChainSnapshot } from './pipelineCha
  * else. It owns every effect in the pipeline domain: the `pipeline-progress`
  * Tauri listener, the bus subscriptions (`stream:started`,
  * `pipeline:adb-processor-batch`, `pipeline:adb-tracker-update`,
- * `session:pre-load`, `session:closed`, marketplace refresh), the shared
- * run-count throttle timer, the chain persist/publish effect, and the
- * `workspace-restored` listener via `useWorkspaceRestore`.
+ * `pipeline:adb-processors-excluded`, `session:pre-load`, `session:closed`,
+ * marketplace refresh), the shared run-count throttle timer, the chain
+ * persist/publish effect, and the `workspace-restored` listener via
+ * `useWorkspaceRestore`.
  *
  * Components that need pipeline actions mount `usePipelineCommands` instead,
  * which is effect-free and therefore duplicable. Adding an effect here is free;
@@ -228,6 +229,18 @@ export function usePipelineWiring(
         streamRunCountTimerRef.current = null;
       }
     };
+  }, [dispatch]);
+
+  // Fold the declared-source_types exclusion set for a live stream into the
+  // session's results, so ProcessorDashboard renders the identical skip-row
+  // n/a state a file-mode run produces. Targeted by sessionId — the payload
+  // already names the session that owns the exclusion set.
+  useEffect(() => {
+    const handleExcluded = (payload: { sessionId: string; excluded: AdbExcludedProcessor[] }) => {
+      dispatch({ type: 'adb:processors-excluded', sessionId: payload.sessionId, excluded: payload.excluded });
+    };
+    bus.on('pipeline:adb-processors-excluded', handleExcluded);
+    return () => { bus.off('pipeline:adb-processors-excluded', handleExcluded); };
   }, [dispatch]);
 
   // Subscribe to session:pre-load to auto-clear results for the outgoing session.

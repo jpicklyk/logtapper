@@ -124,6 +124,17 @@ What's still true regardless of which layer you're in:
   `services::stream::stop` / the `stop_adb_stream` command. On the frontend,
   `channelActiveRef` in `useStreamSession` guards against late channel messages arriving
   after stop or detach.
+- **`AdbStreamEvent::ProcessorsExcluded`** carries the current set of active processors a
+  live stream's declared `schema.source_types` check excludes (always vs. `Logcat`) —
+  file mode's `PipelineRunSummary.skipped` skip-row equivalent for streaming, which had
+  none before. `flush_batch` recomputes eligibility every batch, dedups against
+  `AppState::stream_excluded_processors` (a cache only, no epoch guard needed) and sends
+  the event once when the set first becomes non-empty and again only when it actually
+  changes — never once per batch. The frontend forwards it via the
+  `pipeline:adb-processors-excluded` bus event, folded into `PipelineContext`'s per-session
+  results as `PipelineRunSummary.skipped` (`applyExcludedProcessors` in
+  `context/PipelineContext.tsx`) so `ProcessorDashboard` renders the identical n/a row for
+  either path.
 - `ChunksTimeout` (tokio-stream) is **not** `Unpin` — `tokio::pin!(stream)` is required
   before using it in `select!`.
 - **Always use `source.meta_at(n)` and `source.raw_line(n)` instead of direct indexing** —

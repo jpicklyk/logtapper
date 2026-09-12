@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, useReducer, type ReactNode } from 'react';
 import { arrayMove } from '@dnd-kit/sortable';
-import type { ProcessorSummary, PipelineRunSummary, PackSummary } from '../bridge/types';
+import type { ProcessorSummary, PipelineRunSummary, PackSummary, AdbExcludedProcessor } from '../bridge/types';
 
 /** Processor IDs that must always remain at the tail of the chain. */
 export const PINNED_TAIL_IDS = new Set(['__pii_anonymizer']);
@@ -44,6 +44,49 @@ function mergeProcessorResult(
   const results = idx >= 0
     ? s.results.map((r, i) => i === idx ? updated : r)
     : [...s.results, updated];
+  return { ...s, results };
+}
+
+/**
+ * Fold the backend's current declared-`source_types` exclusion set for a live
+ * stream into the same `PipelineRunSummary[]` shape a file-mode run produces,
+ * so `ProcessorDashboard`'s `r.skipped` check renders the identical n/a row
+ * for either path with no stream-specific branch.
+ *
+ * `excluded` is the *complete* current set (see `services::stream::flush_batch`'s
+ * "exclusion announcement" step on the Rust side) — every existing entry whose
+ * `skipped` reason is `"source_type_mismatch"` but whose id is no longer in
+ * `excluded` is cleared (the processor became eligible again, e.g. after a
+ * chain change), and every id in `excluded` gets `skipped` set, creating a new
+ * zero-count entry when the processor has not produced any update yet.
+ */
+export function applyExcludedProcessors(
+  s: SessionPipelineState,
+  excluded: AdbExcludedProcessor[],
+): SessionPipelineState {
+  const excludedIds = new Set(excluded.map((e) => e.processorId));
+
+  // Clear stale exclusions: only ones this same mechanism set, so an
+  // unrelated skip reason (there is none today for streaming, but the
+  // check stays narrow on purpose) is never touched.
+  const cleared = s.results.map((r) =>
+    r.skipped?.reason === 'source_type_mismatch' && !excludedIds.has(r.processorId)
+      ? { ...r, skipped: undefined }
+      : r,
+  );
+
+  let results = cleared;
+  for (const { processorId, skip } of excluded) {
+    const idx = results.findIndex((r) => r.processorId === processorId);
+    if (idx >= 0) {
+      results = results.map((r, i) => (i === idx ? { ...r, skipped: skip } : r));
+    } else {
+      results = [
+        ...results,
+        { processorId, matchedLines: 0, emissionCount: 0, scriptErrors: 0, scannedFrom: 0, skipped: skip },
+      ];
+    }
+  }
   return { ...s, results };
 }
 
@@ -154,6 +197,7 @@ export type PipelineAction =
   | { type: 'adb:results-update'; sessionId: string; processorId: string; matchedLines: number; emissionCount: number }
   | { type: 'adb:results-batch'; updates: Array<{ sessionId: string; processorId: string; matchedLines: number; emissionCount: number }> }
   | { type: 'adb:run-count-bump'; sessionId: string }
+  | { type: 'adb:processors-excluded'; sessionId: string; excluded: AdbExcludedProcessor[] }
   // Error management
   | { type: 'error:set'; error: string }
   | { type: 'error:clear' };
@@ -444,6 +488,14 @@ export function pipelineReducer(state: PipelineState, action: PipelineAction): P
         resultsBySession: withSessionState(state.resultsBySession, action.sessionId, (s) => ({
           ...s, runCount: s.runCount + 1,
         })),
+      };
+
+    case 'adb:processors-excluded':
+      return {
+        ...state,
+        resultsBySession: withSessionState(state.resultsBySession, action.sessionId, (s) =>
+          applyExcludedProcessors(s, action.excluded),
+        ),
       };
 
     // ── Error ────────────────────────────────────────────────────────────────

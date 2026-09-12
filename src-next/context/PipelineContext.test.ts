@@ -20,7 +20,7 @@ import {
   type PipelineState,
   type PipelineAction,
 } from './PipelineContext';
-import type { ProcessorSummary, PipelineRunSummary } from '../bridge/types';
+import type { ProcessorSummary, PipelineRunSummary, AdbExcludedProcessor, SkipReason } from '../bridge/types';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -742,6 +742,63 @@ describe('per-session results', () => {
 
     expect(state.resultsBySession.get(A)!.results).toEqual([]);
     expect(chainOf(state, A)).toEqual(['p1']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Streaming's declared-source_types exclusion — must fold into the exact
+// same PipelineRunSummary.skipped shape a file-mode run produces, so
+// ProcessorDashboard's skip-row rendering needs no stream-specific branch.
+// ---------------------------------------------------------------------------
+
+describe('adb:processors-excluded', () => {
+  const skip: SkipReason = { reason: 'source_type_mismatch', declared: ['dumpstate'], actual: 'Logcat' };
+
+  it('folds a streaming exclusion into the identical shape a file-mode skip row has', () => {
+    const excluded: AdbExcludedProcessor[] = [{ processorId: 'p1', skip }];
+    const state = reduce(initialState, { type: 'adb:processors-excluded', sessionId: A, excluded });
+
+    // What a file-mode `run:complete` would have produced for the same skip
+    // (see `pipeline.rs`'s `PipelineRunSummary.skipped` and
+    // `ProcessorDashboard.tsx`'s `r.skipped` check) — the dashboard-visible
+    // shape this streaming path must match exactly.
+    const fileModeSkipRow: PipelineRunSummary = {
+      processorId: 'p1', matchedLines: 0, emissionCount: 0, scriptErrors: 0, scannedFrom: 0, skipped: skip,
+    };
+
+    expect(state.resultsBySession.get(A)!.results).toEqual([fileModeSkipRow]);
+  });
+
+  it('sets skipped on an existing entry without disturbing its counts', () => {
+    const state = reduce(
+      initialState,
+      { type: 'adb:results-update', sessionId: A, processorId: 'p1', matchedLines: 5, emissionCount: 2 },
+      { type: 'adb:processors-excluded', sessionId: A, excluded: [{ processorId: 'p1', skip }] },
+    );
+
+    expect(state.resultsBySession.get(A)!.results).toEqual([
+      { processorId: 'p1', matchedLines: 5, emissionCount: 2, scriptErrors: 0, scannedFrom: 0, skipped: skip },
+    ]);
+  });
+
+  it('clears a previously-excluded processor once it leaves the set (chain change mid-stream)', () => {
+    const state = reduce(
+      initialState,
+      { type: 'adb:processors-excluded', sessionId: A, excluded: [{ processorId: 'p1', skip }] },
+      { type: 'adb:processors-excluded', sessionId: A, excluded: [] },
+    );
+
+    expect(state.resultsBySession.get(A)!.results).toEqual([
+      { processorId: 'p1', matchedLines: 0, emissionCount: 0, scriptErrors: 0, scannedFrom: 0 },
+    ]);
+  });
+
+  it('never touches another session\'s results', () => {
+    const state = reduce(initialState, {
+      type: 'adb:processors-excluded', sessionId: A, excluded: [{ processorId: 'p1', skip }],
+    });
+
+    expect(state.resultsBySession.has(B)).toBe(false);
   });
 });
 

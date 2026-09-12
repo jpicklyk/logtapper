@@ -236,6 +236,14 @@ export function useStreamSession(
           // batching window to collect all updates from one flush_batch call.
           setTimeout(flushProcessorUpdates, 0);
         }
+      } else if (msg.event === 'processorsExcluded') {
+        // Sent once when the backend's declared-source_types exclusion set
+        // first becomes non-empty, and again whenever it changes — never
+        // once per batch (see `services::stream::flush_batch`'s "exclusion
+        // announcement" step). Forward as-is; PipelineContext folds it into
+        // the same `PipelineRunSummary.skipped` shape a file-mode run uses.
+        if (msg.data.sessionId !== refs.streamingSessionIdRef.current) return;
+        bus.emit('pipeline:adb-processors-excluded', msg.data);
       }
     };
 

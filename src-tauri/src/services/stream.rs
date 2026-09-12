@@ -117,6 +117,33 @@ pub struct AdbTrackerUpdate {
     pub transition_count: usize,
 }
 
+/// One processor excluded from a live stream before it ran, because its
+/// declared `schema.source_types` does not include the stream's source type
+/// (always `Logcat`). Wraps the exact `SkipReason` file-mode's
+/// `PipelineRunSummary.skipped` uses — same discriminants
+/// (`"source_type_mismatch"` today; streaming has no embedded-filter-rule
+/// exclusion pass, so `"source_type_filter_excluded"` never appears here) —
+/// so a consumer folds this into the identical row shape without a
+/// stream-specific branch. See [`AdbProcessorsExcluded`].
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AdbExcludedProcessor {
+    pub processor_id: String,
+    pub skip: crate::commands::pipeline::SkipReason,
+}
+
+/// The full set of processors currently excluded from a live stream by
+/// declared `source_types`, sent once when the set first becomes non-empty
+/// and again whenever it changes (a processor added, removed, or made
+/// eligible/ineligible mid-stream). See [`flush_batch`]'s "exclusion
+/// announcement" step for when this is (re)computed and de-duplicated.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AdbProcessorsExcluded {
+    pub session_id: String,
+    pub excluded: Vec<AdbExcludedProcessor>,
+}
+
 /// Typed channel event for ADB streaming — replaces high-frequency `app.emit()` calls.
 /// Serializes as a tagged union: `{ "event": "batch", "data": {...} }`.
 #[derive(Debug, Clone, Serialize, TS)]
@@ -125,6 +152,7 @@ pub enum AdbStreamEvent {
     Batch(AdbBatch),
     ProcessorUpdate(AdbProcessorUpdate),
     StreamStopped(AdbStreamStopped),
+    ProcessorsExcluded(AdbProcessorsExcluded),
 }
 
 // ---------------------------------------------------------------------------
@@ -702,6 +730,12 @@ pub fn stop(ctx: &ServiceCtx, session_id: &str) -> Result<(), ServiceError> {
     // this map in streaming mode, so it needs no epoch guard.
     if let Ok(mut str_results) = state.state_tracker_results.lock() {
         str_results.remove(session_id);
+    }
+
+    // Drop the last-announced exclusion set too — purely a dedup cache for
+    // `flush_batch`'s exclusion announcement, so it needs no epoch guard either.
+    if let Ok(mut ex) = state.stream_excluded_processors.lock() {
+        ex.remove(session_id);
     }
 
     ctx.journal("stream.stop", Some(session_id), "stream stopped");
@@ -1730,8 +1764,24 @@ fn flush_batch(
             .and_then(|sp| sp.get(session_id).map(|m| m.keys().cloned().collect()))
             .unwrap_or_default();
 
-        // Only proceed if there are active processors
+        // Only proceed if there are active processors. NOTE: this also gates
+        // the exclusion-announcement step below — if the chain goes from
+        // "one mismatched processor" to fully empty, the cleared
+        // `ProcessorsExcluded` event is never sent and
+        // `stream_excluded_processors` keeps the stale entry until `stop`
+        // clears it. Harmless in practice: `ProcessorDashboard` renders rows
+        // from the active chain, not from stale `results` entries, so an
+        // empty chain shows nothing regardless of what this cache still
+        // holds. Re-adding any processor recomputes eligibility from scratch
+        // on the next batch, same as always.
         if !tracker_ids.is_empty() || !reporter_ids.is_empty() {
+            // Populated below, inside the `processors` lock, with every
+            // currently-active id the declared-source_types check excludes.
+            // Compared against `stream_excluded_processors` after the lock is
+            // dropped so a batch that changes nothing sends no event — see the
+            // "exclusion announcement" step after this block.
+            let mut excluded_processors: Vec<AdbExcludedProcessor> = Vec::new();
+
             // Clone Arc pointers for processor defs (O(1) per def, brief lock)
             let partitioned = {
                 match state.processors.lock() {
@@ -1740,11 +1790,7 @@ fn flush_batch(
                         // above). Apply the same declared-source_types
                         // exclusion file mode uses, so a processor's
                         // eligibility does not depend on which path executes
-                        // it. The streaming channel has no equivalent of the
-                        // file-mode skip row yet, so an excluded processor
-                        // simply stops producing updates rather than reporting
-                        // why — it stays in the chain showing zero, which is
-                        // what it did before this exclusion existed.
+                        // it.
                         let stream_source_type = crate::core::session::SourceType::Logcat;
                         let eligible = |id: &str| -> bool {
                             // `map_or(true, ..)` rather than `is_none_or`: the
@@ -1758,6 +1804,38 @@ fn flush_batch(
                                 !excluded_by_declared_source_types(declared, &stream_source_type)
                             })
                         };
+                        // Record every active id (reporter or tracker) the
+                        // check above excludes, with the same `SkipReason`
+                        // shape file mode's `PipelineRunSummary.skipped` uses,
+                        // so the streaming channel can announce *why* a
+                        // processor sits at zero instead of just stopping its
+                        // updates silently. Recomputed every batch — which
+                        // means every time a chain change (`update_processors`
+                        // / `update_trackers`) mutates the active id sets this
+                        // read below — so it self-corrects with no dedicated
+                        // chain-change hook.
+                        for id in reporter_ids.iter().chain(tracker_ids.iter()) {
+                            if excluded_processors.iter().any(|e| &e.processor_id == id) {
+                                continue; // already recorded (rare: same id in both sets)
+                            }
+                            if eligible(id.as_str()) {
+                                continue;
+                            }
+                            let Some(p) = procs.get(id.as_str()) else { continue };
+                            let declared = p
+                                .schema
+                                .as_ref()
+                                .map_or(&[][..], |s| s.source_types.as_slice())
+                                .to_vec();
+                            excluded_processors.push(AdbExcludedProcessor {
+                                processor_id: id.clone(),
+                                skip: crate::commands::pipeline::SkipReason {
+                                    reason: "source_type_mismatch",
+                                    declared,
+                                    actual: stream_source_type.to_string(),
+                                },
+                            });
+                        }
                         let reporter_defs: Vec<_> = reporter_ids
                             .iter()
                             .filter(|id| eligible(id.as_str()))
@@ -1791,6 +1869,53 @@ fn flush_batch(
                     }
                 }
             };
+
+            // ── Exclusion announcement ────────────────────────────────────
+            // Compare against the last-announced set for this session and
+            // send `ProcessorsExcluded` only on an actual change (first
+            // exclusion, a new one added, one cleared, or the source_types
+            // that caused it changing) — never once per batch. Runs whether
+            // or not `partitioned` above is `Some`: a poisoned `processors`
+            // lock already produced an empty `excluded_processors` list here,
+            // and this comparison degrades the same way any other
+            // best-effort lock read in this function does.
+            {
+                let mut ids: Vec<String> = excluded_processors
+                    .iter()
+                    .map(|e| e.processor_id.clone())
+                    .collect();
+                ids.sort();
+                let changed = match state.stream_excluded_processors.lock() {
+                    Ok(mut ex) => {
+                        // A direct `!= Some(&ids)` comparison rather than
+                        // `map_or`/`is_none_or` — clippy's `unnecessary_map_or`
+                        // flags the closure form here since `PartialEq` already
+                        // covers the `None` case for free.
+                        let changed = ex.get(session_id) != Some(&ids);
+                        if changed {
+                            if ids.is_empty() {
+                                ex.remove(session_id);
+                            } else {
+                                ex.insert(session_id.to_string(), ids);
+                            }
+                        }
+                        changed
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[adb flush_batch] stream_excluded_processors lock poisoned: {e}"
+                        );
+                        false
+                    }
+                };
+                if changed {
+                    excluded_processors.sort_by(|a, b| a.processor_id.cmp(&b.processor_id));
+                    sink.send(AdbStreamEvent::ProcessorsExcluded(AdbProcessorsExcluded {
+                        session_id: session_id.to_string(),
+                        excluded: excluded_processors,
+                    }));
+                }
+            }
 
             if let Some(partitioned) = partitioned {
                 // Snapshot continuous states from AppState. Clone (not remove)
@@ -2068,6 +2193,22 @@ pipeline:
     rules:
       - type: message_contains
         value: boot
+";
+
+    /// A reporter that declares `schema.source_types: [dumpstate]` — excluded
+    /// from every ADB stream, which is always `Logcat`. Used to exercise the
+    /// exclusion-announcement path in `flush_batch`.
+    const DUMPSTATE_ONLY_REPORTER_YAML: &str = r"
+meta:
+  id: dumpstate_only
+  name: Dumpstate Only
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains
+        value: boot
+schema:
+  source_types: [dumpstate]
 ";
 
     fn install(ctx: &ServiceCtx, id: &str, yaml: &str) {
@@ -2513,6 +2654,184 @@ pipeline:
             &stream_sink,
         );
         assert!(sink.events_named("watch-match").is_empty());
+    }
+
+    // ── Excluded processors (declared source_types) ───────────────────────
+
+    /// A reporter whose declared `schema.source_types` excludes `Logcat` (the
+    /// stream's only possible source type) must be announced via a single
+    /// `ProcessorsExcluded` event with `source_type_mismatch`, and must never
+    /// produce an `AdbProcessorUpdate` — while an eligible reporter in the
+    /// same chain keeps running normally.
+    #[test]
+    fn flush_batch_excludes_a_declared_source_type_mismatch_and_reports_it_once() {
+        let (ctx, _tmp) = test_ctx().build();
+        seed_stream_session(&ctx, "s1");
+        install(&ctx, "r@official", REPORTER_YAML);
+        install(&ctx, "dumpstate_only@official", DUMPSTATE_ONLY_REPORTER_YAML);
+        seed_continuous_state(
+            &ctx,
+            "s1",
+            &["r@official".to_string(), "dumpstate_only@official".to_string()],
+            0,
+        )
+        .unwrap();
+
+        let stream_sink = RecordingSink::new();
+        flush_batch(
+            vec![logcat_line("boot complete")],
+            "s1",
+            "s1-src",
+            &ctx,
+            1000,
+            &stream_sink,
+        );
+
+        let sent = stream_sink.events_named("sink");
+
+        let excluded_events: Vec<_> = sent
+            .iter()
+            .filter(|e| e.payload["event"] == "processorsExcluded")
+            .collect();
+        assert_eq!(
+            excluded_events.len(),
+            1,
+            "the exclusion set must be announced exactly once, not per-batch"
+        );
+        let data = &excluded_events[0].payload["data"];
+        assert_eq!(data["sessionId"], "s1");
+        let excluded = data["excluded"].as_array().unwrap();
+        assert_eq!(excluded.len(), 1);
+        assert_eq!(excluded[0]["processorId"], "dumpstate_only@official");
+        assert_eq!(excluded[0]["skip"]["reason"], "source_type_mismatch");
+        assert_eq!(excluded[0]["skip"]["declared"], serde_json::json!(["dumpstate"]));
+        assert_eq!(excluded[0]["skip"]["actual"], "Logcat");
+
+        // The excluded processor never ran: no AdbProcessorUpdate for it.
+        let updates: Vec<_> = sent
+            .iter()
+            .filter(|e| e.payload["event"] == "processorUpdate")
+            .collect();
+        assert!(
+            updates.iter().all(|e| e.payload["data"]["processorId"] != "dumpstate_only@official"),
+            "an excluded processor must never produce an update"
+        );
+        // The eligible reporter in the same chain still runs and matches.
+        let r_update = updates
+            .iter()
+            .find(|e| e.payload["data"]["processorId"] == "r@official")
+            .expect("the eligible reporter must still produce an update");
+        assert_eq!(r_update.payload["data"]["matchedLines"], 1);
+    }
+
+    /// The exclusion set is a dedup cache, not a per-batch broadcast: a second
+    /// batch with no change to the active chain must not re-announce it.
+    #[test]
+    fn flush_batch_does_not_reannounce_an_unchanged_exclusion_set() {
+        let (ctx, _tmp) = test_ctx().build();
+        seed_stream_session(&ctx, "s1");
+        install(&ctx, "dumpstate_only@official", DUMPSTATE_ONLY_REPORTER_YAML);
+        seed_continuous_state(&ctx, "s1", &["dumpstate_only@official".to_string()], 0).unwrap();
+
+        let stream_sink = RecordingSink::new();
+        flush_batch(vec![logcat_line("one")], "s1", "s1-src", &ctx, 1000, &stream_sink);
+        flush_batch(vec![logcat_line("two")], "s1", "s1-src", &ctx, 1000, &stream_sink);
+
+        let excluded_events: Vec<_> = stream_sink
+            .events_named("sink")
+            .into_iter()
+            .filter(|e| e.payload["event"] == "processorsExcluded")
+            .collect();
+        assert_eq!(
+            excluded_events.len(),
+            1,
+            "an unchanged exclusion set across batches must be announced only once"
+        );
+    }
+
+    /// A chain change mid-stream (the mismatched processor removed via
+    /// `update_processors`, an eligible one left active) must re-derive
+    /// eligibility on the next batch and announce the cleared exclusion set —
+    /// not keep reporting a processor that is no longer even in the chain.
+    /// (Dropping the chain to fully empty short-circuits the whole Layer 2
+    /// block before the announcement step runs, which is moot for the
+    /// dashboard: `ProcessorDashboard` renders rows from the active chain,
+    /// not from stale `results` entries, so an empty chain shows nothing
+    /// regardless. This test keeps one eligible processor active so the
+    /// announcement path is actually exercised.)
+    #[test]
+    fn flush_batch_reannounces_when_the_excluded_set_changes_mid_stream() {
+        let (ctx, _tmp) = test_ctx().build();
+        seed_stream_session(&ctx, "s1");
+        install(&ctx, "r@official", REPORTER_YAML);
+        install(&ctx, "dumpstate_only@official", DUMPSTATE_ONLY_REPORTER_YAML);
+        seed_continuous_state(
+            &ctx,
+            "s1",
+            &["r@official".to_string(), "dumpstate_only@official".to_string()],
+            0,
+        )
+        .unwrap();
+
+        let stream_sink = RecordingSink::new();
+        flush_batch(vec![logcat_line("boot one")], "s1", "s1-src", &ctx, 1000, &stream_sink);
+        let first_excluded = stream_sink
+            .events_named("sink")
+            .into_iter()
+            .filter(|e| e.payload["event"] == "processorsExcluded")
+            .count();
+        assert_eq!(first_excluded, 1);
+
+        // Chain change: drop the mismatched processor, keep the eligible one.
+        update_processors(&ctx, "s1", &["r@official".to_string()]).unwrap();
+
+        flush_batch(vec![logcat_line("boot two")], "s1", "s1-src", &ctx, 1000, &stream_sink);
+        let excluded_events: Vec<_> = stream_sink
+            .events_named("sink")
+            .into_iter()
+            .filter(|e| e.payload["event"] == "processorsExcluded")
+            .collect();
+        assert_eq!(
+            excluded_events.len(),
+            2,
+            "the cleared exclusion set must be re-announced once the chain changes"
+        );
+        assert!(
+            excluded_events[1].payload["data"]["excluded"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
+            "the mismatched processor is no longer in the chain, so nothing should be reported excluded"
+        );
+    }
+
+    /// `stream_excluded_processors` is purely a dedup cache — `stop` must
+    /// drop a session's entry so a later stream on the same session id starts
+    /// with a clean announcement history rather than inheriting a stale one.
+    #[test]
+    fn stop_clears_the_excluded_processors_dedup_cache() {
+        let (ctx, _tmp) = test_ctx().build();
+        seed_stream_session(&ctx, "s1");
+        install(&ctx, "dumpstate_only@official", DUMPSTATE_ONLY_REPORTER_YAML);
+        seed_continuous_state(&ctx, "s1", &["dumpstate_only@official".to_string()], 0).unwrap();
+
+        let stream_sink = RecordingSink::new();
+        flush_batch(vec![logcat_line("one")], "s1", "s1-src", &ctx, 1000, &stream_sink);
+        assert!(ctx
+            .state()
+            .stream_excluded_processors
+            .lock()
+            .unwrap()
+            .contains_key("s1"));
+
+        stop(&ctx, "s1").unwrap();
+
+        assert!(!ctx
+            .state()
+            .stream_excluded_processors
+            .lock()
+            .unwrap()
+            .contains_key("s1"));
     }
 
     // ── Capture task: EOF ──────────────────────────────────────────────────
