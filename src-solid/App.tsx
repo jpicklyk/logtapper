@@ -12,6 +12,8 @@ import type { CacheDataSource } from './viewer';
 import { createStreamSession } from './viewer/createStreamSession';
 import { AppShell } from './shell';
 import type { SessionKind } from './shell';
+import { PresencePanel, createPresenceStore } from './presence';
+import type { NavTarget } from './presence';
 import { BASE_THEMES } from './theme/applyTheme';
 import type { Density, ThemeController, ThemeMode } from './theme/applyTheme';
 import styles from './App.module.css';
@@ -72,6 +74,26 @@ export function App(props: AppProps) {
     setDataSource(null);
   };
   onCleanup(disposeSource);
+
+  // ── Agent presence (A2) ──────────────────────────────────────────────────
+  // One store per app. Applying a navigation target cannot scroll the viewer
+  // yet: `LogViewer` (P3) exposes no scroll-to-line prop or imperative handle,
+  // so a target for the open session is recorded and shown rather than
+  // applied. Switching to a *different* session is a 2b surface anyway.
+  const [navTarget, setNavTarget] = createSignal<NavTarget | null>(null);
+  const presence = createPresenceStore({ navigate: setNavTarget });
+  onCleanup(() => presence.dispose());
+
+  const navTargetText = () => {
+    const target = navTarget();
+    if (!target) return '';
+    const where = target.sessionId === sessionId() ? 'here' : presence.sessionName(target.sessionId);
+    const what =
+      target.line !== undefined
+        ? `line ${target.line}`
+        : (target.analysisId ?? target.watchId ?? target.bookmarkId ?? 'session');
+    return `Requested: ${where} · ${what}`;
+  };
 
   /** Point the single viewer at a backend session (file or live stream). */
   const attachSession = (id: string, name: string, total: number, tail: boolean) => {
@@ -199,6 +221,9 @@ export function App(props: AppProps) {
       <Show when={error()}>
         <span class={styles.error}>{error()}</span>
       </Show>
+      <Show when={navTargetText()}>
+        <span class={styles.session}>{navTargetText()}</span>
+      </Show>
       <Show when={props.theme}>
         {(theme) => (
           <span class={styles.controls}>
@@ -234,6 +259,7 @@ export function App(props: AppProps) {
       sessionKind={sessionKind()}
       topBar={topBar}
       slots={{
+        presence: () => <PresencePanel store={presence} />,
         viewer: () => (
           <Show
             when={dataSource()}

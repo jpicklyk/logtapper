@@ -1,0 +1,323 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ActivityEntry, FocusContext, McpStatus, NavRequest } from '@bridge/types';
+import {
+  NAV_CONFIRM_STORAGE_KEY,
+  createPresenceStore,
+  mergeEntries,
+} from './presenceStore';
+import type { NavTarget, PresenceStore } from './presenceStore';
+
+// The store is the only module that talks to the bridge, so both bridge
+// modules are mocked wholesale: the command mocks hand back fixtures and the
+// event mocks capture the callbacks so a test can fire an event by hand.
+const getMcpStatusMock = vi.fn<() => Promise<McpStatus>>();
+const getActivityMock = vi.fn<(limit?: number) => Promise<ActivityEntry[]>>();
+const getFocusMock = vi.fn<() => Promise<FocusContext | null>>();
+const setFocusMock = vi.fn<(input: unknown) => Promise<FocusContext | null>>();
+const getExportAllSessionsInfoMock = vi.fn();
+
+vi.mock('@bridge/commands', () => ({
+  getMcpStatus: () => getMcpStatusMock(),
+  getActivity: (limit?: number) => getActivityMock(limit),
+  getFocus: () => getFocusMock(),
+  setFocus: (input: unknown) => setFocusMock(input),
+  getExportAllSessionsInfo: () => getExportAllSessionsInfoMock(),
+}));
+
+interface Listeners {
+  activity: ((e: ActivityEntry) => void)[];
+  focus: ((f: FocusContext | null) => void)[];
+  nav: ((r: NavRequest) => void)[];
+}
+const listeners: Listeners = { activity: [], focus: [], nav: [] };
+const unlistenCalls: string[] = [];
+
+vi.mock('@bridge/events', () => ({
+  onActivity: (cb: (e: ActivityEntry) => void) => {
+    listeners.activity.push(cb);
+    return Promise.resolve(() => unlistenCalls.push('activity'));
+  },
+  onFocusChanged: (cb: (f: FocusContext | null) => void) => {
+    listeners.focus.push(cb);
+    return Promise.resolve(() => unlistenCalls.push('focus'));
+  },
+  onNavigateRequest: (cb: (r: NavRequest) => void) => {
+    listeners.nav.push(cb);
+    return Promise.resolve(() => unlistenCalls.push('nav'));
+  },
+}));
+
+function status(overrides: Partial<McpStatus> = {}): McpStatus {
+  return { running: true, port: 40404, idleSecs: 1, agentRawAccess: false, ...overrides };
+}
+
+function entry(id: number, overrides: Partial<ActivityEntry> = {}): ActivityEntry {
+  return {
+    id,
+    ts: 1_700_000_000_000 + id,
+    caller: { kind: 'agent', client: 'claude-code' },
+    action: 'bookmark.create',
+    sessionId: 's1',
+    summary: `line ${id}: note`,
+    ...overrides,
+  };
+}
+
+function navRequest(id: number, overrides: Partial<NavRequest> = {}): NavRequest {
+  return {
+    id,
+    sessionId: 's1',
+    line: 42,
+    analysisId: null,
+    reason: 'look at the enumeration failure',
+    requestedBy: { kind: 'agent', client: 'claude-code' },
+    ts: 1_700_000_000_000,
+    ...overrides,
+  };
+}
+
+/** Let the mocked promises (and their `.then` chains) settle. */
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+let store: PresenceStore | null = null;
+let navigated: NavTarget[] = [];
+
+function build(options: { navigate?: (t: NavTarget) => void } = {}): PresenceStore {
+  navigated = [];
+  store = createPresenceStore({
+    pollMs: 1_000_000, // effectively off; tests drive refreshes by hand
+    navigate: options.navigate ?? ((t) => navigated.push(t)),
+  });
+  return store;
+}
+
+beforeEach(() => {
+  listeners.activity = [];
+  listeners.focus = [];
+  listeners.nav = [];
+  unlistenCalls.length = 0;
+  localStorage.clear();
+  getMcpStatusMock.mockResolvedValue(status());
+  getActivityMock.mockResolvedValue([]);
+  getFocusMock.mockResolvedValue(null);
+  setFocusMock.mockResolvedValue(null);
+  getExportAllSessionsInfoMock.mockResolvedValue({
+    sessions: [
+      { sessionId: 's1', sourceFilename: 'dumpstate_S911.txt', bookmarkCount: 0, analysisCount: 0 },
+    ],
+    totalProcessorCount: 0,
+    totalPipelineProcessorCount: 0,
+  });
+});
+
+afterEach(() => {
+  store?.dispose();
+  store = null;
+});
+
+describe('mergeEntries', () => {
+  it('dedupes by id, keeps ascending order and caps the tail', () => {
+    const merged = mergeEntries([entry(3), entry(1)], [entry(1), entry(2)], 10);
+    expect(merged.map((e) => e.id)).toEqual([1, 2, 3]);
+
+    const capped = mergeEntries([], [entry(1), entry(2), entry(3)], 2);
+    expect(capped.map((e) => e.id)).toEqual([2, 3]);
+  });
+
+  it('returns the same array reference when nothing is new', () => {
+    const previous = [entry(1)];
+    expect(mergeEntries(previous, [entry(1)], 10)).toBe(previous);
+  });
+});
+
+describe('createPresenceStore — journal', () => {
+  it('seeds from getActivity and appends live entries without duplicating', async () => {
+    getActivityMock.mockResolvedValue([entry(1), entry(2)]);
+    const s = build();
+    await flush();
+    expect(s.entries().map((e) => e.id)).toEqual([1, 2]);
+
+    listeners.activity[0](entry(3));
+    listeners.activity[0](entry(2)); // re-delivery of a seeded entry
+    expect(s.entries().map((e) => e.id)).toEqual([1, 2, 3]);
+  });
+
+  it('caps the journal at the configured limit, keeping the newest', async () => {
+    store = createPresenceStore({ pollMs: 1_000_000, limit: 2 });
+    await flush();
+    listeners.activity[0](entry(1));
+    listeners.activity[0](entry(2));
+    listeners.activity[0](entry(3));
+    expect(store.entries().map((e) => e.id)).toEqual([2, 3]);
+  });
+
+  it('survives a failing getActivity', async () => {
+    getActivityMock.mockRejectedValue(new Error('no host'));
+    const s = build();
+    await flush();
+    expect(s.entries()).toEqual([]);
+  });
+});
+
+describe('createPresenceStore — status and raw access', () => {
+  it('exposes agentRawAccess from the bridge status', async () => {
+    getMcpStatusMock.mockResolvedValue(status({ agentRawAccess: true }));
+    const s = build();
+    await flush();
+    expect(s.status()?.port).toBe(40404);
+    expect(s.agentRawAccess()).toBe(true);
+  });
+
+  it('defaults agentRawAccess to false before the first status resolves', () => {
+    const s = build();
+    expect(s.agentRawAccess()).toBe(false);
+  });
+
+  it('resolves session names from the session list, falling back to the id', async () => {
+    const s = build();
+    await flush();
+    expect(s.sessionName('s1')).toBe('dumpstate_S911.txt');
+    expect(s.sessionName('unknown')).toBe('unknown');
+  });
+});
+
+describe('createPresenceStore — focus', () => {
+  const focus: FocusContext = {
+    sessionId: 's1',
+    line: 48213,
+    section: 'usb',
+    selection: null,
+    note: null,
+    setBy: { kind: 'agent', client: 'claude-code' },
+    ts: 1_700_000_000_000,
+  };
+
+  it('seeds from getFocus and follows focus-changed, including a clear', async () => {
+    getFocusMock.mockResolvedValue(focus);
+    const s = build();
+    await flush();
+    expect(s.focus()?.line).toBe(48213);
+
+    listeners.focus[0](null);
+    expect(s.focus()).toBeNull();
+  });
+
+  it('clearFocus calls setFocus(null) and clears optimistically', async () => {
+    getFocusMock.mockResolvedValue(focus);
+    const s = build();
+    await flush();
+
+    await s.clearFocus();
+    expect(setFocusMock).toHaveBeenCalledWith(null);
+    expect(s.focus()).toBeNull();
+  });
+});
+
+describe('createPresenceStore — navigation requests', () => {
+  it('queues a request when confirmation is required and applies it on demand', async () => {
+    const s = build();
+    await flush();
+
+    listeners.nav[0](navRequest(7));
+    expect(s.pendingNav().map((r) => r.id)).toEqual([7]);
+    expect(s.agent.state()).toBe('needs');
+    expect(navigated).toEqual([]);
+
+    s.applyNav(7);
+    expect(navigated).toEqual([{ sessionId: 's1', line: 42 }]);
+    expect(s.pendingNav()).toEqual([]);
+    expect(s.agent.state()).not.toBe('needs');
+  });
+
+  it('holding keeps the request listed but stops the needs-you state', async () => {
+    const s = build();
+    await flush();
+
+    listeners.nav[0](navRequest(7));
+    s.holdNav(7);
+    expect(s.pendingNav().map((r) => r.id)).toEqual([7]);
+    expect(s.isNavHeld(7)).toBe(true);
+    expect(s.agent.state()).not.toBe('needs');
+
+    // A later request re-asserts attention even while one is held.
+    listeners.nav[0](navRequest(8));
+    expect(s.agent.state()).toBe('needs');
+  });
+
+  it('dismiss drops the request without navigating', async () => {
+    const s = build();
+    await flush();
+
+    listeners.nav[0](navRequest(7));
+    s.dismissNav(7);
+    expect(s.pendingNav()).toEqual([]);
+    expect(navigated).toEqual([]);
+  });
+
+  it('applies immediately when confirmation is off', async () => {
+    const s = build();
+    await flush();
+    s.setRequireNavConfirmation(false);
+
+    listeners.nav[0](navRequest(9, { line: null, analysisId: 'a-1' }));
+    expect(s.pendingNav()).toEqual([]);
+    expect(navigated).toEqual([{ sessionId: 's1', analysisId: 'a-1' }]);
+  });
+
+  it('turning confirmation off flushes whatever was already queued', async () => {
+    const s = build();
+    await flush();
+
+    listeners.nav[0](navRequest(7));
+    s.setRequireNavConfirmation(false);
+    expect(navigated).toEqual([{ sessionId: 's1', line: 42 }]);
+    expect(s.pendingNav()).toEqual([]);
+    expect(s.agent.state()).not.toBe('needs');
+  });
+
+  it('persists the confirmation setting and reads it back on the next store', async () => {
+    const first = build();
+    await flush();
+    first.setRequireNavConfirmation(false);
+    expect(localStorage.getItem(NAV_CONFIRM_STORAGE_KEY)).toBe('false');
+    first.dispose();
+
+    const second = build();
+    await flush();
+    expect(second.requireNavConfirmation()).toBe(false);
+  });
+
+  it('defaults to requiring confirmation with no stored value', async () => {
+    const s = build();
+    await flush();
+    expect(s.requireNavConfirmation()).toBe(true);
+  });
+});
+
+describe('createPresenceStore — disposal', () => {
+  it('unlistens every subscription and stops the poll', async () => {
+    const s = build();
+    await flush();
+    expect(unlistenCalls).toEqual([]);
+
+    s.dispose();
+    store = null;
+    expect(unlistenCalls.sort()).toEqual(['activity', 'focus', 'nav']);
+
+    const before = getMcpStatusMock.mock.calls.length;
+    await flush();
+    expect(getMcpStatusMock.mock.calls.length).toBe(before);
+  });
+
+  it('ignores events that arrive after dispose', async () => {
+    const s = build();
+    await flush();
+    const fire = listeners.activity[0];
+    s.dispose();
+    store = null;
+
+    fire(entry(99));
+    expect(s.entries().map((e) => e.id)).toEqual([]);
+  });
+});
