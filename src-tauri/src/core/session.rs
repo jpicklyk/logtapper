@@ -2633,6 +2633,128 @@ mod tests {
         assert!(!sections.iter().any(|s| s.parent_index.is_some()), "no children should exist");
     }
 
+    /// Feed raw dumpstate text through the real `BugreportParser` (rather than
+    /// hand-built `LineMeta`) so this exercises the exact tag values
+    /// `classify()` produces — the same path a real file goes through.
+    fn classify_lines_for_sections(lines: &[&str]) -> (Vec<u8>, Vec<u64>, Vec<LineMeta>, TagInterner) {
+        let parser = BugreportParser::new();
+        let mut interner = TagInterner::new();
+        let mut data: Vec<u8> = Vec::new();
+        let mut line_index: Vec<u64> = Vec::new();
+        let mut meta: Vec<LineMeta> = Vec::new();
+
+        for line in lines {
+            line_index.push(data.len() as u64);
+            data.extend_from_slice(line.as_bytes());
+            data.push(b'\n');
+
+            let parsed: ParsedLineMeta = parser.parse_meta(line, 0).unwrap();
+            let tag_id = interner.intern(&parsed.tag);
+            meta.push(LineMeta {
+                level: parsed.level,
+                tag_id,
+                timestamp: parsed.timestamp,
+                byte_offset: parsed.byte_offset,
+                byte_len: parsed.byte_len,
+                is_section_boundary: parsed.is_section_boundary,
+            });
+        }
+        line_index.push(data.len() as u64);
+
+        (data, line_index, meta, interner)
+    }
+
+    /// Regression test for a section header that immediately follows another
+    /// section's duration trailer, where the header's title itself contains
+    /// a parenthesised note (`KERNEL LOG (dmesg)`) rather than a stripped
+    /// source-path annotation. Real-world shape (Samsung/S23 dumpstate):
+    ///
+    /// ```text
+    /// ------ FIRST SECTION ------
+    /// first content
+    /// ------ 0.019s was the duration of 'FIRST SECTION' ------
+    /// ------ KERNEL LOG (dmesg) ------
+    /// kernel content
+    /// ------ 0.012s was the duration of 'KERNEL LOG (dmesg)' ------
+    /// ```
+    ///
+    /// Before the fix, `KERNEL LOG (dmesg)`'s footer quoted the title with
+    /// the parens still attached while the header's tag had them stripped,
+    /// so the two names never matched and the section was silently dropped
+    /// from the index — even though the header line parsed and classified
+    /// just fine on its own.
+    #[test]
+    fn build_section_index_indexes_header_immediately_following_duration_trailer() {
+        let lines: &[&str] = &[
+            "------ FIRST SECTION ------",
+            "first content",
+            "------ 0.019s was the duration of 'FIRST SECTION' ------",
+            "------ KERNEL LOG (dmesg) ------",
+            "kernel content",
+            "------ 0.012s was the duration of 'KERNEL LOG (dmesg)' ------",
+        ];
+        let (data, line_index, meta, interner) = classify_lines_for_sections(lines);
+
+        let sections = build_section_index(&meta, &SourceType::Bugreport, &interner, &data, &line_index);
+
+        let by_name: HashMap<&str, &SectionInfo> =
+            sections.iter().map(|s| (s.name.as_str(), s)).collect();
+
+        let first = by_name.get("FIRST SECTION").expect("FIRST SECTION should be indexed");
+        assert_eq!(first.start_line, 0);
+        assert_eq!(first.end_line, 2);
+
+        let kernel = by_name
+            .get("KERNEL LOG")
+            .expect("KERNEL LOG must be indexed even though its header immediately follows another section's duration trailer");
+        assert_eq!(kernel.start_line, 3);
+        assert_eq!(kernel.end_line, 5);
+
+        assert_eq!(sections.len(), 2, "exactly the two sections above should be indexed");
+    }
+
+    /// Same shape as above, verified against the real Samsung dumpstate
+    /// sample the bug was reported against, when it's present on disk.
+    /// Skips gracefully (rather than failing) when the fixture isn't
+    /// available, since it lives outside the repo.
+    #[test]
+    fn build_section_index_indexes_kernel_log_in_real_samsung_dumpstate_sample() {
+        use std::io::BufRead;
+
+        let path = "D:\\Users\\Jeff\\Downloads\\samsung_dumpstate\\samsung_dumpstate\\dumpState_S916U1UES7EZA1_B2BF_202603171919.log";
+        let file = match std::fs::File::open(path) {
+            Ok(f) => f,
+            Err(_) => {
+                eprintln!("skipping build_section_index_indexes_kernel_log_in_real_samsung_dumpstate_sample: fixture not present at {path}");
+                return;
+            }
+        };
+
+        // The reported failure sits around line 318564-318565 (1-indexed) and
+        // the KERNEL LOG section's own duration trailer around line 320845;
+        // read a generous window around that so this stays fast instead of
+        // parsing the whole multi-hundred-MB file.
+        let reader = std::io::BufReader::new(file);
+        let lines: Vec<String> = reader
+            .lines()
+            .skip(318_550)
+            .take(2_400)
+            .map(|l| l.expect("read line"))
+            .collect();
+        assert!(!lines.is_empty(), "expected to read a window of lines from the fixture");
+
+        let line_refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
+        let (data, line_index, meta, interner) = classify_lines_for_sections(&line_refs);
+
+        let sections = build_section_index(&meta, &SourceType::Bugreport, &interner, &data, &line_index);
+
+        assert!(
+            sections.iter().any(|s| s.name == "KERNEL LOG"),
+            "KERNEL LOG section should be indexed from the real dumpstate sample; got sections: {:?}",
+            sections.iter().map(|s| &s.name).collect::<Vec<_>>()
+        );
+    }
+
     // =========================================================================
     // ZipLogSource tests
     // =========================================================================
