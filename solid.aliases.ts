@@ -31,6 +31,12 @@ export const solidAliasPaths: Record<string, string> = {
   // `reconcileWorkspaceList`, `restorePlan`, `artifactPairing`, `startupFile`).
   // Widening that allow-list needs the same scrutiny as adding an alias.
   "@hooks": "src-next/hooks",
+  // `src-next/components/FileInfoPanel/` is React territory (the whole
+  // `components/` tree is off-limits, per eslint.config.js's Block 4). W3's
+  // sections navigator reuses exactly three framework-free modules from it —
+  // `sectionTree`, `formatters`, `sectionDescriptions` — via the same
+  // file-level ESLint allow-list pattern as `@hooks`.
+  "@fileinfo": "src-next/components/FileInfoPanel",
 };
 
 /** alias → absolute directory, the form Vite's `resolve.alias` wants. */

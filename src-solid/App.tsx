@@ -13,6 +13,7 @@ import { AppShell, TabStrip } from './shell';
 import type { TabDescriptor } from './shell';
 import { PresencePanel, createPresenceStore } from './presence';
 import { EditorTab } from './editor';
+import { SectionsPanel, createSectionsStore } from './sections';
 import { BASE_THEMES } from './theme/applyTheme';
 import type { Density, ThemeController, ThemeMode } from './theme/applyTheme';
 import styles from './App.module.css';
@@ -56,6 +57,12 @@ export function App(props: AppProps) {
     store.dispose();
     controller.dispose();
   });
+
+  // Sections navigator (W3) — bugreport/dumpstate section tree for the
+  // focused session; couples to the app only through the controller and
+  // session store, same as every other surface.
+  const sections = createSectionsStore({ sessions: store, controller });
+  onCleanup(() => sections.dispose());
 
   // Agent presence (A2). An agent's navigation request routes through the
   // controller, which focuses the right session and jumps the pane.
@@ -171,6 +178,14 @@ export function App(props: AppProps) {
       topBar={topBar}
       slots={{
         presence: () => <PresencePanel store={presence} />,
+        sections: () => (
+          <SectionsPanel
+            store={sections}
+            sourceName={store.focused()?.load.sourceName}
+            firstTimestamp={store.focused()?.load.firstTimestamp}
+            lastTimestamp={store.focused()?.load.lastTimestamp}
+          />
+        ),
         viewer: () => (
           <>
             <TabStrip

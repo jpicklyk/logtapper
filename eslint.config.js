@@ -300,6 +300,14 @@ export default tseslint.config(
             message:
               'Only the framework-free files on the @hooks allow-list are shared with src-solid/ — the rest of src-next/hooks/ is React-only. Extend the alternation in eslint.config.js by exact file path.',
           },
+          // Same pattern as `@hooks`: `@fileinfo` reaches into React territory
+          // (`src-next/components/FileInfoPanel/`), so only the three
+          // framework-free modules W3 reuses are let through.
+          {
+            regex: '^@fileinfo/(?!sectionTree$|formatters$|sectionDescriptions$).*',
+            message:
+              'Only sectionTree, formatters and sectionDescriptions are shared with src-solid/ — the rest of FileInfoPanel/ is React-only. Extend the alternation in eslint.config.js by exact file path.',
+          },
           {
             group: ['@tauri-apps/api/core'],
             importNames: ['invoke', 'Channel'],
