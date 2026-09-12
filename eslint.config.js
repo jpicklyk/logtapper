@@ -287,6 +287,18 @@ export default tseslint.config(
             group: ['**/src-next/context/**', '**/src-next/hooks/**', '**/src-next/components/**'],
             message: 'src-next/ context, hooks and components are React-only — not shared with src-solid/.',
           },
+          // The `@hooks` alias exists for one framework-free file. Everything
+          // else under src-next/hooks/ is React and stays unreachable. This has
+          // to be a `regex` with a negative lookahead rather than a `group`
+          // with a `!` entry: `group` is matched by the `ignore` package, whose
+          // gitignore semantics refuse to re-include a path once a parent
+          // directory pattern has excluded it — so the negation is silently
+          // inert. Extend the alternation, by exact file path, to widen it.
+          {
+            regex: '^@hooks/(?!useLogViewer/multiSessionImport$).*',
+            message:
+              'Only @hooks/useLogViewer/multiSessionImport is shared with src-solid/ — the rest of src-next/hooks/ is React-only.',
+          },
           {
             group: ['@tauri-apps/api/core'],
             importNames: ['invoke', 'Channel'],

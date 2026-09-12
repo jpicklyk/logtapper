@@ -8,9 +8,14 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
 // activity journal, the focus context and the session list on construction —
 // all must be stubbed, or the module mock throws on the missing export.
 // E1 added the editor tab, which reads text files.
+// W0b added the session store and action surface: both reach the bridge
+// (`set_focused_session` on focus, `close_session` on a tab close) and both
+// subscribe to the four session/indexing events mocked below.
 vi.mock('@bridge/commands', () => ({
   getLines: vi.fn(),
   loadLogFile: vi.fn(),
+  closeSession: vi.fn(() => Promise.resolve()),
+  setFocusedSession: vi.fn(() => Promise.resolve()),
   readTextFile: vi.fn(),
   getMcpStatus: vi.fn(() => Promise.resolve({ running: false, port: 0, idleSecs: null, agentRawAccess: false })),
   getActivity: vi.fn(() => Promise.resolve([])),
@@ -24,6 +29,10 @@ vi.mock('@bridge/events', () => ({
   onActivity: vi.fn(() => Promise.resolve(() => {})),
   onFocusChanged: vi.fn(() => Promise.resolve(() => {})),
   onNavigateRequest: vi.fn(() => Promise.resolve(() => {})),
+  onBridgeSessionOpened: vi.fn(() => Promise.resolve(() => {})),
+  onBridgeSessionClosed: vi.fn(() => Promise.resolve(() => {})),
+  onFileIndexProgress: vi.fn(() => Promise.resolve(() => {})),
+  onFileIndexComplete: vi.fn(() => Promise.resolve(() => {})),
 }));
 
 // vitest `globals` is off, so @solidjs/testing-library's auto-cleanup never
