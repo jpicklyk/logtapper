@@ -296,9 +296,16 @@ export default tseslint.config(
           // inert. Extend the alternation, by exact file path, to widen it.
           {
             regex:
-              '^@hooks/(?!useLogViewer/multiSessionImport$|workspace/appStatePayload$|workspace/reconcileWorkspaceList$|workspace/restorePlan$|workspace/artifactPairing$|workspace/startupFile$).*',
+              '^@hooks/(?!useLogViewer/multiSessionImport$|workspace/appStatePayload$|workspace/reconcileWorkspaceList$|workspace/restorePlan$|workspace/artifactPairing$|workspace/startupFile$|pipelineChainStorage$).*',
             message:
               'Only the framework-free files on the @hooks allow-list are shared with src-solid/ — the rest of src-next/hooks/ is React-only. Extend the alternation in eslint.config.js by exact file path.',
+          },
+          // Same file-level allow-list pattern as `@hooks`, for the one
+          // framework-free file under src-next/components/ProcessorDashboard/.
+          {
+            regex: '^@procdash/(?!utils$).*',
+            message:
+              'Only @procdash/utils (framework-free) is shared with src-solid/ — the rest of ProcessorDashboard/ is React-only. Extend the alternation in eslint.config.js by exact file path.',
           },
           {
             group: ['@tauri-apps/api/core'],
