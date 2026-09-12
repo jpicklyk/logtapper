@@ -18,6 +18,9 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
 // on construction and subscribes to pipeline progress.
 // W6 added the analyses store, which lists analyses and subscribes to
 // `analysis-update` on construction.
+// W5 added the device state store, which fetches a tracker's snapshot/
+// transitions once a cursor exists and a tracker is active — stubbed even
+// though no test here opens a session with an active tracker.
 vi.mock('@bridge/commands', () => ({
   getLines: vi.fn(),
   loadLogFile: vi.fn(),
@@ -48,6 +51,8 @@ vi.mock('@bridge/commands', () => ({
   publishAnalysis: vi.fn(),
   updateAnalysis: vi.fn(),
   deleteAnalysis: vi.fn(),
+  getStateAtLine: vi.fn(),
+  getStateTransitions: vi.fn(() => Promise.resolve([])),
 }));
 vi.mock('@bridge/events', () => ({
   onActivity: vi.fn(() => Promise.resolve(() => {})),
