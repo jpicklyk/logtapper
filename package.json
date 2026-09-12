@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.2",
+    "@codemirror/lang-markdown": "6.5.2",
     "@codemirror/language": "^6.12.3",
     "@codemirror/search": "^6.6.0",
     "@codemirror/state": "^6.5.4",
@@ -45,6 +46,8 @@
     "react-dom": "^19.2.4",
     "react-markdown": "^10.1.0",
     "recharts": "^3.8.0",
+    "rehype-sanitize": "6.0.0",
+    "rehype-stringify": "10.0.1",
     "remark-gfm": "^4.0.1",
     "remark-parse": "11.0.0",
     "remark-rehype": "11.1.2",

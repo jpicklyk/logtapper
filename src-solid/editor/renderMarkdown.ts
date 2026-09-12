@@ -1,34 +1,32 @@
 /**
  * Markdown → sanitized HTML string.
  *
- * The pipeline plan §G asked for, with two substitutions forced by the lockfile
- * (see `sanitize.ts` / `toHtml.ts` headers):
- *
  *   unified()
  *     .use(remarkParse)      // markdown → mdast
  *     .use(remarkGfm)        // tables, strikethrough, task lists, autolinks
  *     .use(remarkRehype)     // mdast → hast; allowDangerousHtml stays off, so
  *                            //   raw HTML in the source never becomes markup
  *     .use(rehypeLineRefs)   // SourceReference mentions → <a data-session data-line>
- *     .use(rehypeSanitize)   // local stand-in for rehype-sanitize
- *     .use(rehypeStringify)  // local stand-in for rehype-stringify
+ *     .use(rehypeSanitize)   // allowlist — see sanitizeSchema.ts
+ *     .use(rehypeStringify)  // hast → HTML string
  *
- * `remark-parse`, `remark-gfm`, `remark-rehype` and `unified` are pinned as
- * direct dependencies at the versions already resolved in `package-lock.json`.
- * `rehype-sanitize` and `rehype-stringify` are **not in the lockfile at all** —
- * react-markdown v10 renders straight to JSX and brings in neither — so they are
- * implemented in this directory rather than installed.
+ * All six packages are direct dependencies pinned at exact (`remark-parse`,
+ * `remark-rehype`, `unified`) or caret (`remark-gfm`) versions already resolved
+ * in the lockfile, plus `rehype-sanitize` / `rehype-stringify` added by this
+ * change (see `sanitizeSchema.ts`'s header for why the schema needs tightening
+ * beyond `defaultSchema`).
  */
 
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
 import remarkRehype from 'remark-rehype';
+import rehypeSanitize from 'rehype-sanitize';
+import rehypeStringify from 'rehype-stringify';
 import { rehypeLineRefs } from './lineRefs';
 import type { LineRefSource } from './lineRefs';
-import { rehypeSanitize, DEFAULT_SCHEMA } from './sanitize';
-import type { SanitizeSchema } from './sanitize';
-import { rehypeStringify } from './toHtml';
+import { DEFAULT_SCHEMA } from './sanitizeSchema';
+import type { SanitizeSchema } from './sanitizeSchema';
 
 export interface RenderMarkdownOptions {
   /** References whose `L<n>` / `L<n>–<m>` mentions become clickable anchors. */

@@ -46,8 +46,11 @@ describe('renderMarkdown — GFM', () => {
 
   it('escapes markup characters inside code rather than emitting tags', () => {
     const html = renderMarkdown('```\n<b>hi</b>\n```');
-    expect(html).toContain('&lt;b&gt;hi&lt;/b&gt;');
+    // `<` is always escaped (as the numeric entity `&#x3C;`); a bare `>` in
+    // text content needs no escaping to stay unambiguous and is left as-is.
+    // Either way, no real `<b>` element is produced.
     expect(html).not.toContain('<b>hi</b>');
+    expect(html).toContain('&#x3C;b>hi&#x3C;/b>');
   });
 });
 

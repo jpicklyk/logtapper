@@ -1,8 +1,7 @@
 /**
  * Public API of the editor module (Principle 9 — import from here, never from an
- * internal file). `sanitize.ts` / `toHtml.ts` are internal: they exist only
- * because `rehype-sanitize` / `rehype-stringify` are not in the lockfile, and
- * their schema is reached through `renderMarkdown`'s options.
+ * internal file). `sanitizeSchema.ts` is internal: the schema it builds is
+ * reached through `renderMarkdown`'s options.
  */
 
 export { createTextEditor } from './createTextEditor';
@@ -14,8 +13,8 @@ export type { MarkdownProps } from './Markdown';
 export { renderMarkdown } from './renderMarkdown';
 export type { RenderMarkdownOptions } from './renderMarkdown';
 
-export { DEFAULT_SCHEMA } from './sanitize';
-export type { SanitizeSchema } from './sanitize';
+export { DEFAULT_SCHEMA } from './sanitizeSchema';
+export type { SanitizeSchema } from './sanitizeSchema';
 
 export {
   LINE_REF_CLASS,

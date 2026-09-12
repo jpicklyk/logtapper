@@ -7,20 +7,16 @@
  * a line-wrapping compartment and a read-only compartment) and adds what the
  * React component got from React state instead: modes, and dirty tracking.
  *
- * **`@codemirror/lang-markdown` is not in `package-lock.json`**, and this package
- * may not change the lockfile, so `markdown` mode cannot use the real Lezer
- * markdown parser. It instead turns on line wrapping and a small regex-driven
- * decoration plugin (headings, fences, inline code, emphasis, link text, list
- * bullets, blockquotes) built from `@codemirror/view` primitives only. Swapping
- * in `markdownLanguage()` later is a one-line change inside `modeExtensions`.
+ * `markdown` mode uses the real Lezer markdown parser
+ * (`@codemirror/lang-markdown`'s `markdownLanguage`, CommonMark + GFM), paired
+ * with a `HighlightStyle` that maps its highlight tags onto the same
+ * `cm-md-*` classes `EDITOR_THEME` already themes with T1 tokens.
  */
 
-import { Compartment, EditorState, RangeSetBuilder } from '@codemirror/state';
+import { Compartment, EditorState } from '@codemirror/state';
 import type { Extension } from '@codemirror/state';
 import {
-  Decoration,
   EditorView,
-  ViewPlugin,
   crosshairCursor,
   highlightActiveLine,
   highlightActiveLineGutter,
@@ -29,9 +25,11 @@ import {
   placeholder as cmPlaceholder,
   rectangularSelection,
 } from '@codemirror/view';
-import type { DecorationSet, ViewUpdate } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { searchKeymap } from '@codemirror/search';
+import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
+import { tags } from '@lezer/highlight';
 
 export type EditorMode = 'plain' | 'markdown';
 
@@ -100,92 +98,31 @@ const EDITOR_THEME: Extension = EditorView.theme({
   '.cm-md-quote': { color: 'var(--text-muted)' },
 });
 
-// ── Markdown mode without a parser ───────────────────────────────────────────
+// ── Markdown mode ────────────────────────────────────────────────────────────
 
 /**
- * Per-line regexes, applied to the visible ranges only. Not a parser — it cannot
- * know that a `*` sits inside a fence — which is exactly why this is described as
- * "basic" highlighting and why the real language package is the upgrade path.
+ * Maps `@lezer/markdown`'s highlight tags onto the `cm-md-*` classes
+ * `EDITOR_THEME` themes with T1 tokens. Tag matching follows the lezer tag
+ * hierarchy, so a rule for `tags.heading` also matches the `heading1`…`heading6`
+ * tags the parser actually emits (one class for every heading level, same as
+ * the previous regex-based highlighting).
  */
-const MARKDOWN_RULES: Array<{ pattern: RegExp; class: string }> = [
-  { pattern: /^\s{0,3}#{1,6}\s.*$/, class: 'cm-md-heading' },
-  { pattern: /^\s{0,3}(?:```|~~~).*$/, class: 'cm-md-code' },
-  { pattern: /^\s{0,3}>\s?.*$/, class: 'cm-md-quote' },
-  { pattern: /`[^`\n]+`/g, class: 'cm-md-code' },
-  { pattern: /\*\*[^\n*]+\*\*/g, class: 'cm-md-strong' },
-  { pattern: /(?<![*\w])\*[^\n*]+\*(?!\*)/g, class: 'cm-md-emphasis' },
-  { pattern: /\[[^\]\n]*\]\([^)\n]*\)/g, class: 'cm-md-link' },
-  { pattern: /^\s{0,3}(?:[-*+]|\d+\.)\s/, class: 'cm-md-marker' },
-];
-
-function markdownDecorations(view: EditorView): DecorationSet {
-  const builder = new RangeSetBuilder<Decoration>();
-  // Ranges must be added in ascending `from`; collect then sort, because the
-  // rules above are applied rule-first rather than position-first.
-  const ranges: Array<{ from: number; to: number; class: string }> = [];
-
-  for (const { from, to } of view.visibleRanges) {
-    let position = from;
-    while (position <= to) {
-      const line = view.state.doc.lineAt(position);
-      for (const rule of MARKDOWN_RULES) {
-        if (rule.pattern.global) {
-          rule.pattern.lastIndex = 0;
-          let match: RegExpExecArray | null;
-          while ((match = rule.pattern.exec(line.text)) !== null) {
-            ranges.push({
-              from: line.from + match.index,
-              to: line.from + match.index + match[0].length,
-              class: rule.class,
-            });
-          }
-        } else {
-          const match = rule.pattern.exec(line.text);
-          if (match) {
-            ranges.push({
-              from: line.from + match.index,
-              to: line.from + match.index + match[0].length,
-              class: rule.class,
-            });
-          }
-        }
-      }
-      if (line.to >= view.state.doc.length) break;
-      position = line.to + 1;
-    }
-  }
-
-  ranges.sort((a, b) => a.from - b.from || a.to - b.to);
-  let lastFrom = -1;
-  for (const range of ranges) {
-    // RangeSetBuilder rejects out-of-order adds; overlapping rules (a `**bold**`
-    // inside a heading) are resolved by keeping the first at each position.
-    if (range.from < lastFrom || range.from >= range.to) continue;
-    builder.add(range.from, range.to, Decoration.mark({ class: range.class }));
-    lastFrom = range.to;
-  }
-  return builder.finish();
-}
-
-const markdownHighlight = ViewPlugin.fromClass(
-  class {
-    decorations: DecorationSet;
-    constructor(view: EditorView) {
-      this.decorations = markdownDecorations(view);
-    }
-    update(update: ViewUpdate) {
-      if (update.docChanged || update.viewportChanged) {
-        this.decorations = markdownDecorations(update.view);
-      }
-    }
-  },
-  { decorations: (plugin) => plugin.decorations },
-);
+const markdownHighlightStyle = HighlightStyle.define([
+  { tag: tags.heading, class: 'cm-md-heading' },
+  { tag: tags.monospace, class: 'cm-md-code' },
+  { tag: tags.emphasis, class: 'cm-md-emphasis' },
+  { tag: tags.strong, class: 'cm-md-strong' },
+  { tag: tags.link, class: 'cm-md-link' },
+  { tag: tags.quote, class: 'cm-md-quote' },
+  // Formatting characters themselves: `#`, `*`/`_`, `` ` ``, `-`/`+`/digit-dot,
+  // `>`, link brackets — the marker style the old regex called `cm-md-marker`.
+  { tag: tags.processingInstruction, class: 'cm-md-marker' },
+]);
 
 function modeExtensions(mode: EditorMode): Extension {
-  // TODO: replace with `markdown({ base: markdownLanguage })` once
-  // @codemirror/lang-markdown is a dependency (it is not in the lockfile today).
-  return mode === 'markdown' ? [markdownHighlight] : [];
+  return mode === 'markdown'
+    ? [markdown({ base: markdownLanguage }), syntaxHighlighting(markdownHighlightStyle)]
+    : [];
 }
 
 // ── Factory ──────────────────────────────────────────────────────────────────
