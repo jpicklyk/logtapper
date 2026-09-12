@@ -14,6 +14,8 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
 // W3 added the sections store, which fetches section/dumpstate metadata for
 // the focused session when it is bugreport-like — stubbed even though no test
 // here opens one, so the module import itself never sees an undefined export.
+// W6 added the analyses store, which lists analyses and subscribes to
+// `analysis-update` on construction.
 vi.mock('@bridge/commands', () => ({
   getLines: vi.fn(),
   loadLogFile: vi.fn(),
@@ -29,6 +31,11 @@ vi.mock('@bridge/commands', () => ({
   getExportAllSessionsInfo: vi.fn(() =>
     Promise.resolve({ sessions: [], totalProcessorCount: 0, totalPipelineProcessorCount: 0 }),
   ),
+  listAnalyses: vi.fn(() => Promise.resolve([])),
+  getAnalysis: vi.fn(),
+  publishAnalysis: vi.fn(),
+  updateAnalysis: vi.fn(),
+  deleteAnalysis: vi.fn(),
 }));
 vi.mock('@bridge/events', () => ({
   onActivity: vi.fn(() => Promise.resolve(() => {})),
@@ -38,6 +45,7 @@ vi.mock('@bridge/events', () => ({
   onBridgeSessionClosed: vi.fn(() => Promise.resolve(() => {})),
   onFileIndexProgress: vi.fn(() => Promise.resolve(() => {})),
   onFileIndexComplete: vi.fn(() => Promise.resolve(() => {})),
+  onAnalysisUpdate: vi.fn(() => Promise.resolve(() => {})),
 }));
 
 // vitest `globals` is off, so @solidjs/testing-library's auto-cleanup never

@@ -37,6 +37,13 @@ export const solidAliasPaths: Record<string, string> = {
   // `sectionTree`, `formatters`, `sectionDescriptions` — via the same
   // file-level ESLint allow-list pattern as `@hooks`.
   "@fileinfo": "src-next/components/FileInfoPanel",
+  // W6's session-attribution helper — the one framework-free file in
+  // `AnalysisPanel/` (everything else there is a React component). Same
+  // file-level ESLint allow-list pattern as `@hooks`/`@fileinfo`.
+  "@analysisPanel": "src-next/components/AnalysisPanel",
+  // W6's pending-selection handoff — the one framework-free file in
+  // `AnalysisReader/` (everything else there is a React component).
+  "@analysisReader": "src-next/components/AnalysisReader",
 };
 
 /** alias → absolute directory, the form Vite's `resolve.alias` wants. */
