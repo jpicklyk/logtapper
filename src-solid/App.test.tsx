@@ -11,12 +11,17 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
 // W0b added the session store and action surface: both reach the bridge
 // (`set_focused_session` on focus, `close_session` on a tab close) and both
 // subscribe to the four session/indexing events mocked below.
+// W3 added the sections store, which fetches section/dumpstate metadata for
+// the focused session when it is bugreport-like — stubbed even though no test
+// here opens one, so the module import itself never sees an undefined export.
 vi.mock('@bridge/commands', () => ({
   getLines: vi.fn(),
   loadLogFile: vi.fn(),
   closeSession: vi.fn(() => Promise.resolve()),
   setFocusedSession: vi.fn(() => Promise.resolve()),
   readTextFile: vi.fn(),
+  getSections: vi.fn(() => Promise.resolve([])),
+  getDumpstateMetadata: vi.fn(() => Promise.resolve(null)),
   getMcpStatus: vi.fn(() => Promise.resolve({ running: false, port: 0, idleSecs: null, agentRawAccess: false })),
   getActivity: vi.fn(() => Promise.resolve([])),
   getFocus: vi.fn(() => Promise.resolve(null)),

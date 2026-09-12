@@ -20,7 +20,10 @@
       "@bench/*": ["src-next/bench/*"],
       // Directory alias, file-level allow-list: ESLint lets exactly
       // `@hooks/useLogViewer/multiSessionImport` through.
-      "@hooks/*": ["src-next/hooks/*"]
+      "@hooks/*": ["src-next/hooks/*"],
+      // Directory alias, file-level allow-list: ESLint lets exactly
+      // `sectionTree`, `formatters`, `sectionDescriptions` through.
+      "@fileinfo/*": ["src-next/components/FileInfoPanel/*"]
     }
   },
   "include": ["src-solid"],
