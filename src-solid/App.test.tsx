@@ -32,6 +32,9 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
 // references must still exist on the mock, or that key resolves to
 // `undefined` — harmless today (no test opens those drawers) but stubbed
 // anyway so the module's shape stays honest as more tests are added.
+// W9 added the editor tabs store, which defaults to the same `readTextFile`/
+// `writeTextFile` commands the removed E1 demo used (`open`/`save` are not
+// called at construction, only from user actions neither test here triggers).
 vi.mock('@bridge/commands', () => ({
   getLines: vi.fn(),
   loadLogFile: vi.fn(),

@@ -21,6 +21,24 @@ import styles from './editor.module.css';
  * `@tauri-apps/plugin-dialog` and the `write_text_file` command via
  * `@bridge/commands`' `writeTextFile`. No new bridge route, no agent-reachable
  * write path: the native save dialog is the `Ui` consent step.
+ *
+ * ## W9 additions (additive, backward compatible)
+ *
+ * `EditorTabs.tsx` (the W9 tab manager) owns multiple documents and their
+ * saved/dirty bookkeeping in `editorStore.ts`, and drives this single-document
+ * component as a thin view rather than reimplementing it. Four optional props
+ * bridge that, none of which change behaviour for a caller that omits them:
+ * - `onContentChanged` mirrors every keystroke out (the store's own
+ *   `content`/`savedContent` compare needs the live text; the CM6
+ *   `updateListener` already materialises it once per change).
+ * - `viewMode`/`onViewModeChanged` make the preview toggle controlled, so the
+ *   store can persist the choice into `LtwEditorTab.viewMode`.
+ * - `showSaveButtons={false}` hides this header's own Save/Save As — W9's
+ *   toolbar owns those so there is one save path, not two disagreeing ones.
+ * - `dirty` overrides the header's own dot with the store's dirty flag, which
+ *   is what stays correct after a store-driven save (this component's
+ *   internal CM6 dirty tracking never learns about a save that happened
+ *   through `editorStore.save()` rather than its own hidden button).
  */
 
 /** Last path segment, for the tab title. `src-next/utils`' `basename` is not alias-reachable. */
@@ -34,10 +52,14 @@ export function modeForPath(path: string | null | undefined): EditorMode {
   return path && /\.(md|markdown)$/i.test(path) ? 'markdown' : 'plain';
 }
 
-const SAVE_FILTERS = [
+export const SAVE_FILTERS = [
   { name: 'Text Files', extensions: ['yaml', 'yml', 'md', 'txt'] },
   { name: 'All Files', extensions: ['*'] },
 ];
+
+/** The two preview states this component can actually render (see the W9
+ *  note above — there is no editor-hidden "preview only" layout here). */
+export type EditorPreviewMode = 'editor' | 'split';
 
 export interface EditorTabProps {
   /** Path the content came from; `null` for an unsaved scratch document. */
@@ -48,6 +70,16 @@ export interface EditorTabProps {
   mode?: EditorMode;
   onFilePathChanged?: (path: string) => void;
   onDirtyChanged?: (dirty: boolean) => void;
+  /** Fires on every edit with the current buffer text (W9's content mirror). */
+  onContentChanged?: (text: string) => void;
+  /** Controls the preview split; omit to keep the internal toggle button. */
+  viewMode?: EditorPreviewMode;
+  onViewModeChanged?: (mode: EditorPreviewMode) => void;
+  /** Hides this header's own Save/Save As — a caller with its own save path
+   *  (W9's toolbar) sets this `false` so there is a single save path. */
+  showSaveButtons?: boolean;
+  /** Overrides the header's dirty dot with an externally tracked value. */
+  dirty?: boolean;
   /** A line reference clicked in the markdown preview. */
   onLineRef?: (target: LineRefTarget) => void;
 }
@@ -68,11 +100,21 @@ export function EditorTab(props: EditorTabProps) {
   const [dirty, setDirty] = createSignal(false);
   const [filePath, setFilePath] = createSignal<string | null>(initial.filePath);
   const [mode, setMode] = createSignal<EditorMode>(initial.mode);
-  const [showPreview, setShowPreview] = createSignal(true);
+  const [internalShowPreview, setInternalShowPreview] = createSignal(true);
 
   const title = () => {
     const path = filePath();
     return path ? basename(path) : 'Untitled';
+  };
+
+  // Controlled when the caller passes `viewMode`/`dirty` (W9's tab manager);
+  // otherwise the pre-existing internal signals, unchanged for any other caller.
+  const showPreview = () => (props.viewMode !== undefined ? props.viewMode === 'split' : internalShowPreview());
+  const isDirty = () => (props.dirty !== undefined ? props.dirty : dirty());
+
+  const togglePreview = (): void => {
+    if (props.viewMode !== undefined) props.onViewModeChanged?.(showPreview() ? 'editor' : 'split');
+    else setInternalShowPreview((prev) => !prev);
   };
 
   const syncDirty = () => {
@@ -90,6 +132,7 @@ export function EditorTab(props: EditorTabProps) {
       onChange: (next) => {
         setValue(next);
         syncDirty();
+        props.onContentChanged?.(next);
       },
     });
   });
@@ -142,7 +185,7 @@ export function EditorTab(props: EditorTabProps) {
       <header class={styles.toolbar}>
         <span class={styles.title}>
           {title()}
-          <Show when={dirty()}>
+          <Show when={isDirty()}>
             <span class={styles.dirty} aria-label="Unsaved changes" title="Unsaved changes">
               ●
             </span>
@@ -160,22 +203,19 @@ export function EditorTab(props: EditorTabProps) {
           </select>
         </label>
         <Show when={isMarkdown()}>
-          <button
-            type="button"
-            class={styles.button}
-            aria-pressed={showPreview()}
-            onClick={() => setShowPreview((on_) => !on_)}
-          >
+          <button type="button" class={styles.button} aria-pressed={showPreview()} onClick={togglePreview}>
             Preview
           </button>
         </Show>
         <span class={styles.spacer} />
-        <button type="button" class={styles.button} onClick={() => void saveFile()}>
-          Save
-        </button>
-        <button type="button" class={styles.button} onClick={() => void saveAs()}>
-          Save As…
-        </button>
+        <Show when={props.showSaveButtons ?? true}>
+          <button type="button" class={styles.button} onClick={() => void saveFile()}>
+            Save
+          </button>
+          <button type="button" class={styles.button} onClick={() => void saveAs()}>
+            Save As…
+          </button>
+        </Show>
       </header>
 
       <div class={styles.body} data-split={isMarkdown() && showPreview() ? 'true' : 'false'}>

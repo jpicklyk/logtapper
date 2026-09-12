@@ -1,7 +1,5 @@
 /** @jsxImportSource solid-js */
 import { Show, createMemo, createSignal, onCleanup } from 'solid-js';
-import { open } from '@tauri-apps/plugin-dialog';
-import { readTextFile } from '@bridge/commands';
 import {
   CacheManager,
   DataSourceRegistry,
@@ -13,7 +11,8 @@ import { AppShell, TabStrip } from './shell';
 import type { TabDescriptor } from './shell';
 import { QueryBar, createQueryStore } from './query';
 import { PresencePanel, createPresenceStore } from './presence';
-import { EditorTab } from './editor';
+import { EditorTabs, createEditorStore } from './editor';
+import type { ConfirmClose, EditorStore } from './editor';
 import { SectionsPanel, createSectionsStore } from './sections';
 import { AnalyzersPanel, createAnalyzerStore } from './analyzers';
 import type { CallerLike } from './ui';
@@ -30,9 +29,11 @@ import styles from './App.module.css';
  * Composition root. Everything here is wiring: build the app-wide singletons,
  * hand them to each other, and place the surfaces in the shell.
  *
- * No state lives in this file beyond the editor demo's two signals. Sessions
- * are in `app/sessions.ts`, transitions in `app/actions.ts`, the rendered index
- * space in `viewer/controller.ts`, and the bench driver in `app/benchDriver.ts`.
+ * No state lives in this file beyond which tab-strip surface (session or
+ * editor) is showing in the viewer region. Sessions are in `app/sessions.ts`,
+ * transitions in `app/actions.ts`, editor documents in `editor/editorStore.ts`,
+ * the rendered index space in `viewer/controller.ts`, and the bench driver in
+ * `app/benchDriver.ts`.
  */
 
 const CACHE_BUDGET = 100_000;
@@ -93,9 +94,70 @@ export function App(props: AppProps) {
   // of `shell/Splitter.ts`, which is outside this file's scope (see W1a's own
   // "Ask for W1b" in its implementation notes); until then a save/restore
   // round-trips only React's layout keys, never Solid's own pane widths.
-  const workspace = createWorkspaceStore({ sessions: store, actions });
+  //
+  // `getEditorTabs` closes over a forward reference: the workspace store must
+  // exist before `createEditorStore` (the editor store reads the workspace's
+  // pending-tabs signal), but the workspace store's own constructor is where
+  // W9's save-time provider is injected. A boxed reference filled in right
+  // after breaks the cycle without changing W1a's `WorkspaceStoreDeps` shape.
+  const editorStoreBox: { current?: Pick<EditorStore, 'toLtwTabs'> } = {};
+  const workspace = createWorkspaceStore({
+    sessions: store,
+    actions,
+    getEditorTabs: () => editorStoreBox.current?.toLtwTabs() ?? [],
+  });
   onCleanup(() => workspace.dispose());
   void workspace.hydrate().then(() => workspace.startupRestore());
+
+  // Editor tabs (W9) — scratch/file documents opened alongside sessions, with
+  // dirty tracking and Save/Save As. Restore is pull-based: this store reads
+  // `workspace.pendingEditorTabs()` reactively and adopts them once.
+  const editorStore = createEditorStore({ workspace });
+  editorStoreBox.current = editorStore;
+  onCleanup(() => editorStore.dispose());
+
+  /** Which half of the merged tab strip is currently shown in the viewer
+   *  region — a session's `LogViewer` or an editor document. Set by
+   *  `selectTab`; `closeTab` falls back to `'session'` when closing the last
+   *  editor tab leaves nothing for `'editor'` to point at. */
+  const [activeSurface, setActiveSurface] = createSignal<'session' | 'editor'>('session');
+
+  const selectTab = (key: string, kind: 'session' | 'editor'): void => {
+    if (kind === 'editor') {
+      editorStore.setActive(key);
+      setActiveSurface('editor');
+    } else {
+      actions.focus(key);
+      setActiveSurface('session');
+    }
+  };
+
+  /** Refuses to close a dirty document rather than silently discarding it —
+   *  `window.confirm` only offers a binary choice, so "discard" is reached by
+   *  cancelling here and using a future dedicated dialog (see this task's
+   *  implementation notes). */
+  const confirmEditorClose: ConfirmClose = async (doc) =>
+    window.confirm(`"${doc.label}" has unsaved changes. Save before closing?`) ? 'save' : 'cancel';
+
+  const closeTab = (key: string, kind: 'session' | 'editor'): void => {
+    if (kind === 'editor') {
+      // A one-shot read of the current value once the close settles, not a
+      // reactive binding — there is nothing here for a tracked scope to own.
+      // eslint-disable-next-line solid/reactivity -- snapshot after close settles, by design (see above)
+      void editorStore.close(key, confirmEditorClose).then(() => {
+        if (activeSurface() === 'editor' && editorStore.activeId() === null) setActiveSurface('session');
+        // A cancelled Save-As dialog resolves (see `editorStore.close`'s own
+        // handling), so a rejection here is always a real write failure — the
+        // tab stayed open and dirty (close() never reached `removeTab`); this
+        // just keeps it from becoming an unhandled rejection and reuses the
+        // same `actions.reportError` plumbing `EditorTabs`'s `onError` uses.
+      }).catch((e: unknown) => actions.reportError(String(e)));
+    } else {
+      // A close the backend rejects has already dropped the tab; swallowing
+      // keeps it out of the unhandled-rejection channel.
+      void actions.close(key).catch(() => undefined);
+    }
+  };
 
   // Agent presence (A2). An agent's navigation request routes through the
   // controller, which focuses the right session and jumps the pane.
@@ -144,36 +206,21 @@ export function App(props: AppProps) {
     return null;
   };
 
-  // E1 demo: a text document in the `details` region. W9 turns this into real
-  // editor tabs on the strip below; until then it is one document, not a tab.
-  const [editorPath, setEditorPath] = createSignal<string | null>(null);
-  const [editorContent, setEditorContent] = createSignal<string | null>(null);
-
-  const openInEditor = async (): Promise<void> => {
-    const selected = await open({
-      multiple: false,
-      filters: [
-        { name: 'Text Files', extensions: ['md', 'markdown', 'txt', 'yaml', 'yml'] },
-        { name: 'All Files', extensions: ['*'] },
-      ],
-    });
-    if (typeof selected !== 'string') return;
-    try {
-      setEditorContent(await readTextFile(selected));
-      setEditorPath(selected);
-    } catch (e) {
-      actions.reportError(String(e));
-    }
-  };
-
-  const tabs = createMemo<TabDescriptor[]>(() =>
-    store.order().map((id) => ({
+  const tabs = createMemo<TabDescriptor[]>(() => [
+    ...store.order().map((id) => ({
       key: id,
       label: store.byId(id)?.load.sourceName ?? id,
       kind: 'session' as const,
       closable: true,
     })),
-  );
+    ...editorStore.tabs().map((doc) => ({
+      key: doc.id,
+      label: doc.label,
+      kind: 'editor' as const,
+      dirty: editorStore.isDirty(doc.id),
+      closable: true,
+    })),
+  ]);
 
   /** Rows the viewer sizes its spacer for: the line set's, when one is set. */
   const renderedLineCount = (): number => {
@@ -194,9 +241,6 @@ export function App(props: AppProps) {
         disabled={actions.busy()}
       >
         Open file…
-      </button>
-      <button type="button" class={styles.openButton} onClick={() => void openInEditor()}>
-        Open in editor…
       </button>
       <Show when={store.focused()}>
         {(entry) => (
@@ -258,36 +302,41 @@ export function App(props: AppProps) {
           <>
             <TabStrip
               tabs={tabs()}
-              activeKey={store.focusedId()}
-              onSelect={actions.focus}
-              // A close that the backend rejects has already dropped the tab;
-              // swallowing keeps it out of the unhandled-rejection channel.
-              onClose={(key) => void actions.close(key).catch(() => undefined)}
+              activeKey={activeSurface() === 'editor' ? editorStore.activeId() : store.focusedId()}
+              onSelect={(key) => selectTab(key, tabs().find((t) => t.key === key)?.kind ?? 'session')}
+              onClose={(key) => closeTab(key, tabs().find((t) => t.key === key)?.kind ?? 'session')}
             />
             <Show
-              when={store.focused()}
-              fallback={<div class={styles.empty}>No log open. Choose a file to begin.</div>}
+              when={activeSurface() === 'editor' && editorStore.active()}
+              fallback={
+                <Show
+                  when={store.focused()}
+                  fallback={<div class={styles.empty}>No log open. Choose a file to begin.</div>}
+                >
+                  {(entry) => (
+                    <>
+                      {/* Keyed on the session id: QueryBar snapshots its session at
+                          mount by design, so it must be remounted per session. The
+                          outer non-keyed Show does NOT remount on a truthy→truthy
+                          switch between two open tabs. */}
+                      <Show when={entry().load.sessionId} keyed>
+                        {(sid) => (
+                          <QueryBar sessionId={sid} store={queryStore} controller={controller} />
+                        )}
+                      </Show>
+                      <LogViewer
+                        dataSource={entry().dataSource}
+                        totalLineCount={renderedLineCount()}
+                        sessionId={entry().load.sessionId}
+                        tailMode={entry().kind === 'live'}
+                        controller={controller}
+                      />
+                    </>
+                  )}
+                </Show>
+              }
             >
-              {(entry) => (
-                <>
-                  {/* Keyed on the session id: QueryBar snapshots its session at
-                      mount by design, so it must be remounted per session. The
-                      outer non-keyed Show does NOT remount on a truthy→truthy
-                      switch between two open tabs. */}
-                  <Show when={entry().load.sessionId} keyed>
-                    {(sid) => (
-                      <QueryBar sessionId={sid} store={queryStore} controller={controller} />
-                    )}
-                  </Show>
-                  <LogViewer
-                    dataSource={entry().dataSource}
-                    totalLineCount={renderedLineCount()}
-                    sessionId={entry().load.sessionId}
-                    tailMode={entry().kind === 'live'}
-                    controller={controller}
-                  />
-                </>
-              )}
+              <EditorTabs store={editorStore} onError={actions.reportError} />
             </Show>
           </>
         ),
@@ -305,19 +354,6 @@ export function App(props: AppProps) {
         ),
         export: () => <ExportDialog store={exportStore} />,
         settings: () => <SettingsPanel store={settings} theme={props.theme} />,
-      }}
-      regionSlots={{
-        // The editor tab is not a brief §4 surface, so it mounts through the
-        // region escape hatch S1 provides rather than through `slots`.
-        details: () => (
-          <Show when={editorContent() !== null}>
-            <EditorTab
-              filePath={editorPath()}
-              content={editorContent() ?? ''}
-              onFilePathChanged={setEditorPath}
-            />
-          </Show>
-        ),
       }}
     />
   );

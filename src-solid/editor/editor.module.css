@@ -107,6 +107,14 @@
   color: var(--text-dimmed);
 }
 
+.error {
+  padding: 4px var(--ui-gap);
+  color: var(--danger);
+  font-size: 12px;
+  background: var(--danger-muted);
+  border-bottom: 1px solid var(--danger);
+}
+
 .prose :global(h1),
 .prose :global(h2),
 .prose :global(h3),
