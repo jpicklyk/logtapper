@@ -1,5 +1,7 @@
 export { AppShell } from './AppShell';
 export type { AppShellProps, RegionSlots, SurfaceSlots } from './AppShell';
+export { TabStrip } from './TabStrip';
+export type { TabDescriptor, TabKind, TabStripProps } from './TabStrip';
 export { createMode, modeForKind } from './mode';
 export type { Mode, SessionKind } from './mode';
 export { TIERS, TIER_MIN_WIDTH, TIER_QUERIES, createTier, tierForWidth } from './tier';

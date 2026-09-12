@@ -1,59 +1,43 @@
 /** @jsxImportSource solid-js */
-import { For, Show, createSignal, onCleanup } from 'solid-js';
+import { For, Show, createMemo, createSignal, onCleanup } from 'solid-js';
 import { open } from '@tauri-apps/plugin-dialog';
-import { getLines, loadLogFile, readTextFile } from '@bridge/commands';
+import { readTextFile } from '@bridge/commands';
 import {
   CacheManager,
   DataSourceRegistry,
   LogViewer,
-  createCacheDataSource,
   createViewerController,
 } from './viewer';
-import type { CacheDataSource } from './viewer';
-import { createStreamSession } from './viewer/createStreamSession';
-import { AppShell } from './shell';
-import type { SessionKind } from './shell';
+import { createAppActions, createSessionStore, installBenchApp, isBenchMode } from './app/index';
+import { AppShell, TabStrip } from './shell';
+import type { TabDescriptor } from './shell';
 import { PresencePanel, createPresenceStore } from './presence';
-import type { NavTarget } from './presence';
 import { EditorTab } from './editor';
 import { BASE_THEMES } from './theme/applyTheme';
 import type { Density, ThemeController, ThemeMode } from './theme/applyTheme';
 import styles from './App.module.css';
 
 /**
- * Solid spike shell: open a file, then show it in the virtualized viewer,
- * inside the §F layout shell.
+ * Composition root. Everything here is wiring: build the app-wide singletons,
+ * hand them to each other, and place the surfaces in the shell.
  *
- * The cache manager and data-source registry are app-wide singletons — one each,
- * created once here. React builds them in `CacheProvider`; Solid has no provider
- * in the spike, so they are constructed directly (the barrel re-exports the
- * classes for exactly this reason).
+ * No state lives in this file beyond the editor demo's two signals. Sessions
+ * are in `app/sessions.ts`, transitions in `app/actions.ts`, the rendered index
+ * space in `viewer/controller.ts`, and the bench driver in `app/benchDriver.ts`.
  */
 
 const CACHE_BUDGET = 100_000;
-const VIEW_ID = 'solid-main';
 
-/**
- * Workspaces are a 2b surface; until then every session shares one id, which is
- * the key the shell's column widths are stored under.
- */
+/** Workspaces are a W1a surface; until then every session shares one id. */
 const WORKSPACE_ID = 'default';
 
 const THEME_MODES: readonly ThemeMode[] = ['system', ...BASE_THEMES];
 const DENSITIES: readonly Density[] = ['comfortable', 'compact'];
 
-/** Bench-only driver (`?bench=1`), so the gate can run without the native dialog. */
-interface BenchApp {
-  open(path: string): Promise<void>;
-  startStream(deviceId?: string): Promise<string>;
-  stopStream(): Promise<void>;
-}
-
 export interface AppProps {
   /**
    * The live theme/density controller, built in `main.tsx` before first paint.
-   * Optional so tests can mount `App` without a `matchMedia` shim; the theme
-   * selector only renders when one is supplied.
+   * Optional so tests can mount `App` without a `matchMedia` shim.
    */
   theme?: ThemeController;
 }
@@ -62,162 +46,34 @@ export function App(props: AppProps) {
   const cacheManager = new CacheManager(CACHE_BUDGET);
   const registry = new DataSourceRegistry();
 
-  const [dataSource, setDataSource] = createSignal<CacheDataSource | null>(null);
-  const [sessionId, setSessionId] = createSignal<string | null>(null);
-  const [sessionKind, setSessionKind] = createSignal<SessionKind>(null);
-  const [sourceName, setSourceName] = createSignal('');
-  const [totalLines, setTotalLines] = createSignal(0);
-  const [tailMode, setTailMode] = createSignal(false);
-  const [error, setError] = createSignal('');
-  const [loading, setLoading] = createSignal(false);
+  // Viewer controller (W0a) — owns the rendered index space and pane routing.
+  // `focusSession` closes the loop: a jump into a session that is not on screen
+  // selects its tab first.
+  const controller = createViewerController({ focusSession: (id) => store.setFocused(id) });
+  const store = createSessionStore({ cacheManager, registry, controller });
+  const actions = createAppActions({ store, controller });
+  onCleanup(() => {
+    store.dispose();
+    controller.dispose();
+  });
 
-  // E1 demo: a text document open in the `details` region's editor tab. Separate
-  // from the log session above — opening a note does not touch the viewer.
-  const [editorPath, setEditorPath] = createSignal<string | null>(null);
-  const [editorContent, setEditorContent] = createSignal<string | null>(null);
-
-  const disposeSource = () => {
-    dataSource()?.dispose?.();
-    setDataSource(null);
-  };
-  onCleanup(disposeSource);
-
-  // ── Viewer controller (W0a) ──────────────────────────────────────────────
-  // One per app, owning its own root. `focusSession` is a stub until W0b brings
-  // the session store; with a single pane the session is always already here.
-  const controller = createViewerController({ focusSession: () => {} });
-  onCleanup(() => controller.dispose());
-
-  // ── Agent presence (A2) ──────────────────────────────────────────────────
-  // One store per app. A navigation target is still shown in the top bar, but
-  // it now also goes through the controller, which routes it to the pane.
-  const [navTarget, setNavTarget] = createSignal<NavTarget | null>(null);
+  // Agent presence (A2). An agent's navigation request routes through the
+  // controller, which focuses the right session and jumps the pane.
   const presence = createPresenceStore({
-    navigate: (target) => {
-      setNavTarget(target);
-      if (target.line !== undefined) {
-        controller.scrollToLine(target.sessionId, target.line, { source: 'agent' });
-      }
-    },
+    navigate: (target) =>
+      controller.scrollToLine(target.sessionId, target.line ?? 0, {
+        highlight: true,
+        source: 'agent',
+      }),
   });
   onCleanup(() => presence.dispose());
 
-  /** Rows the viewer should size its spacer for: the line set's, when one is set. */
-  const renderedLineCount = () => {
-    const id = sessionId();
-    return (id ? controller.lineNumbers(id)?.length : undefined) ?? totalLines();
-  };
+  // E1 demo: a text document in the `details` region. W9 turns this into real
+  // editor tabs on the strip below; until then it is one document, not a tab.
+  const [editorPath, setEditorPath] = createSignal<string | null>(null);
+  const [editorContent, setEditorContent] = createSignal<string | null>(null);
 
-  const navTargetText = () => {
-    const target = navTarget();
-    if (!target) return '';
-    const where = target.sessionId === sessionId() ? 'here' : presence.sessionName(target.sessionId);
-    const what =
-      target.line !== undefined
-        ? `line ${target.line}`
-        : (target.analysisId ?? target.watchId ?? target.bookmarkId ?? 'session');
-    return `Requested: ${where} · ${what}`;
-  };
-
-  /** Point the single viewer at a backend session (file or live stream). */
-  const attachSession = (id: string, name: string, total: number, tail: boolean) => {
-    disposeSource();
-    cacheManager.releaseView(VIEW_ID);
-    const viewCache = cacheManager.allocateView(VIEW_ID, id);
-
-    const ds = createCacheDataSource({
-      sessionId: id,
-      viewCache,
-      fetchLines: (offset, count) =>
-        getLines({
-          sessionId: id,
-          mode: { mode: 'Full' },
-          offset,
-          count,
-          context: 0,
-          processorId: null,
-          search: null,
-        }),
-      // The controller owns the rendered index space; `undefined` (no line set)
-      // means "render every line", which is the state until W2/W3 set one.
-      getLineNumbers: () => controller.lineNumbers(id),
-      registry,
-    });
-    ds.updateTotalLines(total);
-
-    setSessionId(id);
-    setSourceName(name);
-    setTotalLines(total);
-    setTailMode(tail);
-    setSessionKind(tail ? 'live' : 'file');
-    setDataSource(ds);
-  };
-
-  const probeTotal = async (id: string) => {
-    const head = await getLines({
-      sessionId: id,
-      mode: { mode: 'Full' },
-      offset: 0,
-      count: 1,
-      context: 0,
-      processorId: null,
-      search: null,
-    });
-    return head.totalLines;
-  };
-
-  /**
-   * Open a file session. `waitForIndex` (bench only) polls the line total until
-   * it has been stable for two consecutive probes, so a benchmark sweeps the
-   * whole file rather than whatever the indexer had reached at open time.
-   * The UI path does not wait: subscribing to indexing events is a 2b item.
-   */
-  const openPath = async (path: string, waitForIndex = false) => {
-    setError('');
-    setLoading(true);
-    try {
-      const [result] = await loadLogFile(path);
-      const id = result.sessionId;
-
-      // Probe for the authoritative total before building the source, so the
-      // viewer's spacer is correct on its very first paint.
-      let total = await probeTotal(id);
-      if (waitForIndex) {
-        const deadline = Date.now() + 120_000;
-        let previous = -1;
-        while (Date.now() < deadline && !(total > 0 && total === previous)) {
-          previous = total;
-          await new Promise((r) => setTimeout(r, 750));
-          total = await probeTotal(id);
-        }
-      }
-      attachSession(id, result.sourceName, total, false);
-    } catch (e) {
-      setError(String(e));
-      throw e;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const openFile = async () => {
-    const selected = await open({
-      multiple: false,
-      filters: [
-        { name: 'Log Files', extensions: ['log', 'txt', 'zip', 'gz', 'lts'] },
-        { name: 'All Files', extensions: ['*'] },
-      ],
-    });
-    if (typeof selected !== 'string') return;
-    await openPath(selected).catch(() => undefined);
-  };
-
-  /**
-   * Open a markdown/text document in the editor tab. `read_text_file` is the
-   * same `Ui`-only command the React editor tab uses; the dialog is the consent
-   * step, so no bridge route is involved.
-   */
-  const openInEditor = async () => {
+  const openInEditor = async (): Promise<void> => {
     const selected = await open({
       multiple: false,
       filters: [
@@ -227,55 +83,57 @@ export function App(props: AppProps) {
     });
     if (typeof selected !== 'string') return;
     try {
-      const content = await readTextFile(selected);
+      setEditorContent(await readTextFile(selected));
       setEditorPath(selected);
-      setEditorContent(content);
     } catch (e) {
-      setError(String(e));
+      actions.reportError(String(e));
     }
   };
 
-  // ── Bench driver (?bench=1 only) ─────────────────────────────────────────
-  // Mirrors what the UI does, minus the dialog, so scripts/bench.md can open
-  // the fixture and start the fake-adb stream over CDP. Not part of the UI.
-  if (location.search.includes('bench=1')) {
-    const stream = createStreamSession({ cacheManager, registry });
-    const benchApp: BenchApp = {
-      open: (path) => openPath(path, true),
-      startStream: async (deviceId) => {
-        await stream.start(deviceId);
-        const st = stream.status();
-        if (st.phase !== 'streaming') throw new Error(`stream not started: ${JSON.stringify(st)}`);
-        attachSession(st.sessionId, st.sourceName, st.totalLines, true);
-        return st.sessionId;
-      },
-      stopStream: () => stream.stop(),
-    };
-    (window as unknown as { __benchApp?: BenchApp }).__benchApp = benchApp;
-    onCleanup(() => { void stream.stop(); });
-  }
+  const tabs = createMemo<TabDescriptor[]>(() =>
+    store.order().map((id) => ({
+      key: id,
+      label: store.byId(id)?.load.sourceName ?? id,
+      kind: 'session' as const,
+      closable: true,
+    })),
+  );
+
+  /** Rows the viewer sizes its spacer for: the line set's, when one is set. */
+  const renderedLineCount = (): number => {
+    const entry = store.focused();
+    if (!entry) return 0;
+    return controller.lineNumbers(entry.load.sessionId)?.length ?? entry.totalLines;
+  };
+
+  if (isBenchMode()) installBenchApp({ actions, store, cacheManager, registry });
 
   const topBar = (
     <>
-      <button type="button" class={styles.openButton} onClick={openFile} disabled={loading()}>
+      <button
+        type="button"
+        class={styles.openButton}
+        onClick={() => void actions.openFileDialog()}
+        disabled={actions.busy()}
+      >
         Open file…
       </button>
-      <button type="button" class={styles.openButton} onClick={openInEditor}>
+      <button type="button" class={styles.openButton} onClick={() => void openInEditor()}>
         Open in editor…
       </button>
-      <Show when={sourceName()}>
-        <span class={styles.session}>
-          {sourceName()} — {totalLines().toLocaleString()} lines
-        </span>
+      <Show when={store.focused()}>
+        {(entry) => (
+          <span class={styles.session}>
+            {entry().load.sourceName} — {entry().totalLines.toLocaleString()} lines
+            <Show when={entry().isIndexing}> (indexing…)</Show>
+          </span>
+        )}
       </Show>
-      <Show when={loading()}>
+      <Show when={actions.busy()}>
         <span class={styles.session}>Loading…</span>
       </Show>
-      <Show when={error()}>
-        <span class={styles.error}>{error()}</span>
-      </Show>
-      <Show when={navTargetText()}>
-        <span class={styles.session}>{navTargetText()}</span>
+      <Show when={actions.error()}>
+        <span class={styles.error}>{actions.error()}</span>
       </Show>
       <Show when={props.theme}>
         {(theme) => (
@@ -309,25 +167,35 @@ export function App(props: AppProps) {
   return (
     <AppShell
       workspaceId={WORKSPACE_ID}
-      sessionKind={sessionKind()}
+      sessionKind={store.focused()?.kind ?? null}
       topBar={topBar}
       slots={{
         presence: () => <PresencePanel store={presence} />,
         viewer: () => (
-          <Show
-            when={dataSource()}
-            fallback={<div class={styles.empty}>No log open. Choose a file to begin.</div>}
-          >
-            {(ds) => (
-              <LogViewer
-                dataSource={ds()}
-                totalLineCount={renderedLineCount()}
-                sessionId={sessionId() ?? undefined}
-                tailMode={tailMode()}
-                controller={controller}
-              />
-            )}
-          </Show>
+          <>
+            <TabStrip
+              tabs={tabs()}
+              activeKey={store.focusedId()}
+              onSelect={actions.focus}
+              // A close that the backend rejects has already dropped the tab;
+              // swallowing keeps it out of the unhandled-rejection channel.
+              onClose={(key) => void actions.close(key).catch(() => undefined)}
+            />
+            <Show
+              when={store.focused()}
+              fallback={<div class={styles.empty}>No log open. Choose a file to begin.</div>}
+            >
+              {(entry) => (
+                <LogViewer
+                  dataSource={entry().dataSource}
+                  totalLineCount={renderedLineCount()}
+                  sessionId={entry().load.sessionId}
+                  tailMode={entry().kind === 'live'}
+                  controller={controller}
+                />
+              )}
+            </Show>
+          </>
         ),
       }}
       regionSlots={{

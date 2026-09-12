@@ -1,0 +1,19 @@
+/* Shared leaf widgets. Colours arrive as tokens; the one runtime value a
+   component supplies is `--badge-color`, so every visual decision stays here. */
+
+.callerBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  height: 16px;
+  border: 1px solid var(--badge-color);
+  border-radius: var(--radius-md);
+  color: var(--badge-color);
+  background: transparent;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}

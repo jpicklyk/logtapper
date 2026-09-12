@@ -24,6 +24,11 @@ export const solidAliasPaths: Record<string, string> = {
   "@events": "src-next/events",
   "@filter": "src-next/filter",
   "@bench": "src-next/bench",
+  // `src-next/hooks/` is React territory and stays off-limits as a directory:
+  // ESLint allows exactly one file through this alias
+  // (`@hooks/useLogViewer/multiSessionImport`, framework-free and shared).
+  // Widening that allow-list needs the same scrutiny as adding an alias.
+  "@hooks": "src-next/hooks",
 };
 
 /** alias → absolute directory, the form Vite's `resolve.alias` wants. */
