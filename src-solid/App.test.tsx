@@ -18,6 +18,8 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
 // on construction and subscribes to pipeline progress.
 // W6 added the analyses store, which lists analyses and subscribes to
 // `analysis-update` on construction.
+// W7 added the bookmarks store, which fetches a session's bookmarks the
+// first time it is focused and subscribes to `bookmark-update`.
 vi.mock('@bridge/commands', () => ({
   getLines: vi.fn(),
   loadLogFile: vi.fn(),
@@ -48,6 +50,10 @@ vi.mock('@bridge/commands', () => ({
   publishAnalysis: vi.fn(),
   updateAnalysis: vi.fn(),
   deleteAnalysis: vi.fn(),
+  listBookmarks: vi.fn(() => Promise.resolve([])),
+  createBookmark: vi.fn(),
+  updateBookmark: vi.fn(),
+  deleteBookmark: vi.fn(),
 }));
 vi.mock('@bridge/events', () => ({
   onActivity: vi.fn(() => Promise.resolve(() => {})),
@@ -59,6 +65,7 @@ vi.mock('@bridge/events', () => ({
   onFileIndexComplete: vi.fn(() => Promise.resolve(() => {})),
   onPipelineProgress: vi.fn(() => Promise.resolve(() => {})),
   onAnalysisUpdate: vi.fn(() => Promise.resolve(() => {})),
+  onBookmarkUpdate: vi.fn(() => Promise.resolve(() => {})),
 }));
 
 // vitest `globals` is off, so @solidjs/testing-library's auto-cleanup never

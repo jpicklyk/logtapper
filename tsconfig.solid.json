@@ -32,7 +32,10 @@
       "@analysisPanel/*": ["src-next/components/AnalysisPanel/*"],
       // Directory alias, file-level allow-list: ESLint lets exactly
       // `pendingSelection` through.
-      "@analysisReader/*": ["src-next/components/AnalysisReader/*"]
+      "@analysisReader/*": ["src-next/components/AnalysisReader/*"],
+      // Directory alias, file-level allow-list: ESLint lets exactly
+      // `exportMarkdown` through.
+      "@bookmarkPanel/*": ["src-next/components/BookmarkPanel/*"]
     }
   },
   "include": ["src-solid"],

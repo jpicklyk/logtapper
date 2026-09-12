@@ -18,6 +18,7 @@ import { SectionsPanel, createSectionsStore } from './sections';
 import { AnalyzersPanel, createAnalyzerStore } from './analyzers';
 import type { CallerLike } from './ui';
 import { AnalysesPanel, createAnalysesStore } from './analyses';
+import { BookmarksPanel, createBookmarksStore } from './bookmarks';
 import { BASE_THEMES } from './theme/applyTheme';
 import type { Density, ThemeController, ThemeMode } from './theme/applyTheme';
 import styles from './App.module.css';
@@ -77,6 +78,12 @@ export function App(props: AppProps) {
   // and session store, same as the sections navigator above.
   const analyses = createAnalysesStore({ sessions: store, controller });
   onCleanup(() => analyses.dispose());
+
+  // Bookmarks (W7) — per-session line pins, categories, create-from-cursor,
+  // markdown export. Couples to the app only through the controller and
+  // session store, same as sections/analyses above.
+  const bookmarks = createBookmarksStore({ sessions: store, controller });
+  onCleanup(() => bookmarks.dispose());
 
   // Agent presence (A2). An agent's navigation request routes through the
   // controller, which focuses the right session and jumps the pane.
@@ -231,6 +238,7 @@ export function App(props: AppProps) {
           </Show>
         ),
         analyses: () => <AnalysesPanel store={analyses} />,
+        bookmarks: () => <BookmarksPanel store={bookmarks} sessions={store} />,
         viewer: () => (
           <>
             <TabStrip

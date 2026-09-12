@@ -50,6 +50,10 @@ export const solidAliasPaths: Record<string, string> = {
   // W6's pending-selection handoff — the one framework-free file in
   // `AnalysisReader/` (everything else there is a React component).
   "@analysisReader": "src-next/components/AnalysisReader",
+  // W7's markdown export — the one framework-free file in `BookmarkPanel/`
+  // (everything else there is a React component). Same file-level ESLint
+  // allow-list pattern as `@hooks`/`@analysisPanel`/`@analysisReader`.
+  "@bookmarkPanel": "src-next/components/BookmarkPanel",
 };
 
 /** alias → absolute directory, the form Vite's `resolve.alias` wants. */
