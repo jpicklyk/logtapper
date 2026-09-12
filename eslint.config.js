@@ -330,6 +330,13 @@ export default tseslint.config(
             message:
               'Only pendingSelection (framework-free) is shared with src-solid/ — the rest of AnalysisReader/ is React-only. Extend the alternation in eslint.config.js by exact file path.',
           },
+          // Same file-level allow-list pattern again, for the one
+          // framework-free file under src-next/components/StateTimeline/.
+          {
+            regex: '^@statetimeline/(?!timelineUtils$).*',
+            message:
+              'Only @statetimeline/timelineUtils (framework-free) is shared with src-solid/ — the rest of StateTimeline/ is React-only. Extend the alternation in eslint.config.js by exact file path.',
+          },
           {
             group: ['@tauri-apps/api/core'],
             importNames: ['invoke', 'Channel'],

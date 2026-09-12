@@ -1,0 +1,297 @@
+/* Device state panel (W5) — tracker selector, field table, transition nav —
+   plus the on-demand timeline strip. All colour/radius/spacing decisions live
+   here; components only ever supply a runtime accent via custom properties. */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 100%;
+  padding: 16px 8px;
+  color: var(--text-dimmed);
+  text-align: center;
+}
+
+.emptyHint {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex: 0 0 auto;
+}
+
+.trackerSelect {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--text);
+  padding: 3px 6px;
+  font-size: 11px;
+}
+
+.transitionNav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.navButton {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--text);
+  padding: 2px 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.navButton:hover:not(:disabled) {
+  background: var(--surface-raised);
+}
+
+.navButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.transitionCount {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  min-width: 44px;
+  text-align: center;
+}
+
+.lineInfo {
+  padding: 6px 8px 2px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  flex: 0 0 auto;
+}
+
+.sourceBar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  flex-wrap: wrap;
+  flex: 0 0 auto;
+}
+
+.sourceChip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--accent);
+  white-space: nowrap;
+  line-height: 1.7;
+}
+
+/* ── Fields grid ──────────────────────────────────────────────────────── */
+
+.fieldsGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 8px 8px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+}
+
+.fieldRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  transition: background-color 0.15s ease;
+}
+
+.fieldRowUnknown {
+  composes: fieldRow;
+  opacity: 0.45;
+}
+
+.fieldChanged {
+  background: var(--accent-muted);
+  animation: devicestate-flash 1.2s ease-out;
+}
+
+@keyframes devicestate-flash {
+  0% {
+    background: var(--warning-muted, var(--accent-muted));
+  }
+  100% {
+    background: var(--accent-muted);
+  }
+}
+
+.fieldKey {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.fieldVal {
+  text-align: right;
+  font-family: var(--font-mono);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unknownVal {
+  color: var(--text-dimmed);
+  font-style: italic;
+  font-family: var(--font-ui);
+}
+
+.emptyVal {
+  color: var(--text-dimmed);
+  font-style: italic;
+  font-family: var(--font-ui);
+}
+
+.boolTrue {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.boolFalse {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.numVal {
+  color: var(--accent);
+}
+
+.strVal {
+  color: var(--text);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unknownDivider {
+  height: 0;
+  border: none;
+  border-top: 1px dashed var(--border-subtle);
+  margin: 4px 4px 2px;
+}
+
+/* ── Timeline strip ───────────────────────────────────────────────────── */
+
+.timelineWrap {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-overlay);
+}
+
+.timelineToggle {
+  display: block;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: left;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.timelineToggle:hover {
+  color: var(--text);
+  background: var(--surface-raised);
+}
+
+.timelineToggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.timelineStrip {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 8px 8px;
+}
+
+.timelineEmpty {
+  padding: 8px 0;
+  font-size: 11px;
+  color: var(--text-dimmed);
+  text-align: center;
+}
+
+.timelineTrack {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.timelineTrackLabel {
+  flex: 0 0 auto;
+  width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.timelineSvg {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 18px;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.timelineBaseline {
+  stroke: var(--border);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.timelineTick {
+  stroke: var(--accent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.timelineCursor {
+  stroke: var(--warning);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}

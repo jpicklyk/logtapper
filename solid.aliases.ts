@@ -50,6 +50,12 @@ export const solidAliasPaths: Record<string, string> = {
   // W6's pending-selection handoff — the one framework-free file in
   // `AnalysisReader/` (everything else there is a React component).
   "@analysisReader": "src-next/components/AnalysisReader",
+  // Same pattern again: `StateTimeline/timelineUtils.ts` is the one
+  // framework-free file under `src-next/components/StateTimeline/` (pure
+  // line/viewport math + a re-export of the timestamp/duration formatters) —
+  // W5's device-state timeline strip reuses it verbatim rather than
+  // reimplementing the same math. File-level ESLint allow-list, same shape.
+  "@statetimeline": "src-next/components/StateTimeline",
 };
 
 /** alias → absolute directory, the form Vite's `resolve.alias` wants. */

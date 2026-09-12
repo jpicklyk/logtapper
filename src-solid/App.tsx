@@ -18,6 +18,7 @@ import { SectionsPanel, createSectionsStore } from './sections';
 import { AnalyzersPanel, createAnalyzerStore } from './analyzers';
 import type { CallerLike } from './ui';
 import { AnalysesPanel, createAnalysesStore } from './analyses';
+import { DeviceStatePanel, TimelineStrip, createDeviceStateStore } from './devicestate';
 import { BASE_THEMES } from './theme/applyTheme';
 import type { Density, ThemeController, ThemeMode } from './theme/applyTheme';
 import styles from './App.module.css';
@@ -94,6 +95,14 @@ export function App(props: AppProps) {
   // controller every other surface uses.
   const analyzers = createAnalyzerStore({ sessions: store, controller });
   onCleanup(() => analyzers.dispose());
+
+  // Device state + timeline (W5) — cursor-tied state-tracker snapshot, field
+  // diffs, transition navigation, and the on-demand timeline strip. Reads
+  // W4a's `analyzers` store for which trackers are active and when the
+  // pipeline last ran; couples to the app only through those plus the
+  // controller and session store, same as every other surface.
+  const deviceState = createDeviceStateStore({ sessions: store, controller, analyzers });
+  onCleanup(() => deviceState.dispose());
 
   /** Who last ran this session's pipeline, from the presence journal — the
    *  analyzers surface has no journal access of its own (A2 owns that). */
@@ -226,8 +235,16 @@ export function App(props: AppProps) {
                 sessionId={entry().load.sessionId}
                 sessionName={entry().load.sourceName}
                 lastRunCaller={lastRunCaller}
+                onOpenDeviceState={(processorId) =>
+                  deviceState.setSelectedTracker(entry().load.sessionId, processorId)
+                }
               />
             )}
+          </Show>
+        ),
+        'device-state': () => (
+          <Show when={store.focused()}>
+            {(entry) => <DeviceStatePanel store={deviceState} sessionId={entry().load.sessionId} />}
           </Show>
         ),
         analyses: () => <AnalysesPanel store={analyses} />,
@@ -267,6 +284,18 @@ export function App(props: AppProps) {
               )}
             </Show>
           </>
+        ),
+        timeline: () => (
+          <Show when={store.focused()}>
+            {(entry) => (
+              <TimelineStrip
+                store={deviceState}
+                controller={controller}
+                sessionId={entry().load.sessionId}
+                totalLines={entry().totalLines}
+              />
+            )}
+          </Show>
         ),
       }}
       regionSlots={{
