@@ -315,6 +315,21 @@ export default tseslint.config(
             message:
               'Only @procdash/utils (framework-free) is shared with src-solid/ — the rest of ProcessorDashboard/ is React-only. Extend the alternation in eslint.config.js by exact file path.',
           },
+          // Same pattern as `@hooks`/`@fileinfo`: `@analysisPanel` reaches into
+          // React territory (`src-next/components/AnalysisPanel/`), so only the
+          // one framework-free module W6 reuses is let through.
+          {
+            regex: '^@analysisPanel/(?!analysisAttribution$).*',
+            message:
+              'Only analysisAttribution (framework-free) is shared with src-solid/ — the rest of AnalysisPanel/ is React-only. Extend the alternation in eslint.config.js by exact file path.',
+          },
+          // Same pattern, for the one framework-free file under
+          // `src-next/components/AnalysisReader/`.
+          {
+            regex: '^@analysisReader/(?!pendingSelection$).*',
+            message:
+              'Only pendingSelection (framework-free) is shared with src-solid/ — the rest of AnalysisReader/ is React-only. Extend the alternation in eslint.config.js by exact file path.',
+          },
           {
             group: ['@tauri-apps/api/core'],
             importNames: ['invoke', 'Channel'],

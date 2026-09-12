@@ -16,6 +16,8 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
 // here opens one, so the module import itself never sees an undefined export.
 // W4a/W4b added the analyzer store, which fetches the processor/pack catalog
 // on construction and subscribes to pipeline progress.
+// W6 added the analyses store, which lists analyses and subscribes to
+// `analysis-update` on construction.
 vi.mock('@bridge/commands', () => ({
   getLines: vi.fn(),
   loadLogFile: vi.fn(),
@@ -41,6 +43,11 @@ vi.mock('@bridge/commands', () => ({
   getMatchedLines: vi.fn(() => Promise.resolve([])),
   getCorrelatorEvents: vi.fn(() => Promise.resolve({ guidance: null, events: [] })),
   getProcessorVars: vi.fn(() => Promise.resolve({})),
+  listAnalyses: vi.fn(() => Promise.resolve([])),
+  getAnalysis: vi.fn(),
+  publishAnalysis: vi.fn(),
+  updateAnalysis: vi.fn(),
+  deleteAnalysis: vi.fn(),
 }));
 vi.mock('@bridge/events', () => ({
   onActivity: vi.fn(() => Promise.resolve(() => {})),
@@ -51,6 +58,7 @@ vi.mock('@bridge/events', () => ({
   onFileIndexProgress: vi.fn(() => Promise.resolve(() => {})),
   onFileIndexComplete: vi.fn(() => Promise.resolve(() => {})),
   onPipelineProgress: vi.fn(() => Promise.resolve(() => {})),
+  onAnalysisUpdate: vi.fn(() => Promise.resolve(() => {})),
 }));
 
 // vitest `globals` is off, so @solidjs/testing-library's auto-cleanup never

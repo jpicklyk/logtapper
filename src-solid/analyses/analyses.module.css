@@ -1,0 +1,382 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+  font-size: 12px;
+  color: var(--text);
+  overflow-y: auto;
+}
+
+.empty {
+  margin: 0;
+  padding: 12px 4px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.errorText {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: var(--p-radius-sm);
+  background: var(--danger-muted);
+  color: var(--danger);
+}
+
+/* ── List header / search ────────────────────────────────────────────── */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.headerLabel {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.headerCount {
+  padding: 0 6px;
+  border-radius: var(--p-radius-full);
+  background: var(--surface-overlay);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.newButton {
+  margin-left: auto;
+}
+
+.search {
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--p-radius-sm);
+  background: var(--surface-input);
+  color: var(--text);
+  font-size: 12px;
+}
+
+/* ── Groups / cards ───────────────────────────────────────────────────── */
+
+.groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.groupLabel {
+  margin: 0;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--card-accent);
+  border-radius: var(--p-radius-md);
+  background: var(--surface-raised);
+  cursor: pointer;
+}
+
+.card:hover {
+  background: var(--surface-overlay);
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cardTitle {
+  flex: 1;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cardMeta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-subtle);
+  font-size: 11px;
+}
+
+.metaDivider {
+  color: var(--text-dimmed);
+}
+
+.chipRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.sourceChip {
+  padding: 1px 6px;
+  border-radius: var(--p-radius-full);
+  background: var(--surface-overlay);
+  color: var(--text-subtle);
+  font-size: 10px;
+}
+
+.sourceChipWarning {
+  padding: 1px 6px;
+  border-radius: var(--p-radius-full);
+  background: var(--warning-muted);
+  color: var(--warning);
+  font-size: 10px;
+}
+
+/* ── Reader ───────────────────────────────────────────────────────────── */
+
+.reader {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+}
+
+.readerHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.readerTitle {
+  flex: 1;
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.readerBody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+/* ── Editor ───────────────────────────────────────────────────────────── */
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.editorHeader {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.editorHeading {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.titleInput {
+  padding: 5px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--p-radius-sm);
+  background: var(--surface-input);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.sectionList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sectionCard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--p-radius-md);
+  background: var(--surface-raised);
+}
+
+.sectionCardHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.headingInput {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--p-radius-sm);
+  background: var(--surface-input);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.severitySelect {
+  padding: 4px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--p-radius-sm);
+  background: var(--surface-input);
+  color: var(--text);
+  font-size: 11px;
+}
+
+.bodySplit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bodyEditorHost {
+  height: 140px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--p-radius-sm);
+  overflow: hidden;
+}
+
+.bodyPreview {
+  padding: 6px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--p-radius-sm);
+  background: var(--surface-input);
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.referencesRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.referenceChip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  border-radius: var(--p-radius-full);
+  background: var(--surface-overlay);
+}
+
+.referenceLine {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.referenceLabelInput {
+  width: 100px;
+  padding: 1px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--p-radius-xs);
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+}
+
+.referenceLabelInput:focus {
+  border-color: var(--border-subtle);
+  background: var(--surface-input);
+}
+
+.actionsRow {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ── Shared buttons ───────────────────────────────────────────────────── */
+
+.button,
+.newButton,
+.smallButton,
+.primaryButton {
+  padding: 4px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--p-radius-sm);
+  background: var(--surface-overlay);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.primaryButton {
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+
+.primaryButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.smallButton {
+  align-self: flex-start;
+  font-size: 10px;
+}
+
+.backButton,
+.editButton {
+  padding: 3px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--p-radius-sm);
+  background: var(--surface-overlay);
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.iconButton {
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-dimmed);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.iconButton:hover {
+  color: var(--danger);
+}

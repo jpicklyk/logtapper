@@ -17,6 +17,7 @@ import { EditorTab } from './editor';
 import { SectionsPanel, createSectionsStore } from './sections';
 import { AnalyzersPanel, createAnalyzerStore } from './analyzers';
 import type { CallerLike } from './ui';
+import { AnalysesPanel, createAnalysesStore } from './analyses';
 import { BASE_THEMES } from './theme/applyTheme';
 import type { Density, ThemeController, ThemeMode } from './theme/applyTheme';
 import styles from './App.module.css';
@@ -70,6 +71,12 @@ export function App(props: AppProps) {
   // session store, same as every other surface.
   const sections = createSectionsStore({ sessions: store, controller });
   onCleanup(() => sections.dispose());
+
+  // Analyses (W6) — workspace-owned analysis artifacts: list, reader,
+  // publish/update/delete. Couples to the app only through the controller
+  // and session store, same as the sections navigator above.
+  const analyses = createAnalysesStore({ sessions: store, controller });
+  onCleanup(() => analyses.dispose());
 
   // Agent presence (A2). An agent's navigation request routes through the
   // controller, which focuses the right session and jumps the pane.
@@ -223,6 +230,7 @@ export function App(props: AppProps) {
             )}
           </Show>
         ),
+        analyses: () => <AnalysesPanel store={analyses} />,
         viewer: () => (
           <>
             <TabStrip

@@ -26,7 +26,13 @@
       "@fileinfo/*": ["src-next/components/FileInfoPanel/*"],
       // Directory alias, file-level allow-list: ESLint lets exactly
       // `@procdash/utils` through.
-      "@procdash/*": ["src-next/components/ProcessorDashboard/*"]
+      "@procdash/*": ["src-next/components/ProcessorDashboard/*"],
+      // Directory alias, file-level allow-list: ESLint lets exactly
+      // `analysisAttribution` through.
+      "@analysisPanel/*": ["src-next/components/AnalysisPanel/*"],
+      // Directory alias, file-level allow-list: ESLint lets exactly
+      // `pendingSelection` through.
+      "@analysisReader/*": ["src-next/components/AnalysisReader/*"]
     }
   },
   "include": ["src-solid"],
