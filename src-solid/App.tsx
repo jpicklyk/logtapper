@@ -11,6 +11,7 @@ import {
 import { createAppActions, createSessionStore, installBenchApp, isBenchMode } from './app/index';
 import { AppShell, TabStrip } from './shell';
 import type { TabDescriptor } from './shell';
+import { QueryBar, createQueryStore } from './query';
 import { PresencePanel, createPresenceStore } from './presence';
 import { EditorTab } from './editor';
 import { BASE_THEMES } from './theme/applyTheme';
@@ -52,7 +53,11 @@ export function App(props: AppProps) {
   const controller = createViewerController({ focusSession: (id) => store.setFocused(id) });
   const store = createSessionStore({ cacheManager, registry, controller });
   const actions = createAppActions({ store, controller });
+  // Query bar (W2b) — reads/writes per-session query state and plugs its
+  // `SearchQuery` provider into the session store's `fetchLines`.
+  const queryStore = createQueryStore({ cacheManager, controller, sessions: store });
   onCleanup(() => {
+    queryStore.dispose();
     store.dispose();
     controller.dispose();
   });
@@ -186,13 +191,24 @@ export function App(props: AppProps) {
               fallback={<div class={styles.empty}>No log open. Choose a file to begin.</div>}
             >
               {(entry) => (
-                <LogViewer
-                  dataSource={entry().dataSource}
-                  totalLineCount={renderedLineCount()}
-                  sessionId={entry().load.sessionId}
-                  tailMode={entry().kind === 'live'}
-                  controller={controller}
-                />
+                <>
+                  {/* Keyed on the session id: QueryBar snapshots its session at
+                      mount by design, so it must be remounted per session. The
+                      outer non-keyed Show does NOT remount on a truthy→truthy
+                      switch between two open tabs. */}
+                  <Show when={entry().load.sessionId} keyed>
+                    {(sid) => (
+                      <QueryBar sessionId={sid} store={queryStore} controller={controller} />
+                    )}
+                  </Show>
+                  <LogViewer
+                    dataSource={entry().dataSource}
+                    totalLineCount={renderedLineCount()}
+                    sessionId={entry().load.sessionId}
+                    tailMode={entry().kind === 'live'}
+                    controller={controller}
+                  />
+                </>
               )}
             </Show>
           </>
