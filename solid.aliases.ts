@@ -56,6 +56,10 @@ export const solidAliasPaths: Record<string, string> = {
   // W5's device-state timeline strip reuses it verbatim rather than
   // reimplementing the same math. File-level ESLint allow-list, same shape.
   "@statetimeline": "src-next/components/StateTimeline",
+  // W7's markdown export — the one framework-free file in `BookmarkPanel/`
+  // (everything else there is a React component). Same file-level ESLint
+  // allow-list pattern as `@hooks`/`@analysisPanel`/`@analysisReader`.
+  "@bookmarkPanel": "src-next/components/BookmarkPanel",
 };
 
 /** alias → absolute directory, the form Vite's `resolve.alias` wants. */

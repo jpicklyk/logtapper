@@ -337,6 +337,13 @@ export default tseslint.config(
             message:
               'Only @statetimeline/timelineUtils (framework-free) is shared with src-solid/ — the rest of StateTimeline/ is React-only. Extend the alternation in eslint.config.js by exact file path.',
           },
+          // Same pattern, for the one framework-free file under
+          // `src-next/components/BookmarkPanel/`.
+          {
+            regex: '^@bookmarkPanel/(?!exportMarkdown$).*',
+            message:
+              'Only exportMarkdown (framework-free) is shared with src-solid/ — the rest of BookmarkPanel/ is React-only. Extend the alternation in eslint.config.js by exact file path.',
+          },
           {
             group: ['@tauri-apps/api/core'],
             importNames: ['invoke', 'Channel'],

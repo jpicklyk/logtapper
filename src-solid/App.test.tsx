@@ -21,6 +21,8 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
 // W5 added the device state store, which fetches a tracker's snapshot/
 // transitions once a cursor exists and a tracker is active — stubbed even
 // though no test here opens a session with an active tracker.
+// W7 added the bookmarks store, which fetches a session's bookmarks the
+// first time it is focused and subscribes to `bookmark-update`.
 vi.mock('@bridge/commands', () => ({
   getLines: vi.fn(),
   loadLogFile: vi.fn(),
@@ -53,6 +55,10 @@ vi.mock('@bridge/commands', () => ({
   deleteAnalysis: vi.fn(),
   getStateAtLine: vi.fn(),
   getStateTransitions: vi.fn(() => Promise.resolve([])),
+  listBookmarks: vi.fn(() => Promise.resolve([])),
+  createBookmark: vi.fn(),
+  updateBookmark: vi.fn(),
+  deleteBookmark: vi.fn(),
 }));
 vi.mock('@bridge/events', () => ({
   onActivity: vi.fn(() => Promise.resolve(() => {})),
@@ -64,6 +70,7 @@ vi.mock('@bridge/events', () => ({
   onFileIndexComplete: vi.fn(() => Promise.resolve(() => {})),
   onPipelineProgress: vi.fn(() => Promise.resolve(() => {})),
   onAnalysisUpdate: vi.fn(() => Promise.resolve(() => {})),
+  onBookmarkUpdate: vi.fn(() => Promise.resolve(() => {})),
 }));
 
 // vitest `globals` is off, so @solidjs/testing-library's auto-cleanup never
