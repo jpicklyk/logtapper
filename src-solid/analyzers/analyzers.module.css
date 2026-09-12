@@ -1,0 +1,375 @@
+/* Analyzers surface (W4b) — panel, cards, detail drawer, add-analyzer drawer.
+   All colour/radius/spacing decisions live here; components only ever supply
+   a runtime accent via `--card-accent` / `--bar-pct` custom properties. */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex: 0 0 auto;
+}
+
+.sessionName {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.btn {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--text);
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--surface-raised);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btnPrimary {
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+
+.btnDanger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.runProgress {
+  display: inline-block;
+  margin-left: 4px;
+  color: var(--text-subtle);
+}
+
+.banner {
+  padding: 6px 8px;
+  background: var(--warning-muted);
+  color: var(--warning);
+  font-size: 11px;
+  flex: 0 0 auto;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 8px;
+  color: var(--text-muted);
+}
+
+.list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.groupLabel {
+  padding: 4px 2px 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-subtle);
+}
+
+.card {
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--card-accent, var(--border));
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  padding: 6px 8px;
+  outline: none;
+}
+
+.card:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -1px;
+}
+
+.cardDisabled {
+  opacity: 0.55;
+}
+
+.cardPinned {
+  border-left-color: var(--text-dimmed);
+}
+
+.cardRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cardName {
+  font-weight: 600;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.typeBadge {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--card-accent, var(--text-subtle));
+  border: 1px solid var(--card-accent, var(--border));
+  border-radius: var(--radius-sm);
+  padding: 0 4px;
+}
+
+.iconBtn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.iconBtn:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.iconBtn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.statLine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.chip {
+  border-radius: var(--radius-sm);
+  background: var(--surface-overlay);
+  padding: 0 5px;
+  color: var(--text);
+  cursor: pointer;
+  border: none;
+  font-size: 11px;
+}
+
+.chip:hover {
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+
+.badge {
+  border-radius: var(--radius-sm);
+  background: var(--surface-overlay);
+  padding: 0 5px;
+  color: var(--text-subtle);
+  font-size: 10px;
+}
+
+.skipRow {
+  margin-top: 3px;
+  color: var(--warning);
+  font-size: 11px;
+}
+
+.errorRow {
+  margin-top: 3px;
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.progressBar {
+  margin-top: 4px;
+  height: 3px;
+  border-radius: var(--radius-full);
+  background: var(--surface-overlay);
+  overflow: hidden;
+}
+
+.progressBar > span {
+  display: block;
+  height: 100%;
+  width: var(--bar-pct, 0%);
+  background: var(--accent);
+}
+
+.footerRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+/* ── Overlays: detail drawer, add-analyzer drawer ─────────────────────── */
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: var(--p-z-overlay);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-raised);
+  border-left: 1px solid var(--border);
+}
+
+.overlayHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex: 0 0 auto;
+}
+
+.overlayTitle {
+  flex: 1 1 auto;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overlayBody {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.section {
+  margin-bottom: 10px;
+}
+
+.sectionLabel {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-subtle);
+  margin-bottom: 3px;
+}
+
+.kvRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 11px;
+}
+
+.kvKey {
+  color: var(--text-muted);
+}
+
+.kvVal {
+  color: var(--text);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.matchRow {
+  display: flex;
+  gap: 8px;
+  padding: 2px 4px;
+  cursor: pointer;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+}
+
+.matchRow:hover {
+  background: var(--surface-overlay);
+}
+
+.matchNum {
+  color: var(--text-subtle);
+  flex: 0 0 auto;
+}
+
+.matchRaw {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.hint {
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 4px 0;
+}
+
+.search {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--text);
+  padding: 4px 6px;
+  font-size: 11px;
+  margin-bottom: 6px;
+}
+
+.search:focus {
+  outline: 2px solid var(--focus-ring);
+}
+
+.catalogRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.catalogInfo {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.catalogName {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.catalogDesc {
+  color: var(--text-muted);
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

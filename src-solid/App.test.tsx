@@ -14,6 +14,8 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
 // W3 added the sections store, which fetches section/dumpstate metadata for
 // the focused session when it is bugreport-like — stubbed even though no test
 // here opens one, so the module import itself never sees an undefined export.
+// W4a/W4b added the analyzer store, which fetches the processor/pack catalog
+// on construction and subscribes to pipeline progress.
 vi.mock('@bridge/commands', () => ({
   getLines: vi.fn(),
   loadLogFile: vi.fn(),
@@ -29,6 +31,16 @@ vi.mock('@bridge/commands', () => ({
   getExportAllSessionsInfo: vi.fn(() =>
     Promise.resolve({ sessions: [], totalProcessorCount: 0, totalPipelineProcessorCount: 0 }),
   ),
+  listProcessors: vi.fn(() => Promise.resolve([])),
+  listPacks: vi.fn(() => Promise.resolve([])),
+  loadProcessorFromFile: vi.fn(),
+  uninstallProcessor: vi.fn(() => Promise.resolve()),
+  setSessionPipelineMeta: vi.fn(() => Promise.resolve()),
+  runPipeline: vi.fn(),
+  stopPipeline: vi.fn(() => Promise.resolve()),
+  getMatchedLines: vi.fn(() => Promise.resolve([])),
+  getCorrelatorEvents: vi.fn(() => Promise.resolve({ guidance: null, events: [] })),
+  getProcessorVars: vi.fn(() => Promise.resolve({})),
 }));
 vi.mock('@bridge/events', () => ({
   onActivity: vi.fn(() => Promise.resolve(() => {})),
@@ -38,6 +50,7 @@ vi.mock('@bridge/events', () => ({
   onBridgeSessionClosed: vi.fn(() => Promise.resolve(() => {})),
   onFileIndexProgress: vi.fn(() => Promise.resolve(() => {})),
   onFileIndexComplete: vi.fn(() => Promise.resolve(() => {})),
+  onPipelineProgress: vi.fn(() => Promise.resolve(() => {})),
 }));
 
 // vitest `globals` is off, so @solidjs/testing-library's auto-cleanup never

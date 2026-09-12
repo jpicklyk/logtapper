@@ -15,6 +15,8 @@ import { QueryBar, createQueryStore } from './query';
 import { PresencePanel, createPresenceStore } from './presence';
 import { EditorTab } from './editor';
 import { SectionsPanel, createSectionsStore } from './sections';
+import { AnalyzersPanel, createAnalyzerStore } from './analyzers';
+import type { CallerLike } from './ui';
 import { BASE_THEMES } from './theme/applyTheme';
 import type { Density, ThemeController, ThemeMode } from './theme/applyTheme';
 import styles from './App.module.css';
@@ -79,6 +81,23 @@ export function App(props: AppProps) {
       }),
   });
   onCleanup(() => presence.dispose());
+
+  // Analyzers (W4a store + W4b surface) — per-session pipeline chain, run
+  // lifecycle and results; card clicks route matched lines through the same
+  // controller every other surface uses.
+  const analyzers = createAnalyzerStore({ sessions: store, controller });
+  onCleanup(() => analyzers.dispose());
+
+  /** Who last ran this session's pipeline, from the presence journal — the
+   *  analyzers surface has no journal access of its own (A2 owns that). */
+  const lastRunCaller = (sessionId: string): CallerLike | null => {
+    const entries = presence.entries();
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i];
+      if (entry.sessionId === sessionId && entry.action === 'pipeline.run') return entry.caller;
+    }
+    return null;
+  };
 
   // E1 demo: a text document in the `details` region. W9 turns this into real
   // editor tabs on the strip below; until then it is one document, not a tab.
@@ -190,6 +209,19 @@ export function App(props: AppProps) {
             firstTimestamp={store.focused()?.load.firstTimestamp}
             lastTimestamp={store.focused()?.load.lastTimestamp}
           />
+        ),
+        analyzers: () => (
+          <Show when={store.focused()}>
+            {(entry) => (
+              <AnalyzersPanel
+                store={analyzers}
+                controller={controller}
+                sessionId={entry().load.sessionId}
+                sessionName={entry().load.sourceName}
+                lastRunCaller={lastRunCaller}
+              />
+            )}
+          </Show>
         ),
         viewer: () => (
           <>

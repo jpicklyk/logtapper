@@ -307,6 +307,7 @@ export default tseslint.config(
             regex: '^@fileinfo/(?!sectionTree$|formatters$|sectionDescriptions$).*',
             message:
               'Only sectionTree, formatters and sectionDescriptions are shared with src-solid/ — the rest of FileInfoPanel/ is React-only. Extend the alternation in eslint.config.js by exact file path.',
+          },
           // Same file-level allow-list pattern as `@hooks`, for the one
           // framework-free file under src-next/components/ProcessorDashboard/.
           {

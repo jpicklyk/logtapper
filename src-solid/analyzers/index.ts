@@ -29,3 +29,13 @@ export {
   formatNumber,
 } from '@procdash/utils';
 export type { VarGroup } from '@procdash/utils';
+
+// W4b — the analyzers surface: cards, detail drawer, add-analyzer catalog.
+export { AnalyzersPanel } from './AnalyzersPanel';
+export type { AnalyzersPanelProps } from './AnalyzersPanel';
+export { AnalyzerCard } from './AnalyzerCard';
+export type { AnalyzerCardProps } from './AnalyzerCard';
+export { AnalyzerDetail } from './AnalyzerDetail';
+export type { AnalyzerDetailProps } from './AnalyzerDetail';
+export { AddAnalyzer } from './AddAnalyzer';
+export type { AddAnalyzerProps } from './AddAnalyzer';
