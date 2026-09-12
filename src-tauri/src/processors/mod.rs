@@ -378,14 +378,15 @@ pub struct ProcessorSummary {
     #[ts(optional)]
     pub tracker_mode: Option<crate::processors::state_tracker::schema::TrackerMode>,
     /// Section names this state tracker targets (bugreport/dumpstate only).
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    /// Always serialized (as `[]` when empty): the generated TS type declares
+    /// a required array, and the Solid analyzers surface indexes it directly.
     pub tracker_sections: Vec<String>,
     /// Whether this state tracker outputs to the timeline. Only set for state_tracker type.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub tracker_timeline: Option<bool>,
     /// Log source types this processor supports (from schema.source_types).
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    /// Always serialized (as `[]` when empty) — same contract reason as above.
     pub source_types: Vec<String>,
 }
 
@@ -469,6 +470,39 @@ pub mod vars {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The generated `ProcessorSummary.ts` declares `trackerSections` and
+    /// `sourceTypes` as required arrays; the wire must therefore carry `[]`
+    /// rather than omit the key, or a consumer that indexes them crashes on
+    /// the first reporter (found by the phase 2b Solid parity smoke).
+    #[test]
+    fn processor_summary_serializes_empty_arrays_as_present() {
+        let summary = ProcessorSummary {
+            id: "x".into(),
+            name: "x".into(),
+            version: "1".into(),
+            description: String::new(),
+            tags: Vec::new(),
+            builtin: false,
+            processor_type: "reporter".into(),
+            group: None,
+            vars_meta: Vec::new(),
+            license: None,
+            category: None,
+            repository: None,
+            deprecated: false,
+            has_schema: false,
+            source: None,
+            pack_id: None,
+            tracker_mode: None,
+            tracker_timeline: None,
+            tracker_sections: Vec::new(),
+            source_types: Vec::new(),
+        };
+        let json = serde_json::to_value(&summary).expect("serialize");
+        assert_eq!(json["trackerSections"], serde_json::json!([]));
+        assert_eq!(json["sourceTypes"], serde_json::json!([]));
+    }
 
     // ── Shipped marketplace content ──────────────────────────────────────────
     //
