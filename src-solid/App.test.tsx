@@ -26,12 +26,16 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
 // W1b added the workspace store, which reads `app-state.json` and the CLI
 // startup file on construction, subscribes to the three `workspace-*` list/
 // content events, and drives open/save/switch/rename/delete over v4 commands.
+// W9 added the editor tabs store, which defaults to the same `readTextFile`/
+// `writeTextFile` commands the removed E1 demo used (`open`/`save` are not
+// called at construction, only from user actions neither test here triggers).
 vi.mock('@bridge/commands', () => ({
   getLines: vi.fn(),
   loadLogFile: vi.fn(),
   closeSession: vi.fn(() => Promise.resolve()),
   setFocusedSession: vi.fn(() => Promise.resolve()),
   readTextFile: vi.fn(),
+  writeTextFile: vi.fn(() => Promise.resolve()),
   getSections: vi.fn(() => Promise.resolve([])),
   getDumpstateMetadata: vi.fn(() => Promise.resolve(null)),
   getMcpStatus: vi.fn(() => Promise.resolve({ running: false, port: 0, idleSecs: null, agentRawAccess: false })),

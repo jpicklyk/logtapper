@@ -25,8 +25,21 @@ export {
 } from './lineRefs';
 export type { LineRefOptions, LineRefSource, LineRefTarget } from './lineRefs';
 
-export { EditorTab, basename, modeForPath } from './EditorTab';
-export type { EditorTabProps } from './EditorTab';
+export { EditorTab, SAVE_FILTERS, basename, modeForPath } from './EditorTab';
+export type { EditorPreviewMode, EditorTabProps } from './EditorTab';
+
+export { createEditorStore } from './editorStore';
+export type {
+  CloseConfirmChoice,
+  CloseOutcome,
+  ConfirmClose,
+  EditorDoc,
+  EditorStore,
+  EditorStoreDeps,
+} from './editorStore';
+
+export { EditorTabs } from './EditorTabs';
+export type { EditorTabsProps } from './EditorTabs';
 
 export { AnalysisSectionView } from './AnalysisSectionView';
 export type {
