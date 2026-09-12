@@ -294,6 +294,12 @@ export function createDeviceStateStore(deps: DeviceStateStoreDeps): DeviceStateS
       // Snapshot fetch: debounced + generation-guarded, and short-circuited
       // entirely for a snapshot-mode tracker once its run generation is cached.
       createEffect(() => {
+        // The tracker id is deliberately the value at schedule time: the
+        // debounced fetch below must resolve for the tracker/cursor pair that
+        // scheduled it, and `fetchToken` discards a response the effect has
+        // since superseded. Re-reading the memo inside the timeout would pair
+        // a newer tracker with an older cursor line.
+        // eslint-disable-next-line solid/reactivity -- snapshot at schedule time by design (see above)
         const trackerId = effectiveTrackerId();
         const cursor = controller.cursor();
         if (disposed) return;
