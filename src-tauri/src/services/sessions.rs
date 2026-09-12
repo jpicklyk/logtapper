@@ -638,6 +638,7 @@ fn close_session_state(ctx: &ServiceCtx, session_id: &str) -> Result<(), Service
         .map_err(ServiceError::Internal)?;
 
     lock_svc(&state.mcp_anonymizers, "mcp_anonymizers")?.remove(session_id);
+    lock_svc(&state.stream_excluded_processors, "stream_excluded_processors")?.remove(session_id);
 
     lock_svc(&state.bookmarks, "bookmarks")?.remove(session_id);
     lock_svc(&state.session_pipeline_meta, "session_pipeline_meta")?.remove(session_id);

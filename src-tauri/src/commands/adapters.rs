@@ -116,7 +116,7 @@ impl<T: Clone + serde::Serialize + Send + Sync + 'static> Sink<T> for ChannelSin
 }
 
 /// The ADB streaming sink: `Channel<AdbStreamEvent>` carrying `Batch`,
-/// `ProcessorUpdate` and `StreamStopped` to one pane.
+/// `ProcessorUpdate`, `StreamStopped` and `ProcessorsExcluded` to one pane.
 pub type AdbChannelSink = ChannelSink<crate::services::stream::AdbStreamEvent>;
 
 // ---------------------------------------------------------------------------

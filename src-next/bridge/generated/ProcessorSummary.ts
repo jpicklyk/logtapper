@@ -28,6 +28,8 @@ packId?: string,
 trackerMode?: TrackerMode, 
 /**
  * Section names this state tracker targets (bugreport/dumpstate only).
+ * Always serialized (as `[]` when empty): the generated TS type declares
+ * a required array, and the Solid analyzers surface indexes it directly.
  */
 trackerSections: Array<string>, 
 /**
@@ -36,5 +38,6 @@ trackerSections: Array<string>,
 trackerTimeline?: boolean, 
 /**
  * Log source types this processor supports (from schema.source_types).
+ * Always serialized (as `[]` when empty) — same contract reason as above.
  */
 sourceTypes: Array<string>, };

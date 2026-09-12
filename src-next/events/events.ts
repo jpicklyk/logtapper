@@ -1,4 +1,4 @@
-import type { AdbProcessorUpdate, AdbTrackerUpdate, SourceType } from '../bridge/types';
+import type { AdbExcludedProcessor, AdbProcessorUpdate, AdbTrackerUpdate, SourceType } from '../bridge/types';
 import type { EditorTabState, SplitNode } from '../hooks/workspace/workspaceTypes';
 
 /** Typed event map for the internal application event bus. */
@@ -90,6 +90,14 @@ export type AppEvents = {
   /** Forwarded from Tauri adb-tracker-update broadcast — triggers runCount bump
    *  and transition line refresh so dashboard/timeline update during streaming. */
   'pipeline:adb-tracker-update': AdbTrackerUpdate;
+  /** Forwarded from Channel<AdbStreamEvent> processorsExcluded — the complete
+   *  current set of processors a live stream's declared-`source_types` check
+   *  excludes. Targeted: `sessionId` names the streaming session: a consumer
+   *  showing a different session's dashboard must ignore it. Folded into
+   *  `PipelineContext.resultsBySession` (`adb:processors-excluded`) as
+   *  `PipelineRunSummary.skipped`, so it renders through the exact same
+   *  n/a row `ProcessorDashboard` already draws for a file-mode skip. */
+  'pipeline:adb-processors-excluded': { sessionId: string; excluded: AdbExcludedProcessor[] };
 
   // ── Layout / navigation ───────────────────────────────────────────────────
   /** `analysisArtifactId` is set when opening (or reusing) an `'analysis'`
