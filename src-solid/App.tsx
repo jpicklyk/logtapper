@@ -1,7 +1,7 @@
 /** @jsxImportSource solid-js */
 import { For, Show, createSignal, onCleanup } from 'solid-js';
 import { open } from '@tauri-apps/plugin-dialog';
-import { getLines, loadLogFile } from '@bridge/commands';
+import { getLines, loadLogFile, readTextFile } from '@bridge/commands';
 import {
   CacheManager,
   DataSourceRegistry,
@@ -12,6 +12,7 @@ import type { CacheDataSource } from './viewer';
 import { createStreamSession } from './viewer/createStreamSession';
 import { AppShell } from './shell';
 import type { SessionKind } from './shell';
+import { EditorTab } from './editor';
 import { BASE_THEMES } from './theme/applyTheme';
 import type { Density, ThemeController, ThemeMode } from './theme/applyTheme';
 import styles from './App.module.css';
@@ -66,6 +67,11 @@ export function App(props: AppProps) {
   const [tailMode, setTailMode] = createSignal(false);
   const [error, setError] = createSignal('');
   const [loading, setLoading] = createSignal(false);
+
+  // E1 demo: a text document open in the `details` region's editor tab. Separate
+  // from the log session above — opening a note does not touch the viewer.
+  const [editorPath, setEditorPath] = createSignal<string | null>(null);
+  const [editorContent, setEditorContent] = createSignal<string | null>(null);
 
   const disposeSource = () => {
     dataSource()?.dispose?.();
@@ -163,6 +169,29 @@ export function App(props: AppProps) {
     await openPath(selected).catch(() => undefined);
   };
 
+  /**
+   * Open a markdown/text document in the editor tab. `read_text_file` is the
+   * same `Ui`-only command the React editor tab uses; the dialog is the consent
+   * step, so no bridge route is involved.
+   */
+  const openInEditor = async () => {
+    const selected = await open({
+      multiple: false,
+      filters: [
+        { name: 'Text Files', extensions: ['md', 'markdown', 'txt', 'yaml', 'yml'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+    if (typeof selected !== 'string') return;
+    try {
+      const content = await readTextFile(selected);
+      setEditorPath(selected);
+      setEditorContent(content);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
   // ── Bench driver (?bench=1 only) ─────────────────────────────────────────
   // Mirrors what the UI does, minus the dialog, so scripts/bench.md can open
   // the fixture and start the fake-adb stream over CDP. Not part of the UI.
@@ -187,6 +216,9 @@ export function App(props: AppProps) {
     <>
       <button type="button" class={styles.openButton} onClick={openFile} disabled={loading()}>
         Open file…
+      </button>
+      <button type="button" class={styles.openButton} onClick={openInEditor}>
+        Open in editor…
       </button>
       <Show when={sourceName()}>
         <span class={styles.session}>
@@ -247,6 +279,19 @@ export function App(props: AppProps) {
                 tailMode={tailMode()}
               />
             )}
+          </Show>
+        ),
+      }}
+      regionSlots={{
+        // The editor tab is not a brief §4 surface, so it mounts through the
+        // region escape hatch S1 provides rather than through `slots`.
+        details: () => (
+          <Show when={editorContent() !== null}>
+            <EditorTab
+              filePath={editorPath()}
+              content={editorContent() ?? ''}
+              onFilePathChanged={setEditorPath}
+            />
           </Show>
         ),
       }}

@@ -4,7 +4,11 @@ import { cleanup, render, screen } from '@solidjs/testing-library';
 import { App } from './App';
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
-vi.mock('@bridge/commands', () => ({ getLines: vi.fn(), loadLogFile: vi.fn() }));
+vi.mock('@bridge/commands', () => ({
+  getLines: vi.fn(),
+  loadLogFile: vi.fn(),
+  readTextFile: vi.fn(),
+}));
 
 // vitest `globals` is off, so @solidjs/testing-library's auto-cleanup never
 // registers — unmount explicitly or renders stack up across tests.
