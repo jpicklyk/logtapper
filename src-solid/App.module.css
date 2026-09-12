@@ -29,34 +29,6 @@
   color: var(--danger);
 }
 
-.controls {
-  display: flex;
-  align-items: center;
-  gap: var(--ui-gap);
-  margin-left: auto;
-}
-
-.control {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--ui-gap) / 2);
-  color: var(--text-muted);
-}
-
-.select {
-  padding: 2px 4px;
-  color: var(--text);
-  font: inherit;
-  background: var(--surface-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-
-.select:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
-}
-
 .empty {
   display: flex;
   flex: 1;

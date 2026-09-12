@@ -1,5 +1,5 @@
 /** @jsxImportSource solid-js */
-import { For, Show, createMemo, createSignal, onCleanup } from 'solid-js';
+import { Show, createMemo, createSignal, onCleanup } from 'solid-js';
 import { open } from '@tauri-apps/plugin-dialog';
 import { readTextFile } from '@bridge/commands';
 import {
@@ -21,8 +21,9 @@ import { AnalysesPanel, createAnalysesStore } from './analyses';
 import { DeviceStatePanel, TimelineStrip, createDeviceStateStore } from './devicestate';
 import { BookmarksPanel, createBookmarksStore } from './bookmarks';
 import { Switcher, WorkspaceHome, createWorkspaceStore } from './workspace';
-import { BASE_THEMES } from './theme/applyTheme';
-import type { Density, ThemeController, ThemeMode } from './theme/applyTheme';
+import { ExportDialog, createExportStore } from './export';
+import { SettingsPanel, createSettingsStore } from './settings';
+import type { ThemeController } from './theme/applyTheme';
 import styles from './App.module.css';
 
 /**
@@ -39,9 +40,6 @@ const CACHE_BUDGET = 100_000;
 /** Fallback shell-layout key before the workspace store's `hydrate()` resolves
  *  an activeId (W1a/W1b own the real workspace list). */
 const WORKSPACE_ID = 'default';
-
-const THEME_MODES: readonly ThemeMode[] = ['system', ...BASE_THEMES];
-const DENSITIES: readonly Density[] = ['comfortable', 'compact'];
 
 export interface AppProps {
   /**
@@ -124,6 +122,17 @@ export function App(props: AppProps) {
   const deviceState = createDeviceStateStore({ sessions: store, controller, analyzers });
   onCleanup(() => deviceState.dispose());
 
+  // Export (W8) — session/processor counts and the `.lts` export run for
+  // the `export` rail surface.
+  const exportStore = createExportStore();
+  onCleanup(() => exportStore.dispose());
+
+  // Settings (W8) — General/PII/Themes/Sources tabs for the `settings` rail
+  // surface. Reuses A2's `presence.status` (`McpStatus`, already polled
+  // every 5s) instead of polling the bridge a second time.
+  const settings = createSettingsStore({ mcpStatus: presence.status });
+  onCleanup(() => settings.dispose());
+
   /** Who last ran this session's pipeline, from the presence journal — the
    *  analyzers surface has no journal access of its own (A2 owns that). */
   const lastRunCaller = (sessionId: string): CallerLike | null => {
@@ -202,32 +211,6 @@ export function App(props: AppProps) {
       </Show>
       <Show when={actions.error()}>
         <span class={styles.error}>{actions.error()}</span>
-      </Show>
-      <Show when={props.theme}>
-        {(theme) => (
-          <span class={styles.controls}>
-            <label class={styles.control}>
-              Theme
-              <select
-                class={styles.select}
-                value={theme().mode()}
-                onChange={(event) => theme().setMode(event.currentTarget.value as ThemeMode)}
-              >
-                <For each={THEME_MODES}>{(value) => <option value={value}>{value}</option>}</For>
-              </select>
-            </label>
-            <label class={styles.control}>
-              Density
-              <select
-                class={styles.select}
-                value={theme().density()}
-                onChange={(event) => theme().setDensity(event.currentTarget.value as Density)}
-              >
-                <For each={DENSITIES}>{(value) => <option value={value}>{value}</option>}</For>
-              </select>
-            </label>
-          </span>
-        )}
       </Show>
     </>
   );
@@ -320,6 +303,8 @@ export function App(props: AppProps) {
             )}
           </Show>
         ),
+        export: () => <ExportDialog store={exportStore} />,
+        settings: () => <SettingsPanel store={settings} theme={props.theme} />,
       }}
       regionSlots={{
         // The editor tab is not a brief §4 surface, so it mounts through the
