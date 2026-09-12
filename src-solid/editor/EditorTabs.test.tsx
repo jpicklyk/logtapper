@@ -34,7 +34,8 @@ beforeAll(() => {
 
 function makeWorkspace(): EditorWorkspacePort {
   const [pending] = createSignal<readonly LtwEditorTab[]>([]);
-  return { pendingEditorTabs: pending, takePendingEditorTabs: () => [], markMutated: vi.fn() };
+  const [activeId] = createSignal<string | null>('ws-1');
+  return { activeId, pendingEditorTabs: pending, takePendingEditorTabs: () => [], markMutated: vi.fn() };
 }
 
 afterEach(cleanup);
@@ -74,11 +75,8 @@ describe('EditorTabs', () => {
 
     saveDialog.mockResolvedValue('/tmp/draft.txt');
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
 
-    expect(writeTextFile).toHaveBeenCalledWith('/tmp/draft.txt', 'draft text');
+    await vi.waitFor(() => expect(writeTextFile).toHaveBeenCalledWith('/tmp/draft.txt', 'draft text'));
     expect(container.querySelector('[aria-label="Unsaved changes"]')).toBeFalsy();
   });
 
@@ -102,6 +100,22 @@ describe('EditorTabs', () => {
     fireEvent.keyDown(window, { key: 's', ctrlKey: true });
 
     expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it('renders an alert and keeps the dirty marker when Ctrl+S write rejects', async () => {
+    // The store has no path, so Ctrl+S goes through the save dialog first.
+    saveDialog.mockResolvedValue('/tmp/draft.txt');
+    writeTextFile.mockRejectedValueOnce(new Error('disk full'));
+    const store = createEditorStore({ workspace: makeWorkspace() });
+    const id = store.newDoc();
+    store.setContent(id, 'draft text');
+    const { container } = render(() => <EditorTabs store={store} />);
+
+    fireEvent.keyDown(window, { key: 's', ctrlKey: true });
+
+    await vi.waitFor(() => expect(screen.getByRole('alert').textContent).toContain('disk full'));
+    expect(container.querySelector('[aria-label="Unsaved changes"]')).toBeTruthy();
+    expect(store.isDirty(id)).toBe(true);
   });
 
   it('switching tabs swaps the displayed document', async () => {

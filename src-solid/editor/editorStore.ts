@@ -56,6 +56,11 @@ export type CloseOutcome = 'saved' | 'discarded' | 'cancelled';
 /** The slice of W1a's `WorkspaceStore` this store reads and drives. Structural
  *  on purpose — a test can pass a literal without building the real store. */
 export interface EditorWorkspacePort {
+  /** The active workspace id. Read reactively (never `untrack`) so a switch
+   *  can be detected and this store's docs torn down before the incoming
+   *  workspace's pending tabs are materialised — see the teardown effect
+   *  below. */
+  activeId: Accessor<string | null>;
   pendingEditorTabs: Accessor<readonly LtwEditorTab[]>;
   takePendingEditorTabs(): LtwEditorTab[];
   markMutated(): void;
@@ -169,6 +174,35 @@ export function createEditorStore(deps: EditorStoreDeps): EditorStore {
       notifyMutated();
     };
 
+    // ── workspace-switch teardown ──────────────────────────────────────────
+    //
+    // Editor docs are per-workspace. When the active workspace id changes —
+    // an explicit open, `switchWorkspace`, or `newWorkspace` — every doc left
+    // over from the outgoing workspace must be closed before the incoming
+    // workspace's pending tabs (if any) are materialised below, mirroring
+    // `workspaceStore.ts`'s own `closeAllSessions()` teardown-before-restore
+    // for session tabs. In the real app this ordering falls out naturally:
+    // `workspaceStore.ts` always updates `activeId` synchronously and only
+    // populates `pendingEditorTabs` later, after an `await` on the loaded
+    // `.ltw` — but this effect is declared first regardless, so the ordering
+    // holds even if a test (or a future caller) updates both in one tick.
+    //
+    // There is no app-wide dirty-tracking/autosave path for editor docs yet
+    // (out of W9's scope) — a dirty, unsaved doc still open when the
+    // workspace switches is silently dropped here, the same loss a browser
+    // tab close without saving would cause. `markMutated()` is deliberately
+    // NOT called for this teardown: it would mark the *incoming* workspace
+    // dirty purely because the outgoing one had open docs.
+    let lastWorkspaceId: string | null | undefined; // undefined: not yet observed
+    createEffect(() => {
+      const id = deps.workspace.activeId();
+      if (lastWorkspaceId !== undefined && id !== lastWorkspaceId) {
+        setTabs([]);
+        setActiveId(null);
+      }
+      lastWorkspaceId = id;
+    });
+
     createEffect(() => {
       const pending = deps.workspace.pendingEditorTabs();
       if (pending.length === 0) return;
@@ -222,14 +256,17 @@ export function createEditorStore(deps: EditorStoreDeps): EditorStore {
       notifyMutated();
     };
 
+    /** Resolves the destination path for a save with no explicit target: the
+     *  document's own path, or the chosen Save-As path. Resolves `null` when
+     *  the user cancels the native dialog — callers must treat that as
+     *  "nothing to do", never as a write failure. */
+    const resolveSavePath = async (doc: EditorDoc): Promise<string | null> =>
+      doc.filePath ?? (await chooseSavePath(doc.label));
+
     const save = async (id: string): Promise<void> => {
       const doc = findDoc(id);
       if (!doc) return;
-      if (doc.filePath) {
-        await commitSave(id, doc.filePath);
-        return;
-      }
-      const path = await chooseSavePath(doc.label);
+      const path = await resolveSavePath(doc);
       if (!path) return;
       await commitSave(id, path);
     };
@@ -260,7 +297,18 @@ export function createEditorStore(deps: EditorStoreDeps): EditorStore {
         notifyMutated();
         return 'discarded';
       }
-      await save(id);
+      // choice === 'save'. Resolve the destination ourselves (rather than
+      // delegating to `save(id)`) so a cancelled Save-As dialog is
+      // distinguishable from a completed write: `resolveSavePath` returning
+      // `null` means the user backed out of the dialog — refuse the close,
+      // keep the tab open and dirty, and discard nothing. A rejection from
+      // `commitSave` (the write itself failing) propagates out of `close()`
+      // for the same reason: it is never reached, so `removeTab` never runs
+      // and the caller's `.catch` can surface the error (see `EditorTabs.tsx`
+      // and `App.tsx`'s `closeTab`).
+      const path = await resolveSavePath(doc);
+      if (!path) return 'cancelled';
+      await commitSave(id, path);
       removeTab(id);
       notifyMutated();
       return 'saved';

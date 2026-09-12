@@ -15,13 +15,18 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ save: vi.fn() }));
 import { createEditorStore } from './editorStore';
 import type { ConfirmClose, EditorFileCommands, EditorStoreDeps, EditorWorkspacePort } from './editorStore';
 
-function makeWorkspace(initialPending: readonly LtwEditorTab[] = []): {
+function makeWorkspace(
+  initialPending: readonly LtwEditorTab[] = [],
+  initialActiveId: string | null = 'ws-1',
+): {
   port: EditorWorkspacePort;
   setPending: (tabs: readonly LtwEditorTab[]) => void;
+  setActiveId: (id: string | null) => void;
   markMutated: ReturnType<typeof vi.fn>;
   takeSpy: ReturnType<typeof vi.fn>;
 } {
   const [pending, setPending] = createSignal<readonly LtwEditorTab[]>(initialPending);
+  const [activeId, setActiveId] = createSignal<string | null>(initialActiveId);
   const markMutated = vi.fn();
   // A fake `takePendingEditorTabs`: reads-then-clears imperatively, exactly
   // like the real `workspaceStore.ts` implementation — not a reactive binding.
@@ -32,8 +37,9 @@ function makeWorkspace(initialPending: readonly LtwEditorTab[] = []): {
     return [...current];
   });
   return {
-    port: { pendingEditorTabs: pending, takePendingEditorTabs: takeSpy, markMutated },
+    port: { activeId, pendingEditorTabs: pending, takePendingEditorTabs: takeSpy, markMutated },
     setPending,
+    setActiveId,
     markMutated,
     takeSpy,
   };
@@ -226,6 +232,90 @@ describe('createEditorStore', () => {
       expect(outcome).toBe('saved');
       expect(commands.writeTextFile).toHaveBeenCalledWith('/chosen.md', 'unsaved');
       expect(store.tabs()).toHaveLength(0);
+    });
+
+    it('does not discard content when the Save As dialog is cancelled during a save-close', async () => {
+      const { store, commands } = makeStore({ chooseSavePath: vi.fn(() => Promise.resolve(null)) });
+      const id = store.newDoc();
+      store.setContent(id, 'important');
+
+      const outcome = await store.close(id, async () => 'save');
+
+      expect(outcome).toBe('cancelled');
+      expect(commands.writeTextFile).not.toHaveBeenCalled();
+      expect(store.tabs()).toHaveLength(1);
+      expect(store.isDirty(id)).toBe(true);
+    });
+
+    it('keeps the document open and dirty when the write rejects during a save-close', async () => {
+      const commands = makeCommands();
+      commands.writeTextFile.mockRejectedValueOnce(new Error('disk full'));
+      const { store } = makeStore({ commands, chooseSavePath: vi.fn(() => Promise.resolve('/chosen.md')) });
+      const id = store.newDoc();
+      store.setContent(id, 'unsaved');
+
+      await expect(store.close(id, async () => 'save')).rejects.toThrow('disk full');
+
+      expect(commands.writeTextFile).toHaveBeenCalledWith('/chosen.md', 'unsaved');
+      expect(store.tabs()).toHaveLength(1);
+      expect(store.isDirty(id)).toBe(true);
+    });
+  });
+
+  describe('workspace-switch teardown', () => {
+    it('closes the outgoing workspace docs before materialising the incoming one, with no duplicates', async () => {
+      const workspace = makeWorkspace([], 'ws-1');
+      const store = createEditorStore({ workspace: workspace.port, commands: makeCommands() });
+      await Promise.resolve();
+
+      const tabA: LtwEditorTab = { label: 'a.md', content: 'a', viewMode: 'editor', wordWrap: false, filePath: '/a.md' };
+      workspace.setPending([tabA]);
+      await Promise.resolve();
+      expect(store.tabs()).toHaveLength(1);
+
+      // Switch to a new workspace — its own pending tabs arrive afterwards,
+      // exactly like `workspaceStore.ts`'s `switchWorkspace` (activeId first,
+      // pendingEditorTabs later after the `.ltw` load resolves).
+      workspace.setActiveId('ws-2');
+      await Promise.resolve();
+      expect(store.tabs()).toHaveLength(0);
+
+      const tabB: LtwEditorTab = { label: 'b.md', content: 'b', viewMode: 'editor', wordWrap: false, filePath: '/b.md' };
+      const tabC: LtwEditorTab = { label: 'c.md', content: 'c', viewMode: 'editor', wordWrap: false, filePath: '/c.md' };
+      workspace.setPending([tabB, tabC]);
+      await Promise.resolve();
+
+      expect(store.tabs()).toHaveLength(2);
+      expect(store.tabs().map((t) => t.filePath)).toEqual(['/b.md', '/c.md']);
+    });
+
+    it('closes open docs on a switch that delivers no pending tabs', async () => {
+      const workspace = makeWorkspace([], 'ws-1');
+      const store = createEditorStore({ workspace: workspace.port, commands: makeCommands() });
+      await Promise.resolve();
+      store.newDoc();
+      expect(store.tabs()).toHaveLength(1);
+
+      workspace.setActiveId('ws-2');
+      await Promise.resolve();
+
+      expect(store.tabs()).toHaveLength(0);
+      expect(store.activeId()).toBeNull();
+    });
+
+    it('does not tear down docs when the workspace id has not changed', async () => {
+      const workspace = makeWorkspace([], 'ws-1');
+      const store = createEditorStore({ workspace: workspace.port, commands: makeCommands() });
+      await Promise.resolve();
+      const id = store.newDoc();
+
+      // Re-triggering the effect with the same id (e.g. an unrelated signal
+      // update elsewhere) must not clear anything.
+      workspace.setActiveId('ws-1');
+      await Promise.resolve();
+
+      expect(store.tabs()).toHaveLength(1);
+      expect(store.activeId()).toBe(id);
     });
   });
 });

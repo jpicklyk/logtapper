@@ -148,7 +148,12 @@ export function App(props: AppProps) {
       // eslint-disable-next-line solid/reactivity -- snapshot after close settles, by design (see above)
       void editorStore.close(key, confirmEditorClose).then(() => {
         if (activeSurface() === 'editor' && editorStore.activeId() === null) setActiveSurface('session');
-      });
+        // A cancelled Save-As dialog resolves (see `editorStore.close`'s own
+        // handling), so a rejection here is always a real write failure — the
+        // tab stayed open and dirty (close() never reached `removeTab`); this
+        // just keeps it from becoming an unhandled rejection and reuses the
+        // same `actions.reportError` plumbing `EditorTabs`'s `onError` uses.
+      }).catch((e: unknown) => actions.reportError(String(e)));
     } else {
       // A close the backend rejects has already dropped the tab; swallowing
       // keeps it out of the unhandled-rejection channel.
