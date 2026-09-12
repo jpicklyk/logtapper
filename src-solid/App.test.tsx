@@ -1,6 +1,6 @@
 /** @jsxImportSource solid-js */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@solidjs/testing-library';
+import { cleanup, fireEvent, render, screen } from '@solidjs/testing-library';
 import { App } from './App';
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
@@ -129,6 +129,14 @@ describe('App', () => {
   it('renders the open-file button', () => {
     render(() => <App />);
     expect(screen.getByRole('button', { name: /open file/i })).toBeTruthy();
+  });
+
+  it('reaches the editor surface from the top bar before any document exists', () => {
+    render(() => <App />);
+    expect(screen.queryByTestId('editor-tabs')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /new document/i }));
+    expect(screen.getByTestId('editor-tabs')).toBeTruthy();
+    expect(screen.queryByText(/no log open/i)).toBeNull();
   });
 
   it('shows the empty state until a file is opened', () => {

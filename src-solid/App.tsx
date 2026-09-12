@@ -1,5 +1,6 @@
 /** @jsxImportSource solid-js */
 import { Show, createMemo, createSignal, onCleanup } from 'solid-js';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import {
   CacheManager,
   DataSourceRegistry,
@@ -231,6 +232,28 @@ export function App(props: AppProps) {
 
   if (isBenchMode()) installBenchApp({ actions, store, cacheManager, registry });
 
+  const newDocument = (): void => {
+    editorStore.newDoc();
+    setActiveSurface('editor');
+  };
+
+  const openInEditor = async (): Promise<void> => {
+    const selected = await openDialog({
+      multiple: false,
+      filters: [
+        { name: 'Text Files', extensions: ['md', 'markdown', 'txt', 'yaml', 'yml'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+    if (typeof selected !== 'string') return;
+    try {
+      await editorStore.open(selected);
+      setActiveSurface('editor');
+    } catch (e) {
+      actions.reportError(String(e));
+    }
+  };
+
   const topBar = (
     <>
       <Switcher store={workspace} />
@@ -241,6 +264,16 @@ export function App(props: AppProps) {
         disabled={actions.busy()}
       >
         Open file…
+      </button>
+      {/* The editor's own toolbar only exists once a document is open, so the
+          first document has to be created from here (found by the phase 2b
+          parity smoke: with these on the editor toolbar alone, the editor was
+          unreachable). Both switch the viewer region to the editor surface. */}
+      <button type="button" class={styles.openButton} onClick={newDocument}>
+        New document
+      </button>
+      <button type="button" class={styles.openButton} onClick={() => void openInEditor()}>
+        Open in editor…
       </button>
       <Show when={store.focused()}>
         {(entry) => (
