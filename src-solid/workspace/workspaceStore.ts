@@ -426,8 +426,11 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
         persistMirror();
         return;
       }
-      const result = await loadWorkspaceV4(candidate).catch(() => null);
-      if (disposed || !result) return;
+      // A failed load propagates: the target is already active (matching the
+      // backend), its sessions are closed, and the caller shows the error —
+      // silently landing on an empty workspace hides a missing `.ltw`.
+      const result = await loadWorkspaceV4(candidate);
+      if (disposed) return;
       await applyRestore(planExplicitOpen(result.sessions), result.sessionData, result.layout, result.editorTabs);
     };
 
@@ -460,7 +463,10 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
         force: options.force ?? false,
       });
       setList((prev) => prev.filter((w) => w.id !== id));
-      if (activeId() === id) setActiveId(list()[0]?.id ?? null);
+      // A forced delete of the active workspace leaves the backend with no
+      // active id; mirror that rather than promoting an unrelated entry whose
+      // `.ltw` was never loaded (an autosave would then write into it).
+      if (activeId() === id) setActiveId(null);
     };
 
     // ── hydration ───────────────────────────────────────────────────────────

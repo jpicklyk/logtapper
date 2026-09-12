@@ -58,7 +58,15 @@ export function Switcher(props: SwitcherProps): JSX.Element {
   };
 
   return (
-    <div class={styles.switcher} data-testid="workspace-switcher">
+    <div
+      class={styles.switcher}
+      data-testid="workspace-switcher"
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape' || !open()) return;
+        event.stopPropagation();
+        close();
+      }}
+    >
       <button
         type="button"
         class={styles.trigger}

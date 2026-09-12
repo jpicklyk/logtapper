@@ -56,6 +56,15 @@ function openPanel(): ReturnType<typeof within> {
 }
 
 describe('Switcher', () => {
+  it('closes the dropdown on Escape', () => {
+    const store = fakeWorkspaceStore({ list: [ws('w1')], activeId: 'w1' });
+    render(() => <Switcher store={store} />);
+    openPanel();
+    expect(screen.queryByTestId('workspace-switcher-panel')).not.toBeNull();
+    fireEvent.keyDown(screen.getByTestId('workspace-switcher'), { key: 'Escape' });
+    expect(screen.queryByTestId('workspace-switcher-panel')).toBeNull();
+  });
+
   it('shows the active workspace name', () => {
     const store = fakeWorkspaceStore({ list: [ws('w1', { name: 'USB plugin' })], activeId: 'w1' });
     render(() => <Switcher store={store} />);

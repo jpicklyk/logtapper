@@ -395,6 +395,21 @@ describe('switchWorkspace', () => {
     expect(store.activeId()).toBe('b');
   });
 
+  it('surfaces a failed load after the switch has torn down the old sessions', async () => {
+    getAppStateMock.mockResolvedValue(
+      appState([entry('a', { ltwPath: 'C:/a.ltw' }), entry('b', { ltwPath: 'C:/missing.ltw' })], 'a'),
+    );
+    loadWorkspaceV4Mock.mockRejectedValue(new Error('NOT_FOUND: C:/missing.ltw'));
+    const fakes = makeFakes();
+    const store = build(fakes);
+    await store.hydrate();
+    await fakes.actions.openPath('a1.log');
+
+    await expect(store.switchWorkspace('b')).rejects.toThrow('NOT_FOUND');
+    expect(fakes.closed).toEqual(['sess-1']);
+    expect(store.activeId()).toBe('b');
+  });
+
   it('is a no-op for the already-active workspace', async () => {
     getAppStateMock.mockResolvedValue(appState([entry('a')], 'a'));
     const store = build(makeFakes());
@@ -425,7 +440,9 @@ describe('rename and delete', () => {
     await store.delete('a', { deleteFile: true, force: true });
     expect(deleteMock).toHaveBeenCalledWith({ workspaceId: 'a', deleteFile: true, force: true });
     expect(store.list().map((w) => w.id)).toEqual(['b']);
-    expect(store.activeId()).toBe('b');
+    // Mirrors the backend: a forced delete of the active workspace leaves no
+    // active id rather than promoting an unloaded neighbour.
+    expect(store.activeId()).toBeNull();
   });
 
   it('reconciles the list when workspace-list-changed reports a delete', async () => {
