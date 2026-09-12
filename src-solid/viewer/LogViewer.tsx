@@ -81,6 +81,21 @@ export function LogViewer(props: LogViewerProps) {
 
   const selection = new SelectionManager();
 
+  // ── Benchmark harness (?bench=1) ─────────────────────────────────────────
+  // Installed ahead of `createCacheBinding` so this effect runs before the
+  // scheduler's first fetch — `firstPaintedRowMs` then measures fetch-to-paint.
+  createEffect(() => {
+    if (!location.search.includes('bench=1')) return;
+    const bench = installBench({
+      label: 'solid',
+      getScrollEl: () => container ?? null,
+      getTotalLines: () => scrollCtl.liveTotalLines(),
+      rowHeight: () => rowHeight(),
+      isReady: () => container?.querySelector('[data-line]:not([data-skeleton])') != null,
+    });
+    if (props.sessionId != null) bench.markLinePage();
+  });
+
   const binding = createCacheBinding({
     dataSource,
     scrollTop,
@@ -139,22 +154,6 @@ export function LogViewer(props: LogViewerProps) {
     }
   });
 
-  // ── Benchmark harness (?bench=1) ─────────────────────────────────────────
-  // Same module the React viewer installs. Mirrors the React gate exactly:
-  // mark when the line at the virtual base has actually resolved (cacheVersion
-  // alone bumps at mount), and "ready" means a non-skeleton row is in the DOM.
-  createEffect(() => {
-    if (!location.search.includes('bench=1')) return;
-    const bench = installBench({
-      label: 'solid',
-      getScrollEl: () => container ?? null,
-      getTotalLines: () => scrollCtl.liveTotalLines(),
-      rowHeight: () => rowHeight(),
-      isReady: () => container?.querySelector('[data-line]:not([data-skeleton])') != null,
-    });
-    if (binding.cacheVersion() > 0 && dataSource().getLine(vb.virtualBase()) != null) bench.markLinePage();
-  });
-
   // ── Clear selection + cursor when the data source changes ────────────────
   createEffect(
     on(
@@ -168,6 +167,16 @@ export function LogViewer(props: LogViewerProps) {
   );
 
   // ── Tail-mode auto-scroll: at most one rAF write per frame ───────────────
+  // The frame does the append commit *and* the follow scroll, so the target is
+  // derived from the spacer geometry this component already owns
+  // (`renderCount × rowHeight`) instead of read back off the element:
+  // `el.scrollHeight` here is a forced synchronous layout of the tree the
+  // append just dirtied, and profiling a 60 s stream attributed 620 ms of
+  // main-thread time to that single read. An over-large `scrollTop` write is
+  // clamped by the browser, so no read is needed to stay pinned. Order matters:
+  // the `scrollTop` signal is published first so the rows move in the same
+  // frame, and the element write that follows pays for one layout covering
+  // both — rather than the scroll event driving a second render pass later.
   let rafId: number | null = null;
   onCleanup(() => {
     if (rafId != null) cancelAnimationFrame(rafId);
@@ -182,7 +191,9 @@ export function LogViewer(props: LogViewerProps) {
       rafId = requestAnimationFrame(() => {
         rafId = null;
         if (!scrollCtl.autoScrollRef.value) return;
-        el.scrollTop = el.scrollHeight;
+        const contentHeight = renderCount() * rowHeight();
+        setScrollTop(Math.max(0, contentHeight - viewportHeight()));
+        el.scrollTop = contentHeight;
       });
     }),
   );

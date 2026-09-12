@@ -112,15 +112,18 @@ export function createStreamSession(options: StreamSessionOptions): StreamSessio
     // populates the bounded ViewCacheHandle LRU before pushToSession fires
     // onAppend, so a listener reacting to onAppend can already read the new
     // lines via dataSource.getLine().
+    // The running-total status write joins the same batch: left outside it, a
+    // batch cost the render layer two reactive flushes (and two commits) per
+    // arriving payload instead of one.
     batch(() => {
       cacheManager.broadcastToSession(payload.sessionId, payload.lines);
       registry.pushToSession(payload.sessionId, payload.lines, payload.totalLines);
-    });
 
-    const prev = status();
-    if (prev.phase === 'streaming' && prev.sessionId === payload.sessionId) {
-      applyStatus({ ...prev, totalLines: payload.totalLines });
-    }
+      const prev = status();
+      if (prev.phase === 'streaming' && prev.sessionId === payload.sessionId) {
+        applyStatus({ ...prev, totalLines: payload.totalLines });
+      }
+    });
 
     // TODO(plan §filter UI phase): incremental filter-AST matching for lines
     // arriving after the create_filter snapshot — useFilterScan.appendMatches

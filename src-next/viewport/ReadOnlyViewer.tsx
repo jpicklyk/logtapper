@@ -146,14 +146,11 @@ export default function ReadOnlyViewer({
 
   const items = virtualizer.getVirtualItems();
 
-  // ── Fetch scheduler ──────────────────────────────────────────────────────
-  const { schedulerRef } = useFetchScheduler(
-    dataSource, virtualBase, items, liveTotalLines, bumpCacheVersion,
-  );
-
   // ── Benchmark harness (dev + ?bench=1 only) ──────────────────────────────
   // The only bench hook in src-next. installBench()/markLinePage() are both
-  // idempotent, so this may run on every render. See src-next/bench/harness.ts.
+  // idempotent, so this may run on every render. Declared ahead of
+  // useFetchScheduler so its effect runs before the scheduler's first request
+  // and `firstPaintedRowMs` measures fetch-to-paint. See src-next/bench/harness.ts.
   useEffect(() => {
     if (!import.meta.env.DEV || !location.search.includes('bench=1')) return;
     const bench = installBench({
@@ -165,8 +162,13 @@ export default function ReadOnlyViewer({
       // `[data-line]:not([data-skeleton])` without touching TextLine's markup.
       isReady: () => parentRef.current?.querySelector('[class*="msg"]') != null,
     });
-    if (dataSource.getLine(virtualBase) != null) bench.markLinePage();
+    if (dataSource.sourceId) bench.markLinePage();
   });
+
+  // ── Fetch scheduler ──────────────────────────────────────────────────────
+  const { schedulerRef } = useFetchScheduler(
+    dataSource, virtualBase, items, liveTotalLines, bumpCacheVersion,
+  );
 
   // ── Selection manager ────────────────────────────────────────────────────
   const {

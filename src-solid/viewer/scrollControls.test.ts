@@ -185,6 +185,29 @@ describe('ScrollControls', () => {
       dispose();
     });
 
+    it('does not touch layout on a scroll event it caused itself', () => {
+      // Tail mode scrolls the element on every batch. With auto-scroll on and
+      // the pointer up, neither branch of the handler can fire, so it must bail
+      // before reading `scrollHeight` — that read is a forced reflow on a tree
+      // the append just dirtied.
+      const { sc, el, dispose } = render({});
+      let reads = 0;
+      Object.defineProperty(el, 'scrollHeight', {
+        configurable: true,
+        get: () => { reads += 1; return 2000; },
+      });
+
+      scrollEvent(el);
+      expect(reads).toBe(0);
+      expect(sc.autoScroll()).toBe(true);
+
+      // …but a scroll while auto-scroll is off still consults the geometry.
+      sc.disableAutoScroll();
+      scrollEvent(el);
+      expect(reads).toBe(1);
+      dispose();
+    });
+
     it('scroll away without pointer down does NOT disable auto-scroll', () => {
       const { sc, el, dispose } = render({});
       setScrollGeometry(el, { scrollHeight: 2000, scrollTop: 500, clientHeight: 500 });

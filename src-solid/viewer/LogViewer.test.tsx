@@ -208,6 +208,106 @@ describe('LogViewer append invalidation', () => {
   });
 });
 
+// ── Tail-mode follow: one layout-free rAF write per frame ──────────────────
+
+describe('LogViewer tail-mode auto-scroll', () => {
+  let rafQueue: FrameRequestCallback[] = [];
+  let realRaf: typeof globalThis.requestAnimationFrame;
+  let realCancel: typeof globalThis.cancelAnimationFrame;
+
+  beforeEach(() => {
+    rafQueue = [];
+    realRaf = globalThis.requestAnimationFrame;
+    realCancel = globalThis.cancelAnimationFrame;
+    globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) =>
+      rafQueue.push(cb)) as unknown as typeof globalThis.requestAnimationFrame;
+    globalThis.cancelAnimationFrame = (() => {}) as unknown as typeof globalThis.cancelAnimationFrame;
+  });
+
+  afterEach(() => {
+    globalThis.requestAnimationFrame = realRaf;
+    globalThis.cancelAnimationFrame = realCancel;
+  });
+
+  /** Run everything queued for the next frame (callbacks may queue more). */
+  const flushFrame = () => {
+    const due = rafQueue;
+    rafQueue = [];
+    for (const cb of due) cb(0);
+  };
+
+  /** Count `scrollHeight` reads on every element until `restore()`. */
+  const countScrollHeightReads = () => {
+    const proto = HTMLElement.prototype;
+    const original = Object.getOwnPropertyDescriptor(proto, 'scrollHeight')!;
+    let reads = 0;
+    Object.defineProperty(proto, 'scrollHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        reads += 1;
+        return original.get!.call(this);
+      },
+    });
+    return {
+      reads: () => reads,
+      restore: () => Object.defineProperty(proto, 'scrollHeight', original),
+    };
+  };
+
+  const mountTailing = () => {
+    const src = makeSource(100);
+    const { container } = render(() => (
+      <LogViewer dataSource={src} totalLineCount={100} tailMode />
+    ));
+    flushFrame(); // the mount-time follow
+    return { src, container, el: grid(container) };
+  };
+
+  it('follows the tail without reading scrollHeight back off the element', () => {
+    const { src, container, el } = mountTailing();
+    const spy = countScrollHeightReads();
+    try {
+      src.fill(100, 200, 200);
+      expect(rafQueue).toHaveLength(1);
+      flushFrame();
+
+      // The target comes from the spacer geometry the component already owns,
+      // so the frame that commits the append performs no layout read.
+      expect(spy.reads()).toBe(0);
+      // jsdom does not clamp; the browser does. The write is deliberately the
+      // full content height so no `scrollHeight` read is needed to stay pinned.
+      expect(el.scrollTop).toBe(200 * ROW_H);
+    } finally {
+      spy.restore();
+    }
+
+    // The window moved to the tail inside the same frame — no scroll event
+    // round-trip was needed to update the rendered rows.
+    expect(lineNums(container)).toContain(199);
+    expect(lineNums(container)).not.toContain(0);
+  });
+
+  it('coalesces several appends in one frame into a single scroll write', () => {
+    const { src, el } = mountTailing();
+    src.fill(100, 200, 200);
+    src.fill(200, 300, 300);
+    src.fill(300, 400, 400);
+
+    // Three appends, one queued frame — and it targets the latest total.
+    expect(rafQueue).toHaveLength(1);
+    flushFrame();
+    expect(el.scrollTop).toBe(400 * ROW_H);
+    expect(rafQueue).toHaveLength(0);
+  });
+
+  it('schedules no follow frame once the user has scrolled away', () => {
+    const { src, el } = mountTailing();
+    fireEvent.wheel(el, { deltaY: -100 }); // disables auto-scroll
+    src.fill(100, 200, 200);
+    expect(rafQueue).toHaveLength(0);
+  });
+});
+
 // ── Keyboard ───────────────────────────────────────────────────────────────
 
 describe('LogViewer keyboard navigation', () => {

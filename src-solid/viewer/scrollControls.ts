@@ -148,6 +148,12 @@ export class ScrollControls {
     const onPointerUp = () => { this._pointerDown = false; };
 
     const onScroll = () => {
+      // Neither branch below can fire while auto-scroll is on and no pointer is
+      // down (the first needs `_pointerDown`, the second `!autoScrollRef`), so
+      // bail before touching layout: tail mode scrolls itself on every batch and
+      // `scrollHeight` is a forced reflow on a tree the append just dirtied.
+      if (this.autoScrollRef.value && !this._pointerDown) return;
+
       const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_THRESHOLD;
 
       // Scrollbar drags produce no wheel/keyboard events — pointer state is the
