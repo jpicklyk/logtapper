@@ -4,16 +4,22 @@ import type { SearchQuery, SearchSummary, SearchProgress } from '../bridge/types
 import { searchLogs } from '../bridge/commands';
 import { onSearchProgress } from '../bridge/events';
 import { useActionsContext } from './ActionsContext';
+import {
+  EMPTY_PANE_SEARCH_STATE,
+  startSearch,
+  applySearchProgress,
+  applySearchSummary,
+  computeJumpTarget,
+  type PaneSearchState,
+} from './paneSearchReducer';
+
+// Re-exported for existing external type-only imports (barrel + callers keep
+// importing `PaneSearchState` from this module, not the internal reducer file).
+export type { PaneSearchState };
 
 // ---------------------------------------------------------------------------
 // Value types — split so action consumers never re-render on query changes
 // ---------------------------------------------------------------------------
-
-export interface PaneSearchState {
-  search: SearchQuery | null;
-  searchSummary: SearchSummary | null;
-  currentMatchIndex: number;
-}
 
 export interface PaneSearchActions {
   /** Run a search against this pane's session, or clear it with null. */
@@ -27,11 +33,7 @@ export interface PaneSearchActions {
   setEffectiveLineNums: (lineNums: number[] | null) => void;
 }
 
-const EMPTY_STATE: PaneSearchState = {
-  search: null,
-  searchSummary: null,
-  currentMatchIndex: 0,
-};
+const EMPTY_STATE: PaneSearchState = EMPTY_PANE_SEARCH_STATE;
 
 const NOOP_ACTIONS: PaneSearchActions = {
   setSearch: () => {},
@@ -96,7 +98,7 @@ export function PaneSearchProvider({ paneId, sessionId, children }: Props) {
     progressUnlistenRef.current?.();
     progressUnlistenRef.current = null;
 
-    setState({ search: query, searchSummary: null, currentMatchIndex: 0 });
+    setState(startSearch(query));
 
     if (!sid || !query) return;
 
@@ -111,15 +113,7 @@ export function PaneSearchProvider({ paneId, sessionId, children }: Props) {
       if (payload.newMatches.length > 0) {
         accumulated.push(...payload.newMatches);
         const snapshot = [...accumulated];
-        setState((prev) => ({
-          ...prev,
-          searchSummary: {
-            totalMatches: payload.matchedSoFar,
-            matchLineNums: snapshot,
-            byLevel: prev.searchSummary?.byLevel ?? {},
-            byTag: prev.searchSummary?.byTag ?? {},
-          },
-        }));
+        setState((prev) => applySearchProgress(prev, payload.matchedSoFar, snapshot));
         if (!jumpedToFirst) {
           jumpedToFirst = true;
           jumpToLineRef.current(snapshot[0], paneIdRef.current ?? undefined);
@@ -140,7 +134,7 @@ export function PaneSearchProvider({ paneId, sessionId, children }: Props) {
     searchLogs(sid, query)
       .then((summary) => {
         if (seq !== searchSeqRef.current) return;
-        setState((prev) => ({ ...prev, searchSummary: summary, currentMatchIndex: 0 }));
+        setState((prev) => applySearchSummary(prev, summary));
         if (summary.matchLineNums.length > 0 && !jumpedToFirst) {
           jumpToLineRef.current(summary.matchLineNums[0], paneIdRef.current ?? undefined);
         }
@@ -193,25 +187,17 @@ export function PaneSearchProvider({ paneId, sessionId, children }: Props) {
     // committed state) BEFORE touching setState, so jumpToLine is called exactly
     // once at the top level rather than inside the setState updater — StrictMode
     // double-invokes updaters, which would fire the scroll side effect twice.
+    // The actual computation (filtering matches to this pane's effective lines,
+    // wrapping the index) is pure and lives in `computeJumpTarget`.
     const prev = stateRef.current;
-    const summary = prev.searchSummary;
-    if (!summary || summary.matchLineNums.length === 0) return;
+    const target = computeJumpTarget(prev, direction, effectiveLineNumsRef.current);
+    if (!target) return;
 
-    // Scope matches to this pane's visible lines (stream filter ∩ section
-    // filter). Null means no filter is active and every match is navigable.
-    const effective = effectiveLineNumsRef.current;
-    const matches = effective
-      ? summary.matchLineNums.filter((ln) => binaryIncludes(effective, ln))
-      : summary.matchLineNums;
-
-    if (matches.length === 0) return;
-
-    const next = (prev.currentMatchIndex + direction + matches.length) % matches.length;
-    jumpToLineRef.current(matches[next], paneIdRef.current ?? undefined);
+    jumpToLineRef.current(target.lineNum, paneIdRef.current ?? undefined);
 
     // Pure updater — only applies the pre-computed index, and only if state
     // hasn't moved on since we read it above (defensive bail against a race).
-    setState((p) => (p === prev ? { ...p, currentMatchIndex: next } : p));
+    setState((p) => (p === prev ? { ...p, currentMatchIndex: target.nextIndex } : p));
   }, []);
 
   const actions = useMemo<PaneSearchActions>(
@@ -226,19 +212,6 @@ export function PaneSearchProvider({ paneId, sessionId, children }: Props) {
       </PaneSearchActionsCtx.Provider>
     </PaneSearchStateCtx.Provider>
   );
-}
-
-/** Binary search over a sorted ascending array. O(log n). */
-function binaryIncludes(sorted: number[], target: number): boolean {
-  let lo = 0;
-  let hi = sorted.length - 1;
-  while (lo <= hi) {
-    const mid = (lo + hi) >>> 1;
-    if (sorted[mid] === target) return true;
-    if (sorted[mid] < target) lo = mid + 1;
-    else hi = mid - 1;
-  }
-  return false;
 }
 
 // ---------------------------------------------------------------------------
