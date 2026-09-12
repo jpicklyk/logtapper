@@ -137,6 +137,12 @@ export interface WorkspaceStore {
   /** Run a save now if the workspace is dirty and has an active id. */
   autoSave(): Promise<void>;
   switchWorkspace(id: string): Promise<void>;
+  /**
+   * Close everything and start a fresh, unsaved workspace — the "New
+   * workspace" action. No `.ltw` is written; the new entry becomes active and
+   * the list change is persisted like any other (W1b).
+   */
+  newWorkspace(): Promise<void>;
   rename(id: string, name: string): Promise<void>;
   delete(id: string, options?: { deleteFile?: boolean; force?: boolean }): Promise<void>;
 
@@ -425,6 +431,20 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       await applyRestore(planExplicitOpen(result.sessions), result.sessionData, result.layout, result.editorTabs);
     };
 
+    const newWorkspace = async (): Promise<void> => {
+      cancelPending();
+      // Same teardown-before-switch bracket as `switchWorkspace`: arm the
+      // backend's suppression window before anything closes, so a flush in
+      // flight can't write the outgoing workspace's shell into the new one.
+      await beginWorkspaceSwitch().catch(() => undefined);
+      await closeAllSessions();
+      const fresh = createEmptyWorkspace();
+      setList((prev) => [...prev, fresh]);
+      setActiveId(fresh.id);
+      persistAppState();
+      persistMirror();
+    };
+
     const rename = async (id: string, name: string): Promise<void> => {
       const entry = await renameWorkspace({ workspaceId: id, newName: name });
       patch(id, { name: entry.name });
@@ -516,6 +536,7 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       saveWorkspace,
       autoSave,
       switchWorkspace,
+      newWorkspace,
       rename,
       delete: remove,
       dispose() {

@@ -20,6 +20,7 @@ import type { CallerLike } from './ui';
 import { AnalysesPanel, createAnalysesStore } from './analyses';
 import { DeviceStatePanel, TimelineStrip, createDeviceStateStore } from './devicestate';
 import { BookmarksPanel, createBookmarksStore } from './bookmarks';
+import { Switcher, WorkspaceHome, createWorkspaceStore } from './workspace';
 import { BASE_THEMES } from './theme/applyTheme';
 import type { Density, ThemeController, ThemeMode } from './theme/applyTheme';
 import styles from './App.module.css';
@@ -35,7 +36,8 @@ import styles from './App.module.css';
 
 const CACHE_BUDGET = 100_000;
 
-/** Workspaces are a W1a surface; until then every session shares one id. */
+/** Fallback shell-layout key before the workspace store's `hydrate()` resolves
+ *  an activeId (W1a/W1b own the real workspace list). */
 const WORKSPACE_ID = 'default';
 
 const THEME_MODES: readonly ThemeMode[] = ['system', ...BASE_THEMES];
@@ -85,6 +87,17 @@ export function App(props: AppProps) {
   // session store, same as sections/analyses above.
   const bookmarks = createBookmarksStore({ sessions: store, controller });
   onCleanup(() => bookmarks.dispose());
+
+  // Workspace home + switcher (W1b) — the workspace list, open/save/switch,
+  // rename/delete over B3's wrappers. `store`/`actions` already satisfy the
+  // structural `WorkspaceSessions`/`WorkspaceSessionActions` deps, so no
+  // adapter is needed. `shellLayout` is not wired yet — that needs a port out
+  // of `shell/Splitter.ts`, which is outside this file's scope (see W1a's own
+  // "Ask for W1b" in its implementation notes); until then a save/restore
+  // round-trips only React's layout keys, never Solid's own pane widths.
+  const workspace = createWorkspaceStore({ sessions: store, actions });
+  onCleanup(() => workspace.dispose());
+  void workspace.hydrate().then(() => workspace.startupRestore());
 
   // Agent presence (A2). An agent's navigation request routes through the
   // controller, which focuses the right session and jumps the pane.
@@ -164,6 +177,7 @@ export function App(props: AppProps) {
 
   const topBar = (
     <>
+      <Switcher store={workspace} />
       <button
         type="button"
         class={styles.openButton}
@@ -220,10 +234,11 @@ export function App(props: AppProps) {
 
   return (
     <AppShell
-      workspaceId={WORKSPACE_ID}
+      workspaceId={workspace.activeId() ?? WORKSPACE_ID}
       sessionKind={store.focused()?.kind ?? null}
       topBar={topBar}
       slots={{
+        'workspace-home': () => <WorkspaceHome store={workspace} sessions={store} actions={actions} />,
         presence: () => <PresencePanel store={presence} />,
         sections: () => (
           <SectionsPanel

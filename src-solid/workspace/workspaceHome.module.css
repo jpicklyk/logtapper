@@ -1,0 +1,310 @@
+.home {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: 100%;
+  padding: 14px;
+  overflow-y: auto;
+  color: var(--text);
+  font-family: var(--font-ui);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.headerTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.activeName {
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dirtyDot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--p-radius-full);
+  background: var(--warning);
+  flex: 0 0 auto;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.actionButton {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--p-radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text);
+  font: 500 12px var(--font-ui);
+  cursor: pointer;
+}
+
+.actionButton:hover {
+  background: var(--surface-overlay);
+}
+
+.viewToggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--p-radius-md);
+  overflow: hidden;
+}
+
+.viewButton {
+  height: 28px;
+  padding: 0 10px;
+  border: none;
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font: 500 12px var(--font-ui);
+  cursor: pointer;
+}
+
+.viewButtonActive {
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+
+.error {
+  padding: 8px 10px;
+  border-radius: var(--p-radius-sm);
+  border: 1px solid var(--danger);
+  background: var(--danger-muted);
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sectionLabel {
+  margin: 0;
+  font: 600 11px var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.empty {
+  padding: 10px 12px;
+  border-radius: var(--p-radius-md);
+  border: 1px dashed var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.inlineLink {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: var(--p-radius-lg);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  cursor: pointer;
+}
+
+.card:hover {
+  background: var(--surface-overlay);
+}
+
+.cardActive {
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cardName {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.renameInput {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--p-radius-xs);
+  background: var(--surface-input);
+  color: var(--text);
+  padding: 0 6px;
+  font: inherit;
+}
+
+.activeBadge {
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--p-radius-full);
+  background: var(--accent-base);
+  color: var(--text-on-accent);
+  font-size: 11px;
+  line-height: 18px;
+  flex: 0 0 auto;
+}
+
+.cardPath {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dimmed);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cardMeta {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.cardActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.iconButton {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--p-radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-input);
+  color: var(--text-subtle);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.iconButton:hover {
+  color: var(--text);
+}
+
+.dangerButton {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--p-radius-sm);
+  border: 1px solid var(--danger);
+  background: var(--danger-muted);
+  color: var(--danger);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.deleteFileLabel {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.sessionList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sessionRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: var(--p-radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+  font-size: 12px;
+}
+
+.sessionRowFocused {
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
+}
+
+.sessionName {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sessionKind {
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-size: 10px;
+}
+
+.sessionLines {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.focusedMarker {
+  height: 16px;
+  padding: 0 6px;
+  border-radius: var(--p-radius-full);
+  background: var(--accent-base);
+  color: var(--text-on-accent);
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.sessionActions {
+  display: flex;
+  gap: 6px;
+}
