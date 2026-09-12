@@ -17,6 +17,23 @@ export interface SettingsStoreDeps {
   /** A2's bridge-status accessor (`presenceStore.status`) — read-only here. */
   mcpStatus: Accessor<McpStatus | null>;
   commands?: Partial<SettingsCommands>; // injected for tests; defaults to the real bridge commands
+  /** Where the shared `logtapper_settings` preference blob lives; defaults to `localStorage`. */
+  storage?: Pick<Storage, 'getItem' | 'setItem'>;
+}
+
+/** React's persisted settings blob (`src-next/hooks/useSettings.ts` `STORAGE_KEY`). Solid reads
+ *  and writes only `mcpBridgeEnabled` in it, read-modify-write, so the two UIs agree on whether
+ *  the bridge auto-starts and neither drops the other's keys. */
+export const SHARED_SETTINGS_KEY = 'logtapper_settings';
+
+function readSharedSettings(storage: Pick<Storage, 'getItem'> | undefined): Record<string, unknown> {
+  try {
+    const raw = storage?.getItem(SHARED_SETTINGS_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
 }
 export interface SettingsStore {
   mcpStatus: Accessor<McpStatus | null>; mcpBridgePending: Accessor<boolean>; setMcpBridgeEnabled(enabled: boolean): Promise<void>;
@@ -39,6 +56,14 @@ export interface SettingsStore {
 export function createSettingsStore(deps: SettingsStoreDeps): SettingsStore {
   const c: SettingsCommands = { ...cmds, ...deps.commands };
   const mcpStatus = deps.mcpStatus;
+  const storage = deps.storage ?? (typeof localStorage === 'undefined' ? undefined : localStorage);
+  const persistBridgePreference = (enabled: boolean): void => {
+    try {
+      storage?.setItem(SHARED_SETTINGS_KEY, JSON.stringify({ ...readSharedSettings(storage), mcpBridgeEnabled: enabled }));
+    } catch {
+      // a full or unavailable storage must never fail the toggle itself
+    }
+  };
   return createRoot((disposeRoot) => {
     const [mcpBridgePending, setMcpBridgePending] = createSignal(false);
     const [agentRawAccessPending, setAgentRawAccessPending] = createSignal(false);
@@ -65,8 +90,14 @@ export function createSettingsStore(deps: SettingsStoreDeps): SettingsStore {
     const setMcpBridgeEnabled = (enabled: boolean): Promise<void> => {
       setMcpBridgePending(true);
       return mutate(enabled ? c.startMcpBridge() : c.stopMcpBridge())
+        .then(() => persistBridgePreference(enabled))
         .finally(() => { if (!disposed) setMcpBridgePending(false); });
     };
+    // Same launch behaviour as the React shell (`useAppShellSetup.ts`): the bridge starts on
+    // its own when the saved preference says so, so an agent finds it without a manual toggle.
+    if (readSharedSettings(storage).mcpBridgeEnabled === true) {
+      c.startMcpBridge().catch(fail);
+    }
     const setAgentRawAccess = (enabled: boolean): Promise<void> => {
       setAgentRawAccessPending(true);
       return mutate(c.setAgentRawAccess(enabled))

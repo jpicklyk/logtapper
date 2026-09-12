@@ -6,7 +6,51 @@ function noStatus() {
   const [status] = createSignal<McpStatus | null>(null);
   return status;
 }
+function memoryStorage(initial: Record<string, string> = {}): Pick<Storage, 'getItem' | 'setItem'> & { data: Record<string, string> } {
+  const data = { ...initial };
+  return { data, getItem: (k) => data[k] ?? null, setItem: (k, v) => { data[k] = v; } };
+}
+
 describe('settingsStore', () => {
+  it('auto-starts the MCP bridge at construction when the shared preference is on', () => {
+    const startMcpBridge = vi.fn(() => Promise.resolve());
+    const storage = memoryStorage({ logtapper_settings: JSON.stringify({ mcpBridgeEnabled: true, density: 'compact' }) });
+    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { startMcpBridge }, storage });
+    expect(startMcpBridge).toHaveBeenCalledTimes(1);
+    store.dispose();
+  });
+
+  it('leaves the bridge alone at construction when the preference is off, absent, or malformed', () => {
+    for (const raw of [JSON.stringify({ mcpBridgeEnabled: false }), undefined, '{not json', '[]']) {
+      const startMcpBridge = vi.fn(() => Promise.resolve());
+      const storage = memoryStorage(raw === undefined ? {} : { logtapper_settings: raw });
+      const store = createSettingsStore({ mcpStatus: noStatus(), commands: { startMcpBridge }, storage });
+      expect(startMcpBridge).not.toHaveBeenCalled();
+      store.dispose();
+    }
+  });
+
+  it('persists the bridge toggle into the shared settings blob without dropping other keys', async () => {
+    const startMcpBridge = vi.fn(() => Promise.resolve());
+    const stopMcpBridge = vi.fn(() => Promise.resolve());
+    const storage = memoryStorage({ logtapper_settings: JSON.stringify({ density: 'compact', exportAnonymize: true }) });
+    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { startMcpBridge, stopMcpBridge }, storage });
+    await store.setMcpBridgeEnabled(true);
+    expect(JSON.parse(storage.data.logtapper_settings!)).toEqual({ density: 'compact', exportAnonymize: true, mcpBridgeEnabled: true });
+    await store.setMcpBridgeEnabled(false);
+    expect(JSON.parse(storage.data.logtapper_settings!).mcpBridgeEnabled).toBe(false);
+    store.dispose();
+  });
+
+  it('does not persist the preference when the bridge command rejects', async () => {
+    const startMcpBridge = vi.fn(() => Promise.reject(new Error('port in use')));
+    const storage = memoryStorage();
+    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { startMcpBridge }, storage });
+    await expect(store.setMcpBridgeEnabled(true)).rejects.toThrow('port in use');
+    expect(storage.data.logtapper_settings).toBeUndefined();
+    store.dispose();
+  });
+
   it('testAnonymizer round-trip: the call succeeds and its result is stored', async () => {
     const result: AnonymizerTestResult = {
       anonymized: 'user <EMAIL-1> logged in',
