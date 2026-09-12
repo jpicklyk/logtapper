@@ -90,6 +90,19 @@ function navRequest(id: number, overrides: Partial<NavRequest> = {}): NavRequest
 
 beforeEach(() => localStorage.clear());
 
+describe('<PresencePanel> — orb stage', () => {
+  it('renders the orb on a dedicated stage at the bottom of the expanded panel, not in the header', () => {
+    const { container } = render(() => <PresencePanel store={fakeStore().store} />);
+    const stage = container.querySelector('[data-testid="agent-stage"]');
+    expect(stage).toBeTruthy();
+    expect(stage!.querySelector('[class*="orb"]')).toBeTruthy();
+    expect(container.querySelector('header [class*="orb"]')).toBeNull();
+    // The stage is the panel's last block, so it sits at the pane's bottom edge.
+    const panel = container.querySelector('section[aria-label="Agent presence"]')!;
+    expect(panel.lastElementChild).toBe(stage);
+  });
+});
+
 describe('<PresencePanel> — orb state', () => {
   it('renders the idle orb when connected and quiet', () => {
     const { store } = fakeStore();

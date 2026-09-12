@@ -20,9 +20,11 @@ import styles from './presence.module.css';
 /** localStorage key for the collapsed/expanded choice. */
 export const COLLAPSED_STORAGE_KEY = 'logtapper-presence-collapsed';
 
-/** Orb diameter in the collapsed pill and in the expanded header (brief §5 / the canvas board). */
+/** Orb diameter in the collapsed pill (brief §5 / the canvas board). */
 const PILL_ORB_SIZE = 20;
-const HEADER_ORB_SIZE = 48;
+/** Orb diameter on the stage at the bottom of the expanded panel — the animation is the
+ *  point of the surface, so it gets a dedicated block rather than a header icon. */
+const STAGE_ORB_SIZE = 200;
 
 /** Orb state → the words next to it. */
 const STATE_TEXT: Readonly<Record<AgentOrbState, string>> = {
@@ -114,7 +116,6 @@ export function PresencePanel(props: PresencePanelProps): JSX.Element {
         }
       >
         <header class={styles.header}>
-          <Orb state={state()} size={HEADER_ORB_SIZE} title={`${clientName()}: ${stateText()}`} />
           <span class={styles.headerNames}>
             <span class={styles.headerClient}>{clientName()}</span>
             <span class={styles.headerState}>{stateText()}</span>
@@ -213,6 +214,14 @@ export function PresencePanel(props: PresencePanelProps): JSX.Element {
 
         <div class={styles.consentPlaceholder} data-testid="consent-placeholder">
           Consent requests appear here
+        </div>
+
+        <div class={styles.stage} data-testid="agent-stage">
+          <Orb state={state()} size={STAGE_ORB_SIZE} title={`${clientName()}: ${stateText()}`} />
+          <span class={styles.stageCaption}>
+            <span class={styles.stageClient}>{clientName()}</span>
+            <span class={styles.stageState}>{stateText()}</span>
+          </span>
         </div>
       </Show>
     </section>
