@@ -1048,14 +1048,21 @@ mod tests {
         let app_state_path = dir.path().join("app-state.json");
         save_app_state(&app_state_path, &AppStateFile::default()).unwrap();
 
-        // Pre-populate KEEP older .ltw files so the flush's own write pushes the
-        // count to KEEP+1 and eviction trims back to KEEP.
+        // Pre-populate KEEP older .ltw files, UUID-shaped like every real
+        // auto-save id (`crypto.randomUUID()` on the frontend) so
+        // `evict_old_workspaces`'s id-pattern gate treats them as eviction
+        // candidates at all — a plain `old-N.ltw` name would be indistinguishable
+        // from a user-chosen filename and never get evicted, silently turning
+        // this into a no-op test.
         for i in 0..EVICT_KEEP {
-            std::fs::write(ws_dir.join(format!("old-{i}.ltw")), b"x").unwrap();
+            std::fs::write(ws_dir.join(format!("00000000-0000-4000-8000-{i:012x}.ltw")), b"x").unwrap();
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
 
-        let env = envelope("fresh", None);
+        // The flush's own destination must also be UUID-shaped, matching a
+        // real `workspace_id` — an arbitrary id like "fresh" would likewise be
+        // invisible to eviction and could never be confirmed to "survive" it.
+        let env = envelope("11111111-1111-4111-8111-111111111111", None);
         let dest = flush_dest(&env, &ws_dir);
         let ltw_lock = Mutex::new(());
         let as_lock = Mutex::new(());

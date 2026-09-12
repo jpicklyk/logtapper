@@ -587,6 +587,25 @@ fn detect_source_type_with_encoding(data: &[u8], encoding: Encoding) -> SourceTy
         return SourceType::Logcat;
     }
 
+    // A contiguous run of DETECTION_RUN_THRESHOLD-or-more consecutive lines
+    // matching one format's signature decides source type outright. This is
+    // what a whole-sample majority vote cannot do: a real device capture that
+    // opens with an unambiguous, contiguous block of logcat lines and later
+    // embeds a much larger dmesg dump (more total kernel-format lines than
+    // logcat-format lines across the sample) must still be detected as
+    // Logcat, because the actual capture format is decided by the first
+    // recognizable block, not by whichever format happens to have more raw
+    // line count once an unrelated dump is folded into the same sample.
+    // Falls back to the whole-sample majority vote below only when no run
+    // that long exists anywhere in the sample — e.g. a vendor preamble (no
+    // log-shaped content at all, so no run of either format ever forms) or a
+    // short/ambiguous sample that never reaches the threshold either way.
+    match find_dominant_format_run(text) {
+        Some(LineFormat::Kernel) => return SourceType::Kernel,
+        Some(LineFormat::Logcat) => return SourceType::Logcat,
+        None => {}
+    }
+
     // Count format signatures across the sample and let the dominant one win.
     // First-match-wins misclassified any file whose head is vendor preamble
     // rather than log lines: the logcat fallthrough at the bottom claimed them
@@ -607,6 +626,74 @@ fn detect_source_type_with_encoding(data: &[u8], encoding: Encoding) -> SourceTy
     }
 
     SourceType::Logcat
+}
+
+/// Which line-format signature a sampled line matched, for run tracking in
+/// [`find_dominant_format_run`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LineFormat {
+    Logcat,
+    Kernel,
+}
+
+/// How many consecutive matching lines decide source type outright in
+/// [`find_dominant_format_run`], before falling back to a whole-sample
+/// majority vote.
+///
+/// Chosen to be comfortably larger than any incidental run of
+/// false-signature lines a non-log block can produce (a table of decimal
+/// figures or a stack trace occasionally lining up with the kernel
+/// bracket-timestamp shape for a handful of lines is plausible; sustaining
+/// that for 50 lines in a row is not), while staying far smaller than any
+/// real log block — logcat and kernel lines are timestamped one per line, so
+/// a genuine capture reaches this many consecutive matches within its first
+/// few dozen lines, well before the sample window or an embedded dump of the
+/// other format ever gets a chance to compete on total count.
+const DETECTION_RUN_THRESHOLD: usize = 50;
+
+/// Scan the sample top to bottom and return the format of the first
+/// contiguous run of at least [`DETECTION_RUN_THRESHOLD`] consecutive lines
+/// that all match the same format's signature — or `None` if no such run
+/// exists anywhere in the sample.
+///
+/// A buffer-switch divider line (`starts_with("-----")`, e.g.
+/// `--------- switch to main ---------`) is neutral: it neither extends nor
+/// breaks a run, matching how [`count_format_signatures`] already treats it
+/// as noise rather than as a competing signature. Any other line that
+/// matches neither format breaks the run outright — this is a *contiguous*
+/// run by design, not "mostly one format with gaps".
+fn find_dominant_format_run(sample: &str) -> Option<LineFormat> {
+    let mut current: Option<LineFormat> = None;
+    let mut run_len: usize = 0;
+    for line in sample.lines() {
+        if line.starts_with("-----") {
+            continue;
+        }
+        let format = if is_threadtime_line(line) {
+            Some(LineFormat::Logcat)
+        } else if is_kernel_timestamp_line(line) {
+            Some(LineFormat::Kernel)
+        } else {
+            None
+        };
+
+        match format {
+            Some(f) if current == Some(f) => run_len += 1,
+            Some(f) => {
+                current = Some(f);
+                run_len = 1;
+            }
+            None => {
+                current = None;
+                run_len = 0;
+            }
+        }
+
+        if run_len >= DETECTION_RUN_THRESHOLD {
+            return current;
+        }
+    }
+    None
 }
 
 /// Count sampled lines that look like logcat-threadtime versus kernel
@@ -1113,6 +1200,54 @@ mod tests {
             detect_source_type_from_slice(s.as_bytes()),
             SourceType::Kernel,
             "kernel content behind a vendor preamble must not fall through to Logcat"
+        );
+    }
+
+    /// A contiguous run of 500 threadtime logcat lines (no `--------- beginning
+    /// of` buffer marker, so the earlier direct-substring check never fires)
+    /// followed by 4000 dmesg lines must still detect as Logcat: the sample's
+    /// *first* recognizable block is logcat, even though the embedded dmesg
+    /// dump outnumbers it many times over on raw line count. This is exactly
+    /// the "mixed bundle" case a whole-sample majority vote gets backwards.
+    #[test]
+    fn mixed_logcat_then_larger_dmesg_dump_detects_as_logcat() {
+        let mut s = String::new();
+        for i in 0..500 {
+            s.push_str(&format!(
+                "07-14 02:48:{:02}.629  1000  2452  3606 I EthernetTracker: iface eth0 line {i}\n",
+                i % 60
+            ));
+        }
+        for i in 0..4000 {
+            s.push_str(&format!("[{i:>8}.381122] pmon: embedded dmesg dump line {i}\n"));
+        }
+        assert_eq!(
+            detect_source_type_from_slice(s.as_bytes()),
+            SourceType::Logcat,
+            "the first contiguous run (500 logcat lines) must decide, not the \
+             larger total count of embedded dmesg lines"
+        );
+    }
+
+    /// A short (~3 KB) vendor preamble with no log-shaped content, followed by
+    /// dmesg lines, must still detect as Kernel under run-based detection —
+    /// the preamble never forms a run of either format, so detection falls
+    /// through to (and finds) the first qualifying run, which is the dmesg
+    /// block. Preserves the 9660765 goal at a smaller scale than the existing
+    /// long-preamble fixtures.
+    #[test]
+    fn short_vendor_preamble_then_dmesg_detects_as_kernel() {
+        let mut s = String::new();
+        while s.len() < 3072 {
+            s.push_str("!@Boot: stage some vendor boot-stat line with no timestamp shape\n");
+        }
+        for i in 0..80 {
+            s.push_str(&format!("[{i:>6}.000000] dmesg line {i}\n"));
+        }
+        assert_eq!(
+            detect_source_type_from_slice(s.as_bytes()),
+            SourceType::Kernel,
+            "a short vendor preamble must not prevent the dmesg run behind it from deciding"
         );
     }
 
