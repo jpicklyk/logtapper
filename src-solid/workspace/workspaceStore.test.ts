@@ -293,6 +293,34 @@ describe('saveWorkspace', () => {
     expect(state.workspaces[0]!.dirty).toBe(false);
   });
 
+  it("keeps React's layout keys after a startup restore that trusted the mirror", async () => {
+    // The mirror holds tabs, so the .ltw view state is NOT applied on startup;
+    // the loaded blob must still be the base of the next save.
+    getAppStateMock.mockResolvedValue(appState([entry('a', { ltwPath: 'C:/a.ltw' })], 'a'));
+    loadWorkspaceV4Mock.mockResolvedValue(ltw({
+      sessions: [manifestSession('a.log')], sessionData: [emptySessionData()],
+      layout: { leftPaneWidth: 260, centerTree: { type: 'leaf' }, bottomPaneTab: 'timeline' },
+    }));
+    const fakes = makeFakes();
+    fakes.store[SOLID_MIRROR_KEY] = JSON.stringify({
+      activeWorkspaceId: 'a', tabPaths: ['a.log'], activeTabPath: 'a.log',
+    });
+    const current: SolidLayout = { columns: {}, collapsed: [], tabs: ['a.log'], activeTab: 'a.log' };
+    const store = build(fakes, { shellLayout: { read: () => current, apply: () => undefined } });
+    await store.hydrate();
+    await store.startupRestore();
+
+    await store.saveWorkspace();
+
+    const options = saveWorkspaceV4Mock.mock.calls[0]![0] as Record<string, unknown>;
+    expect(options.layout).toEqual({
+      leftPaneWidth: 260,
+      centerTree: { type: 'leaf' },
+      bottomPaneTab: 'timeline',
+      solid: { v: 1, ...current },
+    });
+  });
+
   it('auto-saves to the app-data dir when the workspace has no path', async () => {
     const store = build(makeFakes());
     await store.hydrate();

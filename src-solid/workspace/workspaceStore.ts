@@ -343,8 +343,12 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       try {
         const outcome = await runRestorePlan(plan, sessionData, { openPath: openPathIds });
         setWarnings(outcome.warnings);
+        // Remember the loaded blob on EVERY restore, not only when its view
+        // state is applied: a startup restore that trusts the local mirror
+        // skips the apply, and a later save must still read-modify-write the
+        // file's blob or React's keys are dropped (phase 2b smoke finding).
+        if (layout !== undefined) lastLayoutBlob = layout ?? null;
         if (plan.applyLtwViewState) {
-          lastLayoutBlob = layout ?? null;
           const solid = readSolidLayout(layout);
           if (solid) deps.shellLayout?.apply(solid);
           // Editor tabs are W9's surface — hand them over rather than
