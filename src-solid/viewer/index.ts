@@ -30,6 +30,17 @@ export type { Selection, ClickModifiers, BoxPointerEvent } from './selection';
 export { createCacheBinding, OVERSCAN } from './cacheBinding';
 export type { CacheBinding, CacheBindingOptions, VisibleRange } from './cacheBinding';
 
+export { createViewerController, intersectSorted, DEFAULT_PANE_ID, DEFAULT_VIEW_MODE } from './controller';
+export type {
+  ViewerController,
+  ViewerControllerDeps,
+  PaneHandle,
+  LineSetKey,
+  NavSource,
+  CursorPosition,
+  ScrollToLineOptions,
+} from './controller';
+
 // ── Reused unchanged from src-next/ (framework-free) ──────────────────────
 export { FetchScheduler } from '@viewport/FetchScheduler';
 export type { FetchRange, FetchSchedulerConfig, FetchCallback } from '@viewport/FetchScheduler';
@@ -56,5 +67,5 @@ export type { LogViewerProps } from './LogViewer';
 export { Row } from './Row';
 export type { RowProps } from './Row';
 
-export { HighlightedText, segments, segmentClass } from './HighlightedText';
+export { HighlightedText, segments, segmentClass, mergeHighlights } from './HighlightedText';
 export type { Segment } from './HighlightedText';

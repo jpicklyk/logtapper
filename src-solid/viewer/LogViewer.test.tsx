@@ -1,9 +1,12 @@
 /** @jsxImportSource solid-js */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render } from '@solidjs/testing-library';
+import { createSignal } from 'solid-js';
+import type { HighlightSpan } from '@bridge/generated/HighlightSpan';
 import type { ViewLine } from '@bridge/generated/ViewLine';
 import type { DataSource } from '@viewport/DataSource';
 import { LogViewer } from './LogViewer';
+import { createViewerController, DEFAULT_PANE_ID } from './controller';
 
 vi.mock('@viewport/copyText', () => ({
   buildCopyText: vi.fn(() => 'COPIED'),
@@ -412,5 +415,108 @@ describe('LogViewer copy', () => {
 
     const [selection] = vi.mocked(buildCopyText).mock.calls[0];
     expect([...selection.selected].sort((a, b) => a - b)).toEqual([2, 3, 4, 5]);
+  });
+});
+
+// ── Viewer controller (W0a) ────────────────────────────────────────────────
+
+describe('LogViewer + ViewerController', () => {
+  const SID = 'session-a';
+
+  it('attaches a pane on mount and detaches it on unmount', () => {
+    const controller = createViewerController({ focusSession: vi.fn() });
+    const src = makeSource(100);
+    const { unmount, container } = render(() => (
+      <LogViewer dataSource={src} totalLineCount={100} sessionId={SID} controller={controller} />
+    ));
+
+    // A controller jump reaches the mounted pane.
+    controller.scrollToLine(SID, 60);
+    expect(grid(container).scrollTop).toBeGreaterThan(0);
+
+    unmount();
+    // After unmount the handle is gone — the jump only records the cursor.
+    expect(() => controller.scrollToLine(SID, 10)).not.toThrow();
+    expect(controller.cursor()).toMatchObject({ sessionId: SID, line: 10 });
+    controller.dispose();
+  });
+
+  it('binds its session to its pane, and rebinds when the session changes', () => {
+    const controller = createViewerController({ focusSession: vi.fn() });
+    const src = makeSource(100);
+    const [sid, setSid] = createSignal(SID);
+    render(() => (
+      <LogViewer
+        dataSource={src}
+        totalLineCount={100}
+        sessionId={sid()}
+        paneId="side"
+        controller={controller}
+      />
+    ));
+
+    expect(controller.paneForSession(SID)).toBe('side');
+
+    setSid('session-b');
+    expect(controller.paneForSession('session-b')).toBe('side');
+    // The old session no longer claims the pane.
+    expect(controller.paneForSession(SID)).toBe(DEFAULT_PANE_ID);
+    controller.dispose();
+  });
+
+  it('routes a controller jump with a selection through the pane handle', () => {
+    const controller = createViewerController({ focusSession: vi.fn() });
+    const src = makeSource(100);
+    render(() => (
+      <LogViewer dataSource={src} totalLineCount={100} sessionId={SID} controller={controller} />
+    ));
+
+    controller.scrollToLine(SID, 4, { select: [4, 6] });
+    fireEvent.keyDown(window, { key: 'c', ctrlKey: true });
+
+    const [selection] = vi.mocked(buildCopyText).mock.calls[0];
+    expect([...selection.selected].sort((a, b) => a - b)).toEqual([4, 5, 6]);
+    controller.dispose();
+  });
+
+  it('reports its own cursor to the controller and onCursorChange', () => {
+    const controller = createViewerController({ focusSession: vi.fn() });
+    const onCursorChange = vi.fn();
+    const src = makeSource(100);
+    const { container } = render(() => (
+      <LogViewer
+        dataSource={src}
+        totalLineCount={100}
+        sessionId={SID}
+        controller={controller}
+        onCursorChange={onCursorChange}
+      />
+    ));
+
+    const at = (n: number) =>
+      rows(container).find((r) => r.getAttribute('data-line') === String(n))!;
+    fireEvent.click(at(7));
+
+    expect(controller.cursor()).toEqual({ sessionId: SID, line: 7 });
+    expect(onCursorChange).toHaveBeenCalledWith(7);
+    controller.dispose();
+  });
+
+  it('renders controller highlights over the line spans', () => {
+    const controller = createViewerController({ focusSession: vi.fn() });
+    controller.setHighlights(
+      SID,
+      new Map([[2, [{ start: 0, end: 4, kind: { type: 'Search' } } as HighlightSpan]]]),
+    );
+    const src = makeSource(20);
+    const { container } = render(() => (
+      <LogViewer dataSource={src} totalLineCount={20} sessionId={SID} controller={controller} />
+    ));
+
+    const at = (n: number) =>
+      rows(container).find((r) => r.getAttribute('data-line') === String(n))!;
+    expect(at(2).querySelector('mark')?.textContent).toBe('line');
+    expect(at(3).querySelector('mark')).toBeNull();
+    controller.dispose();
   });
 });

@@ -4,6 +4,8 @@ import type { JSX } from 'solid-js';
 import type { DataSource } from '@viewport/DataSource';
 import { buildCopyText, writeClipboard } from '@viewport/copyText';
 import { createCacheBinding, OVERSCAN } from './cacheBinding';
+import { DEFAULT_PANE_ID } from './controller';
+import type { ViewerController } from './controller';
 import { createVirtualBase, DEFAULT_ROW_HEIGHT } from './virtualBase';
 import { ScrollControls } from './scrollControls';
 import { SelectionManager } from './selection';
@@ -50,6 +52,16 @@ export interface LogViewerProps {
   rowHeight?: number;
   /** Notified after a row is clicked (read-only — selection lives in the viewer). */
   onLineClick?: (lineNum: number) => void;
+  /**
+   * The app's `ViewerController`. When supplied, the viewer registers itself as
+   * a pane, binds `sessionId` to it, resets its cache on `revision()` bumps and
+   * reports its cursor back. Optional so tests can mount a bare viewer.
+   */
+  controller?: ViewerController;
+  /** Which pane this viewer is. Defaults to the controller's `'main'`. */
+  paneId?: string;
+  /** Notified whenever the viewer's own cursor moves. */
+  onCursorChange?: (line: number) => void;
   class?: string;
 }
 
@@ -103,6 +115,12 @@ export function LogViewer(props: LogViewerProps) {
     rowHeight,
     virtualBase: vb.virtualBase,
     liveTotalLines: scrollCtl.liveTotalLines,
+    // A line set / view mode / highlight change remaps what this source renders
+    // without moving its `sourceId`, so the binding needs the same reset.
+    revision: () => {
+      const sid = props.sessionId;
+      return sid != null ? (props.controller?.revision(sid) ?? 0) : 0;
+    },
   });
 
   // ── Window maths ─────────────────────────────────────────────────────────
@@ -240,6 +258,61 @@ export function LogViewer(props: LogViewerProps) {
       binding.forceFetch();
     }),
   );
+
+  // ── Viewer controller (W0a) ──────────────────────────────────────────────
+  // The pane handle is this component's imperative surface: the controller is
+  // the only thing allowed to drive it, and it is detached on unmount so a late
+  // `scrollToLine` cannot reach a disposed viewer.
+  const paneId = () => props.paneId ?? DEFAULT_PANE_ID;
+
+  onMount(() => {
+    const controller = props.controller;
+    if (!controller) return;
+    onCleanup(
+      controller.attachPane(paneId(), {
+        jumpToLine,
+        focus: () => container?.focus(),
+        setSelection: (range) => {
+          if (!range) {
+            selection.clear();
+            return;
+          }
+          // Reuse the click path rather than adding a second range writer:
+          // anchor on `start`, then shift-extend to `end`.
+          const [start, end] = range;
+          selection.handleLineClick(start, { shiftKey: false, ctrlKey: false, metaKey: false });
+          if (end !== start) {
+            selection.handleLineClick(end, { shiftKey: true, ctrlKey: false, metaKey: false });
+          }
+        },
+      }),
+    );
+  });
+
+  createEffect(
+    on(
+      () => props.sessionId,
+      (sessionId) => {
+        if (sessionId != null) props.controller?.bindSession(sessionId, paneId());
+      },
+    ),
+  );
+
+  // Report the viewer's own cursor (click, arrow keys) back to the controller.
+  createEffect(
+    on(cursorLine, (line) => {
+      if (line == null) return;
+      const sid = props.sessionId;
+      if (sid != null) props.controller?.setCursor(sid, line);
+      props.onCursorChange?.(line);
+    }),
+  );
+
+  /** Controller highlight overlay for the session on screen. */
+  const controllerHighlights = createMemo(() => {
+    const sid = props.sessionId;
+    return sid != null ? (props.controller?.highlights(sid) ?? null) : null;
+  });
 
   // ── Keyboard navigation ──────────────────────────────────────────────────
   const moveCursor = (target: number, shiftKey: boolean) => {
@@ -383,6 +456,7 @@ export function LogViewer(props: LogViewerProps) {
                 rowHeight={rowHeight()}
                 cacheVersion={binding.cacheVersion()}
                 dataSource={props.dataSource}
+                controllerHighlights={controllerHighlights()}
                 selected={
                   selection.selection.mode !== 'box' &&
                   selection.selection.selected.has(vb.virtualBase() + relIndex())

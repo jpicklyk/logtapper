@@ -33,6 +33,13 @@ export interface CacheBindingOptions {
   virtualBase: Accessor<number>;
   /** Total lines including streaming appends. Defaults to `dataSource().totalLines`. */
   liveTotalLines?: Accessor<number>;
+  /**
+   * View revision from `ViewerController.revision(sessionId)`. A bump means the
+   * *contents* of the current source changed without its `sourceId` moving (a
+   * new line set, view mode or highlight map), and is handled exactly like a
+   * source swap. The initial value is ignored — only changes reset.
+   */
+  revision?: Accessor<number>;
   /** Rows of overscan; default {@link OVERSCAN}. */
   overscan?: number;
   /** Inject a scheduler (tests); otherwise one is constructed and owned here. */
@@ -115,6 +122,27 @@ export function createCacheBinding(options: CacheBindingOptions): CacheBinding {
       },
     ),
   );
+
+  // ── Reset on a view revision bump ────────────────────────────────────────
+  // Same reset as above — the rendered index space may have been remapped under
+  // a stable `sourceId` — plus an immediate forceFetch, because nothing else
+  // moves the scroll geometry afterwards to trigger one.
+  const revision = options.revision;
+  if (revision) {
+    createEffect(
+      on(
+        revision,
+        () => {
+          fetchGen++;
+          fetchInFlight = false;
+          initialFetchDone = false;
+          bumpCacheVersion();
+          if (!disposed) scheduler.forceFetch();
+        },
+        { defer: true },
+      ),
+    );
+  }
 
   // ── Bind the onFetch callback ────────────────────────────────────────────
   createEffect(

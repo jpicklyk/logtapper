@@ -53,6 +53,23 @@ export function segments(text: string, highlights: HighlightSpan[]): Segment[] {
   return out;
 }
 
+/**
+ * Merge controller-supplied spans over the ones the backend put on the line.
+ *
+ * Controller spans win: any backend span that overlaps one is dropped rather
+ * than stacked, so a search hit re-kinded by the controller renders with the
+ * controller's kind alone. Non-overlapping backend spans survive. The result is
+ * ascending by `start`, which is what `segments` walks.
+ */
+export function mergeHighlights(
+  base: readonly HighlightSpan[],
+  override: readonly HighlightSpan[],
+): HighlightSpan[] {
+  if (override.length === 0) return base.slice();
+  const kept = base.filter((b) => !override.some((o) => o.start < b.end && b.start < o.end));
+  return [...kept, ...override].sort((a, b) => a.start - b.start || a.end - b.end);
+}
+
 const KIND_CLASS: Record<HighlightKind['type'], string> = {
   Search: styles.hlSearch,
   SearchActive: styles.hlSearchActive,

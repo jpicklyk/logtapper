@@ -7,6 +7,7 @@ import {
   DataSourceRegistry,
   LogViewer,
   createCacheDataSource,
+  createViewerController,
 } from './viewer';
 import type { CacheDataSource } from './viewer';
 import { createStreamSession } from './viewer/createStreamSession';
@@ -81,14 +82,31 @@ export function App(props: AppProps) {
   };
   onCleanup(disposeSource);
 
+  // ── Viewer controller (W0a) ──────────────────────────────────────────────
+  // One per app, owning its own root. `focusSession` is a stub until W0b brings
+  // the session store; with a single pane the session is always already here.
+  const controller = createViewerController({ focusSession: () => {} });
+  onCleanup(() => controller.dispose());
+
   // ── Agent presence (A2) ──────────────────────────────────────────────────
-  // One store per app. Applying a navigation target cannot scroll the viewer
-  // yet: `LogViewer` (P3) exposes no scroll-to-line prop or imperative handle,
-  // so a target for the open session is recorded and shown rather than
-  // applied. Switching to a *different* session is a 2b surface anyway.
+  // One store per app. A navigation target is still shown in the top bar, but
+  // it now also goes through the controller, which routes it to the pane.
   const [navTarget, setNavTarget] = createSignal<NavTarget | null>(null);
-  const presence = createPresenceStore({ navigate: setNavTarget });
+  const presence = createPresenceStore({
+    navigate: (target) => {
+      setNavTarget(target);
+      if (target.line !== undefined) {
+        controller.scrollToLine(target.sessionId, target.line, { source: 'agent' });
+      }
+    },
+  });
   onCleanup(() => presence.dispose());
+
+  /** Rows the viewer should size its spacer for: the line set's, when one is set. */
+  const renderedLineCount = () => {
+    const id = sessionId();
+    return (id ? controller.lineNumbers(id)?.length : undefined) ?? totalLines();
+  };
 
   const navTargetText = () => {
     const target = navTarget();
@@ -120,6 +138,9 @@ export function App(props: AppProps) {
           processorId: null,
           search: null,
         }),
+      // The controller owns the rendered index space; `undefined` (no line set)
+      // means "render every line", which is the state until W2/W3 set one.
+      getLineNumbers: () => controller.lineNumbers(id),
       registry,
     });
     ds.updateTotalLines(total);
@@ -300,9 +321,10 @@ export function App(props: AppProps) {
             {(ds) => (
               <LogViewer
                 dataSource={ds()}
-                totalLineCount={totalLines()}
+                totalLineCount={renderedLineCount()}
                 sessionId={sessionId() ?? undefined}
                 tailMode={tailMode()}
+                controller={controller}
               />
             )}
           </Show>

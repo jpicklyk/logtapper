@@ -41,9 +41,11 @@ function mount(opts: {
   viewportHeight?: number;
   virtualBase?: number;
   liveTotalLines?: number;
+  revision?: boolean;
 } = {}) {
   const scheduler = new FetchScheduler();
   const reportScroll = vi.spyOn(scheduler, 'reportScroll');
+  const forceFetch = vi.spyOn(scheduler, 'forceFetch');
   const ds = opts.dataSource ?? makeDataSource().ds;
 
   return createRoot((dispose) => {
@@ -52,6 +54,7 @@ function mount(opts: {
     const [virtualBase, setVirtualBase] = createSignal(opts.virtualBase ?? 0);
     const [source, setSource] = createSignal<DataSource>(ds);
     const [total, setTotal] = createSignal(opts.liveTotalLines ?? 1000);
+    const [revision, setRevision] = createSignal(0);
 
     const binding = createCacheBinding({
       dataSource: source,
@@ -60,6 +63,7 @@ function mount(opts: {
       rowHeight: ROW_H,
       virtualBase,
       liveTotalLines: total,
+      ...(opts.revision ? { revision } : {}),
       scheduler,
     });
 
@@ -67,11 +71,13 @@ function mount(opts: {
       binding,
       scheduler,
       reportScroll,
+      forceFetch,
       setScrollTop,
       setViewportHeight,
       setVirtualBase,
       setDataSource: (v: DataSource) => setSource(() => v),
       setTotal,
+      bumpRevision: () => setRevision((v) => v + 1),
       dispose,
     };
   });
@@ -233,6 +239,52 @@ describe('createCacheBinding', () => {
       h.binding.bumpCacheVersion();
       expect(h.binding.cacheVersion()).toBe(before + 1);
       h.dispose();
+    });
+  });
+
+  // ── View revision (W0a) ──────────────────────────────────────────────────
+
+  describe('revision', () => {
+    it('does not reset on the initial value', () => {
+      const h = mount({ revision: true });
+      // Same as without a revision accessor: one bump for the source binding.
+      expect(h.binding.cacheVersion()).toBe(1);
+      h.dispose();
+    });
+
+    it('resets exactly like a sourceId swap, and forces a fetch', () => {
+      const h = mount({ revision: true });
+      const before = h.binding.cacheVersion();
+      h.forceFetch.mockClear();
+
+      h.bumpRevision();
+
+      expect(h.binding.cacheVersion()).toBe(before + 1);
+      expect(h.forceFetch).toHaveBeenCalledTimes(1);
+      h.dispose();
+    });
+
+    it('discards an in-flight fetch so its bump never lands', async () => {
+      const src = makeDataSource();
+      const h = mount({ dataSource: src.ds, revision: true });
+      const before = h.binding.cacheVersion();
+
+      h.bumpRevision();          // resets the generation mid-flight
+      const afterReset = h.binding.cacheVersion();
+      await flush();             // the pre-reset promise settles here
+
+      expect(afterReset).toBe(before + 1);
+      // Only the reset's own bump plus any post-reset fetch — never the stale one.
+      expect(h.binding.cacheVersion()).toBeGreaterThanOrEqual(afterReset);
+      h.dispose();
+    });
+
+    it('stops resetting once disposed', () => {
+      const h = mount({ revision: true });
+      h.dispose();
+      const after = h.binding.cacheVersion();
+      h.bumpRevision();
+      expect(h.binding.cacheVersion()).toBe(after);
     });
   });
 

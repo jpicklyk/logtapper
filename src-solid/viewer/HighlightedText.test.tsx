@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { render } from '@solidjs/testing-library';
 import type { HighlightSpan } from '@bridge/generated/HighlightSpan';
-import { HighlightedText, segments } from './HighlightedText';
+import { HighlightedText, mergeHighlights, segments } from './HighlightedText';
 
 const span = (start: number, end: number, kind: HighlightSpan['kind']): HighlightSpan =>
   ({ start, end, kind });
@@ -84,5 +84,27 @@ describe('<HighlightedText>', () => {
     expect([...marks].map((m) => m.textContent)).toEqual(['bc', 'de', 'fg']);
     expect(marks[1].className.split(' ').filter(Boolean)).toHaveLength(2);
     expect(container.textContent).toBe('abcdefgh');
+  });
+});
+
+describe('mergeHighlights', () => {
+  it('returns a copy of the base spans when there is no override', () => {
+    const base = [span(0, 2, search)];
+    const out = mergeHighlights(base, []);
+    expect(out).toEqual(base);
+    expect(out).not.toBe(base);
+  });
+
+  it('drops base spans that overlap an override and keeps the rest, ascending', () => {
+    const out = mergeHighlights(
+      [span(0, 3, search), span(6, 9, search)],
+      [span(2, 5, pii)],
+    );
+    expect(out).toEqual([span(2, 5, pii), span(6, 9, search)]);
+  });
+
+  it('keeps a base span that only abuts an override', () => {
+    const out = mergeHighlights([span(0, 3, search)], [span(3, 6, pii)]);
+    expect(out).toEqual([span(0, 3, search), span(3, 6, pii)]);
   });
 });

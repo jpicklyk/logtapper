@@ -1,9 +1,10 @@
 /** @jsxImportSource solid-js */
 import { Show, createMemo } from 'solid-js';
 import type { JSX } from 'solid-js';
+import type { HighlightSpan } from '@bridge/generated/HighlightSpan';
 import type { LogLevel } from '@bridge/generated/LogLevel';
 import type { DataSource } from '@viewport/DataSource';
-import { HighlightedText } from './HighlightedText';
+import { HighlightedText, mergeHighlights } from './HighlightedText';
 import styles from './LogViewer.module.css';
 
 /**
@@ -35,6 +36,11 @@ export interface RowProps {
   /** Invalidation counter from `createCacheBinding`. */
   cacheVersion: number;
   dataSource: DataSource;
+  /**
+   * `ViewerController.highlights(sessionId)` for the session on screen. Spans
+   * found here for this line win over the ones the backend put on `ViewLine`.
+   */
+  controllerHighlights?: Map<number, HighlightSpan[]> | null;
   selected: boolean;
   /** The keyboard cursor's row. */
   active: boolean;
@@ -47,6 +53,13 @@ export function Row(props: RowProps) {
   const line = createMemo(() => {
     void props.cacheVersion; // invalidation dependency
     return props.dataSource.getLine(lineNum());
+  });
+
+  const highlights = createMemo<HighlightSpan[]>(() => {
+    const l = line();
+    if (!l) return [];
+    const extra = props.controllerHighlights?.get(lineNum());
+    return extra ? mergeHighlights(l.highlights, extra) : l.highlights;
   });
 
   const style = (): JSX.CSSProperties =>
@@ -69,7 +82,7 @@ export function Row(props: RowProps) {
           <>
             <span class={styles.level}>{LEVEL_LETTER[l().level] ?? ' '}</span>
             <span class={styles.msg}>
-              <HighlightedText text={l().raw} highlights={l().highlights} />
+              <HighlightedText text={l().raw} highlights={highlights()} />
             </span>
           </>
         )}
