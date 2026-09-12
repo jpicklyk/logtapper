@@ -292,7 +292,11 @@ describe('createBookmarksStore', () => {
       const b = bookmark('b1', { lineNumber: 41, label: 'Boot complete' });
       listen.emit(updateEvent('created', b));
       const expected = exportBookmarksAsMarkdown([b], { sourceName: 'app.log', totalLines: 100 });
-      expect(store.exportMarkdown('s1')).toBe(expected);
+      // Both renders stamp `**Exported:**` with the wall clock; under a loaded
+      // full-suite run they can land a millisecond apart, so compare without it.
+      const withoutExportedAt = (md: string): string => md.replace(/^\*\*Exported:\*\* .*$/m, '');
+      expect(withoutExportedAt(store.exportMarkdown('s1'))).toBe(withoutExportedAt(expected));
+      expect(store.exportMarkdown('s1')).toMatch(/^\*\*Exported:\*\* \d{4}-\d{2}-\d{2}T/m);
     });
   });
 
