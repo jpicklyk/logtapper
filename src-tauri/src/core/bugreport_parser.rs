@@ -72,18 +72,34 @@ fn duration_name_re() -> &'static Regex {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Strip a trailing ` (...)` annotation from a section title.
+///
+/// Most dumpstate section titles are plain (`CPU INFO`), but file-dump
+/// sections append the source path (`MEMORY INFO (/proc/meminfo)`) and some
+/// command sections bake a parenthesised note directly into their title
+/// (`KERNEL LOG (dmesg)`). The duration footer for the *latter* kind quotes
+/// the title verbatim, parens included (`'KERNEL LOG (dmesg)'`), while the
+/// footer for the former kind quotes just the bare title (`'MEMORY INFO'`).
+/// Stripping this annotation identically from both the header name and the
+/// footer name — see [`duration_name_re`]'s caller — is what lets
+/// `build_section_index` match a start header to its duration footer by
+/// name; without it, a title like `KERNEL LOG (dmesg)` never matches its own
+/// footer and the whole section silently disappears from the index.
+fn strip_source_annotation(name: &str) -> String {
+    if let Some(idx) = name.rfind(" (") {
+        name[..idx].trim().to_string()
+    } else {
+        name.to_string()
+    }
+}
+
 /// Extract the human-readable section name from a `------` start line.
 ///
 /// `------ MEMORY INFO (/proc/meminfo) ------` → `"MEMORY INFO"`
 /// `------ CPU INFO ------`                    → `"CPU INFO"`
 fn extract_section_name(raw: &str) -> String {
     let inner = raw.trim_start_matches('-').trim_end_matches('-').trim();
-    // Strip trailing ` (source/path)` annotation if present.
-    if let Some(idx) = inner.rfind(" (") {
-        inner[..idx].trim().to_string()
-    } else {
-        inner.to_string()
-    }
+    strip_source_annotation(inner)
 }
 
 /// Nanosecond offset between Jan 1 of `from_year` and Jan 1 of `to_year`.
@@ -230,11 +246,13 @@ impl BugreportParser {
         // `------` lines — section headers and duration footers.
         if raw.starts_with("------") {
             let (tag, level) = if raw.contains("was the duration of") {
-                // Duration footer: extract name from single-quotes.
+                // Duration footer: extract name from single-quotes, then strip
+                // the same ` (...)` annotation `extract_section_name` strips
+                // from the matching start header — see `strip_source_annotation`.
                 let name = duration_name_re()
                     .captures(raw)
                     .and_then(|c| c.get(1))
-                    .map(|m| m.as_str().to_string())
+                    .map(|m| strip_source_annotation(m.as_str()))
                     .unwrap_or_default();
                 (name, LogLevel::Verbose)
             } else {
@@ -350,6 +368,44 @@ mod tests {
             .unwrap();
         assert_eq!(m.tag, "MEMORY INFO");
         assert_eq!(m.level, LogLevel::Verbose);
+    }
+
+    /// Regression test: a section whose title itself contains a parenthesised
+    /// note (`KERNEL LOG (dmesg)`, as opposed to a stripped source-path
+    /// annotation like `MEMORY INFO (/proc/meminfo)`) has its duration footer
+    /// quote the title *verbatim, parens included* —
+    /// `'KERNEL LOG (dmesg)'` — rather than the bare `'KERNEL LOG'`.
+    /// The header tag and the footer tag must still normalize to the same
+    /// name, or `build_section_index` can never match the footer back to its
+    /// header and the section silently vanishes from the index.
+    #[test]
+    fn header_and_footer_tags_match_when_title_has_parenthesized_note() {
+        let p = BugreportParser::new();
+        let header = p
+            .parse_meta("------ KERNEL LOG (dmesg) ------", 0)
+            .unwrap();
+        let footer = p
+            .parse_meta("------ 0.012s was the duration of 'KERNEL LOG (dmesg)' ------", 0)
+            .unwrap();
+        assert_eq!(header.tag, "KERNEL LOG");
+        assert_eq!(footer.tag, "KERNEL LOG");
+        assert_eq!(header.tag, footer.tag, "header and footer tags must match so build_section_index can pair them");
+    }
+
+    /// A header whose footer quotes the title with the source-path
+    /// annotation dropped (`MEMORY INFO (/proc/meminfo)` header,
+    /// `'MEMORY INFO'` footer) must also normalize to matching tags — this
+    /// is the already-working case that the fix above must not regress.
+    #[test]
+    fn header_and_footer_tags_match_when_footer_drops_source_path() {
+        let p = BugreportParser::new();
+        let header = p
+            .parse_meta("------ MEMORY INFO (/proc/meminfo) ------", 0)
+            .unwrap();
+        let footer = p
+            .parse_meta("------ 0.011s was the duration of 'MEMORY INFO' ------", 0)
+            .unwrap();
+        assert_eq!(header.tag, footer.tag);
     }
 
     #[test]
