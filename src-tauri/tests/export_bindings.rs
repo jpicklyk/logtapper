@@ -215,6 +215,10 @@ macro_rules! ROOT_TYPES {
             app_lib::services::themes::UserTheme,
             app_lib::services::themes::ThemeBase,
             app_lib::services::themes::ThemeSummary,
+            // --- B3: workspace rename/delete --------------------------------------
+            app_lib::services::workspace::RenameWorkspaceRequest,
+            app_lib::services::workspace::DeleteWorkspaceRequest,
+            app_lib::services::workspace::WorkspaceListChangedEvent,
         ]
     };
 }

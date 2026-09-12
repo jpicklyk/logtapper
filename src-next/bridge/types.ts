@@ -99,6 +99,8 @@ import type {
   UserTheme,
   ThemeBase,
   ThemeSummary,
+  RenameWorkspaceRequest,
+  DeleteWorkspaceRequest,
 } from './generated';
 
 export type {
@@ -185,6 +187,8 @@ export type {
   UserTheme,
   ThemeBase,
   ThemeSummary,
+  RenameWorkspaceRequest,
+  DeleteWorkspaceRequest,
 };
 
 // ---------------------------------------------------------------------------
@@ -278,6 +282,11 @@ export type WatchUpdateEvent = Omit<Generated.WatchUpdateEvent, 'action'> & {
  *  `"lts"` for a `.lts` bundle import, `"workspace"` for a `.ltw` restore. */
 export type WorkspaceRestoredEvent = Omit<Generated.WorkspaceRestoredEvent, 'source'> & {
   source: 'lts' | 'workspace';
+};
+
+/** Rust `action` field is a `String`; only these two values are ever emitted. */
+export type WorkspaceListChangedEvent = Omit<Generated.WorkspaceListChangedEvent, 'action'> & {
+  action: 'renamed' | 'deleted';
 };
 
 /** Rust `tier` field is a `String`; only these three values are ever emitted. */

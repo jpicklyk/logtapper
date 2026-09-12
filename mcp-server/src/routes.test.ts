@@ -216,6 +216,8 @@ const ROUTE_TABLE: Row[] = [
   { route: "POST /mcp/navigate", tool: "logtapper_navigate", args: { session_id: S, reason: "look here" }, method: "POST", expectPath: "/mcp/navigate" },
   { route: "GET /mcp/themes", tool: "logtapper_themes", args: { action: "list" }, method: "GET", expectPath: "/mcp/themes" },
   { route: "GET /mcp/themes/{slug}", tool: "logtapper_themes", args: { action: "read", slug: "midnight" }, method: "GET", expectPath: "/mcp/themes/midnight" },
+  { route: "PATCH /mcp/workspaces/{id}", tool: "logtapper_workspace", args: { action: "rename", workspace_id: "ws1", new_name: "Renamed" }, method: "PATCH", expectPath: "/mcp/workspaces/ws1" },
+  { route: "DELETE /mcp/workspaces/{id}", tool: "logtapper_workspace", args: { action: "delete", workspace_id: "ws1" }, method: "DELETE", expectPath: "/mcp/workspaces/ws1" },
 ];
 
 const covered = new Set<string>();
@@ -253,7 +255,7 @@ describe("mcp-server tool → route coverage", () => {
 
   it("ROUTE_TABLE covers every entry in mcp_bridge::ROUTES", () => {
     const bridgeRoutes = parseBridgeRoutes();
-    expect(bridgeRoutes.length).toBe(78);
+    expect(bridgeRoutes.length).toBe(80);
 
     const missing = bridgeRoutes.filter((r) => !covered.has(r) && !ROUTES_WITH_NO_TOOL.has(r));
     expect(missing, `ROUTE_TABLE is missing rows for: ${missing.join(", ")}`).toEqual([]);

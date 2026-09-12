@@ -50,14 +50,21 @@
 //! status — `403 NOT_ALLOWED` for a destination or `.ltw` outside the
 //! allowlist, `400 INVALID_PATH` / `INVALID_ARGUMENT` for a malformed one.
 
-use axum::{Json, extract::State, http::HeaderMap};
+use axum::{
+    Json,
+    extract::{Path, State},
+    http::HeaderMap,
+};
 use serde::Deserialize;
 
 use crate::mcp_bridge::BridgeCtx;
-use crate::mcp_bridge::respond::{JsonBody, client_name};
+use crate::mcp_bridge::respond::{JsonBody, Qs, client_name};
 use crate::services::ServiceError;
-use crate::services::workspace::{self, WorkspaceLoadOutcome, WorkspaceSummary};
-use crate::services::wire::{WorkspaceList, WorkspaceSaved};
+use crate::services::workspace::{
+    self, DeleteWorkspaceRequest, RenameWorkspaceRequest, WorkspaceLoadOutcome, WorkspaceSummary,
+};
+use crate::services::wire::{Ack, WorkspaceList, WorkspaceSaved};
+use crate::workspace::app_state::WorkspaceEntry;
 
 // ---------------------------------------------------------------------------
 // GET /mcp/workspaces
@@ -136,4 +143,63 @@ pub(crate) async fn h_autosave_workspace(
     let svc = ctx.svc(client_name(&headers));
     let path = workspace::auto_save(&svc, options)?;
     Ok(Json(WorkspaceSaved { saved: true, path }))
+}
+
+// ---------------------------------------------------------------------------
+// PATCH /mcp/workspaces/{id} — rename
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RenameWorkspaceBody {
+    pub new_name: String,
+}
+
+pub(crate) async fn h_rename_workspace(
+    State(ctx): State<BridgeCtx>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+    JsonBody(body): JsonBody<RenameWorkspaceBody>,
+) -> Result<Json<WorkspaceEntry>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(workspace::rename_workspace(
+        &svc,
+        RenameWorkspaceRequest { workspace_id, new_name: body.new_name },
+    )?))
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /mcp/workspaces/{id}?deleteFile=&force=
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeleteWorkspaceQuery {
+    #[serde(default)]
+    pub delete_file: bool,
+    #[serde(default)]
+    pub force: bool,
+}
+
+/// `delete_file` requires [`crate::services::policy::authorize_write_dest`]
+/// for an `Agent` caller (the entry's `ltwPath` is deleted like any other
+/// agent-chosen write destination); `force` closes the active workspace's
+/// open sessions first instead of refusing the delete outright — see
+/// `services::workspace::delete_workspace`.
+pub(crate) async fn h_delete_workspace(
+    State(ctx): State<BridgeCtx>,
+    Path(workspace_id): Path<String>,
+    Qs(query): Qs<DeleteWorkspaceQuery>,
+    headers: HeaderMap,
+) -> Result<Json<Ack>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    workspace::delete_workspace(
+        &svc,
+        DeleteWorkspaceRequest {
+            workspace_id,
+            delete_file: query.delete_file,
+            force: query.force,
+        },
+    )?;
+    Ok(Json(Ack::ok()))
 }

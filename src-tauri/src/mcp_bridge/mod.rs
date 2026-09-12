@@ -19,7 +19,7 @@ use std::sync::Arc;
 use axum::{
     Router,
     middleware as axum_middleware,
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
 };
 use tauri::{AppHandle, Manager, Wry};
 
@@ -55,8 +55,8 @@ use routes::stream::{
 use routes::tracker::{h_correlations, h_events, h_section_at, h_sections, h_state_at_line};
 use routes::watches::{h_cancel_watch, h_create_watch, h_list_watches};
 use routes::workspace::{
-    h_autosave_workspace, h_current_workspace, h_list_workspaces, h_load_workspace,
-    h_save_workspace,
+    h_autosave_workspace, h_current_workspace, h_delete_workspace, h_list_workspaces,
+    h_load_workspace, h_rename_workspace, h_save_workspace,
 };
 use routes::focus::{h_clear_focus, h_get_focus, h_set_focus};
 use routes::navigation::h_request_navigation;
@@ -260,6 +260,9 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/mcp/themes/{slug}"),
     ("PUT", "/mcp/themes/{slug}"),
     ("DELETE", "/mcp/themes/{slug}"),
+    // B3 — workspace rename/delete (services::workspace).
+    ("PATCH", "/mcp/workspaces/{id}"),
+    ("DELETE", "/mcp/workspaces/{id}"),
 ];
 
 /// Build the bridge's `Router` without binding a socket.
@@ -349,6 +352,8 @@ pub fn router(ctx: BridgeCtx) -> Router {
         // B2 — user theme storage. PUT/DELETE are Ui-only (403 for an agent).
         .route("/mcp/themes", get(h_list_themes))
         .route("/mcp/themes/{slug}", get(h_read_theme).put(h_write_theme).delete(h_delete_theme))
+        // B3 — workspace rename/delete.
+        .route("/mcp/workspaces/{id}", patch(h_rename_workspace).delete(h_delete_workspace))
         .layer(axum_middleware::from_fn_with_state(ctx.clone(), middleware::record_activity))
         // `require_local` is added AFTER `record_activity`, which in axum/tower
         // layering means it becomes the OUTERMOST layer and therefore runs
@@ -498,6 +503,8 @@ mod tests {
             "GET /mcp/themes/{slug}",
             "PUT /mcp/themes/{slug}",
             "DELETE /mcp/themes/{slug}",
+            "PATCH /mcp/workspaces/{id}",
+            "DELETE /mcp/workspaces/{id}",
         ];
 
         assert_eq!(rendered, expected, "ROUTES drifted from the pinned route table — update both this test and router() together");

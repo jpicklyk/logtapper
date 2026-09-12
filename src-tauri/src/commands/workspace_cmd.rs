@@ -24,11 +24,11 @@ use tauri::AppHandle;
 
 use crate::commands::adapters::ui_ctx;
 use crate::services::workspace as svc;
-use crate::workspace::app_state::AppStateFile;
+use crate::workspace::app_state::{AppStateFile, WorkspaceEntry};
 
 pub use crate::services::workspace::{
-    AutoSaveWorkspaceOptions, LoadWorkspaceResult, LoadWorkspaceSessionData, RestoreSessionOptions,
-    SaveWorkspaceOptions, SyncWorkspaceEnvelopeOptions,
+    AutoSaveWorkspaceOptions, DeleteWorkspaceRequest, LoadWorkspaceResult, LoadWorkspaceSessionData,
+    RenameWorkspaceRequest, RestoreSessionOptions, SaveWorkspaceOptions, SyncWorkspaceEnvelopeOptions,
 };
 
 // ---------------------------------------------------------------------------
@@ -110,4 +110,23 @@ pub async fn get_app_state(app: AppHandle) -> Result<AppStateFile, String> {
 #[tauri::command]
 pub async fn save_app_state_cmd(app: AppHandle, state: AppStateFile) -> Result<(), String> {
     Ok(svc::save_app_state(&ui_ctx(&app), state)?)
+}
+
+// ---------------------------------------------------------------------------
+// Rename / delete (B3)
+// ---------------------------------------------------------------------------
+
+/// Rename a workspace's `app-state.json` entry. Returns the updated entry.
+#[tauri::command]
+pub async fn rename_workspace(app: AppHandle, request: RenameWorkspaceRequest) -> Result<WorkspaceEntry, String> {
+    Ok(svc::rename_workspace(&ui_ctx(&app), request)?)
+}
+
+/// Remove a workspace from `app-state.json` (and its auto-save file, if any);
+/// optionally also delete its explicit `.ltw`. See
+/// [`crate::services::workspace::delete_workspace`] for the active-workspace
+/// and file-safety rules.
+#[tauri::command]
+pub async fn delete_workspace(app: AppHandle, request: DeleteWorkspaceRequest) -> Result<(), String> {
+    Ok(svc::delete_workspace(&ui_ctx(&app), request)?)
 }

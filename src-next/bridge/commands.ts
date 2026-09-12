@@ -56,6 +56,9 @@ import type {
   NavRequestInput,
   ThemeSummary,
   UserTheme,
+  RenameWorkspaceRequest,
+  DeleteWorkspaceRequest,
+  WorkspaceEntry,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -698,6 +701,21 @@ export function getAppState(): Promise<AppStateFile> {
 
 export function saveAppState(state: AppStateFile): Promise<void> {
   return invoke('save_app_state_cmd', { state });
+}
+
+/** Rename a workspace's `app-state.json` entry. Returns the updated entry.
+ *  The `.ltw` manifest's own name is unaffected until the workspace is next
+ *  saved or auto-saved — see `services::workspace::rename_workspace`. */
+export function renameWorkspace(request: RenameWorkspaceRequest): Promise<WorkspaceEntry> {
+  return invoke('rename_workspace', { request });
+}
+
+/** Remove a workspace from `app-state.json` (and its auto-save file, if any);
+ *  optionally also delete its explicit `.ltw`. Refused for the active
+ *  workspace unless `force` is set, in which case its open sessions are
+ *  closed first — see `services::workspace::delete_workspace`. */
+export function deleteWorkspace(request: DeleteWorkspaceRequest): Promise<void> {
+  return invoke('delete_workspace', { request });
 }
 
 // ---------------------------------------------------------------------------

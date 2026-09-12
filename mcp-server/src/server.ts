@@ -86,6 +86,7 @@ import type {
   UserTheme,
   WatchInfo,
   WireError,
+  WorkspaceEntry,
   WorkspaceList,
   WorkspaceLoadOutcome,
   WorkspaceSaved,
@@ -182,8 +183,25 @@ async function bridgePut<T>(path: string, body: unknown): Promise<T> {
   });
 }
 
-async function bridgeDelete<T>(path: string): Promise<T> {
-  return bridgeFetch<T>(`${BASE_URL}${path}`, { method: "DELETE" });
+async function bridgePatch<T>(path: string, body: unknown): Promise<T> {
+  return bridgeFetch<T>(`${BASE_URL}${path}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function bridgeDelete<T>(
+  path: string,
+  query?: Record<string, string | number | boolean | undefined>
+): Promise<T> {
+  const url = new URL(`${BASE_URL}${path}`);
+  if (query) {
+    for (const [k, v] of Object.entries(query)) {
+      if (v !== undefined) url.searchParams.set(k, String(v));
+    }
+  }
+  return bridgeFetch<T>(url.toString(), { method: "DELETE" });
 }
 
 // ---------------------------------------------------------------------------
@@ -1586,8 +1604,11 @@ server.tool(
     "pipeline chain, and editor layout. Use 'list' to see every known workspace, " +
     "'current' for what the backend currently believes the active workspace is, " +
     "'load' to open a `.ltw` end-to-end (opens and restores every session it " +
-    "names), 'save' to write a `.ltw` to a caller-chosen path, and 'autosave' to " +
-    "write to the app-owned per-workspace autosave slot (no destination to choose).\n\n" +
+    "names), 'save' to write a `.ltw` to a caller-chosen path, 'autosave' to " +
+    "write to the app-owned per-workspace autosave slot (no destination to choose), " +
+    "'rename' to change a workspace's app-state display name, and 'delete' to " +
+    "remove a workspace from the app-state list (optionally also deleting its " +
+    "`.ltw` file).\n\n" +
     "GATES: 'load' resolves `path` the same way logtapper_open_file resolves a log " +
     "path — outside the open allowlist and nonexistent both fail identically with " +
     "NOT_ALLOWED — and then opens every session the manifest names through that " +
@@ -1596,15 +1617,28 @@ server.tool(
     "rest — check `sessions[i].error` in the response for a partial result. 'save' " +
     "requires dest_path's PARENT DIRECTORY to already exist inside the open " +
     "allowlist; the `.ltw` file itself need not exist yet. 'autosave' has no " +
-    "destination to gate — only workspace_id, constrained to a single path segment.",
+    "destination to gate — only workspace_id, constrained to a single path segment. " +
+    "'delete' with delete_file=true requires the entry's saved `.ltw` path's PARENT " +
+    "DIRECTORY to already be inside the open allowlist (same rule as 'save'), and " +
+    "refuses to delete the currently active workspace unless force=true, which " +
+    "closes its open sessions first instead of failing outright.",
   {
-    action: z.enum(["list", "current", "load", "save", "autosave"]).describe("Action to perform"),
+    action: z.enum(["list", "current", "load", "save", "autosave", "rename", "delete"]).describe("Action to perform"),
     path: z.string().optional().describe("`.ltw` path to open (required for 'load')"),
     workspace_id: z
       .string()
       .optional()
-      .describe("Stable workspace identifier (required for 'save' and 'autosave')"),
+      .describe("Stable workspace identifier (required for 'save', 'autosave', 'rename', and 'delete')"),
     workspace_name: z.string().optional().describe("Display name (required for 'save' and 'autosave')"),
+    new_name: z.string().optional().describe("New display name, 1-128 chars, no path separators (required for 'rename')"),
+    delete_file: z
+      .boolean()
+      .optional()
+      .describe("Also delete the entry's saved `.ltw` from disk (used with 'delete', default false)"),
+    force: z
+      .boolean()
+      .optional()
+      .describe("Close the active workspace's open sessions and delete it anyway (used with 'delete', default false)"),
     dest_path: z
       .string()
       .optional()
@@ -1626,7 +1660,20 @@ server.tool(
       .optional()
       .describe("UI layout tree, opaque to the backend — never inspected server-side (used with 'save'/'autosave')"),
   },
-  async ({ action, path, workspace_id, workspace_name, dest_path, pipeline_chain, disabled_chain_ids, editor_tabs, layout }) => {
+  async ({
+    action,
+    path,
+    workspace_id,
+    workspace_name,
+    new_name,
+    delete_file,
+    force,
+    dest_path,
+    pipeline_chain,
+    disabled_chain_ids,
+    editor_tabs,
+    layout,
+  }) => {
     try {
       switch (action) {
         case "list":
@@ -1665,6 +1712,23 @@ server.tool(
               layout: layout ?? null,
               pipelineChain: pipeline_chain ?? [],
               disabledChainIds: disabled_chain_ids ?? [],
+            })
+          );
+        }
+        case "rename": {
+          if (!workspace_id || !new_name) return argError("workspace_id and new_name are required for 'rename'");
+          return ok(
+            await bridgePatch<WorkspaceEntry>(`/mcp/workspaces/${encodeURIComponent(workspace_id)}`, {
+              newName: new_name,
+            })
+          );
+        }
+        case "delete": {
+          if (!workspace_id) return argError("workspace_id is required for 'delete'");
+          return ok(
+            await bridgeDelete<Ack>(`/mcp/workspaces/${encodeURIComponent(workspace_id)}`, {
+              deleteFile: delete_file ?? false,
+              force: force ?? false,
             })
           );
         }
