@@ -6,10 +6,12 @@ import { App } from './App';
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
 // A2 added the presence store to App, which fetches bridge status, the
 // activity journal, the focus context and the session list on construction —
-// all five must be stubbed, or the module mock throws on the missing export.
+// all must be stubbed, or the module mock throws on the missing export.
+// E1 added the editor tab, which reads text files.
 vi.mock('@bridge/commands', () => ({
   getLines: vi.fn(),
   loadLogFile: vi.fn(),
+  readTextFile: vi.fn(),
   getMcpStatus: vi.fn(() => Promise.resolve({ running: false, port: 0, idleSecs: null, agentRawAccess: false })),
   getActivity: vi.fn(() => Promise.resolve([])),
   getFocus: vi.fn(() => Promise.resolve(null)),
