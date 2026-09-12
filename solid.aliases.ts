@@ -25,8 +25,10 @@ export const solidAliasPaths: Record<string, string> = {
   "@filter": "src-next/filter",
   "@bench": "src-next/bench",
   // `src-next/hooks/` is React territory and stays off-limits as a directory:
-  // ESLint allows exactly one file through this alias
-  // (`@hooks/useLogViewer/multiSessionImport`, framework-free and shared).
+  // ESLint allows through it only an explicit, per-file allow-list of
+  // framework-free modules — `useLogViewer/multiSessionImport` plus the pure
+  // workspace-persistence helpers W1a shares (`workspace/appStatePayload`,
+  // `reconcileWorkspaceList`, `restorePlan`, `artifactPairing`, `startupFile`).
   // Widening that allow-list needs the same scrutiny as adding an alias.
   "@hooks": "src-next/hooks",
 };
