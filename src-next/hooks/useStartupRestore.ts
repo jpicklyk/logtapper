@@ -39,6 +39,12 @@ export interface StartupRestoreDeps extends RestoreIo {
   /** Live pipeline chain (for the envelope push on the localStorage path). */
   getPipelineChain: () => string[];
   getDisabledChainIds: () => string[];
+  /** Dispatches the legacy single-chain `chain:restore` (sessionId: null) so a
+   *  trusted `.ltw`'s own top-level `pipelineChain` becomes the shared default
+   *  on startup restore too — see the matching call in `useWorkspace.doLoadWorkspace`
+   *  for why this is safe to call unconditionally, even for a v4 workspace whose
+   *  sessions carry their own chains. */
+  restoreLegacyChain: (chain: string[], disabledChainIds: string[]) => void;
 }
 
 export function useStartupRestore(deps: StartupRestoreDeps): void {
@@ -168,6 +174,7 @@ export function useStartupRestore(deps: StartupRestoreDeps): void {
           await restoreLocalStorageOnly(active);
           return;
         }
+        depsRef.current.restoreLegacyChain(result.pipelineChain.chain, result.pipelineChain.disabledIds);
         const plan = planStartupRestore({
           sessions: result.sessions,
           storedTabs: readStoredTabs(),

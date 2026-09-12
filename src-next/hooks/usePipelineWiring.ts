@@ -13,6 +13,7 @@ import { bus } from '../events';
 import { useWorkspaceRestore } from './useWorkspaceRestore';
 import { usePipelineCommands, type PipelineActions } from './usePipelineCommands';
 import { saveChainToStorage } from './pipelineChainStorage';
+import { computeChangedChainSessionIds, type ChainSnapshot } from './pipelineChainDiff';
 
 /**
  * SINGLETON. Mount this exactly once — in `context/HookWiring` — and nowhere
@@ -66,7 +67,7 @@ export function usePipelineWiring(
 
   const metaSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Previous chain state, for diffing which sessions to notify. */
-  const prevChainsRef = useRef<{ byS: typeof chainBySession; def: typeof defaultChain } | null>(null);
+  const prevChainsRef = useRef<ChainSnapshot | null>(null);
   /** Sessions with a chain edit awaiting the debounced backend meta push. */
   const pendingMetaRef = useRef<Set<string>>(new Set());
 
@@ -90,17 +91,9 @@ export function usePipelineWiring(
     // Broadcasting and letting the consumer filter by ref is forbidden outright
     // (root CLAUDE.md principle #6), which is why the sessionId is in the payload.
     const prev = prevChainsRef.current;
-    const targets = new Set<string>();
-    for (const [sid, c] of chainBySession) {
-      if (prev?.byS.get(sid) !== c) targets.add(sid);
-    }
-    // A change to the default reaches every session that has no chain of its own.
-    if (prev?.def !== defaultChain) {
-      for (const sid of paneSessionMapRef.current.values()) {
-        if (sid && !chainBySession.has(sid)) targets.add(sid);
-      }
-    }
-    prevChainsRef.current = { byS: chainBySession, def: defaultChain };
+    const next: ChainSnapshot = { chainBySession, defaultChain };
+    const targets = computeChangedChainSessionIds(prev, next, paneSessionMapRef.current.values());
+    prevChainsRef.current = next;
     for (const sid of targets) {
       bus.emit('pipeline:chain-changed', { sessionId: sid, chain: chainFor(sid).chain });
     }

@@ -16,6 +16,7 @@ import {
   pipelineReducer,
   initialState,
   PINNED_TAIL_IDS,
+  legacyChainRestoreAction,
   type PipelineState,
   type PipelineAction,
 } from './PipelineContext';
@@ -409,13 +410,18 @@ describe('chain:restore', () => {
     expect(chainOf(state, A)).toEqual(['p1', 'p2', PINNED]);
   });
 
-  // NOTE: the two `sessionId: null` cases below cover the REDUCER branch only.
-  // No production code dispatches `chain:restore` with a null sessionId today —
-  // `useWorkspaceRestore.ts:75` always passes a concrete session, and a legacy
-  // workspace instead reaches the default via `processors:loaded`, whose chain
-  // comes from localStorage rather than the `.ltw`. So these prove the branch
-  // works, NOT that legacy restore works end to end. See the open gap noted with
-  // work item f541e816.
+  // The two `sessionId: null` cases below exercise the REDUCER branch directly.
+  // Production code now reaches it via `legacyChainRestoreAction` (constructed
+  // in `context/index.tsx`'s `restoreLegacyChain`, dispatched from both
+  // `useWorkspace.doLoadWorkspace`'s explicit-open path and
+  // `useStartupRestore`'s trusted-restore path) — closing the gap previously
+  // noted here and tracked as work item f541e816: a legacy `.ltw` (no
+  // per-session `session_meta` chain) has only its top-level `pipelineChain` to
+  // restore from, and it used to be silently ignored in favor of whatever
+  // localStorage already seeded. `useWorkspaceRestore.ts`'s own `chain:restore`
+  // dispatch is unrelated and always passes a concrete sessionId (the
+  // per-session v4 restore path) — see the "pins the wiring" test below for the
+  // helper itself.
   it('restores a legacy global chain onto the default (reducer branch only)', () => {
     // A v3 workspace stored ONE chain with no session key; it arrives with a
     // null sessionId and must become the template every session inherits.
@@ -438,6 +444,39 @@ describe('chain:restore', () => {
 
     expect(chainOf(state, A)).toEqual(['mine']);
     expect(chainOf(state, B)).toEqual(['legacy']);
+  });
+
+  // Pins the production wiring gap (item 1fb06d76 / work item f541e816): the
+  // legacy restore path must go through this exact helper so a `.ltw`'s own
+  // top-level `pipelineChain` reaches the reducer as a `chain:restore` with
+  // `sessionId: null`, rather than being dropped on the floor.
+  describe('legacyChainRestoreAction (production wiring helper)', () => {
+    it('builds a sessionId: null chain:restore action from the .ltw pipelineChain fields', () => {
+      const action = legacyChainRestoreAction(['p1', 'p2'], ['p2']);
+      expect(action).toEqual({
+        type: 'chain:restore', sessionId: null, chain: ['p1', 'p2'], disabledChainIds: ['p2'],
+      });
+    });
+
+    it('round-trips through the reducer to seed the shared default for every chainless session', () => {
+      const state = reduce(initialState, legacyChainRestoreAction(['p1', 'p2'], ['p2']));
+
+      expect(state.defaultChain.chain).toEqual(['p1', 'p2']);
+      expect(state.defaultChain.disabled).toEqual(['p2']);
+      expect(chainOf(state, A)).toEqual(['p1', 'p2']);
+      expect(chainOf(state, B)).toEqual(['p1', 'p2']);
+    });
+
+    it('does not touch a session that already restored its own chain', () => {
+      const state = reduce(
+        initialState,
+        { type: 'chain:restore', sessionId: A, chain: ['mine'], disabledChainIds: [] },
+        legacyChainRestoreAction(['legacy'], []),
+      );
+
+      expect(chainOf(state, A)).toEqual(['mine']);
+      expect(chainOf(state, B)).toEqual(['legacy']);
+    });
   });
 });
 

@@ -201,6 +201,20 @@ function mapAllChains(
   return { ...state, chainBySession, defaultChain: fn(state.defaultChain) };
 }
 
+/**
+ * Builds the legacy single-chain restore action (`sessionId: null`) from a
+ * `.ltw`'s top-level `LtwPipelineChain` fields. Extracted as a pure function —
+ * rather than inlining the action literal at each call site — so the two
+ * production wiring points (`useWorkspace.doLoadWorkspace`'s explicit-open path
+ * and `useStartupRestore`'s trusted-restore path, both via `restoreLegacyChain`
+ * in `context/index.tsx`) are provably constructing the exact action the
+ * reducer's `chain:restore` branch expects, and so that wiring is testable
+ * without rendering the hooks (which need Tauri IPC + React context).
+ */
+export function legacyChainRestoreAction(chain: string[], disabledChainIds: string[]): PipelineAction {
+  return { type: 'chain:restore', sessionId: null, chain, disabledChainIds };
+}
+
 export function pipelineReducer(state: PipelineState, action: PipelineAction): PipelineState {
   switch (action.type) {
     // ── Run lifecycle ────────────────────────────────────────────────────────
