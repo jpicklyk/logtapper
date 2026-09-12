@@ -280,6 +280,18 @@ describe('deviceStateStore', () => {
       expect(h.store.selectedTracker('s1')).toBe('t2');
     });
 
+    it('falls back to the first active tracker when the override leaves the set', () => {
+      const h = mount();
+      h.setTrackers('s1', [processor('t1'), processor('t2')]);
+      h.store.setSelectedTracker('s1', 't2');
+      expect(h.store.selectedTracker('s1')).toBe('t2');
+      h.setTrackers('s1', [processor('t1')]);
+      expect(h.store.selectedTracker('s1')).toBe('t1');
+      // The pick is honoured again if its tracker comes back.
+      h.setTrackers('s1', [processor('t1'), processor('t2')]);
+      expect(h.store.selectedTracker('s1')).toBe('t2');
+    });
+
     it('trackers() passes through the analyzers store', () => {
       const h = mount();
       const list = [processor('t1')];

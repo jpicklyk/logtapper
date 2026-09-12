@@ -255,6 +255,16 @@ export function createDeviceStateStore(deps: DeviceStateStoreDeps): DeviceStateS
       return runtime;
     };
 
+    /** The tracker the panel shows: the user's pick while it is still in the
+     *  session's active set, else the first active tracker. Validating here
+     *  (not only when the pick is made) keeps a pick from outliving its tracker
+     *  when the analyzer chain changes underneath it. */
+    const resolveTracker = (sessionId: string, override: string | null): string | null => {
+      const list = analyzers.trackers(sessionId);
+      if (override !== null && list.some((t) => t.id === override)) return override;
+      return list[0]?.id ?? null;
+    };
+
     const createSessionState = (sessionId: string): SessionDeviceState => {
       const [selectedOverride, setSelectedOverrideSignal] = createSignal<string | null>(null);
       const [snapshot, setSnapshotSignal] = createSignal<StateSnapshot | null>(null);
@@ -277,8 +287,8 @@ export function createDeviceStateStore(deps: DeviceStateStoreDeps): DeviceStateS
         trackerRuntimes: new Map(),
       };
 
-      const effectiveTrackerId = createMemo<string | null>(
-        () => selectedOverride() ?? analyzers.trackers(sessionId)[0]?.id ?? null,
+      const effectiveTrackerId = createMemo<string | null>(() =>
+        resolveTracker(sessionId, selectedOverride()),
       );
 
       // Snapshot fetch: debounced + generation-guarded, and short-circuited
@@ -370,7 +380,7 @@ export function createDeviceStateStore(deps: DeviceStateStoreDeps): DeviceStateS
     const trackers = (sessionId: string): ProcessorSummary[] => analyzers.trackers(sessionId);
 
     const selectedTracker = (sessionId: string): string | null =>
-      stateFor(sessionId).selectedOverride() ?? analyzers.trackers(sessionId)[0]?.id ?? null;
+      resolveTracker(sessionId, stateFor(sessionId).selectedOverride());
 
     const setSelectedTracker = (sessionId: string, trackerId: string | null): void => {
       stateFor(sessionId).setSelectedOverride(trackerId);
