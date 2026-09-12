@@ -23,6 +23,9 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
 // though no test here opens a session with an active tracker.
 // W7 added the bookmarks store, which fetches a session's bookmarks the
 // first time it is focused and subscribes to `bookmark-update`.
+// W1b added the workspace store, which reads `app-state.json` and the CLI
+// startup file on construction, subscribes to the three `workspace-*` list/
+// content events, and drives open/save/switch/rename/delete over v4 commands.
 vi.mock('@bridge/commands', () => ({
   getLines: vi.fn(),
   loadLogFile: vi.fn(),
@@ -59,6 +62,16 @@ vi.mock('@bridge/commands', () => ({
   createBookmark: vi.fn(),
   updateBookmark: vi.fn(),
   deleteBookmark: vi.fn(),
+  getAppState: vi.fn(() => Promise.resolve({ workspaces: [], activeWorkspaceId: null })),
+  saveAppState: vi.fn(() => Promise.resolve()),
+  getStartupFile: vi.fn(() => Promise.resolve(null)),
+  loadWorkspaceV4: vi.fn(),
+  saveWorkspaceV4: vi.fn(),
+  autoSaveWorkspace: vi.fn(),
+  beginWorkspaceSwitch: vi.fn(() => Promise.resolve()),
+  renameWorkspace: vi.fn(),
+  deleteWorkspace: vi.fn(() => Promise.resolve()),
+  restoreWorkspaceSession: vi.fn(() => Promise.resolve()),
 }));
 vi.mock('@bridge/events', () => ({
   onActivity: vi.fn(() => Promise.resolve(() => {})),
@@ -71,6 +84,9 @@ vi.mock('@bridge/events', () => ({
   onPipelineProgress: vi.fn(() => Promise.resolve(() => {})),
   onAnalysisUpdate: vi.fn(() => Promise.resolve(() => {})),
   onBookmarkUpdate: vi.fn(() => Promise.resolve(() => {})),
+  onWorkspaceListChanged: vi.fn(() => Promise.resolve(() => {})),
+  onWorkspaceAutoSaved: vi.fn(() => Promise.resolve(() => {})),
+  onWorkspaceRestored: vi.fn(() => Promise.resolve(() => {})),
 }));
 
 // vitest `globals` is off, so @solidjs/testing-library's auto-cleanup never

@@ -1,7 +1,8 @@
 /**
  * Public API of the workspace package: the persistence store, the `.ltw`
- * layout namespace, and the restore-plan runner. W1b (the UI) and W9 (editor
- * tabs) import from here only — never from the files directly.
+ * layout namespace, the restore-plan runner, and the workspace-home UI
+ * (`WorkspaceHome`, `Switcher`). W9 (editor tabs) and `App.tsx` import from
+ * here only — never from the files directly.
  */
 export {
   REACT_LAYOUT_KEYS,
@@ -30,3 +31,9 @@ export type {
 
 export { runRestorePlan } from './restore';
 export type { RestoreIo, RestoreOutcome } from './restore';
+
+export { WorkspaceHome } from './WorkspaceHome';
+export type { WorkspaceHomeProps } from './WorkspaceHome';
+
+export { Switcher } from './Switcher';
+export type { SwitcherProps } from './Switcher';
