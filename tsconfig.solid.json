@@ -23,7 +23,10 @@
       "@hooks/*": ["src-next/hooks/*"],
       // Directory alias, file-level allow-list: ESLint lets exactly
       // `sectionTree`, `formatters`, `sectionDescriptions` through.
-      "@fileinfo/*": ["src-next/components/FileInfoPanel/*"]
+      "@fileinfo/*": ["src-next/components/FileInfoPanel/*"],
+      // Directory alias, file-level allow-list: ESLint lets exactly
+      // `@procdash/utils` through.
+      "@procdash/*": ["src-next/components/ProcessorDashboard/*"]
     }
   },
   "include": ["src-solid"],

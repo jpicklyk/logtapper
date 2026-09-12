@@ -28,7 +28,9 @@ export const solidAliasPaths: Record<string, string> = {
   // ESLint allows through it only an explicit, per-file allow-list of
   // framework-free modules — `useLogViewer/multiSessionImport` plus the pure
   // workspace-persistence helpers W1a shares (`workspace/appStatePayload`,
-  // `reconcileWorkspaceList`, `restorePlan`, `artifactPairing`, `startupFile`).
+  // `reconcileWorkspaceList`, `restorePlan`, `artifactPairing`, `startupFile`)
+  // and W4a's `pipelineChainStorage` (default-chain localStorage seed, shared
+  // with the React app's own key names).
   // Widening that allow-list needs the same scrutiny as adding an alias.
   "@hooks": "src-next/hooks",
   // `src-next/components/FileInfoPanel/` is React territory (the whole
@@ -37,6 +39,10 @@ export const solidAliasPaths: Record<string, string> = {
   // `sectionTree`, `formatters`, `sectionDescriptions` — via the same
   // file-level ESLint allow-list pattern as `@hooks`.
   "@fileinfo": "src-next/components/FileInfoPanel",
+  // `src-next/components/` is React territory too. `ProcessorDashboard/utils.ts`
+  // is the one framework-free file in it (var-grouping helpers `analyzerStore`
+  // re-exports for W4b) — same file-level ESLint allow-list pattern as `@hooks`.
+  "@procdash": "src-next/components/ProcessorDashboard",
 };
 
 /** alias → absolute directory, the form Vite's `resolve.alias` wants. */
