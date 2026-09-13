@@ -93,6 +93,18 @@ describe('surface map', () => {
     }
   });
 
+  it('gives analyses its own column only from wide up, between details and presence', () => {
+    // Analyses is a post-mortem surface; live mode never places it anywhere.
+    expect(placementFor('analyses', 'postmortem', 'standard')).toEqual({ kind: 'region', region: 'details' });
+    for (const tier of ['wide', 'ultrawide'] as Tier[]) {
+      expect(placementFor('analyses', 'postmortem', tier)).toEqual({ kind: 'region', region: 'analyses' });
+      expect(regionSurfaces('analyses', 'postmortem', tier).map((s) => s.id)).toEqual(['analyses']);
+      expect(placementFor('analyses', 'live', tier)).toBeNull();
+      expect(activeRegions('live', tier)).toEqual(['navigator', 'viewer', 'details', 'presence']);
+    }
+    expect(regionSurfaces('analyses', 'postmortem', 'standard')).toHaveLength(0);
+  });
+
   it('gives presence its own column only from wide up', () => {
     for (const mode of MODES) {
       expect(placementFor('presence', mode, 'standard')).toEqual({
@@ -104,7 +116,11 @@ describe('surface map', () => {
           kind: 'region',
           region: 'presence',
         });
-        expect(activeRegions(mode, tier)).toEqual(['navigator', 'viewer', 'details', 'presence']);
+        expect(activeRegions(mode, tier)).toEqual(
+          mode === 'postmortem'
+            ? ['navigator', 'viewer', 'details', 'analyses', 'presence']
+            : ['navigator', 'viewer', 'details', 'presence'],
+        );
       }
       expect(activeRegions(mode, 'standard')).toEqual(['navigator', 'viewer', 'details']);
     }

@@ -130,6 +130,7 @@
 }
 
 .region[data-region='details'],
+.region[data-region='analyses'],
 .region[data-region='presence'] {
   border-left: 1px solid var(--border);
 }
@@ -152,6 +153,13 @@
   background: var(--surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--p-radius-md);
+}
+
+/* On the tiers that give analyses its own column it is the sole occupant: the
+   list and the reader fill the column and scroll inside it. */
+.region[data-region='analyses'] > .panel[data-surface='analyses'] {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* On the tiers that give presence its own column it is the sole occupant, so

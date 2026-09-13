@@ -19,10 +19,10 @@ export type SurfaceId =
   | 'settings';
 
 /** Persistent grid regions, in left-to-right order. `rail` is always present. */
-export type RegionId = 'rail' | 'navigator' | 'viewer' | 'details' | 'presence';
+export type RegionId = 'rail' | 'navigator' | 'viewer' | 'details' | 'analyses' | 'presence';
 
 /** Columns the shell lays out, in order. `viewer` is never absent. */
-export const REGION_ORDER: readonly RegionId[] = ['navigator', 'viewer', 'details', 'presence'];
+export const REGION_ORDER: readonly RegionId[] = ['navigator', 'viewer', 'details', 'analyses', 'presence'];
 
 export type Placement =
   | { readonly kind: 'region'; readonly region: RegionId }
@@ -54,8 +54,11 @@ const LIVE: readonly Mode[] = ['live'];
  *
  * Compact keeps every surface reachable: the navigator surfaces and presence
  * collapse to the rail, the analyzer-family surfaces become drawers. Standard
- * is three columns, so presence shares `details` with the analysis surfaces;
- * wide and ultra-wide promote presence to its own column.
+ * is three columns, so presence and analyses share `details` with the
+ * analyzer surfaces; wide and ultra-wide promote presence AND analyses to
+ * their own columns (analyses sits between details and presence), so a
+ * published analysis reads in a pane of its own instead of a card under the
+ * analyzers.
  */
 export const SURFACES: readonly SurfaceDef[] = [
   {
@@ -98,7 +101,7 @@ export const SURFACES: readonly SurfaceDef[] = [
     title: 'Analyses',
     description: 'Line-anchored findings, agent- or human-authored, with their reader.',
     modes: POSTMORTEM,
-    placement: [DRAWER, R('details'), R('details'), R('details')],
+    placement: [DRAWER, R('details'), R('analyses'), R('analyses')],
   },
   {
     id: 'bookmarks',

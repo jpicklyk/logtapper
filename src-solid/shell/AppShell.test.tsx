@@ -23,7 +23,7 @@ function regionsOf(container: Element): string[] {
 }
 
 describe('AppShell', () => {
-  it('lays out all four columns beside the rail on a wide viewport', () => {
+  it('lays out all five columns beside the rail on a wide viewport', () => {
     setViewportWidth(2600);
     const { container } = render(() => (
       <AppShell
@@ -37,7 +37,7 @@ describe('AppShell', () => {
       />
     ));
 
-    expect(regionsOf(container)).toEqual(['navigator', 'viewer', 'details', 'presence']);
+    expect(regionsOf(container)).toEqual(['navigator', 'viewer', 'details', 'analyses', 'presence']);
     expect(container.querySelector('nav[aria-label="Surfaces"]')).toBeTruthy();
 
     // A2's slot lands inside the presence region; E1's extra panel inside details.
@@ -48,7 +48,7 @@ describe('AppShell', () => {
     expect(container.querySelector('[data-testid="viewer-slot"]')).toBeTruthy();
 
     // One resize handle per column that is not the viewer.
-    expect(container.querySelectorAll('[role="separator"]')).toHaveLength(3);
+    expect(container.querySelectorAll('[role="separator"]')).toHaveLength(4);
 
     // Surfaces with no implementation still render their brief §4 description.
     expect(screen.getByText(/analyzers' understanding of the device/i)).toBeTruthy();

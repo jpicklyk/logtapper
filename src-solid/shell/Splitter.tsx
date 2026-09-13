@@ -7,17 +7,19 @@ import styles from './shell.module.css';
 /** The columns a splitter can resize — `rail` is fixed, `viewer` takes the rest. */
 export type ResizableRegion = Exclude<RegionId, 'rail' | 'viewer'>;
 
-export const RESIZABLE_REGIONS: readonly ResizableRegion[] = ['navigator', 'details', 'presence'];
+export const RESIZABLE_REGIONS: readonly ResizableRegion[] = ['navigator', 'details', 'analyses', 'presence'];
 
 export const DEFAULT_REGION_WIDTH: Record<ResizableRegion, number> = {
   navigator: 280,
   details: 420,
+  analyses: 440,
   presence: 340,
 };
 
 export const MIN_REGION_WIDTH: Record<ResizableRegion, number> = {
   navigator: 180,
   details: 280,
+  analyses: 320,
   presence: 220,
 };
 
