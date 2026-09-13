@@ -13,7 +13,7 @@ import { For, Show, createMemo, createSignal } from 'solid-js';
 import type { JSX } from 'solid-js';
 import { Orb } from './Orb';
 import type { AgentOrbState } from './agentState';
-import { ActivityFeed } from './ActivityFeed';
+import { ActivityFeed, isAgent } from './ActivityFeed';
 import type { PresenceStore } from './presenceStore';
 import styles from './presence.module.css';
 
@@ -206,8 +206,12 @@ export function PresencePanel(props: PresencePanelProps): JSX.Element {
         </div>
 
         <h2 class={styles.sectionTitle}>Activity</h2>
+        {/* Agent activity only: the user already knows what they did, and their
+            rows (session opens, workspace loads) swamped the agent's. The journal
+            itself still records both — agents read it through the MCP activity
+            tool — so this is a display choice, not a data one. */}
         <ActivityFeed
-          entries={store().entries()}
+          entries={store().entries().filter((entry) => isAgent(entry.caller))}
           sessionName={store().sessionName}
           onNavigate={store().navigate}
           now={props.now}

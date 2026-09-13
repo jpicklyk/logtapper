@@ -202,7 +202,7 @@ export function ActivityFeed(props: ActivityFeedProps): JSX.Element {
     <div class={styles.feed} data-testid="activity-feed">
       <Show
         when={props.entries.length > 0}
-        fallback={<p class={styles.empty}>No activity yet.</p>}
+        fallback={<p class={styles.empty}>No agent activity yet.</p>}
       >
         <For each={groups()}>
           {(group) => (

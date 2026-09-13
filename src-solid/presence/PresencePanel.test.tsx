@@ -218,6 +218,21 @@ describe('<PresencePanel> — feed and placeholders', () => {
     expect(calls.navigate).toEqual([{ sessionId: 's1', line: 42 }]);
   });
 
+  it("shows only agent entries in the feed; the user's own actions are filtered out", () => {
+    const { store, setEntries } = fakeStore();
+    const { container } = render(() => <PresencePanel store={store} now={() => NOW} />);
+    setEntries([
+      { id: 1, ts: NOW - 2_000, caller: { kind: 'ui' }, action: 'session.open', sessionId: 's1', summary: 'opened app.log' },
+      { id: 2, ts: NOW - 1_000, caller: { kind: 'agent', client: 'claude-code' }, action: 'query', sessionId: 's1', summary: 'searched ANR' },
+      { id: 3, ts: NOW - 500, caller: { kind: 'ui' }, action: 'workspace.load', sessionId: null, summary: 'loaded workspace' },
+    ]);
+    const feed = container.querySelector('[data-testid="activity-feed"]')!;
+    expect(feed.textContent).toContain('searched ANR');
+    expect(feed.textContent).not.toContain('opened app.log');
+    expect(feed.textContent).not.toContain('loaded workspace');
+    expect(feed.querySelectorAll('[data-caller="human"]')).toHaveLength(0);
+  });
+
   it('always renders the phase-2b consent placeholder', () => {
     const { store } = fakeStore();
     const { container } = render(() => <PresencePanel store={store} now={() => NOW} />);

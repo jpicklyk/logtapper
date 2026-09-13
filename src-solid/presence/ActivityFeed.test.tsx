@@ -154,6 +154,6 @@ describe('<ActivityFeed>', () => {
     const { container } = render(() => (
       <ActivityFeed entries={[]} sessionName={sessionName} now={() => NOW} />
     ));
-    expect(container.textContent).toContain('No activity yet.');
+    expect(container.textContent).toContain('No agent activity yet.');
   });
 });
