@@ -162,6 +162,20 @@
   min-height: 0;
 }
 
+/* The navigator column stacks the sections tree above bookmarks. The tree
+   takes the column's slack and scrolls inside its own panel; bookmarks keep a
+   bounded, scrollable share so a long section index never buries them. */
+.region[data-region='navigator'] > .panel[data-surface='sections'] {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.region[data-region='navigator'] > .panel[data-surface='bookmarks'] {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 45%;
+}
+
 .panelHeader {
   color: var(--text);
   font-weight: 600;
