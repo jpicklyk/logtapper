@@ -188,6 +188,43 @@ describe('createSectionsStore — fetch and cache', () => {
     expect(store.scanning()).toBe(false);
   });
 
+  it('re-fetches after indexing completes when the first fetch saw a partial index', async () => {
+    // Load reports not-indexing (the restore path), so the gate fetches at once…
+    commands.getSections.mockResolvedValueOnce([section('A', 0, 9)]);
+    const entry = sessionStore.add(load('s1', { isIndexing: false }));
+    sessionStore.setFocused('s1');
+    await flush();
+    expect(commands.getSections).toHaveBeenCalledTimes(1);
+    expect(store.sections()).toEqual([section('A', 0, 9)]);
+
+    // …then the first progress event flips it to indexing, and completion must refresh.
+    commands.getSections.mockResolvedValueOnce([section('A', 0, 9), section('B', 10, 99)]);
+    sessionStore.updateTotal('s1', entry.totalLines, true);
+    await flush();
+    expect(commands.getSections).toHaveBeenCalledTimes(1);
+    sessionStore.updateTotal('s1', 100, false);
+    await flush();
+    expect(commands.getSections).toHaveBeenCalledTimes(2);
+    expect(store.sections()).toEqual([section('A', 0, 9), section('B', 10, 99)]);
+  });
+
+  it('refreshes a session whose indexing completed while another was focused', async () => {
+    commands.getSections.mockResolvedValue([section('A', 0, 9)]);
+    const s1 = sessionStore.add(load('s1', { isIndexing: false }));
+    sessionStore.add(load('s2'));
+    sessionStore.setFocused('s1');
+    await flush();
+    expect(commands.getSections).toHaveBeenCalledTimes(1);
+    sessionStore.updateTotal('s1', s1.totalLines, true);
+    sessionStore.setFocused('s2');
+    await flush();
+    sessionStore.updateTotal('s1', 100, false); // completes off-focus
+    await flush();
+    sessionStore.setFocused('s1');
+    await flush();
+    expect(commands.getSections.mock.calls.filter((c) => c[0] === 's1')).toHaveLength(2);
+  });
+
   it('does not re-fetch on repeated focus of the same session', async () => {
     commands.getSections.mockResolvedValue([section('A', 0, 9)]);
     sessionStore.add(load('s1'));

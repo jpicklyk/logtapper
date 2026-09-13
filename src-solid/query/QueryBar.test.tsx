@@ -176,10 +176,10 @@ describe('QueryBar', () => {
       scrollSpy.mockClear(); // drop the auto-jump-to-first-match call
 
       fireEvent.keyDown(input, { key: 'Enter' });
-      expect(scrollSpy).toHaveBeenLastCalledWith('s1', 20, { highlight: true, source: 'search' });
+      expect(scrollSpy).toHaveBeenLastCalledWith('s1', 20, { highlight: true, select: expect.any(Array), source: 'search' });
 
       fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
-      expect(scrollSpy).toHaveBeenLastCalledWith('s1', 10, { highlight: true, source: 'search' });
+      expect(scrollSpy).toHaveBeenLastCalledWith('s1', 10, { highlight: true, select: expect.any(Array), source: 'search' });
     } finally {
       vi.useRealTimers();
     }

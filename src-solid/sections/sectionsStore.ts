@@ -179,11 +179,33 @@ export function createSectionsStore(deps: SectionsStoreDeps): SectionsStore {
       return activeSectionIndexAt(sectionsAccessor(), cursor.line);
     });
 
+    // A session restored or opened while the backend is still indexing can
+    // report `isIndexing: false` at load time and only flip to true on the
+    // first progress event — by which point the gate below has already
+    // fetched a partial index (the live bug: a 586-section dumpstate showed
+    // 7). So the true→false transition of ANY session invalidates its cache
+    // and bumps `indexedTick`, which the fetch effect reads, so the completed
+    // index is fetched whenever that session is (re)focused.
+    const wasIndexing = new Set<string>();
+    const [indexedTick, setIndexedTick] = createSignal(0);
+    createEffect(() => {
+      for (const id of sessions.order()) {
+        if (sessions.byId(id)?.isIndexing) {
+          wasIndexing.add(id);
+        } else if (wasIndexing.delete(id)) {
+          fetchedIds.delete(id);
+          setIndexedTick((n) => n + 1);
+        }
+      }
+    });
+
     // Fetch sections + dumpstate metadata once per session id, gated on the
     // session being bugreport-like and fully indexed — mirrors
     // `useFileInfo.ts`'s fetch effects. `fetchedIds` makes this idempotent
-    // across repeated focus changes (the cache requirement).
+    // across repeated focus changes (the cache requirement); it is cleared
+    // for a session whose indexing just completed (above).
     createEffect(() => {
+      indexedTick();
       const id = sessions.focusedId();
       if (!id || disposed) return;
       const entry = sessions.byId(id);

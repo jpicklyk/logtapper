@@ -101,7 +101,10 @@ export function createSearchRunner(deps: SearchRunnerDeps): SearchRunner {
       const list = untrack(hits);
       if (index < 0 || index >= list.length) return;
       setCurrent(index);
-      controller.scrollToLine(sessionId, list[index], { highlight: true, source: 'search' });
+      // Select the hit as well as scrolling to it: the viewer's selected row is
+      // what the user reads as "the current match" while cycling with n / N.
+      const line = list[index];
+      controller.scrollToLine(sessionId, line, { highlight: true, select: [line, line], source: 'search' });
     };
 
     const run = (targetSession: string, query: SearchQuery | null): void => {

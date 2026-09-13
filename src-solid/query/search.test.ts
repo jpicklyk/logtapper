@@ -141,7 +141,7 @@ describe('createSearchRunner', () => {
     await Promise.resolve();
 
     expect(controller.scrollToLine).toHaveBeenCalledTimes(1);
-    expect(controller.scrollToLine).toHaveBeenCalledWith('s1', 7, { highlight: true, source: 'search' });
+    expect(controller.scrollToLine).toHaveBeenCalledWith('s1', 7, { highlight: true, select: expect.any(Array), source: 'search' });
     expect(runner.current()).toBe(0);
   });
 
@@ -166,7 +166,7 @@ describe('createSearchRunner', () => {
     expect(runner.current()).toBe(0);
     runner.prev(); // wraps before the first
     expect(runner.current()).toBe(2);
-    expect(controller.scrollToLine).toHaveBeenLastCalledWith('s1', 30, { highlight: true, source: 'search' });
+    expect(controller.scrollToLine).toHaveBeenLastCalledWith('s1', 30, { highlight: true, select: expect.any(Array), source: 'search' });
   });
 
   it('writes the search line set only while matchesOnly is on', async () => {
