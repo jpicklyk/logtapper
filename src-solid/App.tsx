@@ -447,9 +447,23 @@ export function App(props: AppProps) {
       >
         Split view
       </button>
+    </>
+  );
+
+
+  // Status line (footer). The session name and line count, the loading
+  // indicator and the last failure all lived in the top bar beside the action
+  // buttons, so a long error message pushed the window controls off the end
+  // and a healthy session's count sat between two buttons as if it were one.
+  // The user asked for these in the footer: they are state, not actions, and
+  // the shell has reserved a status bar for exactly this since the shell
+  // landed. Order is left to right by how often it changes — the session line
+  // is stable, the busy flag is transient, and an error deserves the eye last.
+  const statusBar = (
+    <>
       <Show when={store.focused()}>
         {(entry) => (
-          <span class={styles.session}>
+          <span class={styles.session} data-testid="status-session">
             {entry().load.sourceName} — {entry().totalLines.toLocaleString()} lines
             <Show when={entry().isIndexing}> (indexing…)</Show>
           </span>
@@ -486,6 +500,7 @@ export function App(props: AppProps) {
       // and closing it makes it stay closed.
       initialDrawer={store.order().length === 0 ? 'workspace-home' : null}
       topBar={topBar}
+      statusBar={statusBar}
       slots={{
         'workspace-home': () => (
           <WorkspaceHome store={workspace} sessions={store} actions={actions} liveStream={liveStream} />

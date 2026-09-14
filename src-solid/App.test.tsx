@@ -1,5 +1,5 @@
 /** @jsxImportSource solid-js */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@solidjs/testing-library';
 import { App } from './App';
 import type { LoadResult } from '@bridge/types';
@@ -163,6 +163,12 @@ vi.mock('@bridge/events', () => ({
   onAdbTrackerUpdate: vi.fn(() => Promise.resolve(() => {})),
 }));
 
+// Nothing resets the module mocks between tests, so `toHaveBeenCalledTimes`
+// counts carried over from whichever test ran before — three tests in this
+// file had grown their own ad hoc clears to cope. Clear calls (not
+// implementations: the factory-set defaults above must survive) before each.
+beforeEach(() => vi.clearAllMocks());
+
 // vitest `globals` is off, so @solidjs/testing-library's auto-cleanup never
 // registers — unmount explicitly or renders stack up across tests.
 afterEach(cleanup);
@@ -231,6 +237,49 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: /dismiss error/i }));
 
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  // The session line, the loading indicator and the error all used to sit in
+  // the top bar beside the action buttons. The user asked for them in the
+  // footer: they are state, not actions. This pins WHERE they render, not just
+  // that they render, so a later refactor cannot quietly move them back.
+  it('reports the focused session in the footer, not the top bar', async () => {
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const { getLines, loadLogFile } = await import('@bridge/commands');
+
+    vi.mocked(open).mockReset();
+    vi.mocked(loadLogFile).mockReset();
+    vi.mocked(open).mockResolvedValueOnce('/status.log');
+    vi.mocked(loadLogFile).mockResolvedValueOnce([
+      {
+        sessionId: '/status.log',
+        sourceId: '/status.log',
+        sourceName: 'status.log',
+        filePath: '/status.log',
+        totalLines: 4321,
+        fileSize: 0,
+        firstTimestamp: null,
+        lastTimestamp: null,
+        sourceType: 'Logcat',
+        isStreaming: false,
+        isIndexing: false,
+        hasCrlf: false,
+        encoding: 'UTF-8',
+      },
+    ]);
+    vi.mocked(getLines).mockResolvedValue({ lines: [], totalLines: 4321 } as never);
+
+    render(() => <App />);
+    fireEvent.click(within(screen.getByTestId('top-bar')).getByRole('button', { name: /^open file/i }));
+
+    const status = await screen.findByTestId('status-session');
+    expect(status.textContent).toContain('status.log');
+    expect(status.textContent).toContain('4,321 lines');
+
+    // In the footer…
+    expect(screen.getByRole('contentinfo').contains(status)).toBe(true);
+    // …and nowhere in the top bar.
+    expect(within(screen.getByTestId('top-bar')).queryByText(/4,321 lines/)).toBeNull();
   });
 
   it('shows the empty state until a file is opened', () => {
