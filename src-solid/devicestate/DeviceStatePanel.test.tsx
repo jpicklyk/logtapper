@@ -22,6 +22,7 @@ function fakeStore(overrides: Partial<DeviceStateStore> = {}): DeviceStateStore 
     selectedTracker: vi.fn(() => 't1'),
     setSelectedTracker: vi.fn(),
     hasCursor: vi.fn(() => true),
+    isLive: vi.fn(() => false),
     snapshot: vi.fn(() => snapshot()),
     snapshotLoading: vi.fn(() => false),
     changes: vi.fn(() => ({})),

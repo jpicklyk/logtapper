@@ -7,7 +7,13 @@ import type {
   PipelineProgress,
   MatchedLine,
 } from '@bridge/types';
-import { createAnalyzerStore, PII_ANONYMIZER_ID, PINNED_TAIL_IDS } from './analyzerStore';
+import {
+  createAnalyzerStore,
+  PII_ANONYMIZER_ID,
+  PINNED_TAIL_IDS,
+  mergeProcessorResult,
+  applyExcludedProcessors,
+} from './analyzerStore';
 import type { AnalyzerStore, AnalyzerCommands, AnalyzerSessions } from './analyzerStore';
 
 // The store imports `@tauri-apps/plugin-dialog` for its default `chooseFile` —
@@ -608,6 +614,93 @@ describe('analyzerStore', () => {
     await store.run('s1');
     await store.matchedLines('s1', 'a');
     expect(commands.getMatchedLines).toHaveBeenCalledTimes(2);
+  });
+
+  // ── Live counters (L3) ───────────────────────────────────────────────────
+
+  describe('mergeProcessorResult (pure)', () => {
+    it('appends a new entry for a processor with no prior summary', () => {
+      const out = mergeProcessorResult([], 'p1', 5, 2);
+      expect(out).toEqual([{ processorId: 'p1', matchedLines: 5, emissionCount: 2, scriptErrors: 0, scannedFrom: 0 }]);
+    });
+
+    it('replaces the existing entry for the same processor, dropping any skipped flag', () => {
+      const existing = [
+        summary('p1', { matchedLines: 1, skipped: { reason: 'source_type_mismatch', declared: ['Bugreport'], actual: 'Logcat' } }),
+        summary('p2', { matchedLines: 9 }),
+      ];
+      const out = mergeProcessorResult(existing, 'p1', 10, 3);
+      expect(out).toEqual([
+        { processorId: 'p1', matchedLines: 10, emissionCount: 3, scriptErrors: 0, scannedFrom: 0 },
+        summary('p2', { matchedLines: 9 }),
+      ]);
+    });
+  });
+
+  describe('applyExcludedProcessors (pure)', () => {
+    function skip(actual = 'Logcat'): { reason: string; declared: string[]; actual: string } {
+      return { reason: 'source_type_mismatch', declared: ['Bugreport'], actual };
+    }
+
+    it('creates a zero-count skipped entry for a processor with no prior summary', () => {
+      const out = applyExcludedProcessors([], [{ processorId: 'p1', skip: skip() }]);
+      expect(out).toEqual([{ processorId: 'p1', matchedLines: 0, emissionCount: 0, scriptErrors: 0, scannedFrom: 0, skipped: skip() }]);
+    });
+
+    it('marks an existing entry skipped without discarding its counts', () => {
+      const out = applyExcludedProcessors([summary('p1', { matchedLines: 4 })], [{ processorId: 'p1', skip: skip() }]);
+      expect(out).toEqual([summary('p1', { matchedLines: 4, skipped: skip() })]);
+    });
+
+    it('clears a stale exclusion once the processor is no longer in the excluded set', () => {
+      const out = applyExcludedProcessors([summary('p1', { skipped: skip() })], []);
+      expect(out).toEqual([summary('p1', { skipped: undefined })]);
+    });
+
+    it('never clears a skip reason this mechanism did not set', () => {
+      const otherReason = { reason: 'source_type_filter_excluded', declared: ['Bugreport'], actual: 'Logcat' };
+      const out = applyExcludedProcessors([summary('p1', { skipped: otherReason })], []);
+      expect(out).toEqual([summary('p1', { skipped: otherReason })]);
+    });
+  });
+
+  describe('applyProcessorUpdates / applyProcessorsExcluded (store methods)', () => {
+    it('folds live counters into summaryFor with no prior run, and keeps updating them', async () => {
+      const { store } = mount();
+      expect(store.summaryFor('s1', 'p1')).toBeUndefined();
+
+      store.applyProcessorUpdates('s1', [{ sessionId: 's1', processorId: 'p1', matchedLines: 1, emissionCount: 0 }]);
+      expect(store.summaryFor('s1', 'p1')?.matchedLines).toBe(1);
+
+      store.applyProcessorUpdates('s1', [{ sessionId: 's1', processorId: 'p1', matchedLines: 4, emissionCount: 1 }]);
+      expect(store.summaryFor('s1', 'p1')?.matchedLines).toBe(4);
+    });
+
+    it('is a no-op for an empty updates array', async () => {
+      const { store } = mount();
+      store.applyProcessorUpdates('s1', []);
+      expect(store.result('s1')).toBeNull();
+    });
+
+    it('folds an exclusion set into summaryFor, reachable by AnalyzerCard as `skipped`', async () => {
+      const { store } = mount();
+      store.applyProcessorsExcluded('s1', [
+        { processorId: 'p1', skip: { reason: 'source_type_mismatch', declared: ['Bugreport'], actual: 'Logcat' } },
+      ]);
+      expect(store.summaryFor('s1', 'p1')?.skipped?.actual).toBe('Logcat');
+    });
+
+    it('preserves a prior file-mode run result while layering live updates on top', async () => {
+      const { store } = mount({
+        runPipeline: vi.fn(async (sessionId: string) => runResult(sessionId, [summary('p1', { matchedLines: 2 })])),
+      });
+      await store.run('s1');
+      expect(store.result('s1')?.effectiveProcessorIds).toEqual(['p1']);
+
+      store.applyProcessorUpdates('s1', [{ sessionId: 's1', processorId: 'p1', matchedLines: 7, emissionCount: 0 }]);
+      expect(store.result('s1')?.effectiveProcessorIds).toEqual(['p1']);
+      expect(store.summaryFor('s1', 'p1')?.matchedLines).toBe(7);
+    });
   });
 
   // ── Disposal ─────────────────────────────────────────────────────────────

@@ -322,4 +322,94 @@ describe('createStreamSession', () => {
       dispose();
     });
   });
+
+  describe('live processor-update forwarding (L3)', () => {
+    function mountWithProcessorCallbacks(overrides: {
+      onProcessorUpdates?: (sessionId: string, updates: unknown[]) => void;
+      onProcessorsExcluded?: (payload: unknown) => void;
+    }) {
+      const calls: string[] = [];
+      const cacheManager = makeCacheController(calls);
+      const registry = makeRegistry(calls);
+      return createRoot((dispose) => {
+        const session = createStreamSession({
+          cacheManager,
+          registry,
+          onProcessorUpdates: overrides.onProcessorUpdates,
+          onProcessorsExcluded: overrides.onProcessorsExcluded,
+        });
+        return { session, dispose };
+      });
+    }
+
+    // A macrotask, not a microtask — `handleProcessorUpdate` schedules its
+    // flush with `setTimeout(fn, 0)` deliberately (see the module doc).
+    const macrotask = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+    it('batches every processorUpdate from one flush into a single onProcessorUpdates call', async () => {
+      const channel = captureOnEvent();
+      const onProcessorUpdates = vi.fn();
+      const { session, dispose } = mountWithProcessorCallbacks({ onProcessorUpdates });
+
+      await session.start('emulator-5554');
+      channel.fire({ event: 'processorUpdate', data: { sessionId: 's1', processorId: 'p1', matchedLines: 1, emissionCount: 0 } });
+      channel.fire({ event: 'processorUpdate', data: { sessionId: 's1', processorId: 'p2', matchedLines: 2, emissionCount: 1 } });
+      // Not flushed synchronously — collapsed into one macrotask.
+      expect(onProcessorUpdates).not.toHaveBeenCalled();
+
+      await macrotask();
+
+      expect(onProcessorUpdates).toHaveBeenCalledTimes(1);
+      expect(onProcessorUpdates).toHaveBeenCalledWith('s1', [
+        { sessionId: 's1', processorId: 'p1', matchedLines: 1, emissionCount: 0 },
+        { sessionId: 's1', processorId: 'p2', matchedLines: 2, emissionCount: 1 },
+      ]);
+
+      dispose();
+    });
+
+    it('does not flush a late-arriving batch of updates after stop()', async () => {
+      const channel = captureOnEvent();
+      const onProcessorUpdates = vi.fn();
+      const { session, dispose } = mountWithProcessorCallbacks({ onProcessorUpdates });
+
+      await session.start('emulator-5554');
+      channel.fire({ event: 'processorUpdate', data: { sessionId: 's1', processorId: 'p1', matchedLines: 1, emissionCount: 0 } });
+      await session.stop();
+      await macrotask();
+
+      expect(onProcessorUpdates).not.toHaveBeenCalled();
+      dispose();
+    });
+
+    it('forwards a processorsExcluded message for the current session', async () => {
+      const channel = captureOnEvent();
+      const onProcessorsExcluded = vi.fn();
+      const { session, dispose } = mountWithProcessorCallbacks({ onProcessorsExcluded });
+
+      await session.start('emulator-5554');
+      const payload = { sessionId: 's1', excluded: [{ processorId: 'p1', skip: { reason: 'source_type_mismatch', declared: ['Bugreport'], actual: 'Logcat' } }] };
+      channel.fire({ event: 'processorsExcluded', data: payload });
+
+      expect(onProcessorsExcluded).toHaveBeenCalledTimes(1);
+      expect(onProcessorsExcluded).toHaveBeenCalledWith(payload);
+
+      dispose();
+    });
+
+    it('drops a processorsExcluded message targeting a different session', async () => {
+      const channel = captureOnEvent();
+      const onProcessorsExcluded = vi.fn();
+      const { session, dispose } = mountWithProcessorCallbacks({ onProcessorsExcluded });
+
+      await session.start('emulator-5554');
+      channel.fire({
+        event: 'processorsExcluded',
+        data: { sessionId: 'some-other-session', excluded: [] },
+      });
+
+      expect(onProcessorsExcluded).not.toHaveBeenCalled();
+      dispose();
+    });
+  });
 });

@@ -142,6 +142,7 @@ vi.mock('@bridge/events', () => ({
   onWorkspaceListChanged: vi.fn(() => Promise.resolve(() => {})),
   onWorkspaceAutoSaved: vi.fn(() => Promise.resolve(() => {})),
   onWorkspaceRestored: vi.fn(() => Promise.resolve(() => {})),
+  onAdbTrackerUpdate: vi.fn(() => Promise.resolve(() => {})),
 }));
 
 // vitest `globals` is off, so @solidjs/testing-library's auto-cleanup never
