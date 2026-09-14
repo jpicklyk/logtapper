@@ -611,6 +611,17 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
     const addedBy = (sessionId: string, processorId: string): Caller | null =>
       addedByAgent[sessionId]?.[processorId] ?? null;
 
+    /** Mirror a chain the backend already holds (a restore, or a read-back)
+     *  onto one session. An empty backend chain leaves the session on the
+     *  shared template, as it always did. */
+    const applyBackendChain = (
+      state: { activeProcessorIds: string[]; disabledProcessorIds: string[] },
+      sessionId: string,
+    ): void => {
+      if (state.activeProcessorIds.length === 0) return;
+      applyWorkspaceChain({ chain: state.activeProcessorIds, disabledChainIds: state.disabledProcessorIds }, sessionId);
+    };
+
     // A workspace restore put this session's saved chain into the backend
     // (`workspace/restore.ts` → `restoreWorkspaceSession`); mirror it here or
     // the panel shows an empty chain the first edit would then push back over
@@ -620,11 +631,7 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
     track(
       listenRestored((payload) => {
         if (disposed) return;
-        if (payload.activeProcessorIds.length === 0) return;
-        applyWorkspaceChain(
-          { chain: payload.activeProcessorIds, disabledChainIds: payload.disabledProcessorIds },
-          payload.sessionId,
-        );
+        applyBackendChain(payload, payload.sessionId);
       }),
     );
 
@@ -993,11 +1000,7 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
             untrack(() => {
               if (disposed || chains[sessionId] !== undefined) return;
               if (!sessions.order().includes(sessionId)) return;
-              if (state.activeProcessorIds.length === 0) return;
-              applyWorkspaceChain(
-                { chain: state.activeProcessorIds, disabledChainIds: state.disabledProcessorIds },
-                sessionId,
-              );
+              applyBackendChain(state, sessionId);
             }),
           )
           .catch(() => undefined);

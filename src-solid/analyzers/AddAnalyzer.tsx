@@ -2,7 +2,7 @@
 import { For, Show, createMemo, createSignal } from 'solid-js';
 import type { JSX } from 'solid-js';
 import type { Caller, ProcessorSummary } from '@bridge/types';
-import { CallerBadge } from '../ui';
+import { CallerBadge, callerClient } from '../ui';
 import { PII_ANONYMIZER_ID } from './analyzerStore';
 import type { AnalyzerStore } from './analyzerStore';
 import styles from './analyzers.module.css';
@@ -28,11 +28,11 @@ export function installedByCaller(installedBy: string | undefined): Caller | nul
   return null;
 }
 
-/** The agent client that installed this row, or `null` when a human did (or
- *  nobody recorded it) — the only case the picker badges. */
-function agentInstaller(p: ProcessorSummary): string | null {
+/** The agent that installed this row, or `null` when a human did (or nobody
+ *  recorded it) — the only case the picker badges. */
+function agentInstaller(p: ProcessorSummary): Caller | null {
   const caller = installedByCaller(p.installedBy);
-  return caller?.kind === 'agent' ? caller.client : null;
+  return caller?.kind === 'agent' ? caller : null;
 }
 
 export interface AddAnalyzerProps {
@@ -149,8 +149,8 @@ export function AddAnalyzer(props: AddAnalyzerProps): JSX.Element {
                       <div class={styles.catalogMeta}>
                         <span>{provenanceLabel(p)}</span>
                         <Show when={agentInstaller(p)} keyed>
-                          {(client) => (
-                            <CallerBadge caller={{ kind: 'agent', client }} label="Installed" title={`Installed by ${client}`} />
+                          {(caller) => (
+                            <CallerBadge caller={caller} label="Installed" title={`Installed by ${callerClient(caller)}`} />
                           )}
                         </Show>
                       </div>
