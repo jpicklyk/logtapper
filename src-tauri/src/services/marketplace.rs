@@ -230,7 +230,8 @@ pub(crate) fn build_provenance_yaml(source_name: &str, version: &str, sha256: &s
     let now = chrono_now_iso();
     let mut yaml = format!("\n_source: {source_name}\n_installed_version: {version}\n_installed_at: {now}\n_sha256: {sha256}\n");
     if let Some(v) = installed_by {
-        yaml.push_str(&format!("_installed_by: {v}\n"));
+        yaml.push_str(&super::processors::installed_by_line(v));
+        yaml.push('\n');
     }
     yaml
 }

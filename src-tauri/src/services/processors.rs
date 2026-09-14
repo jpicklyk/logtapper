@@ -65,6 +65,36 @@ pub(crate) fn caller_provenance(caller: &Caller) -> String {
     }
 }
 
+/// One `_installed_by: <value>` line with the value YAML-quoted where it needs
+/// to be. The agent half of the value is the raw `X-LogTapper-Client` header —
+/// a client calling itself `a: b` must not be able to corrupt the persisted
+/// file so the processor vanishes on the next load.
+pub(crate) fn installed_by_line(installed_by: &str) -> String {
+    let scalar = serde_yaml::to_string(installed_by).unwrap_or_else(|_| "''\n".to_string());
+    format!("_installed_by: {}", scalar.trim_end_matches('\n'))
+}
+
+/// Stamp `_installed_by` onto a caller-supplied YAML document without
+/// re-serializing it — comments and layout stay as the author wrote them.
+/// Any existing top-level `_installed_by:` line is dropped first (re-uploading
+/// an already-installed processor's file would otherwise carry a duplicate
+/// key, which serde_yaml rejects on the next load), as is a trailing
+/// document-end marker (`...`), after which no mapping content may follow.
+pub(crate) fn stamp_installed_by(yaml: &str, installed_by: &str) -> String {
+    let mut lines: Vec<&str> = yaml
+        .lines()
+        .filter(|line| !line.starts_with("_installed_by:"))
+        .collect();
+    while matches!(lines.last(), Some(l) if l.trim() == "..." || l.trim().is_empty()) {
+        lines.pop();
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out.push_str(&installed_by_line(installed_by));
+    out.push('\n');
+    out
+}
+
 // ---------------------------------------------------------------------------
 // On-disk persistence (paths-based — the one place both commands/processors.rs
 // and services/marketplace.rs's install flow write processor/pack YAML).
@@ -398,7 +428,7 @@ fn validate_and_install(ctx: &ServiceCtx, yaml: &str, mut processor: AnyProcesso
     // `build_provenance_yaml` (`from_yaml` tolerates the unknown top-level
     // key on the next load, same as `_source`/`_installed_version`).
     let installed_by = caller_provenance(ctx.caller());
-    let yaml_with_provenance = format!("{yaml}\n_installed_by: {installed_by}\n");
+    let yaml_with_provenance = stamp_installed_by(yaml, &installed_by);
     persist_processor_file(ctx.paths(), &processor.meta.id, &yaml_with_provenance)?;
     processor.installed_by = Some(installed_by);
     let summary = ProcessorSummary::from(&processor);
@@ -816,5 +846,37 @@ processors:
         let (ctx, _tmp) = test_ctx().build();
         let summary = install_yaml(&ctx, MINIMAL_REPORTER).unwrap();
         assert_eq!(summary.installed_by.as_deref(), Some("ui"));
+    }
+
+    #[test]
+    fn reinstalling_an_already_stamped_yaml_replaces_the_key_instead_of_duplicating_it() {
+        // A user copies an installed processor's file back out of the data dir
+        // (it now carries `_installed_by: ui`) and re-installs it from an agent.
+        let (ctx, tmp) = test_ctx().agent("claude").build();
+        install_yaml(&ctx, MINIMAL_REPORTER).unwrap();
+        let yaml_path = tmp.path().join("processors").join("test-reporter.yaml");
+        let exported = std::fs::read_to_string(&yaml_path).unwrap();
+        assert!(exported.contains("_installed_by: agent:claude"));
+
+        let (ctx2, tmp2) = test_ctx().build();
+        install_yaml(&ctx2, &format!("{exported}...\n")).unwrap();
+        let persisted = std::fs::read_to_string(tmp2.path().join("processors").join("test-reporter.yaml")).unwrap();
+        assert_eq!(persisted.matches("_installed_by:").count(), 1, "one key, not a duplicate");
+        assert!(!persisted.contains("\n..."), "the document-end marker is dropped so the key still parses");
+        // The persisted text must load as a processor again — a duplicate key
+        // or content after `...` would make `from_yaml` reject it at startup.
+        AnyProcessor::from_yaml(&persisted).expect("re-stamped YAML still parses");
+        let prov: crate::processors::marketplace::Provenance = serde_yaml::from_str(&persisted).unwrap();
+        assert_eq!(prov.installed_by.as_deref(), Some("ui"));
+    }
+
+    #[test]
+    fn a_hostile_client_name_cannot_corrupt_the_persisted_yaml() {
+        let (ctx, tmp) = test_ctx().agent("a: b #c").build();
+        install_yaml(&ctx, MINIMAL_REPORTER).unwrap();
+        let persisted = std::fs::read_to_string(tmp.path().join("processors").join("test-reporter.yaml")).unwrap();
+        AnyProcessor::from_yaml(&persisted).expect("quoted value keeps the document valid");
+        let prov: crate::processors::marketplace::Provenance = serde_yaml::from_str(&persisted).unwrap();
+        assert_eq!(prov.installed_by.as_deref(), Some("agent:a: b #c"));
     }
 }
