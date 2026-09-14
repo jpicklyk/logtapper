@@ -318,6 +318,62 @@ describe('createViewerController — pane routing', () => {
     expect(second.jumpToLine).toHaveBeenCalledWith(2);
     controller.dispose();
   });
+
+  it('clears a session binding when its pane detaches (S1: unsplit)', () => {
+    const { controller, focusSession } = build();
+    const side = makePane();
+    const detach = controller.attachPane('side', side);
+    controller.bindSession(SID, 'side');
+    expect(controller.paneForSession(SID)).toBe('side');
+
+    detach();
+    // Nothing claims the session any more — routing falls back to the default.
+    expect(controller.paneForSession(SID)).toBe(DEFAULT_PANE_ID);
+
+    controller.scrollToLine(SID, 5);
+    expect(focusSession).toHaveBeenCalledWith(SID);
+    controller.dispose();
+  });
+
+  it('leaves other panes and bindings alone on a stale detach', () => {
+    const { controller } = build();
+    const first = controller.attachPane(DEFAULT_PANE_ID, makePane());
+    controller.bindSession(SID, DEFAULT_PANE_ID);
+    const side = makePane();
+    controller.attachPane('side', side);
+    controller.bindSession('other', 'side');
+
+    // A stale (already-replaced) detach for the main pane must not touch 'side'.
+    first();
+    controller.attachPane(DEFAULT_PANE_ID, makePane());
+    first();
+
+    expect(controller.paneForSession('other')).toBe('side');
+    controller.dispose();
+  });
+
+  it('focusPane retargets focus() without touching any session binding', () => {
+    const { controller } = build();
+    const main = makePane();
+    const side = makePane();
+    controller.attachPane(DEFAULT_PANE_ID, main);
+    controller.attachPane('side', side);
+    controller.bindSession(SID, DEFAULT_PANE_ID);
+    controller.bindSession('other', 'side');
+
+    controller.focusPane('side');
+    controller.focus();
+    expect(side.focus).toHaveBeenCalledTimes(1);
+    expect(main.focus).not.toHaveBeenCalled();
+    // Bindings are untouched — only the focus target moved.
+    expect(controller.paneForSession(SID)).toBe(DEFAULT_PANE_ID);
+    expect(controller.paneForSession('other')).toBe('side');
+
+    controller.focusPane(DEFAULT_PANE_ID);
+    controller.focus();
+    expect(main.focus).toHaveBeenCalledTimes(1);
+    controller.dispose();
+  });
 });
 
 describe('createViewerController — cursor', () => {
@@ -381,7 +437,8 @@ describe('the frozen surface', () => {
     const keys: (keyof ViewerController)[] = [
       'scrollToLine', 'setViewMode', 'viewMode', 'setLineSet', 'lineNumbers',
       'setHighlights', 'highlights', 'revision', 'cursor', 'onCursorChange',
-      'setCursor', 'focus', 'attachPane', 'bindSession', 'paneForSession', 'dispose',
+      'setCursor', 'focus', 'attachPane', 'bindSession', 'paneForSession',
+      'focusPane', 'dispose',
     ];
     for (const key of keys) expect(typeof controller[key]).toBe('function');
     controller.dispose();

@@ -1,5 +1,5 @@
 /** @jsxImportSource solid-js */
-import { Show, createMemo, createSignal, onCleanup } from 'solid-js';
+import { Show, createEffect, createMemo, createSignal, on, onCleanup } from 'solid-js';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import {
   CacheManager,
@@ -8,7 +8,16 @@ import {
   createViewerController,
 } from './viewer';
 import { createAppActions, createSessionStore, installBenchApp, isBenchMode } from './app/index';
-import { AppShell, TabStrip } from './shell';
+import type { SessionEntry } from './app/index';
+import {
+  AppShell,
+  SECONDARY_PANE_ID,
+  TabStrip,
+  ViewerSplit,
+  createSplitView,
+  createTier,
+  isSplitTier,
+} from './shell';
 import type { TabDescriptor } from './shell';
 import { QueryBar, createQueryStore } from './query';
 import { PresencePanel, createPresenceStore } from './presence';
@@ -79,6 +88,49 @@ export function App(props: AppProps) {
     controller.dispose();
   });
 
+  // Split panes (S1) — a second `viewer`-region pane, independent of the tab
+  // strip: the primary pane always shows the focused session, unchanged from
+  // before this package; the secondary pane shows whichever open session its
+  // own picker selects. Per-session state (cursor, query, view mode) already
+  // lives on the controller keyed by session id, so two panes showing two
+  // different sessions get separate cursor/query state for free — no
+  // controller change was needed for that half of the task. `ViewerSplit`
+  // (shell/) is the split's chrome; wiring below is only which session/pane
+  // goes where.
+  const splitView = createSplitView();
+  // A second, lightweight `createTier()` subscription (same pattern as
+  // `AppShell`'s own) — only to gate the "Split view" control below; wiring
+  // tier out of `AppShell` for one boolean would be a bigger change than the
+  // decision it drives (see this task's implementation-notes).
+  const tier = createTier();
+
+  // A session closing — from this UI or a foreign (agent) close, neither of
+  // which routes through a single call site — must not leave the secondary
+  // pane pointing at an id nothing can resolve any more.
+  createEffect(
+    on(store.order, (order, previousOrder) => {
+      if (!previousOrder) return;
+      for (const id of previousOrder) {
+        if (!order.includes(id)) splitView.handleSessionClosed(id);
+      }
+    }),
+  );
+
+  // `ViewerSplit`'s picker already excludes the focused session from the
+  // secondary pane's options, but the *primary* pane's session can also
+  // change from underneath the split — the tab strip switches focus straight
+  // to whatever session the secondary pane is already showing. Without this,
+  // both panes would end up rendering the same session, which would also
+  // make them share its cursor/query state (that state is keyed by session
+  // id on the controller, not by pane — see `ViewerSplitProps.secondaryOptions`).
+  createEffect(
+    on(store.focusedId, (focusedId) => {
+      if (focusedId !== null && focusedId === splitView.secondarySessionId()) {
+        splitView.setSecondarySession(null);
+      }
+    }),
+  );
+
   // Sections navigator (W3) — bugreport/dumpstate section tree for the
   // focused session; couples to the app only through the controller and
   // session store, same as every other surface.
@@ -115,6 +167,16 @@ export function App(props: AppProps) {
     sessions: store,
     actions,
     getEditorTabs: () => editorStoreBox.current?.toLtwTabs() ?? [],
+    // Only the split (S1) is wired into `.ltw` persistence so far — the
+    // region-width/collapsed-rail/tab-strip fields of `SolidLayout` stay
+    // their empty defaults until a future package ports `Splitter`'s
+    // localStorage widths onto this same port (see this task's
+    // implementation-notes: W1b's shellLayout was left unwired for exactly
+    // this reason).
+    shellLayout: {
+      read: () => ({ columns: {}, collapsed: [], tabs: [], activeTab: null, split: splitView.toLayout() }),
+      apply: (layout) => splitView.applyLayout(layout.split),
+    },
   });
   onCleanup(() => workspace.dispose());
   void workspace.hydrate().then(() => workspace.startupRestore());
@@ -232,11 +294,13 @@ export function App(props: AppProps) {
     })),
   ]);
 
-  /** Rows the viewer sizes its spacer for: the line set's, when one is set. */
+  /** Rows a pane's viewer sizes its spacer for: the line set's, when one is set. */
+  const renderedLineCountFor = (entry: SessionEntry): number =>
+    controller.lineNumbers(entry.load.sessionId)?.length ?? entry.totalLines;
+
   const renderedLineCount = (): number => {
     const entry = store.focused();
-    if (!entry) return 0;
-    return controller.lineNumbers(entry.load.sessionId)?.length ?? entry.totalLines;
+    return entry ? renderedLineCountFor(entry) : 0;
   };
 
   if (isBenchMode()) installBenchApp({ actions, stream: liveStream });
@@ -283,6 +347,15 @@ export function App(props: AppProps) {
       </button>
       <button type="button" class={styles.openButton} onClick={() => void openInEditor()}>
         Open in editor…
+      </button>
+      <button
+        type="button"
+        class={styles.openButton}
+        onClick={() => splitView.split()}
+        disabled={splitView.active() || !isSplitTier(tier())}
+        title={isSplitTier(tier()) ? undefined : 'Widen the window to split the viewer'}
+      >
+        Split view
       </button>
       <Show when={store.focused()}>
         {(entry) => (
@@ -341,46 +414,98 @@ export function App(props: AppProps) {
         analyses: () => <AnalysesPanel store={analyses} />,
         bookmarks: () => <BookmarksPanel store={bookmarks} sessions={store} />,
         viewer: () => (
-          <>
-            <TabStrip
-              tabs={tabs()}
-              activeKey={activeSurface() === 'editor' ? editorStore.activeId() : store.focusedId()}
-              onSelect={(key) => selectTab(key, tabs().find((t) => t.key === key)?.kind ?? 'session')}
-              onClose={(key) => closeTab(key, tabs().find((t) => t.key === key)?.kind ?? 'session')}
-            />
-            <Show
-              when={activeSurface() === 'editor' && editorStore.active()}
-              fallback={
+          <ViewerSplit
+            split={splitView}
+            // The same session can never be picked for both panes — cursor,
+            // query and view-mode state are keyed by session id on the
+            // controller, not by pane, so showing one session in two panes
+            // would make them share that state instead of each having its own.
+            secondaryOptions={() => {
+              const primaryId = store.focusedId();
+              return store
+                .order()
+                .filter((id) => id !== primaryId)
+                .map((id) => ({ sessionId: id, label: store.byId(id)?.load.sourceName ?? id }));
+            }}
+            primary={() => (
+              <>
+                <TabStrip
+                  tabs={tabs()}
+                  activeKey={activeSurface() === 'editor' ? editorStore.activeId() : store.focusedId()}
+                  onSelect={(key) => selectTab(key, tabs().find((t) => t.key === key)?.kind ?? 'session')}
+                  onClose={(key) => closeTab(key, tabs().find((t) => t.key === key)?.kind ?? 'session')}
+                />
                 <Show
-                  when={store.focused()}
-                  fallback={<div class={styles.empty}>No log open. Choose a file to begin.</div>}
+                  when={activeSurface() === 'editor' && editorStore.active()}
+                  fallback={
+                    <Show
+                      when={store.focused()}
+                      fallback={<div class={styles.empty}>No log open. Choose a file to begin.</div>}
+                    >
+                      {(entry) => (
+                        <>
+                          {/* Keyed on the session id: QueryBar snapshots its session at
+                              mount by design, so it must be remounted per session. The
+                              outer non-keyed Show does NOT remount on a truthy→truthy
+                              switch between two open tabs. */}
+                          <Show when={entry().load.sessionId} keyed>
+                            {(sid) => (
+                              <QueryBar
+                                sessionId={sid}
+                                store={queryStore}
+                                controller={controller}
+                                active={splitView.activePane() === 'main'}
+                              />
+                            )}
+                          </Show>
+                          <LogViewer
+                            dataSource={entry().dataSource}
+                            totalLineCount={renderedLineCount()}
+                            sessionId={entry().load.sessionId}
+                            tailMode={entry().kind === 'live'}
+                            controller={controller}
+                            onActivate={() => splitView.setActivePane('main')}
+                          />
+                        </>
+                      )}
+                    </Show>
+                  }
                 >
-                  {(entry) => (
-                    <>
-                      {/* Keyed on the session id: QueryBar snapshots its session at
-                          mount by design, so it must be remounted per session. The
-                          outer non-keyed Show does NOT remount on a truthy→truthy
-                          switch between two open tabs. */}
-                      <Show when={entry().load.sessionId} keyed>
-                        {(sid) => (
-                          <QueryBar sessionId={sid} store={queryStore} controller={controller} />
-                        )}
-                      </Show>
-                      <LogViewer
-                        dataSource={entry().dataSource}
-                        totalLineCount={renderedLineCount()}
-                        sessionId={entry().load.sessionId}
-                        tailMode={entry().kind === 'live'}
-                        controller={controller}
-                      />
-                    </>
-                  )}
+                  <EditorTabs store={editorStore} onError={actions.reportError} />
                 </Show>
-              }
-            >
-              <EditorTabs store={editorStore} onError={actions.reportError} />
-            </Show>
-          </>
+              </>
+            )}
+            secondary={(sessionId) => (
+              <Show
+                when={store.byId(sessionId)}
+                fallback={<div class={styles.empty}>That session is no longer open.</div>}
+              >
+                {(entry) => (
+                  <>
+                    <Show when={entry().load.sessionId} keyed>
+                      {(sid) => (
+                        <QueryBar
+                          sessionId={sid}
+                          store={queryStore}
+                          controller={controller}
+                          active={splitView.activePane() === 'secondary'}
+                        />
+                      )}
+                    </Show>
+                    <LogViewer
+                      dataSource={entry().dataSource}
+                      totalLineCount={renderedLineCountFor(entry())}
+                      sessionId={entry().load.sessionId}
+                      tailMode={entry().kind === 'live'}
+                      controller={controller}
+                      paneId={SECONDARY_PANE_ID}
+                      onActivate={() => splitView.setActivePane('secondary')}
+                    />
+                  </>
+                )}
+              </Show>
+            )}
+          />
         ),
         timeline: () => (
           <Show when={store.focused()}>

@@ -29,3 +29,7 @@ export {
   widthsStorageKey,
 } from './Splitter';
 export type { RegionWidths, ResizableRegion, SplitterProps } from './Splitter';
+export { SECONDARY_PANE_ID, createSplitView, isSplitTier } from './splitView';
+export type { PaneSlot, SplitView } from './splitView';
+export { ViewerSplit } from './ViewerSplit';
+export type { ViewerSplitProps, ViewerSplitSessionOption } from './ViewerSplit';

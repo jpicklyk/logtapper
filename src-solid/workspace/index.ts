@@ -5,13 +5,17 @@
  * here only — never from the files directly.
  */
 export {
+  DEFAULT_SPLIT_RATIO,
+  MAX_SPLIT_RATIO,
+  MIN_SPLIT_RATIO,
   REACT_LAYOUT_KEYS,
   SOLID_LAYOUT_VERSION,
   emptySolidLayout,
+  emptySplitLayout,
   readSolidLayout,
   writeSolidLayout,
 } from './layoutBlob';
-export type { SolidLayout } from './layoutBlob';
+export type { SolidLayout, SplitLayout } from './layoutBlob';
 
 export {
   AUTO_SAVE_DEBOUNCE_MS,

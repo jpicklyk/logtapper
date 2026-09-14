@@ -209,11 +209,15 @@ describe('openWorkspace', () => {
   it('applies the .ltw layout and restores sessions in manifest order', async () => {
     const applied: SolidLayout[] = [];
     const shellLayout: ShellLayoutPort = {
-      read: () => ({ columns: {}, collapsed: [], tabs: [], activeTab: null }),
+      read: () => ({
+        columns: {}, collapsed: [], tabs: [], activeTab: null,
+        split: { active: false, secondarySessionId: null, ratio: 0.5 },
+      }),
       apply: (l) => applied.push(l),
     };
     const saved: SolidLayout = {
       columns: { navigator: 333 }, collapsed: ['presence'], tabs: ['a.log', 'b.log'], activeTab: 'b.log',
+      split: { active: true, secondarySessionId: 'a.log', ratio: 0.4 },
     };
     loadWorkspaceV4Mock.mockResolvedValue(ltw({
       sessions: [manifestSession('a.log'), manifestSession('b.log'), manifestSession('c.log')],
@@ -265,6 +269,7 @@ describe('saveWorkspace', () => {
   it('writes the namespaced blob and the app-state payload', async () => {
     const current: SolidLayout = {
       columns: { navigator: 280 }, collapsed: [], tabs: ['a.log'], activeTab: 'a.log',
+      split: { active: false, secondarySessionId: null, ratio: 0.5 },
     };
     loadWorkspaceV4Mock.mockResolvedValue(ltw({ layout: { leftPaneWidth: 260, centerTree: { type: 'leaf' } } }));
     const store = build(makeFakes(), {
@@ -305,7 +310,10 @@ describe('saveWorkspace', () => {
     fakes.store[SOLID_MIRROR_KEY] = JSON.stringify({
       activeWorkspaceId: 'a', tabPaths: ['a.log'], activeTabPath: 'a.log',
     });
-    const current: SolidLayout = { columns: {}, collapsed: [], tabs: ['a.log'], activeTab: 'a.log' };
+    const current: SolidLayout = {
+      columns: {}, collapsed: [], tabs: ['a.log'], activeTab: 'a.log',
+      split: { active: false, secondarySessionId: null, ratio: 0.5 },
+    };
     const store = build(fakes, { shellLayout: { read: () => current, apply: () => undefined } });
     await store.hydrate();
     await store.startupRestore();

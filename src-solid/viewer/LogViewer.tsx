@@ -62,6 +62,14 @@ export interface LogViewerProps {
   paneId?: string;
   /** Notified whenever the viewer's own cursor moves. */
   onCursorChange?: (line: number) => void;
+  /**
+   * Notified when this pane gains pointer or keyboard focus — alongside the
+   * matching `controller.focusPane(paneId)` call, so a split-pane host (S1)
+   * can track which pane is "active" for its own UI (a `QueryBar`'s
+   * shortcut-gating `active` prop, an outline) without polling the
+   * controller.
+   */
+  onActivate?: () => void;
   class?: string;
 }
 
@@ -265,6 +273,14 @@ export function LogViewer(props: LogViewerProps) {
   // `scrollToLine` cannot reach a disposed viewer.
   const paneId = () => props.paneId ?? DEFAULT_PANE_ID;
 
+  /** Pointer-down or native focus inside this pane makes it the controller's
+   *  focus target — see `focusPane`'s doc comment for why this is on the
+   *  controller and not left for a caller to infer from a ref. */
+  const activatePane = (): void => {
+    props.controller?.focusPane(paneId());
+    props.onActivate?.();
+  };
+
   onMount(() => {
     const controller = props.controller;
     if (!controller) return;
@@ -435,7 +451,9 @@ export function LogViewer(props: LogViewerProps) {
         aria-label="Log lines"
         aria-rowcount={scrollCtl.liveTotalLines()}
         onKeyDown={onKeyDown}
+        onFocusIn={activatePane}
         onPointerDown={(e) => {
+          activatePane();
           const { lineNum, col } = lineColFromPointer(e.clientX, e.clientY);
           selection.handlePointerDown(lineNum, col, e);
         }}

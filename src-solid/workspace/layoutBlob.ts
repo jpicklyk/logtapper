@@ -43,13 +43,36 @@ export const REACT_LAYOUT_KEYS = [
   'bottomPaneTab',
 ] as const;
 
+/** Ratio clamp for the split divider — keeps neither pane from collapsing away. */
+export const MIN_SPLIT_RATIO = 0.2;
+export const MAX_SPLIT_RATIO = 0.8;
+export const DEFAULT_SPLIT_RATIO = 0.5;
+
+/**
+ * S1's split-pane state for the `viewer` region: whether it is split into two
+ * panes, which session (if any) the secondary pane shows, and the primary
+ * pane's share of the region's width.
+ */
+export interface SplitLayout {
+  active: boolean;
+  secondarySessionId: string | null;
+  /** Primary pane's width share, 0..1. */
+  ratio: number;
+}
+
+/** An empty split — no secondary pane, default ratio. */
+export function emptySplitLayout(): SplitLayout {
+  return { active: false, secondarySessionId: null, ratio: DEFAULT_SPLIT_RATIO };
+}
+
 /**
  * The Solid shell's persisted layout.
  *
- * `columns`/`collapsed` are S1's shell state (per-region splitter widths and
- * which rails are collapsed); `tabs`/`activeTab` are the tab strip's order and
- * selection, keyed the same way `TabStrip` keys its descriptors (a session's
- * source path for log tabs, the editor tab's own key for editor tabs).
+ * `columns`/`collapsed` are the shell's region state (per-region splitter
+ * widths and which rails are collapsed); `tabs`/`activeTab` are the tab
+ * strip's order and selection, keyed the same way `TabStrip` keys its
+ * descriptors (a session's source path for log tabs, the editor tab's own key
+ * for editor tabs). `split` is S1's viewer-region split pane.
  */
 export interface SolidLayout {
   /** Region id → width in px. */
@@ -60,11 +83,13 @@ export interface SolidLayout {
   tabs: string[];
   /** The selected tab key, or null when nothing is selected. */
   activeTab: string | null;
+  /** The viewer region's split-pane state (S1). */
+  split: SplitLayout;
 }
 
 /** An empty layout — what a workspace with no Solid namespace restores to. */
 export function emptySolidLayout(): SolidLayout {
-  return { columns: {}, collapsed: [], tabs: [], activeTab: null };
+  return { columns: {}, collapsed: [], tabs: [], activeTab: null, split: emptySplitLayout() };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -85,6 +110,24 @@ function sanitizeStrings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
 }
 
+function clampSplitRatio(ratio: number): number {
+  return Math.min(MAX_SPLIT_RATIO, Math.max(MIN_SPLIT_RATIO, ratio));
+}
+
+/** Same "drop corrupt fields" contract as the rest of this reader — a bad
+ *  `split` value degrades to `emptySplitLayout()`'s fields, not a throw. */
+function sanitizeSplit(value: unknown): SplitLayout {
+  if (!isRecord(value)) return emptySplitLayout();
+  const ratio = typeof value.ratio === 'number' && Number.isFinite(value.ratio)
+    ? clampSplitRatio(value.ratio)
+    : DEFAULT_SPLIT_RATIO;
+  return {
+    active: value.active === true,
+    secondarySessionId: typeof value.secondarySessionId === 'string' ? value.secondarySessionId : null,
+    ratio,
+  };
+}
+
 /**
  * Read the Solid namespace out of a `.ltw` layout blob.
  *
@@ -102,6 +145,7 @@ export function readSolidLayout(blob: unknown): SolidLayout | null {
     collapsed: sanitizeStrings(ns.collapsed),
     tabs: sanitizeStrings(ns.tabs),
     activeTab: typeof ns.activeTab === 'string' ? ns.activeTab : null,
+    split: sanitizeSplit(ns.split),
   };
 }
 
@@ -123,6 +167,7 @@ export function writeSolidLayout(blob: unknown, layout: SolidLayout): Record<str
       collapsed: [...layout.collapsed],
       tabs: [...layout.tabs],
       activeTab: layout.activeTab,
+      split: { ...layout.split },
     },
   };
 }
