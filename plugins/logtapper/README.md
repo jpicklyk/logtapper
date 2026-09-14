@@ -20,8 +20,10 @@ desktop UI, not just read access. New tool families —
 `logtapper_workspace` (list/load/save/autosave), `logtapper_filters`
 (create/info/lines/cancel/close), `logtapper_stream` (start/status/events/stop
 for ADB streaming), `logtapper_processors` and `logtapper_marketplace`
-(install/uninstall/packs/sources/updates), `logtapper_chart` /
-`logtapper_timeline`, `logtapper_export`, `logtapper_settings` (read-only —
+(install/uninstall/packs/sources/updates), `logtapper_chain`
+(get/set/add/remove — read or edit a session's configured processor chain),
+`logtapper_chart` / `logtapper_timeline`, `logtapper_export`,
+`logtapper_settings` (read-only —
 agents cannot change the anonymizer config, open-file allowlist or their own
 raw-log access, by design; log text reaching an agent is PII-redacted unless
 the user opted out in Settings),
