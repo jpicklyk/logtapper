@@ -231,6 +231,35 @@ describe('close', () => {
 
     expect(release).toHaveBeenCalledWith('only');
   });
+
+  it('stops a live stream before telling the backend to close the session', async () => {
+    commands.loadLogFile.mockResolvedValue([load('only')]);
+    await actions.openPath('C:/logs/a.log');
+
+    const order: string[] = [];
+    const stopLiveSession = vi.fn(() => {
+      order.push('stop');
+      return Promise.resolve();
+    });
+    commands.closeSession.mockImplementation(() => {
+      order.push('command');
+      return Promise.resolve();
+    });
+    const withStream = createAppActions({ store, controller, stopLiveSession });
+
+    await withStream.close('only');
+
+    expect(stopLiveSession).toHaveBeenCalledWith('only');
+    expect(order).toEqual(['stop', 'command']);
+  });
+
+  it('close works with no stopLiveSession injected (the default AppActionsDeps shape)', async () => {
+    commands.loadLogFile.mockResolvedValue([load('only')]);
+    await actions.openPath('C:/logs/a.log');
+
+    await expect(actions.close('only')).resolves.toBeUndefined();
+    expect(store.byId('only')).toBeUndefined();
+  });
 });
 
 describe('view reset', () => {

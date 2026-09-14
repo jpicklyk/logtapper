@@ -41,6 +41,14 @@ export type {
   ScrollToLineOptions,
 } from './controller';
 
+export { createStreamSession } from './createStreamSession';
+export type {
+  StreamSession,
+  StreamSessionOptions,
+  StreamSessionStatus,
+  StreamStartOptions,
+} from './createStreamSession';
+
 // ── Reused unchanged from src-next/ (framework-free) ──────────────────────
 export { FetchScheduler } from '@viewport/FetchScheduler';
 export type { FetchRange, FetchSchedulerConfig, FetchCallback } from '@viewport/FetchScheduler';

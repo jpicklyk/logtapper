@@ -10,15 +10,22 @@ import type {
 } from '@bridge/types';
 import type { CacheController } from '@cache/CacheManager';
 import type { StreamPusher } from '@viewport/DataSourceRegistry';
+import { matchesFilter } from '@filter/index';
+import type { FilterNode } from '@filter/index';
 
 /**
  * Plain Solid module — ADB streaming session lifecycle.
  *
  * Port of `src-next/hooks/useLogViewer/useStreamSession.ts`'s core batch/stop
- * handling, without the React-only wiring (`SharedLogViewerRefs`, session-tab
- * registration, filter-AST incremental matching, pipeline bus dispatch) that
- * belongs to later phases. See the TODO markers below for what was
- * deliberately left out and which plan phase owns it.
+ * handling, plus (as of L1) its incremental filter-AST matching. What stays
+ * deliberately out of this file — and belongs one layer up — is anything that
+ * needs the rest of the app: session-tab registration (`store.add` /
+ * `store.setFocused`) lives in `src-solid/stream/streamStore.ts`, which wraps
+ * this module and is the thing components actually construct; pipeline bus
+ * dispatch has no Solid event bus to dispatch into yet (see
+ * `handleProcessorUpdate` below). Keeping this file free of `SessionStore` /
+ * bus coupling is deliberate: it stays constructible and testable on its own,
+ * exactly as the original doc comment intended.
  *
  * Ownership: `createStreamSession(...)` registers `onCleanup`, so it MUST be
  * called inside a component body or an explicit `createRoot` the caller owns.
@@ -27,13 +34,26 @@ import type { StreamPusher } from '@viewport/DataSourceRegistry';
  * backend `stop_adb_stream`; callers must still await `stop()` themselves
  * (or accept an orphaned backend stream) before tearing down the owner.
  *
- * Tail-mode follow is deliberately NOT re-implemented here. `registry
- * .pushToSession()` already fires `onAppend` on every `CacheDataSource`
- * registered for the session (see `@viewport/DataSourceRegistry` /
- * `@viewport/CacheDataSource`), and P2's `ScrollControls` already subscribes
- * to that `onAppend` to track `liveTotalLines` / the "N new lines" badge. P3
- * and P5 subscribe the same way — no extra signal is exposed here, per the
- * plan's "reuse the registry's onAppend" option.
+ * Tail-mode follow is deliberately NOT re-implemented here, and this was
+ * re-verified rather than taken on faith: `registry.pushToSession()` already
+ * fires `onAppend` on every `CacheDataSource` registered for the session (see
+ * `@viewport/DataSourceRegistry` / `@viewport/CacheDataSource`), and
+ * `ScrollControls` already subscribes to that `onAppend` to track
+ * `liveTotalLines` / the "N new lines" badge (`viewer/scrollControls.ts`).
+ * `App.tsx` already passes `tailMode={entry().kind === 'live'}` to
+ * `LogViewer`, so once a stream's session is registered (see
+ * `stream/streamStore.ts`), auto-follow works with zero additional code here
+ * — there is nothing left to port for this piece.
+ *
+ * Filter-AST incremental matching (`options.filterAst` /
+ * `options.appendFilterMatches` below) IS ported — the same `matchesFilter`
+ * check React's `handleAdbBatch` runs against `refs.filterAstRef` — but as an
+ * injectable capability rather than a hard dependency, because the AST and
+ * append-target live in `src-solid/query/` (`FilterScan`), which this
+ * package does not own. See this file's own module for the current caller
+ * (there isn't one yet — `FilterScan` has no public AST/pids accessor to
+ * bind these to) and `implementation-notes` on task `fe34022c` for the exact
+ * gap and what a future query-side change would need to add.
  */
 
 /** Options accepted by {@link StreamSession.start}. */
@@ -72,6 +92,29 @@ export interface StreamSessionOptions {
    * message callback, both of which are ordinary event-handler contexts.
    */
   onStatus?: (status: StreamSessionStatus) => void;
+
+  /**
+   * The currently-committed filter AST to check newly arrived lines against,
+   * and the session it applies to — mirrors React's `filterAstRef` /
+   * `filterAstSessionIdRef`. Read together on every batch: a match is only
+   * attempted when `filterAst()` is non-null AND `filterSessionId()` equals
+   * the batch's `sessionId`, so a filter committed for a different pane's
+   * session can never capture (or be polluted by) this stream. Both absent
+   * (the default) disables incremental matching entirely — no capability is
+   * lost by omitting them, since `create_filter` still covers everything up
+   * to the snapshot it was created from.
+   */
+  filterAst?: Accessor<FilterNode | null>;
+  filterSessionId?: Accessor<string | null>;
+  /** Resolved `package:` → pids for the active filter. Defaults to empty. */
+  packagePids?: Accessor<Map<string, number[]>>;
+  /**
+   * Reports line numbers matched by `filterAst` within one batch. The caller
+   * (a `FilterScan` instance, once one is wired to a live session) appends
+   * these to its own matched-lines set — mirrors React's
+   * `appendFilterMatchesRef.current?.(sessionId, newMatches)`.
+   */
+  appendFilterMatches?: (sessionId: string, lineNums: number[]) => void;
 }
 
 export interface StreamSession {
@@ -125,9 +168,20 @@ export function createStreamSession(options: StreamSessionOptions): StreamSessio
       }
     });
 
-    // TODO(plan §filter UI phase): incremental filter-AST matching for lines
-    // arriving after the create_filter snapshot — useFilterScan.appendMatches
-    // in the React hook (useStreamSession.handleAdbBatch).
+    // Incremental filter: check only this batch's new lines against the
+    // committed AST, same as React's `handleAdbBatch`. Applied outside the
+    // `batch()` above deliberately — `appendFilterMatches` writes to a
+    // different owner's (FilterScan's) reactive state, not this session's.
+    const ast = options.filterAst?.();
+    if (ast && options.filterSessionId?.() === payload.sessionId) {
+      const pids = options.packagePids?.() ?? new Map<string, number[]>();
+      const newMatches = payload.lines
+        .filter((line) => matchesFilter(ast, line, pids))
+        .map((line) => line.lineNum);
+      if (newMatches.length > 0) {
+        options.appendFilterMatches?.(payload.sessionId, newMatches);
+      }
+    }
   };
 
   const handleProcessorUpdate = (_payload: AdbProcessorUpdate): void => {

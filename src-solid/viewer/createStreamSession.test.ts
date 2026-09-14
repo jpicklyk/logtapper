@@ -196,4 +196,130 @@ describe('createStreamSession', () => {
 
     dispose();
   });
+
+  describe('incremental filter-AST matching', () => {
+    // A `level:E` field node, built by hand rather than through the real
+    // parser — this suite only needs to prove the wiring (which lines got
+    // checked, and what was reported), not filter-expression syntax.
+    const levelEAst: import('@filter/index').FilterNode = { kind: 'field', field: 'level', value: 'E' };
+
+    function mountWithFilter(overrides: {
+      filterAst?: () => import('@filter/index').FilterNode | null;
+      filterSessionId?: () => string | null;
+      packagePids?: () => Map<string, number[]>;
+      appendFilterMatches?: (sessionId: string, lineNums: number[]) => void;
+    }) {
+      const calls: string[] = [];
+      const cacheManager = makeCacheController(calls);
+      const registry = makeRegistry(calls);
+      const appendFilterMatches = overrides.appendFilterMatches ?? vi.fn();
+      return createRoot((dispose) => {
+        const session = createStreamSession({
+          cacheManager,
+          registry,
+          filterAst: overrides.filterAst ?? (() => levelEAst),
+          filterSessionId: overrides.filterSessionId ?? (() => 's1'),
+          packagePids: overrides.packagePids,
+          appendFilterMatches,
+        });
+        return { session, appendFilterMatches, dispose };
+      });
+    }
+
+    function errorLine(lineNum: number): ViewLine {
+      return { ...makeLine(lineNum), level: 'Error' } as unknown as ViewLine;
+    }
+
+    it('reports matching lines from a batch belonging to the filtered session', async () => {
+      const channel = captureOnEvent();
+      const { session, appendFilterMatches, dispose } = mountWithFilter({});
+
+      await session.start('emulator-5554');
+      channel.fire({
+        event: 'batch',
+        data: {
+          sessionId: 's1',
+          lines: [errorLine(1), makeLine(2), errorLine(3)],
+          totalLines: 3,
+          byteCount: 100,
+          firstTimestamp: null,
+          lastTimestamp: null,
+          lostLineCount: 0,
+        },
+      });
+
+      expect(appendFilterMatches).toHaveBeenCalledTimes(1);
+      expect(appendFilterMatches).toHaveBeenCalledWith('s1', [1, 3]);
+
+      dispose();
+    });
+
+    it('does nothing when no line in the batch matches', async () => {
+      const channel = captureOnEvent();
+      const { session, appendFilterMatches, dispose } = mountWithFilter({});
+
+      await session.start('emulator-5554');
+      channel.fire({
+        event: 'batch',
+        data: {
+          sessionId: 's1',
+          lines: [makeLine(1), makeLine(2)],
+          totalLines: 2,
+          byteCount: 100,
+          firstTimestamp: null,
+          lastTimestamp: null,
+          lostLineCount: 0,
+        },
+      });
+
+      expect(appendFilterMatches).not.toHaveBeenCalled();
+      dispose();
+    });
+
+    it('never checks lines when the AST is null', async () => {
+      const channel = captureOnEvent();
+      const { session, appendFilterMatches, dispose } = mountWithFilter({ filterAst: () => null });
+
+      await session.start('emulator-5554');
+      channel.fire({
+        event: 'batch',
+        data: {
+          sessionId: 's1',
+          lines: [errorLine(1)],
+          totalLines: 1,
+          byteCount: 10,
+          firstTimestamp: null,
+          lastTimestamp: null,
+          lostLineCount: 0,
+        },
+      });
+
+      expect(appendFilterMatches).not.toHaveBeenCalled();
+      dispose();
+    });
+
+    it('never checks lines when the filter targets a different session', async () => {
+      const channel = captureOnEvent();
+      const { session, appendFilterMatches, dispose } = mountWithFilter({
+        filterSessionId: () => 'some-other-session',
+      });
+
+      await session.start('emulator-5554');
+      channel.fire({
+        event: 'batch',
+        data: {
+          sessionId: 's1',
+          lines: [errorLine(1)],
+          totalLines: 1,
+          byteCount: 10,
+          firstTimestamp: null,
+          lastTimestamp: null,
+          lostLineCount: 0,
+        },
+      });
+
+      expect(appendFilterMatches).not.toHaveBeenCalled();
+      dispose();
+    });
+  });
 });
