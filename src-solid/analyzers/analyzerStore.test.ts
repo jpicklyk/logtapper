@@ -107,9 +107,30 @@ interface Harness {
   setOrder: (ids: string[]) => void;
 }
 
-function mount(commandOverrides: Partial<AnalyzerCommands> = {}): Harness {
+interface MountOptions {
+  /** Model the backend's contract that `pipeline-complete` (caller `ui`) is
+   *  emitted for every own run BEFORE `run_pipeline` returns — the harness
+   *  fires it right before the `runPipeline` mock settles. Default on; a test
+   *  that pins the "settled but no complete yet" window turns it off. */
+  uiComplete?: boolean;
+}
+
+function mount(commandOverrides: Partial<AnalyzerCommands> = {}, options: MountOptions = {}): Harness {
   const [order, setOrderSignal] = createSignal<readonly string[]>([]);
   const commands = makeCommands(commandOverrides);
+  if (options.uiComplete !== false) {
+    const inner = commands.runPipeline;
+    commands.runPipeline = vi.fn(async (sessionId: string, ids: string[] | null) => {
+      try {
+        const result = await inner(sessionId, ids);
+        completeCb?.({ sessionId, caller: UI, result, error: null });
+        return result;
+      } catch (e) {
+        completeCb?.({ sessionId, caller: UI, result: null, error: String(e) });
+        throw e;
+      }
+    });
+  }
   const controller = { setLineSet: vi.fn(), scrollToLine: vi.fn() };
   const unlisten = vi.fn();
   const chooseFile = vi.fn(async () => null);
@@ -347,6 +368,15 @@ describe('analyzerStore', () => {
       expect(commands.setSessionPipelineMeta).toHaveBeenCalledTimes(2);
       expect(commands.setSessionPipelineMeta).toHaveBeenCalledWith('s1', ['a'], []);
       expect(commands.setSessionPipelineMeta).toHaveBeenCalledWith('s2', ['b'], ['b']);
+    });
+
+    it('a push whose session closed before the microtask ran is skipped', async () => {
+      const { store, setOrder, commands } = mount();
+      setOrder(['s1']);
+      store.add('s1', 'a');
+      setOrder([]); // the cleanup effect prunes chains['s1'] synchronously
+      await tick();
+      expect(commands.setSessionPipelineMeta).not.toHaveBeenCalled();
     });
 
     it('a rejected push is swallowed, not surfaced', async () => {
@@ -812,6 +842,110 @@ describe('analyzerStore', () => {
       await p;
       expect(store.running('s1')).toBe(false);
       expect(store.result('s1')?.summaries[0].processorId).toBe('from-promise');
+    });
+
+    it('a late ui pipeline-complete against an idle session writes nothing', async () => {
+      const { store, setOrder, fireComplete } = mount({
+        runPipeline: vi.fn(async (sid: string) => runResult(sid, [summary('own')])),
+      });
+      setOrder(['s1']);
+      await store.run('s1');
+      const landedAt = store.lastRunAt('s1');
+      expect(landedAt).not.toBeNull();
+
+      // Idle now — no token, nothing running, own mode over. Only the caller
+      // check separates this echo from an agent's completion.
+      fireComplete(completeEvent('s1', { caller: UI, result: runResult('s1', [summary('echo')]) }));
+
+      expect(store.result('s1')?.summaries[0].processorId).toBe('own');
+      expect(store.lastRunAt('s1')).toBe(landedAt);
+      expect(store.running('s1')).toBe(false);
+      fireComplete(completeEvent('s1', { caller: UI, result: null, error: 'echoed failure' }));
+      expect(store.lastError('s1')).toBeNull();
+    });
+
+    // B1 (review): `stop()` clears `running` when `stopPipeline()` resolves,
+    // but the backend only checks its cancel flag once per chunk, AFTER
+    // emitting that chunk's progress — so trailing progress lands on an idle
+    // row. It must not be mistaken for a foreign run, or `running` flips back
+    // on with nothing left to turn it off (the own settlement is guarded by a
+    // generation the phantom bumped past, and the ui complete never writes).
+    it('progress arriving after stop() but before the own run() promise settles does not start a foreign run, and the own settlement clears running', async () => {
+      const own = deferred<PipelineRunResult>();
+      const { store, setOrder, commands, fireProgress } = mount({ runPipeline: vi.fn(() => own.promise) });
+      setOrder(['s1']);
+      const p = store.run('s1');
+      await tick(); // setSessionPipelineMeta resolved; runPipeline in flight
+      await store.matchedLines('s1', 'a');
+
+      await store.stop('s1');
+      expect(store.running('s1')).toBe(false);
+
+      fireProgress(progressPayload('s1', 'a', 60)); // the chunk that was mid-flight
+      fireProgress(progressPayload('s1', 'b', 60));
+      expect(store.running('s1')).toBe(false); // stays off — no phantom
+      expect(store.progress('s1').size).toBe(0);
+      // No generation bump either: the cache from before stop is still current.
+      await store.matchedLines('s1', 'a');
+      expect(commands.getMatchedLines).toHaveBeenCalledTimes(1);
+
+      own.resolve(runResult('s1', [])); // the cancelled run's settlement
+      await p;
+      expect(store.running('s1')).toBe(false);
+      expect(store.lastError('s1')).toBeNull();
+
+      // And own mode is over: a genuine foreign run is still noticed.
+      fireProgress(progressPayload('s1', 'a', 5));
+      expect(store.running('s1')).toBe(true);
+    });
+
+    // The pre-F1 pin ('ignores an update once the run has already settled'),
+    // restored for the own-run case: the event channel can lag the invoke
+    // response, so an own run's last progress may trail its promise. Own mode
+    // ends only once the run's `pipeline-complete(ui)` has arrived too.
+    it('a late own progress after the promise settled but before the ui complete is dropped; after the complete, progress is a foreign run', async () => {
+      const { store, setOrder, fireProgress, fireComplete } = mount(
+        { runPipeline: vi.fn(async (sid: string) => runResult(sid, [summary('own')])) },
+        { uiComplete: false },
+      );
+      setOrder(['s1']);
+      await store.run('s1');
+      expect(store.running('s1')).toBe(false);
+
+      fireProgress(progressPayload('s1', 'a', 100)); // trailing own event
+      expect(store.running('s1')).toBe(false);
+      expect(store.progress('s1').size).toBe(0);
+
+      fireComplete(completeEvent('s1', { caller: UI, result: runResult('s1', [summary('own')]) }));
+      expect(store.running('s1')).toBe(false);
+
+      fireProgress(progressPayload('s1', 'a', 5)); // now genuinely foreign
+      expect(store.running('s1')).toBe(true);
+    });
+
+    it('a rejected own run does not wait on a ui complete before foreign runs are noticed again', async () => {
+      const { store, setOrder, fireProgress } = mount(
+        { runPipeline: vi.fn(async () => { throw new Error('ipc down'); }) },
+        { uiComplete: false },
+      );
+      setOrder(['s1']);
+      await store.run('s1');
+      expect(store.lastError('s1')).toContain('ipc down');
+      fireProgress(progressPayload('s1', 'a', 5));
+      expect(store.running('s1')).toBe(true);
+    });
+
+    it('an agent complete during the post-stop window is dropped, not landed', async () => {
+      const own = deferred<PipelineRunResult>();
+      const { store, setOrder, fireComplete } = mount({ runPipeline: vi.fn(() => own.promise) });
+      setOrder(['s1']);
+      const p = store.run('s1');
+      await tick();
+      await store.stop('s1');
+      fireComplete(completeEvent('s1'));
+      expect(store.result('s1')).toBeNull();
+      own.resolve(runResult('s1', []));
+      await p;
     });
 
     it('a foreign complete arriving after a newer own run() started is dropped by the guard', async () => {
