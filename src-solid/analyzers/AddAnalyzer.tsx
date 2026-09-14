@@ -16,7 +16,16 @@ export interface AddAnalyzerProps {
 
 /** Catalog minus this session's active chain, grouped by `group`, with search,
  *  per-row add, "Load YAML from file…", and a confirm-gated uninstall for
- *  every row shown here (all of them are non-active by construction). */
+ *  every row shown here (all of them are non-active by construction).
+ *
+ *  This is the per-session view of the "library" brief §3 demotes under the
+ *  Advanced disclosure — it browses and manages whatever is *already
+ *  installed*. Browsing and adding curated packs or individual analyzers
+ *  *from a marketplace source* lives in the Packs tab (`packs/PacksPanel.tsx`,
+ *  under Settings), not here; the hint text below is this file's pointer to
+ *  that surface. `store.catalog()` already reflects anything installed from
+ *  there without any wiring in this file — `App.tsx` refreshes it via
+ *  `analyzerStore.refreshCatalog()` after every Packs-tab mutation. */
 export function AddAnalyzer(props: AddAnalyzerProps): JSX.Element {
   const [query, setQuery] = createSignal('');
   const [pendingUninstall, setPendingUninstall] = createSignal<string | null>(null);
@@ -80,6 +89,9 @@ export function AddAnalyzer(props: AddAnalyzerProps): JSX.Element {
         </button>
       </div>
       <div class={styles.overlayBody}>
+        <div class={styles.hint}>
+          Looking for more? Curated packs by subsystem are under Settings → Packs.
+        </div>
         <input
           type="text"
           class={styles.search}

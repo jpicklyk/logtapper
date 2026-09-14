@@ -8,6 +8,7 @@ import type {
 import type { Density, ThemeController, ThemeMode } from '../theme/applyTheme';
 import { SettingsPanel } from './SettingsPanel';
 import type { SettingsStore } from './settingsStore';
+import type { PacksStore } from '../packs/packsStore';
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(), save: vi.fn() }));
 afterEach(cleanup);
 /** A hand-built `SettingsStore` double — the panel is tested as a renderer
@@ -34,6 +35,26 @@ function fakeStore(): SettingsStore {
     error: () => null, dispose: vi.fn(),
   } as unknown as SettingsStore;
 }
+/** Minimal `PacksStore` double — enough for `PacksPanel` to render its empty
+ *  state; `PacksPanel.test.tsx` covers the panel's own behaviour. */
+function fakePacksStore(): PacksStore {
+  const [sources] = createSignal([]);
+  const [selectedSource] = createSignal<string | null>(null);
+  const [emptyArr] = createSignal([]);
+  const [f] = createSignal(false);
+  const noop = () => Promise.resolve();
+  return {
+    sources, selectedSource,
+    entries: emptyArr, packEntries: emptyArr, entriesLoading: f, entriesError: () => null,
+    fetchEntries: vi.fn(noop),
+    installedPacks: emptyArr, installedProcessors: emptyArr, refreshInstalled: vi.fn(noop),
+    isPending: vi.fn(() => false), errorFor: vi.fn(() => undefined),
+    installPack: vi.fn(noop), uninstallPack: vi.fn(noop), installProcessor: vi.fn(noop), uninstallProcessor: vi.fn(noop),
+    pendingUpdates: emptyArr, pendingPackUpdates: emptyArr, updatesLoading: f, updateErrors: emptyArr,
+    checkUpdates: vi.fn(noop), updateOne: vi.fn(noop), updateAllFromSource: vi.fn(noop), updatePack: vi.fn(noop),
+    dispose: vi.fn(),
+  } as unknown as PacksStore;
+}
 function fakeThemeController(): ThemeController {
   const [mode, setModeSignal] = createSignal<ThemeMode>('dark');
   const [density, setDensitySignal] = createSignal<Density>('comfortable');
@@ -56,7 +77,16 @@ describe('SettingsPanel', () => {
     expect(screen.queryByTestId('general-tab')).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: 'Themes' }));
     expect(screen.getByTestId('themes-tab')).toBeTruthy();
-    fireEvent.click(screen.getByRole('tab', { name: 'Sources' }));
+  });
+  it('shows a fallback on the Packs tab when no packs store is supplied, and the real panel (with Sources under Advanced) when one is', () => {
+    render(() => <SettingsPanel store={fakeStore()} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Packs' }));
+    expect(screen.getByText('Packs are unavailable in this build.')).toBeTruthy();
+    cleanup();
+    render(() => <SettingsPanel store={fakeStore()} packs={fakePacksStore()} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Packs' }));
+    expect(screen.getByTestId('packs-panel')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('packs-advanced').querySelector('summary')!);
     expect(screen.getByTestId('sources-tab')).toBeTruthy();
   });
   it('deletes a user theme only after the row is confirmed', () => {

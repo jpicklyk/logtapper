@@ -33,6 +33,7 @@ import { WatchesPanel, createWatchesStore } from './watches';
 import { Switcher, WorkspaceHome, createWorkspaceStore } from './workspace';
 import { ExportDialog, createExportStore } from './export';
 import { SettingsPanel, createSettingsStore } from './settings';
+import { createPacksStore } from './packs';
 import { StreamControlsPanel, createLiveStreamStore } from './stream';
 import type { ThemeController } from './theme/applyTheme';
 import styles from './App.module.css';
@@ -267,6 +268,24 @@ export function App(props: AppProps) {
   // every 5s) instead of polling the bridge a second time.
   const settings = createSettingsStore({ mcpStatus: presence.status });
   onCleanup(() => settings.dispose());
+
+  // Packs (P1) — the remote marketplace half (browse/install/uninstall/
+  // update) for the Packs tab now mounted where `settings` used to hold a
+  // standalone Sources tab. `sources`/`refreshSources` are `settings`'s own
+  // (SourcesTab remains the only place a source is added or removed — see
+  // `PacksPanel.tsx`'s doc comment); `onCatalogChanged` calls
+  // `analyzers.refreshCatalog()` so a pack or processor installed here shows
+  // up immediately in every session's "Add analyzer" list, same as
+  // `AddAnalyzer.tsx`'s own `installFromFile` already does for a local YAML
+  // load. No event bus involved — direct store-to-store wiring here matches
+  // how every other cross-store dependency in this composition root works
+  // (e.g. `deviceState` reading `analyzers` above); see implementation-notes.
+  const packs = createPacksStore({
+    sources: settings.sources,
+    refreshSources: settings.refreshSources,
+    onCatalogChanged: () => void analyzers.refreshCatalog(),
+  });
+  onCleanup(() => packs.dispose());
 
   /** Who last ran this session's pipeline, from the presence journal — the
    *  analyzers surface has no journal access of its own (A2 owns that). */
@@ -549,7 +568,7 @@ export function App(props: AppProps) {
           </Show>
         ),
         export: () => <ExportDialog store={exportStore} />,
-        settings: () => <SettingsPanel store={settings} theme={props.theme} />,
+        settings: () => <SettingsPanel store={settings} packs={packs} theme={props.theme} />,
         'stream-controls': () => <StreamControlsPanel store={liveStream} />,
       }}
     />
