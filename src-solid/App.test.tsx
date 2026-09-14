@@ -110,6 +110,21 @@ vi.mock('@bridge/commands', () => ({
   listSources: vi.fn(() => Promise.resolve([])),
   addSource: vi.fn(() => Promise.resolve()),
   removeSource: vi.fn(() => Promise.resolve()),
+  // P1 added the packs store, which fetches installed packs/processors
+  // (`listPacks`/`listProcessors` above) immediately at construction and
+  // calls the rest of these only from a Packs-tab action no test here
+  // triggers — stubbed anyway so `defaultCommands` never resolves an
+  // undefined key.
+  fetchMarketplace: vi.fn(() => Promise.resolve({ processors: [], packs: [] })),
+  installFromMarketplace: vi.fn(),
+  installPackFromMarketplace: vi.fn(),
+  uninstallPackFromMarketplace: vi.fn(() => Promise.resolve()),
+  checkUpdates: vi.fn(() => Promise.resolve({ updates: [], packUpdates: [], errors: [] })),
+  getPendingUpdates: vi.fn(() => Promise.resolve([])),
+  getPendingPackUpdates: vi.fn(() => Promise.resolve([])),
+  updateProcessor: vi.fn(),
+  updateAllFromSource: vi.fn(() => Promise.resolve([])),
+  saveSourcesToDisk: vi.fn(() => Promise.resolve()),
 }));
 vi.mock('@bridge/events', () => ({
   onActivity: vi.fn(() => Promise.resolve(() => {})),
