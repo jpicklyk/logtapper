@@ -59,6 +59,8 @@ import type {
 // React app's key names (`logtapper_pipeline_chain` / `_disabled`) — same
 // file the file-level ESLint allow-list on `@hooks` names.
 import { loadChainFromStorage, loadDisabledFromStorage } from '@hooks/pipelineChainStorage';
+import { createGenerationGuard } from '../reactive';
+import type { GenerationGuard } from '../reactive';
 
 /** Backend-appended, never user-managed. See the module doc's first bullet. */
 export const PII_ANONYMIZER_ID = '__pii_anonymizer';
@@ -239,7 +241,6 @@ function toSnapshot(c: SessionChain): SessionChainSnapshot {
 
 interface SessionRun {
   running: boolean;
-  runGeneration: number;
   progress: Map<string, AnalyzerProgress>;
   result: PipelineRunResult | null;
   lastError: string | null;
@@ -248,7 +249,6 @@ interface SessionRun {
 
 const emptyRun = (): SessionRun => ({
   running: false,
-  runGeneration: 0,
   progress: new Map(),
   result: null,
   lastError: null,
@@ -289,6 +289,10 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
     // `Map`/nested-object churn per fetch would just fight `createStore`'s
     // diffing for no reactive benefit (nothing renders directly off a cache).
     const runCaches = new Map<string, RunCache>();
+    // One run-generation guard per session, external to the reactive `runs`
+    // store for the same reason `runCaches` is: nothing renders a generation
+    // number, so it doesn't belong in store-tracked state.
+    const runGuards = new Map<string, GenerationGuard>();
 
     let disposed = false;
     let templateSeeded = false;
@@ -308,6 +312,15 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
     // ── Catalog ──────────────────────────────────────────────────────────
     const currentChain = (sessionId: string): SessionChain => chains[sessionId] ?? defaultTemplate();
     const currentRun = (sessionId: string): SessionRun => runs[sessionId] ?? emptyRun();
+
+    const guardFor = (sessionId: string): GenerationGuard => {
+      let guard = runGuards.get(sessionId);
+      if (!guard) {
+        guard = createGenerationGuard();
+        runGuards.set(sessionId, guard);
+      }
+      return guard;
+    };
 
     const refreshCatalog = async (): Promise<void> => {
       const [list, pk] = await Promise.all([commands.listProcessors(), commands.listPacks()]);
@@ -395,11 +408,10 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
 
     const run = async (sessionId: string): Promise<void> => {
       const own = toSnapshot(currentChain(sessionId));
-      const myGeneration = currentRun(sessionId).runGeneration + 1;
+      const myGeneration = guardFor(sessionId).bump();
       setRuns(sessionId, {
         ...currentRun(sessionId),
         running: true,
-        runGeneration: myGeneration,
         progress: new Map(),
         lastError: null,
       });
@@ -408,10 +420,10 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
         const runResult = await commands.runPipeline(sessionId, null);
         // A newer `run()` call for this session superseded this one while the
         // IPC round trip was in flight — its state must win, not ours.
-        if (currentRun(sessionId).runGeneration !== myGeneration) return;
+        if (!guardFor(sessionId).isCurrent(myGeneration)) return;
         setRuns(sessionId, { ...currentRun(sessionId), running: false, result: runResult, lastRunAt: Date.now() });
       } catch (e) {
-        if (currentRun(sessionId).runGeneration !== myGeneration) return;
+        if (!guardFor(sessionId).isCurrent(myGeneration)) return;
         const message = String(e);
         if (message.includes(NO_CHAIN_CONFIGURED)) {
           // Nothing to run — not a failure the user needs a red banner for,
@@ -471,7 +483,7 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
     };
 
     const matchedLines = (sessionId: string, processorId: string): Promise<MatchedLine[]> => {
-      const cache = ensureCache(sessionId, currentRun(sessionId).runGeneration);
+      const cache = ensureCache(sessionId, guardFor(sessionId).current());
       let p = cache.matchedLines.get(processorId);
       if (!p) {
         p = commands.getMatchedLines(sessionId, processorId);
@@ -481,7 +493,7 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
     };
 
     const correlatorEvents = (sessionId: string, processorId: string): Promise<CorrelatorResult> => {
-      const cache = ensureCache(sessionId, currentRun(sessionId).runGeneration);
+      const cache = ensureCache(sessionId, guardFor(sessionId).current());
       let p = cache.correlatorEvents.get(processorId);
       if (!p) {
         p = commands.getCorrelatorEvents(sessionId, processorId);
@@ -593,7 +605,10 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
       // A session can be stale in one record and not the other (e.g. `run()`
       // was never called for it), so sweep the union rather than assume the
       // two lists match.
-      for (const id of new Set([...staleChains, ...staleRuns])) runCaches.delete(id);
+      for (const id of new Set([...staleChains, ...staleRuns])) {
+        runCaches.delete(id);
+        runGuards.delete(id);
+      }
     });
 
     // Kick off the first catalog load. Fire-and-forget: callers read `catalog()`
@@ -606,6 +621,7 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
       for (const fn of unlisteners) fn();
       unlisteners.length = 0;
       runCaches.clear();
+      runGuards.clear();
       disposeRoot();
     };
 

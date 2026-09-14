@@ -41,6 +41,8 @@ import type {
   ViewLine,
 } from '@bridge/types';
 import { buildBackendFilter } from './backendFilter';
+import { createGenerationGuard } from '../reactive';
+import type { GenerationGuard } from '../reactive';
 
 export type FilterScanPhase = 'idle' | 'parsing' | 'scanning' | 'done' | 'error';
 
@@ -99,7 +101,7 @@ export class FilterScan {
   private readonly pageSize: number;
 
   /** Bumped by every `setExpression`, `cancel` and `dispose`. */
-  private gen = 0;
+  private readonly guard: GenerationGuard = createGenerationGuard();
   private activeFilterId: string | null = null;
   private unlisten: (() => void) | null = null;
   /** Resolved `package:` → pids, cached across expressions like React's ref. */
@@ -146,7 +148,7 @@ export class FilterScan {
    * scanned.
    */
   async setExpression(sessionId: string, expr: string | null): Promise<void> {
-    const gen = ++this.gen;
+    const gen = this.guard.bump();
 
     if (!expr || !expr.trim()) {
       this.teardownBackendFilter();
@@ -187,7 +189,7 @@ export class FilterScan {
         } catch {
           for (const pkg of unresolved) this.packagePids.set(pkg, []);
         }
-        if (this.gen !== gen) return;
+        if (!this.guard.isCurrent(gen)) return;
       }
     }
 
@@ -219,7 +221,7 @@ export class FilterScan {
 
   /** Stop the running scan and clear results. The stored expression is the caller's. */
   cancel(): void {
-    this.gen++;
+    this.guard.bump();
     this.teardownBackendFilter();
     this.clearState('idle');
   }
@@ -228,7 +230,7 @@ export class FilterScan {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.gen++;
+    this.guard.bump();
     this.teardownBackendFilter();
     this.disposeRoot();
   }
@@ -251,7 +253,7 @@ export class FilterScan {
       // The backend rejects an invalid regex at create time. Surface it next to
       // the parse errors — a rejection the user can't see is no better than the
       // silent zero-match scan it replaced.
-      if (this.gen !== gen) return;
+      if (!this.guard.isCurrent(gen)) return;
       batch(() => {
         this.setLines(null);
         this.setMatched(0);
@@ -261,7 +263,7 @@ export class FilterScan {
       return;
     }
 
-    if (this.gen !== gen) {
+    if (!this.guard.isCurrent(gen)) {
       commands.cancelFilter(created.filterId).catch(() => {});
       commands.closeFilter(created.filterId).catch(() => {});
       return;
@@ -279,7 +281,7 @@ export class FilterScan {
 
     const handleProgress = async (progress: { filterId: string; matchedSoFar: number; done: boolean }) => {
       if (listenerDone || progress.filterId !== filterId) return;
-      if (this.gen !== gen) {
+      if (!this.guard.isCurrent(gen)) {
         listenerDone = true;
         commands.cancelFilter(filterId).catch(() => {});
         commands.closeFilter(filterId).catch(() => {});
@@ -291,7 +293,7 @@ export class FilterScan {
       if (newCount > 0) {
         try {
           const page = await commands.getFilteredLines(filterId, lastFetched, newCount);
-          if (listenerDone || this.gen !== gen) return;
+          if (listenerDone || !this.guard.isCurrent(gen)) return;
           lastFetched = progress.matchedSoFar;
 
           // JS second pass: only needed when the backend criteria is a superset
@@ -316,7 +318,7 @@ export class FilterScan {
         commands.closeFilter(filterId).catch(() => {});
         unlisten?.();
         if (this.unlisten === unlisten) this.unlisten = null;
-        if (this.gen === gen) {
+        if (this.guard.isCurrent(gen)) {
           batch(() => {
             this.flush(matches);
             this.setPhase('done');
@@ -329,7 +331,7 @@ export class FilterScan {
       handlerChain = handlerChain.then(() => handleProgress(progress)).catch(() => {});
     });
 
-    if (listenerDone || this.gen !== gen) {
+    if (listenerDone || !this.guard.isCurrent(gen)) {
       // Already done, or a newer scan started while this listener was still
       // registering — unregister immediately instead of storing a stale
       // listener, which would orphan the newer scan's own listener.
@@ -350,7 +352,7 @@ export class FilterScan {
     let batchCount = 0;
 
     while (offset < total) {
-      if (this.gen !== gen) return;
+      if (!this.guard.isCurrent(gen)) return;
       let window: LinePage;
       try {
         window = await commands.getLines({
@@ -365,7 +367,7 @@ export class FilterScan {
       } catch {
         break;
       }
-      if (this.gen !== gen) return;
+      if (!this.guard.isCurrent(gen)) return;
 
       total = window.totalLines;
       this.setTotal(window.totalLines);
@@ -381,7 +383,7 @@ export class FilterScan {
       if (window.lines.length === 0) break;
     }
 
-    if (this.gen === gen) {
+    if (this.guard.isCurrent(gen)) {
       batch(() => {
         this.flush(matches);
         this.setPhase('done');

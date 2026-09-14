@@ -67,6 +67,7 @@ import type { ViewerController } from '../viewer';
 // `'../app'` also matches `App.tsx` on a case-insensitive filesystem and TS
 // refuses the program (TS1149) — always import the barrel via `/index`.
 import type { SessionStore } from '../app/index';
+import { coalesceMicrotask } from '../reactive';
 
 export interface AnalysesCommands {
   listAnalyses: typeof listAnalysesCmd;
@@ -163,7 +164,6 @@ export function createAnalysesStore(deps: AnalysesStoreDeps): AnalysesStore {
 
     let disposed = false;
     let unlisten: UnlistenFn | null = null;
-    let refreshScheduled = false;
     let seenThisBatch = new Set<string>();
 
     const labels = createMemo<ReadonlyMap<string, string>>(() => {
@@ -191,15 +191,10 @@ export function createAnalysesStore(deps: AnalysesStoreDeps): AnalysesStore {
 
     /** Coalesces a burst of `analysis-update` events in the same microtask
      *  into one `listAnalyses()` call, and resets the per-batch dedupe set. */
-    const scheduleListRefresh = (): void => {
-      if (refreshScheduled) return;
-      refreshScheduled = true;
-      queueMicrotask(() => {
-        refreshScheduled = false;
-        seenThisBatch = new Set();
-        if (!disposed) refreshList();
-      });
-    };
+    const scheduleListRefresh = coalesceMicrotask(() => {
+      seenThisBatch = new Set();
+      if (!disposed) refreshList();
+    });
 
     const open = (artifactId: string): Promise<AnalysisArtifact> => {
       const cached = cache.get(artifactId);
