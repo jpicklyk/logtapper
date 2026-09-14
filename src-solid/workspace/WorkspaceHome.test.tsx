@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@solidjs/testing-library';
 import type { WorkspaceIdentity } from '@bridge/workspaceTypes';
 import type { AppActions, SessionEntry, SessionStore } from '../app/index';
+import type { LiveStreamStore } from '../stream';
 import type { WorkspaceStore } from './workspaceStore';
 import { WorkspaceHome } from './WorkspaceHome';
 
@@ -84,22 +85,50 @@ function fakeActions(overrides: Partial<AppActions> = {}): AppActions {
   } as unknown as AppActions;
 }
 
+/** A hand-built `LiveStreamStore` double, mirroring
+ *  `StreamControlsPanel.test.tsx`'s own fake — WorkspaceHome only needs to
+ *  prove it wires the real panel through unchanged, not re-verify the
+ *  panel's own behavior. `devices`/`devicesError` cover the no-device and
+ *  no-`adb` branches this task must render correctly. */
+function fakeLiveStreamStore(
+  overrides: { devices?: unknown[]; devicesError?: string | null } = {},
+): LiveStreamStore {
+  return {
+    status: () => ({ phase: 'idle' }),
+    active: () => false,
+    devices: () => overrides.devices ?? [],
+    devicesLoading: () => false,
+    devicesError: () => overrides.devicesError ?? null,
+    refreshDevices: vi.fn(() => Promise.resolve()),
+    start: vi.fn(() => Promise.resolve()),
+    stop: vi.fn(() => Promise.resolve()),
+    stopIfCurrent: vi.fn(() => Promise.resolve()),
+    setAnonymize: vi.fn(() => Promise.resolve()),
+    updateProcessors: vi.fn(() => Promise.resolve()),
+    updateTrackers: vi.fn(() => Promise.resolve()),
+    updateTransformers: vi.fn(() => Promise.resolve()),
+    resolvePackagePids: vi.fn(() => Promise.resolve([])),
+    saveCapture: vi.fn(() => Promise.resolve(0)),
+    dispose: vi.fn(),
+  } as unknown as LiveStreamStore;
+}
+
 describe('WorkspaceHome', () => {
   it('shows the empty state when there are no workspaces yet', () => {
-    render(() => <WorkspaceHome store={fakeWorkspaceStore()} sessions={fakeSessions()} actions={fakeActions()} />);
+    render(() => <WorkspaceHome store={fakeWorkspaceStore()} sessions={fakeSessions()} actions={fakeActions()} liveStream={fakeLiveStreamStore()} />);
     expect(screen.getByText(/no workspaces yet/i)).toBeTruthy();
   });
 
   it('shows the empty state when the active workspace has no sessions', () => {
     const store = fakeWorkspaceStore({ list: [ws('w1')], activeId: 'w1' });
-    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} />);
+    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} liveStream={fakeLiveStreamStore()} />);
     expect(screen.getByText(/no sessions in this workspace/i)).toBeTruthy();
   });
 
   it('grid and list views render the same workspace set', () => {
     const list = [ws('w1', { name: 'Alpha' }), ws('w2', { name: 'Beta' })];
     const store = fakeWorkspaceStore({ list, activeId: 'w1' });
-    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} />);
+    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} liveStream={fakeLiveStreamStore()} />);
 
     // Default view is grid.
     const grid = within(screen.getByTestId('workspace-grid'));
@@ -117,19 +146,19 @@ describe('WorkspaceHome', () => {
 
   it('persists the grid/list choice across remounts', () => {
     const store = fakeWorkspaceStore({ list: [ws('w1')], activeId: 'w1' });
-    const { unmount } = render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} />);
+    const { unmount } = render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} liveStream={fakeLiveStreamStore()} />);
     fireEvent.click(screen.getByRole('button', { name: 'List' }));
     expect(screen.getByTestId('workspace-list')).toBeTruthy();
     unmount();
 
-    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} />);
+    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} liveStream={fakeLiveStreamStore()} />);
     expect(screen.getByTestId('workspace-list')).toBeTruthy();
   });
 
   it('renaming a workspace calls store.rename with the workspace id and new name', () => {
     const rename = vi.fn(() => Promise.resolve());
     const store = fakeWorkspaceStore({ list: [ws('w1', { name: 'Old name' })], activeId: 'w1', rename });
-    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} />);
+    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} liveStream={fakeLiveStreamStore()} />);
 
     fireEvent.click(screen.getByTitle('Rename workspace'));
     const input = screen.getByLabelText('Rename Old name') as HTMLInputElement;
@@ -142,7 +171,7 @@ describe('WorkspaceHome', () => {
   it('deleting a workspace requires a confirm click, then calls store.delete with the workspace id', () => {
     const remove = vi.fn(() => Promise.resolve());
     const store = fakeWorkspaceStore({ list: [ws('w1')], activeId: 'w1', remove });
-    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} />);
+    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} liveStream={fakeLiveStreamStore()} />);
 
     fireEvent.click(screen.getByTitle('Delete workspace'));
     expect(remove).not.toHaveBeenCalled();
@@ -154,7 +183,7 @@ describe('WorkspaceHome', () => {
   it('deleting a non-active workspace does not force-close it', () => {
     const remove = vi.fn(() => Promise.resolve());
     const store = fakeWorkspaceStore({ list: [ws('w1'), ws('w2')], activeId: 'w1', remove });
-    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} />);
+    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} liveStream={fakeLiveStreamStore()} />);
 
     const deleteButtons = screen.getAllByTitle('Delete workspace');
     fireEvent.click(deleteButtons[1]);
@@ -166,7 +195,7 @@ describe('WorkspaceHome', () => {
   it('checking "Also delete .ltw" passes deleteFile:true through to store.delete', () => {
     const remove = vi.fn(() => Promise.resolve());
     const store = fakeWorkspaceStore({ list: [ws('w1')], activeId: 'w1', remove });
-    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} />);
+    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} liveStream={fakeLiveStreamStore()} />);
 
     fireEvent.click(screen.getByTitle('Delete workspace'));
     fireEvent.click(screen.getByRole('checkbox'));
@@ -178,7 +207,7 @@ describe('WorkspaceHome', () => {
   it('shows a refused delete error verbatim', async () => {
     const remove = vi.fn(() => Promise.reject(new Error('NOT_ALLOWED: outside the allowlist')));
     const store = fakeWorkspaceStore({ list: [ws('w1')], activeId: 'w1', remove });
-    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} />);
+    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} liveStream={fakeLiveStreamStore()} />);
 
     fireEvent.click(screen.getByTitle('Delete workspace'));
     fireEvent.click(screen.getByText('Confirm'));
@@ -197,7 +226,7 @@ describe('WorkspaceHome', () => {
       },
       focusedId: 's2',
     });
-    render(() => <WorkspaceHome store={store} sessions={sessions} actions={fakeActions()} />);
+    render(() => <WorkspaceHome store={store} sessions={sessions} actions={fakeActions()} liveStream={fakeLiveStreamStore()} />);
 
     const rows = screen.getAllByTestId('session-row');
     expect(rows).toHaveLength(2);
@@ -211,7 +240,7 @@ describe('WorkspaceHome', () => {
     const store = fakeWorkspaceStore({ list: [ws('w1')], activeId: 'w1' });
     const sessions = fakeSessions({ order: ['s1'], entries: { s1: sessionEntry('a.log') } });
     const actions = fakeActions();
-    render(() => <WorkspaceHome store={store} sessions={sessions} actions={actions} />);
+    render(() => <WorkspaceHome store={store} sessions={sessions} actions={actions} liveStream={fakeLiveStreamStore()} />);
 
     fireEvent.click(screen.getByText('Focus'));
     expect(actions.focus).toHaveBeenCalledWith('s1');
@@ -222,21 +251,21 @@ describe('WorkspaceHome', () => {
 
   it('"New workspace" calls store.newWorkspace', () => {
     const store = fakeWorkspaceStore({ list: [ws('w1')], activeId: 'w1' });
-    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} />);
+    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} liveStream={fakeLiveStreamStore()} />);
     fireEvent.click(screen.getByText('New workspace'));
     expect(store.newWorkspace).toHaveBeenCalled();
   });
 
   it('clicking a recent workspace card switches to it', () => {
     const store = fakeWorkspaceStore({ list: [ws('w1'), ws('w2', { name: 'Other' })], activeId: 'w1' });
-    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} />);
+    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} liveStream={fakeLiveStreamStore()} />);
     fireEvent.click(screen.getByText('Other'));
     expect(store.switchWorkspace).toHaveBeenCalledWith('w2');
   });
 
   it('clicking the already-active card does not call switchWorkspace', () => {
     const store = fakeWorkspaceStore({ list: [ws('w1')], activeId: 'w1' });
-    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} />);
+    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} liveStream={fakeLiveStreamStore()} />);
     fireEvent.click(screen.getByTestId('workspace-card'));
     expect(store.switchWorkspace).not.toHaveBeenCalled();
   });
@@ -244,8 +273,71 @@ describe('WorkspaceHome', () => {
   it('"Open file…" in the sessions empty state routes through the app actions', async () => {
     const store = fakeWorkspaceStore({ list: [ws('w1')], activeId: 'w1' });
     const actions = fakeActions();
-    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={actions} />);
+    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={actions} liveStream={fakeLiveStreamStore()} />);
     fireEvent.click(screen.getByTestId('sessions-empty-open-file'));
     await waitFor(() => expect(actions.openFileDialog).toHaveBeenCalled());
+  });
+
+  describe('first-run attach', () => {
+    it('offers both ways in and keeps the device picker collapsed by default', () => {
+      const store = fakeWorkspaceStore({ list: [ws('w1')], activeId: 'w1' });
+      render(() => (
+        <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} liveStream={fakeLiveStreamStore()} />
+      ));
+
+      expect(screen.getByTestId('workspace-first-run')).toBeTruthy();
+      expect(screen.getByTestId('attach-device-toggle')).toBeTruthy();
+      expect(screen.getByTestId('sessions-empty-open-file')).toBeTruthy();
+      expect(screen.queryByTestId('workspace-attach-panel')).toBeNull();
+      expect(screen.queryByTestId('stream-controls')).toBeNull();
+    });
+
+    it('"Attach a device" reveals L1\'s picker and does not build a second one', () => {
+      const store = fakeWorkspaceStore({ list: [ws('w1')], activeId: 'w1' });
+      const liveStream = fakeLiveStreamStore();
+      render(() => (
+        <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} liveStream={liveStream} />
+      ));
+
+      fireEvent.click(screen.getByTestId('attach-device-toggle'));
+
+      expect(screen.getByTestId('workspace-attach-panel')).toBeTruthy();
+      // Real `StreamControlsPanel` markup, not a re-implementation — and it
+      // drives the exact store instance this panel was handed.
+      expect(screen.getByTestId('stream-controls')).toBeTruthy();
+      expect(liveStream.refreshDevices).toHaveBeenCalled();
+
+      fireEvent.click(screen.getByTestId('attach-device-toggle'));
+      expect(screen.queryByTestId('workspace-attach-panel')).toBeNull();
+    });
+
+    it('shows the ordinary no-device hint when a device is connected but adb finds none', () => {
+      const store = fakeWorkspaceStore({ list: [ws('w1')], activeId: 'w1' });
+      const liveStream = fakeLiveStreamStore({ devices: [] });
+      render(() => (
+        <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} liveStream={liveStream} />
+      ));
+
+      fireEvent.click(screen.getByTestId('attach-device-toggle'));
+
+      expect(screen.getByText(/no devices found/i)).toBeTruthy();
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+
+    it('surfaces a missing-adb failure as the picker\'s own error text, not a crash', () => {
+      const store = fakeWorkspaceStore({ list: [ws('w1')], activeId: 'w1' });
+      const liveStream = fakeLiveStreamStore({
+        devices: [],
+        devicesError: "Failed to launch 'adb': program not found",
+      });
+      render(() => (
+        <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} liveStream={liveStream} />
+      ));
+
+      fireEvent.click(screen.getByTestId('attach-device-toggle'));
+
+      const alert = screen.getByRole('alert');
+      expect(alert.textContent).toContain('program not found');
+    });
   });
 });
