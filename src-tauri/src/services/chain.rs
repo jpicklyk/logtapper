@@ -129,7 +129,7 @@ pub fn patch(
     add: Vec<String>,
     remove: Vec<String>,
 ) -> Result<ChainState, ServiceError> {
-    ensure_session(ctx, session_id)?;
+    // `get` already checks the session exists — no second `sessions` lock.
     let current = get(ctx, session_id)?;
     let add = resolve_ids(ctx, &add, Resolution::Strict)?;
     let remove = resolve_ids(ctx, &remove, Resolution::StrictOrMember(&current.active_processor_ids))?;
@@ -472,6 +472,25 @@ pipeline:
             state.disabled_processor_ids.is_empty(),
             "an explicit add re-enables a disabled member"
         );
+    }
+
+    #[test]
+    fn patch_with_an_id_in_both_add_and_remove_lets_add_win() {
+        // `remove` filters first, then `add` re-appends whatever is missing —
+        // so a contradictory request lands the id present and enabled. An
+        // explicit add means "I want this to run", and that is the final word.
+        let (ctx, _t) = test_ctx().with_session("s1", 1).build();
+        install(&ctx, "a@official");
+        install(&ctx, "b@official");
+        set(&ctx, "s1", strs(&["a", "b"]), strs(&["b"])).expect("seed");
+
+        let state = patch(&ctx, "s1", strs(&["b"]), strs(&["b"])).expect("patch");
+        assert_eq!(
+            state.active_processor_ids,
+            strs(&["a@official", "b@official"]),
+            "the id is removed then re-added, so it moves to the tail"
+        );
+        assert!(state.disabled_processor_ids.is_empty(), "the add re-enables it");
     }
 
     #[test]
