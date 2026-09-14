@@ -100,6 +100,7 @@ fn load_persisted_processors(state: &AppState, proc_dir: &std::path::Path) {
                     // Check for provenance: if `_source` is present, reconstruct
                     // the qualified ID and set the source field.
                     if let Ok(prov) = serde_yaml::from_str::<processors::marketplace::Provenance>(yaml) {
+                        def.installed_by = prov.installed_by.clone();
                         if let Some(ref source) = prov.source {
                             def.source = Some(source.clone());
                             let qid = processors::marketplace::qualified_id(&def.meta.id, source);
@@ -161,13 +162,19 @@ async fn startup_update_check(handle: tauri::AppHandle) {
             if !commands::sources::is_newer(inst_ver, &entry.version) { continue; }
 
             if source.auto_update {
-                // Auto-apply silently.
+                // Auto-apply silently. This is a version bump, not a fresh
+                // install initiated by anyone — carry forward whatever
+                // `installed_by` the processor already had (`None` if it
+                // predates that field) rather than attributing it to a caller.
+                let existing_installed_by = state.processors.lock().ok()
+                    .and_then(|procs| procs.get(&qid).and_then(|p| p.installed_by.clone()));
                 if let Ok(yaml) = registry::download_processor_from_source(
                     &state.http_client, source, entry
                 ).await {
-                    let final_yaml = format!("{}{}", yaml, commands::sources::build_provenance_yaml(&source.name, &entry.version, &entry.sha256));
+                    let final_yaml = format!("{}{}", yaml, commands::sources::build_provenance_yaml(&source.name, &entry.version, &entry.sha256, existing_installed_by.as_deref()));
                     if let Ok(mut def) = AnyProcessor::from_yaml(&final_yaml) {
                         def.source = Some(source.name.clone());
+                        def.installed_by = existing_installed_by.clone();
                         // Persist to disk. `qid` is a qualified `id@source` string
                         // assembled from the marketplace index, not validated by
                         // validate_processor_id() directly — persist_processor()
@@ -645,4 +652,44 @@ pub fn run() {
                 _ => {}
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // B2: startup provenance recovery (`load_persisted_processors`)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn load_persisted_processors_with_no_installed_by_loads_as_none() {
+        // A processor YAML persisted before `_installed_by` existed must
+        // still load — with `installed_by: None`, not an error.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("legacy.yaml"),
+            "meta:\n  id: legacy\n  name: Legacy\n  version: 1.0.0\n",
+        )
+        .unwrap();
+        let state = AppState::new();
+        load_persisted_processors(&state, dir.path());
+        let procs = state.processors.lock().unwrap();
+        assert_eq!(procs.get("legacy").unwrap().installed_by, None);
+    }
+
+    #[test]
+    fn load_persisted_processors_recovers_installed_by_from_provenance() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("wifi.yaml"),
+            "meta:\n  id: wifi-state\n  name: WiFi\n  version: 1.0.0\n_source: official\n_installed_by: agent:claude\n",
+        )
+        .unwrap();
+        let state = AppState::new();
+        load_persisted_processors(&state, dir.path());
+        let procs = state.processors.lock().unwrap();
+        let p = procs.get("wifi-state@official").expect("qualified by _source");
+        assert_eq!(p.installed_by.as_deref(), Some("agent:claude"));
+    }
 }

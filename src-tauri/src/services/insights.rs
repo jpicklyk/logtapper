@@ -381,6 +381,7 @@ mod tests {
                 mcp: Some(mcp),
             }),
             source: None,
+            installed_by: None,
         };
         ctx.state().processors.lock().unwrap().insert(id.to_string(), processor);
     }

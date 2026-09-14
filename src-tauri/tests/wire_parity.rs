@@ -165,6 +165,7 @@ fn install_tracker(state: &Arc<AppState>, id: &str, mode: TrackerMode) {
         kind: ProcessorKind::StateTracker(Arc::new(tracker_def(mode))),
         schema: None,
         source: None,
+        installed_by: None,
     };
     state.processors.lock().unwrap().insert(id.to_string(), processor);
 }

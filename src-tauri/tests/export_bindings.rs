@@ -223,6 +223,8 @@ macro_rules! ROOT_TYPES {
             app_lib::services::chain::ChainState,
             app_lib::services::chain::ChainUpdateEvent,
             app_lib::services::pipeline::PipelineCompleteEvent,
+            // --- B2: catalog-update event (processor/pack install provenance) ---
+            app_lib::services::processors::CatalogUpdateEvent,
         ]
     };
 }

@@ -274,6 +274,10 @@ pub struct Provenance {
     pub installed_at: Option<String>,
     #[serde(rename = "_sha256", default, skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
+    /// Who installed this processor: `"ui"` or `"agent:<client>"`. `None` for
+    /// a processor persisted before this field existed.
+    #[serde(rename = "_installed_by", default, skip_serializing_if = "Option::is_none")]
+    pub installed_by: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

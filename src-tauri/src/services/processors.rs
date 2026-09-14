@@ -11,14 +11,89 @@
 
 use std::collections::HashMap;
 
+use serde::Serialize;
 use serde_json::{json, Value};
+use ts_rs::TS;
 
 use crate::processors::marketplace::{self, resolve_processor_id_checked};
 use crate::processors::{AnyProcessor, PackMeta, PackSummary, ProcessorKind, ProcessorSummary};
 
 use super::paths::AppPaths;
 use super::policy;
-use super::{lock_svc, ServiceCtx, ServiceError};
+use super::{lock_svc, Caller, ServiceCtx, ServiceError};
+
+/// Emitted as the `catalog-update` Tauri event on every processor/pack
+/// install, uninstall, or update, from either caller — mirrors
+/// `WatchUpdateEvent`'s "the UI panel updates live regardless of transport"
+/// contract for the catalog rather than one session's artifacts. `ids` are
+/// qualified processor ids and/or pack ids, whichever the mutation touched.
+/// Never emitted for `add_source`/`remove_source` — sources are a
+/// human-only surface, not a catalog change.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogUpdateEvent {
+    pub caller: Caller,
+    /// `"install"` | `"uninstall"` | `"update"`.
+    pub action: String,
+    pub ids: Vec<String>,
+}
+
+/// Emit `catalog-update` after the journal call, at every processor/pack
+/// mutation site. A no-op for an empty `ids` (e.g. `update_all_from_source`
+/// finding nothing to apply) — an empty event would tell listeners nothing.
+pub(crate) fn emit_catalog_update(ctx: &ServiceCtx, action: &str, ids: Vec<String>) {
+    if ids.is_empty() {
+        return;
+    }
+    ctx.events().emit_json(
+        "catalog-update",
+        serde_json::to_value(CatalogUpdateEvent {
+            caller: ctx.caller().clone(),
+            action: action.to_string(),
+            ids,
+        })
+        .unwrap_or_default(),
+    );
+}
+
+/// Provenance string stored as `_installed_by` in a processor's persisted
+/// YAML: `"ui"` for the desktop UI, `"agent:<client>"` for an MCP agent.
+pub(crate) fn caller_provenance(caller: &Caller) -> String {
+    match caller {
+        Caller::Ui => "ui".to_string(),
+        Caller::Agent { client } => format!("agent:{client}"),
+    }
+}
+
+/// One `_installed_by: <value>` line with the value YAML-quoted where it needs
+/// to be. The agent half of the value is the raw `X-LogTapper-Client` header —
+/// a client calling itself `a: b` must not be able to corrupt the persisted
+/// file so the processor vanishes on the next load.
+pub(crate) fn installed_by_line(installed_by: &str) -> String {
+    let scalar = serde_yaml::to_string(installed_by).unwrap_or_else(|_| "''\n".to_string());
+    format!("_installed_by: {}", scalar.trim_end_matches('\n'))
+}
+
+/// Stamp `_installed_by` onto a caller-supplied YAML document without
+/// re-serializing it — comments and layout stay as the author wrote them.
+/// Any existing top-level `_installed_by:` line is dropped first (re-uploading
+/// an already-installed processor's file would otherwise carry a duplicate
+/// key, which serde_yaml rejects on the next load), as is a trailing
+/// document-end marker (`...`), after which no mapping content may follow.
+pub(crate) fn stamp_installed_by(yaml: &str, installed_by: &str) -> String {
+    let mut lines: Vec<&str> = yaml
+        .lines()
+        .filter(|line| !line.starts_with("_installed_by:"))
+        .collect();
+    while matches!(lines.last(), Some(l) if l.trim() == "..." || l.trim().is_empty()) {
+        lines.pop();
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out.push_str(&installed_by_line(installed_by));
+    out.push('\n');
+    out
+}
 
 // ---------------------------------------------------------------------------
 // On-disk persistence (paths-based — the one place both commands/processors.rs
@@ -346,9 +421,16 @@ pub fn packs(ctx: &ServiceCtx) -> Result<Vec<PackSummary>, ServiceError> {
 // install / uninstall — processors
 // ---------------------------------------------------------------------------
 
-fn validate_and_install(ctx: &ServiceCtx, yaml: &str, processor: AnyProcessor) -> Result<ProcessorSummary, ServiceError> {
+fn validate_and_install(ctx: &ServiceCtx, yaml: &str, mut processor: AnyProcessor) -> Result<ProcessorSummary, ServiceError> {
     crate::commands::processors::validate_processor(&processor).map_err(ServiceError::invalid_arg)?;
-    persist_processor_file(ctx.paths(), &processor.meta.id, yaml)?;
+    // Raw installs (paste/upload/file) carry no provenance in the caller's
+    // YAML — stamp who did it, same as a marketplace install's
+    // `build_provenance_yaml` (`from_yaml` tolerates the unknown top-level
+    // key on the next load, same as `_source`/`_installed_version`).
+    let installed_by = caller_provenance(ctx.caller());
+    let yaml_with_provenance = stamp_installed_by(yaml, &installed_by);
+    persist_processor_file(ctx.paths(), &processor.meta.id, &yaml_with_provenance)?;
+    processor.installed_by = Some(installed_by);
     let summary = ProcessorSummary::from(&processor);
     let mut procs = lock_svc(&ctx.state().processors, "processors")?;
     procs.insert(processor.meta.id.clone(), processor);
@@ -361,6 +443,7 @@ pub fn install_yaml(ctx: &ServiceCtx, yaml: &str) -> Result<ProcessorSummary, Se
     let id = processor.meta.id.clone();
     let summary = validate_and_install(ctx, yaml, processor)?;
     ctx.journal("processor.install", None, format!("installed processor '{id}' from YAML"));
+    emit_catalog_update(ctx, "install", vec![id]);
     Ok(summary)
 }
 
@@ -376,6 +459,7 @@ pub fn install_from_file(ctx: &ServiceCtx, path: &str) -> Result<ProcessorSummar
     let id = processor.meta.id.clone();
     let summary = validate_and_install(ctx, &yaml, processor)?;
     ctx.journal("processor.install", None, format!("installed processor '{id}' from file"));
+    emit_catalog_update(ctx, "install", vec![id]);
     Ok(summary)
 }
 
@@ -391,6 +475,7 @@ pub fn uninstall(ctx: &ServiceCtx, processor_id: &str) -> Result<(), ServiceErro
     drop(procs);
     delete_processor_file(ctx.paths(), processor_id);
     ctx.journal("processor.uninstall", None, format!("uninstalled processor '{processor_id}'"));
+    emit_catalog_update(ctx, "uninstall", vec![processor_id.to_string()]);
     Ok(())
 }
 
@@ -410,6 +495,7 @@ pub fn install_pack_yaml(ctx: &ServiceCtx, pack_id: &str, yaml: &str) -> Result<
     let summary = PackSummary::from(&pack);
     upsert_pack(ctx, pack)?;
     ctx.journal("pack.install", None, format!("installed pack '{pack_id}' from YAML"));
+    emit_catalog_update(ctx, "install", vec![pack_id.to_string()]);
     Ok(summary)
 }
 
@@ -429,6 +515,7 @@ pub fn load_pack_from_file(ctx: &ServiceCtx, path: &str) -> Result<PackSummary, 
     let summary = PackSummary::from(&pack);
     upsert_pack(ctx, pack)?;
     ctx.journal("pack.install", None, format!("installed pack '{id}' from file"));
+    emit_catalog_update(ctx, "install", vec![id]);
     Ok(summary)
 }
 
@@ -445,6 +532,7 @@ pub fn uninstall_pack(ctx: &ServiceCtx, pack_id: &str) -> Result<(), ServiceErro
     drop(packs);
     delete_pack_file(ctx.paths(), pack_id);
     ctx.journal("pack.uninstall", None, format!("uninstalled pack '{pack_id}'"));
+    emit_catalog_update(ctx, "uninstall", vec![pack_id.to_string()]);
     Ok(())
 }
 
@@ -642,5 +730,153 @@ processors:
         let (agent, _t2) = test_ctx().agent("claude-code").build();
         assert!(install_yaml(&agent, MINIMAL_REPORTER).is_ok());
         assert_eq!(*agent.caller(), Caller::agent("claude-code"));
+    }
+
+    // -----------------------------------------------------------------------
+    // B2: catalog-update event + installed_by provenance
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn every_processor_pack_mutation_emits_one_catalog_update() {
+        struct Case {
+            label: &'static str,
+            action: &'static str,
+            ids: Vec<&'static str>,
+            /// Pre-installs whatever the measured action needs to already
+            /// exist (uninstall targets). Its own events are cleared from the
+            /// sink before `act` runs, so only `act`'s emission is asserted.
+            setup: Box<dyn Fn(&ServiceCtx)>,
+            act: Box<dyn Fn(&ServiceCtx)>,
+        }
+
+        fn no_setup(_ctx: &ServiceCtx) {}
+
+        let cases: Vec<Case> = vec![
+            Case {
+                label: "install_yaml",
+                action: "install",
+                ids: vec!["test-reporter"],
+                setup: Box::new(no_setup),
+                act: Box::new(|ctx| {
+                    install_yaml(ctx, MINIMAL_REPORTER).unwrap();
+                }),
+            },
+            Case {
+                label: "install_from_file",
+                action: "install",
+                ids: vec!["test-reporter"],
+                setup: Box::new(no_setup),
+                act: Box::new(|ctx| {
+                    let file = tempfile::NamedTempFile::new().unwrap();
+                    std::fs::write(file.path(), MINIMAL_REPORTER).unwrap();
+                    install_from_file(ctx, &file.path().to_string_lossy()).unwrap();
+                }),
+            },
+            Case {
+                label: "uninstall",
+                action: "uninstall",
+                ids: vec!["test-reporter"],
+                setup: Box::new(|ctx| {
+                    install_yaml(ctx, MINIMAL_REPORTER).unwrap();
+                }),
+                act: Box::new(|ctx| {
+                    uninstall(ctx, "test-reporter").unwrap();
+                }),
+            },
+            Case {
+                label: "install_pack_yaml",
+                action: "install",
+                ids: vec!["test-pack"],
+                setup: Box::new(no_setup),
+                act: Box::new(|ctx| {
+                    install_pack_yaml(ctx, "test-pack", MINIMAL_PACK).unwrap();
+                }),
+            },
+            Case {
+                label: "load_pack_from_file",
+                action: "install",
+                ids: vec!["test-pack-file"],
+                setup: Box::new(no_setup),
+                act: Box::new(|ctx| {
+                    let dir = tempfile::tempdir().unwrap();
+                    let path = dir.path().join("test-pack-file.pack.yaml");
+                    std::fs::write(&path, MINIMAL_PACK).unwrap();
+                    load_pack_from_file(ctx, &path.to_string_lossy()).unwrap();
+                }),
+            },
+            Case {
+                label: "uninstall_pack",
+                action: "uninstall",
+                ids: vec!["test-pack"],
+                setup: Box::new(|ctx| {
+                    install_pack_yaml(ctx, "test-pack", MINIMAL_PACK).unwrap();
+                }),
+                act: Box::new(|ctx| {
+                    uninstall_pack(ctx, "test-pack").unwrap();
+                }),
+            },
+        ];
+
+        for case in cases {
+            let (ctx, sink, _tmp) = test_ctx().build_recording();
+            (case.setup)(&ctx);
+            sink.clear();
+            (case.act)(&ctx);
+            let events = sink.events_named("catalog-update");
+            assert_eq!(events.len(), 1, "case '{}' should emit exactly one catalog-update", case.label);
+            assert_eq!(events[0].payload["action"], json!(case.action), "case '{}'", case.label);
+            assert_eq!(events[0].payload["ids"], json!(case.ids), "case '{}'", case.label);
+        }
+    }
+
+    #[test]
+    fn install_yaml_stamps_agent_installed_by_provenance() {
+        let (ctx, tmp) = test_ctx().agent("claude").build();
+        let summary = install_yaml(&ctx, MINIMAL_REPORTER).unwrap();
+        assert_eq!(summary.installed_by.as_deref(), Some("agent:claude"));
+
+        let yaml_path = tmp.path().join("processors").join("test-reporter.yaml");
+        let persisted = std::fs::read_to_string(&yaml_path).unwrap();
+        let prov: crate::processors::marketplace::Provenance = serde_yaml::from_str(&persisted).unwrap();
+        assert_eq!(prov.installed_by.as_deref(), Some("agent:claude"));
+    }
+
+    #[test]
+    fn install_yaml_stamps_ui_installed_by_provenance() {
+        let (ctx, _tmp) = test_ctx().build();
+        let summary = install_yaml(&ctx, MINIMAL_REPORTER).unwrap();
+        assert_eq!(summary.installed_by.as_deref(), Some("ui"));
+    }
+
+    #[test]
+    fn reinstalling_an_already_stamped_yaml_replaces_the_key_instead_of_duplicating_it() {
+        // A user copies an installed processor's file back out of the data dir
+        // (it now carries `_installed_by: ui`) and re-installs it from an agent.
+        let (ctx, tmp) = test_ctx().agent("claude").build();
+        install_yaml(&ctx, MINIMAL_REPORTER).unwrap();
+        let yaml_path = tmp.path().join("processors").join("test-reporter.yaml");
+        let exported = std::fs::read_to_string(&yaml_path).unwrap();
+        assert!(exported.contains("_installed_by: agent:claude"));
+
+        let (ctx2, tmp2) = test_ctx().build();
+        install_yaml(&ctx2, &format!("{exported}...\n")).unwrap();
+        let persisted = std::fs::read_to_string(tmp2.path().join("processors").join("test-reporter.yaml")).unwrap();
+        assert_eq!(persisted.matches("_installed_by:").count(), 1, "one key, not a duplicate");
+        assert!(!persisted.contains("\n..."), "the document-end marker is dropped so the key still parses");
+        // The persisted text must load as a processor again — a duplicate key
+        // or content after `...` would make `from_yaml` reject it at startup.
+        AnyProcessor::from_yaml(&persisted).expect("re-stamped YAML still parses");
+        let prov: crate::processors::marketplace::Provenance = serde_yaml::from_str(&persisted).unwrap();
+        assert_eq!(prov.installed_by.as_deref(), Some("ui"));
+    }
+
+    #[test]
+    fn a_hostile_client_name_cannot_corrupt_the_persisted_yaml() {
+        let (ctx, tmp) = test_ctx().agent("a: b #c").build();
+        install_yaml(&ctx, MINIMAL_REPORTER).unwrap();
+        let persisted = std::fs::read_to_string(tmp.path().join("processors").join("test-reporter.yaml")).unwrap();
+        AnyProcessor::from_yaml(&persisted).expect("quoted value keeps the document valid");
+        let prov: crate::processors::marketplace::Provenance = serde_yaml::from_str(&persisted).unwrap();
+        assert_eq!(prov.installed_by.as_deref(), Some("agent:a: b #c"));
     }
 }

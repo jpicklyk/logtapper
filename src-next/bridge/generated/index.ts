@@ -27,6 +27,7 @@ export type { BridgeSessionMetadata } from './BridgeSessionMetadata';
 export type { BridgeSessionSource } from './BridgeSessionSource';
 export type { BridgeStatusInfo } from './BridgeStatusInfo';
 export type { Caller } from './Caller';
+export type { CatalogUpdateEvent } from './CatalogUpdateEvent';
 export type { ChainState } from './ChainState';
 export type { ChainUpdateEvent } from './ChainUpdateEvent';
 export type { ChartData } from './ChartData';

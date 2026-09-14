@@ -219,6 +219,7 @@ pipeline:
             kind: ProcessorKind::Reporter(std::sync::Arc::new(def)),
             schema: None,
             source: None,
+            installed_by: None,
         }
     }
 
@@ -239,6 +240,7 @@ pipeline:
             kind: ProcessorKind::Transformer(std::sync::Arc::new(def)),
             schema: None,
             source: None,
+            installed_by: None,
         };
         let result = validate_processor(&proc);
         assert!(result.is_err(), "Expected AddField with script to be rejected");
@@ -261,6 +263,7 @@ pipeline:
             kind: ProcessorKind::Transformer(std::sync::Arc::new(def)),
             schema: None,
             source: None,
+            installed_by: None,
         };
         // The AddField check should pass (other checks may still apply but at
         // minimum the AddField-specific rejection must not trigger)
