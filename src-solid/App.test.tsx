@@ -1,6 +1,6 @@
 /** @jsxImportSource solid-js */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@solidjs/testing-library';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@solidjs/testing-library';
 import { App } from './App';
 import type { LoadResult } from '@bridge/types';
 
@@ -162,9 +162,15 @@ afterEach(() => {
 describe('App', () => {
   // The scaffold heading was replaced by the viewer shell in P3; the open-file
   // button is the stable landmark.
+  // Scoped to the top bar: with no session open, the shell now lands on
+  // workspace home (A1's first-run actions), and that panel has its own
+  // "Open file…" button in its header. Both are real and both should exist —
+  // this test is about the persistent top-bar one, so it says so rather than
+  // matching whichever the query happens to reach first.
   it('renders the open-file button', () => {
     render(() => <App />);
-    expect(screen.getByRole('button', { name: /open file/i })).toBeTruthy();
+    const topBar = within(screen.getByTestId('top-bar'));
+    expect(topBar.getByRole('button', { name: /open file/i })).toBeTruthy();
   });
 
   it('reaches the editor surface from the top bar before any document exists', () => {
@@ -173,6 +179,19 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: /new document/i }));
     expect(screen.getByTestId('editor-tabs')).toBeTruthy();
     expect(screen.queryByText(/no log open/i)).toBeNull();
+  });
+
+  // Phase 2c's acceptance criterion: opening with nothing loaded must offer
+  // attach-a-device and open-a-capture. A1 built both on workspace-home, but
+  // that is a rail surface and the shell's drawer starts closed, so a cold
+  // start showed only "No log open" and the actions sat behind a glyph. The
+  // live smoke confirmed it before this was wired. Asserting the first-run
+  // block is REACHABLE ON MOUNT is the point — not that it exists somewhere.
+  it('lands on workspace home when nothing is open, so first-run actions are visible (A1)', () => {
+    render(() => <App />);
+    expect(screen.getByTestId('workspace-first-run')).toBeTruthy();
+    expect(screen.getByTestId('attach-device-toggle')).toBeTruthy();
+    expect(screen.getByTestId('sessions-empty-open-file')).toBeTruthy();
   });
 
   it('shows the empty state until a file is opened', () => {
@@ -216,7 +235,11 @@ describe('App', () => {
     Object.defineProperty(window, 'innerWidth', { value: 2600, configurable: true });
 
     render(() => <App />);
-    const openButton = screen.getByRole('button', { name: /^open file/i }) as HTMLButtonElement;
+    // Same disambiguation as above: workspace home's header carries its own
+    // "Open file…" now that the first-run drawer opens on an empty start.
+    const openButton = within(screen.getByTestId('top-bar')).getByRole('button', {
+      name: /^open file/i,
+    }) as HTMLButtonElement;
 
     fireEvent.click(openButton);
     await waitFor(() => expect(loadLogFile).toHaveBeenCalledTimes(1));
@@ -293,7 +316,11 @@ describe('App', () => {
     Object.defineProperty(window, 'innerWidth', { value: 2600, configurable: true });
 
     render(() => <App />);
-    const openButton = screen.getByRole('button', { name: /^open file/i }) as HTMLButtonElement;
+    // Same disambiguation as above: workspace home's header carries its own
+    // "Open file…" now that the first-run drawer opens on an empty start.
+    const openButton = within(screen.getByTestId('top-bar')).getByRole('button', {
+      name: /^open file/i,
+    }) as HTMLButtonElement;
 
     fireEvent.click(openButton);
     await waitFor(() => expect(loadLogFile).toHaveBeenCalledTimes(1));

@@ -35,6 +35,19 @@ export interface AppShellProps {
   workspaceId: string;
   /** Focused session's source; decides `data-mode`. */
   sessionKind: SessionKind;
+  /**
+   * Drawer to open on mount, read ONCE at construction and never again.
+   *
+   * A1 put the first-run attach and open actions on `workspace-home`, which is
+   * a rail surface on every tier, so with the drawer closed by default a cold
+   * start showed only the viewer's "No log open" line and those actions sat
+   * behind a glyph nobody had a reason to press. The caller decides (it is the
+   * one that knows whether any session exists); the shell just honours it.
+   *
+   * Deliberately not reactive: a drawer that reopens whenever its condition
+   * becomes true again would fight a user who closed it.
+   */
+  initialDrawer?: SurfaceId | null;
   topBar?: JSX.Element;
   statusBar?: JSX.Element;
   slots?: SurfaceSlots;
@@ -71,7 +84,16 @@ export function AppShell(props: AppShellProps) {
   const mode = createMode({ sessionKind: () => props.sessionKind });
   const widths = createRegionWidths(() => props.workspaceId);
 
-  const [openDrawer, setOpenDrawer] = createSignal<SurfaceId | null>(null);
+  // Read once, untracked: see `initialDrawer`'s doc. A surface that is not a
+  // drawer on this tier and mode is ignored rather than opening an empty aside.
+  const [openDrawer, setOpenDrawer] = createSignal<SurfaceId | null>(
+    (() => {
+      const requested = props.initialDrawer ?? null;
+      if (requested === null) return null;
+      const openable = [...railSurfaces(mode(), tier()), ...drawerSurfaces(mode(), tier())];
+      return openable.some((s) => s.id === requested) ? requested : null;
+    })(),
+  );
 
   const regions = createMemo(() => activeRegions(mode(), tier()));
 
@@ -104,7 +126,9 @@ export function AppShell(props: AppShellProps) {
       data-mode={mode()}
       style={{ '--shell-columns': columns() } as JSX.CSSProperties}
     >
-      <header class={styles.topBar}>{props.topBar}</header>
+      <header class={styles.topBar} data-testid="top-bar">
+        {props.topBar}
+      </header>
 
       <nav class={styles.rail} aria-label="Surfaces">
         <For each={railItems()}>

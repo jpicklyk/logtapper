@@ -467,6 +467,12 @@ export function App(props: AppProps) {
     <AppShell
       workspaceId={workspace.activeId() ?? WORKSPACE_ID}
       sessionKind={store.focused()?.kind ?? null}
+      // Land on workspace home when the app opens with nothing loaded, so A1's
+      // attach-a-device and open-a-capture actions are the first thing seen
+      // rather than sitting behind a rail glyph. Read once by the shell, so a
+      // restore that populates sessions a moment later does not yank it away,
+      // and closing it makes it stay closed.
+      initialDrawer={store.order().length === 0 ? 'workspace-home' : null}
       topBar={topBar}
       slots={{
         'workspace-home': () => (
