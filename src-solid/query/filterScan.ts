@@ -18,6 +18,12 @@
  *   windows — reading `LogSource` directly, including lines a stream has spilled
  *   to disk. It never reads the render cache, which only holds the LRU window.
  *
+ * As of L4, `currentFilter()` and `appendMatches()` let a live stream
+ * (`createStreamSession`, `src-solid/stream/`) report matches for newly
+ * arrived batches — lines beyond the scan's own snapshot, which the scan
+ * itself never sees. Both are additive: nothing about post-mortem filtering
+ * changes when no caller ever invokes them.
+ *
  * ## Ownership
  *
  * All reactive state lives under a `createRoot` this instance owns, so a
@@ -108,6 +114,37 @@ export class FilterScan {
   private readonly packagePids = new Map<string, number[]>();
   private disposed = false;
 
+  /**
+   * The AST currently committed for matching, exposed read-only via
+   * {@link currentFilter}. Mirrors React's `filterAstRef`: set synchronously
+   * the moment `setExpression` finishes parsing — *before* the `await` for
+   * package-pid resolution — and reset to `null` for every other outcome
+   * (empty expression, parse error, `cancel`, `dispose`). `null` means "no
+   * filter active"; a live batch matcher (`createStreamSession`) must treat
+   * that as "nothing to match against", not "match everything".
+   */
+  private committedAst: FilterNode | null = null;
+  /**
+   * The active generation's own scan-confirmed matches — what used to be the
+   * local `matches` array inside `runBackendScan`/`runFallbackScan`, promoted
+   * to a field so `appendMatches` (called from outside those methods) can
+   * flush through the exact same merge as the scan's own progress/completion
+   * flushes, per `flush()`'s doc comment. Reset to `[]` at the top of every
+   * new generation, same moment as `committedAst`.
+   */
+  private scanMatches: number[] = [];
+  /**
+   * Line numbers reported by `appendMatches` for the *current* generation —
+   * i.e. live batches matched against `committedAst`. Reset to `[]` in the
+   * same place and at the same time as `scanMatches`/`committedAst`, so an
+   * expression change discards any live matches that belonged to the
+   * superseded expression before the new scan's first `flush()` runs. This
+   * is what stops a stale live batch from resurrecting results from an old
+   * scan: by the time a new generation's scan can publish anything, this
+   * array has already been cleared to `[]` for it.
+   */
+  private liveMatches: number[] = [];
+
   constructor(deps: FilterScanDeps) {
     this.deps = deps;
     this.pageSize = deps.pageSize ?? DEFAULT_PAGE_SIZE;
@@ -149,6 +186,13 @@ export class FilterScan {
    */
   async setExpression(sessionId: string, expr: string | null): Promise<void> {
     const gen = this.guard.bump();
+    // New generation: discard whatever the previous expression committed and
+    // whatever live batches appended for it, synchronously and before any
+    // `await` below — see the fields' own doc comments for why the ordering
+    // matters.
+    this.committedAst = null;
+    this.scanMatches = [];
+    this.liveMatches = [];
 
     if (!expr || !expr.trim()) {
       this.teardownBackendFilter();
@@ -179,6 +223,13 @@ export class FilterScan {
       this.clearState('idle');
       return;
     }
+
+    // Committed synchronously here — before the pid-resolution `await` below
+    // — so a live batch that arrives mid-resolution already matches against
+    // the new expression instead of a stale one. Mirrors React's
+    // `filterAstRef.current = ast` (set before its own `await Promise.all(…)`
+    // for the same reason).
+    this.committedAst = ast;
 
     if (this.deps.resolvePackagePids) {
       const unresolved = extractPackageNames(ast).filter((p) => !this.packagePids.has(p));
@@ -222,6 +273,9 @@ export class FilterScan {
   /** Stop the running scan and clear results. The stored expression is the caller's. */
   cancel(): void {
     this.guard.bump();
+    this.committedAst = null;
+    this.scanMatches = [];
+    this.liveMatches = [];
     this.teardownBackendFilter();
     this.clearState('idle');
   }
@@ -231,8 +285,53 @@ export class FilterScan {
     if (this.disposed) return;
     this.disposed = true;
     this.guard.bump();
+    this.committedAst = null;
+    this.scanMatches = [];
+    this.liveMatches = [];
     this.teardownBackendFilter();
     this.disposeRoot();
+  }
+
+  // ── Live incremental matching (L4) ──────────────────────────────────────
+
+  /**
+   * The filter currently committed for matching, and its resolved
+   * `package:` → pids — read fresh by `createStreamSession.handleBatch` on
+   * every arriving live batch (mirrors React's `filterAstRef.current` /
+   * `packagePidsRef.current`). `ast` is `null` when no filter is active:
+   * idle, cleared, a parse/backend error, or momentarily while a *new*
+   * expression is still resolving package pids for its first scan (during
+   * which `ast` is already the new one — see `setExpression`). Not a Solid
+   * signal: nothing renders directly off it, it is only ever read
+   * imperatively from an event handler, same as the React ref it replaces.
+   */
+  currentFilter(): { ast: FilterNode | null; packagePids: Map<string, number[]> } {
+    return { ast: this.committedAst, packagePids: this.packagePids };
+  }
+
+  /**
+   * Append line numbers a live batch matched against `currentFilter().ast`
+   * to the active scan's results. Routed through `flush()` — the exact merge
+   * the scan's own progress/completion events use — rather than writing a
+   * second `setLines`/`setMatched` pair that could drift from it.
+   *
+   * A no-op when there is no committed filter (`currentFilter().ast` is
+   * `null`): a live batch matched against an expression that has since been
+   * cleared, cancelled or superseded has nothing left to append to.
+   * `committedAst` and `liveMatches` are both reset to their new
+   * generation's values synchronously, before any `await`, at the top of
+   * every `setExpression`/`cancel`/`dispose` call — so by the time a call
+   * here could be "for the old expression", `currentFilter().ast` has
+   * already moved on (or gone `null`) and `liveMatches` has already been
+   * cleared for the new generation. A late call therefore either targets the
+   * live matches that legitimately belong to whatever generation is current
+   * right now, or is silently dropped — it can never resurrect results into
+   * a scan that superseded it.
+   */
+  appendMatches(lineNums: number[]): void {
+    if (lineNums.length === 0 || this.committedAst === null) return;
+    this.liveMatches.push(...lineNums);
+    this.flush();
   }
 
   // ── Backend scan ────────────────────────────────────────────────────────
@@ -254,6 +353,13 @@ export class FilterScan {
       // the parse errors — a rejection the user can't see is no better than the
       // silent zero-match scan it replaced.
       if (!this.guard.isCurrent(gen)) return;
+      // No filter ends up active for this generation — clear the committed AST
+      // too, not just the displayed lines, so a live batch arriving after this
+      // rejection has nothing to match against (see `currentFilter()`'s
+      // contract: `null` on any parse/backend error, not just while idle).
+      this.committedAst = null;
+      this.scanMatches = [];
+      this.liveMatches = [];
       batch(() => {
         this.setLines(null);
         this.setMatched(0);
@@ -273,7 +379,6 @@ export class FilterScan {
     this.activeFilterId = filterId;
     this.setTotal(created.totalLines);
 
-    const matches: number[] = [];
     let lastFetched = 0;
     let listenerDone = false;
     let unlisten: (() => void) | null = null;
@@ -304,8 +409,8 @@ export class FilterScan {
             : page.lines;
 
           if (confirmed.length > 0) {
-            for (const line of confirmed) matches.push(line.lineNum);
-            this.flush(matches);
+            for (const line of confirmed) this.scanMatches.push(line.lineNum);
+            this.flush();
           }
         } catch {
           // Ignore transient fetch errors; the next progress event retries.
@@ -320,7 +425,7 @@ export class FilterScan {
         if (this.unlisten === unlisten) this.unlisten = null;
         if (this.guard.isCurrent(gen)) {
           batch(() => {
-            this.flush(matches);
+            this.flush();
             this.setPhase('done');
           });
         }
@@ -346,7 +451,6 @@ export class FilterScan {
 
   private async runFallbackScan(sessionId: string, gen: number, ast: FilterNode): Promise<void> {
     const { commands } = this.deps;
-    const matches: number[] = [];
     let offset = 0;
     let total = Infinity;
     let batchCount = 0;
@@ -372,12 +476,12 @@ export class FilterScan {
       total = window.totalLines;
       this.setTotal(window.totalLines);
       for (const line of window.lines) {
-        if (matchesFilter(ast, line, this.packagePids)) matches.push(line.lineNum);
+        if (matchesFilter(ast, line, this.packagePids)) this.scanMatches.push(line.lineNum);
       }
       batchCount++;
-      const isFirstFlush = batchCount === 1 && matches.length > 0;
-      if (isFirstFlush || (batchCount % FLUSH_EVERY === 0 && matches.length > 0)) {
-        this.flush(matches);
+      const isFirstFlush = batchCount === 1 && this.scanMatches.length > 0;
+      if (isFirstFlush || (batchCount % FLUSH_EVERY === 0 && this.scanMatches.length > 0)) {
+        this.flush();
       }
       offset += window.lines.length;
       if (window.lines.length === 0) break;
@@ -385,7 +489,7 @@ export class FilterScan {
 
     if (this.guard.isCurrent(gen)) {
       batch(() => {
-        this.flush(matches);
+        this.flush();
         this.setPhase('done');
       });
     }
@@ -393,11 +497,22 @@ export class FilterScan {
 
   // ── Internals ───────────────────────────────────────────────────────────
 
-  /** Publish the accumulated matches as a fresh Set so consumers see a new reference. */
-  private flush(matches: number[]): void {
+  /**
+   * Publish `scanMatches` ∪ `liveMatches` as a fresh Set so consumers see a
+   * new reference. Both accumulators belong to the current generation only —
+   * see their own doc comments — so this can never mix in a superseded
+   * scan's or a stale live batch's results. `matched()` reads the merged
+   * Set's `size`, not either array's `length`, so a line number appearing in
+   * both (a live batch re-confirming something the scan also found) is
+   * counted once.
+   */
+  private flush(): void {
+    const merged = this.liveMatches.length > 0
+      ? new Set([...this.scanMatches, ...this.liveMatches])
+      : new Set(this.scanMatches);
     batch(() => {
-      this.setLines(new Set(matches));
-      this.setMatched(matches.length);
+      this.setLines(merged);
+      this.setMatched(merged.size);
     });
   }
 

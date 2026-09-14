@@ -48,13 +48,16 @@ import type { FilterNode } from '@filter/index';
  *
  * Filter-AST incremental matching (`options.filterAst` /
  * `options.appendFilterMatches` below) IS ported — the same `matchesFilter`
- * check React's `handleAdbBatch` runs against `refs.filterAstRef` — but as an
+ * check React's `handleAdbBatch` runs against `refs.filterAstRef` — as an
  * injectable capability rather than a hard dependency, because the AST and
  * append-target live in `src-solid/query/` (`FilterScan`), which this
- * package does not own. See this file's own module for the current caller
- * (there isn't one yet — `FilterScan` has no public AST/pids accessor to
- * bind these to) and `implementation-notes` on task `fe34022c` for the exact
- * gap and what a future query-side change would need to add.
+ * package does not own. As of L4 (task `2ecd8bbc`) it IS wired: `FilterScan`
+ * gained `currentFilter()` (the AST + resolved pids accessor this needed)
+ * and `appendMatches()` (routed through its own `flush()`), and
+ * `src-solid/App.tsx` binds whichever `FilterScan` is currently the live
+ * session's to these four options. See that file's `bindLiveFilter` comment
+ * for why the binding is indirect (a `FilterScan` is private to whichever
+ * `QueryBar` constructs it).
  *
  * Live processor-update forwarding (`options.onProcessorUpdates` /
  * `options.onProcessorsExcluded` below) was completed by L3 (task

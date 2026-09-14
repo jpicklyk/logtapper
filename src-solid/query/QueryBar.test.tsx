@@ -5,6 +5,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
 import type { SearchSummary } from '@bridge/types';
 import { Show, createSignal } from 'solid-js';
 import { QueryBar } from './QueryBar';
+import { FilterScan } from './filterScan';
 import { DEFAULT_QUERY_STATE, toSearchQuery } from './queryStore';
 import type { QueryState, QueryStore } from './queryStore';
 import { createViewerController } from '../viewer';
@@ -196,5 +197,25 @@ describe('QueryBar', () => {
 
     expect(input.value).toBe('');
     expect(focusSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('bindLiveFilter (L4) is called once at mount with this session\'s own FilterScan, and unbound on unmount', () => {
+    const controller = createViewerController({ focusSession: () => {} });
+    const store = createTestStore();
+    const unbind = vi.fn();
+    const bindLiveFilter = vi.fn((_sessionId: string, _scan: FilterScan) => unbind);
+
+    const { unmount } = render(() => (
+      <QueryBar sessionId="s1" store={store} controller={controller} bindLiveFilter={bindLiveFilter} />
+    ));
+
+    expect(bindLiveFilter).toHaveBeenCalledTimes(1);
+    const [sid, scan] = bindLiveFilter.mock.calls[0];
+    expect(sid).toBe('s1');
+    expect(scan).toBeInstanceOf(FilterScan);
+    expect(unbind).not.toHaveBeenCalled();
+
+    unmount();
+    expect(unbind).toHaveBeenCalledTimes(1);
   });
 });

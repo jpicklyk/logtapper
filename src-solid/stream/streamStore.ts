@@ -29,11 +29,22 @@
  * (`deps.analyzers`, optional) — closing `createStreamSession.ts`'s former
  * `handleProcessorUpdate` TODO now that a pipeline context to dispatch into
  * (the analyzer store itself) exists.
+ *
+ * As of L4 (task `2ecd8bbc`), `deps.filter` (optional) threads through to
+ * the same four `createStreamSession` options L1 already built and left
+ * unwired: `filterAst`/`filterSessionId`/`packagePids`/
+ * `appendFilterMatches`. This store adds no filter logic of its own — it is
+ * pure pass-through, same shape as the `analyzers` dep above. `App.tsx` is
+ * where the actual `FilterScan` instance gets bound (see its own comment):
+ * that binding is necessarily indirect, because `FilterScan` instances are
+ * constructed privately inside `query/QueryBar.tsx`, one per mounted pane,
+ * not owned by this store or by `App.tsx` itself.
  */
 import { createRoot, createSignal } from 'solid-js';
 import type { Accessor } from 'solid-js';
 import * as cmds from '@bridge/commands';
 import type { AdbDevice, AdbProcessorUpdate, AdbProcessorsExcluded, LoadResult, SourceType } from '@bridge/types';
+import type { FilterNode } from '@filter/index';
 import { createStreamSession } from '../viewer';
 import type {
   CacheController,
@@ -66,6 +77,23 @@ export interface LiveStreamAnalyzers {
   applyProcessorsExcluded(sessionId: string, excluded: AdbProcessorsExcluded['excluded']): void;
 }
 
+/**
+ * Live incremental filter matching (L4) — threaded straight through to
+ * `createStreamSession`'s own `filterAst`/`filterSessionId`/`packagePids`/
+ * `appendFilterMatches` options (see that file's doc comment for the exact
+ * contract). This store owns no filter state itself; it only carries
+ * whichever `FilterScan` the app currently has bound as "the live one" (see
+ * `App.tsx`) down to the session primitive that needs to read it per batch.
+ * Optional: omitting it just means live batches are never matched against
+ * a filter, same as before L4.
+ */
+export interface LiveStreamFilterHooks {
+  filterAst: Accessor<FilterNode | null>;
+  filterSessionId: Accessor<string | null>;
+  packagePids: Accessor<Map<string, number[]>>;
+  appendFilterMatches: (sessionId: string, lineNums: number[]) => void;
+}
+
 export interface LiveStreamStoreDeps {
   cacheManager: CacheController;
   registry: StreamPusher;
@@ -74,6 +102,8 @@ export interface LiveStreamStoreDeps {
    *  the analyzer store's live-counter path (L3). Optional so existing
    *  callers/tests that don't care about analyzer cards need no change. */
   analyzers?: LiveStreamAnalyzers;
+  /** See {@link LiveStreamFilterHooks}. Optional (L4). */
+  filter?: LiveStreamFilterHooks;
   /** Injected for tests; defaults to the real bridge commands. */
   commands?: Partial<StreamCommands>;
 }
@@ -143,7 +173,7 @@ function streamLoadResult(status: {
 }
 
 export function createLiveStreamStore(deps: LiveStreamStoreDeps): LiveStreamStore {
-  const { cacheManager, registry, sessions, analyzers } = deps;
+  const { cacheManager, registry, sessions, analyzers, filter } = deps;
   const c: StreamCommands = { ...cmds, ...deps.commands };
 
   return createRoot((disposeRoot) => {
@@ -171,6 +201,10 @@ export function createLiveStreamStore(deps: LiveStreamStoreDeps): LiveStreamStor
       onStatus,
       onProcessorUpdates: (sessionId, updates) => analyzers?.applyProcessorUpdates(sessionId, updates),
       onProcessorsExcluded: (payload) => analyzers?.applyProcessorsExcluded(payload.sessionId, payload.excluded),
+      filterAst: filter?.filterAst,
+      filterSessionId: filter?.filterSessionId,
+      packagePids: filter?.packagePids,
+      appendFilterMatches: filter?.appendFilterMatches,
     });
 
     const refreshDevices = async (): Promise<void> => {

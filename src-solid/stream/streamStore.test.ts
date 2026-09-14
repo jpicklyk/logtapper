@@ -273,4 +273,44 @@ describe('createLiveStreamStore', () => {
 
     disposeSessions();
   });
+
+  it('deps.filter (L4) passes straight through to the wrapped createStreamSession', async () => {
+    const channel = captureOnEvent();
+    const { sessions, dispose: disposeSessions } = makeSessionStore();
+    const appendFilterMatches = vi.fn();
+    const levelEAst = { kind: 'field', field: 'level', value: 'E' } as unknown as import('@filter/index').FilterNode;
+    const store = createLiveStreamStore({
+      cacheManager: makeCacheController(),
+      registry: makeRegistry(),
+      sessions,
+      filter: {
+        filterAst: () => levelEAst,
+        filterSessionId: () => 's1',
+        packagePids: () => new Map(),
+        appendFilterMatches,
+      },
+    });
+
+    await store.start('emulator-5554');
+    channel.fire({
+      event: 'batch',
+      data: {
+        sessionId: 's1',
+        lines: [
+          { lineNum: 1, raw: 'l1', tag: 'T', message: 'l1', level: 'Error', timestamp: null, highlights: [] },
+          { lineNum: 2, raw: 'l2', tag: 'T', message: 'l2', level: 'Info', timestamp: null, highlights: [] },
+        ] as unknown as import('@bridge/types').ViewLine[],
+        totalLines: 2,
+        byteCount: 10,
+        firstTimestamp: null,
+        lastTimestamp: null,
+        lostLineCount: 0,
+      },
+    });
+
+    expect(appendFilterMatches).toHaveBeenCalledWith('s1', [1]);
+
+    store.dispose();
+    disposeSessions();
+  });
 });

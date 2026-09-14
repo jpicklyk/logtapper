@@ -3,7 +3,7 @@
  * imports from this barrel only.
  */
 export { createLiveStreamStore } from './streamStore';
-export type { LiveStreamStore, LiveStreamStoreDeps, StreamCommands } from './streamStore';
+export type { LiveStreamStore, LiveStreamStoreDeps, LiveStreamFilterHooks, StreamCommands } from './streamStore';
 
 export { StreamControlsPanel } from './StreamControlsPanel';
 export type { StreamControlsPanelProps } from './StreamControlsPanel';

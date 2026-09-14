@@ -422,4 +422,120 @@ describe('FilterScan', () => {
     await scan.setExpression('s1', 'package:com.example');
     expect(resolve).toHaveBeenCalledTimes(1);
   });
+
+  // ── Live incremental matching (L4) ────────────────────────────────────────
+
+  describe('live incremental matching', () => {
+    it('currentFilter() exposes the committed ast, null when idle or cleared', async () => {
+      const fake = createFakeCommands({ backendMatches: [viewLine(1)] });
+      const listener = createFakeListen();
+      const scan = make({ commands: fake.commands, listen: listener.listen });
+
+      expect(scan.currentFilter().ast).toBeNull();
+      expect(scan.currentFilter().packagePids.size).toBe(0);
+
+      await scan.setExpression('s1', 'level:E');
+      expect(scan.currentFilter().ast).not.toBeNull();
+
+      await scan.setExpression('s1', '');
+      expect(scan.currentFilter().ast).toBeNull();
+    });
+
+    it('appendMatches merges a live batch into lines()/matched() immediately, before the scan has confirmed anything of its own', async () => {
+      const fake = createFakeCommands({ backendMatches: [viewLine(1), viewLine(2)] });
+      const listener = createFakeListen();
+      const scan = make({ commands: fake.commands, listen: listener.listen });
+
+      await scan.setExpression('s1', 'level:E');
+      expect(scan.phase()).toBe('scanning');
+
+      scan.appendMatches([500]);
+      expect([...scan.lines()!]).toEqual([500]);
+      expect(scan.matched()).toBe(1);
+    });
+
+    it('a live-appended match survives the scan\'s own subsequent flush — flush() merges, it does not overwrite', async () => {
+      const fake = createFakeCommands({ backendMatches: [viewLine(1), viewLine(2)] });
+      const listener = createFakeListen();
+      const scan = make({ commands: fake.commands, listen: listener.listen });
+
+      await scan.setExpression('s1', 'level:E');
+      scan.appendMatches([500]);
+      expect([...scan.lines()!]).toEqual([500]);
+
+      listener.emit({ filterId: 'f1', matchedSoFar: 2, done: true });
+      await settle();
+
+      // Both the scan's own confirmed matches and the earlier live append
+      // are present — the scan's completion flush did not clobber it.
+      expect(new Set(scan.lines())).toEqual(new Set([1, 2, 500]));
+      expect(scan.matched()).toBe(3);
+      expect(scan.phase()).toBe('done');
+    });
+
+    it('is a no-op with no active filter: idle, after a parse error, and after a backend rejection', async () => {
+      const fake = createFakeCommands();
+      const listener = createFakeListen();
+      const scan = make({ commands: fake.commands, listen: listener.listen });
+
+      scan.appendMatches([1]);
+      expect(scan.lines()).toBeNull();
+
+      await scan.setExpression('s1', 'level:E (unclosed');
+      expect(scan.phase()).toBe('error');
+      scan.appendMatches([1]);
+      expect(scan.lines()).toBeNull();
+      expect(scan.matched()).toBe(0);
+
+      const rejecting = createFakeCommands({ createRejects: new Error('bad regex') });
+      const scan2 = make({ commands: rejecting.commands, listen: listener.listen });
+      await scan2.setExpression('s1', 'level:E');
+      expect(scan2.phase()).toBe('error');
+      expect(scan2.currentFilter().ast).toBeNull();
+      scan2.appendMatches([1]);
+      expect(scan2.lines()).toBeNull();
+    });
+
+    it('a live match appended under a superseded expression is discarded once the new expression flushes — it never resurrects into the new scan', async () => {
+      const fake = createFakeCommands({ backendMatches: [viewLine(7), viewLine(8)] });
+      const listener = createFakeListen();
+      const scan = make({ commands: fake.commands, listen: listener.listen });
+
+      await scan.setExpression('s1', 'level:E');
+      scan.appendMatches([500]); // a live batch matched under level:E
+      expect([...scan.lines()!]).toEqual([500]);
+
+      // The expression changes before level:E's scan confirmed any matches
+      // of its own — a fresh generation starts for level:W.
+      await scan.setExpression('s1', 'level:W');
+      listener.emit({ filterId: 'f2', matchedSoFar: 2, done: true });
+      await settle();
+
+      // Only level:W's own matches are present. The stale 500 that was live
+      // for the superseded level:E generation must not resurface here.
+      expect([...scan.lines()!].sort((a, b) => a - b)).toEqual([7, 8]);
+      expect(scan.matched()).toBe(2);
+    });
+
+    it('a batch arriving after the filter expression changed matches (and appends) against the new expression, never the old one', async () => {
+      const fake = createFakeCommands({ backendMatches: [viewLine(9)] });
+      const listener = createFakeListen();
+      const scan = make({ commands: fake.commands, listen: listener.listen });
+
+      await scan.setExpression('s1', 'level:E');
+      const astDuringE = scan.currentFilter().ast;
+
+      // `createStreamSession.handleBatch` always reads `currentFilter()` fresh
+      // per arriving batch — simulate one landing after the expression below
+      // it has already moved on.
+      await scan.setExpression('s1', 'level:W');
+      expect(scan.currentFilter().ast).not.toBe(astDuringE);
+
+      scan.appendMatches([501]);
+      listener.emit({ filterId: 'f2', matchedSoFar: 1, done: true });
+      await settle();
+
+      expect([...scan.lines()!].sort((a, b) => a - b)).toEqual([9, 501]);
+    });
+  });
 });

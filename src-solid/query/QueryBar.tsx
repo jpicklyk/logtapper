@@ -44,6 +44,17 @@ export interface QueryBarProps {
   /** Gates Ctrl+F focus — false when another pane holds keyboard focus.
    *  Defaults to true: today's shell mounts exactly one query bar at a time. */
   active?: boolean;
+  /**
+   * Binds this bar's `FilterScan` instance (L4) as the live-stream
+   * incremental-match target for `sessionId` — App.tsx is the only owner of
+   * "which FilterScan is the live one" (there is at most one live session at
+   * a time), and this is the one seam that reaches it: a `FilterScan` is
+   * otherwise private to whichever `QueryBar` constructs it. Called once at
+   * mount with the freshly-constructed `scan`; the returned unbind callback
+   * is invoked from this bar's own `onCleanup`, so the binding never outlives
+   * the pane. Omitted in tests that don't exercise live streaming.
+   */
+  bindLiveFilter?: (sessionId: string, scan: FilterScan) => () => void;
 }
 
 /**
@@ -53,6 +64,12 @@ export interface QueryBarProps {
  * `<Show when={store.focused()}>` as `LogViewer` in `App.tsx`, so a session
  * switch tears this instance down and a new one starts from that session's own
  * persisted `QueryState`.
+ *
+ * `props.bindLiveFilter` (L4, optional) is the seam that lets `App.tsx` bind
+ * this bar's private `scan` as the live-stream incremental-match target when
+ * `sessionId` is (or becomes) the active capture — see the prop's own doc
+ * comment. `FilterScan` itself has no idea a stream exists; this is purely
+ * exposing an otherwise-private instance to the one place that needs it.
  */
 export function QueryBar(props: QueryBarProps) {
   // A one-time snapshot at mount, deliberately non-reactive. CONTRACT: the
@@ -73,9 +90,11 @@ export function QueryBar(props: QueryBarProps) {
     listen: onSearchProgress,
     commands: { searchLogs },
   });
+  const unbindLiveFilter = untrack(() => props.bindLiveFilter)?.(sessionId, scan);
   onCleanup(() => {
     scan.dispose();
     runner.dispose();
+    unbindLiveFilter?.();
   });
 
   // The rendered index space: filter mode's scan and search mode's "matches

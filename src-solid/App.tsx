@@ -20,6 +20,7 @@ import {
 } from './shell';
 import type { TabDescriptor } from './shell';
 import { QueryBar, createQueryStore } from './query';
+import type { FilterScan } from './query';
 import { PresencePanel, createPresenceStore } from './presence';
 import { EditorTabs, createEditorStore } from './editor';
 import type { ConfirmClose, EditorStore } from './editor';
@@ -79,6 +80,24 @@ export function App(props: AppProps) {
   // `deviceState` further down reads it.
   const analyzers = createAnalyzerStore({ sessions: store, controller });
   onCleanup(() => analyzers.dispose());
+  // Live incremental filter matching (L4) — "which FilterScan is the live
+  // one right now", the one piece of state this file owns for the wiring
+  // below. A `FilterScan` is otherwise private to whichever `QueryBar`
+  // constructs it (one per mounted pane); `bindLiveFilter` is the callback
+  // handed to every `QueryBar` mount (primary and secondary pane, below) so
+  // whichever one currently owns `sessionId` can register itself here. At
+  // most one binding is ever meaningful at a time — there is at most one
+  // live session (see `streamStore.ts`'s coexistence note) — so last-bound
+  // wins; a pane's own `onCleanup` clears its binding via the returned
+  // unbind, guarded so an already-superseded pane's unmount can't clobber a
+  // newer one's. Declared before `liveStream` so the accessor closures
+  // passed into it below can already reference `liveFilterBinding`.
+  const [liveFilterBinding, setLiveFilterBinding] =
+    createSignal<{ sessionId: string; scan: FilterScan } | null>(null);
+  const bindLiveFilter = (sessionId: string, scan: FilterScan): (() => void) => {
+    setLiveFilterBinding({ sessionId, scan });
+    return () => setLiveFilterBinding((current) => (current?.scan === scan ? null : current));
+  };
   // Live stream (L1) — the one place a `start_adb_stream` result becomes a
   // registered session (tab, focus) and a stopped one becomes an ordinary
   // postmortem session again. Built before `actions` so `close()` can stop a
@@ -87,8 +106,27 @@ export function App(props: AppProps) {
   // this same instance — see its own module doc for why that's the point.
   // `analyzers` is passed in (L3) so batched `AdbProcessorUpdate`/
   // `AdbProcessorsExcluded` Channel messages feed the analyzer cards' live
-  // counters — see `streamStore.ts`'s module doc.
-  const liveStream = createLiveStreamStore({ cacheManager, registry, sessions: store, analyzers });
+  // counters — see `streamStore.ts`'s module doc. `filter` (L4) closes the
+  // gap L1 left open: `createStreamSession`'s own doc comment named this as
+  // unwired because `FilterScan` had no AST/pids accessor and `query/` was
+  // out of L1's scope — both now exist (`FilterScan.currentFilter()` /
+  // `.appendMatches()`), and `liveFilterBinding` above is what reaches
+  // whichever `FilterScan` is currently live.
+  const liveStream = createLiveStreamStore({
+    cacheManager,
+    registry,
+    sessions: store,
+    analyzers,
+    filter: {
+      filterAst: () => liveFilterBinding()?.scan.currentFilter().ast ?? null,
+      filterSessionId: () => liveFilterBinding()?.sessionId ?? null,
+      packagePids: () => liveFilterBinding()?.scan.currentFilter().packagePids ?? new Map(),
+      appendFilterMatches: (sessionId, lineNums) => {
+        const binding = liveFilterBinding();
+        if (binding && binding.sessionId === sessionId) binding.scan.appendMatches(lineNums);
+      },
+    },
+  });
   const actions = createAppActions({ store, controller, stopLiveSession: liveStream.stopIfCurrent });
   // Query bar (W2b) — reads/writes per-session query state and plugs its
   // `SearchQuery` provider into the session store's `fetchLines`.
@@ -507,6 +545,7 @@ export function App(props: AppProps) {
                                 store={queryStore}
                                 controller={controller}
                                 active={splitView.activePane() === 'main'}
+                                bindLiveFilter={bindLiveFilter}
                               />
                             )}
                           </Show>
@@ -541,6 +580,7 @@ export function App(props: AppProps) {
                           store={queryStore}
                           controller={controller}
                           active={splitView.activePane() === 'secondary'}
+                          bindLiveFilter={bindLiveFilter}
                         />
                       )}
                     </Show>
