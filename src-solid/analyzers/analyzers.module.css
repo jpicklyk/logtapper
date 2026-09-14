@@ -373,3 +373,13 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Provenance line under a catalog row: source (or "local YAML") plus the
+   installed-by badge when an agent did it. */
+.catalogMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 10px;
+}

@@ -91,4 +91,33 @@ describe('AddAnalyzer', () => {
     render(() => <AddAnalyzer store={store} sessionId="s1" onClose={vi.fn()} />);
     expect(screen.queryByText('Uninstall')).toBeNull();
   });
+
+  describe('provenance', () => {
+    it('names the marketplace source, or "local YAML" when there is none, or "built-in"', () => {
+      const store = fakeStore([
+        proc('curated', { source: 'official' }),
+        proc('pasted'),
+        proc('builtin-thing', { builtin: true }),
+      ]);
+      render(() => <AddAnalyzer store={store} sessionId="s1" onClose={vi.fn()} />);
+      expect(screen.getByTestId('catalog-row-curated').textContent).toContain('via official');
+      expect(screen.getByTestId('catalog-row-pasted').textContent).toContain('local YAML');
+      expect(screen.getByTestId('catalog-row-builtin-thing').textContent).toContain('built-in');
+    });
+
+    it('badges only the rows an agent installed, naming the client', () => {
+      const store = fakeStore([
+        proc('by-agent', { installedBy: 'agent:claude' }),
+        proc('by-human', { installedBy: 'ui' }),
+        proc('unrecorded'),
+      ]);
+      render(() => <AddAnalyzer store={store} sessionId="s1" onClose={vi.fn()} />);
+      const badge = screen.getByTestId('catalog-row-by-agent').querySelector('[data-caller]');
+      expect(badge?.getAttribute('data-caller')).toBe('agent');
+      expect(badge?.getAttribute('title')).toBe('Installed by claude');
+      expect(badge?.textContent).toBe('Installed');
+      expect(screen.getByTestId('catalog-row-by-human').querySelector('[data-caller]')).toBeNull();
+      expect(screen.getByTestId('catalog-row-unrecorded').querySelector('[data-caller]')).toBeNull();
+    });
+  });
 });

@@ -1,12 +1,39 @@
 /** @jsxImportSource solid-js */
 import { For, Show, createMemo, createSignal } from 'solid-js';
 import type { JSX } from 'solid-js';
-import type { ProcessorSummary } from '@bridge/types';
+import type { Caller, ProcessorSummary } from '@bridge/types';
+import { CallerBadge } from '../ui';
 import { PII_ANONYMIZER_ID } from './analyzerStore';
 import type { AnalyzerStore } from './analyzerStore';
 import styles from './analyzers.module.css';
 
 const OTHER_GROUP = 'Other';
+
+/** Where a catalog row came from: its marketplace source, a pasted/uploaded
+ *  file, or the app itself. Built-ins have no provenance to speak of. */
+export function provenanceLabel(p: ProcessorSummary): string {
+  if (p.builtin) return 'built-in';
+  return p.source ? `via ${p.source}` : 'local YAML';
+}
+
+/** `ProcessorSummary.installedBy` is the backend's `_installed_by` provenance
+ *  string — `"ui"` or `"agent:<client>"` — folded back into the `Caller` shape
+ *  `CallerBadge` already understands. Absent (a processor installed before the
+ *  field existed, or a built-in) is `null`, not a guess. */
+export function installedByCaller(installedBy: string | undefined): Caller | null {
+  if (!installedBy) return null;
+  if (installedBy === 'ui') return { kind: 'ui' };
+  const AGENT_PREFIX = 'agent:';
+  if (installedBy.startsWith(AGENT_PREFIX)) return { kind: 'agent', client: installedBy.slice(AGENT_PREFIX.length) };
+  return null;
+}
+
+/** The agent client that installed this row, or `null` when a human did (or
+ *  nobody recorded it) — the only case the picker badges. */
+function agentInstaller(p: ProcessorSummary): string | null {
+  const caller = installedByCaller(p.installedBy);
+  return caller?.kind === 'agent' ? caller.client : null;
+}
 
 export interface AddAnalyzerProps {
   store: AnalyzerStore;
@@ -119,6 +146,14 @@ export function AddAnalyzer(props: AddAnalyzerProps): JSX.Element {
                       <Show when={p.description}>
                         <div class={styles.catalogDesc}>{p.description}</div>
                       </Show>
+                      <div class={styles.catalogMeta}>
+                        <span>{provenanceLabel(p)}</span>
+                        <Show when={agentInstaller(p)} keyed>
+                          {(client) => (
+                            <CallerBadge caller={{ kind: 'agent', client }} label="Installed" title={`Installed by ${client}`} />
+                          )}
+                        </Show>
+                      </div>
                     </div>
                     <button type="button" class={`${styles.btn} ${styles.btnPrimary}`} onClick={() => handleAdd(p.id)}>
                       Add
