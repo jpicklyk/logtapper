@@ -55,6 +55,19 @@
   flex: 0 0 auto;
 }
 
+/* L3 live "now" projection indicator — replaces the transition-nav chip
+   (meaningless without a viewer cursor) while the session streams. */
+.liveBadge {
+  flex: 0 0 auto;
+  border: 1px solid var(--success);
+  border-radius: var(--radius-md);
+  color: var(--success);
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
 .navButton {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);

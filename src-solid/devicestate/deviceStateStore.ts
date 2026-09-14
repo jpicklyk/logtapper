@@ -31,17 +31,82 @@
  *
  * The "throttled like `useStateTracker.ts`" note refers to that hook's
  * ADB-streaming throttle (at most one `getAllTransitionLines` refresh per 3s,
- * driven by `adb-tracker-update` events). Nothing in `src-solid/` wires ADB
- * streaming events yet (checked — no consumer of `onAdbTrackerUpdate`
- * anywhere under `src-solid/`), so there is no streaming signal to throttle.
- * `transitions()` refreshes once per pipeline-run generation instead, which
- * is the same "not more often than a run can actually change" ceiling
- * `useStateTracker`'s throttle approximates for the streaming case.
+ * driven by `adb-tracker-update` events). At the time this doc comment was
+ * first written, nothing in `src-solid/` wired ADB streaming events (checked
+ * — no consumer of `onAdbTrackerUpdate` anywhere under `src-solid/`), so
+ * `transitions()` refreshed once per pipeline-run generation only. L1 has
+ * since landed live sessions (`SessionEntry.kind`), so this was re-checked
+ * for L3 rather than assumed still true — it *was* still true (re-grepped:
+ * still zero consumers before this package) — and `transitions()` is
+ * deliberately left as-is: a live ADB stream has no discrete pipeline "run"
+ * (`analyzers.lastRunAt()` stays `null` throughout a capture — `run()` is
+ * the file-mode path only), so `transitions()`/`timeline()` simply never
+ * populate during live streaming. That is not a regression to fix here: the
+ * task-scope's own "No live timeline strip" constraint means `TimelineStrip`
+ * is post-mortem-only by design, and `DeviceStatePanel`'s transition-nav
+ * chip (prev/next transition, driven by the same `transitions()` cache) is
+ * hidden whenever a session is live — see `isLive` below.
+ *
+ * ## Live "now" projection (L3, task `2439a7c5`)
+ *
+ * For a session whose `SessionEntry.kind === 'live'` (read via
+ * {@link DeviceStateSessions.byId}, never `LiveStreamStore.status()` — see
+ * task `fe34022c`'s implementation-notes on why the session-store field, not
+ * the stream store's own lifecycle signal, is the right thing to read here),
+ * `DeviceStatePanel` renders a "now" snapshot instead of the cursor-tied one:
+ * the selected tracker's state at `Number.MAX_SAFE_INTEGER` (the highest
+ * known line — "now"), refetched on a throttle rather than a debounce. This
+ * reuses the exact same `snapshot`/`snapshotLoading`/`changes` signals and
+ * `applySnapshot` field-diffing the cursor-tied path writes — only the
+ * trigger and the fetched line differ — so `DeviceStatePanel`'s field-table
+ * rendering needs no live-specific branch at all, only its empty-state text
+ * and the (now conceptually meaningless) transition-nav chip.
+ *
+ * The trigger is `adb-tracker-update` (`AdbTrackerUpdate`, a genuine Tauri
+ * broadcast event — unlike `AdbProcessorUpdate`/`AdbProcessorsExcluded`,
+ * which arrive only via the streaming Channel and are therefore NOT directly
+ * subscribable here; see `analyzers/analyzerStore.ts`'s "Live counters"
+ * section for that path), throttled per session to one refresh per 3s to
+ * match React's `components/StatePanel/StatePanel.tsx` reference cited in
+ * this task's brief. React's own implementation actually blends a 2s
+ * `adb:run-count-bump` throttle (`usePipelineWiring.ts`) with a separate 3s
+ * `refreshTransitionLines` throttle (`useStateTracker.ts`) across two hooks
+ * — there is no single 3s constant to port literally. This store uses one
+ * explicit 3s throttle ({@link LIVE_REFRESH_THROTTLE_MS}), trailing-edge
+ * (mirrors `useStateTracker.refreshTransitionLines`'s own timer shape: the
+ * first event in a quiet period schedules a fetch 3s out; every event that
+ * arrives while that timer is already pending is absorbed for free), plus
+ * an immediate fetch whenever the effective tracker changes or a session
+ * newly becomes live — so the panel is never left showing stale-by-default
+ * data purely because no `adb-tracker-update` has arrived yet this session.
+ * `state.guard` ({@link GenerationGuard}) is shared between the cursor-tied
+ * and live fetch paths: they never run for the same session at the same
+ * time (one is gated on `!isLive(sessionId)`, the other on `isLive`), so a
+ * single per-session guard correctly discards either path's late-settling
+ * fetch without needing a second guard instance.
+ *
+ * Deliberately NOT ported: `SessionDeviceState.snapshotCache` (the
+ * per-run-generation cache for `trackerMode: 'snapshot'` processors). A live
+ * stream has no run generation to key it on, and caching a "now" value would
+ * defeat the entire point of a continuously refreshing live projection —
+ * every live fetch is a genuine fresh `getStateAtLine` call.
+ *
+ * When a live session's stream stops (`kind` flips `'live'` → `'file'`),
+ * this store does nothing special: `isLive(sessionId)` starts reading
+ * `false`, the live effect's guard clause stops firing, and the *existing*
+ * cursor-tied effect (which has been idle, not torn down) picks back up —
+ * on whatever cursor state already existed for that session. In practice
+ * that means the last "now" snapshot stays displayed, frozen, until the
+ * user clicks a line (post-mortem browsing resumes exactly as it would for
+ * any freshly-opened file). No snapshot is cleared and no extra fetch is
+ * forced on the stop transition itself.
  */
 import { createEffect, createMemo, createRoot, createSignal, getOwner, runWithOwner, untrack } from 'solid-js';
 import type { Accessor, Owner } from 'solid-js';
+import type { UnlistenFn } from '@tauri-apps/api/event';
 import { getStateAtLine, getStateTransitions } from '@bridge/commands';
-import type { FieldChange, ProcessorSummary, StateSnapshot, StateTransition } from '@bridge/types';
+import { onAdbTrackerUpdate } from '@bridge/events';
+import type { AdbTrackerUpdate, FieldChange, ProcessorSummary, StateSnapshot, StateTransition } from '@bridge/types';
 import type { CursorPosition, NavSource } from '../viewer';
 import { createGenerationGuard } from '../reactive';
 import type { GenerationGuard } from '../reactive';
@@ -50,11 +115,19 @@ import type { GenerationGuard } from '../reactive';
  *  fetch — cheap enough that a fast scroll doesn't fire one request per line. */
 export const SNAPSHOT_DEBOUNCE_MS = 80;
 
+/** Throttle window between live "now" refreshes while a session streams —
+ *  see the module doc's "Live 'now' projection" section for why 3s and why
+ *  trailing-edge. */
+export const LIVE_REFRESH_THROTTLE_MS = 3000;
+
 /** The slice of W0b's session store this store reads — structural, so a test
- *  can pass a literal. Used only to prune per-session state when a session
- *  closes (mirrors `analyzerStore`'s own `sessions.order()` prune effect). */
+ *  can pass a literal. `order()` prunes per-session state when a session
+ *  closes (mirrors `analyzerStore`'s own `sessions.order()` prune effect);
+ *  `byId(sessionId)?.kind` is read only for its `'live'`/`'file'` value (a
+ *  real `SessionEntry` carries far more, structurally compatible as-is). */
 export interface DeviceStateSessions {
   order(): readonly string[];
+  byId(sessionId: string): { kind: 'file' | 'live' } | undefined;
 }
 
 /** The slice of W0a's `ViewerController` this store drives — structural on
@@ -85,6 +158,9 @@ export interface DeviceStateStoreDeps {
   controller: DeviceStateController;
   analyzers: DeviceStateAnalyzers;
   commands?: DeviceStateCommands;
+  /** Injected for tests; defaults to `onAdbTrackerUpdate`. Drives the live
+   *  "now" projection's throttled refresh — see the module doc. */
+  listenTrackerUpdate?: (cb: (payload: AdbTrackerUpdate) => void) => Promise<UnlistenFn>;
 }
 
 export interface TransitionPosition {
@@ -114,8 +190,14 @@ export interface DeviceStateStore {
 
   /** Whether the viewer cursor currently belongs to this session — `false`
    *  right after a session opens and before anything has been navigated to,
-   *  which is the panel's third empty state ("cursor outside data"). */
+   *  which is the panel's third empty state ("cursor outside data"). Not
+   *  meaningful (and not consulted by the panel) while {@link isLive} — a
+   *  live session shows the "now" snapshot regardless of any cursor. */
   hasCursor(sessionId: string): boolean;
+  /** `true` while `sessionId` is an active ADB stream (`SessionEntry.kind
+   *  === 'live'`) — the panel renders the "now" projection instead of the
+   *  cursor-tied one. See the module doc's "Live 'now' projection" section. */
+  isLive(sessionId: string): boolean;
   snapshot(sessionId: string): StateSnapshot | null;
   snapshotLoading(sessionId: string): boolean;
   /** Fields that changed between the previously displayed snapshot and the
@@ -198,20 +280,53 @@ interface SessionDeviceState {
   /** Which tracker the currently displayed snapshot belongs to, so a tracker
    *  switch does not diff two unrelated trackers' fields against each other. */
   displayedTrackerId: string | null;
-  /** Guards a late-settling `getStateAtLine` after a newer one was issued. */
+  /** Guards a late-settling `getStateAtLine` after a newer one was issued.
+   *  Shared between the cursor-tied and live "now" fetch paths — see the
+   *  module doc's "Live 'now' projection" section for why one guard covers
+   *  both. */
   guard: GenerationGuard;
   debounceTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Trailing-edge throttle timer for the live "now" refresh — set the
+   *  moment an `adb-tracker-update` schedules a fetch, cleared when that
+   *  fetch fires. `undefined` means "not currently throttled" (the next
+   *  update may schedule immediately). */
+  liveThrottleTimer: ReturnType<typeof setTimeout> | undefined;
   trackerRuntimes: Map<string, TrackerRuntime>;
 }
 
 export function createDeviceStateStore(deps: DeviceStateStoreDeps): DeviceStateStore {
   const { sessions, controller, analyzers } = deps;
   const commands = deps.commands ?? defaultCommands;
+  const listenTrackerUpdate = deps.listenTrackerUpdate ?? onAdbTrackerUpdate;
 
   return createRoot((disposeRoot) => {
     const owner = getOwner() as Owner;
     const states = new Map<string, SessionDeviceState>();
     let disposed = false;
+    const unlisteners: UnlistenFn[] = [];
+
+    /** Unlisten-safe subscribe — a promise that settles after `dispose()`
+     *  unlistens itself instead of leaking. Same pattern as `app/sessions.ts`
+     *  / `analyzers/analyzerStore.ts`. */
+    const track = (pending: Promise<UnlistenFn>): void => {
+      void pending
+        .then((fn) => {
+          if (disposed) fn();
+          else unlisteners.push(fn);
+        })
+        .catch(() => undefined);
+    };
+
+    const isLiveSession = (sessionId: string): boolean => sessions.byId(sessionId)?.kind === 'live';
+
+    /** One `scheduleLiveRefresh` closure per session with state, so the
+     *  single global `adb-tracker-update` subscription below can route an
+     *  event to the right session without a second reactive layer. A session
+     *  with no state yet (the panel hasn't read anything for it) has no
+     *  entry — harmless, since the live effect's immediate fetch (inside
+     *  `createSessionState`) covers that session the moment its state IS
+     *  created. */
+    const liveRefreshSchedulers = new Map<string, () => void>();
 
     const createTrackerRuntime = (): TrackerRuntime => {
       const [transitions, setTransitionsSignal] = createSignal<StateTransition[]>([]);
@@ -286,6 +401,7 @@ export function createDeviceStateStore(deps: DeviceStateStoreDeps): DeviceStateS
         displayedTrackerId: null,
         guard: createGenerationGuard(),
         debounceTimer: undefined,
+        liveThrottleTimer: undefined,
         trackerRuntimes: new Map(),
       };
 
@@ -293,23 +409,101 @@ export function createDeviceStateStore(deps: DeviceStateStoreDeps): DeviceStateS
         resolveTracker(sessionId, selectedOverride()),
       );
 
-      // Snapshot fetch: debounced + generation-guarded, and short-circuited
-      // entirely for a snapshot-mode tracker once its run generation is cached.
+      // Shared by both the cursor-tied and live "now" fetch paths (see the
+      // module doc) — applies a resolved snapshot to this session's signals,
+      // diffing against the previously displayed one only when it belonged
+      // to the same tracker.
+      const applySnapshot = (trackerId: string, snap: StateSnapshot): void => {
+        const prev = state.displayedTrackerId === trackerId ? untrack(state.snapshot) : null;
+        state.setChanges(prev ? diffSnapshotFields(prev.fields, snap.fields) : {});
+        state.setSnapshot(snap);
+        state.setSnapshotLoading(false);
+        state.displayedTrackerId = trackerId;
+      };
+
+      /** The live "now" fetch: always `Number.MAX_SAFE_INTEGER` (the highest
+       *  known line), never cached (see the module doc for why), guarded by
+       *  the same `state.guard` the cursor-tied path uses. */
+      const fetchNow = (trackerId: string): void => {
+        state.setSnapshotLoading(true);
+        const myToken = state.guard.bump();
+        commands
+          .getStateAtLine(sessionId, trackerId, Number.MAX_SAFE_INTEGER)
+          .then((snap) => {
+            if (disposed || !state.guard.isCurrent(myToken)) return;
+            applySnapshot(trackerId, snap);
+          })
+          .catch(() => {
+            if (disposed || !state.guard.isCurrent(myToken)) return;
+            state.setSnapshotLoading(false);
+          });
+      };
+
+      /** Trailing-edge throttle: the first `adb-tracker-update` in a quiet
+       *  period schedules a fetch {@link LIVE_REFRESH_THROTTLE_MS} out; every
+       *  update that arrives while a timer is already pending is absorbed —
+       *  a burst collapses into exactly one refresh. Re-checks `isLive` and
+       *  re-resolves the tracker when the timer fires, since either can have
+       *  changed during the wait (a tracker switch, or the stream stopping). */
+      const scheduleLiveRefresh = (): void => {
+        if (state.liveThrottleTimer !== undefined) return;
+        state.liveThrottleTimer = setTimeout(() => {
+          state.liveThrottleTimer = undefined;
+          if (disposed || !isLiveSession(sessionId)) return;
+          const trackerId = resolveTracker(sessionId, untrack(state.selectedOverride));
+          if (trackerId) fetchNow(trackerId);
+        }, LIVE_REFRESH_THROTTLE_MS);
+      };
+
+      // Live "now" effect: owns the signals entirely while `isLive` — fires
+      // immediately on mount and whenever the effective tracker changes (so
+      // switching trackers, or a session newly going live, never waits out a
+      // stale throttle window), and again on each throttled
+      // `adb-tracker-update` via `scheduleLiveRefresh` above.
+      createEffect(() => {
+        const trackerId = effectiveTrackerId();
+        const live = isLiveSession(sessionId);
+        if (disposed || !live) return;
+
+        if (!trackerId) {
+          state.setSnapshot(null);
+          state.setChanges({});
+          state.setSnapshotLoading(false);
+          state.displayedTrackerId = null;
+          return;
+        }
+        fetchNow(trackerId);
+      });
+
+      // Cursor-tied snapshot fetch: debounced + generation-guarded, and
+      // short-circuited entirely for a snapshot-mode tracker once its run
+      // generation is cached. Owns the signals only while NOT live — the
+      // effect above takes over for a live session.
       createEffect(() => {
         // The tracker id is deliberately the value at schedule time: the
         // debounced fetch below must resolve for the tracker/cursor pair that
         // scheduled it, and `state.guard` discards a response the effect has
         // since superseded. Re-reading the memo inside the timeout would pair
-        // a newer tracker with an older cursor line.
-        // eslint-disable-next-line solid/reactivity -- snapshot at schedule time by design (see above)
+        // a newer tracker with an older cursor line. (No `solid/reactivity`
+        // suppression needed here — that rule flags a reactive read whose
+        // value visibly escapes into a closure kept past this run; now that
+        // `applySnapshot` takes `trackerId` as a parameter instead of closing
+        // over this effect's local, the only escaping use is the plain
+        // `setTimeout` closure below, which the rule already accepts.)
         const trackerId = effectiveTrackerId();
         const cursor = controller.cursor();
+        const live = isLiveSession(sessionId);
         if (disposed) return;
 
         if (state.debounceTimer !== undefined) {
           clearTimeout(state.debounceTimer);
           state.debounceTimer = undefined;
         }
+
+        // The live effect above owns the signals for a live session — bail
+        // out without touching `snapshot`/`changes`/`loading` so it never
+        // fights the live effect's own writes for the same session.
+        if (live) return;
 
         if (!trackerId) {
           state.setSnapshot(null);
@@ -325,18 +519,10 @@ export function createDeviceStateStore(deps: DeviceStateStoreDeps): DeviceStateS
         const isSnapshotMode = meta?.trackerMode === 'snapshot';
         const generation = analyzers.lastRunAt(sessionId);
 
-        const applySnapshot = (snap: StateSnapshot): void => {
-          const prev = state.displayedTrackerId === trackerId ? untrack(state.snapshot) : null;
-          state.setChanges(prev ? diffSnapshotFields(prev.fields, snap.fields) : {});
-          state.setSnapshot(snap);
-          state.setSnapshotLoading(false);
-          state.displayedTrackerId = trackerId;
-        };
-
         if (isSnapshotMode) {
           const cached = state.snapshotCache.get(trackerId);
           if (cached && cached.generation === generation) {
-            applySnapshot(cached.snapshot);
+            applySnapshot(trackerId, cached.snapshot);
             return;
           }
         }
@@ -350,7 +536,7 @@ export function createDeviceStateStore(deps: DeviceStateStoreDeps): DeviceStateS
             .then((snap) => {
               if (disposed || !state.guard.isCurrent(myToken)) return;
               if (isSnapshotMode) state.snapshotCache.set(trackerId, { generation, snapshot: snap });
-              applySnapshot(snap);
+              applySnapshot(trackerId, snap);
             })
             .catch(() => {
               if (disposed || !state.guard.isCurrent(myToken)) return;
@@ -358,6 +544,13 @@ export function createDeviceStateStore(deps: DeviceStateStoreDeps): DeviceStateS
             });
         }, SNAPSHOT_DEBOUNCE_MS);
       });
+
+      // The global (root-level) `adb-tracker-update` subscription below
+      // routes into this closure for whichever session's state already
+      // exists — registered in a small side map, not on `SessionDeviceState`
+      // itself, since it is bookkeeping for that subscription, not state the
+      // rest of this file reads.
+      liveRefreshSchedulers.set(sessionId, scheduleLiveRefresh);
 
       return state;
     };
@@ -380,10 +573,26 @@ export function createDeviceStateStore(deps: DeviceStateStoreDeps): DeviceStateS
           if (ids.has(key)) continue;
           const stale = states.get(key);
           if (stale?.debounceTimer !== undefined) clearTimeout(stale.debounceTimer);
+          if (stale?.liveThrottleTimer !== undefined) clearTimeout(stale.liveThrottleTimer);
           states.delete(key);
+          liveRefreshSchedulers.delete(key);
         }
       });
     });
+
+    // Live "now" projection trigger: a genuine Tauri broadcast event (unlike
+    // `AdbProcessorUpdate`/`AdbProcessorsExcluded`, which arrive only via the
+    // streaming Channel — see `analyzers/analyzerStore.ts`), so it is
+    // subscribed directly here rather than through `stream/streamStore.ts`.
+    // Routed by `payload.sessionId`, guarded by `isLiveSession` so an event
+    // for a session that has since stopped streaming (or one this store has
+    // no state for yet) is a cheap no-op.
+    track(
+      listenTrackerUpdate((payload: AdbTrackerUpdate) => {
+        if (disposed || !isLiveSession(payload.sessionId)) return;
+        liveRefreshSchedulers.get(payload.sessionId)?.();
+      }),
+    );
 
     const trackers = (sessionId: string): ProcessorSummary[] => analyzers.trackers(sessionId);
 
@@ -398,6 +607,8 @@ export function createDeviceStateStore(deps: DeviceStateStoreDeps): DeviceStateS
       const cursor = controller.cursor();
       return !!cursor && cursor.sessionId === sessionId;
     };
+
+    const isLive = (sessionId: string): boolean => isLiveSession(sessionId);
 
     const snapshot = (sessionId: string): StateSnapshot | null => stateFor(sessionId).snapshot();
     const snapshotLoading = (sessionId: string): boolean => stateFor(sessionId).snapshotLoading();
@@ -470,10 +681,14 @@ export function createDeviceStateStore(deps: DeviceStateStoreDeps): DeviceStateS
     const dispose = (): void => {
       if (disposed) return;
       disposed = true;
+      for (const fn of unlisteners) fn();
+      unlisteners.length = 0;
       for (const state of states.values()) {
         if (state.debounceTimer !== undefined) clearTimeout(state.debounceTimer);
+        if (state.liveThrottleTimer !== undefined) clearTimeout(state.liveThrottleTimer);
       }
       states.clear();
+      liveRefreshSchedulers.clear();
       disposeRoot();
     };
 
@@ -482,6 +697,7 @@ export function createDeviceStateStore(deps: DeviceStateStoreDeps): DeviceStateS
       selectedTracker,
       setSelectedTracker,
       hasCursor,
+      isLive,
       snapshot,
       snapshotLoading,
       changes,

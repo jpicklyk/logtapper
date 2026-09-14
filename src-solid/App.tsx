@@ -72,13 +72,23 @@ export function App(props: AppProps) {
   // selects its tab first.
   const controller = createViewerController({ focusSession: (id) => store.setFocused(id) });
   const store = createSessionStore({ cacheManager, registry, controller });
+  // Analyzers (W4a store + W4b surface) — per-session pipeline chain, run
+  // lifecycle and results; card clicks route matched lines through the same
+  // controller every other surface uses. Built before `liveStream` (below) so
+  // L3's live-counter path can be wired into it at construction time, same as
+  // `deviceState` further down reads it.
+  const analyzers = createAnalyzerStore({ sessions: store, controller });
+  onCleanup(() => analyzers.dispose());
   // Live stream (L1) — the one place a `start_adb_stream` result becomes a
   // registered session (tab, focus) and a stopped one becomes an ordinary
   // postmortem session again. Built before `actions` so `close()` can stop a
   // running stream before its session closes; `benchDriver.ts`'s
   // `startStream`/`stopStream` and `stream-controls`'s panel below both drive
   // this same instance — see its own module doc for why that's the point.
-  const liveStream = createLiveStreamStore({ cacheManager, registry, sessions: store });
+  // `analyzers` is passed in (L3) so batched `AdbProcessorUpdate`/
+  // `AdbProcessorsExcluded` Channel messages feed the analyzer cards' live
+  // counters — see `streamStore.ts`'s module doc.
+  const liveStream = createLiveStreamStore({ cacheManager, registry, sessions: store, analyzers });
   const actions = createAppActions({ store, controller, stopLiveSession: liveStream.stopIfCurrent });
   // Query bar (W2b) — reads/writes per-session query state and plugs its
   // `SearchQuery` provider into the session store's `fetchLines`.
@@ -243,12 +253,6 @@ export function App(props: AppProps) {
       }),
   });
   onCleanup(() => presence.dispose());
-
-  // Analyzers (W4a store + W4b surface) — per-session pipeline chain, run
-  // lifecycle and results; card clicks route matched lines through the same
-  // controller every other surface uses.
-  const analyzers = createAnalyzerStore({ sessions: store, controller });
-  onCleanup(() => analyzers.dispose());
 
   // Device state + timeline (W5) — cursor-tied state-tracker snapshot, field
   // diffs, transition navigation, and the on-demand timeline strip. Reads

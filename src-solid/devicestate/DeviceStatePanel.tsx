@@ -46,9 +46,14 @@ function FieldValue(props: { value: unknown; initialized: boolean }) {
 }
 
 /**
- * Device state panel (W5): tracker selector, cursor-tied snapshot as a field
- * table (initialized fields first, then a divider, then never-touched ones),
- * briefly-flashed changed fields, and prev/next transition navigation.
+ * Device state panel (W5): tracker selector, snapshot as a field table
+ * (initialized fields first, then a divider, then never-touched ones), and
+ * briefly-flashed changed fields — cursor-tied in post-mortem, a throttled
+ * "now" projection while the session streams (L3; see `deviceStateStore.ts`'s
+ * module doc for the "Live 'now' projection" section). Transition navigation
+ * (prev/next chip) is hidden while live: it is meaningless without a viewer
+ * cursor, and a live stream never produces `transitions()` data anyway (no
+ * discrete pipeline run to key the fetch on — see the same module doc).
  *
  * `sourceSections` has no per-field attribution on the wire (`StateSnapshot`
  * carries one section list for the whole snapshot, not per key) — rendered
@@ -58,6 +63,7 @@ function FieldValue(props: { value: unknown; initialized: boolean }) {
 export function DeviceStatePanel(props: DeviceStatePanelProps) {
   const trackers = createMemo(() => props.store.trackers(props.sessionId));
   const selectedId = createMemo(() => props.store.selectedTracker(props.sessionId));
+  const isLive = createMemo(() => props.store.isLive(props.sessionId));
   const hasCursor = createMemo(() => props.store.hasCursor(props.sessionId));
   const snapshot = createMemo(() => props.store.snapshot(props.sessionId));
   const loading = createMemo(() => props.store.snapshotLoading(props.sessionId));
@@ -90,35 +96,40 @@ export function DeviceStatePanel(props: DeviceStatePanelProps) {
           >
             <For each={trackers()}>{(t) => <option value={t.id}>{t.name}</option>}</For>
           </select>
-          <Show when={position()}>
-            {(pos) => (
-              <div class={styles.transitionNav}>
-                <button
-                  type="button"
-                  class={styles.navButton}
-                  disabled={pos().total === 0}
-                  onClick={() => props.store.prevTransition(props.sessionId)}
-                >
-                  ◀
-                </button>
-                <span class={styles.transitionCount}>
-                  {pos().index} / {pos().total}
-                </span>
-                <button
-                  type="button"
-                  class={styles.navButton}
-                  disabled={pos().total === 0}
-                  onClick={() => props.store.nextTransition(props.sessionId)}
-                >
-                  ▶
-                </button>
-              </div>
-            )}
+          <Show when={isLive()}>
+            <span class={styles.liveBadge} title="Refreshing from the live device">LIVE</span>
+          </Show>
+          <Show when={!isLive()}>
+            <Show when={position()}>
+              {(pos) => (
+                <div class={styles.transitionNav}>
+                  <button
+                    type="button"
+                    class={styles.navButton}
+                    disabled={pos().total === 0}
+                    onClick={() => props.store.prevTransition(props.sessionId)}
+                  >
+                    ◀
+                  </button>
+                  <span class={styles.transitionCount}>
+                    {pos().index} / {pos().total}
+                  </span>
+                  <button
+                    type="button"
+                    class={styles.navButton}
+                    disabled={pos().total === 0}
+                    onClick={() => props.store.nextTransition(props.sessionId)}
+                  >
+                    ▶
+                  </button>
+                </div>
+              )}
+            </Show>
           </Show>
         </div>
 
         <Show
-          when={hasCursor()}
+          when={isLive() || hasCursor()}
           fallback={
             <div class={styles.empty}>
               <span>Select a line in the viewer to see state here</span>
@@ -129,7 +140,7 @@ export function DeviceStatePanel(props: DeviceStatePanelProps) {
           when={snapshot()}
           fallback={
             <div class={styles.empty}>
-              <span>{loading() ? 'Loading…' : 'Run the pipeline to see state'}</span>
+              <span>{loading() ? 'Loading…' : isLive() ? 'Waiting for device state…' : 'Run the pipeline to see state'}</span>
             </div>
           }
         >

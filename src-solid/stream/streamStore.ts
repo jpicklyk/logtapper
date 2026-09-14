@@ -22,11 +22,18 @@
  * caller — `App.tsx` builds exactly one instance and hands it to both, so a
  * live session is registered through the identical path either way (see
  * task `fe34022c`'s implementation-notes for why that matters).
+ *
+ * As of L3 (task `2439a7c5`), this store also binds the wrapped
+ * `createStreamSession`'s batched `AdbProcessorUpdate`/`AdbProcessorsExcluded`
+ * Channel forwarding to `analyzers/analyzerStore.ts`'s live-counter methods
+ * (`deps.analyzers`, optional) — closing `createStreamSession.ts`'s former
+ * `handleProcessorUpdate` TODO now that a pipeline context to dispatch into
+ * (the analyzer store itself) exists.
  */
 import { createRoot, createSignal } from 'solid-js';
 import type { Accessor } from 'solid-js';
 import * as cmds from '@bridge/commands';
-import type { AdbDevice, LoadResult, SourceType } from '@bridge/types';
+import type { AdbDevice, AdbProcessorUpdate, AdbProcessorsExcluded, LoadResult, SourceType } from '@bridge/types';
 import { createStreamSession } from '../viewer';
 import type {
   CacheController,
@@ -49,10 +56,24 @@ export type StreamCommands = Pick<
   | 'saveLiveCapture'
 >;
 
+/** The slice of W4a's `AnalyzerStore` this store feeds live counters into —
+ *  structural, so a test can pass a literal instead of a real store. See
+ *  `analyzers/analyzerStore.ts`'s "Live counters" section for what these
+ *  fold into. Optional: omitting it just means a live capture's analyzer
+ *  cards never advance past `--`, same as before L3. */
+export interface LiveStreamAnalyzers {
+  applyProcessorUpdates(sessionId: string, updates: AdbProcessorUpdate[]): void;
+  applyProcessorsExcluded(sessionId: string, excluded: AdbProcessorsExcluded['excluded']): void;
+}
+
 export interface LiveStreamStoreDeps {
   cacheManager: CacheController;
   registry: StreamPusher;
   sessions: SessionStore;
+  /** Feeds `AdbProcessorUpdate`/`AdbProcessorsExcluded` Channel messages into
+   *  the analyzer store's live-counter path (L3). Optional so existing
+   *  callers/tests that don't care about analyzer cards need no change. */
+  analyzers?: LiveStreamAnalyzers;
   /** Injected for tests; defaults to the real bridge commands. */
   commands?: Partial<StreamCommands>;
 }
@@ -122,7 +143,7 @@ function streamLoadResult(status: {
 }
 
 export function createLiveStreamStore(deps: LiveStreamStoreDeps): LiveStreamStore {
-  const { cacheManager, registry, sessions } = deps;
+  const { cacheManager, registry, sessions, analyzers } = deps;
   const c: StreamCommands = { ...cmds, ...deps.commands };
 
   return createRoot((disposeRoot) => {
@@ -144,7 +165,13 @@ export function createLiveStreamStore(deps: LiveStreamStoreDeps): LiveStreamStor
       }
     };
 
-    const session: StreamSession = createStreamSession({ cacheManager, registry, onStatus });
+    const session: StreamSession = createStreamSession({
+      cacheManager,
+      registry,
+      onStatus,
+      onProcessorUpdates: (sessionId, updates) => analyzers?.applyProcessorUpdates(sessionId, updates),
+      onProcessorsExcluded: (payload) => analyzers?.applyProcessorsExcluded(payload.sessionId, payload.excluded),
+    });
 
     const refreshDevices = async (): Promise<void> => {
       setDevicesLoading(true);

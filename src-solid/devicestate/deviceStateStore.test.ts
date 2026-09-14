@@ -1,7 +1,7 @@
 import { createSignal } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ProcessorSummary, StateSnapshot, StateTransition } from '@bridge/types';
-import { createDeviceStateStore, diffSnapshotFields, SNAPSHOT_DEBOUNCE_MS } from './deviceStateStore';
+import type { AdbTrackerUpdate, ProcessorSummary, StateSnapshot, StateTransition } from '@bridge/types';
+import { createDeviceStateStore, diffSnapshotFields, LIVE_REFRESH_THROTTLE_MS, SNAPSHOT_DEBOUNCE_MS } from './deviceStateStore';
 import type {
   DeviceStateAnalyzers,
   DeviceStateCommands,
@@ -56,6 +56,12 @@ interface Harness {
   setLastRunAt: (sessionId: string, v: number | null) => void;
   setCursor: (sessionId: string, line: number) => void;
   clearCursor: () => void;
+  /** Flips a session's `SessionEntry.kind` — see the module doc's "Live 'now'
+   *  projection" section. Defaults every unset session to `'file'`. */
+  setKind: (sessionId: string, kind: 'file' | 'live') => void;
+  /** Fires the injected `listenTrackerUpdate` callback as if a real
+   *  `adb-tracker-update` Tauri event arrived. */
+  fireTrackerUpdate: (payload: AdbTrackerUpdate) => void;
   scrollToLine: ReturnType<typeof vi.fn>;
   /** Session state (and its cursor-watching effect) is created lazily on
    *  first getter access — the same as a real `DeviceStatePanel` mounting
@@ -71,9 +77,13 @@ function mount(commandOverrides: Partial<DeviceStateCommands> = {}): Harness {
   const [trackersMap, setTrackersMap] = createSignal<Record<string, ProcessorSummary[]>>({});
   const [lastRunMap, setLastRunMap] = createSignal<Record<string, number | null>>({});
   const [cursor, setCursorSignal] = createSignal<{ sessionId: string; line: number } | null>(null);
+  const [kindMap, setKindMap] = createSignal<Record<string, 'file' | 'live'>>({});
   const scrollToLine = vi.fn();
 
-  const sessions: DeviceStateSessions = { order: () => order() };
+  const sessions: DeviceStateSessions = {
+    order: () => order(),
+    byId: (sid) => ({ kind: kindMap()[sid] ?? 'file' }),
+  };
   const controller: DeviceStateController = { cursor, scrollToLine };
   const analyzers: DeviceStateAnalyzers = {
     trackers: (sid) => trackersMap()[sid] ?? [],
@@ -85,7 +95,13 @@ function mount(commandOverrides: Partial<DeviceStateCommands> = {}): Harness {
     ...commandOverrides,
   };
 
-  const store = createDeviceStateStore({ sessions, controller, analyzers, commands });
+  let trackerUpdateCb: ((payload: AdbTrackerUpdate) => void) | null = null;
+  const listenTrackerUpdate = vi.fn((cb: (payload: AdbTrackerUpdate) => void) => {
+    trackerUpdateCb = cb;
+    return Promise.resolve(vi.fn());
+  });
+
+  const store = createDeviceStateStore({ sessions, controller, analyzers, commands, listenTrackerUpdate });
 
   return {
     store,
@@ -95,6 +111,8 @@ function mount(commandOverrides: Partial<DeviceStateCommands> = {}): Harness {
     setLastRunAt: (sid, v) => setLastRunMap((m) => ({ ...m, [sid]: v })),
     setCursor: (sid, line) => setCursorSignal({ sessionId: sid, line }),
     clearCursor: () => setCursorSignal(null),
+    setKind: (sid, kind) => setKindMap((m) => ({ ...m, [sid]: kind })),
+    fireTrackerUpdate: (payload) => trackerUpdateCb?.(payload),
     scrollToLine,
     watch: (sid) => void store.snapshotLoading(sid),
   };
@@ -204,6 +222,124 @@ describe('deviceStateStore', () => {
       h.setCursor('s1', 1);
       expect(h.store.hasCursor('s1')).toBe(true);
       expect(h.store.hasCursor('s2')).toBe(false);
+    });
+  });
+
+  // ── Live "now" projection (L3) ───────────────────────────────────────────
+
+  describe('live "now" projection', () => {
+    it('fetches "now" immediately once a session is live, with no cursor at all', async () => {
+      const getStateAtLine = vi.fn(async () => snapshot({ lineNum: 999, fields: { on: true } }));
+      const h = mount({ getStateAtLine });
+      h.setTrackers('s1', [processor('t1')]);
+      h.setKind('s1', 'live');
+      h.watch('s1');
+      await tick();
+
+      expect(h.store.isLive('s1')).toBe(true);
+      expect(getStateAtLine).toHaveBeenCalledWith('s1', 't1', Number.MAX_SAFE_INTEGER);
+      expect(h.store.snapshot('s1')?.fields.on).toBe(true);
+      // No cursor was ever set for this session — the live projection does
+      // not need one, unlike the cursor-tied post-mortem path.
+      expect(h.store.hasCursor('s1')).toBe(false);
+    });
+
+    it('collapses a burst of adb-tracker-update events into a single throttled refresh', async () => {
+      const getStateAtLine = vi.fn(async () => snapshot());
+      const h = mount({ getStateAtLine });
+      h.setTrackers('s1', [processor('t1')]);
+      h.setKind('s1', 'live');
+      h.watch('s1');
+      await tick();
+      expect(getStateAtLine).toHaveBeenCalledTimes(1); // the immediate on-live-mount fetch
+
+      // A burst of five updates arriving within the same throttle window.
+      for (let i = 0; i < 5; i++) {
+        h.fireTrackerUpdate({ sessionId: 's1', trackerId: 't1', transitionCount: i + 1 });
+      }
+      // Not yet — the throttle is trailing-edge.
+      await vi.advanceTimersByTimeAsync(LIVE_REFRESH_THROTTLE_MS - 1);
+      expect(getStateAtLine).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await tick();
+      // Exactly one more call for the whole burst, not five.
+      expect(getStateAtLine).toHaveBeenCalledTimes(2);
+
+      // A second burst after the throttle window closed schedules exactly one more.
+      h.fireTrackerUpdate({ sessionId: 's1', trackerId: 't1', transitionCount: 10 });
+      h.fireTrackerUpdate({ sessionId: 's1', trackerId: 't1', transitionCount: 11 });
+      await vi.advanceTimersByTimeAsync(LIVE_REFRESH_THROTTLE_MS);
+      await tick();
+      expect(getStateAtLine).toHaveBeenCalledTimes(3);
+    });
+
+    it('ignores an adb-tracker-update for a session that is not this one, or not live', async () => {
+      const getStateAtLine = vi.fn(async () => snapshot());
+      const h = mount({ getStateAtLine });
+      h.setTrackers('s1', [processor('t1')]);
+      h.setKind('s1', 'live');
+      h.watch('s1');
+      await tick();
+      getStateAtLine.mockClear();
+
+      h.fireTrackerUpdate({ sessionId: 's2', trackerId: 't1', transitionCount: 1 });
+      await vi.advanceTimersByTimeAsync(LIVE_REFRESH_THROTTLE_MS);
+      await tick();
+      expect(getStateAtLine).not.toHaveBeenCalled();
+
+      h.setKind('s1', 'file');
+      h.fireTrackerUpdate({ sessionId: 's1', trackerId: 't1', transitionCount: 2 });
+      await vi.advanceTimersByTimeAsync(LIVE_REFRESH_THROTTLE_MS);
+      await tick();
+      expect(getStateAtLine).not.toHaveBeenCalled();
+    });
+
+    it('does not run the cursor-tied debounce path while live, even with a cursor set', async () => {
+      const getStateAtLine = vi.fn(async () => snapshot());
+      const h = mount({ getStateAtLine });
+      h.setTrackers('s1', [processor('t1')]);
+      h.setKind('s1', 'live');
+      h.watch('s1');
+      await tick();
+      getStateAtLine.mockClear();
+
+      // A cursor move while live must never trigger the debounced,
+      // line-scoped fetch — only the live "now" path may write these signals.
+      h.setCursor('s1', 42);
+      await vi.advanceTimersByTimeAsync(SNAPSHOT_DEBOUNCE_MS * 4);
+      await tick();
+      expect(getStateAtLine).not.toHaveBeenCalled();
+    });
+
+    it('reverts to cursor-tied browsing once the stream stops, keeping the last "now" snapshot until then', async () => {
+      const getStateAtLine = vi
+        .fn()
+        .mockResolvedValueOnce(snapshot({ lineNum: 999, fields: { now: true } }))
+        .mockResolvedValueOnce(snapshot({ lineNum: 7, fields: { now: false } }));
+      const h = mount({ getStateAtLine });
+      h.setTrackers('s1', [processor('t1')]);
+      h.setLastRunAt('s1', 1);
+      h.setKind('s1', 'live');
+      h.watch('s1');
+      await tick();
+      expect(h.store.snapshot('s1')?.fields.now).toBe(true);
+
+      // Stream stops — kind flips back to 'file'. No cursor yet, so nothing
+      // new fetches, and the last "now" snapshot stays exactly as it was.
+      h.setKind('s1', 'file');
+      await tick();
+      expect(h.store.isLive('s1')).toBe(false);
+      expect(h.store.snapshot('s1')?.fields.now).toBe(true);
+      expect(getStateAtLine).toHaveBeenCalledTimes(1);
+
+      // Post-mortem browsing resumes normally from here.
+      h.setCursor('s1', 7);
+      await vi.advanceTimersByTimeAsync(SNAPSHOT_DEBOUNCE_MS);
+      await tick();
+      expect(getStateAtLine).toHaveBeenCalledTimes(2);
+      expect(getStateAtLine).toHaveBeenLastCalledWith('s1', 't1', 7);
+      expect(h.store.snapshot('s1')?.fields.now).toBe(false);
     });
   });
 

@@ -5,6 +5,7 @@ import type {
   AdbStreamEvent,
   AdbBatchPayload,
   AdbProcessorUpdate,
+  AdbProcessorsExcluded,
   LoadResult,
   SourceType,
 } from '@bridge/types';
@@ -54,6 +55,22 @@ import type { FilterNode } from '@filter/index';
  * (there isn't one yet — `FilterScan` has no public AST/pids accessor to
  * bind these to) and `implementation-notes` on task `fe34022c` for the exact
  * gap and what a future query-side change would need to add.
+ *
+ * Live processor-update forwarding (`options.onProcessorUpdates` /
+ * `options.onProcessorsExcluded` below) was completed by L3 (task
+ * `2439a7c5`), closing the TODO this file's `handleProcessorUpdate` used to
+ * carry ("once src-solid has an event bus / pipeline context to dispatch
+ * into") — `analyzers/analyzerStore.ts`'s live-counter methods are that
+ * pipeline context. Same batching shape as React's `useStreamSession.ts`:
+ * `processorUpdate` messages accumulate and flush once per macrotask
+ * (`setTimeout(…, 0)`, not a microtask — Channel messages can arrive in
+ * separate microtask cycles, so a macrotask gives a wider window to collect
+ * every update from one `flush_batch` call), while `processorsExcluded` is
+ * forwarded as-is on arrival (sent once when the exclusion set first becomes
+ * non-empty and again whenever it changes, never once per batch). Also fixes
+ * a real gap this file had: `handleChannelEvent`'s `if`/`else if` chain had
+ * no branch at all for `'processorsExcluded'` — that event was silently
+ * dropped, not merely stubbed.
  */
 
 /** Options accepted by {@link StreamSession.start}. */
@@ -115,6 +132,17 @@ export interface StreamSessionOptions {
    * `appendFilterMatchesRef.current?.(sessionId, newMatches)`.
    */
   appendFilterMatches?: (sessionId: string, lineNums: number[]) => void;
+
+  /**
+   * Receives one batched flush of `AdbProcessorUpdate`s — every update the
+   * Channel delivered since the last flush, from possibly several processors
+   * — so a caller (the analyzer store's live-counter path) writes its
+   * reactive state once per flush instead of once per message. Never called
+   * with an empty array.
+   */
+  onProcessorUpdates?: (sessionId: string, updates: AdbProcessorUpdate[]) => void;
+  /** Forwarded verbatim, one call per `processorsExcluded` Channel message. */
+  onProcessorsExcluded?: (payload: AdbProcessorsExcluded) => void;
 }
 
 export interface StreamSession {
@@ -142,6 +170,12 @@ export function createStreamSession(options: StreamSessionOptions): StreamSessio
   // invariant, which is React-hooks-only and not importable from src-solid).
   let channelActive = false;
   let currentSessionId: string | null = null;
+
+  // Processor-update batching: accumulate, flush once per macrotask. See the
+  // module doc's "Live processor-update forwarding" section for why a
+  // macrotask (not a microtask) and why this mirrors React's own buffer.
+  let pendingProcessorUpdates: AdbProcessorUpdate[] = [];
+  let flushScheduled = false;
 
   const applyStatus = (next: StreamSessionStatus): void => {
     setStatus(next);
@@ -184,11 +218,35 @@ export function createStreamSession(options: StreamSessionOptions): StreamSessio
     }
   };
 
-  const handleProcessorUpdate = (_payload: AdbProcessorUpdate): void => {
-    // TODO(P5): accumulate + flush a `pipeline:adb-processor-batch` bus
-    // dispatch equivalent once src-solid has an event bus / pipeline
-    // context to dispatch into. React's version batches updates from the
-    // same flush_batch call into one microtask-flushed bus emit.
+  const flushProcessorUpdates = (): void => {
+    flushScheduled = false;
+    if (pendingProcessorUpdates.length === 0) return;
+    const updates = pendingProcessorUpdates;
+    pendingProcessorUpdates = [];
+    // The batch can span a stop/restart if messages queue across a macrotask
+    // boundary; only forward while still bound to the stream that produced
+    // them, same guard `handleChannelEvent` already applies per-message.
+    if (channelActive) options.onProcessorUpdates?.(updates[0].sessionId, updates);
+  };
+
+  const handleProcessorUpdate = (payload: AdbProcessorUpdate): void => {
+    // Same session guard as `handleBatch` and `handleProcessorsExcluded`. It
+    // matters more here than it looks: `flushProcessorUpdates` attributes the
+    // whole buffered batch to `updates[0].sessionId`, so one stale update
+    // admitted at the head would misattribute every update behind it. Guarding
+    // on entry keeps the buffer homogeneous, which is what makes that
+    // `updates[0]` read correct by construction rather than by luck.
+    if (payload.sessionId !== currentSessionId) return;
+    pendingProcessorUpdates.push(payload);
+    if (!flushScheduled) {
+      flushScheduled = true;
+      setTimeout(flushProcessorUpdates, 0);
+    }
+  };
+
+  const handleProcessorsExcluded = (payload: AdbProcessorsExcluded): void => {
+    if (payload.sessionId !== currentSessionId) return;
+    options.onProcessorsExcluded?.(payload);
   };
 
   const handleStreamStopped = (sessionId: string, reason: string): void => {
@@ -210,6 +268,8 @@ export function createStreamSession(options: StreamSessionOptions): StreamSessio
       handleProcessorUpdate(msg.data);
     } else if (msg.event === 'streamStopped') {
       handleStreamStopped(msg.data.sessionId, msg.data.reason);
+    } else if (msg.event === 'processorsExcluded') {
+      handleProcessorsExcluded(msg.data);
     }
   };
 

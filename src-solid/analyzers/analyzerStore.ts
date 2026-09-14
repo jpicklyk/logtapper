@@ -25,6 +25,29 @@
  * `viewer/controller.ts`). `dispose()` unlistens the progress subscription
  * (including a `listen()` promise that settles after disposal) and tears the
  * root down.
+ *
+ * ## Live counters (L3, task `2439a7c5`)
+ *
+ * `applyProcessorUpdates`/`applyProcessorsExcluded` fold a live ADB stream's
+ * `AdbProcessorUpdate`/`AdbProcessorsExcluded` Channel messages into the same
+ * `SessionRun.result.summaries` shape `run()` produces from a file-mode
+ * `PipelineRunResult` — so `AnalyzerCard`'s existing `props.summary?.skipped`
+ * / matched-lines rendering needs zero branching for "was this session's
+ * result produced by a run or by a stream." This ports React's
+ * `PipelineContext.tsx` reducer cases `adb:results-batch` (`mergeProcessorResult`)
+ * and `adb:processors-excluded` (`applyExcludedProcessors`, shipped in
+ * `38b9ed2`) as pure functions plus two store methods, rather than a second
+ * reducer — this store already holds `SessionRun.result` directly (no
+ * `useReducer` to dispatch into), so folding is a plain read-modify-write on
+ * the `runs` `createStore`. Deliberately NOT gated behind `running(sessionId)`
+ * or any run-generation check: a live stream's counters are not a "run" in
+ * the `run()`/`guardFor` sense at all (there is no discrete start/settle to
+ * race), so `guardFor`/`runCaches` are untouched by either method — matching
+ * `matchedLines`/`correlatorEvents`'s existing per-run caches, which simply
+ * never get consulted for a session that has no post-mortem run at all.
+ * `viewer/createStreamSession.ts` (via `stream/streamStore.ts`) is the sole
+ * caller today, batching multiple `AdbProcessorUpdate`s per Channel flush
+ * before calling `applyProcessorUpdates` once — see that module's doc.
  */
 import { batch, createEffect, createRoot, createSignal } from 'solid-js';
 import type { Accessor } from 'solid-js';
@@ -54,6 +77,8 @@ import type {
   PipelineProgress,
   MatchedLine,
   CorrelatorResult,
+  AdbProcessorUpdate,
+  AdbExcludedProcessor,
 } from '@bridge/types';
 // Framework-free localStorage seed for the default chain, shared with the
 // React app's key names (`logtapper_pipeline_chain` / `_disabled`) — same
@@ -202,6 +227,15 @@ export interface AnalyzerStore {
   showMatched(sessionId: string, processorId: string): Promise<void>;
   clearMatched(sessionId: string): void;
 
+  // ── Live counters (L3) ───────────────────────────────────────────────────
+  /** Fold one flush's worth of live `AdbProcessorUpdate`s into this session's
+   *  result — see the module doc's "Live counters" section. No-op for an
+   *  empty array. */
+  applyProcessorUpdates(sessionId: string, updates: AdbProcessorUpdate[]): void;
+  /** Fold the current declared-`source_types` exclusion set for a live
+   *  stream into this session's result — see the module doc. */
+  applyProcessorsExcluded(sessionId: string, excluded: AdbExcludedProcessor[]): void;
+
   // ── Install flow ─────────────────────────────────────────────────────────
   installFromFile(): Promise<void>;
   /** Removes the id from every session's (and the default's) chain first. */
@@ -270,6 +304,63 @@ interface RunCache {
 
 function freshCache(generation: number): RunCache {
   return { generation, matchedLines: new Map(), correlatorEvents: new Map() };
+}
+
+/**
+ * Fold one processor's live streaming counters into a summaries array,
+ * replacing any pre-existing entry for the same processor (including
+ * dropping a stale `skipped` — a real update means the processor did run,
+ * not that it was excluded) or appending a new one. Pure — exported for unit
+ * tests. Mirrors React's `PipelineContext.tsx`'s `mergeProcessorResult`;
+ * `scriptErrors`/`scannedFrom` are 0 because `AdbProcessorUpdate` doesn't
+ * carry them, the same "not applicable / not yet known" default file-mode
+ * runs use.
+ */
+export function mergeProcessorResult(
+  summaries: readonly PipelineRunSummary[],
+  processorId: string,
+  matchedLines: number,
+  emissionCount: number,
+): PipelineRunSummary[] {
+  const idx = summaries.findIndex((s) => s.processorId === processorId);
+  const updated: PipelineRunSummary = { processorId, matchedLines, emissionCount, scriptErrors: 0, scannedFrom: 0 };
+  return idx >= 0
+    ? summaries.map((s, i) => (i === idx ? updated : s))
+    : [...summaries, updated];
+}
+
+/**
+ * Fold the backend's current declared-`source_types` exclusion set for a
+ * live stream into the same summaries shape, so `AnalyzerCard`'s
+ * `props.summary?.skipped` renders the identical n/a row for either path
+ * with no stream-specific branch. Pure — exported for unit tests. Mirrors
+ * React's `PipelineContext.tsx`'s `applyExcludedProcessors` (shipped
+ * `38b9ed2`): `excluded` is the *complete* current set, so every existing
+ * entry whose `skipped.reason` is `'source_type_mismatch'` but whose id is
+ * no longer in `excluded` is cleared (the processor became eligible again,
+ * e.g. after a chain change), and every id in `excluded` gets `skipped` set,
+ * creating a new zero-count entry when the processor has not produced any
+ * update yet.
+ */
+export function applyExcludedProcessors(
+  summaries: readonly PipelineRunSummary[],
+  excluded: readonly AdbExcludedProcessor[],
+): PipelineRunSummary[] {
+  const excludedIds = new Set(excluded.map((e) => e.processorId));
+  const cleared = summaries.map((s) =>
+    s.skipped?.reason === 'source_type_mismatch' && !excludedIds.has(s.processorId)
+      ? { ...s, skipped: undefined }
+      : s,
+  );
+  let result = cleared;
+  for (const { processorId, skip } of excluded) {
+    const idx = result.findIndex((s) => s.processorId === processorId);
+    result =
+      idx >= 0
+        ? result.map((s, i) => (i === idx ? { ...s, skipped: skip } : s))
+        : [...result, { processorId, matchedLines: 0, emissionCount: 0, scriptErrors: 0, scannedFrom: 0, skipped: skip }];
+  }
+  return result;
 }
 
 export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
@@ -516,6 +607,33 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
       controller.setLineSet(sessionId, 'filter', null);
     };
 
+    // ── Live counters (L3) ───────────────────────────────────────────────
+    /** Live updates target a session that may have no run at all yet — start
+     *  from the existing result's shape when there is one (so a live capture
+     *  that was also run post-mortem keeps its `effectiveProcessorIds`), or a
+     *  minimal synthetic one when there isn't. `effectiveProcessorIds: []` is
+     *  never read by any `src-solid` consumer today (only by tests), so it
+     *  carries no "this ran nothing" implication a live counter would need
+     *  to correct. */
+    const liveResultBase = (sessionId: string): PipelineRunResult =>
+      currentRun(sessionId).result ?? { sessionId, effectiveProcessorIds: [], summaries: [] };
+
+    const applyProcessorUpdates = (sessionId: string, updates: AdbProcessorUpdate[]): void => {
+      if (updates.length === 0) return;
+      const base = liveResultBase(sessionId);
+      let summaries = base.summaries;
+      for (const u of updates) {
+        summaries = mergeProcessorResult(summaries, u.processorId, u.matchedLines, u.emissionCount);
+      }
+      setRuns(sessionId, { ...currentRun(sessionId), result: { ...base, summaries } });
+    };
+
+    const applyProcessorsExcluded = (sessionId: string, excluded: AdbExcludedProcessor[]): void => {
+      const base = liveResultBase(sessionId);
+      const summaries = applyExcludedProcessors(base.summaries, excluded);
+      setRuns(sessionId, { ...currentRun(sessionId), result: { ...base, summaries } });
+    };
+
     // ── Install flow ─────────────────────────────────────────────────────
     const PROCESSOR_FILE_FILTERS = [
       { name: 'Processor YAML', extensions: ['yaml', 'yml'] },
@@ -652,6 +770,8 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
       vars,
       showMatched,
       clearMatched,
+      applyProcessorUpdates,
+      applyProcessorsExcluded,
       installFromFile,
       uninstall,
       pipelineChainProvider,
