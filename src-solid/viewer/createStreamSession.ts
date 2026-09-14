@@ -230,6 +230,13 @@ export function createStreamSession(options: StreamSessionOptions): StreamSessio
   };
 
   const handleProcessorUpdate = (payload: AdbProcessorUpdate): void => {
+    // Same session guard as `handleBatch` and `handleProcessorsExcluded`. It
+    // matters more here than it looks: `flushProcessorUpdates` attributes the
+    // whole buffered batch to `updates[0].sessionId`, so one stale update
+    // admitted at the head would misattribute every update behind it. Guarding
+    // on entry keeps the buffer homogeneous, which is what makes that
+    // `updates[0]` read correct by construction rather than by luck.
+    if (payload.sessionId !== currentSessionId) return;
     pendingProcessorUpdates.push(payload);
     if (!flushScheduled) {
       flushScheduled = true;

@@ -368,6 +368,33 @@ describe('createStreamSession', () => {
       dispose();
     });
 
+    // Regression: `handleProcessorUpdate` used to buffer any payload without
+    // checking its session, while `flushProcessorUpdates` attributes the whole
+    // buffered batch to `updates[0].sessionId`. A foreign update admitted at
+    // the head therefore did not merely add a stray entry — it relabelled every
+    // real update behind it, so one session's live counters were credited to
+    // another. Both assertions matter: the foreign payload must be absent AND
+    // the surviving batch must still be attributed to 's1'.
+    it('ignores a processorUpdate for a different session rather than misattributing the batch', async () => {
+      const channel = captureOnEvent();
+      const onProcessorUpdates = vi.fn();
+      const { session, dispose } = mountWithProcessorCallbacks({ onProcessorUpdates });
+
+      await session.start('emulator-5554');
+      // Foreign session first, so it would land at `updates[0]` if admitted.
+      channel.fire({ event: 'processorUpdate', data: { sessionId: 'other', processorId: 'p9', matchedLines: 99, emissionCount: 9 } });
+      channel.fire({ event: 'processorUpdate', data: { sessionId: 's1', processorId: 'p1', matchedLines: 1, emissionCount: 0 } });
+
+      await macrotask();
+
+      expect(onProcessorUpdates).toHaveBeenCalledTimes(1);
+      expect(onProcessorUpdates).toHaveBeenCalledWith('s1', [
+        { sessionId: 's1', processorId: 'p1', matchedLines: 1, emissionCount: 0 },
+      ]);
+
+      dispose();
+    });
+
     it('does not flush a late-arriving batch of updates after stop()', async () => {
       const channel = captureOnEvent();
       const onProcessorUpdates = vi.fn();
