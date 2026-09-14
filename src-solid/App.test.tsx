@@ -231,4 +231,83 @@ describe('App', () => {
     const pickerAfter = screen.getByLabelText('Secondary pane session') as HTMLSelectElement;
     expect(pickerAfter.value).toBe('');
   });
+
+  // S1's review flagged this path as unit-tested (`splitView.handleSessionClosed`)
+  // but never exercised end to end. It matters because a session can close from
+  // outside this UI — an agent calling `close_session` over the MCP bridge —
+  // so the clearing effect is driven by `store.order` changing, not by the tab
+  // close button's own handler. Closing from the button is simply the reachable
+  // way to make `order` change in a test.
+  it('clears the secondary pane when its session is closed (S1)', async () => {
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const { getLines, loadLogFile, closeSession } = await import('@bridge/commands');
+
+    const makeLoad = (path: string): LoadResult => ({
+      sessionId: path,
+      sourceId: path,
+      sourceName: path,
+      filePath: path,
+      totalLines: 5,
+      fileSize: 0,
+      firstTimestamp: null,
+      lastTimestamp: null,
+      sourceType: 'Logcat',
+      isStreaming: false,
+      isIndexing: false,
+      hasCrlf: false,
+      encoding: 'UTF-8',
+    });
+
+    // `globals` is off and nothing resets mocks between tests here, so call
+    // counts carry over from the split test above — clear the three this test
+    // asserts on rather than asserting cumulative totals.
+    vi.mocked(open).mockReset();
+    vi.mocked(loadLogFile).mockClear();
+    vi.mocked(closeSession).mockClear();
+
+    vi.mocked(open).mockResolvedValueOnce('/a.log').mockResolvedValueOnce('/b.log');
+    vi.mocked(loadLogFile).mockImplementation((path: string) => Promise.resolve([makeLoad(path)]));
+    vi.mocked(getLines).mockResolvedValue({ lines: [], totalLines: 5 } as never);
+
+    Object.defineProperty(window, 'innerWidth', { value: 2600, configurable: true });
+
+    render(() => <App />);
+    const openButton = screen.getByRole('button', { name: /^open file/i }) as HTMLButtonElement;
+
+    fireEvent.click(openButton);
+    await waitFor(() => expect(loadLogFile).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(openButton.disabled).toBe(false));
+
+    fireEvent.click(openButton);
+    await waitFor(() => expect(loadLogFile).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(openButton.disabled).toBe(false));
+
+    // '/b.log' is focused in the primary pane, so '/a.log' goes to the secondary.
+    fireEvent.click(screen.getByRole('button', { name: /split view/i }));
+    const picker = screen.getByLabelText('Secondary pane session') as HTMLSelectElement;
+    fireEvent.change(picker, { target: { value: '/a.log' } });
+    expect(screen.getAllByRole('grid')).toHaveLength(2);
+
+    // Close the session the SECONDARY pane is showing, not the focused one.
+    fireEvent.click(screen.getByRole('button', { name: /close \/a\.log/i }));
+    await waitFor(() => expect(closeSession).toHaveBeenCalledWith('/a.log'));
+
+    // The secondary selection is cleared rather than left pointing at a session
+    // the store can no longer resolve, and the split itself stays open.
+    await waitFor(() => expect(screen.getAllByRole('grid')).toHaveLength(1));
+    const pickerAfter = screen.getByLabelText('Secondary pane session') as HTMLSelectElement;
+    expect(pickerAfter.value).toBe('');
+    // '/a.log' is gone from the options too — it is no longer an open session.
+    expect([...pickerAfter.options].map((o) => o.value).filter(Boolean)).toEqual([]);
+
+    // The assertions above are necessary but NOT sufficient: if the clearing
+    // effect were removed, the grid count and the picker value would both look
+    // identical, because `App.tsx` would fall back to "That session is no
+    // longer open." for the now-unresolvable id and render no second grid
+    // either. These two lines are what actually separate "cleared" from
+    // "stale but guarded" — the pane must show the pick-a-session placeholder,
+    // never the stale-session fallback.
+    expect(screen.queryByText(/no longer open/i)).toBeNull();
+    expect(screen.getByText(/pick a session above/i)).toBeTruthy();
+  });
 });

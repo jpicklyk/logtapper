@@ -88,6 +88,28 @@ describe('createSplitView', () => {
     expect(view.ratio()).toBe(MAX_SPLIT_RATIO);
   });
 
+  // A workspace saved with a split can be restored long after the session it
+  // named was closed — nothing re-opens sessions to satisfy a layout. This
+  // store deliberately does NOT validate the id (it has no session-store
+  // dependency, by design); it restores verbatim and leaves existence to the
+  // owner. `App.tsx` guards the render with
+  // `<Show when={store.byId(sessionId)} fallback={…}>`, so a stale id shows
+  // "That session is no longer open." instead of mounting a viewer over
+  // nothing. Pinning the no-validation contract here keeps a later "helpful"
+  // change from silently dropping the id and taking that fallback with it.
+  it('applyLayout restores a secondary session id that is no longer open', () => {
+    const view = createSplitView();
+    view.applyLayout({ active: true, secondarySessionId: 'closed-session', ratio: 0.5 });
+    expect(view.active()).toBe(true);
+    expect(view.secondarySessionId()).toBe('closed-session');
+
+    // The owner's session-close path is what clears it, and it still works on
+    // an id that arrived from a restore rather than from `split()`.
+    view.handleSessionClosed('closed-session');
+    expect(view.secondarySessionId()).toBeNull();
+    expect(view.active()).toBe(true);
+  });
+
   it('exposes a stable secondary pane id constant', () => {
     expect(SECONDARY_PANE_ID).toBe('secondary');
   });
