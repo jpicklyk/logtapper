@@ -127,6 +127,15 @@ describe('AnalyzersPanel', () => {
     expect(screen.getAllByLabelText('Move up')).toHaveLength(2);
   });
 
+  it('the × on a card removes that analyzer from the chain, and the pinned row has none', () => {
+    const store = fakeStore();
+    render(() => <AnalyzersPanel store={store} controller={fakeController()} sessionId="s1" />);
+    expect(screen.queryByLabelText('Remove __pii_anonymizer')).toBeNull();
+    fireEvent.click(screen.getByLabelText('Remove p2'));
+    expect(store.remove).toHaveBeenCalledWith('s1', 'p2');
+    expect(store.remove).toHaveBeenCalledTimes(1);
+  });
+
   it('Run starts the run and Stop calls store.stop', async () => {
     const store = fakeStore();
     render(() => <AnalyzersPanel store={store} controller={fakeController()} sessionId="s1" />);

@@ -92,6 +92,7 @@ export function AnalyzersPanel(props: AnalyzersPanelProps): JSX.Element {
       onToggle={() => props.store.toggle(props.sessionId, processor.id)}
       onMoveUp={() => props.store.reorder(props.sessionId, indexOf(processor.id), indexOf(processor.id) - 1)}
       onMoveDown={() => props.store.reorder(props.sessionId, indexOf(processor.id), indexOf(processor.id) + 1)}
+      onRemove={() => props.store.remove(props.sessionId, processor.id)}
       onOpenDeviceState={props.onOpenDeviceState}
       onOpenDetail={setDetailId}
     />

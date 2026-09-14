@@ -41,6 +41,9 @@ export interface AnalyzerCardProps {
   onToggle?: () => void;
   onMoveUp?: () => void;
   onMoveDown?: () => void;
+  /** Drop this analyzer from the session's chain (the processor stays
+   *  installed). The undo for anything an agent added. */
+  onRemove?: () => void;
   onOpenDeviceState?: (processorId: string) => void;
   onOpenDetail?: (processorId: string) => void;
 }
@@ -151,6 +154,15 @@ export function AnalyzerCard(props: AnalyzerCardProps): JSX.Element {
             onClick={() => props.onMoveDown?.()}
           >
             ▼
+          </button>
+          <button
+            type="button"
+            class={styles.iconBtn}
+            title="Remove from this session's chain"
+            aria-label={`Remove ${props.processor.name}`}
+            onClick={() => props.onRemove?.()}
+          >
+            ×
           </button>
         </Show>
       </div>
