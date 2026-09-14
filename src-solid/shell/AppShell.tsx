@@ -14,6 +14,7 @@ import {
 import type { RegionId, SurfaceDef, SurfaceId } from './surfaces';
 import { Splitter, createRegionWidths } from './Splitter';
 import type { ResizableRegion } from './Splitter';
+import { WindowControls } from './WindowControls';
 import styles from './shell.module.css';
 
 /**
@@ -126,8 +127,13 @@ export function AppShell(props: AppShellProps) {
       data-mode={mode()}
       style={{ '--shell-columns': columns() } as JSX.CSSProperties}
     >
-      <header class={styles.topBar} data-testid="top-bar">
+      {/* The window renders a 1px caption (see `WindowControls`), so this bar
+          IS the title bar: it has to be draggable, or the window could only be
+          moved with the keyboard. Tauri drags only when the mousedown target
+          itself carries the attribute, so the bar's buttons still click. */}
+      <header class={styles.topBar} data-testid="top-bar" data-tauri-drag-region>
         {props.topBar}
+        <WindowControls />
       </header>
 
       <nav class={styles.rail} aria-label="Surfaces">

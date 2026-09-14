@@ -1,7 +1,21 @@
 /** @jsxImportSource solid-js */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@solidjs/testing-library';
 import { AppShell } from './AppShell';
+
+// The shell now renders `WindowControls`, which calls `getCurrentWindow()` from
+// `@tauri-apps/api/window` — that throws outside a Tauri webview, so stub it.
+// Every method returns a resolved promise; `isMaximized` reports false so the
+// middle control renders as "Maximize".
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: () => ({
+    minimize: vi.fn(() => Promise.resolve()),
+    toggleMaximize: vi.fn(() => Promise.resolve()),
+    close: vi.fn(() => Promise.resolve()),
+    isMaximized: vi.fn(() => Promise.resolve(false)),
+    onResized: vi.fn(() => Promise.resolve(() => {})),
+  }),
+}));
 
 // vitest `globals` is off, so @solidjs/testing-library's auto-cleanup never registers.
 afterEach(cleanup);

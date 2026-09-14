@@ -1,0 +1,44 @@
+/* Windows title-bar controls, sized to the platform convention (46x32 per
+   button) so they read as system chrome rather than app buttons. `margin-left:
+   auto` parks them at the right end of the top bar's flex row. */
+.controls {
+  display: flex;
+  align-items: stretch;
+  margin-left: auto;
+  align-self: stretch;
+  /* No `-webkit-app-region` here: that is Electron's mechanism. Tauri starts a
+     drag only when the mousedown target itself carries `data-tauri-drag-region`,
+     so these buttons — children of the bar, without the attribute — keep their
+     clicks. */
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+  transition: background-color var(--p-duration-fast, 120ms) ease,
+    color var(--p-duration-fast, 120ms) ease;
+}
+
+.button:hover {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* Windows paints only the close button red on hover; the other two stay
+   neutral. Matching that keeps the destructive control distinguishable. */
+.close:hover {
+  background: var(--danger);
+  color: var(--text-on-accent);
+}

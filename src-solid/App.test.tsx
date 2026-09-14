@@ -5,6 +5,19 @@ import { App } from './App';
 import type { LoadResult } from '@bridge/types';
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
+// The shell now renders `WindowControls`, which calls `getCurrentWindow()` from
+// `@tauri-apps/api/window` — that throws outside a Tauri webview, so stub it.
+// Every method returns a resolved promise; `isMaximized` reports false so the
+// middle control renders as "Maximize".
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: () => ({
+    minimize: vi.fn(() => Promise.resolve()),
+    toggleMaximize: vi.fn(() => Promise.resolve()),
+    close: vi.fn(() => Promise.resolve()),
+    isMaximized: vi.fn(() => Promise.resolve(false)),
+    onResized: vi.fn(() => Promise.resolve(() => {})),
+  }),
+}));
 // A2 added the presence store to App, which fetches bridge status, the
 // activity journal, the focus context and the session list on construction —
 // all must be stubbed, or the module mock throws on the missing export.
