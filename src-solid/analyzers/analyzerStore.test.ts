@@ -7,6 +7,7 @@ import type {
   PipelineProgress,
   PipelineCompleteEvent,
   ChainUpdateEvent,
+  ChainState,
   WorkspaceRestoredEvent,
   MatchedLine,
 } from '@bridge/types';
@@ -85,6 +86,7 @@ function makeCommands(overrides: Partial<AnalyzerCommands> = {}): AnalyzerComman
     loadProcessorFromFile: vi.fn(async () => processor('installed')),
     uninstallProcessor: vi.fn(async () => undefined),
     setSessionPipelineMeta: vi.fn(async () => undefined),
+    getSessionChain: vi.fn(async (sessionId: string) => ({ sessionId, activeProcessorIds: [], disabledProcessorIds: [] })),
     runPipeline: vi.fn(async (sessionId: string) => runResult(sessionId)),
     stopPipeline: vi.fn(async () => undefined),
     getMatchedLines: vi.fn(async () => []),
@@ -405,6 +407,46 @@ describe('analyzerStore', () => {
   });
 
   // ── chain-update (F1) ────────────────────────────────────────────────────
+
+  describe('hydration from the backend', () => {
+    it("reads a newly known session's chain from the backend and mirrors it", async () => {
+      const { store, setOrder, commands } = mount({
+        getSessionChain: vi.fn(async (sessionId: string) => ({
+          sessionId, activeProcessorIds: ['a', 'b', PII_ANONYMIZER_ID], disabledProcessorIds: ['b'],
+        })),
+      });
+      setOrder(['s1']);
+      await tick();
+      expect(commands.getSessionChain).toHaveBeenCalledWith('s1');
+      expect(store.chain('s1').order).toEqual(['a', 'b']);
+      expect(store.chain('s1').disabled).toEqual(['b']);
+    });
+
+    it('never overwrites a local edit made before the read resolved', async () => {
+      let resolveRead!: (v: ChainState) => void;
+      const { store, setOrder } = mount({
+        getSessionChain: vi.fn(() => new Promise<ChainState>((res) => { resolveRead = res; })),
+      });
+      setOrder(['s1']);
+      store.add('s1', 'x');
+      resolveRead({ sessionId: 's1', activeProcessorIds: ['a'], disabledProcessorIds: [] });
+      await tick();
+      expect(store.chain('s1').order).toEqual(['x']);
+    });
+
+    it('reads once per session and again after the session was closed and reopened', async () => {
+      const { setOrder, commands } = mount();
+      setOrder(['s1']);
+      await tick();
+      setOrder(['s1']);
+      await tick();
+      expect(commands.getSessionChain).toHaveBeenCalledTimes(1);
+      setOrder([]);
+      setOrder(['s1']);
+      await tick();
+      expect(commands.getSessionChain).toHaveBeenCalledTimes(2);
+    });
+  });
 
   describe('workspace-restored', () => {
     const restored = (sessionId: string, active: string[], disabled: string[] = []): WorkspaceRestoredEvent => ({

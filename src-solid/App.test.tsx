@@ -114,6 +114,7 @@ vi.mock('@bridge/commands', () => ({
   loadProcessorFromFile: vi.fn(),
   uninstallProcessor: vi.fn(() => Promise.resolve()),
   setSessionPipelineMeta: vi.fn(() => Promise.resolve()),
+  getSessionChain: vi.fn((sessionId: string) => Promise.resolve({ sessionId, activeProcessorIds: [], disabledProcessorIds: [] })),
   runPipeline: vi.fn(),
   stopPipeline: vi.fn(() => Promise.resolve()),
   getMatchedLines: vi.fn(() => Promise.resolve([])),

@@ -209,6 +209,17 @@ pub fn set_session_pipeline_meta(
     Ok(())
 }
 
+/// Thin adapter over `services::chain::get` — the UI's read of the chain the
+/// backend holds for a session. The frontend hydrates a newly opened session
+/// from this because not every backend write announces itself: a reopen of
+/// the same file re-keys the rescued chain in `sessions::RescuedArtifacts`
+/// without an event, and an agent may have edited the chain before the tab
+/// existed. Same shape the bridge's `GET /mcp/sessions/{id}/chain` returns.
+#[tauri::command]
+pub fn get_session_chain(app: AppHandle, session_id: String) -> Result<crate::services::chain::ChainState, String> {
+    Ok(crate::services::chain::get(&crate::commands::adapters::ui_ctx(&app), &session_id)?)
+}
+
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // Tests — the wire shapes this module still owns, and the `AppState` run

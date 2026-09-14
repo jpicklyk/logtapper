@@ -82,6 +82,7 @@ import {
   loadProcessorFromFile,
   uninstallProcessor,
   setSessionPipelineMeta,
+  getSessionChain,
   runPipeline,
   stopPipeline,
   getMatchedLines,
@@ -100,6 +101,7 @@ import type {
   PipelineProgress,
   PipelineCompleteEvent,
   ChainUpdateEvent,
+  ChainState,
   WorkspaceRestoredEvent,
   MatchedLine,
   CorrelatorResult,
@@ -180,6 +182,7 @@ export interface AnalyzerCommands {
   loadProcessorFromFile(path: string): Promise<ProcessorSummary>;
   uninstallProcessor(id: string): Promise<void>;
   setSessionPipelineMeta(sessionId: string, active: string[], disabled: string[]): Promise<void>;
+  getSessionChain(sessionId: string): Promise<ChainState>;
   runPipeline(sessionId: string, processorIds: string[] | null): Promise<PipelineRunResult>;
   stopPipeline(): Promise<void>;
   getMatchedLines(sessionId: string, processorId: string): Promise<MatchedLine[]>;
@@ -193,6 +196,7 @@ const defaultCommands: AnalyzerCommands = {
   loadProcessorFromFile,
   uninstallProcessor,
   setSessionPipelineMeta,
+  getSessionChain,
   runPipeline,
   stopPipeline,
   getMatchedLines,
@@ -968,6 +972,38 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
       });
     };
 
+    // ── Hydration ────────────────────────────────────────────────────────
+    // The backend is the chain's source of truth, and not every write there
+    // announces itself: a reopen of the same file re-keys the rescued chain
+    // in `sessions::RescuedArtifacts` with no event, and an agent may have
+    // edited the chain before this tab existed. So the first time a session
+    // is known here, read its chain back — and apply it only if the user has
+    // not edited locally in the meantime (a local chain already exists), so a
+    // slow read can never overwrite a fresh edit. An empty backend chain
+    // leaves the session on the shared template exactly as before.
+    const hydrated = new Set<string>();
+    createEffect(() => {
+      for (const sessionId of sessions.order()) {
+        if (hydrated.has(sessionId)) continue;
+        hydrated.add(sessionId);
+        void commands
+          .getSessionChain(sessionId)
+          .then((state) =>
+            // Not a tracked scope — every read here is deliberately untracked.
+            untrack(() => {
+              if (disposed || chains[sessionId] !== undefined) return;
+              if (!sessions.order().includes(sessionId)) return;
+              if (state.activeProcessorIds.length === 0) return;
+              applyWorkspaceChain(
+                { chain: state.activeProcessorIds, disabledChainIds: state.disabledProcessorIds },
+                sessionId,
+              );
+            }),
+          )
+          .catch(() => undefined);
+      }
+    });
+
     // ── Session cleanup ──────────────────────────────────────────────────
     // Prunes chain/run state for sessions that have closed, so the two records
     // don't grow unbounded across a long-lived app the way `PipelineContext`'s
@@ -977,6 +1013,9 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
       const staleChains = Object.keys(unwrap(chains)).filter((id) => !known.has(id));
       const staleRuns = Object.keys(unwrap(runs)).filter((id) => !known.has(id));
       const staleAdded = Object.keys(unwrap(addedByAgent)).filter((id) => !known.has(id));
+      // A session that closed before it was ever edited has no record to
+      // prune but must still hydrate afresh if the same id reopens.
+      for (const id of [...hydrated]) if (!known.has(id)) hydrated.delete(id);
       if (staleChains.length === 0 && staleRuns.length === 0 && staleAdded.length === 0) return;
       batch(() => {
         if (staleChains.length > 0) {

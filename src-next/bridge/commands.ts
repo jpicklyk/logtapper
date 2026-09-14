@@ -1,6 +1,7 @@
 import { invoke, Channel } from '@tauri-apps/api/core';
 import type {
   LineRequest,
+  ChainState,
   LinePage,
   LoadResult,
   SourceType,
@@ -198,6 +199,14 @@ export function setSessionPipelineMeta(
   disabledProcessorIds: string[],
 ): Promise<void> {
   return invoke('set_session_pipeline_meta', { sessionId, activeProcessorIds, disabledProcessorIds });
+}
+
+/** The chain the backend holds for a session — the same shape the bridge's
+ *  `GET /mcp/sessions/{id}/chain` returns. Read it when a session becomes
+ *  known: a reopen-of-the-same-file rescue re-keys the saved chain without an
+ *  event, and an agent may have edited it before the tab existed. */
+export function getSessionChain(sessionId: string): Promise<ChainState> {
+  return invoke('get_session_chain', { sessionId });
 }
 
 export function listProcessors(): Promise<ProcessorSummary[]> {

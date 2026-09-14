@@ -587,6 +587,7 @@ pub fn run() {
             commands::sources::uninstall_pack_from_marketplace,
             // Pipeline meta (workspace persistence)
             commands::pipeline::set_session_pipeline_meta,
+            commands::pipeline::get_session_chain,
             // Export commands
             commands::export::get_export_all_sessions_info,
             commands::export::export_all_sessions,
