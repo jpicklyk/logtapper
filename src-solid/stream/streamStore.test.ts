@@ -112,6 +112,41 @@ describe('createLiveStreamStore', () => {
     disposeSessions();
   });
 
+  // Regression, found by the phase's live smoke rather than by any unit test.
+  // Nothing else updates a live session's line count: `updateTotal`'s other
+  // callers are the file-open path and the index-progress events, neither of
+  // which fires for a stream. While streaming the gap was masked, because the
+  // viewer sizes itself from the data source's own append total in tail mode.
+  // On stop, `kind` flips to 'file', tail mode goes false, the viewer falls
+  // back to this count, and a real 339k-line capture rendered as an EMPTY
+  // viewer while the backend still held every line. The second assertion,
+  // after `stop()`, is the one that matters.
+  it('keeps the session line count in step with the stream, including after it stops', async () => {
+    const channel = captureOnEvent();
+    const { sessions, dispose: disposeSessions } = makeSessionStore();
+    const store = createLiveStreamStore({
+      cacheManager: makeCacheController(),
+      registry: makeRegistry(),
+      sessions,
+    });
+
+    await store.start('emulator-5554');
+    expect(sessions.byId('s1')?.totalLines).toBe(0);
+
+    channel.fire({ event: 'batch', data: { sessionId: 's1', lines: [], totalLines: 1200 } } as never);
+    expect(sessions.byId('s1')?.totalLines).toBe(1200);
+
+    channel.fire({ event: 'batch', data: { sessionId: 's1', lines: [], totalLines: 3400 } } as never);
+    expect(sessions.byId('s1')?.totalLines).toBe(3400);
+
+    // The capture must still be there to render once tail mode ends.
+    await store.stop();
+    expect(sessions.byId('s1')?.totalLines).toBe(3400);
+
+    store.dispose();
+    disposeSessions();
+  });
+
   it('flips the session back to file kind when the stream stops, without removing it', async () => {
     captureOnEvent();
     const { sessions, dispose: disposeSessions } = makeSessionStore();

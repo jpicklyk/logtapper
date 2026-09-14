@@ -190,6 +190,23 @@ export function createLiveStreamStore(deps: LiveStreamStoreDeps): LiveStreamStor
         // just re-focuses it rather than re-registering.
         if (!sessions.byId(next.sessionId)) sessions.add(streamLoadResult(next));
         sessions.setFocused(next.sessionId);
+        // `handleBatch` republishes the status on every batch with the running
+        // total, so this is where a live session's line count comes from —
+        // nothing else updates it (`updateTotal`'s other callers are the file
+        // open path and the index-progress events, neither of which fires for
+        // a stream).
+        //
+        // Missing this was invisible while streaming and destructive on stop.
+        // In tail mode the viewer sizes itself from `ScrollControls.
+        // liveTotalLines`, which tracks the data source's own `onAppend`
+        // total, so the capture rendered correctly and only the top bar's
+        // "— 0 lines" hinted at the gap. On stop, `kind` flips to 'file',
+        // tail mode goes false, `liveTotalLines` falls back to the
+        // `totalLineCount` prop — this entry's count — and a 339k-line capture
+        // rendered as an empty viewer while the backend still held every line.
+        // Found by the phase's live smoke; no unit test spans the two stores
+        // and the viewer, which is why all eight packages passed without it.
+        sessions.updateTotal(next.sessionId, next.totalLines, false);
       } else if (next.phase === 'stopped') {
         sessions.setStreamingKind(next.sessionId, false);
       }
